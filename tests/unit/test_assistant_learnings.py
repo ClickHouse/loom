@@ -1342,7 +1342,10 @@ async def test_other_bots_rules_ranked_first_leave_the_knowledge_section_full(
         )
     ]
 
+    reranks: list[str] = []
+
     async def search(input: Any) -> KnowledgeSearchOutput:
+        reranks.append(input.rerank)
         return KnowledgeSearchOutput(results=ranked[: input.top_k], embedding_model="fake")
 
     monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
@@ -1361,6 +1364,8 @@ async def test_other_bots_rules_ranked_first_leave_the_knowledge_section_full(
 
     assert "Refunds take five days." in st.sections["knowledge"]
     assert "rule 0" not in st.sections["knowledge"]
+    # a pack makes no rerank call, on its first read or a widened one
+    assert reranks and set(reranks) == {"none"}
 
 
 # Three sales-bot rules outrank support-bot's own rule and a plain document.

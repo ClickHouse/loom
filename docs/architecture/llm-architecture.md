@@ -470,6 +470,7 @@ write, on the leader, so the write's own verdict stays deterministic.
 | `memory.ask` synthesis                        | Yes           | `LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP`, `LOOM_MEMORY_ASK_MID_MODEL`                                                                                                                                                                                                              |
 | `memory.search` HyDE and fallback helpers     | Yes, bounded  | Per-request `hyde`; `LOOM_MEMORY_SEARCH_FALLBACK_MAX_LLM_CALLS` (2); [none](../features/memory/search-and-ask.md#modes-and-recipes) under `retrieval_budget: "fast"`, `recipe: "fast"` or in `context.pack`                                                                                                  |
 | `memory.search` rerank                        | Yes, opt-in   | Namespace `rerank_endpoint` or per-request `rerank` (`builtin:openai[:model]`, `builtin:cohere[:model]`, a `LOOM_RERANK_ENDPOINTS_JSON` name); `builtin:openai` makes [none](../features/memory/search-and-ask.md#modes-and-recipes) under `retrieval_budget: "fast"`, `recipe: "fast"` or in `context.pack` |
+| `knowledge.search` rerank                     | Yes, opt-in   | Per-request `rerank` or `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT`; none in `context.pack` or `loom_search`'s repository-docs leg                                                                                                                                                                                |
 | Entity extraction                             | Yes           | `entity_extractor` worker, `LOOM_ENTITY_EXTRACT_ENABLED` (on)                                                                                                                                                                                                                                                |
 | Conversation titles                           | Yes           | `conversation_titler` worker (on; skips on the fake LLM)                                                                                                                                                                                                                                                     |
 | Observation mining, reflection, profile folds | Yes           | `observe_extract`, `reflection_distill`, `profile_consolidation` workers (off)                                                                                                                                                                                                                               |
@@ -497,8 +498,9 @@ call a model reads `reads_llm_free()`:
 - `code.search`: no HyDE, model-named concept expansion or query expansion; its memo keeps LLM-free
   answers apart.
 - Reranking: a reranker is a model call, and an LLM-free read makes only the ones it names. A
-  namespace's `rerank_endpoint` and code search's default (`LOOM_CODE_SEARCH_RERANK_DEFAULT`) do not
-  run; a reranker the request names runs, except `builtin:openai`, which keeps the fused order.
+  namespace's `rerank_endpoint` and the code and knowledge search defaults
+  (`LOOM_CODE_SEARCH_RERANK_DEFAULT`, `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT`) do not run; a
+  reranker the request names runs, except `builtin:openai`, which keeps the fused order.
 - `tracker.duplicate_check` and `tracker.answer`: no rerank or uncertainty judge; `code.bisect_candidates`:
   no rerank. Each keeps the deterministic answer it already falls back to.
 - `memory.ask` and `code.ask` answer 409 `READS_LLM_FREE` naming the setting unless the request

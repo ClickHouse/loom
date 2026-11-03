@@ -737,6 +737,8 @@ async def _pack_knowledge(st: _PackState) -> None:
                 query=input.query,
                 top_k=top_k,
                 namespace_scope="all_mine",
+                # A pack makes no rerank call, as its memories search does not.
+                rerank="none",
             )
         )
         return list(out.results)

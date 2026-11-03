@@ -80,7 +80,8 @@ content posted to classifiers and rerankers go only to the hosts
 allow-list, so a cloud's own endpoint, an IP address or a look-alike name is refused as a
 provider's API is. The settings refuse to load with no hosts, or with an API root, the
 token endpoint or a rerank endpoint elsewhere, or the Gemini embedder (`gateway_refusal`),
-and with a `builtin:cohere` code-search default (`_check_code_rerank_behind_the_gateway`).
+and with a `builtin:cohere` code-search or knowledge-search default
+(`_check_rerank_defaults_behind_the_gateway`).
 Model calls go through their own client, `server/clients/_http.py::get_model_client`,
 whose request hook (`_on_request`) refuses every other host on every hop, redirects
 included; GitHub and an issuer's discovery document use the other client, which has no
