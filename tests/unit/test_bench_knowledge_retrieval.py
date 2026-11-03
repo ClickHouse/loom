@@ -283,13 +283,19 @@ def test_one_phase_alone_needs_a_named_namespace(monkeypatch, phase: str) -> Non
     assert exit_info.value.code == 2  # argparse's usage error, before any request
 
 
-def test_queries_scored_on_the_same_chunks_share_a_cluster() -> None:
-    _, queries = load_fixture(FIXTURE)
+def test_queries_whose_results_move_together_share_a_cluster() -> None:
+    docs, queries = load_fixture(FIXTURE)
+    size, stride = settings.knowledge_chunk_size, settings.knowledge_chunk_stride
+    chunks = {d["source_uri"]: chunk_document(d["content"], size=size, stride=stride) for d in docs}
+    cluster_of_chunk: dict[tuple[str, int], str] = {}
+    for q in queries:
+        for uri, text in q["gold"]:
+            idx = next(c.idx for c in chunks[uri] if text in c.text)
+            # two queries answered by one chunk move together
+            assert cluster_of_chunk.setdefault((uri, idx), q["cluster"]) == q["cluster"], q["id"]
     cluster = {q["id"]: q["cluster"] for q in queries}
+    # one question asked of each product
     assert cluster["harbor-retention"] == cluster["lantern-retention"] == "retention"
-    assert cluster["rb-E4031"] == cluster["rb-E4031-how"]
-    assert cluster["all-saml"] == cluster["harbor-sso"] == "sso"
-    assert cluster["meridian-backup"] == cluster["meridian-retention"]
 
 
 def test_the_corpus_check_returns_the_chunk_count_the_run_measured() -> None:

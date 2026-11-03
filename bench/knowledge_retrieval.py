@@ -46,7 +46,8 @@ Two arms are compared per query, not by their means: pair the `queries` rows of
 two `--out` reports by `id`, only when their `instrument` names the same corpus,
 queries and chunk count, and pass the metric deltas to
 `bench.bootstrap.paired_bootstrap` with each row's `cluster` (the fixture's: the
-queries scored on the same chunks) as `clusters`. Its lower bound is what a
+queries whose results move together, one question asked of each product and the
+queries that share a gold chunk) as `clusters`. Its lower bound is what a
 change ships on.
 """
 

@@ -2,7 +2,8 @@
 // Gold: (source_uri, answer text) pairs written with the documents; every answer text
 // occurs once in its document. Every answerable query's answer is in the corpus, so
 // R@10 can reach 1; five queries have no answer in it. `cluster` groups the queries
-// scored on the same chunks (one question per product, a runbook's two queries).
+// whose results move together: one question asked of each product, and queries that
+// share a gold chunk.
 {"id": "harbor-retention", "query": "How long does Harbor keep deleted or old data?", "gold": [["handbook/harbor.md", "Deleted objects stay recoverable for 14 days"]], "kind": "context", "cluster": "retention"}
 {"id": "harbor-sev1", "query": "What is the first response time for a severity 1 incident on Harbor?", "gold": [["handbook/harbor.md", "1 hour"]], "kind": "context", "cluster": "sev1"}
 {"id": "harbor-refund", "query": "Can a Harbor customer get their money back?", "gold": [["handbook/harbor.md", "within 30 days of the first invoice"]], "kind": "context", "cluster": "refund"}
@@ -59,8 +60,8 @@
 {"id": "rb-Q-118-how", "query": "How do I fix Q-118?", "gold": [["runbooks/q-118.md", "an admin can break a lock"]], "kind": "identifier", "cluster": "rb-Q-118"}
 {"id": "rb-M-41-how", "query": "How do I fix M-41?", "gold": [["runbooks/m-41.md", "reconnects the calendar from Settings > Integrations"]], "kind": "identifier", "cluster": "rb-M-41"}
 {"id": "pol-perdiem", "query": "What is the current daily meal allowance in the EU?", "gold": [["policies/travel-2025.md", "55 EUR"]], "kind": "freshness", "cluster": "pol-perdiem"}
-{"id": "pol-economy", "query": "Up to how many hours of flight do we book economy now?", "gold": [["policies/travel-2025.md", "under 8 hours"]], "kind": "freshness", "cluster": "pol-economy"}
-{"id": "pol-ahead", "query": "How many days in advance do I have to book a trip now?", "gold": [["policies/travel-2025.md", "at least 10 days ahead"]], "kind": "freshness", "cluster": "pol-ahead"}
+{"id": "pol-economy", "query": "Up to how many hours of flight do we book economy now?", "gold": [["policies/travel-2025.md", "under 8 hours"]], "kind": "freshness", "cluster": "pol-booking"}
+{"id": "pol-ahead", "query": "How many days in advance do I have to book a trip now?", "gold": [["policies/travel-2025.md", "at least 10 days ahead"]], "kind": "freshness", "cluster": "pol-booking"}
 {"id": "pol-rail", "query": "When should I take the train instead of flying?", "gold": [["policies/travel-2025.md", "under 4 hours"]], "kind": "paraphrase", "cluster": "pol-rail"}
 {"id": "exp-receipt", "query": "Do I need a receipt for a 20 euro taxi?", "gold": [["policies/expenses.md", "above 25 EUR"]], "kind": "paraphrase", "cluster": "exp-receipt"}
 {"id": "exp-approve", "query": "Who signs off on a 1,200 EUR expense?", "gold": [["policies/expenses.md", "department head approves"]], "kind": "paraphrase", "cluster": "exp-approve"}
@@ -76,8 +77,8 @@
 {"id": "dn-cold", "query": "When is a log entry shipped off to the cheap tier?", "gold": [["design/lantern-tiering.md", "older than 3 days"]], "kind": "paraphrase", "cluster": "dn-cold"}
 {"id": "dn-saving", "query": "How much did the tiering change save on storage?", "gold": [["design/lantern-tiering.md", "about 40 percent"]], "kind": "paraphrase", "cluster": "dn-saving"}
 {"id": "dn-rollout", "query": "In which order was storage tiering rolled out?", "gold": [["design/lantern-tiering.md", "Starter workspaces first"]], "kind": "context", "cluster": "dn-rollout"}
-{"id": "mt-handover", "query": "How often does the on-call handover happen after the change?", "gold": [["notes/ops-review-2025-03.md", "twice weekly"]], "kind": "paraphrase", "cluster": "mt-handover"}
-{"id": "mt-postmortem", "query": "What is the deadline for writing a postmortem?", "gold": [["notes/ops-review-2025-03.md", "five working days"]], "kind": "paraphrase", "cluster": "mt-postmortem"}
+{"id": "mt-handover", "query": "How often does the on-call handover happen after the change?", "gold": [["notes/ops-review-2025-03.md", "twice weekly"]], "kind": "paraphrase", "cluster": "mt-decisions"}
+{"id": "mt-postmortem", "query": "What is the deadline for writing a postmortem?", "gold": [["notes/ops-review-2025-03.md", "five working days"]], "kind": "paraphrase", "cluster": "mt-decisions"}
 {"id": "mt-cause", "query": "Why did log intake break twice?", "gold": [["notes/ops-review-2025-03.md", "load balancer health check"]], "kind": "paraphrase", "cluster": "mt-cause"}
 {"id": "none-0", "query": "What is the parental leave policy?", "gold": [], "kind": "unanswerable", "cluster": "none-0"}
 {"id": "none-1", "query": "Which database does Meridian use internally?", "gold": [], "kind": "unanswerable", "cluster": "none-1"}
