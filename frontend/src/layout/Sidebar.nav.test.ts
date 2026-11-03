@@ -61,7 +61,7 @@ describe("the rail reads as groups", () => {
   it("is Profile, then Memory / Activity / Sources, with Settings at the foot", () => {
     expect(RAIL_GROUPS.map((g) => g.label)).toEqual([null, "Memory", "Activity", "Sources"]);
     expect(RAIL_GROUPS[0].items.map((i) => i.id)).toEqual(["profile"]);
-    expect(RAIL_GROUPS[1].items.map((i) => i.id)).toEqual(["memories", "knowledge", "sessions"]);
+    expect(RAIL_GROUPS[1].items.map((i) => i.id)).toEqual(["memories", "knowledge", "sessions", "assistant"]);
     expect(RAIL_GROUPS[2].items.map((i) => i.id)).toEqual(["runs", "tasks"]);
     expect(RAIL_GROUPS[3].items.map((i) => i.id)).toEqual(["code"]);
     expect(SETTINGS_ITEM).toMatchObject({ id: "setup", label: "Settings" });

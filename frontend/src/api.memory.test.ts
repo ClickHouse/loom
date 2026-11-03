@@ -171,3 +171,69 @@ describe("the dashboard's consumer", () => {
     expect(bodies).toEqual([{ expected_version: "v1" }, { config_id: "c1" }]);
   });
 });
+
+describe("the inspector's section reads", () => {
+  it("name the user and session of the row they were opened on, and none for the caller's own", async () => {
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+      key: vi.fn(() => null),
+      length: 0,
+    });
+    const fetchMock = vi.fn(
+      async (..._args: Parameters<typeof fetch>): Promise<Response> =>
+        new Response(JSON.stringify({ rows: [], results: [], steps: [] }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { getProvenance, memoryHistory, memoryRelated } = await import("./api");
+    const owned = { org: "dev", namespace: "team", agent: "claude-code", user_id: "ada", session_id: "-" };
+    for (const read of [memoryHistory, memoryRelated, getProvenance]) {
+      await read(owned, "k");
+      await read({ org: "dev", namespace: "team", agent: "loom-ui" }, "k");
+    }
+    const bodies = fetchMock.mock.calls.map(([url, init]) => [url, JSON.parse(String(init?.body))] as const);
+    expect(bodies.map(([url]) => url)).toEqual([
+      "/v1/memory.history",
+      "/v1/memory.history",
+      "/v1/memory.related",
+      "/v1/memory.related",
+      "/v1/memory.provenance",
+      "/v1/memory.provenance",
+    ]);
+    for (const [i, [, body]] of bodies.entries()) {
+      if (i % 2 === 0) expect(body).toMatchObject({ agent: "claude-code", user_id: "ada", session_id: "-" });
+      else expect(body).not.toHaveProperty("user_id");
+    }
+  });
+});
+
+describe("copyMemoryTo", () => {
+  it("copies a row opened under its user and session as that row, and the newest row of the key otherwise", async () => {
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+      key: vi.fn(() => null),
+      length: 0,
+    });
+    const fetchMock = vi.fn(
+      async (..._args: Parameters<typeof fetch>): Promise<Response> =>
+        new Response(JSON.stringify({ copied: true }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { copyMemoryTo } = await import("./api");
+    await copyMemoryTo(
+      { org: "dev", namespace: "team", agent: "claude-code", user_id: "ada", session_id: "-" },
+      "k",
+      "other",
+    );
+    await copyMemoryTo({ org: "dev", namespace: "team", agent: "loom-ui" }, "k", "other");
+    const [owned, plain] = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+    expect(owned).toMatchObject({ from_agent: "claude-code", from_user_id: "ada", from_session_id: "-" });
+    expect(plain).toMatchObject({ from_agent: "*" });
+    expect(plain).not.toHaveProperty("from_user_id");
+  });
+});

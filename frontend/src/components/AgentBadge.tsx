@@ -13,7 +13,11 @@ import { Tip } from "./ui/Tooltip";
  * (`inRowOrControl`). Elsewhere a cut name is focusable.
  */
 export function AgentBadge({ agent, quiet }: { agent: string; quiet?: boolean }) {
-  const name = displayAgent(agent);
+  return <NameBadge name={displayAgent(agent)} quiet={quiet} />;
+}
+
+/** The same capped badge for any identity name that is not an agent: an author, a user id. */
+export function NameBadge({ name, quiet }: { name: string; quiet?: boolean }) {
   const [text, setText] = useState<HTMLElement | null>(null);
   const [box, setBox] = useState<HTMLElement | null>(null);
   // Badge's own ellipsis measures once, at mount; a row laid out later (content-visibility)

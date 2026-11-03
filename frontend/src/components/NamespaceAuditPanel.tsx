@@ -17,6 +17,7 @@ import { Loading, Panel, SectionHeading } from "./ui";
 import { useFold } from "../lib/folds";
 import { toast } from "./Toast";
 import { IconButton } from "./IconButton";
+import { KeyButton } from "./ui/KeyButton";
 
 /**
  * "Usage audit" — the Memories view's namespace-level report. One click runs
@@ -319,19 +320,6 @@ const KIND_LABEL: Record<NonNullable<NamespaceAuditFinding["kind"]>, string> = {
 
 function SeverityBadge({ severity }: { severity: NamespaceAuditSeverity }) {
   return <Badge text={severity} state={SEVERITY_STATE[severity] ?? "neutral"} size="sm" />;
-}
-
-function KeyButton({ memoryKey, onInspect }: { memoryKey: string; onInspect: (key: string) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onInspect(memoryKey)}
-      className="inline-flex items-center min-h-9 max-w-full font-mono text-xs text-text hover:text-accent hover:underline text-left break-all pointer-coarse:min-h-11"
-      aria-label={`Open memory ${memoryKey}`}
-    >
-      {memoryKey}
-    </button>
-  );
 }
 
 function FindingRows({

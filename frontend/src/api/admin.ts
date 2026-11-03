@@ -1,7 +1,7 @@
 // The API client is split by plane behind the `api.ts` barrel, so a view's client rides
 // in that view's chunk and the shell evaluates only the functions it calls. Importers
 // still import from `api.ts`.
-import { post } from "../api";
+import { ownerArgs, post } from "../api";
 import type { Identity, RequestOpts } from "../api";
 
 // ===== Namespace usage audit =====
@@ -815,6 +815,7 @@ export async function memoryHistory(
     org: id.org,
     namespace: id.namespace,
     agent: id.agent,
+    ...ownerArgs(id),
     memory_key: memoryKey,
     limit,
   });
@@ -836,6 +837,7 @@ export async function memoryRelated(
     org: id.org,
     namespace: id.namespace,
     agent: id.agent,
+    ...ownerArgs(id),
     memory_key: memoryKey,
     top_k: topK,
   });
@@ -850,6 +852,7 @@ export interface LineageStep {
 
 /** Trace back to the original write event + supporting learnings. */
 export async function memoryLineage(id: Identity, memoryKey: string): Promise<{ steps: LineageStep[] }> {
+  // Lineage is read by key alone (server/memory/app/dedup.py), so no user or session is sent.
   return post("/v1/memory.lineage", {
     org: id.org,
     namespace: id.namespace,

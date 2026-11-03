@@ -3,7 +3,7 @@ import type { Identity, MyNamespaceEntry, WhoAmI } from "../api";
 import { hasToken, isAuthDisabled, isProxyMode } from "../api";
 import { sameIdentity } from "./boot";
 import { NAMESPACE_NAME } from "./namespace";
-import { patchEntry, readPlace, rememberPlace, type Place } from "./place";
+import { patchEntry, readPlace, rememberPlace, type InspectedOwner, type Place } from "./place";
 
 export type View =
   | "memories"
@@ -14,6 +14,7 @@ export type View =
   | "sessions"
   | "runs"
   | "graph"
+  | "assistant"
   | "browse"
   | "code"
   | "tasks"
@@ -38,6 +39,7 @@ export const ALL_VIEWS: View[] = [
   "sessions",
   "runs",
   "graph",
+  "assistant",
   "browse",
   "code",
   "tasks",
@@ -178,7 +180,7 @@ function pushView(v: View, opts: NavOptions = {}, remember = true): void {
   // its state.
   if (!remember) return patchEntry({}, want + window.location.hash);
   const s = useStore.getState();
-  rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent }, opts.focusKey);
+  rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent, owner: s.inspectedOwner }, opts.focusKey);
   // A navigation's entry is made in the current namespace.
   const namespace = s.identity?.namespace ?? null;
   history.pushState(
@@ -254,7 +256,7 @@ function stampFor(namespace: string | null): Record<string, unknown> {
   return {
     loomNamespace: namespace,
     loomInspect: null,
-    ...(place ? { loomPlace: { ...place, inspected: null, inspectedAgent: "" } } : {}),
+    ...(place ? { loomPlace: { ...place, inspected: null, inspectedAgent: "", inspectedOwner: null } } : {}),
   };
 }
 
@@ -266,6 +268,7 @@ function openedByUrl(v: View): Partial<AppState> {
   return {
     inspectedMemoryKey: memory,
     inspectedAgent: memory ? linkedAgent(memory) : "",
+    inspectedOwner: null,
     ...(doc ? { pendingDocSourceUri: doc } : {}),
     ...(thread ? { pendingConversationThread: { threadId: thread } } : {}),
   };
@@ -322,6 +325,9 @@ interface AppState {
   // with agent="*", the writer's agent may differ from identity.agent and
   // a strict memory.get would 404. Empty string falls back to identity.agent.
   inspectedAgent: string;
+  // The user and session the inspected row is filed under, when the view that opened it
+  // names them (the Assistant's inspected and cited rows); null reads the caller's own.
+  inspectedOwner: InspectedOwner | null;
   // Tag-chip navigation target; Recent.tsx filters by it.
   memoryTagFilter: string | null;
   // Header-search document target; Documents.tsx opens its preview dialog.
@@ -360,7 +366,7 @@ interface AppState {
    *  user picks one). The picker clears the flag once it has opened. */
   namespacePickerOpen: boolean;
   openNamespacePicker: (v: boolean) => void;
-  inspect: (memoryKey: string | null, opts?: { agent?: string }) => void;
+  inspect: (memoryKey: string | null, opts?: { agent?: string; userId?: string; sessionId?: string }) => void;
   helpOpen: boolean;
   openHelp: (v: boolean) => void;
   toggleSidebar: () => void;
@@ -414,6 +420,7 @@ export const useStore = create<AppState>((set, get) => ({
   navNote: null,
   inspectedMemoryKey: null,
   inspectedAgent: "",
+  inspectedOwner: null,
   memoryTagFilter: null,
   pendingDocSourceUri: null,
   pendingConversationThread: null,
@@ -473,7 +480,10 @@ export const useStore = create<AppState>((set, get) => ({
     // What a link names belongs to its namespace: none of it opens on another, and nothing
     // opens under the page that says the account cannot read the link's namespace.
     const here = !get().deniedNamespace && entryHere(get().identity?.namespace ?? null);
-    set({ view, ...(here ? openedByUrl(view) : { inspectedMemoryKey: null, inspectedAgent: "" }) });
+    set({
+      view,
+      ...(here ? openedByUrl(view) : { inspectedMemoryKey: null, inspectedAgent: "", inspectedOwner: null }),
+    });
   },
   arriveFromHistory: (view, place) => {
     // An entry made in another namespace reopens nothing it names in this one.
@@ -485,6 +495,7 @@ export const useStore = create<AppState>((set, get) => ({
       ...opened,
       inspectedMemoryKey: inspected ?? opened.inspectedMemoryKey ?? null,
       inspectedAgent: inspected ? (place?.inspectedAgent ?? "") : (opened.inspectedAgent ?? ""),
+      inspectedOwner: inspected ? (place?.inspectedOwner ?? null) : null,
     });
     addressPageNamespace();
   },
@@ -496,7 +507,9 @@ export const useStore = create<AppState>((set, get) => ({
     // link's unreadable namespace is left first, as Continue leaves it.
     if (inspectedMemoryKey && deniedNamespace && identity) get().setIdentity(identity);
     const agent = opts?.agent || "";
-    set({ inspectedMemoryKey, inspectedAgent: agent });
+    const owner =
+      opts?.userId || opts?.sessionId ? { user_id: opts.userId || "-", session_id: opts.sessionId || "-" } : null;
+    set({ inspectedMemoryKey, inspectedAgent: agent, inspectedOwner: owner });
     // On Memories the open memory is the page's URL (`?memory=`), with the agent it was
     // read as in the entry's state for a reload.
     if (get().view === "memories") {

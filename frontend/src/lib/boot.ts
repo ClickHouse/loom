@@ -18,6 +18,13 @@ export interface TokenClaims {
   subject: string | null;
   /** The sign-in session (`sid`) the token belongs to; null for a minted token. */
   session: string | null;
+  /** The read scope the token's claims pin it to: `own_session`, or `own_user` from that
+   *  claim or from a `read_user_id` alone (the server narrows both the same way); null for a
+   *  namespace-wide token. An end-user token is pinned by its issuer, which the claims do
+   *  not name, so it reads null here. */
+  readScope: "own_user" | "own_session" | null;
+  /** The user `read_user_id` pins the token to; null when the claims name none. */
+  readUserId: string | null;
 }
 
 /** The token's own org / namespaces / subject, read without verification —
@@ -40,7 +47,23 @@ export function claimsFromToken(jwt: string | null | undefined): TokenClaims | n
       : [];
     const subject = typeof json.sub === "string" ? json.sub : null;
     const session = typeof json.sid === "string" && json.sid ? json.sid : null;
-    return { org, namespaces, subject, session };
+    // Trimmed, as the server reads it: a blank pin pins nothing.
+    const pinned = typeof json.read_user_id === "string" ? json.read_user_id.trim() : "";
+    const pinnedUser = pinned !== "";
+    const readScope =
+      json.read_scope === "own_session"
+        ? "own_session"
+        : json.read_scope === "own_user" || pinnedUser
+          ? "own_user"
+          : null;
+    return {
+      org,
+      namespaces,
+      subject,
+      session,
+      readScope,
+      readUserId: pinned || null,
+    };
   } catch {
     return null;
   }
