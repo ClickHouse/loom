@@ -82,9 +82,7 @@ function endSession(): void {
 
 onSignInRejected(endSession);
 // A call carries only the token of the person whose page this is.
-useStore.subscribe((s) =>
-  setPageOwner(s.whoami?.subject ? { subject: s.whoami.subject, org: s.whoami.org ?? "" } : null),
-);
+useStore.subscribe((s) => setPageOwner(s.whoami));
 // A sign-in, a dropped token or a sign-out in another tab reaches this one from the first
 // moment (a proxy's header and an auth-off install keep no token; before boot has an
 // identity, boot's own checks decide).
@@ -106,6 +104,8 @@ async function whoamiWhenReady(): Promise<WhoAmI> {
       if (storedToken() !== asked) return { authenticated: false };
       if (attempt >= 6 || !(e instanceof ApiError) || e.status !== 503) throw e;
       await new Promise((r) => setTimeout(r, 1000));
+      // And again after the wait, before the next ask carries the stored token.
+      if (storedToken() !== asked) return { authenticated: false };
     }
   }
 }
@@ -382,6 +382,8 @@ export default function App() {
     (async () => {
       // A sign-in link's token, taken first thing; the catch below reads it too.
       let link: ReturnType<typeof takeLinkToken> = null;
+      // The token boot asks whoami about; the catch reads it too.
+      let sent: string | null = null;
       try {
         // A login link (federation redirect) carries the token in the #token= fragment: taken
         // and scrubbed before anything can fail. The return to the page its sign-in started on
@@ -437,7 +439,7 @@ export default function App() {
           ? sharedMine(early.org).catch(() => null)
           : null;
 
-        const sent = storedToken();
+        sent = storedToken();
         const w = await whoamiWhenReady();
         // Another tab stored someone's token while whoami answered for this one: that
         // token decides, on a fresh boot.
@@ -457,7 +459,7 @@ export default function App() {
           const ended = sessionEndedNote(true) && !out;
           if (ended || hasToken() || (dropped && !out)) {
             clearToken();
-            useStore.getState().setGateReason(link?.token?.replace(/\s+/g, "") === sent ? "refused" : "expired");
+            useStore.getState().setGateReason(link?.token ? "refused" : "expired");
           }
           setAuthed(false);
           return;
@@ -586,7 +588,9 @@ export default function App() {
         // for the next load. A sign-in link refused on the way says so and leaves no note,
         // so the next load does not start a sign-in by itself (the link may be the way in).
         // A token refused on the way (the early read) says so on the gate, as the try would.
-        const ended = sessionEndedNote(true) && !signedOut();
+        // Only a token this boot itself lost: an earlier load's note alone (a Reload while
+        // the server is away) starts no sign-in by itself.
+        const ended = sessionEndedNote(true) && !signedOut() && !!sent;
         if (!storedToken() && (link?.token || ended))
           useStore.getState().setGateReason(link?.token ? "refused" : "expired");
         toastError("Auth bootstrap failed", e);

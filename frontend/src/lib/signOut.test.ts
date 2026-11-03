@@ -13,7 +13,7 @@ describe("sign out", () => {
     const fetch = vi.fn(() => new Promise<Response>(() => {})); // a request that never answers
     vi.stubGlobal("fetch", fetch);
     setToken(jwt({ sub: "alice", sid: "s1" }));
-    expect(signOut()).toBeUndefined(); // returns at once
+    expect(signOut()).toBe(true); // returns at once, having signed this person out
     expect(localStorage.getItem("loom_token_v1")).toBeNull();
     const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(init.keepalive).toBe(true);

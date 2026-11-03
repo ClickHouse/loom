@@ -780,6 +780,21 @@ describe("a refused token", { timeout: 30_000 }, () => {
     await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
   });
 
+  it("a Reload while the server is away starts no sign-in by itself", async () => {
+    window.__LOOM_SSO = true;
+    await expireMidSession();
+    cleanup();
+    useStore.setState({ authed: true, sessionExpired: false, gateReason: null, whoami: null, identity: null });
+    vi.mocked(fetch).mockImplementation(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
+    expect(useStore.getState().gateReason).toBeNull();
+    expect(goToSso).not.toHaveBeenCalled();
+  });
+
   it("a reload after the session ended shows the gate saying so, though the token is gone", async () => {
     await expireMidSession();
     cleanup();

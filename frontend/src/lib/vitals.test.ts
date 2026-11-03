@@ -63,7 +63,7 @@ describe("ui.vitals", () => {
     const fetchMock = vi.fn(async () => new Response("{}"));
     vi.stubGlobal("fetch", fetchMock);
     const part = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
-    setPageOwner({ subject: "alice", org: "o" });
+    setPageOwner({ authenticated: true, subject: "alice", org: "o" });
     try {
       setToken(`${part({ alg: "HS256" })}.${part({ sub: "bob", org: "o" })}.sig`);
       startView("memories");

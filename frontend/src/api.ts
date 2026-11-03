@@ -102,17 +102,17 @@ export function onTokenStored(fn: (token: string | null) => void): () => void {
   return () => window.removeEventListener("storage", listener);
 }
 
-// The person this page belongs to, once boot knows (App keeps it in step with whoami).
-let pageOwner: { subject: string; org: string } | null = null;
-export function setPageOwner(owner: { subject: string; org: string } | null): void {
+// The person this page belongs to: boot's whoami answer (App keeps it in step).
+let pageOwner: WhoAmI | null = null;
+export function setPageOwner(owner: WhoAmI | null): void {
   pageOwner = owner;
 }
 
 /** Whether `t` (none, or one an auth-off install ignores, counts) is the page's person's. */
 export function ownsToken(t: string | null): boolean {
-  if (!t || !pageOwner || isAuthDisabled()) return true;
+  if (!t || !pageOwner?.subject || isAuthDisabled()) return true;
   const c = claimsFromToken(t);
-  return c?.subject === pageOwner.subject && (c?.org ?? "") === pageOwner.org;
+  return c?.subject === pageOwner.subject && (c?.org ?? "") === (pageOwner.org ?? "");
 }
 
 // The app's answer to a stored token the server refuses (expired or revoked): the session
@@ -128,14 +128,14 @@ export function onSignInRejected(fn: () => void): void {
  *  The revocation is sent without waiting for it: `keepalive` lets it finish across the
  *  page reload that follows, and it gives up after a few seconds. A token with no
  *  sign-in session (a minted one, maybe a CI job's too) is only forgotten here. */
-export function signOut(): void {
+/** False when another person's token is the stored one (another tab signed them in a
+ *  moment ago): it is not this page's to end, and the reload that follows opens their page. */
+export function signOut(): boolean {
   const t = token();
-  // Another person's token, which another tab stored a moment ago, is not this page's to end:
-  // the reload that follows opens their page.
-  if (!ownsToken(t)) return;
+  if (!ownsToken(t)) return false;
   localStorage.setItem(KEY_SIGNED_OUT, "1");
   clearToken();
-  if (!t || !claimsFromToken(t)?.session) return;
+  if (!t || !claimsFromToken(t)?.session) return true;
   fetch("/oauth/revoke", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -145,6 +145,7 @@ export function signOut(): void {
   }).catch(() => {
     // Offline, too slow or the route is absent: the token is gone from this browser anyway.
   });
+  return true;
 }
 
 // Presence check that seeds auth state at boot: if a token is already stored, the SPA can

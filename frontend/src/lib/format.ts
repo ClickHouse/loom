@@ -238,7 +238,7 @@ export function humanizeError(err: unknown): string {
 
 /** The server's words (server/auth/bearer.py) for a call sent after the session ended in
  *  another tab took the token; a refusal of a token the call carried is `sessionEnded`. */
-const SESSION_GONE = /\bmissing bearer token\b/i;
+const SESSION_GONE = /missing bearer token/;
 
 function humanizeApiError(err: ApiError): string {
   // A page that read while its session was away says so plainly (the dashboard's card

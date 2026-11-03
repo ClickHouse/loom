@@ -150,7 +150,7 @@ describe("a refused sign-in token", () => {
   it("reads a call raced by someone else's token as the ended session, not as a retry", async () => {
     const ended = vi.fn(() => clearToken());
     onSignInRejected(ended);
-    setPageOwner({ subject: "alice", org: "o" });
+    setPageOwner({ authenticated: true, subject: "alice", org: "o" });
     setToken(ALICE_1);
     const fetchMock = vi.fn(async () => {
       setToken(jwtFor("bob")); // someone else signed in while this call was out
@@ -164,7 +164,7 @@ describe("a refused sign-in token", () => {
   });
 
   it("never sends a call under a token that names someone other than the page's person", async () => {
-    setPageOwner({ subject: "alice", org: "o" });
+    setPageOwner({ authenticated: true, subject: "alice", org: "o" });
     try {
       setToken(jwtFor("bob")); // another tab signed bob in; this tab has not heard yet
       const fetchMock = vi.fn(async () => new Response("{}"));
@@ -192,6 +192,24 @@ describe("a refused sign-in token", () => {
 describe("signing out", () => {
   afterEach(() => localStorage.clear());
 
+  it("leaves another person's token alone, revoking and marking nothing", () => {
+    const part = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
+    const bob = `${part({ alg: "HS256" })}.${part({ sub: "bob", org: "o", sid: "s1" })}.sig`;
+    const fetchMock = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    setPageOwner({ authenticated: true, subject: "alice", org: "o" });
+    try {
+      setToken(bob);
+      expect(signOut()).toBe(false);
+      expect(localStorage.getItem("loom_token_v1")).toBe(bob);
+      expect(signedOut()).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      setPageOwner(null);
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("marks the browser signed out until the next sign-in", () => {
     setToken("tok-a");
     signOut();
@@ -215,7 +233,7 @@ describe("with auth off", () => {
     const api = await import("./api"); // reads the flag as it loads
     api.onSignInRejected(() => api.clearToken());
     // As App does: auth-off boot's stand-in identity is the page's person.
-    api.setPageOwner({ subject: "local", org: "dev" });
+    api.setPageOwner({ authenticated: true, subject: "local", org: "dev" });
     api.setToken(jwtFor("alice"));
     const sentWith: string[] = [];
     vi.stubGlobal(
