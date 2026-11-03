@@ -682,12 +682,12 @@ loom call /v1/admin/revoke_subject --data \
 Loom revokes the subject and every spelling the org's directory pairs with it,
 its email verified or not (grants are read under verified pairs only): an email
 reaches the login handle of each account naming it (an SSO account's subject is
-its namespace, `u-…`), and a handle reaches its email. For each, every token whose subject it is, every token
-it made or that descends from one of its tokens, and every refresh of its sign-in
-sessions are refused at once by the process that took the request, and by every
-other process at its next revocation refresh. Every mint reads revocations from
-ClickHouse, so a sign-in, a device approval or an MCP connect for it gets no token
-either. The service accounts and MCP tokens it ends show as revoked in the Tokens
+its namespace, `u-…`), and a handle reaches its email. For each, every token
+whose subject it is, every token it made or that descends from one of its tokens,
+and every refresh of its sign-in sessions are refused at once by the process that
+took the request, and by every other process at its next revocation refresh.
+Every mint reads revocations from ClickHouse, so a sign-in, a device approval or
+an MCP connect for it gets no token either. The service accounts and MCP tokens it ends show as revoked in the Tokens
 list, by `admin:<you>`, and their names are free again, as after a SCIM
 deactivation. The accounts, their grants and their data stay; this is not
 erasure.

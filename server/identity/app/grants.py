@@ -334,17 +334,21 @@ async def handle_grants_pending_for_me(
 
 async def _live_grant_row(org: str, namespace: str, subject: str) -> tuple[str, GrantState | None]:
     """(the subject the grant row is stored under, that row): the login handle a human
-    spelling canonicalises to, else the first other spelling holding a row: for an
-    address, those a revocation reaches (`aliases.spellings`), so a grant for it
-    stored under an unverified account's handle is found; for a handle, itself
-    only, since its unverified email may name someone else's grant."""
-    from server.auth.aliases import canonical_subject, spellings
+    spelling canonicalises to, else the first other spelling holding a row. An
+    address falls back to every spelling a revocation reaches (`aliases.spellings`),
+    so a grant for it stored under an unverified account's handle is found. A
+    handle falls back to its verified email only (`read_aliases`): an unverified
+    one may name someone else's grant."""
+    from server.auth.aliases import canonical_subject, read_aliases, spellings
 
     canonical = await canonical_subject(org, subject)
     row = await grants_repo.find_any_grant(org, namespace, canonical)
     if row is not None:
         return canonical, row
-    others = await spellings(org, subject) if "@" in subject else [subject]
+    if "@" in subject:
+        others = await spellings(org, subject)
+    else:
+        others = await read_aliases(org, subject, None)
     for spelling in others:
         if spelling != canonical:
             row = await grants_repo.find_any_grant(org, namespace, spelling)

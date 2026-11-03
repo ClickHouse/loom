@@ -267,36 +267,53 @@ async def test_revoke_by_email_reaches_a_row_under_an_unverified_accounts_handle
 
 
 @pytest.mark.asyncio
-async def test_revoke_by_handle_leaves_its_unverified_emails_row(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("handle", "verified", "email", "revoked"),
+    [
+        # `mallory`'s unverified email may name someone else's grant: revoking her
+        # handle, which holds none here, revokes nothing.
+        ("mallory", [], "bob@corp.example", False),
+        # An SSO account's verified email is its owner's: the row under it goes.
+        ("u-carol", ["carol@corp.example"], "carol@corp.example", True),
+    ],
+)
+async def test_revoke_by_handle_falls_back_to_its_verified_email_only(
+    monkeypatch: pytest.MonkeyPatch, handle: str, verified: list[str], email: str, revoked: bool
 ) -> None:
-    # `mallory`'s unverified email may name someone else's grant: revoking her
-    # handle, which holds none here, revokes nothing.
     from server.identity.api.models_grants import GrantsRevokeInput
+    from server.identity.app import token_grants
 
     inserted: list[dict[str, Any]] = []
 
     async def _canonical(org: str, subject: str, **_: Any) -> str:
         return subject
 
+    async def _read_aliases(org: str, subject: str, ch: Any) -> list[str]:
+        return [subject, *verified]
+
     async def _spellings(org: str, subject: str, **_: Any) -> list[str]:
-        return [subject, "bob@corp.example"]
+        return [subject, email]  # every pair, the unverified one too
 
     async def _find_any(org: str, ns: str, sub: str, **_: Any) -> GrantState | None:
-        return GrantState.from_row(_row("writer")) if sub == "bob@corp.example" else None
+        return GrantState.from_row(_row("writer")) if sub == email else None
 
     async def _insert(row: dict[str, Any], **_: Any) -> None:
         inserted.append(row)
 
+    async def _cascade(*_a: Any, **_k: Any) -> None:
+        return None
+
     monkeypatch.setattr("server.auth.aliases.canonical_subject", _canonical)
+    monkeypatch.setattr("server.auth.aliases.read_aliases", _read_aliases)
     monkeypatch.setattr("server.auth.aliases.spellings", _spellings)
     monkeypatch.setattr(grants_repo, "find_any_grant", _find_any)
     monkeypatch.setattr(grants_repo, "insert_row", _insert)
+    monkeypatch.setattr(token_grants, "cascade_revoke_to_created_tokens", _cascade)
     out = await grants_mod.handle_grants_revoke(
-        GrantsRevokeInput(org="o", namespace="ns", subject="mallory")
+        GrantsRevokeInput(org="o", namespace="ns", subject=handle)
     )
-    assert out.revoked is False
-    assert inserted == []
+    assert out.revoked is revoked
+    assert [r["subject"] for r in inserted] == ([email] if revoked else [])
 
 
 @pytest.mark.asyncio
