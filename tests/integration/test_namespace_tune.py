@@ -71,11 +71,13 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
             )
 
         def counts() -> tuple[int, int]:
+            # FINAL: a background merge between two counts must not read as a change.
             rows = ch_client.query(
-                "SELECT count() FROM loom.memory WHERE org = {org:String}", parameters={"org": ORG}
+                "SELECT count() FROM loom.memory FINAL WHERE org = {org:String}",
+                parameters={"org": ORG},
             ).result_rows[0][0]
             cats = ch_client.query(
-                "SELECT count() FROM loom.categories WHERE org = {org:String}",
+                "SELECT count() FROM loom.categories FINAL WHERE org = {org:String}",
                 parameters={"org": ORG},
             ).result_rows[0][0]
             return int(rows), int(cats)
