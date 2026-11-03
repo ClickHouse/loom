@@ -127,22 +127,19 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
 # is prose (`[PR #42]`, `[see doc#1]`) and is left as written. Of nested brackets, the
 # innermost is the one read. An index is at most nine digits 0-9: a longer run is prose.
 _ITEM = r"[^\s,;\[\]]+#[0-9]{1,9}(?:-[0-9]{1,9})?"
-_CITATION = re.compile(rf"\[\s*({_ITEM}(?:\s*[,;]\s*{_ITEM})*)\s*\]")
-_PART = re.compile(r"(.+)#([0-9]{1,9})(?:-([0-9]{1,9}))?")
-_SEPARATOR = re.compile(r"\s*[,;]\s*")
+_CITATION = rf"\[\s*({_ITEM}(?:\s*[,;]\s*{_ITEM})*)\s*\]"
+# One item of a matched citation, as (source, first index, last index).
+_ITEM_PARTS = re.compile(r"([^\s,;\[\]]+)#([0-9]{1,9})(?:-([0-9]{1,9}))?")
 # A removed citation goes with the blanks before it; the lookbehind starts the blanks at
 # the start of their run, so a long run is scanned once.
-_SPACED_CITATION = re.compile(r"(?<![ \t])[ \t]*" + _CITATION.pattern)
+_SPACED_CITATION = re.compile(r"(?<![ \t])[ \t]*" + _CITATION)
 
 
 def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
     """Whether `source#idx` (or `source#a-b`, a <= b, or a `,`/`;` list of them) names
     chunks in `read`, the (source, idx) pairs the passes were shown. A range needs both
     of its ends read, a list every part."""
-    for part in _SEPARATOR.split(tag):
-        m = _PART.fullmatch(part)
-        if m is None:
-            return False
+    for m in _ITEM_PARTS.finditer(tag):
         source, a, b = m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))
         if not (a <= b and (source, a) in read and (source, b) in read):
             return False
