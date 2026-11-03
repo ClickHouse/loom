@@ -1,8 +1,10 @@
-"""Pluggable per-namespace reranker.
+"""Pluggable per-namespace reranker, shared by memory.search, code.search and
+knowledge.search.
 
 When a namespace sets `rerank_endpoint` (or a request sets `rerank`),
 `memory.search` POSTs its candidate pool to the endpoint of that NAME and orders
-results by the response. Rows an exact identifier match pins keep their place
+results by the response; code.search and knowledge.search post their fused heads
+the same way. Rows an exact identifier match pins keep their place
 and are not sent; with fewer than two rows left, no call is made. Names map to
 URLs only in the operator's LOOM_RERANK_ENDPOINTS_JSON; a caller never supplies
 the URL, and a value that is not a configured name (a URL included) reranks

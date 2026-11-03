@@ -57,6 +57,10 @@ def test_an_llm_free_read_reranks_only_as_named_and_never_with_the_llm(monkeypat
 def test_a_default_no_request_may_name_reranks_nothing(monkeypatch) -> None:
     monkeypatch.setattr(settings, "knowledge_search_rerank_default", "https://example.com/r")
     assert ks._rerank_endpoint(_input()) == ""
+    # a runtime override to Cohere while the gateway is required: boot never saw it
+    monkeypatch.setattr(settings, "inference_gateway_required", True)
+    monkeypatch.setattr(settings, "knowledge_search_rerank_default", "builtin:cohere")
+    assert ks._rerank_endpoint(_input()) == ""
 
 
 def test_a_url_is_no_reranker_a_request_may_name() -> None:
