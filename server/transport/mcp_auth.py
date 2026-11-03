@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import Request, Response
 
 from server.code.domain.scope import set_code_scope
-from server.transport.gates import present
+from server.core.naming import present
 from server.transport.mcp_config import (
     _LOOM_SEARCH_TOOL_NAME,
     _TRANSPORT_ERROR_ID,

@@ -10,8 +10,8 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from server.core import llm_free
+from server.core.naming import present
 from server.transport._common import ledger_identity
-from server.transport.gates import present
 from server.transport.lean_results import mcp_op_result
 from server.transport.mcp_config import TOOL_EXEC_FAILED, _err, _ok
 from server.transport.mcp_identity import default_namespace_note

@@ -18,7 +18,7 @@ import re
 from contextvars import ContextVar, Token
 from typing import Any
 
-from server.core.naming import named
+from server.core.naming import present
 
 _PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SCOPE: ContextVar[tuple[str, str] | None] = ContextVar("loom_code_scope", default=None)
@@ -49,21 +49,17 @@ def current_code_scope() -> tuple[str, str] | None:
     return _SCOPE.get()
 
 
-def _names(value: Any) -> bool:
-    """Whether a value names something: blank and "-" do not, as the gates read them."""
-    return named(str(value or "").strip()) is not None
-
-
 def apply_code_scope(
     op_name: str, arguments: dict[str, Any], scope: tuple[str, str] | None
 ) -> bool:
     """Fill ``namespace`` (and ``org`` when absent) on a ``code.*`` call that
-    names no namespace. Returns True when the scope was applied. Other ops
-    and explicit namespaces are untouched."""
-    if not scope or not op_name.startswith("code.") or _names(arguments.get("namespace")):
+    names no namespace (missing, blank or "-"), the ``code.repo.*`` writes
+    included: the scope names the checkout's repository. Returns True when the
+    scope was applied. Other ops and explicit namespaces are untouched."""
+    if not scope or not op_name.startswith("code.") or present(arguments.get("namespace")):
         return False
     org, namespace = scope
     arguments["namespace"] = namespace
-    if not _names(arguments.get("org")):
+    if not present(arguments.get("org")):
         arguments["org"] = org
     return True

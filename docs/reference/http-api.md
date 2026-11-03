@@ -187,7 +187,9 @@ MCP `tools/call` runs the same sequence. Consequences worth knowing:
   or tracker op takes its plane's org (and a code op the code namespace,
   except the `code.repo.*` writes, which must name their repository), any other
   op the token's own org, and a namespace with no org to pair it with is
-  `400 IDENTITY_INCOMPLETE`. A padded `org` or `namespace` is stripped.
+  `400 IDENTITY_INCOMPLETE`. A padded `org` or `namespace` is stripped. Over
+  MCP, a connection's `X-Loom-Code-Scope` names the repository for any `code.*`
+  call that names none, the `code.repo.*` writes included.
 - An idempotent replay is looked up only after authorization and policy admit
   the call, so a stored answer never reaches another principal.
 - A rate limiter or traffic classifier that fails lets the request through and

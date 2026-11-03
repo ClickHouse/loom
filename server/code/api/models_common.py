@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from server.core.naming import named
+from server.core.naming import present
 from server.operations.base import MCP_HIDDEN
 
 # The overlay's own bounds (server/code/app/index/pr_overlay.py): files parsed,
@@ -106,7 +106,7 @@ def _git_sha(v: str) -> str:
 def _lead_namespaces(namespace: str, namespaces: list[str]) -> list[str]:
     """`namespace`, when named and absent from a non-empty list, leads it; a
     blank or "-" namespace names none."""
-    if namespaces and named(namespace.strip()) and namespace not in namespaces:
+    if namespaces and present(namespace) and namespace not in namespaces:
         return [namespace, *namespaces]
     return namespaces
 
