@@ -43,9 +43,8 @@ class RequestWork:
     ch_read_rows: int = 0
     ch_read_bytes: int = 0
     ch_elapsed_ms: float = 0.0
-    # Per-request statement sequence and nonce, for `query_id =
-    # <request_id>:<n>:<nonce>`: two requests that carry the same caller id
-    # never send the same query_id, which ClickHouse refuses while one runs.
+    # For `query_id = <request_id>:<n>:<nonce>`: the nonce keeps two requests
+    # with one caller id from sending a query_id ClickHouse is still running.
     ch_seq: int = 0
     ch_nonce: str = field(default_factory=lambda: secrets.token_hex(4))
     # Identifier injection: rows the exact reads put in the

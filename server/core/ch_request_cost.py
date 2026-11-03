@@ -8,15 +8,13 @@ from typing import Any
 from server.core import request_work
 
 
-# Every statement of a request carries `query_id =
-# "<request_id>:<n>:<nonce>"` (the request id is the second token of the query
-# tag; n counts statements, and attempts, within the request; the nonce is the
-# request's own, so a caller that sends one id twice at once gets two sets of
-# ids), so `system.query_log` joins `agent_events` on
-# `splitByChar(':', query_id)[1] = request_id` instead of `LIKE` over
-# `log_comment`. `query_id` is a URL parameter the driver passes through
-# unvalidated, never a server setting. A worker pass (no request id) keeps the
-# driver's own uuid.
+# Every statement of a request carries `query_id = "<request_id>:<n>:<nonce>"`.
+# The request id is the second token of the query tag, and n counts the
+# request's statements and attempts. The nonce is drawn once per request
+# (`RequestWork.ch_nonce`). `system.query_log` joins `agent_events` on
+# `splitByChar(':', query_id)[1] = request_id`. `query_id` is a URL parameter
+# the driver passes through, never a server setting. A worker pass (no request
+# id) keeps the driver's own uuid.
 def request_query_id(query_tag: str) -> str | None:
     """`<request_id>:<n>:<nonce>` for the next statement under `query_tag`, or
     None outside a request."""

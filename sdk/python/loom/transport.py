@@ -443,8 +443,10 @@ class Transport:
             timeout_s: Per-call override of the Transport's default timeout,
                 for ops that legitimately run longer than the default.
             request_id: Sent as `X-Request-Id`; a UUID is generated when
-                omitted. The server echoes it, and every `LoomError` this
-                call raises carries it as `.request_id`.
+                omitted. The server echoes it when it is 1 to 64 letters,
+                digits, `.`, `_` or `-` (else it answers with an id of its
+                own), and every `LoomError` this call raises carries the
+                echoed id as `.request_id`.
             retry: A `RetryPolicy` or a dict of its fields overriding the
                 Transport's policy for this call (`{"max_attempts": 1}`
                 disables retries).
