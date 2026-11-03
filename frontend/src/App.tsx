@@ -72,12 +72,12 @@ const lostReason = (token: string | null): GateReason => (claimsFromToken(token)
  *  app boots there is no page to keep, and boot, which knows whether the token came by a
  *  sign-in link, shows the gate and says why once whoami answers. Mid-session a card says
  *  so over the page, which stays as it is. */
-function endSession(): void {
-  const reason = lostReason(storedToken());
+function endSession(lost = storedToken()): void {
+  // `lost` is read on the call, before the token is cleared.
   clearToken();
   // A single-user install has no sign-in: its next call goes without the stale token.
   if (isAuthDisabled()) return;
-  sessionEndedNote(reason);
+  sessionEndedNote(lostReason(lost));
   const s = useStore.getState();
   if (s.whoami) s.setSessionExpired(true);
 }
@@ -88,8 +88,8 @@ useStore.subscribe((s) => setPageOwner(s.whoami));
 // A sign-in, a dropped token or a sign-out in another tab reaches this one from the first
 // moment (a proxy's header and an auth-off install keep no token; before boot has an
 // identity, boot's own checks decide).
-onTokenStored((token) => {
-  if (!isProxyMode() && !isAuthDisabled()) void tokenChangedElsewhere(token);
+onTokenStored((token, before) => {
+  if (!isProxyMode() && !isAuthDisabled()) void tokenChangedElsewhere(token, before);
 });
 
 /** whoami, asked again while the replica answers 503 (its signing keys still loading, the
@@ -117,15 +117,16 @@ let recheck: ReturnType<typeof setTimeout> | undefined;
  *  sign-out: this tab reloads to a plain sign-in. Dropped by a refusal: this tab's session
  *  ended too. Stored: once the server confirms it is the same person, this page carries on
  *  with their identity and roles read again; anyone else gets a fresh page, so nothing the
- *  last person read stays on screen. */
-async function tokenChangedElsewhere(token: string | null): Promise<void> {
+ *  last person read stays on screen. `lost`: the token stored before, which a session that
+ *  ends here takes its gate's reason from (the stored one is already gone or replaced). */
+async function tokenChangedElsewhere(token: string | null, lost: string | null): Promise<void> {
   clearTimeout(recheck); // this change decides
   const s = useStore.getState;
   const before = s().whoami;
   if (!before) return;
   if (token === null) {
     if (signedOut()) reloadPage();
-    else if (!s().sessionExpired) endSession();
+    else if (!s().sessionExpired) endSession(lost);
     return;
   }
   // A token naming someone else is a fresh page at once: until a reload, every call here
@@ -141,7 +142,7 @@ async function tokenChangedElsewhere(token: string | null): Promise<void> {
     // Unconfirmed: a healthy page stays as it is; an ended one keeps its card and asks
     // again shortly, while that token is still the stored one.
     if (s().sessionExpired)
-      recheck = setTimeout(() => storedToken() === token && void tokenChangedElsewhere(token), 30_000);
+      recheck = setTimeout(() => storedToken() === token && void tokenChangedElsewhere(token, lost), 30_000);
     return;
   }
   // Another change landed while whoami answered: that one decides.
@@ -149,7 +150,7 @@ async function tokenChangedElsewhere(token: string | null): Promise<void> {
   // A token the server refuses is nobody's: this session ended, and the page stays. One it
   // accepts is the person its claims named, already checked above.
   if (!now.authenticated) {
-    if (!s().sessionExpired) endSession();
+    if (!s().sessionExpired) endSession(lost);
     return;
   }
   // The card going away is the sign that the session is back.

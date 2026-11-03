@@ -741,6 +741,9 @@ describe("a refused token", { timeout: 30_000 }, () => {
     await act(async () => storeElsewhere(null));
     await until(() => useStore.getState().sessionExpired);
     expect(screen.getByTestId("session-expired-bar")).toBeInTheDocument();
+    // The dropped token was a sign-in session's: a reload resumes it, as the tab that lost
+    // it first would.
+    expect(sessionStorage.getItem("loom_session_ended_v1")).toBe("expired");
   });
 
   it("a reload after the session ended starts SSO by itself", async () => {

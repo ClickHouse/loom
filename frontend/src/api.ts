@@ -90,13 +90,14 @@ export function clearToken(): void {
 }
 
 /** Call `fn` with each token another tab of this origin stores (a sign-in there), or null
- *  when one drops it or signs out; the returned function stops listening. */
-export function onTokenStored(fn: (token: string | null) => void): () => void {
+ *  when one drops it or signs out, and the token stored before; the returned function
+ *  stops listening. */
+export function onTokenStored(fn: (token: string | null, before: string | null) => void): () => void {
   const listener = (e: StorageEvent) => {
     // A sign-out elsewhere counts even when this tab's token was already gone (its own
     // removal, when there was one, follows as a token event).
     if (e.key === KEY_TOKEN ? e.newValue !== e.oldValue : e.key === KEY_SIGNED_OUT && !!e.newValue && !token())
-      fn(token());
+      fn(token(), e.oldValue);
   };
   window.addEventListener("storage", listener);
   return () => window.removeEventListener("storage", listener);
@@ -347,11 +348,10 @@ async function send(
     // A single-user install has no sign-in: the stale token is gone (this refusal or a
     // concurrent one dropped it), so the call goes again without it.
     if (isAuthDisabled() && !retried) return send(method, path, body, signal, true);
-    const err = await apiErrorFromResponse(r);
     // A call raced by another tab's sign-in is not sent again under a token this tab has
     // not checked: Retry sends it, and the error says so instead of "sign in again".
-    if (!ending && token() && ownsToken(token()))
-      throw new ApiError({ status: 401, code: "SIGNED_IN_ELSEWHERE", requestId: err.requestId });
+    if (!ending && token() && ownsToken(token())) throw new ApiError({ status: 401, code: "SIGNED_IN_ELSEWHERE" });
+    const err = await apiErrorFromResponse(r);
     err.sessionEnded = true;
     throw err;
   }
