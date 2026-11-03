@@ -357,16 +357,18 @@ They answer predicate questions without parsing text.
 - Identity fields derive the key when none is given (`key_source="identity"`), so two
   writes of one entity land on one record. A name-like field (`name`, `title`, `label`,
   `*_name`, `*_title`, `*_label`) keys on its words without case, accents, a leading
-  article or a possessive. Any other field keys on its letters and digits a-z, 0-9 after
-  case folding and accent stripping, so `INV-2024/001` and `inv 2024 001` agree; a value
-  with none of those (Cyrillic, CJK or Arabic text) keys on every letter, digit and
-  combining mark it holds, after NFKC normalisation and case folding. No mark is stripped
-  there: Indic vowel signs, Thai tone marks, the Japanese voicing mark and Arabic and
-  Hebrew points tell words apart, so `かぎ` and `かき` get two keys, as do a word written with
-  and without its Arabic vowel points. A value that mixes Latin and other scripts keys on
-  its Latin letters and digits alone, so two values that differ only in their non-Latin
-  words share one key. A value of punctuation alone is refused with 400
-  `MISSING_IDENTITY_FIELD`.
+  article or a possessive; it drops combining marks in every script, so `かぎ` and `かき`
+  share a name key. Any other field keys on its letters and digits a-z, 0-9 after case
+  folding and compatibility decomposition with accents stripped, so `INV-2024/001` and
+  `inv 2024 001` agree. A value with none of those (Cyrillic, CJK or Arabic text) keys on
+  every letter, digit and combining mark it holds, after NFKC normalisation and case
+  folding. No mark is stripped there: Indic vowel signs, Thai tone marks, the Japanese
+  voicing mark and Arabic and Hebrew points tell words apart, so `かぎ` and `かき` get two
+  keys, as do a word written with and without its Arabic vowel points. A value with any
+  a-z or 0-9 after compatibility decomposition (`30 дней`, `2024年度`, `№`, `℃`) keys on
+  those characters alone, so two values that differ only in their other characters share
+  one key. A value with no letter or digit (punctuation, or marks alone) is refused with
+  400 `MISSING_IDENTITY_FIELD`.
 - Each field value carries a `state` (`value`, `unknown`, `rejected`, `absent`).
 - `memory.set_from_messages` with `record_schema` and `memory_key` extracts one record.
 

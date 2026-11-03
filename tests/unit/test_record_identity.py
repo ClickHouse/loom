@@ -202,5 +202,12 @@ def test_an_identity_value_of_punctuation_alone_is_a_missing_identity() -> None:
         _write({"invoice_number": {"value": "#/-"}, "vendor_name": {"value": "Y"}})
     assert ei.value.detail["code"] == "MISSING_IDENTITY_FIELD"
     assert ei.value.detail["fields"] == ["invoice_number"]
-    out, _ = _write({"invoice_number": {"value": "№ ٣٤٥"}, "vendor_name": {"value": "Вектор"}})
+    # A combining mark or a spacing vowel sign alone has no letter or digit to key on.
+    for marks in ["\u0301", "ा"]:
+        with pytest.raises(HTTPException) as ei:
+            _write({"invoice_number": {"value": marks}, "vendor_name": {"value": "Y"}})
+        assert ei.value.status_code == 400 and ei.value.detail["fields"] == ["invoice_number"]
+    out, _ = _write({"invoice_number": {"value": "٣٤٥"}, "vendor_name": {"value": "Вектор"}})
+    other, _ = _write({"invoice_number": {"value": "счёт"}, "vendor_name": {"value": "Вектор"}})
     assert out.key_source == "identity" and out.memory_key.startswith("invoice:")
+    assert other.memory_key != out.memory_key
