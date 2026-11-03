@@ -422,6 +422,12 @@ def test_remote_credentials_are_masked_by_argument_position(clause: str, masked:
         "remoteSecure('h', view(SELECT 1 FROM t, 'play', 'secret')",
         "remoteSecure('h', 'db', 'a', 'u', 'p') AS a JOIN remoteSecure('h', 'db', 'b', 'play', 'secret') AS b USING (x)",
         "remoteSecure('h', view(SELECT * FROM remoteSecure('h2', 'db', 't', 'play', 'secret')), 'u', 'p')",
+        "(SELECT \"it's\" FROM remoteSecure('h', 'db', 't', 'play', 'secret'))",
+        "(SELECT `it's` FROM remoteSecure('h', 'db', 't', 'play', 'secret'))",
+        "remoteSecure('h', view(SELECT \"it's\" FROM remote('h2', 'db', 't', 'play', 'secret')), 'u', 'p')",
+        "remoteSecure('h', 'db', 't', 'play', /* it's */ 'secret')",
+        "remoteSecure('h', 'db', 't', 'play', -- it's\n 'secret')",
+        "s3('https://b.example.com/k', 'play', $$secret",
     ],
 )
 def test_any_other_clause_has_every_literal_masked(clause: str) -> None:
