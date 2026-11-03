@@ -394,23 +394,64 @@ def is_budget_timeout(e: BaseException) -> bool:
 
 _REMOTE_CALL = re.compile(r"^\s*remote(Secure)?\s*\(", re.IGNORECASE)
 _QUOTED = re.compile(r"'(?:[^'\\]|\\.)*'")
+_SETTING_ARG = re.compile(r"^\s*\w+\s*=")
+_ONE_ARG_TABLE = re.compile(r"^\s*(view|viewIfPermitted)\s*\(", re.IGNORECASE)
+
+
+def _call_arguments(clause: str, open_at: int) -> list[tuple[int, int]]:
+    """The (start, end) span of each top-level argument of the call whose `(`
+    is at `open_at`: commas inside quotes or nested parentheses do not split.
+    An unclosed call's last argument runs to the end of the clause."""
+    spans: list[tuple[int, int]] = []
+    depth, quote, start, i = 0, "", open_at + 1, open_at + 1
+    while i < len(clause):
+        c = clause[i]
+        if quote:
+            if c == "\\":
+                i += 1
+            elif c == quote:
+                quote = ""
+        elif c in "'\"`":
+            quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")" and depth > 0:
+            depth -= 1
+        elif c in ",)" and depth == 0:
+            spans.append((start, i))
+            if c == ")":
+                break
+            start = i + 1
+        i += 1
+    else:
+        spans.append((start, len(clause)))
+    return spans
 
 
 def redact_table_function(clause: str) -> str:
     """`clause` with the user and password of a `remote` / `remoteSecure`
-    call masked: every quoted literal from the fourth on, where the
-    credentials sit in each of the call's forms. Any other clause (a table,
-    a view) carries no credential and is returned as is."""
-    if not _REMOTE_CALL.match(clause or ""):
+    call masked: every quoted literal in the arguments after the table, which
+    is one argument (`db.table`, `view(...)`) or two (`db`, `table`), and in
+    every `key = value` argument of the named-collection form. Any other
+    clause (a table, a view) carries no credential and is returned as is."""
+    m = _REMOTE_CALL.match(clause or "")
+    if not m:
         return clause
-    seen = 0
-
-    def _mask(m: re.Match[str]) -> str:
-        nonlocal seen
-        seen += 1
-        return m.group(0) if seen <= 3 else "'***'"
-
-    return _QUOTED.sub(_mask, clause)
+    spans = _call_arguments(clause, m.end() - 1)
+    if len(spans) < 2:
+        return clause
+    second = clause[spans[1][0] : spans[1][1]]
+    one_arg_table = "." in second or _ONE_ARG_TABLE.match(second) is not None
+    first_credential = 2 if one_arg_table else 3
+    out, last = [], 0
+    for i, (a, b) in enumerate(spans):
+        arg = clause[a:b]
+        if i >= first_credential or (i > 0 and _SETTING_ARG.match(arg)):
+            out.append(clause[last:a])
+            out.append(_QUOTED.sub("'***'", arg))
+            last = b
+    out.append(clause[last:])
+    return "".join(out)
 
 
 def _printable_endpoint(ep: Any) -> dict[str, Any]:

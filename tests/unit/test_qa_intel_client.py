@@ -372,6 +372,24 @@ def test_probe_output_masks_remote_credentials() -> None:
     assert qi.redact_table_function("") == ""
 
 
+@pytest.mark.parametrize(
+    "clause",
+    [
+        "remoteSecure('h:9440', default.checks, 'play', 'secret')",
+        "remoteSecure('h:9440', default, checks, 'play', 'secret')",
+        "remote('h:9000', 'db', 'checks', 'play', 'secret', rand())",
+        "remoteSecure('h:9440', view(SELECT 'a,b' FROM db.t), 'play', 'secret')",
+        "remoteSecure(my_collection, user = 'play', password = 'secret')",
+    ],
+)
+def test_remote_credentials_are_masked_by_argument_position(clause: str) -> None:
+    """The user and password follow the table argument in every form of the
+    call, whether the database and table are quoted, bare or one `db.table`."""
+    masked = qi.redact_table_function(clause)
+    assert "secret" not in masked and "play" not in masked
+    assert masked.split("(", 1)[0] == clause.split("(", 1)[0]
+
+
 def test_printable_endpoint_masks_checks_from() -> None:
     from server.tracker.domain.sources import TrackerEndpoint
 

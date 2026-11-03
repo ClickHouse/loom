@@ -41,6 +41,14 @@ def checks_config(org: str, namespace: str) -> tuple[str, str]:
     return frm.strip(), repo.strip()
 
 
+def checks_source_label(org: str, namespace: str) -> str:
+    """The checks FROM clause as callers read it and the rollup ledger stores
+    it: a `remote` call's user and password masked."""
+    from server.tracker.store.source.qa_intel import redact_table_function
+
+    return redact_table_function(checks_config(org, namespace)[0])
+
+
 # Which paths are source code is the tracker's convention
 # (`bisect.code_prefixes` in its source entry; ClickHouse's is ["src/"]), not
 # a constant. Without one, any path outside the usual non-code trees counts.

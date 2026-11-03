@@ -30,6 +30,7 @@ from server.tracker.store.source.checks import CheckReads
 from server.tracker.store.source.code_history import CodeHistoryReads
 from server.tracker.store.source.conventions import (
     checks_config,
+    checks_source_label,
     code_path_sql,
     code_prefixes_for,
 )
@@ -62,6 +63,7 @@ __all__ = [
     "CELL_LIMIT",
     "TrackerSource",
     "checks_config",
+    "checks_source_label",
     "code_path_sql",
     "code_prefixes_for",
     "issue_row",

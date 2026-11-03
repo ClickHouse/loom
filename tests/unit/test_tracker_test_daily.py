@@ -755,6 +755,22 @@ async def test_worker_pass_rolls_the_planned_days_and_writes_the_ledger_last(wor
 
 
 @pytest.mark.asyncio
+async def test_the_ledger_stores_the_checks_source_without_its_password(
+    worker, monkeypatch
+) -> None:
+    repo, _ = worker
+    monkeypatch.setattr(
+        settings,
+        "tracker_checks_from",
+        "remoteSecure('play.clickhouse.com', 'default', 'checks', 'play', 'pw-secret')",
+    )
+    await w.run_pass()
+    assert {r["source"] for r in repo.ledger} == {
+        "remoteSecure('play.clickhouse.com', 'default', 'checks', '***', '***')"
+    }
+
+
+@pytest.mark.asyncio
 async def test_worker_stops_at_the_quota_and_records_it_without_failing(worker) -> None:
     repo, source = worker
     source.fail_at = 3  # the second day's fold statement is refused
