@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import Request, Response
 
 from server.code.domain.scope import set_code_scope
+from server.transport.gates import present
 from server.transport.mcp_config import (
     _LOOM_SEARCH_TOOL_NAME,
     _TRANSPORT_ERROR_ID,
@@ -305,8 +306,9 @@ async def _screen_tool_call(
     args = params.get("arguments") if isinstance(params, dict) else None
     if not isinstance(params, dict) or not isinstance(args, dict):
         return None
-    req_org = args.get("org")
-    req_ns = args.get("namespace")
+    # A blank or "-" org or namespace names none, as the gates read it.
+    req_org = present(args.get("org"))
+    req_ns = present(args.get("namespace"))
     # loom_search addresses the caller's home and reads its own memory
     # namespaces (`server.auth.fanout`), so strip any namespace arg rather
     # than reject the call, and let the handler run with defaults.

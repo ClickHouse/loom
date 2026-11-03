@@ -447,3 +447,36 @@ def test_the_ledger_records_a_padded_name_stripped() -> None:
 
     row = ledger_identity({"org": " globex ", "namespace": " ns1 "})
     assert (row["org"], row["namespace"]) == ("globex", "ns1")
+
+
+@pytest.mark.parametrize("org", ["-", "  ", " globex "])
+def test_the_mcp_screen_admits_an_absent_or_padded_org(org: str) -> None:
+    """The pre-dispatch screen reads the org as the gates do, so it does not
+    refuse a call the gate would run under the token's org."""
+    from server.transport import mcp_auth
+
+    auth = verify_token(
+        mint_token(
+            subject="probe", org="globex", namespaces=["ns1"], roles=["viewer"], ttl_seconds=300
+        )
+    )
+    req = {
+        "id": 1,
+        "params": {"name": "loom_memory_get", "arguments": {"org": org, "memory_key": "k"}},
+    }
+    assert asyncio.run(mcp_auth._screen_tool_call(req, auth)) is None
+    # Another org's name is still refused.
+    req["params"]["arguments"]["org"] = "acme"
+    refused = asyncio.run(mcp_auth._screen_tool_call(req, auth))
+    assert refused is not None and refused["result"]["structuredContent"]["code"] == "ORG_MISMATCH"
+
+
+@pytest.mark.parametrize("value", ["", "-", "  "])
+def test_a_code_scope_fills_an_absent_namespace_and_org(value: str) -> None:
+    from server.code.domain.scope import apply_code_scope
+
+    args = {"org": value, "namespace": value, "query": "q"}
+    assert apply_code_scope("code.search", args, ("acme", "code-repo")) is True
+    assert (args["org"], args["namespace"]) == ("acme", "code-repo")
+    named = {"org": "acme", "namespace": "mine"}
+    assert apply_code_scope("code.search", named, ("other", "code-repo")) is False
