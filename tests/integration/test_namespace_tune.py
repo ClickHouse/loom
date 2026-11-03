@@ -71,10 +71,8 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
             )
 
         def snapshot() -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]]]:
-            """The live rows as a write would change them. FINAL: a background merge
-            must not read as a change; the columns leave out `version` and
-            `entities`, which a worker's new version of a row (entity extraction)
-            moves."""
+            """Each row's latest version (FINAL), without `version` and `entities`,
+            which the entity extractor rewrites."""
             rows = ch_client.query(
                 "SELECT agent, memory_key, memory_id, content_sha256, status, pinned, tags,"
                 " tombstoned_at FROM loom.memory FINAL WHERE org = {org:String}"
@@ -111,11 +109,12 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
         served = await post(
             "memory.get", {"agent": cited["agent"], "memory_key": cited["memory_key"]}
         )
-        assert (cited["memory_id"], cited["version"], cited["content_sha256"]) == (
+        assert (cited["memory_id"], cited["content_sha256"]) == (
             served["memory_id"],
-            served["version"],
             served["content_sha256"],
         )
+        # The entity extractor may tag the row between the two reads: a newer version.
+        assert int(served["version"]) >= int(cited["version"])
 
         guide = by_target["namespace.guide"]
         assert guide["current_revision"] == 0 and guide["apply"]["args"]["expected_revision"] == 0
