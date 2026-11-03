@@ -233,8 +233,8 @@ async def test_the_extraction_policy_is_read_only_for_an_org_admin(
 
     monkeypatch.setattr("server.memory.app.extraction_policy.effective", policy)
 
-    async def admin(org: str, ns: str, role: Any, *, hides_answer: bool) -> bool:
-        assert role.name == "ORG_ADMIN" and hides_answer is False
+    async def admin(org: str, ns: str, role: Any) -> bool:
+        assert role.name == "ORG_ADMIN"
         return True
 
     monkeypatch.setattr(mi, "row_in_scope", admin)
