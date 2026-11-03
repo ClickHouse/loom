@@ -130,18 +130,26 @@ def resolve_org(op: Operation, org: Any, auth: AuthInfo | None) -> str | None:
 
 
 def with_resolved_org(op: Operation, args: Any, auth: AuthInfo | None) -> Any:
-    """The arguments to validate: an `org` sent as a blank or "-" string set to
-    the org the call acts in, so the handler, and a validator that reads the
-    org (an inbox's webhook secret names it), see the tenant the gate
-    authorizes, never the literal "-" every token reaches. A copy: validation,
-    and its own refusal row, read it; every later refusal's ledger row reads
-    the raw arguments as sent. A missing, null or non-string org is left for
-    validation."""
-    if not isinstance(args, dict) or not isinstance(args.get("org"), str):
+    """The arguments to validate, with `org` and `namespace` as the gate reads
+    them: an org sent as a blank or "-" string is the org the call acts in, and
+    a padded org or namespace is stripped. The handler, and a validator that
+    reads the org (an inbox's webhook secret names it), then see the tenant the
+    gate authorizes, never the literal "-" every token reaches or a padded name
+    an erasure of the org would miss. A copy: validation, and its own refusal
+    row, read it; every later refusal's ledger row reads the raw arguments as
+    sent. A missing, null or non-string value is left for validation."""
+    if not isinstance(args, dict):
         return args
-    if present(args["org"]) is None and (org := resolve_org(op, None, auth)):
-        return {**args, "org": org}
-    return args
+    update: dict[str, str] = {}
+    if isinstance(args.get("org"), str):
+        org = resolve_org(op, args["org"], auth)
+        if org and org != args["org"]:
+            update["org"] = org
+    if isinstance(args.get("namespace"), str):
+        namespace = present(args["namespace"])
+        if namespace and namespace != args["namespace"]:
+            update["namespace"] = namespace
+    return {**args, **update} if update else args
 
 
 def with_target(input_obj: Any, target: Target) -> Any:

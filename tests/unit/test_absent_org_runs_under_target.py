@@ -432,3 +432,11 @@ def test_a_null_or_non_string_org_is_still_refused(
     r = _post("memory.get", {"org": org, "namespace": "ns1", "agent": "a", "memory_key": "k"})
     assert r.status_code == 422, r.text
     assert seen == []
+
+
+def test_a_padded_org_or_namespace_runs_stripped(seen: list[tuple[str, str, str]]) -> None:
+    """The gate authorizes a padded name stripped; the handler gets it
+    stripped too, or the row lands under a name an erasure never reaches."""
+    body = {"org": " globex ", "namespace": " ns1 ", "agent": "a", "memory_key": "k", "value": "v"}
+    _post("memory.set", body, role="writer")
+    assert seen == [("MemorySetInput", "globex", "ns1")]
