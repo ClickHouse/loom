@@ -330,6 +330,25 @@ async def memory_rows_by_identity_keys(
     return {_identity_key(r): _hydrate(r) for r in rows}
 
 
+async def user_key_rows(
+    org: str, namespace: str, user_id: str, memory_key: str, *, ch: _CHClient | None = None
+) -> list[MemoryRow]:
+    """The live row of `memory_key` under each agent and session of `user_id`: every
+    identity whose value may share the key's memory.set chunks. Sequentially consistent,
+    since a delete decides on the answer."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"""{_MEMORY_FINAL_PROJECTION}
+        PREWHERE org = {{org:String}} AND namespace = {{ns:String}}
+             AND user_id = {{uid:String}} AND memory_key = {{key:String}}
+        WHERE tombstoned_at IS NULL
+        {_SEQUENTIAL}
+        """,
+        params={"org": org, "ns": namespace, "uid": user_id, "key": memory_key},
+    )
+    return [_hydrate(r) for r in rows]
+
+
 async def key_heads_across_sessions(
     org: str,
     namespace: str,

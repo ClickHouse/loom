@@ -925,18 +925,18 @@ async def _head_carries(existing: Any, top: int, row: Any) -> bool:
 
 
 async def _restore_newer_chunks(existing: Any, *, tombstone: int) -> None:
-    """Put back the chunks the removed row `existing` shares with the key's newest value,
-    when search serves that value. A chunk row is named by its index and text, so a newer
-    value keeping a passage at the same index shares the row, and its write may land after
-    the delete's check but before the retire. A write inserts its row before its chunks,
-    and this read follows the retire, so it sees any write whose chunks it caught. The head
-    is read again after the restore: a delete, or a write the chunks no longer serve, that
-    found them retired and left them has them retired again."""
+    """Put back the chunks the removed row `existing` shares with a value search still
+    serves: the key's newest value after it, and the live value of every other agent and
+    session of its user, since a key's chunk rows are the user's, not one session's. A
+    chunk row is named by its index and text, so a value keeping a passage at the same
+    index shares the row, and its write may land after the delete's check but before the
+    retire. A write inserts its row before its chunks, and this read follows the retire, so
+    it sees any write whose chunks it caught. The values are read again after the restore:
+    a delete, or a write the chunks no longer serve, that found them retired and left them
+    has them retired again."""
     from server.memory.app import set_chunks as _set_chunks
 
     removed = _set_chunks.passage_identities(existing.value, existing.memory_type)
-    if not removed:
-        return  # a value too short to chunk shares nothing
     ch = get_client()
     key_chunks = {
         "org": existing.org,
@@ -971,9 +971,26 @@ async def _restore_newer_chunks(existing: Any, *, tombstone: int) -> None:
 
 
 async def _served_chunks(existing: Any, *, tombstone: int) -> frozenset[tuple[int, str]]:
-    """The chunk identities of the key's newest value after `existing` (other than the
-    delete's own `tombstone`) when search serves it: live and embedded (a high row's
-    chunks stay retired); none otherwise."""
+    """The chunk identities search still serves for the user of `existing` under its key:
+    those of its own newest value after it (other than the delete's own `tombstone`), and
+    those of every other agent's and session's live value. A value counts when it is live
+    and embedded (a high row's chunks stay retired)."""
+    import server.memory.store as memory_repo
+    from server.memory.app import set_chunks as _set_chunks
+
+    own = (existing.agent, existing.session_id)
+    served: set[tuple[int, str]] = set()
+    for row in await memory_repo.user_key_rows(
+        existing.org, existing.namespace, str(existing.user_id or "-"), existing.memory_key
+    ):
+        if (row.agent, row.session_id) != own and is_embedded(row.memory_type, row.sensitivity):
+            served |= _set_chunks.set_chunk_identities(row.value, row.memory_type, row.memory_key)
+    return frozenset(served | await _own_newer_chunks(existing, tombstone=tombstone))
+
+
+async def _own_newer_chunks(existing: Any, *, tombstone: int) -> frozenset[tuple[int, str]]:
+    """The chunk identities of the key's newest value after `existing` under its own
+    identity (other than the delete's own `tombstone`) when search serves it."""
     from server.memory.app import set_chunks as _set_chunks
 
     same_delete, others = await _after_checked(
@@ -1122,11 +1139,10 @@ async def _retire_derived(
         from server.memory.app import set_chunks as _set_chunks
 
         # memory.delete_version removes one version: a newer value's chunks stay.
-        retired = await _set_chunks.tombstone_row_chunks_fail_open(
+        await _set_chunks.tombstone_row_chunks_fail_open(
             existing, ch=ch, only_its_own=only_its_chunks
         )
-        # Nothing retired, nothing a newer value could need back.
-        if only_its_chunks and retired:
+        if only_its_chunks:
             await _restore_newer_chunks(existing, tombstone=version)
 
     # A procedure's run ledger must not outlive the procedure.

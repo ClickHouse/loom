@@ -1323,6 +1323,85 @@ async def test_delete_version_retires_chunks_the_excerpt_rule_no_longer_writes(
     assert live == []
 
 
+_OPENING = "\n\n".join(
+    " ".join(f"opening {p}.{i} of the deploy note." for i in range(18)) for p in range(1)
+)
+
+
+def _head_with_opening() -> str:
+    """A long value whose first chunk is `_OPENING` whole: a paragraph break ends it."""
+    tail = " ".join(f"later passage {i} about the release train." for i in range(300))
+    return _OPENING + "\n\n" + tail
+
+
+async def _live_chunk_contents(ch: KeptCH) -> list[str]:
+    rows = await ch.query_all(
+        "SELECT content FROM loom.memory_chunks FINAL WHERE tombstoned_at IS NULL"
+    )
+    return sorted(r["content"] for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_a_short_versions_passage_shared_with_the_head_stays_live(
+    ch: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The removed version is too short to chunk, but its one passage is chunk 0 of the head
+    # that lands after the delete's check: the delete retires that row with the version's
+    # passages and puts it back for the head.
+    from server.memory.app import set_chunks
+    from server.memory.app.chunk_projection import chunk_text
+
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_chunks"))
+    head_value = _head_with_opening()
+    assert set_chunks.plan_set_chunks(_OPENING, "semantic", _KEY) == ([], 0)
+    assert chunk_text(_OPENING)[0][0] == chunk_text(head_value)[0][0]
+    old = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [{**_row(_OPENING, old), "memory_type": "semantic"}])
+    rows = _chunk_rows(head_value)
+    key_moved_on = hm._key_moved_on
+
+    async def head_lands_after_the_check(existing: Any, **kw: Any) -> Any:
+        answer = await key_moved_on(existing, **kw)
+        row = {**_row(head_value, kw["tombstone"] + 1_000), "memory_type": "semantic"}
+        await ch.insert("loom.memory", [row])
+        await ch.insert("loom.memory_chunks", rows)
+        return answer
+
+    monkeypatch.setattr(hm, "_key_moved_on", head_lands_after_the_check)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=old)
+    )
+    assert out.tombstoned is True
+    assert await _live_chunk_contents(ch) == sorted(r["content"] for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_a_passage_another_session_of_the_user_serves_stays_live(ch: KeptCH) -> None:
+    # Chunk rows are the user's under the key: another session's live value that shares a
+    # passage keeps it live when this session's version is deleted.
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_chunks"))
+    head = time.time_ns() - 10_000_000_000
+    removed_value = _OPENING + "\n\n" + " ".join(f"old tail {i} of the note." for i in range(300))
+    other_value = _head_with_opening()
+    await ch.insert("loom.memory", [{**_row(removed_value, head), "memory_type": "semantic"}])
+    other = {
+        **_row(other_value, head + 1_000_000_000),
+        "memory_type": "semantic",
+        "session_id": "s2",
+        "memory_id": "00000000-0000-0000-0000-00000000000b",
+    }
+    await ch.insert("loom.memory", [other])
+    removed, kept = _chunk_rows(removed_value), _chunk_rows(other_value)
+    await ch.insert("loom.memory_chunks", removed + kept)
+    shared = {r["content"] for r in removed} & {r["content"] for r in kept}
+    assert shared, "the values share their opening chunk"
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is True
+    assert await _live_chunk_contents(ch) == sorted(r["content"] for r in kept)
+
+
 @pytest.mark.asyncio
 async def test_delete_version_retires_only_the_removed_versions_chunks(
     ch: KeptCH,

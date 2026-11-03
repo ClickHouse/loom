@@ -1,11 +1,11 @@
 """Verbatim chunks for a long `memory.set` value.
 
-`memory.set` embeds the first `EXCERPT_LIMIT` characters of a value, so the rest of a long
-value (an investigation note, an evidence dump, a report stored as one memory) would be
-findable only through that head. A searchable value whose text runs past the excerpt is
-therefore also written to `loom.memory_chunks` in the 800/100 geometry
-`memory.set_from_messages` uses, with `parent_memory_key` set to the memory key so the
-search's chunk plane lifts the parent fact.
+`memory.set` embeds the first `EXCERPT_LIMIT` characters of a value's stored JSON, so the
+rest of a long value (an investigation note, an evidence dump, a report stored as one
+memory) would be findable only through that head. A searchable value whose stored JSON runs
+past the excerpt's room after its key is therefore also written to `loom.memory_chunks`
+in the 800/100 geometry `memory.set_from_messages` uses, with `parent_memory_key` set to
+the memory key so the search's chunk plane lifts the parent fact.
 
 Chunk rows are keyed `(org, namespace, session_id, chunk_index,
 content_sha256)`; a key's chunks share the deterministic session id
@@ -264,8 +264,9 @@ async def tombstone_row_chunks_fail_open(
     row: Any, *, ch: Any = None, only_its_own: bool = False
 ) -> int:
     """`tombstone_set_chunks_fail_open` for the memory row a delete or move
-    retires: its key, under its own user. `only_its_own` retires only the chunks
-    this row's own value writes, so a newer value's chunks of the key stay."""
+    retires: its key, under its own user. `only_its_own` retires only the chunk rows this
+    row's value's passages can hold (`passage_identities`), so another value's chunks of
+    the key stay."""
     only = passage_identities(row.value, row.memory_type) if only_its_own else None
     return await tombstone_set_chunks_fail_open(
         org=row.org,
