@@ -335,20 +335,21 @@ async def handle_grants_pending_for_me(
 async def _live_grant_rows(org: str, namespace: str, subject: str) -> list[tuple[str, GrantState]]:
     """The (stored subject, row) pairs a revoke of `subject` takes: the live row
     under every spelling the gate admits the person by (the subject, its login
-    handle, its verified email), since one left live would keep admitting them.
-    When there is none and the subject is an address, the first row under a
-    spelling a revocation reaches (`aliases.spellings`): a grant for it stored
-    under an unverified account's handle. A handle never falls back to its
-    unverified email, which may name someone else's grant."""
-    from server.auth.aliases import canonical_subject, read_aliases, spellings
+    handle, its verified email, an address also in lower case, as the directory
+    keeps one), since one left live would keep admitting them. When there is none
+    and the subject is an address, the first row under a spelling a revocation
+    reaches (`aliases.spellings`): a grant for it stored under an unverified
+    account's handle. A handle never falls back to its unverified email, which
+    may name someone else's grant."""
+    from server.auth.aliases import read_aliases, spellings
     from server.core.ch import own_write_reads
     from server.core.principals import has_aliases
 
-    canonical = await canonical_subject(org, subject)
-    verified = [canonical, subject]
+    verified = [subject]
     if has_aliases(subject):
         with own_write_reads():  # a link another process just made
-            verified += await read_aliases(org, subject, None)
+            verified = await read_aliases(org, subject, None)
+    verified += [s.lower() for s in verified if "@" in s]
     found: list[tuple[str, GrantState]] = []
     for spelling in dict.fromkeys(verified):
         row = await grants_repo.find_any_grant(org, namespace, spelling)
@@ -383,6 +384,11 @@ async def revoke_grant(
     if may_take is not None:
         for _, row in rows:
             may_take(row)
+    # Refused before any write when the person holds every admin row there; each
+    # row's write checks again, under the admins claim.
+    admins = sum(_active_admin(row) for _, row in rows)
+    if admins:
+        await _refuse_last_admin(input, also_going=admins - 1)
     revoked_at = None
     for subject, row in rows:
         now = await _revoke_row(input, subject, row, may_take)
@@ -481,10 +487,13 @@ def _active_admin(row: GrantState) -> bool:
     return row.role == "admin" and (row.status or "active") == "active"
 
 
-async def _refuse_last_admin(input: GrantsRevokeInput | GrantsCreateInput) -> None:
-    """Refuse a change that would leave the namespace without an admin; it is
-    counted under `admins_change`."""
-    if await grants_repo.count_active_admins(input.org, input.namespace) <= 1:
+async def _refuse_last_admin(
+    input: GrantsRevokeInput | GrantsCreateInput, *, also_going: int = 0
+) -> None:
+    """Refuse a change that would leave the namespace without an admin, with
+    `also_going` more of its admin rows taken by the same change; it is counted
+    under `admins_change`."""
+    if await grants_repo.count_active_admins(input.org, input.namespace) <= 1 + also_going:
         from server.core.errors import PreconditionFailedError
 
         raise PreconditionFailedError(

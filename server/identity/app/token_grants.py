@@ -150,17 +150,22 @@ async def cascade_revoke_to_created_tokens(
     org: str, namespace: str, subject: str, *, ch: Any = None
 ) -> int:
     """A person's grant on ``namespace`` was revoked: revoke the grants
-    every live token they created holds there, under any spelling the
-    directory pairs with the person, a verified email or not: a revocation
-    reaching further fails closed. Returns tokens touched."""
+    every live token they created holds there, under each of their spellings.
+    For an address that is every account naming it, verified or not (the
+    tokens an unverified account made while the address's grant admitted it);
+    for a handle, its verified email only, since an unverified one may be
+    someone else's. Returns tokens touched."""
     if ch is None:
         from server.core.ch import get_client
 
         ch = get_client()
-    from server.auth.aliases import spellings
+    from server.auth.aliases import read_aliases, spellings
 
     try:
-        creators = await spellings(org, subject, ch=ch)
+        if "@" in subject:
+            creators = await spellings(org, subject, ch=ch)
+        else:
+            creators = await read_aliases(org, subject, ch)
     except Exception as e:  # noqa: BLE001 — the tokens made under the exact subject still go
         log.warning("token grant cascade: spellings of %r unread: %s", subject, e)
         creators = [subject]

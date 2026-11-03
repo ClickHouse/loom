@@ -235,6 +235,30 @@ async def test_revoking_the_address_reaches_the_tokens_its_squatter_made(
 
 
 @pytest.mark.asyncio
+async def test_revoking_a_handle_leaves_the_tokens_its_unverified_email_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A token whose creator is the address may be the real owner's: revoking the
+    # squatter's handle does not reach it.
+    from server.identity.app import token_grants
+    from server.identity.store import grants as grants_repo
+
+    kept = KeptCH(
+        tmp_path,
+        *SETUP,
+        ddl("service_accounts"),
+        "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
+        f" ('{ORG}', 'bot', 'sa:bob-bot', 'bob@corp.example')",
+        _grant("team-x", "sa:bob-bot"),
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
+    monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
+    assert (
+        await token_grants.cascade_revoke_to_created_tokens(ORG, "team-x", "mallory", ch=kept) == 0
+    )
+
+
+@pytest.mark.asyncio
 async def test_grants_list_folds_a_verified_email_only(ch: _CH) -> None:
     people = await grants.people_page(ORG, "team-x", after=None, limit=10, ch=ch)
     # One row per person, its spellings in any order.
@@ -298,6 +322,8 @@ async def test_the_user_list_marks_a_platform_admin_by_a_verified_email_only(
         ("team-z", "bob@corp.example", ["mallory"]),
         # A handle never reaches its unverified email's row.
         ("team-y", "mallory", []),
+        # An address typed in another case still reaches the row kept in lower case.
+        ("team-x", "Carol@Corp.example", ["carol@corp.example", "u-carol"]),
     ],
 )
 async def test_a_revoke_takes_the_rows_its_spellings_reach(
