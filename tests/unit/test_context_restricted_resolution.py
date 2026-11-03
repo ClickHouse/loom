@@ -121,7 +121,7 @@ def test_a_wildcard_scope_excludes_a_named_claim_capped_at_a_revoked_grant(
     """`*` plus a named `x` whose grant was revoked: the claim on `x` is capped
     at nothing live (`authz.claim_cap`), so the gate refuses `x`, and the
     every-namespace scope leaves it out with the restricted ones."""
-    from server.auth.context import every_readable_namespace
+    from server.auth.context import every_namespace_scope
 
     async def _revoked(org, subject):
         return grant_cache.GrantMap(ranks={"x": 0})
@@ -129,7 +129,7 @@ def test_a_wildcard_scope_excludes_a_named_claim_capped_at_a_revoked_grant(
     monkeypatch.setattr(grant_cache, "_read", _revoked)
     grant_cache.clear()
     set_current_auth(_flat(["*", "x", "shop"]))
-    f = asyncio.run(every_readable_namespace(ORG))
+    f = asyncio.run(every_namespace_scope(ORG))
     assert f.accessible and f.params["ns_hidden"] == [PRIV, "x"]
 
 

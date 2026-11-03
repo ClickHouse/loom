@@ -48,7 +48,7 @@ async def handle_memory_owner_report(input: MemoryOwnerReportInput) -> MemoryOwn
     from server.auth.authz import row_in_scope
     from server.auth.context import (
         current_auth,
-        every_readable_namespace,
+        every_namespace_scope,
         rollup_member_namespaces,
     )
     from server.identity.domain.read_scope import resolve_read_filters
@@ -66,9 +66,9 @@ async def handle_memory_owner_report(input: MemoryOwnerReportInput) -> MemoryOwn
         scope = namespace_scope([input.namespace])
     elif auth is None or ("*" in auth.namespaces and not auth.has_ns_roles() and not auth.creator):
         # Auth off, or a namespace-wildcard token: every namespace of the org
-        # but the restricted ones, the collections and the named claims the
-        # gate refuses it (`every_readable_namespace`).
-        scope = await every_readable_namespace(input.org)
+        # but the restricted ones and collections it cannot read, and the
+        # named claims the gate refuses (`every_namespace_scope`).
+        scope = await every_namespace_scope(input.org)
     else:
         # The claim plus grants (a scoped token: its claim alone; a delegated
         # token: its creator's live grants), less the restricted namespaces it
