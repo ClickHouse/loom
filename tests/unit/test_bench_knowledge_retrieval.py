@@ -79,20 +79,16 @@ def test_params_take_json_values_or_plain_strings() -> None:
 
 
 @pytest.mark.parametrize(
-    "field",
-    [
-        "top_k",
-        "org",
-        "query",
-        "namespace",
-        "namespaces",
-        "namespace_scope",
-        "session_id",
-        "explain",
-    ],
+    "field", ["top_k", "org", "query", "namespace", "namespaces", "namespace_scope", "tags"]
 )
 def test_the_fields_that_define_the_measurement_are_refused(field: str) -> None:
-    with pytest.raises(SystemExit, match=field):
+    with pytest.raises(SystemExit, match=f"--param {field} is refused: the harness sets it"):
+        parse_params([f"{field}=x"])
+
+
+@pytest.mark.parametrize("field", ["session_id", "explain", "traffic_class"])
+def test_a_key_that_is_no_search_field_is_refused(field: str) -> None:
+    with pytest.raises(SystemExit, match="not a knowledge.search field"):
         parse_params([f"{field}=x"])
 
 
@@ -133,6 +129,12 @@ def test_the_top_similarity_is_reported_per_answerability_and_kinds_average_apar
     hit = {"source_uri": "a.md", "content": "y", "similarity": 0.25, "lexical_score": 1.0}
     report = search(lambda path, body: {"results": [hit]}, "o", "n", queries, {})
     assert report["top_similarity"] == {"answerable": 0.25, "unanswerable": 0.25, "no_hits": 0}
+    # an unanswerable query with no hit is counted apart, not averaged as 0
+    queries.append({"id": "c", "query": "w", "gold": [], "kind": "unanswerable"})
+    report = search(
+        lambda path, body: {"results": [] if body["query"] == "w" else [hit]}, "o", "n", queries, {}
+    )
+    assert report["top_similarity"] == {"answerable": 0.25, "unanswerable": 0.25, "no_hits": 1}
     assert report["metrics"]["all"]["n"] == 1 and report["metrics"]["context"]["mrr"] == 1.0
     rows = [
         {"kind": "context", "metrics": {"mrr": 1.0}},

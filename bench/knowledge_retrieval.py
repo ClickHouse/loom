@@ -35,7 +35,7 @@ reward finding every listed passage), overall and per query kind, plus the mean
 cosine similarity of the top hit on answerable and on unanswerable queries
 (every hit carries one, in every mode). A hybrid or lexical arm whose lexical leg
 never fired fails the run.
-The `freshness` and `multi` kinds hold three and four queries, so their per-kind
+The `freshness` and `multi` kinds hold three and five queries, so their per-kind
 figures are coarse; a superseded policy ranked above the current one shows in a
 freshness query's R@1, MRR and nDCG@10, not its R@5. Ingesting embeds 21
 documents (97 chunks at the default chunk size): a few cents with a hosted
@@ -96,7 +96,8 @@ def relevant(hit: dict, gold: list[list[str]]) -> list[int]:
 
 
 def score_query(hits: list[dict], gold: list[list[str]]) -> dict[str, float]:
-    """Binary-relevance metrics for one query. A gold passage counts once, at its best rank."""
+    """Per-query metrics. A gold passage counts once, at its best rank; nDCG gains one
+    per gold passage a hit holds."""
     found: dict[int, int] = {}
     gains: list[int] = []  # per relevant hit, the gold passages it finds first
     dcg = 0.0
@@ -133,9 +134,21 @@ def mean_by_kind(rows: list[dict]) -> dict[str, dict[str, float]]:
     return out
 
 
-# Fields that define the measurement: the depth the metrics are computed at, and what
-# is searched. Anything else that is not a search field is refused too.
-FIXED_FIELDS = ("top_k", "org", "namespace", "namespaces", "namespace_scope", "query")
+# Fields that define the measurement: the depth the metrics are computed at, what is
+# searched, and the filters that would score a subset of the corpus as the whole.
+FIXED_FIELDS = (
+    "top_k",
+    "org",
+    "namespace",
+    "namespaces",
+    "namespace_scope",
+    "query",
+    "tags",
+    "uri_prefix",
+    "since_seconds",
+    "session_ids",
+    "source_classes",
+)
 SEARCH_FIELDS = frozenset(KnowledgeSearchInput.model_fields) - set(FIXED_FIELDS)
 
 
@@ -303,10 +316,9 @@ def main() -> int:
             return post_json(client, f"{base}{path}", body, attempts=3, timeout_s=120.0)
 
         instrument = run_metadata(client.get(f"{base}/v1/health", timeout=30).json())
-        if instrument["embedding_model"].startswith("fake"):
-            raise SystemExit(
-                f"{instrument['embedding_model']} ranks by trigram overlap: no numbers"
-            )
+        model = instrument["embedding_model"]
+        if not model or model.startswith("fake"):
+            raise SystemExit(f"embedding model {model!r} is unknown or fake: no numbers")
         with erase_on_exit_sync(post, org=args.org, keep=keep):
             if args.phase in ("ingest", "both"):
                 ingest(post, args.org, namespace, docs, keep)
