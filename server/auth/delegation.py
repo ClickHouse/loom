@@ -243,7 +243,20 @@ async def _allowed_roles(
         writes = scoped and want is not None and want >= Role.WRITER
         allowed = ceiling_role(parent, org, ns, write=writes)
         if ns != "*":
-            allowed = _lower(allowed, await authz.grant_role_for(org, ns, creator))
+            grant = await authz.grant_role_for(org, ns, creator)
+            if (
+                _primary(parent)
+                and allowed is not None
+                and not await authz.may_be_restricted(org, ns)
+            ):
+                # The gate admits a primary token to a namespace on the
+                # subject's grant alone (`authz.check_authorized`), so its flat
+                # role is no cap there: every sign-in token carries `writer`
+                # (`login.platform_roles`), whatever the person administers.
+                # A restricted namespace needs the role from both, as at the gate.
+                allowed = grant
+            else:
+                allowed = _lower(allowed, grant)
         if allowed is None or (want is not None and want > allowed):
             if ns not in requested:
                 continue
@@ -287,6 +300,13 @@ def delegable_role(name: str | None) -> Role | None:
         status_code=422,
         detail={"code": "VALIDATION_FAILED", "message": f"unknown role {name!r}"},
     )
+
+
+def _primary(token: AuthInfo) -> bool:
+    """A token minted from no other: Loom's own sign-in or `loom mint-token`.
+    Its flat role is a platform role; its role on a namespace is the subject's
+    grant there."""
+    return not token.has_ns_roles() and not token.creator
 
 
 def _lower(a: Role | None, b: Role | None) -> Role | None:

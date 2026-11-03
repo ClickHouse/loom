@@ -187,6 +187,24 @@ async def test_named_namespaces_need_the_creators_grant_at_the_role(world) -> No
 
 
 @pytest.mark.asyncio
+async def test_a_sign_in_token_delegates_the_persons_grant_not_its_flat_role(world) -> None:
+    """Every sign-in token carries `writer`; on a namespace the person
+    administers, the grant decides, as it does at the gate. A delegated or
+    scoped parent still caps at its own claim, and a restricted namespace
+    needs the role from the token too."""
+    world["grants"][(ORG, "a", "alice")] = Role.ADMIN
+    child = await _child(_login(), {"a": "admin"}, scoped=True)
+    assert child.ns_roles == (("a", "admin"),)
+    assert await _reaches(child, "a", Role.ADMIN)
+    bare = await _child(_login(), {"a": None}, scoped=True)
+    assert bare.ns_roles == (("a", "admin"),)
+    assert "admin" in await _refused(_delegated_list(), {"a": "admin"})
+    assert "admin" in await _refused(_scoped(), {"a": "admin"})
+    world["grants"][(ORG, RESTRICTED, "alice")] = Role.ADMIN
+    assert "admin" in await _refused(_login(), {RESTRICTED: "admin"})
+
+
+@pytest.mark.asyncio
 async def test_a_cross_org_child_is_refused(world) -> None:
     assert "org" in await _refused(_login(), {"x": None}, org=OTHER)
     # an org-wide parent names the org; the creator's grants there still decide

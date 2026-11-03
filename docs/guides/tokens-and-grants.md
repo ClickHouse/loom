@@ -294,8 +294,9 @@ what was asked for, cut to what the caller's token allows and to the caller's li
 
 - the caller's org only (an org-wide `*` token names one);
 - `viewer`, `writer` or `admin` only; `org_admin` and `platform_admin` are never delegated;
-- on each named namespace, at most the caller's token role there and the person's live
-  grant; a namespace without one is refused (403 naming it);
+- on each named namespace, at most the person's live grant; a namespace without one is
+  refused (403 naming it). A token minted from another token also stays inside that
+  token's own role there, and a restricted namespace inside the caller's token role;
 - `*` only from a sign-in token or a delegated `*` token, and it means "wherever the person
   holds a grant"; from a narrower token it becomes that token's own namespace list;
 - the caller's `read_scope`, `read_user_id` and `ns_write`; a per-namespace child asking for
