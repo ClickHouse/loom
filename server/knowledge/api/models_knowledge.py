@@ -374,14 +374,17 @@ class KnowledgeSynthesizeOutput(BaseModel):
     documents: int
     # How many fold rounds merged the notes into the answer; 1 when they fit one call.
     reduce_rounds: int
-    # Distinct `source#idx` (or `source#a-b`) citations in the answer, in reading order.
+    # Distinct `source#idx` (or `source#a-b`) citations in the answer, in reading order;
+    # each names chunks the passes read.
     citations: list[str] = Field(default_factory=list)
+    # Tags the model wrote for chunks it was not shown, removed from `answer`.
+    unsupported_citations: list[str] = Field(default_factory=list)
     # True when the documents needed more than `max_windows` windows and only the first were read.
     truncated: bool = False
     # True when no answer was attempted; `abstain_reason` says why.
     abstain: bool = False
-    # `budget_capped` (the namespace is over its cost cap) or `no_chunks`
-    # (the documents have no chunks); empty otherwise.
+    # `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents
+    # have no chunks) or `empty_answer` (the passes ran and wrote nothing); empty otherwise.
     abstain_reason: str = ""
     # LLM that wrote the notes and the answer; empty when it abstained.
     model: str = ""

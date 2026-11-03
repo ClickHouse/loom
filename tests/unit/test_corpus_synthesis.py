@@ -200,3 +200,73 @@ def test_registered() -> None:
     from server.operations.registry import OPERATIONS_BY_NAME
 
     assert OPERATIONS_BY_NAME["knowledge.synthesize"].idempotent
+
+
+def test_a_citation_counts_only_when_it_names_chunks_that_were_read() -> None:
+    read = {("doc://a", 0), ("doc://a", 1), ("doc://a", 2), ("doc://b", 0)}
+    assert cs.cites_what_was_read("doc://a#1", read)
+    assert cs.cites_what_was_read("doc://a#0-2", read)
+    assert not cs.cites_what_was_read("doc://a#7", read)  # never shown
+    assert not cs.cites_what_was_read("doc://a#2-7", read)  # a range past what was read
+    assert not cs.cites_what_was_read("doc://a#2-1", read)  # a backwards range
+    assert not cs.cites_what_was_read("doc://c#0", read)  # a document not named
+
+
+def test_grounding_removes_the_tags_of_unread_chunks_from_the_answer() -> None:
+    read = {("doc://a", 0), ("doc://a", 1)}
+    answer, kept, removed = cs.ground_citations(
+        "Refunds take 14 days [doc://a#1] [doc://a#9], or 30 [doc://z#0].", read
+    )
+    assert answer == "Refunds take 14 days [doc://a#1], or 30."
+    assert kept == ["doc://a#1"] and removed == ["doc://a#9", "doc://z#0"]
+    assert cs.ground_citations("No tags at all.", read) == ("No tags at all.", [], [])
+
+
+@pytest.mark.asyncio
+async def test_the_handler_keeps_only_supported_citations_and_abstains_on_an_empty_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.knowledge.app.synthesize as kh
+    import server.llm.client as llm_client
+    from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
+    from server.knowledge.store import chunks as knowledge_repo
+
+    async def _over_cap(org: str, ns: str) -> bool:
+        return False
+
+    monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
+    monkeypatch.setattr(
+        "server.knowledge.app.document_reads.get_embedder",
+        lambda: SimpleNamespace(model_name="fake"),
+    )
+    rows = [SimpleNamespace(chunk_idx=i, content="x" * 1900, chunk_metadata="{}") for i in range(3)]
+
+    async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):
+        return rows
+
+    monkeypatch.setattr(knowledge_repo, "list_for_doc", _list)
+
+    class _Cites(_LLM):
+        answer = "From [doc://a#0] and [doc://a#2], not [doc://a#5]."
+
+        async def complete(self, system: str, user: str, max_tokens: int = 1024, **kw: Any):
+            self.calls.append((system, user, max_tokens))
+            if "Answer the task from these notes" in user:
+                return SimpleNamespace(text=self.answer)
+            return SimpleNamespace(text="notes")
+
+    llm = _Cites()
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: llm)
+    inp = KnowledgeSynthesizeInput(
+        org="o", namespace="n", source_uris=["doc://a"], task="t", window_chars=2000, max_windows=2
+    )
+    out = await kh.handle_knowledge_synthesize(inp)
+    # two windows of one chunk each were read: chunk 2 and chunk 5 were not
+    assert out.truncated and out.chunks_read == 2
+    assert out.citations == ["doc://a#0"]
+    assert out.unsupported_citations == ["doc://a#2", "doc://a#5"]
+    assert out.answer == "From [doc://a#0] and, not." and not out.abstain
+
+    llm.answer = "   "
+    out = await kh.handle_knowledge_synthesize(inp)
+    assert out.abstain and out.abstain_reason == "empty_answer" and out.answer == ""

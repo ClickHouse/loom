@@ -101,14 +101,20 @@ async def handle_knowledge_synthesize(
             break
     if len(answer) > input.max_answer_chars:
         answer = answer[: input.max_answer_chars].rstrip() + "…"
+    read = {(c.source_uri, c.idx) for w in wins for c in w.chunks}
+    answer, cited, unsupported = cs.ground_citations(answer, read)
     return KnowledgeSynthesizeOutput(
         answer=answer,
         windows=len(wins),
         chunks_read=sum(len(w.chunks) for w in wins),
         documents=docs,
         reduce_rounds=rounds,
-        citations=cs.citations(answer),
+        citations=cited,
+        unsupported_citations=unsupported,
         truncated=truncated,
+        # The passes ran and wrote nothing: there is no answer to give.
+        abstain=not answer,
+        abstain_reason="" if answer else "empty_answer",
         model=str(getattr(llm, "model", "") or synth_model or ""),
     )
 

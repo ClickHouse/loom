@@ -10089,6 +10089,7 @@ class KnowledgeSynthesizeOutput(TypedDict, total=False):
     documents: Required[int]
     reduce_rounds: Required[int]
     citations: NotRequired[list[str]]
+    unsupported_citations: NotRequired[list[str]]
     truncated: NotRequired[bool]
     abstain: NotRequired[bool]
     abstain_reason: NotRequired[str]

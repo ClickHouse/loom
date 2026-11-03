@@ -12,6 +12,7 @@ not fit in one call.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -120,15 +121,38 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
     )
 
 
+_CITATION = re.compile(r"\[([^\[\]\s]+#\d+(?:-\d+)?)\]")
+
+
 def citations(text: str) -> list[str]:
     """Distinct [source#idx] or [source#a-b] tags in reading order."""
-    import re
-
     out: list[str] = []
     seen: set[str] = set()
-    for m in re.finditer(r"\[([^\[\]\s]+#\d+(?:-\d+)?)\]", text or ""):
+    for m in _CITATION.finditer(text or ""):
         tag = m.group(1)
         if tag not in seen:
             seen.add(tag)
             out.append(tag)
     return out
+
+
+def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
+    """Whether `source#idx` (or `source#a-b`, a <= b) names chunks in `read`, the
+    (source, idx) pairs the passes were shown. A range needs both of its ends read."""
+    source, _, span = tag.rpartition("#")
+    first, _, last = span.partition("-")
+    a, b = int(first), int(last or first)
+    return a <= b and (source, a) in read and (source, b) in read
+
+
+def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list[str], list[str]]:
+    """(the answer without the tags that name no chunk it read, the tags it keeps, the
+    tags it removed). A model can write a tag for a part it was never shown; a caller
+    that follows it would read something the answer did not come from."""
+    kept: list[str] = []
+    removed: list[str] = []
+    for tag in citations(answer):
+        (kept if cites_what_was_read(tag, read) else removed).append(tag)
+    for tag in removed:
+        answer = re.sub(r"[ \t]*\[" + re.escape(tag) + r"\]", "", answer)
+    return answer.strip(), kept, removed
