@@ -37,7 +37,7 @@ function collectErrors(page: Page): string[] {
   return errors;
 }
 
-/** A viewer's `namespace.join` body as the fixture records it. */
+/** A `namespace.join` body asking for the viewer role, as the fixture records it. */
 const joinCall = (namespace: string) => ({ op: "join", org: "dev", namespace, role: "viewer", consumer: "loom-ui" });
 
 const card = (page: Page) => page.getByRole("region", { name: CODE_REPO, exact: true });
