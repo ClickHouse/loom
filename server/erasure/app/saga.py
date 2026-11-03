@@ -170,7 +170,7 @@ async def begin_erasure(
     row = request_row_template(
         erasure_id=erasure_id,
         input=input,
-        # The token's principal; the body's `requester` only with auth off.
+        # The token's principal, else the bound pipeline actor, else the body's requester.
         actor=writer_actor(input.requester),
         requested_at=now,
         attempts=1,
