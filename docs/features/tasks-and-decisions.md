@@ -145,13 +145,13 @@ async with Agent(org="acme", namespace="public", agent="public-bot", api_key=PUB
 
 Two creates by one poster with one `idempotency_key` store one task, even when they race: they run one at a
 time under a lease on the key, each answers with the task, and only the one that stored it says `created=true`.
-A key is its poster's own: another poster's create with the same key stores its own task. A retry of a create that was cut off after storing its task writes the `created` event it left out; its missing lease row
-is the lease sweep's to write, so the task is claimable after the sweep's 60 s grace and one more pass. When the
-first create's own event still lands (it was cancelled mid-insert), the two share one deduplication token and
-the readers (`task.history`, `task.updates`, `/v1/task/watch`, webhooks) keep only the first, so a task is
-created once in its history and in each cursor's delivery. A create that waits more than 10 s for another
-with its key answers 409 `PRECONDITION_FAILED`, and 503 when the lease store (Keeper) does not answer; retry
-either.
+A key is its poster's own: another poster's create with the same key stores its own task. A retry of a create
+that was cut off after storing its task writes the `created` event it left out; its missing lease row is the
+lease sweep's to write, so the task is claimable after the sweep's 60 s grace and one more pass. When the first
+create's own event still lands (it was cancelled mid-insert), the two share one deduplication token and the
+readers (`task.history`, `task.updates`, `/v1/task/watch`, webhooks) keep only the first, so a task is created
+once in its history and in each cursor's delivery. A create that waits more than 10 s for another with its key
+answers 409 `PRECONDITION_FAILED`, and 503 when the lease store (Keeper) does not answer; retry either.
 
 `namespace` is the poster's own; the first argument names the inbox. `create` also takes `priority` (default 3),
 `deadline`, `not_before`, `origin` and `parent_task_id`. A task with `not_before` is `todo` but hidden from `pull`

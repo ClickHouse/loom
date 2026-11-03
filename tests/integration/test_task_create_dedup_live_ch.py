@@ -536,6 +536,38 @@ async def test_a_create_whose_lease_ran_out_answers_the_task_stored_meanwhile(ch
     assert await _live_tasks(ch, org) == [stored.task.task_id]
 
 
+@pytest.mark.asyncio
+async def test_another_posters_create_with_the_key_is_not_dropped_by_its_token(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The key's dedup token names the poster: another poster's task under the same key
+    # lands on its first insert, and the first poster's task stays as it was.
+    org, body = await _registered("itest-poster")
+    first = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    stored = await repo.fetch_task(org, first.task.task_id)
+    assert stored is not None
+    other = {
+        **stored,
+        "task_id": str(uuid.uuid4()),
+        "from_subject": "sa:other-poster",
+        "version": int(stored["version"]) + 1,
+    }
+    insert, tokens = repo.insert_task_version, []
+
+    async def counted(*args: Any, **kwargs: Any) -> None:
+        tokens.append(kwargs.get("dedup_token", ""))
+        await insert(*args, **kwargs)
+
+    monkeypatch.setattr(repo, "insert_task_version", counted)
+    answered = await repo.insert_created_task(other)  # type: ignore[arg-type]
+
+    assert str(answered["task_id"]) == other["task_id"]
+    assert len(tokens) == 1  # not dropped and inserted again under a fresh token
+    assert sorted(await _live_tasks(ch, org)) == sorted([first.task.task_id, other["task_id"]])
+    own = await repo.fetch_task_by_idempotency_key(org, "bot", str(stored["from_subject"]), "k1")
+    assert own is not None and str(own["task_id"]) == first.task.task_id
+
+
 async def _old_build_delivery(ch: Any, watch: Any) -> None:
     """The previous build's delivery once its check found no event: the ready event
     under a random token."""
