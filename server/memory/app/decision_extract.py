@@ -498,7 +498,7 @@ async def _read_own(
         linked_to = ", ".join(names.get(x, x) for x in tagged)
         return [], (
             f"this document's decisions are linked to a repository ({linked_to}); run with "
-            "its --repo, or delete them first"
+            "its --repo and --into source, or delete them first"
         )
     # Where an earlier run may have written them: beside the document, the named
     # repository's trunk, or the trunk of the branch namespace the document is in.
@@ -1342,10 +1342,7 @@ async def _retire_one(
         await _retire_row(report, row, keep=keep, repo_tag=repo_tag)
     elif repo_tag:
         # Its reasoning is still there though the model did not emit it: it stays, linked.
-        on = SOURCE_CHANGED_TAG in row.tags
-        tags = _tags_for(row, source_changed=on, repo_tag=repo_tag)
-        if set(tags) != set(row.tags):
-            await _tag_kept(report, row, tags)
+        await _tag_kept(report, row, SOURCE_CHANGED_TAG in row.tags, repo_tag)
 
 
 async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool, repo_tag: str) -> None:
@@ -1356,15 +1353,18 @@ async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool, repo
         if await _delete_row(report, row):
             report.retired.append(row.memory_key)
         return
-    tags = _tags_for(row, source_changed=True, repo_tag=repo_tag)
-    if set(tags) != set(row.tags):
-        await _tag_kept(report, row, tags)
+    await _tag_kept(report, row, True, repo_tag)
 
 
-async def _tag_kept(report: ExtractReport, row: MemoryRow, tags: list[str]) -> None:
-    """Write the tags of a row the retire step keeps; its key goes to `flagged` when it
-    gains `source-changed` and to `linked` when it gains a repository's tag, once written,
-    a race to `races`."""
+async def _tag_kept(
+    report: ExtractReport, row: MemoryRow, source_changed: bool, repo_tag: str
+) -> None:
+    """Set the tags of a row the retire step keeps (`_tags_for`), if they change. Once
+    written, its key is reported in `flagged` when it gained `source-changed` and in
+    `linked` when it gained a repository's tag; a write that lost a race, in `races`."""
+    tags = _tags_for(row, source_changed=source_changed, repo_tag=repo_tag)
+    if set(tags) == set(row.tags):
+        return
     if not report.dry_run and (moved := await _set_tags(row, tags)):
         report.races.append(f"{row.memory_key}: {moved} since the run read it")
         return

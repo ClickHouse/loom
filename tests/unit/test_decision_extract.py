@@ -4326,7 +4326,7 @@ async def test_a_run_with_another_repo_refuses_over_rows_linked_to_the_first(mon
     # The tag names no configured repository here, so the run prints the tag itself.
     assert report.error == (
         f"this document's decisions are linked to a repository ({REPO_TAG}); run with its "
-        "--repo, or delete them first"
+        "--repo and --into source, or delete them first"
     )
     assert world.prompts == [] and world.recorded == []
 
