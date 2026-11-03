@@ -11,6 +11,11 @@ here, once:
   the request's, else the op's plane default (code.* / tracker.*), else the
   verified token's own org. A namespace is never authorized without an org:
   that is a refusal (IDENTITY_INCOMPLETE), not a flat-role pass.
+- `with_resolved_org` / `with_target`: before validation a blank or "-"
+  org is set to the org the call acts in and a padded org or namespace is
+  stripped; after authorization an absent code namespace is set to the
+  authorized one, so the handler reads and writes where the call was
+  authorized.
 - `authorize`: first-contact provisioning, the role + namespace gate
   (`authorize_op`, raising PermissionError / IdentityIncompleteError), then
   the restricted-access audit row and the first-write registration.
@@ -35,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.code.app.common import plane_namespace_for, plane_org_for
 from server.core.errors import IdentityIncompleteError, RateLimitedError
-from server.core.naming import named
+from server.core.naming import present
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -71,12 +76,6 @@ _FAIL_OPEN_SINCE_LOG: dict[str, int] = {}
 _FAIL_OPEN_LAST_LOG: dict[str, float] = {}
 
 
-def present(value: Any) -> str | None:
-    """A request's identity field as the gates read it: None when absent,
-    empty or the "-" sentinel."""
-    return named(str(value or "").strip())
-
-
 def _token_org(auth: AuthInfo | None) -> str | None:
     org = present(getattr(auth, "org", None)) if auth is not None else None
     return None if org == "*" else org
@@ -103,7 +102,7 @@ def authz_target(op: Operation, *, org: Any, namespace: Any, auth: AuthInfo | No
     `namespace`. Raises IdentityIncompleteError when an authenticated call
     names a namespace with no resolvable org (auth off authorizes nothing)."""
     named_ns = present(namespace)
-    resolved_org = present(org) or present(plane_org_for(op.name)) or _token_org(auth)
+    resolved_org = resolve_org(op, org, auth)
     resolved_ns = named_ns or present(plane_namespace_for(op.name))
     authz_ns = None if op.skip_namespace_authz else resolved_ns
     if auth is not None and authz_ns is not None and resolved_org is None:
@@ -117,6 +116,50 @@ def authz_target(op: Operation, *, org: Any, namespace: Any, auth: AuthInfo | No
         named_namespace=named_ns,
         register_namespace=resolved_ns,
     )
+
+
+def resolve_org(op: Operation, org: Any, auth: AuthInfo | None) -> str | None:
+    """The org a call acts in: the request's, else the op's plane default
+    (code.* / tracker.*), else the verified token's own single org."""
+    return present(org) or present(plane_org_for(op.name)) or _token_org(auth)
+
+
+def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None) -> dict[str, Any]:
+    """The arguments to validate, with `org` and `namespace` as the gate reads
+    them: an org sent as a blank or "-" string is the org the call acts in, and
+    a padded org or namespace is stripped. The handler, and a validator that
+    reads the org (an inbox's webhook secret names it), then see the tenant the
+    gate authorizes, never the literal "-" every token reaches or a padded name
+    an erasure of the org would miss. A copy: validation, and its own refusal
+    row, read it; every later refusal's ledger row reads the raw arguments as
+    sent. A missing, null or non-string value is left for validation."""
+    update: dict[str, str] = {}
+    if isinstance(args.get("org"), str):
+        org = resolve_org(op, args["org"], auth)
+        if org and org != args["org"]:
+            update["org"] = org
+    if isinstance(args.get("namespace"), str):
+        namespace = present(args["namespace"])
+        if namespace and namespace != args["namespace"]:
+            update["namespace"] = namespace
+    return {**args, **update} if update else args
+
+
+def with_target(input_obj: Any, target: Target) -> Any:
+    """The input with an absent namespace set to the one the gate authorized
+    (a code op's plane namespace). A namespace the op requires (the code.repo.*
+    writes) is never filled: "-" must not become the plane's default index.
+    Copied, not validated again, so an absent namespace leads no code fan-out
+    list."""
+    ns_field = type(input_obj).model_fields.get("namespace")
+    if (
+        target.register_namespace
+        and ns_field is not None
+        and not ns_field.is_required()
+        and present(input_obj.namespace) is None
+    ):
+        return input_obj.model_copy(update={"namespace": target.register_namespace})
+    return input_obj
 
 
 async def authorize(

@@ -30,6 +30,7 @@ from server.code.app.common import (
 )
 from server.core import idempotency, llm_free
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, LoomServerError
+from server.core.naming import present
 from server.observability.consumer import (
     bind_current_consumer,
     explicit_consumer,
@@ -351,7 +352,7 @@ def _refused_body(raw_body: dict[str, Any], auth: AuthInfo | None) -> dict[str, 
     namespace `-`, never the named one."""
     from server.auth.authz import may_act_in_org
 
-    named = gates.present(raw_body.get("org"))
+    named = present(raw_body.get("org"))
     if auth is not None and named is not None and not may_act_in_org(auth, named):
         return {**raw_body, "org": auth.org, "namespace": SENTINEL}
     return raw_body
@@ -739,7 +740,9 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         bind_claimed_class(auth)
         call.raw_body = raw_body = await _read_body(op, request, request_id, auth)
 
-        payload = _validate_payload(op, request_id, raw_body, auth)
+        payload = _validate_payload(
+            op, request_id, gates.with_resolved_org(op, raw_body, auth), auth
+        )
         payload, raw_body = _resolve_personal(op, call, payload, raw_body, auth)
         call.raw_body = raw_body
 
@@ -750,6 +753,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # The shared admission sequence (server/transport/gates.py):
         # authorization target, authorization, read scope, policy, then the limiter.
         call.target = target = await _authorize(op, response, call, payload)
+        payload = gates.with_target(payload, target)
         payload = await _bind_context_and_policy(op, request, call, target, payload)
         _rate_limit(op, response, call, target)
         replay = await _idempotency_gate(op, request, response, call, target, payload)
@@ -788,13 +792,15 @@ def _mentor_headers(
     try:
         from server.insights.app import mentor as _mentor
 
+        # The tenant the call was admitted in, as its ledger row names it.
+        tenant = ledger_identity(raw_body)
         hint = _mentor.call_hint(
             op.name,
             raw_body,
             result,
-            session_key=_mentor.session_key_for("", raw_body),
-            org=str(raw_body.get("org") or ""),
-            namespace=str(raw_body.get("namespace") or ""),
+            session_key=_mentor.session_key_for("", {**raw_body, **tenant}),
+            org=present(tenant["org"]) or "",
+            namespace=present(tenant["namespace"]) or "",
             agent=str(raw_body.get("agent") or "-"),
         )
         set_hint_context(hint[0] if hint else "")

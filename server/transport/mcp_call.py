@@ -21,7 +21,7 @@ from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
 from server.core import llm_free
 from server.core.errors import LoomServerError
-from server.core.naming import named
+from server.core.naming import named, present
 from server.identity.app.caller_home import home_namespace
 from server.observability.consumer import ASSISTANT_CONSUMER
 from server.operations.base import Operation
@@ -226,7 +226,9 @@ async def _call_tool(
 
     client_idem_key = _pop_idempotency_key(op, arguments)
 
-    validated = _validated_input(req_id, op, arguments, request_id)
+    validated = _validated_input(
+        req_id, op, gates.with_resolved_org(op, arguments, auth), request_id
+    )
     if isinstance(validated, dict):
         return validated  # misspelled-argument refusal, or VALIDATION_FAILED
     input_obj = validated
@@ -234,6 +236,7 @@ async def _call_tool(
     target = await _authorize_call(req_id, op, input_obj, arguments, auth, request_id)
     if isinstance(target, dict):
         return target  # AUTH_INSUFFICIENT — nothing below (limiter, handler) runs
+    input_obj = gates.with_target(input_obj, target)
 
     # The resolved tenant the telemetry and post-handler rows name, as HTTP's
     # identity does after authorization.
@@ -504,13 +507,11 @@ async def _bind_caller_identity(
 
     # Fill in identity-tuple defaults the caller omitted (LLMs call with just
     # the action args). Existing args win — explicit namespace is honored.
-    # code.* ops are EXEMPT: their identity defaults to the deployment's code
-    # namespace inside the handler (resolve_code_identity), and injecting the
-    # caller's MEMORY namespace here would point every chat-surface code.search
-    # at personal-<user> — an empty index, so the tool would always abstain. Leaving
-    # org/namespace absent also keeps authz on the flat-role path, which is
-    # what lets a human token with no code-namespace grant read the shared
-    # index at all.
+    # code.* ops are EXEMPT: the gate authorizes them against the code plane's
+    # org and namespace (`with_resolved_org` and `with_target` fill an absent
+    # one, the handler a missing org), whereas the caller's MEMORY namespace
+    # here would point every chat-surface code.search at personal-<user>: an
+    # empty index, so the tool would always abstain.
     try:
         defaults = await _caller_defaults(auth, client_name)
     except LoomServerError as e:
@@ -521,7 +522,7 @@ async def _bind_caller_identity(
         raise
     explicit_agent = bool(arguments.get("agent"))
     # A blank or "-" namespace names none, as the gates read it.
-    unnamed = not gates.present(arguments.get("namespace"))
+    unnamed = not present(arguments.get("namespace"))
     # An empty default namespace (a delegated token whose claim holds no home)
     # is not filled in: the call then fails validation naming `namespace`.
     filled_ns = (
@@ -533,7 +534,13 @@ async def _bind_caller_identity(
     if defaults and not op.name.startswith("code."):
         field_names = set(op.input_model.model_fields.keys())
         for k, v in defaults.items():
-            missing = unnamed if k == "namespace" else not arguments.get(k)
+            # A blank or "-" org names none, as the gates read it.
+            if k == "namespace":
+                missing = unnamed
+            elif k == "org":
+                missing = not present(arguments.get(k))
+            else:
+                missing = not arguments.get(k)
             if v and k in field_names and missing:
                 arguments[k] = v
     if defaults and defaults["namespace"] and "lesson_namespaces" in op.input_model.model_fields:
