@@ -3503,6 +3503,7 @@ export interface KnowledgeSourceSync {
   changed?: number;
   removed?: number;
   unconverted?: number;
+  unconverted_reasons?: Record<string, number>;
   skipped?: number;
   error?: string;
 }

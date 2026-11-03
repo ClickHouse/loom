@@ -10263,6 +10263,7 @@ class KnowledgeSourceSync(TypedDict, total=False):
     changed: NotRequired[int]
     removed: NotRequired[int]
     unconverted: NotRequired[int]
+    unconverted_reasons: NotRequired[dict[str, int]]
     skipped: NotRequired[int]
     error: NotRequired[str]
 

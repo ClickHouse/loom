@@ -42,7 +42,17 @@ _FILE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,256}")
 
 
 class DriveError(RuntimeError):
-    pass
+    """`status` is the HTTP status the store answered, 0 when it gave none (a
+    network error, a body that is not JSON, a bound passed here)."""
+
+    def __init__(self, message: str, *, status: int = 0) -> None:
+        super().__init__(message)
+        self.status = status
+
+    @property
+    def refused(self) -> bool:
+        """The store refused this request (a 4xx), as opposed to failing to answer."""
+        return 400 <= self.status < 500
 
 
 class RateLimited(DriveError):
@@ -120,13 +130,13 @@ def _rate_limited(resp: httpx.Response) -> bool:
 
 def _raise_for(resp: httpx.Response, what: str) -> None:
     if _rate_limited(resp):
-        raise RateLimited(f"{what}: rate_limited")
+        raise RateLimited(f"{what}: rate_limited", status=resp.status_code)
     if resp.status_code in (401, 403):
-        raise CredentialRefused(f"{what}: http_{resp.status_code}")
+        raise CredentialRefused(f"{what}: http_{resp.status_code}", status=resp.status_code)
     if resp.status_code == 404:
-        raise NotFound(f"{what}: http_404")
+        raise NotFound(f"{what}: http_404", status=404)
     if resp.status_code >= 400:
-        raise DriveError(f"{what}: http_{resp.status_code}")
+        raise DriveError(f"{what}: http_{resp.status_code}", status=resp.status_code)
 
 
 def _json(resp: httpx.Response, what: str) -> dict[str, Any]:
@@ -314,11 +324,20 @@ async def export_markdown(token: str, file_id: str, *, max_bytes: int) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-async def presentation(token: str, file_id: str) -> dict[str, Any]:
-    """A native presentation's slides, shapes and speaker notes."""
+async def presentation(token: str, file_id: str, *, max_bytes: int) -> dict[str, Any]:
+    """A native presentation's slides, shapes and speaker notes, its description
+    read up to `max_bytes`."""
     if not valid_file_id(file_id):
         raise ValueError("not a file id")
-    return await _get(f"{_SLIDES_URL}/{file_id}", token, {}, f"presentation {file_id}")
+    what = f"presentation {file_id}"
+    data = await _get_bytes(f"{_SLIDES_URL}/{file_id}", token, {}, what, max_bytes)
+    try:
+        deck = json.loads(data)
+    except ValueError:
+        raise DriveError(f"{what}: body is not JSON") from None
+    if not isinstance(deck, dict):
+        raise DriveError(f"{what}: body is not an object")
+    return deck
 
 
 async def download(token: str, file_id: str, *, max_bytes: int) -> bytes:

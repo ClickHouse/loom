@@ -1093,7 +1093,9 @@ only for its own turn; a credential that does not open stops the turn with
 a complete listing no longer has the file or a namespace admin asked
 (`knowledge.source.remove` with `delete_documents`), never on a fetch error, and never
 touches a live document another writer or source holds
-([document sources](../features/knowledge.md#syncing-a-source)).
+([document sources](../features/knowledge.md#syncing-a-source)). Any holder of a writer
+grant on the namespace may still `knowledge.delete` a synced document, as any other;
+while its file is in the folder, the next full listing writes it again.
 
 ## Audit log
 

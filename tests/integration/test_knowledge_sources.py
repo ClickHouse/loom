@@ -141,6 +141,7 @@ def test_sync_now_and_remove_write_state_and_registry_rows(
         "changed": 0,
         "removed": 0,
         "unconverted": 0,
+        "unconverted_reasons": {},
         "skipped": 0,
         "error": "",
     }

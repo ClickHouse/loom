@@ -114,8 +114,9 @@ any later write wins over it. Versions come from the ClickHouse servers' clocks,
 writes stay ordered while those clocks differ by less than the time between them.
 
 A removed source's row stays, inactive and with its credential cleared. With
-`delete_documents` and documents to retire, the row also carries the request for the
-sync worker. Removing a repository (`code.repo.remove`) retires the sources registered
+`delete_documents`, the row also carries the request for the sync worker, even when no
+document is counted yet (a sync turn running at that moment may still write one); the
+worker clears it once none is left. Removing a repository (`code.repo.remove`) retires the sources registered
 on its namespace the same way and names them in `sources_deactivated`; the purge of
 the repository's code index that follows deletes their sync state (it lives in
 `loom.code_index_state`) and the namespace's documents, and leaves the inactive
@@ -177,14 +178,15 @@ A turn lists the source's files. Its first turn, a turn `sync_now(full=true)` as
 for and the first turn after `LOOM_KNOWLEDGE_SOURCE_SYNC_FULL_INTERVAL_SECONDS`
 (default a day) since the last full listing list every file; the others list only the
 files changed after the stored stamp, the newest modification time a complete turn
-saw. A listed file whose stored copy has the same revision is skipped without a fetch.
-A changed file is fetched and written with `knowledge.upsert`:
+saw. A listed file whose stored copy has the same revision, and whose chunks are live,
+is skipped without a fetch, so a write cut between its document and its chunks is
+redone. A changed file is fetched and written with `knowledge.upsert`:
 
-| File                  | Text                                                                                                                                                                                                                                                                                                                                                                        | Original                       |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| A document (`docs`)   | Exported by the store as Markdown.                                                                                                                                                                                                                                                                                                                                          | none                           |
-| A deck (`slides`)     | One `# Slide N: <title>` section per slide, so a chunk is a slide: its shapes' text (groups read through, a table one row per line), then `> Notes: …` from the speaker notes. A run of eight or more bare numbers is dropped. A slide whose text is under 120 characters beside a picture, chart or video ends with `> [image-only: N pictures, rationale not extracted]`. | none                           |
-| A PDF, a `.pptx` file | Sent to the [extractor service](../architecture/document-extraction.md) its format is routed to; the artifact's headings become Markdown headings. With no extractor declaring the format, the file is counted `unconverted` and not written.                                                                                                                               | the file's bytes, downloadable |
+| File                  | Text                                                                                                                                                                                                                                                                                                                                                                                                      | Original                       |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| A document (`docs`)   | Exported by the store as Markdown.                                                                                                                                                                                                                                                                                                                                                                        | none                           |
+| A deck (`slides`)     | One `# Slide N: <title>` section per slide, so a chunk is a slide: its shapes' text (groups read through, a table one row per line), then `> Notes: …` from the speaker notes. A run of eight or more bare numbers is dropped. A slide whose text is under 120 characters beside a picture, chart or video ends with `> [image-only: N pictures, rationale not extracted]`.                               | none                           |
+| A PDF, a `.pptx` file | Sent to the [extractor service](../architecture/document-extraction.md) its format is routed to; the artifact's headings become Markdown headings and its code and SQL blocks are fenced, and how much of the file it read goes in the metadata (`extraction_coverage`). With no extractor configured for the format, or one that does not declare it, the file is counted `unconverted` and not written. | the file's bytes, downloadable |
 
 Each document's address (`source_uri`) is the link the store reports for the file,
 without its query, so a `knowledge.synthesize` citation of it reads
@@ -194,11 +196,16 @@ and its metadata the source's kind and name, the file's id (`ingested_from`), it
 revision (`source_revision`) and the conversion (`ingested_format`). Every document a
 sync writes has the actor `worker:knowledge-source-sync` and the class `imported`. A
 live document at the same address that another writer or another source holds is never
-overwritten; the file is counted `skipped`.
+overwritten or retired; the file is counted `skipped` and nothing is fetched for it.
+The source is read again before each write: one removed or replaced during its turn
+stops the turn, which records nothing.
 
 A document is retired only on positive evidence: absence from a complete full listing
 (a file trashed, deleted or moved out of the folders), or a maintainer's
-`remove(delete_documents=true)`. A fetch error or a rate limit retires nothing. Each
+`remove(delete_documents=true)`. A folder the account no longer sees lists empty rather
+than refused, so a full turn first checks every folder, and one that fails stops the
+turn with status `failed`, nothing written and nothing retired. A fetch error or a rate
+limit retires nothing. Each
 retirement is a `knowledge.delete` with its audit row, actor
 `worker:knowledge-source-sync`. Once a removed source has no documents left, its
 delete request is cleared.
@@ -207,10 +214,16 @@ The stamp moves only when every listed file was handled. A turn cut short (a rat
 limit, a failure, the pass bound) is listed again on the next pass, and the files it
 wrote are skipped by revision. One pass fetches, writes and retires at most
 `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` documents (default 40) across all
-sources, so a large folder's first sync spans several passes. A file over
-`LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` (default 64 MiB) is counted `unconverted`.
-A file left unconverted is fetched again when it changes, or on a full listing once an
-extractor serves its format.
+sources, so a large folder's first sync spans several passes.
+
+Only the token exchange and the listing speak for the credential: a file the store
+refuses on its own (an export over the store's limit, a download turned off) is counted
+`unconverted` with its status, and the turn goes on. So is a file over
+`LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` (default 64 MiB) and one the extractor
+refuses. A file whose extractor cannot be reached leaves the turn incomplete (status
+`failed`, the stamp kept) for three passes on the same revision, then is counted
+`unconverted` too. An unconverted file has no stored copy, so it is fetched again when
+it changes and on every full listing.
 
 A source's `sync` in `list` and `inspect` shows what its last turn did:
 
@@ -222,6 +235,7 @@ A source's `sync` in `list` and `inspect` shows what its last turn did:
 | `documents_seen`         | Files the turn listed.                                                                                                                    |
 | `changed`, `removed`     | Documents it wrote and retired.                                                                                                           |
 | `unconverted`, `skipped` | Files it did not write: no extractor, refused or too large; another writer's document at the address.                                     |
+| `unconverted_reasons`    | Why, by count: `no_extractor`, `too_large`, `http_<status>`, `extraction_failed:<code>`, `extractor_unavailable`.                         |
 | `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text.                                                   |
 
 `loom knowledge sync --org O --namespace <trunk namespace> [--source NAME] [--full]` runs

@@ -21,6 +21,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
+from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.knowledge.domain.sources import (
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
@@ -236,18 +237,36 @@ async def source_documents(
 
 
 async def source_revisions(
-    org: str, namespace: str, name: str, *, ch: _CHClient | None = None
+    org: str,
+    namespace: str,
+    name: str,
+    *,
+    searchable_only: bool = True,
+    ch: _CHClient | None = None,
 ) -> list[dict[str, str]]:
     """Each live document of the source: its address, the store's file id it came
-    from and the revision stamp of the ingested copy. One statement per source turn,
-    a tag filter over the namespace's key prefix like `source_documents`."""
+    from and the revision stamp of the ingested copy. One statement, a tag filter
+    over the namespace's key prefix like `source_documents`.
+
+    With `searchable_only`, only a version whose chunks are live counts: a write cut
+    between its document row and its chunks leaves a version nobody can search, and
+    its revision must not let the next turn skip the file. Without it every live
+    document counts, which is what removal needs."""
+    chunks = (
+        "AND (source_uri, version) IN ("
+        "SELECT source_uri, doc_version FROM loom.chunks "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
+        f"AND {LIVE_CHUNK_SQL}) "
+        if searchable_only
+        else ""
+    )
     rows = await (ch or _default_client()).query_all(
         "SELECT source_uri, JSONExtractString(metadata, 'ingested_from') AS file_id, "
         "JSONExtractString(metadata, 'source_revision') AS source_revision "
         "FROM loom.documents FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
         "AND actor = {actor:String} AND superseded_at IS NULL "
-        f"LIMIT {REVISIONS_LIMIT}",
+        f"{chunks}LIMIT {REVISIONS_LIMIT}",
         params={"org": org, "ns": namespace, "tag": source_tag(name), "actor": SYNC_WORKER_ACTOR},
     )
     return [

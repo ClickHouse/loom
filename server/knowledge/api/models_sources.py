@@ -37,9 +37,12 @@ class KnowledgeSourceSync(BaseModel):
     changed: int = 0
     # Documents the turn retired: files the source no longer has.
     removed: int = 0
-    # Files not ingested: no extractor serves their format, the extractor refused them,
-    # or they are over LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES.
+    # Files not ingested: no extractor serves their format, the extractor or the source
+    # refused them, or they are over LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES.
     unconverted: int = 0
+    # Why, as reason -> files: no_extractor, too_large, http_<status> (the source
+    # refused that file), extraction_failed:<code>, extractor_unavailable.
+    unconverted_reasons: dict[str, int] = Field(default_factory=dict)
     # Files not written because a live document at their address is another writer's
     # or another source's.
     skipped: int = 0

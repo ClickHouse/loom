@@ -102,7 +102,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _Store:
         return ns == NS
 
     monkeypatch.setattr(source_probes, "probe", _probe)
-    monkeypatch.setattr(app, "_is_trunk_namespace", _trunk)
+    monkeypatch.setattr(app, "is_trunk_namespace", _trunk)
 
     async def _registered(org: str, ns: str) -> bool:
         return ns == NS
@@ -343,14 +343,17 @@ def test_remove_with_documents_marks_them_for_the_worker(fake: _Store) -> None:
     assert json.loads(fake.states["design-decks"]["detail"]) == {"status": "ok"}
 
 
-def test_a_source_with_no_documents_is_removed_without_a_delete_request(fake: _Store) -> None:
+def test_a_delete_request_with_no_documents_yet_is_recorded_and_frees_the_name(
+    fake: _Store,
+) -> None:
     asyncio.run(app.handle_knowledge_source_add(_add()))
     body = KnowledgeSourceRemoveInput(
         org=ORG, namespace=NS, name="design-decks", confirm="design-decks", delete_documents=True
     )
     assert asyncio.run(app.handle_knowledge_source_remove(body)).documents_pending == 0
-    assert fake.rows[(ORG, NS, "design-decks")].pending_delete is False
-    # Nothing waits to be retired, so the name is free again.
+    # Recorded anyway: a sync turn running meanwhile may still write a document.
+    assert fake.rows[(ORG, NS, "design-decks")].pending_delete is True
+    # No document waits to be retired, so the name is free again.
     assert asyncio.run(app.handle_knowledge_source_add(_add())).name == "design-decks"
 
 
@@ -608,7 +611,7 @@ def test_add_checks_the_repository_again_after_its_probe(
         calls.append(ns)
         return len(calls) == 1
 
-    monkeypatch.setattr(app, "_is_trunk_namespace", _trunk_then_gone)
+    monkeypatch.setattr(app, "is_trunk_namespace", _trunk_then_gone)
     assert _code(app.handle_knowledge_source_add(_add())) == "NOT_A_CODE_NAMESPACE"
     assert calls == [NS, NS] and fake.rows == {}
 
@@ -676,7 +679,7 @@ def test_a_source_whose_namespace_is_no_trunk_is_refused(
     async def _gone(org: str, ns: str) -> bool:
         return False
 
-    monkeypatch.setattr(app, "_is_trunk_namespace", _gone)
+    monkeypatch.setattr(app, "is_trunk_namespace", _gone)
     with pytest.raises(ValidationError) as e:
         asyncio.run(call())
     assert e.value.to_detail()["code"] == "NOT_A_CODE_NAMESPACE"
@@ -731,9 +734,9 @@ def test_the_trunk_check_reads_the_cached_registry(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(repo_registry, "refresh_db_repos", _refresh)
     monkeypatch.setattr(repos, "docs_namespaces", lambda: {(ORG, "acme/app"): NS})
-    assert asyncio.run(app._is_trunk_namespace(ORG, NS)) is True
-    assert asyncio.run(app._is_trunk_namespace(ORG, "code-acme-app-dev")) is False
-    assert asyncio.run(app._is_trunk_namespace("other", NS)) is False
+    assert asyncio.run(app.is_trunk_namespace(ORG, NS)) is True
+    assert asyncio.run(app.is_trunk_namespace(ORG, "code-acme-app-dev")) is False
+    assert asyncio.run(app.is_trunk_namespace("other", NS)) is False
     # No forced read per call: the snapshot refreshes on its own schedule.
     assert calls == [{}, {}, {}]
 

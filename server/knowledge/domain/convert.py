@@ -125,16 +125,44 @@ def presentation_markdown(presentation: dict[str, Any]) -> str:
     return "\n\n".join(slide_markdown(n, s) for n, s in enumerate(slides, start=1))
 
 
+_FENCED = {"code": "", "sql_statement": "sql"}
+
+
+def _fence(text: str, lang: str) -> str:
+    """`text` in a code fence longer than any run of backticks inside it."""
+    longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
+    ticks = "`" * max(3, longest + 1)
+    return f"{ticks}{lang}\n{text}\n{ticks}"
+
+
 def artifact_markdown(artifact: Artifact) -> str:
-    """An extraction artifact's blocks as Markdown: a heading at its depth, every
-    other block as its text."""
+    """An extraction artifact's blocks as Markdown: a heading at its depth, code and
+    SQL fenced, every other block as its text."""
     parts = []
     for block in artifact.blocks:
+        text = block.text.strip("\n")
+        if not text.strip():
+            continue
         if block.type == "heading":
-            parts.append("#" * min(6, max(1, block.depth)) + " " + block.text.strip())
-        elif block.text.strip():
-            parts.append(block.text.strip())
+            parts.append("#" * min(6, max(1, block.depth)) + " " + text.strip())
+        elif block.type in _FENCED:
+            parts.append(_fence(text, _FENCED[block.type]))
+        else:
+            parts.append(text.strip())
     return "\n\n".join(parts)
+
+
+def coverage_of(artifact: Artifact) -> dict[str, Any]:
+    """How much of the original the artifact holds, for the document's metadata, so
+    a partial extraction is never read as the whole file."""
+    c = artifact.coverage
+    return {
+        "complete": c.complete,
+        "unit": c.unit,
+        "total": c.total,
+        "extracted": c.extracted,
+        "lost": list(c.lost),
+    }
 
 
 def description_of(markdown: str) -> str:
@@ -148,6 +176,7 @@ def description_of(markdown: str) -> str:
 
 __all__ = [
     "artifact_markdown",
+    "coverage_of",
     "description_of",
     "drop_number_runs",
     "presentation_markdown",

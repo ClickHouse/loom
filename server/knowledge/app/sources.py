@@ -85,7 +85,7 @@ def _seal(credential: str) -> str:
         ) from None
 
 
-async def _is_trunk_namespace(org: str, namespace: str) -> bool:
+async def is_trunk_namespace(org: str, namespace: str) -> bool:
     """Whether `namespace` is a repository's trunk code namespace, the one its
     documents live in."""
     from server.code.app.index import repo_registry
@@ -99,7 +99,7 @@ async def _is_trunk_namespace(org: str, namespace: str) -> bool:
 
 async def _require_trunk_namespace(org: str, namespace: str) -> None:
     """Refuse to register a source on a namespace that is no repository's trunk."""
-    if not await _is_trunk_namespace(org, namespace):
+    if not await is_trunk_namespace(org, namespace):
         raise ValidationError(
             f"{namespace!r} is not a repository's trunk code namespace; sources are "
             "registered on the namespace the repository's documents live in",
@@ -119,7 +119,7 @@ async def _source_in_repository(org: str, namespace: str, name: str) -> Knowledg
     a repository's trunk code namespace (a repository retired outside
     `code.repo.remove`, or a branch that now outranks it)."""
     src = await _source_or_404(org, namespace, name)
-    if not await _is_trunk_namespace(org, namespace):
+    if not await is_trunk_namespace(org, namespace):
         raise ValidationError(
             f"the repository of {namespace!r} is gone or no longer has its trunk there, so "
             f"source {src.name!r} is not used; knowledge.source.remove retires it",
@@ -408,9 +408,11 @@ async def handle_knowledge_source_remove(
             if input.delete_documents:
                 pending = await store.count_documents(src.org, src.namespace, src.name)
         # The delete request rides on the inactive registry row, which no sync-state
-        # write touches; with no documents there is nothing to ask for.
+        # write touches. It is recorded even with no documents counted now: a sync
+        # turn running meanwhile may still write one, and the worker clears the
+        # request once none is left.
         retired = dataclasses.replace(
-            src, active=False, credential_enc="", pending_delete=pending > 0
+            src, active=False, credential_enc="", pending_delete=input.delete_documents
         )
         await store.insert_source(retired)
     return KnowledgeSourceRemoveOutput(name=src.name, documents_pending=pending)
@@ -483,6 +485,7 @@ def source_rotate_audit_subject(input: KnowledgeSourceRotateInput, response: Any
 
 __all__ = [
     "deactivate_namespace_sources",
+    "is_trunk_namespace",
     "sources_lease",
     "handle_knowledge_source_add",
     "handle_knowledge_source_check",
