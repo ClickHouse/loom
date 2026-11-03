@@ -105,9 +105,10 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
 5. `docker` publishes `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor` (the
    document extractor service), one matrix entry each, for linux/amd64 and linux/arm64, each
    with provenance and an SBOM, scanned before it is tagged. A package GitHub creates on its
-   first push is private: before the first release that pushes `loom-extractor`, or right
-   after its run creates the package, set the package's visibility to public in its settings
-   (an install pulls it without signing in), or `docker-smoke` fails to pull it;
+   first push is private, and an install pulls without signing in: the first release run
+   that pushes `loom-extractor` creates it and its `docker-smoke` jobs fail to pull it. Set
+   the package's visibility to public in its settings, then re-run the failed jobs
+   ("Re-run failed jobs"), which the workflow allows;
 6. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64;
 7. `github-release` creates the GitHub Release only after both images exist, with notes

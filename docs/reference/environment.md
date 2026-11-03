@@ -77,8 +77,8 @@ image as `LOOM_BUILD_COMMIT`, reported as `build_commit`). The remaining
 | `LOOM_PORT`                                     | `compose.yaml`, `install.sh`                               | `7777`                                | The host port the standalone stack publishes.                                                                                                 |
 
 Other `${LOOM_*}` references in the compose files are settings fields given a
-compose-level default and the uvicorn variables above. The installer keeps the image,
-tag, port and `LOOM_CLICKHOUSE_IMAGE` in `.env` when given; the
+compose-level default and the uvicorn variables above. The installer keeps the two
+images, the tag, the port and `LOOM_CLICKHOUSE_IMAGE` in `.env` when given; the
 [quickstart](../getting-started/quickstart.md) describes what the stock `.env` sets.
 
 ## `loom` CLI
