@@ -1145,10 +1145,10 @@ index shares its row. After the retire, the delete reads the key's newest value 
 own identity and every other row of the key in the namespace that search serves (live, not
 expired, inside its validity, of a served status, and not `sensitivity: high`). It puts
 back the shared chunks any of them cuts, then reads them again to retire those chunks once
-more if a delete or a write landed in between. A `memory.delete` whose insert lands after that read can still answer
-`tombstoned` alongside it, as two racing `memory.delete` calls can. Between the tombstone
-and a write back, the key reads as deleted, and a `memory.delete` in that window answers
-`found=false`. A delete of a decision row, by either op, also tombstones the key's
+more if a delete or a write landed in between. A `memory.delete` whose insert lands after
+that read can still answer `tombstoned` alongside it, as two racing `memory.delete` calls
+can. Between the tombstone and a write back, the key reads as deleted, and a
+`memory.delete` in that window answers `found=false`. A delete of a decision row, by either op, also tombstones the key's
 decision record unless the record's writer still has a live decision row under the key.
 
 Before its tombstone the delete records the check it owes in `loom.delete_version_checks`,

@@ -1249,21 +1249,10 @@ def _chunk_rows(value: Any) -> list[dict[str, Any]]:
     assert chunks, "the value is long enough to chunk"
     return [
         {
-            "org": "o",
-            "namespace": "n",
-            "agent": _ID["agent"],
-            "user_id": "-",
-            "session_id": set_chunks.set_chunk_session_id(_KEY),
-            "run_id": "-",
+            **_chunk_row_base(),
             "chunk_index": i,
             "content_sha256": set_chunks._chunk_sha(text),
             "content": text,
-            "embedding": [0.0] * 3072,
-            "embedding_model": "m",
-            "embedding_dim": 3072,
-            "parent_memory_key": _KEY,
-            "created_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
-            "tombstoned_at": None,
         }
         for i, (text, _s, _e) in enumerate(chunks)
     ]
@@ -1385,15 +1374,17 @@ _PAST = datetime(2020, 1, 1)
         ({"user_id": ""}, True),
         ({"session_id": "s2", "expires_at": _PAST}, False),
         ({"session_id": "s2", "status": "superseded"}, False),
+        ({"session_id": "s2", "valid_to": _PAST}, False),
+        ({"session_id": "s2", "sensitivity": "high"}, False),
     ],
-    ids=["other session", "other user", "empty user", "expired", "superseded"],
+    ids=["other session", "other user", "empty user", "expired", "superseded", "ended", "high"],
 )
 async def test_a_passage_another_row_of_the_key_serves_stays_live(
     ch: KeptCH, other: dict[str, Any], served: bool
 ) -> None:
     # A key's chunk rows are shared by every user, agent and session holding it: another
     # row search serves keeps a shared passage live when this row's version is deleted; an
-    # expired or superseded one does not.
+    # expired, superseded, ended or high one does not.
     ch.create("SET enable_quantized_codec = 1", ddl("memory_chunks"))
     head = time.time_ns() - 10_000_000_000
     removed_value = _OPENING + "\n\n" + " ".join(f"old tail {i} of the note." for i in range(300))
