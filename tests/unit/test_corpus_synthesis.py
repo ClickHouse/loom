@@ -335,18 +335,22 @@ async def test_a_window_spanning_two_documents_keeps_its_citation(
 async def test_unread_citations_are_removed_before_the_answer_is_cut(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Removed citations take no room in `max_answer_chars`, and the cut never leaves half a
-    citation behind."""
+    """Removed citations take no room in `max_answer_chars`; a kept citation the cut
+    halves is not listed in `citations`."""
     import server.knowledge.app.synthesize as kh
     from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
 
     rows = [SimpleNamespace(chunk_idx=0, content="short", chunk_metadata="{}")]
     junk = " ".join(f"[doc://a#{i}]" for i in range(1, 40))  # 39 unread, about 470 chars
-    _patch_corpus(monkeypatch, rows, [f"Refunds take two weeks {junk} [doc://a#0]."])
-    out = await kh.handle_knowledge_synthesize(
-        KnowledgeSynthesizeInput(
-            org="o", namespace="n", source_uris=["doc://a"], task="t", max_answer_chars=200
-        )
+    answer = [f"Refunds take two weeks {junk} [doc://a#0]."]
+    _patch_corpus(monkeypatch, rows, answer)
+    inp = KnowledgeSynthesizeInput(
+        org="o", namespace="n", source_uris=["doc://a"], task="t", max_answer_chars=200
     )
+    out = await kh.handle_knowledge_synthesize(inp)
     assert out.answer == "Refunds take two weeks [doc://a#0]."
     assert out.citations == ["doc://a#0"] and len(out.unsupported_citations) == 39
+
+    answer[0] = "a" * 190 + " [doc://a#0]."  # the cut lands inside the kept citation
+    out = await kh.handle_knowledge_synthesize(inp)
+    assert out.answer.endswith(" [doc://a#…") and out.citations == []
