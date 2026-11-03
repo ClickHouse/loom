@@ -127,7 +127,7 @@ def _heads(monkeypatch: pytest.MonkeyPatch, heads: list[Any], order: list[str]) 
 
     async def _read(keys: list[Any], **_k: Any) -> dict[Any, Any]:
         order.append("re-read")
-        # keyed as the store keys its answer, not through the worker's own helper
+        # keyed by `_identity_key`, as the store keys its answer
         live = {_identity_key(vars(h)): h for h in heads}
         return {k: live[k] for k in keys if k in live}
 
