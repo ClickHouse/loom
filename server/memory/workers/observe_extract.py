@@ -25,6 +25,7 @@ from server.memory.domain.observation_tags import (
 )
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.domain.trust import subject_of
+from server.memory.store.rows import next_version
 from server.settings import settings
 from server.workers.status import record_pass
 
@@ -253,14 +254,12 @@ async def _distill_session(
     extras = await _distill_extras(session, readable, context=context)
 
     # Mark sources DONE. RMT: mirror every column, only tags + version change.
-    # The replay took seconds to minutes, so each DONE row is built from the head as
-    # it is now, not from the copy read before: a row deleted or erased since is gone
-    # from the re-read and stays gone, a redaction (an in-place scrub) is carried, and
-    # a row rewritten since keeps its new version un-DONE for the next pass. The head's
-    # version + 1 keeps any write made after this re-read above the DONE row.
+    # Built from the head re-read now: a key deleted or rewritten during the replay
+    # keeps what it has. The version is drawn first, so a write after the re-read wins.
     from server.core.ch import get_client
 
     ch = get_client()
+    version = next_version()
     heads = await memory_repo.memory_rows_by_identity_keys(
         [_identity(o) for o in observations], ch=ch, sequential=True
     )
@@ -273,11 +272,10 @@ async def _distill_session(
         if CRYSTALLIZE_DONE_TAG not in new_tags:
             new_tags.append(CRYSTALLIZE_DONE_TAG)
         version_rows.append(
-            memory_repo.build_memory_version_row(head, version=int(head.version) + 1, tags=new_tags)
+            memory_repo.build_memory_version_row(head, version=version, tags=new_tags)
         )
     # One committed insert for the session's observations.
-    if version_rows:
-        await memory_repo.insert_memory_versions(version_rows, ch=ch)
+    await memory_repo.insert_memory_versions(version_rows, ch=ch)
 
     return DistilledSession(
         org=str(session["org"]),

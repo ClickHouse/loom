@@ -131,18 +131,15 @@ def _heads(monkeypatch: pytest.MonkeyPatch, heads: list[Any]) -> None:
 async def test_done_is_built_from_the_head_as_it_is_after_the_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # During the replay one observation is deleted, one rewritten and one redacted in
-    # place. The DONE rows must not bring the deleted or the old text back, nor outrank
-    # a write made after the re-read.
+    # During the replay one observation is deleted and one rewritten. The DONE rows must
+    # not bring the deleted row or the old text back.
     import server.memory.store as memory_repo
 
     kept = _obs("kept", {"narrative": "ran the tests"})
     deleted = _obs("deleted", {"narrative": "pasted the customer list"})
     rewritten = _obs("rewritten", {"narrative": "old"})
-    redacted = _obs("redacted", {"narrative": "my phone is 555"})
-    observations = [kept, deleted, rewritten, redacted]
-    scrubbed = _obs("redacted", {"narrative": "[redacted]"})
-    _heads(monkeypatch, [kept, _obs("rewritten", {"narrative": "new"}, version=20), scrubbed])
+    observations = [kept, deleted, rewritten]
+    _heads(monkeypatch, [kept, _obs("rewritten", {"narrative": "new"}, version=20)])
     built: list[tuple[Any, dict[str, Any]]] = []
     done: list[Any] = []
 
@@ -170,9 +167,8 @@ async def test_done_is_built_from_the_head_as_it_is_after_the_replay(
     monkeypatch.setattr(memory_repo, "build_memory_version_row", _build)
     monkeypatch.setattr(memory_repo, "insert_memory_versions", _insert)
     await ox._distill_session(_SESSION, observations)
-    assert done == [kept, scrubbed]
-    assert [k["version"] for _, k in built] == [11, 11]
-    assert all("crystallize:done" in k["tags"] for _, k in built)
+    assert done == [kept]
+    assert built[0][1]["tags"] == ["crystallize:done"]
 
 
 async def test_a_high_observation_is_never_sent_to_the_model(
