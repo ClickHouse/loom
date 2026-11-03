@@ -136,7 +136,7 @@ async def list_completed_requests(
         params["org"] = org
     rows = await ch.query_all(
         f"""
-        SELECT id, org, scope_type, scope_value, requester, urgency,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
                attempts, steps_completed, requested_at, failure_reason,
                residue_count, residue, verified_at
         FROM loom.erasure_requests FINAL

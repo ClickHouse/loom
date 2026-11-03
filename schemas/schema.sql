@@ -1699,7 +1699,8 @@ CREATE TABLE IF NOT EXISTS loom.erasure_requests
     `residue_count` UInt32 DEFAULT 0,
     `residue` String DEFAULT '',
     `verified_at` Nullable(DateTime) DEFAULT NULL,
-    `purge` Bool DEFAULT false
+    `purge` Bool DEFAULT false,
+    `actor` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY id
