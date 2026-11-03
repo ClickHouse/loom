@@ -85,7 +85,7 @@ Record a DECISION as a first-class object — call it whenever you choose betwee
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The run this decision was made in (run.begin). |
 | `category` | `str` | required | category + scenario identify the decision: re-deciding the same scenario supersedes the earlier record (history keeps it). |
-| `scenario` | `str` | required | The situation that needed deciding; `decision.precedents` matches a query against the decision's statement, which includes the start of the scenario. |
+| `scenario` | `str` | required | The situation that needed deciding; `decision.precedents` matches a query against the decision's statement, which opens with the scenario. |
 | `reasoning` | `str` | required | Why this outcome was chosen. |
 | `outcome` | `str` | required | What was decided. |
 | `alternatives` | `list[str]` | *(computed)* | What was considered and not chosen — the field every "why not X" question needs and most decision logs omit. |

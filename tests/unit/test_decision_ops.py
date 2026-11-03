@@ -51,15 +51,43 @@ def test_record_fields_mark_absent_optionals_and_join_alternatives() -> None:
 def test_clean_alternatives_dedupes_and_caps() -> None:
     assert svc.clean_alternatives([" Hotfix ", "hotfix", "", "wait"]) == ["Hotfix", "wait"]
     assert len(svc.clean_alternatives([f"a{i}" for i in range(20)])) == svc.MAX_ALTERNATIVES
-    # The record keeps the first ALTERNATIVE_CHARS characters, as it always has.
-    assert svc.clean_alternatives(["wait", "z" * 400]) == ["wait", "z" * svc.ALTERNATIVE_CHARS]
-    # A path straddling the cut ends the stored alternative in half a name (`guide.md` of
-    # `guide.mdx`); files read from a stored record never take that last token.
-    mdx = "docs/guide.mdx"
-    long = "y" * (svc.ALTERNATIVE_CHARS - len(" docs/guide.md")) + " " + mdx + " is slow"
+    # A long alternative is cut at a space and marked; one first word longer than the
+    # limit leaves the mark alone.
+    words = "w " * 200
+    (cut,) = svc.clean_alternatives([words])
+    assert cut == "w " * 149 + "w…" and len(cut) <= svc.ALTERNATIVE_CHARS
+    assert svc.clean_alternatives(["wait", "z" * 400]) == ["wait", "…"]
+    # A path straddling the cut is never kept in half (`LruCache.c` of `LruCache.cpp`), so
+    # neither the record's files nor the statement's name a file the decision never names.
+    long = "y" * 279 + " src/cache/LruCache.cpp is slow"
+    assert long[: svc.ALTERNATIVE_CHARS].endswith(" src/cache/LruCache.c")
     (cut,) = svc.clean_alternatives([long])
-    assert cut.endswith("docs/guide.md")
+    assert cut == "y" * 279 + "…"
     assert svc.decision_files({"alternatives": [cut]}) is None
+    assert detect_value_files(stmt.memory_value({"outcome": "o", "alternatives": [cut]})) == []
+    # Unspaced CJK is cut between two wide characters, so two options that differ after
+    # the limit's first 299 characters are one, and two that differ before are two.
+    cjk = "使用哈希集合存储去重结果" * 30
+    (cut,) = svc.clean_alternatives([cjk])
+    assert cut == cjk[: svc.ALTERNATIVE_CHARS - 1] + "…"
+    assert len(svc.clean_alternatives([cjk + "甲", cjk + "乙"])) == 1
+    assert len(svc.clean_alternatives(["甲" + cjk, "乙" + cjk])) == 2
+    # Unspaced Thai has no wide characters and no space: one token past the limit, it
+    # leaves the mark alone, as a long path does; so does unspaced Korean, which is cut at
+    # a space only.
+    assert svc.clean_alternatives(["ใช้ตารางแฮช" * 40]) == ["…"]
+    assert svc.clean_alternatives(["데이터베이스를사용합니다" * 30]) == ["…"]
+    # The mark follows the last word, not the punctuation or dash the cut left.
+    (cut,) = svc.clean_alternatives(["y" * 290 + " slow, " + "z" * 40])
+    assert cut == "y" * 290 + " slow…"
+    (cut,) = svc.clean_alternatives(["y" * 285 + " option — " + "z" * 40])
+    assert cut == "y" * 285 + " option…"
+    (cut,) = svc.clean_alternatives(["甲" * 298 + "，" + "乙" * 10])
+    assert cut == "甲" * 298 + "…"
+    # An alternative that fits is kept as written.
+    fits = "y" * 270 + " src/cache/LruCache.cpp"
+    assert svc.clean_alternatives([fits]) == [fits]
+    assert svc.decision_files({"alternatives": [fits]}) == ["src/cache/LruCache.cpp"]
 
 
 def test_the_record_holds_long_alternatives_cut_at_their_cap(env) -> None:
@@ -67,7 +95,7 @@ def test_the_record_holds_long_alternatives_cut_at_their_cap(env) -> None:
     words = "w " * 200
     asyncio.run(h.handle_decision_record(record_input(alternatives=[words, "z" * 400])))
     stored = calls["record"][-1].fields["alternatives"].value.split("\n")
-    assert stored == [words.strip()[: svc.ALTERNATIVE_CHARS], "z" * svc.ALTERNATIVE_CHARS]
+    assert stored == ["w " * 149 + "w…", "…"]
 
 
 def test_influenced_is_a_canonical_verb_and_influenced_by_flips() -> None:
@@ -537,44 +565,19 @@ def test_outcome_reads_and_rewrites_the_row_of_the_recording_identity(env) -> No
     assert after.source_resource_id == "doc:1"
 
 
-def test_files_are_detected_from_the_full_text_not_the_clipped_statement(env) -> None:
+def test_files_are_detected_from_the_decisions_fields(env) -> None:
     _, calls, h = env
     path = "src/Interpreters/GraceHashJoin.cpp"
-    # The path sits past the reasoning clip, so the statement never names it.
+    # The statement holds the whole reasoning, path included; the row's files name it.
     asyncio.run(h.handle_decision_record(record_input(reasoning="x " * 200 + f"see {path}")))
-    assert path not in calls["set"][-1].value
+    assert path in calls["set"][-1].value
     assert calls["set"][-1].files == [path]
-    # A clip that would fall inside a path drops the whole path from the statement;
-    # the row still gets the full path from the full text.
-    kept = len("src/Interpreters/GraceHashJoin.c")
-    cut = "y" * (stmt.STATEMENT_REASONING_CHARS - 3 - kept - 1) + " " + path + " was slow"
-    asyncio.run(h.handle_decision_record(record_input(scenario="another", reasoning=cut)))
-    assert "GraceHashJoin" not in calls["set"][-1].value
-    assert calls["set"][-1].files == [path]
-    # A name the detector does not take (`.mdx`) cut at the clip would read as one it
-    # does (`guide.md`); cut at whitespace, the statement names no file at all.
-    mdx = "docs/guide.mdx"
-    kept = len("docs/guide.md")
-    cut = "y" * (stmt.STATEMENT_REASONING_CHARS - 3 - kept - 1) + " " + mdx + " is long"
-    asyncio.run(h.handle_decision_record(record_input(scenario="fourth", reasoning=cut)))
+    # A name the detector does not take (`.mdx`) names no file.
+    asyncio.run(
+        h.handle_decision_record(record_input(scenario="fourth", reasoning="docs/guide.mdx"))
+    )
     written = calls["set"][-1]
-    assert written.files is None and "guide" not in written.value
-    assert detect_value_files(written.value) == []
-    # A reasoning that is one token past the clip leaves none of it in the statement:
-    # half a path would read as a file the decision never names.
-    long_path = "a/" + "b" * stmt.STATEMENT_REASONING_CHARS + ".py"
-    asyncio.run(h.handle_decision_record(record_input(scenario="fifth", reasoning=long_path)))
-    written = calls["set"][-1]
-    assert "bbb" not in written.value and "because ..." in written.value
-    assert detect_value_files(written.value) == []
-    # A path run straight into unspaced CJK (`data.json文件`) is one token to the detector;
-    # a cut between the two would leave `data.json`, a file the decision never names.
-    head = "y" * (stmt.STATEMENT_REASONING_CHARS - 3 - len(" data.json"))
-    cjk = head + " data.json" + "文件" * 40
-    asyncio.run(h.handle_decision_record(record_input(scenario="sixth", reasoning=cjk)))
-    written = calls["set"][-1]
-    assert written.files is None and "data.json" not in written.value
-    assert detect_value_files(written.value) == []
+    assert written.files is None and detect_value_files(written.value) == []
     # Text naming no file passes None, so a re-record keeps the row's files.
     asyncio.run(h.handle_decision_record(record_input(scenario="third")))
     assert calls["set"][-1].files is None
@@ -629,7 +632,8 @@ def _statement(category: str, scenario: str) -> str:
 
 
 def test_decisions_under_other_keys_only_ever_conflict() -> None:
-    head = "x" * stmt.STATEMENT_SCENARIO_CHARS
+    # Two scenarios alike in every character the embedding's excerpt reads.
+    head = "how the nightly compaction schedules its merges " * 30
     pairs = [
         (("ci", "a bad image"), ("db", "a bad image")),
         (("deploy", "a bad image"), ("deploys", "a bad image")),
@@ -793,19 +797,17 @@ def test_decision_outcome_does_not_honour_read_scope() -> None:
     assert not honours_read_scope("decision.outcome")
 
 
-def test_a_secret_past_the_clip_makes_the_row_high(env) -> None:
-    """The memory row holds a clipped statement; the sensitivity is read from the full
-    text, so a credential past the cut still keeps the row out of the embeddings."""
+def test_a_secret_in_a_long_reasoning_makes_the_row_high(env) -> None:
+    """The sensitivity is read from every field, so a credential keeps the row out of the
+    embeddings and the pre-edit block."""
     _, calls, h = env
     token = "ghp_" + "Ab1" * 12
     reasoning = "the runner needs a token " * 20 + token
     asyncio.run(h.handle_decision_record(record_input(reasoning=reasoning)))
-    written = calls["set"][-1]
-    assert token not in written.value
-    assert written.sensitivity == "high"
+    assert calls["set"][-1].sensitivity == "high"
 
 
-def test_a_blacklisted_phrase_past_the_clip_refuses_the_whole_decision(env) -> None:
+def test_a_blacklisted_phrase_in_a_long_reasoning_refuses_the_whole_decision(env) -> None:
     from fastapi import HTTPException
 
     ch, calls, h = env
@@ -890,7 +892,7 @@ def test_a_decision_recorded_again_word_for_word_writes_the_same_statement(env) 
     assert first.value == second.value
 
 
-def test_an_attribute_past_the_clip_is_labelled(monkeypatch, env) -> None:
+def test_an_attribute_in_a_long_reasoning_is_labelled(monkeypatch, env) -> None:
     from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX, attribute_classes
     from server.settings import settings
 
@@ -900,9 +902,7 @@ def test_an_attribute_past_the_clip_is_labelled(monkeypatch, env) -> None:
     assert attribute_classes(term), "the fixture term must label an attribute"
     reasoning = "the rota changes next month " * 15 + term
     asyncio.run(h.handle_decision_record(record_input(reasoning=reasoning)))
-    written = calls["set"][-1]
-    assert term not in written.value
-    assert any(t.startswith(ATTRIBUTE_TAG_PREFIX) for t in written.tags)
+    assert any(t.startswith(ATTRIBUTE_TAG_PREFIX) for t in calls["set"][-1].tags)
 
 
 def test_a_blacklisted_realized_outcome_refuses_the_outcome(env) -> None:

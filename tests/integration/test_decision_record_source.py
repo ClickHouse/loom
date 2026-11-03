@@ -87,7 +87,7 @@ async def test_decisions_that_read_alike_each_keep_a_live_row(agent, ch_client) 
     # The write-time verdicts only: the conflict resolver is off by default
     # (memory_conflict_resolver_enabled) and the CI server runs no workers, so nothing
     # judges these rows after they are written.
-    head = "x" * 130
+    head = "how the nightly compaction schedules its merges " * 30
     # A reason long enough that the shared statement, not the key each embedded text
     # ends with, decides how close two of these decisions are.
     reasoning = "a rollback takes two minutes and the previous image is known to be good"
@@ -98,7 +98,7 @@ async def test_decisions_that_read_alike_each_keep_a_live_row(agent, ch_client) 
             # The same statement: the category is in the key, not the text.
             ("deploy", "a bad image"),
             ("storage", "a bad image"),
-            # These two differ only past the statement's 80-character scenario clip.
+            # These two differ only past the 1,200 characters the embedding reads.
             ("deploy", f"{head} on monday"),
             ("deploy", f"{head} on friday"),
             ("ci", "a flaky runner"),
@@ -124,3 +124,58 @@ async def test_decisions_that_read_alike_each_keep_a_live_row(agent, ch_client) 
     linked = [(mid, peers) for _, st, mid, peers in rows if st == "conflicted"]
     assert linked, rows
     assert all(peers and set(peers) <= ids - {mid} for mid, peers in linked), rows
+
+
+@pytest.mark.asyncio
+async def test_precedents_find_a_decision_past_its_embedded_excerpt(agent) -> None:
+    # The scenario alone fills the first 1,200 stored characters, so the outcome and the
+    # reasoning are found through the statement's chunks, not its head. A distractor with
+    # the same scenario, so the same head, decides something else.
+    scenario = "how the nightly compaction schedules its merges " * 30
+    assert len(scenario) > 1200
+    distractor = await agent.decision.record(
+        category="design:scheduler",
+        scenario=scenario,
+        outcome="run the merges in key order",
+        reasoning="key order keeps the parts sorted for the next read",
+    )
+    out = await agent.decision.record(
+        category="design:allocator",
+        scenario=scenario,
+        outcome="keep a per-thread arena for spilled blocks",
+        reasoning="a shared arena fragments under concurrent spills and stalls the merge",
+    )
+    found = await agent.decision.precedents(
+        "per-thread arena for spilled blocks fragments under concurrent spills", top_k=5
+    )
+    keys = [p["memory_key"] for p in found["precedents"]]
+    assert keys and keys[0] == out["memory_key"], found
+    # The distractor shares the head, so it is found too, below the target.
+    assert distractor["memory_key"] in keys[1:], found
+
+
+@pytest.mark.asyncio
+async def test_precedents_find_a_cyrillic_decision_past_its_embedded_excerpt(agent) -> None:
+    # Stored as JSON, each Cyrillic letter is a six-character escape: a 250-character
+    # scenario fills the excerpt, and the decision is found through its chunks. The
+    # scenario names one Latin term, as the decision's key needs one.
+    scenario = "MergeTree: " + "как ночное слияние планирует свои части " * 6
+    assert len(scenario) < 1200 < len(json.dumps(scenario))
+    distractor = await agent.decision.record(
+        category="design:scheduler-ru",
+        scenario=scenario,
+        outcome="сливать части по порядку ключа",
+        reasoning="порядок ключа сохраняет части отсортированными",
+    )
+    out = await agent.decision.record(
+        category="design:arena-ru",
+        scenario=scenario,
+        outcome="держать отдельную арену для каждого потока",
+        reasoning="общая арена фрагментируется при одновременных сбросах",
+    )
+    found = await agent.decision.precedents(
+        "отдельная арена для каждого потока фрагментируется при сбросах", top_k=5
+    )
+    keys = [p["memory_key"] for p in found["precedents"]]
+    assert keys and keys[0] == out["memory_key"], found
+    assert distractor["memory_key"] in keys[1:], found

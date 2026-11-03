@@ -54,8 +54,8 @@ def _local_ch(*rows: list[str]) -> LocalCH:
 
 def _chunk(user: str, value: Any, index: int = 0) -> SearchHit:
     """The pooled hit of `value`'s chunk `index`, as the chunk leg builds it."""
-    passage = plan_set_chunks(value, "semantic")[0][index][0]
-    (sha,) = {s for i, s in set_chunk_identities(value, "semantic") if i == index}
+    passage = plan_set_chunks(value, "semantic", "lesson_a")[0][index][0]
+    (sha,) = {s for i, s in set_chunk_identities(value, "semantic", "lesson_a") if i == index}
     return SearchHit(
         memory_key=f"chunk:memory.set:lesson_a:{index}",
         memory_type="episodic",
@@ -208,9 +208,9 @@ async def test_rows_holding_one_value_chunk_it_once(monkeypatch: pytest.MonkeyPa
     calls: list[str] = []
     real = pool.set_chunk_identities
 
-    def counting(value: Any, memory_type: str) -> Any:
+    def counting(value: Any, memory_type: str, memory_key: str) -> Any:
         calls.append(memory_type)
-        return real(value, memory_type)
+        return real(value, memory_type, memory_key)
 
     monkeypatch.setattr(pool, "set_chunk_identities", counting)
     ch = _local_ch(*(_row("u", s, v, LONG_V1) for s, v in (("s1", 1), ("s2", 2), ("s3", 3))))

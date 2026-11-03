@@ -2575,6 +2575,12 @@ settings:
   # "(truncated)". [restart]
   # memory_scratchpad_max_chars: 2000
 
+  # --- pre-edit block ---
+
+  # Tokens (4 characters each) memory.for_file gives its decision and constraint rows,
+  # which print whole outside token_budget; a row past it is left out and named. [live]
+  # memory_for_file_whole_tokens: 1500
+
   # --- deployment-specific names the fact filters recognise ---
 
   # Comma-separated names of the people whose sessions this deployment records

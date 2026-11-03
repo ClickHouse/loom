@@ -264,18 +264,19 @@ The memory row's value is one statement,
 `decision.outcome` has recorded one. The category is not in it: it stays on the record and in the row's
 `decision:category:<category>` tag, which is what a filter by category reads. A reasoning that is the outcome word for
 word (case, whitespace and the closing punctuation aside) records a ban or an invariant stated with no reason: the
-statement reads `Decided <outcome>.`, the outcome keeping the reasoning's room as well, and `context.pack` gives no
-`because`. Search embeds and excerpts it and `memory.for_file` shows it, so it opens with the scenario. Each part is
-shortened to fit the embedded excerpt, the scenario most, because the pre-edit line shows the start of the statement
-and must reach the outcome. The excerpt is measured as the value is stored, JSON-encoded, where a non-ASCII character
-takes six or more, so a Cyrillic or CJK part keeps about a sixth as many characters as an ASCII one. The record keeps
-every field in full except the alternatives, each kept to its first 300 characters.
+statement reads `Decided <outcome>.` and `context.pack` gives no `because`. Every part is stored as the record keeps
+it, whole within the record's limits (scenario 2,000 characters, outcome 1,000, reasoning 4,000, realized outcome
+2,000, up to ten alternatives of 300 each). A longer alternative is cut at a space, or between two CJK characters, and
+ends in `…`, so no half name reads as a file. A statement can run to about 12,000 characters. `memory.for_file` shows
+it whole, or names it when it would pass the block's ceiling, and search embeds its excerpt, the first 1,200 stored
+characters less its ` (#<key>)` suffix, so it opens with the scenario; a longer statement is also stored as chunks,
+which search reads too.
 
 - **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the stored
   category, scenario, outcome, reasoning, alternatives and realized outcome (not `decision_maker` or `run_id`, which
   the row never holds).
 - **Files**: `files` sets the row's files as on `memory.set`; unset, they are detected from the stored fields, never
-  from the shortened statement. `memory.for_file` serves the decision before an edit of a file it names, as it is,
+  from the realized outcome. `memory.for_file` serves the decision before an edit of a file it names, as it is,
   `(pinned)` when pinned and `(source changed)` once tagged `source-changed`
   ([how the block reads](../concepts/memory.md#tags-entities-and-files)).
 - **Source**: `source_resource_id` and `source_class` set those columns as on `memory.set`; `source_resource_id`

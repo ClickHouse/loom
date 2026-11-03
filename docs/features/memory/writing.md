@@ -57,9 +57,11 @@ The write succeeds whatever the shape. `advisories` names a shape recall cannot 
 | oversized      | The serialized value is longer than `LOOM_MEMORY_VALUE_ADVISORY_CHARS` (default 30,000). | Write the claim as the value and put the document in `knowledge.add`. |
 
 **Documents go to knowledge.** A value past a couple of kilobytes is usually a document.
-Long values are split into verbatim chunks (`chunks_written`), but a knowledge document
-is chunked on its headings and searched with its section. Store the document in
-[knowledge](../knowledge.md) and one short claim in memory.
+Long values are split into verbatim chunks (`chunks_written`): any value whose stored JSON
+runs past the 1,200-character excerpt it is embedded by, less its ` (#<key>)` suffix, which
+a non-ASCII text reaches at about 200 characters, since each such character is stored as a
+six-character escape. A knowledge document is chunked on its headings and searched with its
+section. Store the document in [knowledge](../knowledge.md) and one short claim in memory.
 
 **Size limits.** No fixed value cap. The request body is capped by `LOOM_MAX_REQUEST_BYTES`
 (32 MiB, 413 `PAYLOAD_TOO_LARGE`). A caller may set `char_limit` on a row (422

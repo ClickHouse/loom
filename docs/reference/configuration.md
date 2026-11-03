@@ -895,6 +895,12 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_SCRATCHPAD_MAX_CHARS` | `int` | `2000` |  | Characters each injected working-memory block renders before it is cut with "(truncated)". |
 
+### Pre-edit block
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_FOR_FILE_WHOLE_TOKENS` | `int` | `1500` | live | Tokens (4 characters each) memory.for_file gives its decision and constraint rows, which print whole outside token_budget; a row past it is left out and named. |
+
 ### Deployment-specific names the fact filters recognise
 
 | Variable | Type | Default | Live | Meaning |

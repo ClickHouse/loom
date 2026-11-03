@@ -1,11 +1,11 @@
 """Verbatim chunks for a long `memory.set` value.
 
-`memory.set` embeds the first `EXCERPT_LIMIT` characters of a value, so the rest of a long
-value (an investigation note, an evidence dump, a report stored as one memory) would be
-findable only through that head. A searchable value whose text runs past the excerpt is
-therefore also written to `loom.memory_chunks` in the 800/100 geometry
-`memory.set_from_messages` uses, with `parent_memory_key` set to the memory key so the
-search's chunk plane lifts the parent fact.
+`memory.set` embeds the first `EXCERPT_LIMIT` characters of a value's stored JSON, so the
+rest of a long value (an investigation note, an evidence dump, a report stored as one
+memory) would be findable only through that head. A searchable value whose stored JSON runs
+past the excerpt's room after its key is therefore also written to `loom.memory_chunks`
+in the 800/100 geometry `memory.set_from_messages` uses, with `parent_memory_key` set to
+the memory key so the search's chunk plane lifts the parent fact.
 
 Chunk rows are keyed `(org, namespace, session_id, chunk_index,
 content_sha256)`; a key's chunks share the deterministic session id
@@ -264,9 +264,10 @@ async def tombstone_row_chunks_fail_open(
     row: Any, *, ch: Any = None, only_its_own: bool = False
 ) -> int:
     """`tombstone_set_chunks_fail_open` for the memory row a delete or move
-    retires: its key, under its own user. `only_its_own` retires only the chunks
-    this row's own value writes, so a newer value's chunks of the key stay."""
-    only = set_chunk_identities(row.value, row.memory_type) if only_its_own else None
+    retires: its key, under its own user. `only_its_own` retires only the chunk rows this
+    row's value's passages can hold (`passage_identities`), so another value's chunks of
+    the key stay."""
+    only = passage_identities(row.value, row.memory_type) if only_its_own else None
     return await tombstone_set_chunks_fail_open(
         org=row.org,
         namespace=row.namespace,
@@ -277,10 +278,26 @@ async def tombstone_row_chunks_fail_open(
     )
 
 
-def set_chunk_identities(value: Any, memory_type: str) -> frozenset[tuple[int, str]]:
+def set_chunk_identities(
+    value: Any, memory_type: str, memory_key: str
+) -> frozenset[tuple[int, str]]:
     """The `(chunk_index, content_sha256)` of each chunk `write_set_chunks` writes for
-    `value`: the identities of that value's chunk rows."""
-    chunks, _truncated = plan_set_chunks(value, memory_type)
+    `value` under `memory_key`: the identities of that value's chunk rows."""
+    chunks, _truncated = plan_set_chunks(value, memory_type, memory_key)
+    return frozenset((i, _chunk_sha(chunk)) for i, (chunk, _start, _end) in enumerate(chunks))
+
+
+def passage_identities(value: Any, memory_type: str) -> frozenset[tuple[int, str]]:
+    """The identities of every chunk row `value`'s passages can hold, whether or not the
+    excerpt rule chunks it now: a delete of the value retires the chunks a build with
+    another rule wrote for it, which shared-scope search would otherwise still serve."""
+    from server.memory.domain.memory_types import is_searchable_type
+
+    if not is_searchable_type(memory_type):
+        return frozenset()
+    chunks, _truncated = chunk_text_with_truncation(
+        human_text(value, memory_type), max_chunks=_max_chunks()
+    )
     return frozenset((i, _chunk_sha(chunk)) for i, (chunk, _start, _end) in enumerate(chunks))
 
 
@@ -344,20 +361,22 @@ async def _embed_chunks(embedder: Any, chunks: list[str]) -> list[list[float]]:
 
 
 def plan_set_chunks(
-    value: Any, memory_type: str, *, limit: int | None = None
+    value: Any, memory_type: str, memory_key: str, *, limit: int | None = None
 ) -> tuple[list[tuple[str, int, int]], int]:
     """The `(chunk, line_start, line_end)` passages `write_set_chunks` would
     write for a value, and the trailing characters the chunk cap leaves out;
     `([], 0)` when the value is short or the type is not searchable. Pure: no
     embedding, no read, no write."""
     return chunk_text_with_truncation(
-        _chunked_text(value, memory_type, limit), max_chunks=_max_chunks()
+        _chunked_text(value, memory_type, memory_key, limit), max_chunks=_max_chunks()
     )
 
 
-def _chunked_text(value: Any, memory_type: str, limit: int | None) -> str:
-    """The human text of a value that is chunked, or "" when the value is short or the type
-    is not searchable."""
+def _chunked_text(value: Any, memory_type: str, memory_key: str, limit: int | None) -> str:
+    """The human text of a value that is chunked, or "" when the row's own excerpt holds all
+    of it or the type is not searchable."""
+    from server.memory.domain.embed_text import procedural_text_source
+    from server.memory.domain.import_keys import is_import_key
     from server.memory.domain.memory_types import is_searchable_type
 
     if limit is None:
@@ -367,8 +386,13 @@ def _chunked_text(value: Any, memory_type: str, limit: int | None) -> str:
         limit = EXCERPT_LIMIT
     if not is_searchable_type(memory_type):
         return ""
-    text = human_text(value, memory_type)
-    return text if len(text) > limit else ""
+    # The excerpt is cut from the stored JSON, where a non-ASCII character takes six (a
+    # short Cyrillic or CJK text already runs past it), and keeps room for the key suffix
+    # `build_excerpt` adds.
+    if memory_key and not is_import_key(memory_key):
+        limit -= len(f" (#{memory_key})")
+    embedded = procedural_text_source(memory_type, value) or json.dumps(value)
+    return human_text(value, memory_type) if len(embedded) > limit else ""
 
 
 def _chunk_sha(chunk: str) -> str:
@@ -395,7 +419,7 @@ async def write_set_chunks(
     if memory_type is None:
         memory_type = str(getattr(input, "memory_type", "") or "")
     cap = _max_chunks()
-    text = _chunked_text(input.value, memory_type, limit)
+    text = _chunked_text(input.value, memory_type, str(input.memory_key or ""), limit)
     chunks, ranges, truncated_chars = chunk_text_with_ranges(text, max_chunks=cap)
     if truncated_chars:
         from server.memory.app.drops import record_drop

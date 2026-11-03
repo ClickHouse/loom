@@ -708,6 +708,7 @@
  "memory_extract_verify_timeout_s": 45.0,
  "memory_facts_projection_wait_s": 3.0,
  "memory_facts_traverse_ttl_s": 60.0,
+ "memory_for_file_whole_tokens": 1500,
  "memory_harm_reinforcement_weight": null,
  "memory_list_viewer_limit": 100,
  "memory_namespace_health_failure_ttl_s": 300,

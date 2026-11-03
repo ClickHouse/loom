@@ -263,13 +263,14 @@ async def _checked_statement(
     org: str, namespace: str, payload: dict[str, Any], tags: list[str]
 ) -> tuple[str, Sensitivity, list[str]]:
     """Run memory.set's blacklist, sensitivity and attribute checks on the whole decision
-    before the record is written, since the row holds only a clipped statement. Returns
+    before the record is written, since the row's statement leaves some fields out. Returns
     (statement, sensitivity, attribute labels to add). A blacklisted decision raises."""
     from server.memory.app.blacklist_guard import enforce_on_insert
 
     statement = memory_value(payload)
     try:
-        # Every field whole: the statement is clipped, and memory.set checks only it.
+        # Every field: the statement leaves out the category, maker and run, and memory.set
+        # checks only it.
         full_text = "\n".join(svc.blacklist_fields(payload))
         await enforce_on_insert(org=org, namespace=namespace, value=full_text)
     except HTTPException:
@@ -319,7 +320,7 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
             payload=payload,
             tags=tags,
             valid_at=input.valid_at,
-            # Unset: the files the decision's text names; the statement is clipped.
+            # Unset: the files the decision's text names, never its realized outcome's.
             files=input.files if input.files is not None else svc.decision_files(payload),
             source_class=input.source_class,
             source_resource_id=input.source_resource_id,

@@ -1561,11 +1561,37 @@ async def test_a_long_reason_cut_at_the_cap_survives_a_reworded_option(monkeypat
 
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     stored = svc.clean_alternatives([f"a hash set — rejected: {long_reason}"])
-    assert len(stored[0]) == svc.ALTERNATIVE_CHARS  # cut inside the reason
+    assert svc.is_cut(stored[0]) and dx.REJECTED in stored[0]  # cut inside the reason
     world.record(_key(c), {**_same_fields(c), "alternatives": stored[0]}, files=[HEADER])
     world.reply = [
         {**c, "alternatives": [{"option": "a hash-based set on disk", "reason": long_reason}]}
     ]
+    report = await _run()
+    assert report.records[0].action == "unchanged" and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_alternatives_alike_once_cut_are_no_change(monkeypatch) -> None:
+    # Two options that share their first 300 characters are one alternative in the record,
+    # so the candidate is compared as one too and the second run writes nothing.
+    head = "a hash set " + "kept on disk " * 25
+    alts = [
+        {"option": head + "per run", "reason": "costs random reads"},
+        {"option": head + "per part", "reason": "costs random reads"},
+    ]
+    c = _candidate(alternatives=alts)
+    world = _World(monkeypatch, [c])
+    from server.knowledge.app import document_reads
+
+    body = BODY + " " + " ".join(f"{a['option']} costs random reads" for a in alts)
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    stored = svc.clean_alternatives([f"{a['option']}{dx.REJECTED}{a['reason']}" for a in alts])
+    assert len(stored) == 1 and svc.is_cut(stored[0])
+    world.record(_key(c), {**_same_fields(c), "alternatives": stored[0]}, files=[HEADER])
     report = await _run()
     assert report.records[0].action == "unchanged" and world.recorded == []
 
@@ -1906,7 +1932,7 @@ async def test_the_prompt_lists_at_most_the_configured_known_decisions(monkeypat
 
 def test_clean_alternatives_can_keep_them_uncut() -> None:
     long = "a hash set — rejected: " + "slow " * 80
-    assert len(svc.clean_alternatives([long])[0]) == svc.ALTERNATIVE_CHARS
+    assert svc.is_cut(svc.clean_alternatives([long])[0])
     assert svc.clean_alternatives([long, long.upper()], cut=False) == [" ".join(long.split())]
 
 
@@ -2012,14 +2038,28 @@ async def test_a_flag_on_a_value_changed_since_the_read_is_a_race(monkeypatch) -
     assert cli.exit_code(report) == 0
 
 
+def test_a_stored_alternative_cut_at_the_limit_without_a_mark_matches_as_cut() -> None:
+    from server.memory.app.decision_extract import _same_reasons
+
+    full = "a hash set — rejected: " + "costs random reads " * 20
+    stored = full[: svc.ALTERNATIVE_CHARS]
+    assert svc.is_cut(stored) and not stored.endswith(svc.CUT_MARK)
+    assert _same_reasons([stored], [full])
+
+
+def test_alternatives_alike_once_cut_are_one() -> None:
+    head = "a hash set — rejected: " + "costs random reads " * 20
+    assert svc.clean_alternatives([head + "one", head + "two"]) == [svc.cut_alternative(head)]
+
+
 def test_an_exact_reason_is_matched_before_a_cut_one_takes_it() -> None:
     from server.memory.app.decision_extract import _same_reasons
 
     exact = "a plain set — rejected: costs random reads"
     # Cut at the cap inside its reason, so its stored prefix is only "costs".
-    option = "o" * (svc.ALTERNATIVE_CHARS - len(" — rejected: costs"))
+    option = "o" * (svc.ALTERNATIVE_CHARS - len(svc.CUT_MARK + " — rejected: costs"))
     (cut,) = svc.clean_alternatives([f"{option} — rejected: costs random reads and memory"])
-    assert cut.endswith("rejected: costs")
+    assert cut.endswith("rejected: costs…")
     # Reordered, the exact one first: a greedy prefix match of the cut one would take it.
     candidate = [exact, f"{option} — rejected: costs random reads and memory"]
     assert _same_reasons([cut, exact], candidate)
@@ -2067,9 +2107,9 @@ def test_of_two_cut_reasons_sharing_a_prefix_the_longer_is_matched_first() -> No
     from server.memory.app.decision_extract import _same_reasons
 
     def cut_at(reason_kept: str, full: str) -> tuple[str, str]:
-        option = "o" * (svc.ALTERNATIVE_CHARS - len(" — rejected: " + reason_kept))
+        option = "o" * (svc.ALTERNATIVE_CHARS - len(svc.CUT_MARK + " — rejected: " + reason_kept))
         (stored,) = svc.clean_alternatives([f"{option} — rejected: {full}"])
-        assert stored.endswith(f"rejected: {reason_kept}")
+        assert stored.endswith(f"rejected: {reason_kept}…")
         return stored, f"{option} — rejected: {full}"
 
     short, short_full = cut_at("costs", "costs memory")

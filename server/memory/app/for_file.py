@@ -27,6 +27,7 @@ from server.memory.domain.decision_schema import (
 )
 from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import row_verification
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,8 @@ _VALUE_BYTES = 600
 _LINE_CHARS = 220
 # The length of a `\uXXXX` escape in the stored JSON: a cut leaves at most five of one.
 _ESCAPE_CHARS = 6
+# A character outside the Basic Multilingual Plane (an emoji) is two escapes.
+_PAIR_ESCAPE_CHARS = 2 * _ESCAPE_CHARS
 _CODE_NOTES = {
     "changed": " (its code changed since it was written: check before relying on it)",
     "unresolved": " (its code was renamed or removed and could not be followed: check it)",
@@ -51,14 +54,20 @@ _FILE_MATCH = (
     "OR endsWith({p:String}, concat('/', f)))"
 )
 
+# A decision or constraint prints whole, so it is read up to the block's ceiling at twelve
+# stored bytes a character (`whole_bytes`, an escaped surrogate pair each) and the rendered
+# line decides whether it fits; every other row up to the 600 bytes its capped line shows.
+_WHOLE_ROW = "(memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))"
+_READ_BYTES = f"if({_WHOLE_ROW}, {{whole_bytes:UInt32}}, {_VALUE_BYTES})"
+
 _SELECT = f"""
 SELECT
     memory_key, memory_type,
-    substring(value, 1, {_VALUE_BYTES}) AS value,
+    substring(value, 1, {_READ_BYTES}) AS value,
     tags, confidence, pinned, CAST(status AS String) AS status_text, agent, updated_at, actor,
     memory_id, conflict_with, source_resource_id,
     verified_by, verified_sha256, content_sha256,
-    value_len > {_VALUE_BYTES} AS value_truncated,
+    value_len > {_READ_BYTES} AS value_truncated,
     arrayFilter(f -> {_FILE_MATCH}, files) AS matched_files
 FROM loom.memory FINAL
 WHERE org = {{org:String}} AND namespace = {{ns:String}}
@@ -75,6 +84,12 @@ LIMIT {lim:UInt32}
 """
 _FILES_SQL = f"{_SELECT}  AND arrayExists(f -> {_FILE_MATCH}, files){_ORDER}"
 _LINKED_SQL = f"{_SELECT}  AND memory_id IN {{linked:Array(UUID)}}{_ORDER}"
+
+
+def _whole_bytes() -> int:
+    """The stored JSON a decision or constraint is read up to: the ceiling's characters,
+    each as long as the longest escape of one (a surrogate pair's)."""
+    return settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN * _PAIR_ESCAPE_CHARS
 
 
 def _readable(hit: dict[str, Any]) -> str:
@@ -146,10 +161,18 @@ def _is_decision(hit: dict[str, Any]) -> bool:
     return is_decision(str(hit.get("memory_type") or ""), hit.get("tags") or [])
 
 
+def _is_whole(hit: dict[str, Any]) -> bool:
+    """A decision or a constraint: printed whole, outside the token budget."""
+    return _is_decision(hit) or "constraint" in (hit.get("tags") or [])
+
+
 def _body(hit: dict[str, Any], *, decision: bool) -> str:
-    """The value on one capped line; a decision's source follows it whole, so the value's
-    cut never reaches it and the citation still resolves through knowledge.get."""
-    text = _one_line(_readable(hit), _LINE_CHARS)
+    """The value on one line, capped unless the row prints whole; a decision's source
+    follows it whole, so the citation still resolves through knowledge.get."""
+    if _is_whole(hit):
+        text = " ".join(_readable(hit).split())
+    else:
+        text = _one_line(_readable(hit), _LINE_CHARS)
     # Only a line break would break the one-line-per-row layout; spaces stay as cited.
     source = " ".join(str(hit.get("source_resource_id") or "").splitlines())
     if decision and source:
@@ -226,6 +249,52 @@ def _more_line(path: str, rest: int) -> str:
     return f'- … {rest} more; memory.for_file(path="{path}") lists them.'
 
 
+# The left-out line names this many keys, each cut at _NAMED_KEY_CHARS, so the line stays
+# short however many rows are left out and however long their keys are.
+_NAMED_KEYS = 5
+_NAMED_KEY_CHARS = 120
+
+
+def _whole_left_out_line(left: list[dict[str, Any]], home: str) -> str:
+    """Names the decisions and constraints left out at the ceiling, so each is one read
+    away: the first few keys, then how many more."""
+    keys = []
+    for h in left[:_NAMED_KEYS]:
+        key = _one_line(str(h["memory_key"]), _NAMED_KEY_CHARS)
+        ns = _one_line(str(h.get("namespace") or ""), _NAMED_KEY_CHARS)
+        keys.append(f'{key} (namespace "{ns}")' if _is_team(h, home) else key)
+    rest = len(left) - len(keys)
+    named = ", ".join(keys) + (f" and {rest} more" if rest else "")
+    what = "decision or constraint" if len(left) == 1 else "decisions or constraints"
+    return (
+        f"- … {len(left)} more {what} left out to keep this block short; "
+        f"memory.get on the key reads each, or loom_search: {named}."
+    )
+
+
+def _row_line(h: dict[str, Any], now: datetime, home: str) -> str:
+    decision = _is_decision(h)
+    if _is_team(h, home):
+        return _team_line(h, now, decision=decision)
+    marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
+    return f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}"
+
+
+def _ceiling_hides(hits: list[dict[str, Any]], rows: list[str], whole_chars: int) -> bool:
+    """Whether a decision or constraint left out at the ceiling supersedes older rows, with
+    every other row kept: then the block has a "… more" line for those."""
+    used = 0
+    for h, row in zip(hits, rows, strict=True):
+        if not _is_whole(h):
+            continue
+        if h.get("value_truncated") or used + len(row) + 1 > whole_chars:
+            if h.get("supersedes_ids"):
+                return True
+            continue
+        used += len(row) + 1
+    return False
+
+
 def render_block(
     path: str,
     hits: list[dict[str, Any]],
@@ -234,51 +303,72 @@ def render_block(
     home: str = "",
     now: datetime | None = None,
 ) -> tuple[str, int, bool]:
-    """Prompt-ready block cut at `token_budget`. Returns (text, tokens, truncated).
-    The header and the removal footer always print, and the "… more" line whenever a row
-    is left out, so a budget smaller than those can be exceeded.
-    `home` is the caller's namespace; a row from any other is a team row (rule or decision),
-    rendered with its author and age, and the block ends with how to remove one."""
+    """Prompt-ready block. Returns (text, tokens, truncated).
+
+    Decision and constraint rows print whole, in their place in the order, up to
+    `memory_for_file_whole_tokens` between them; one that would pass it is left out and
+    named on a closing line. The other rows are cut at `token_budget`. A row left out with
+    the newer row that supersedes it is counted on the "… more" line. The header and the
+    removal footer always print, and the "… more" line whenever a row is counted on it, so
+    a budget smaller than those can be exceeded. `home` is the caller's namespace; a row
+    from any other is a team row (rule or decision), rendered with its author and age, and
+    the block ends with how to remove one."""
     if not hits:
         return "", 0, False
     now = now or naive_utc_now()
     budget_chars = token_budget * _CHARS_PER_TOKEN
+    whole_chars = settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN
     n = len(hits)
     lines = [f"Loom: {n} memor{'y' if n == 1 else 'ies'} anchored to {path} — read before editing:"]
     footer = _removal_footer(hits, home)
     # Each line after the header adds its length and the newline before it.
     used = len(lines[0]) + (len(footer) + 1 if footer else 0)
-    rows = []
-    for h in hits:
-        decision = _is_decision(h)
-        if _is_team(h, home):
-            rows.append(_team_line(h, now, decision=decision))
-        else:
-            marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
-            rows.append(f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}")
+    rows = [_row_line(h, now, home) for h in hits]
+    budgeted = [not _is_whole(h) for h in hits]
+    # No "… more" line can appear when every budgeted row fits and no decision or constraint
+    # left out at the ceiling takes older rows with it, so then nothing is reserved for one.
+    fits = used + sum(len(r) + 1 for r, b in zip(rows, budgeted, strict=True) if b) <= budget_chars
+    fits = fits and not _ceiling_hides(hits, rows, whole_chars)
     left_out = 0
-    # A block that fits whole needs no "… more" line, so nothing is reserved for one.
-    if used + sum(len(row) + 1 for row in rows) <= budget_chars:
-        lines += rows
-    else:
-        hidden: set[str] = set()  # memory_ids of rows whose superseder was left out
-        for i, (h, row) in enumerate(zip(hits, rows, strict=True)):
+    whole_used = 0
+    whole_left: list[dict[str, Any]] = []
+    hidden: set[str] = set()  # memory_ids of rows whose superseder was left out
+    for i, (h, row) in enumerate(zip(hits, rows, strict=True)):
+        if budgeted[i]:
             # Keep room for a "… more" line counting every row that may still be left out.
             most = left_out + n - i - 1
-            tail = len(_more_line(path, most)) + 1
-            if str(h.get("memory_id")) in hidden or used + len(row) + 1 + tail > budget_chars:
+            tail = 0 if fits else len(_more_line(path, most)) + 1
+            keep = used + len(row) + 1 + tail <= budget_chars
+        else:
+            # A value cut at the read is far longer than the ceiling: it cannot print whole.
+            keep = not h.get("value_truncated") and whole_used + len(row) + 1 <= whole_chars
+        if str(h.get("memory_id")) in hidden:
+            # An older row goes with its superseder, counted on the "… more" line and never
+            # named as one to read.
+            left_out += 1
+            hidden.update(h.get("supersedes_ids") or [])
+            continue
+        if not keep:
+            if budgeted[i]:
                 left_out += 1
-                # Without the newer row above it, the row it supersedes would read as current.
-                hidden.update(h.get("supersedes_ids") or [])
-                continue
-            lines.append(row)
+            else:
+                whole_left.append(h)
+            # Without the newer row above it, the row it supersedes would read as current.
+            hidden.update(h.get("supersedes_ids") or [])
+            continue
+        lines.append(row)
+        if budgeted[i]:
             used += len(row) + 1
-    truncated = left_out > 0
-    if truncated:
+        else:
+            whole_used += len(row) + 1
+    if left_out:
         lines.append(_more_line(path, left_out))
+    if whole_left:
+        lines.append(_whole_left_out_line(whole_left, home))
     if footer:
         lines.append(footer)
     text = "\n".join(lines)
+    truncated = bool(left_out or whole_left)
     return text, (len(text) + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN, truncated
 
 
@@ -365,6 +455,7 @@ async def _rows_for(
         "tags": tags,
         "statuses": statuses,
         "lim": int(input.top_k),
+        "whole_bytes": _whole_bytes(),
     }
     ch = get_client()
     found, states_of = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)
