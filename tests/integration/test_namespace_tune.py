@@ -71,7 +71,8 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
             )
 
         def counts() -> tuple[int, int]:
-            # FINAL: a background merge between two counts must not read as a change.
+            # FINAL: a background merge, or a worker's new version of a row (entity
+            # extraction), must not read as a change.
             rows = ch_client.query(
                 "SELECT count() FROM loom.memory FINAL WHERE org = {org:String}",
                 parameters={"org": ORG},
