@@ -4,7 +4,8 @@ Two agents write into one namespace, one of them for two end users. Inspecting a
 lists its own rows apart from the other agent's; inspecting a user lists the rows filed
 under that user apart from the rest; each listed row carries the memory_id, version and
 content hash memory.get serves; the guide and categories are read; the extraction policy
-is not, for a writer on a server that enforces auth; and the inspection writes nothing.
+is not, for a writer on a server that enforces auth; and the inspection changes no
+memory row, writing only the exposure-ledger row for what it listed.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ ORG = unique_org("inspect")
 
 
 @pytest.mark.asyncio
-async def test_inspect_splits_own_from_others_and_writes_nothing(
+async def test_inspect_splits_own_from_others_and_changes_nothing(
     control_plane_url: str, mint_test_token: Any, ch_client: Any
 ) -> None:
     ns = f"in-{uuid.uuid4().hex[:6]}"
@@ -59,6 +60,12 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
         await post(
             "memory.set",
             {"agent": "other", "memory_key": "team/deploy", "value": "Deploys on Tuesdays."},
+        )
+        # An object with a null field: the JSON column drops the field, so the hash cited
+        # must be the one memory.get serves, not the stored column.
+        await post(
+            "memory.set",
+            {"agent": "other", "memory_key": "team/oncall", "value": {"who": "ana", "until": None}},
         )
         await post(
             "memory.set",
@@ -94,16 +101,24 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
 
         before = rows()
         agent = await post("memory.inspect", {"subject": "agent", "id": "bot"})
-        assert agent["own"]["live_rows"] == 2 and agent["others"]["live_rows"] == 2
+        assert agent["own"]["live_rows"] == 2 and agent["others"]["live_rows"] == 3
         assert {r["memory_key"] for r in agent["own"]["newest"]} == {"u1/pref", "u2/pref"}
-        assert {r["memory_key"] for r in agent["others"]["newest"]} == {"team/deploy", "team/pin"}
+        assert {r["memory_key"] for r in agent["others"]["newest"]} == {
+            "team/deploy",
+            "team/oncall",
+            "team/pin",
+        }
         assert "not a read boundary" in agent["own"]["definition"]
         # A high-sensitivity row is listed without its excerpt or its hash.
         (pin,) = [r for r in agent["others"]["newest"] if r["memory_key"] == "team/pin"]
         assert pin["excerpt"] == "" and pin["content_sha256"] == ""
+        assert pin["sensitivity"] == "high"
+        (oncall,) = [r for r in agent["others"]["newest"] if r["memory_key"] == "team/oncall"]
+        served = await post("memory.get", {"agent": "other", "memory_key": "team/oncall"})
+        assert oncall["content_sha256"] == served["content_sha256"] != ""
 
         user = await post("memory.inspect", {"subject": "user", "id": "u1"})
-        assert user["own"]["live_rows"] == 1 and user["others"]["live_rows"] == 3
+        assert user["own"]["live_rows"] == 1 and user["others"]["live_rows"] == 4
         row = user["own"]["newest"][0]
         assert (row["memory_id"], row["content_sha256"]) == (
             held["memory_id"],
@@ -137,12 +152,12 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
         assert user["skipped"] == []
 
         session = await post("memory.inspect", {"subject": "session", "id": "s1"})
-        assert session["own"]["live_rows"] == 1 and session["others"]["live_rows"] == 3
+        assert session["own"]["live_rows"] == 1 and session["others"]["live_rows"] == 4
         assert [r["memory_key"] for r in session["own"]["newest"]] == ["u1/pref"]
 
         nobody = await post("memory.inspect", {"subject": "session", "id": "never-used"})
         assert nobody["own"]["live_rows"] == 0 and nobody["own"]["newest"] == []
-        assert nobody["others"]["live_rows"] == 4
+        assert nobody["others"]["live_rows"] == 5
 
         # The ledger is flushed in batches: wait for every call that names the agent, its
         # two writes and the read above. An inspection names no agent and is not counted.
@@ -165,15 +180,16 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
 
         # Each inspection that listed rows left one exposure-ledger row with their keys.
         for _ in range(40):
-            exposures = ch_client.query(
-                "SELECT count() FROM loom.memory_exposures "
-                "WHERE org = {org:String} AND operation = 'memory.inspect'",
-                parameters={"org": ORG},
+            listed = ch_client.query(
+                "SELECT groupUniqArrayArray(returned_keys) FROM loom.memory_exposures "
+                "WHERE org = {org:String} AND namespace = {ns:String} "
+                "AND operation = 'memory.inspect'",
+                parameters={"org": ORG, "ns": ns},
             ).result_rows[0][0]
-            if exposures:
+            if "team/pin" in listed:
                 break
             await asyncio.sleep(0.5)
-        assert exposures >= 1
+        assert {"u1/pref", "u2/pref", "team/deploy", "team/pin"} <= set(listed)
 
 
 @pytest.mark.asyncio

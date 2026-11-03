@@ -9,8 +9,9 @@ attempted and what succeeded in the window, nothing more. The settings section r
 the namespace guide and categories, and the operator extraction policy only for a
 caller who may read it (an org admin).
 
-Read-only: plain reads over `loom.memory`, `loom.memory_categories`,
-`loom.memory_versions` and `loom.agent_events`; no recall credit or usage event. A
+It changes nothing it reads: plain reads over `loom.memory`, `loom.memory_categories`,
+`loom.memory_versions`, `loom.namespaces` and `loom.agent_events`, no recall credit or
+usage event, and one exposure-ledger row for the rows it lists, as memory.list writes. A
 section that cannot be read lands in `skipped`, never raises.
 """
 
@@ -27,6 +28,7 @@ from server.identity.api.models_namespace_catalog import NamespaceListCategories
 from server.identity.api.models_namespace_guide import NamespaceGuideGetInput
 from server.identity.app.namespace_catalog import handle_namespace_list_categories
 from server.identity.app.namespace_guide import handle_namespace_guide_get
+from server.identity.app.request_scope import request_scope
 from server.memory.api.models_inspect import (
     InspectActivity,
     InspectCall,
@@ -39,6 +41,7 @@ from server.memory.api.models_inspect import (
 )
 from server.memory.app import extraction_policy
 from server.memory.app.exposure_ledger import record_exposure
+from server.memory.app.finding_evidence import revisions_for
 from server.memory.store import inspect as store
 from server.observability.consumer import INSPECTOR_CONSUMERS
 from server.operations.base import Role
@@ -75,6 +78,16 @@ _DEFINITIONS: dict[str, tuple[str, str]] = {
 }
 
 
+def _cited_hash(revision: dict[str, Any] | None, row: dict[str, Any]) -> str:
+    """The cited hash of the listed version: none for a high-sensitivity row, whose hash
+    comes only with the value, or when the row moved on between the two reads."""
+    if row["sensitivity"] == "high" or revision is None:
+        return ""
+    if int(revision["version"]) != int(row["version"]):
+        return ""
+    return str(revision["content_sha256"])
+
+
 def _counts(rows: list[dict[str, Any]], key: str) -> list[InspectCount]:
     totals: dict[str, int] = {}
     for r in rows:
@@ -88,6 +101,9 @@ def _counts(rows: list[dict[str, Any]], key: str) -> list[InspectCount]:
 class _Inspect:
     def __init__(self, inp: MemoryInspectInput) -> None:
         self.inp = inp
+        # A narrowed token is refused before the handler, so this is the whole namespace;
+        # every read of memory rows still takes it.
+        self.scope = request_scope()
         self.skipped: list[str] = []
         self.category_names: dict[str, str] = {}
 
@@ -103,8 +119,11 @@ class _Inspect:
     async def view(self, which: store.View, definition: str) -> InspectView:
         i = self.inp
         args = (i.org, i.namespace, i.subject, i.id, which)
+        scope = self.scope
         out = InspectView(definition=definition)
-        read = await self.guarded(f"{which}.counts", lambda: store.view_counts(*args), None)
+        read = await self.guarded(
+            f"{which}.counts", lambda: store.view_counts(*args, scope=scope), None
+        )
         # Without the counts, the listing cannot be shown to hold the whole view.
         counted = read is not None
         counts = read or []
@@ -116,11 +135,11 @@ class _Inspect:
             out.first_updated_at = min(r["first_at"] for r in counts)
             out.last_updated_at = max(r["last_at"] for r in counts)
         tags = await self.guarded(
-            f"{which}.tags", lambda: store.view_tags(*args, limit=TOP_TAGS), Rows()
+            f"{which}.tags", lambda: store.view_tags(*args, scope=scope, limit=TOP_TAGS), Rows()
         )
         out.top_tags = [InspectCount(name=str(r["tag"]), rows=int(r["rows"])) for r in tags]
         cats = await self.guarded(
-            f"{which}.categories", lambda: store.view_categories(*args), Rows()
+            f"{which}.categories", lambda: store.view_categories(*args, scope=scope), Rows()
         )
         out.categories = [
             InspectCount(
@@ -131,7 +150,9 @@ class _Inspect:
         ]
         if i.sample_limit:
             newest = await self.guarded(
-                f"{which}.newest", lambda: store.view_newest(*args, limit=i.sample_limit), Rows()
+                f"{which}.newest",
+                lambda: store.view_newest(*args, scope=scope, limit=i.sample_limit),
+                Rows(),
             )
             ids = [str(r["id"]) for r in newest]
             versions = await self.guarded(
@@ -139,10 +160,20 @@ class _Inspect:
                 lambda: store.version_counts(i.org, i.namespace, ids),
                 dict[str, int](),
             )
+            # The hash memory.get serves for each listed revision, none for a high row or
+            # one past `namespace_report_hash_max_bytes` (the reports' own citations).
+            cited = await self.guarded(
+                f"{which}.hashes",
+                lambda: revisions_for(
+                    i.org, i.namespace, [{"memory_id": m} for m in ids], scope=scope
+                ),
+                dict[Any, dict[str, Any]](),
+            )
             out.newest = [
                 InspectRow(
                     **{k: v for k, v in r.items() if k != "id"},
                     memory_id=str(r["id"]),
+                    content_sha256=_cited_hash(cited.get(str(r["id"])), r),
                     versions=versions.get(str(r["id"]), 0),
                 )
                 for r in newest
@@ -231,8 +262,6 @@ class _Inspect:
 def _record_exposure(input: MemoryInspectInput, keys: list[str]) -> None:
     """One exposure-ledger row for the rows listed, as memory.list writes: walking the
     subjects of a namespace lists its newest rows, which the ledger must count."""
-    if not keys:
-        return
     try:
         record_exposure(
             operation="memory.inspect",

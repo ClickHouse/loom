@@ -4911,7 +4911,7 @@ export interface InspectRow {
   memory_key: string;
   memory_id: string;
   version: number;
-  content_sha256: string;
+  content_sha256?: string;
   memory_type: string;
   status: string;
   source_class: string;
@@ -4920,6 +4920,7 @@ export interface InspectRow {
   session_id: string;
   actor: string;
   updated_at: string; // date-time
+  sensitivity: string;
   versions?: number;
   excerpt?: string;
 }

@@ -54,7 +54,6 @@ def _newest(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
             "memory_key": "deploy/window",
             "id": MID,
             "version": 7,
-            "content_sha256": "a" * 64,
             "memory_type": "semantic",
             "status": "active",
             "source_class": "asserted",
@@ -63,7 +62,7 @@ def _newest(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
             "session_id": "-",
             "actor": "process:bot",
             "updated_at": T1,
-            "high": False,
+            "sensitivity": "",
         }
     ]
 
@@ -103,6 +102,21 @@ def _ch(
             [{"category_id": "c1", "name": "decisions", "description": ""}],
         )
     )
+
+
+@pytest.fixture(autouse=True)
+def cited(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """The reports' citation read: the hash memory.get serves for version 7 of MID. Each
+    call's ids are kept."""
+    calls: list[list[str]] = []
+
+    async def revisions_for(org: str, ns: str, samples: Any, *, scope: Any) -> Any:
+        ids = [s["memory_id"] for s in samples]
+        calls.append(ids)
+        return {m: {"version": 7, "content_sha256": "a" * 64} for m in ids if m == MID}
+
+    monkeypatch.setattr(mi, "revisions_for", revisions_for)
+    return calls
 
 
 @pytest.fixture
@@ -161,6 +175,8 @@ async def test_a_view_counts_lists_and_cites(ch: RecordingCH) -> None:
     assert (own.first_updated_at, own.last_updated_at) == (T0, T1)
     row = own.newest[0]
     assert (row.memory_id, row.version, row.versions, row.actor) == (MID, 7, 3, "process:bot")
+    # The hash is the one memory.get serves, from the reports' citation read.
+    assert row.content_sha256 == "a" * 64 and row.sensitivity == ""
     # The excerpt is the decoded preview of the listed version, read for that row only.
     assert row.excerpt == "Deploys on Tuesdays."
     (preview,) = ch.statements("value_preview")[:1]
@@ -318,7 +334,7 @@ async def test_a_high_sensitivity_row_lists_no_excerpt_and_no_hash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def high(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        return [{**_newest(sql, params)[0], "high": True}]
+        return [{**_newest(sql, params)[0], "sensitivity": "high"}]
 
     fake = _ch(newest=high)
     fake.strict = False
@@ -341,9 +357,34 @@ async def test_the_listed_rows_are_recorded_in_the_exposure_ledger(
     assert row["operation"] == "memory.inspect" and row["keys"] == ["deploy/window"] * 2
     assert (row["org"], row["namespace"], row["top_k"]) == ("o", "ns", 1)
 
+    # Nothing listed: no keys, which the ledger writes no row for.
     rows.clear()
     await mi.handle_memory_inspect(_inp(sample_limit=0))
-    assert rows == []
+    assert [r["keys"] for r in rows] == [[]]
+
+
+@pytest.mark.asyncio
+async def test_a_row_revised_between_reads_is_listed_without_a_hash(
+    ch: RecordingCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def moved_on(org: str, ns: str, samples: Any, *, scope: Any) -> Any:
+        return {MID: {"version": 8, "content_sha256": "b" * 64}}
+
+    monkeypatch.setattr(mi, "revisions_for", moved_on)
+    out = await mi.handle_memory_inspect(_inp(sample_limit=1))
+    (row,) = out.own.newest
+    assert row.version == 7 and row.content_sha256 == ""
+
+
+@pytest.mark.asyncio
+async def test_every_memory_read_takes_the_request_scope(ch: RecordingCH) -> None:
+    from server.identity.domain.read_scope import ReadFilters
+
+    narrowed = ReadFilters(scope="own_user", user_id="u9", session_id=None)
+    rows = await mi.store.view_counts("o", "ns", "agent", "bot", "others", scope=narrowed)
+    assert rows is not None
+    (s,) = ch.statements("GROUP BY memory_type, status, source_class")
+    assert "user_id = {" in s.sql and "u9" in s.params.values()
 
 
 @pytest.mark.asyncio

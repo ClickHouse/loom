@@ -1,8 +1,9 @@
 """The reads behind `memory.inspect`: one namespace's live rows split by one identity
 column, the subject's ledger calls, and the version counts of the rows it lists.
 
-Every statement filters on (org, namespace), the prefix of each table's sort key. The
-subject's column is one of three fixed names, never a caller's value; the id is bound.
+Every statement filters on (org, namespace), the prefix of each table's sort key, and
+every read of memory rows takes the caller's read `scope`. The subject's column is one
+of three fixed names, never a caller's value; the id is bound.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from collections.abc import Sequence
 from typing import Any, Literal
 
 from server.core.repo_base import _CHClient, _default_client
+from server.identity.domain.read_scope import ReadFilters, scope_and
 
 # The identity column each subject is matched on.
 SUBJECT_COLUMN: dict[str, str] = {"user": "user_id", "agent": "agent", "session": "session_id"}
@@ -24,9 +26,10 @@ _LIVE = (
 )
 
 
-def _view(subject: str, view: View) -> str:
+def _view(subject: str, view: View, scope: ReadFilters, params: dict[str, Any]) -> str:
     col = SUBJECT_COLUMN[subject]
-    return f"{col} = {{id:String}}" if view == "own" else f"{col} != {{id:String}}"
+    split = f"{col} = {{id:String}}" if view == "own" else f"{col} != {{id:String}}"
+    return split + scope_and(scope, params)
 
 
 def _params(org: str, namespace: str, subject_id: str, **extra: Any) -> dict[str, Any]:
@@ -40,17 +43,19 @@ async def view_counts(
     subject_id: str,
     view: View,
     *,
+    scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """(memory_type, status, source_class, rows, first, last) over the view's rows."""
+    params = _params(org, namespace, subject_id)
     return await (ch or _default_client()).query_all(
         f"""
         SELECT memory_type, toString(status) AS status, source_class, count() AS rows,
                min(updated_at) AS first_at, max(updated_at) AS last_at
-        {_LIVE} AND {_view(subject, view)}
+        {_LIVE} AND {_view(subject, view, scope, params)}
         GROUP BY memory_type, status, source_class
         """,
-        params=_params(org, namespace, subject_id),
+        params=params,
     )
 
 
@@ -61,17 +66,19 @@ async def view_tags(
     subject_id: str,
     view: View,
     *,
+    scope: ReadFilters,
     limit: int,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The view's most used tags, (tag, rows)."""
+    params = _params(org, namespace, subject_id, lim=int(limit))
     return await (ch or _default_client()).query_all(
         f"""
         SELECT tag, count() AS rows
-        FROM (SELECT arrayJoin(tags) AS tag {_LIVE} AND {_view(subject, view)})
+        FROM (SELECT arrayJoin(tags) AS tag {_LIVE} AND {_view(subject, view, scope, params)})
         GROUP BY tag ORDER BY rows DESC, tag LIMIT {{lim:UInt32}}
         """,
-        params=_params(org, namespace, subject_id, lim=int(limit)),
+        params=params,
     )
 
 
@@ -82,20 +89,22 @@ async def view_categories(
     subject_id: str,
     view: View,
     *,
+    scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """(category_id, rows): the categories the view's rows are filed under."""
+    params = _params(org, namespace, subject_id)
     return await (ch or _default_client()).query_all(
         f"""
         SELECT c.category_id AS category_id, count() AS rows
         FROM (SELECT memory_key, category_id FROM loom.memory_categories FINAL
               WHERE org = {{org:String}} AND namespace = {{ns:String}}
                 AND tombstoned_at IS NULL) AS c
-        INNER JOIN (SELECT memory_key {_LIVE} AND {_view(subject, view)}) AS m
+        INNER JOIN (SELECT memory_key {_LIVE} AND {_view(subject, view, scope, params)}) AS m
           ON c.memory_key = m.memory_key
         GROUP BY category_id ORDER BY rows DESC
         """,
-        params=_params(org, namespace, subject_id),
+        params=params,
     )
 
 
@@ -106,29 +115,29 @@ async def view_newest(
     subject_id: str,
     view: View,
     *,
+    scope: ReadFilters,
     limit: int,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """The view's newest rows: identifiers, then `value_preview` for those rows only; a
-    high-sensitivity row has neither an excerpt nor a hash. The
-    order is not the sort key, so under FINAL one statement would read every row's value
-    before the limit; the rows are located without it, and their previews read by
-    (memory_id, version), as `memory.list` does. The id is selected as `id`: an alias
-    named memory_id would shadow the column."""
+    """The view's newest rows: identifiers, then `value_preview` for those rows only, none
+    for a high-sensitivity row. The order is not the sort key, so under FINAL one
+    statement would read every row's value before the limit; the rows are located without
+    it, and their previews read by (memory_id, version), as `memory.list` does. The id is
+    selected as `id`: an alias named memory_id would shadow the column."""
     client = ch or _default_client()
+    params = _params(org, namespace, subject_id, lim=int(limit))
     located = await client.query_all(
         f"""
-        SELECT memory_key, toString(memory_id) AS id, version,
-               toString(content_sha256) AS content_sha256, memory_type,
+        SELECT memory_key, toString(memory_id) AS id, version, memory_type,
                toString(status) AS status, source_class, agent, user_id, session_id, actor,
-               updated_at, sensitivity = 'high' AS high
-        {_LIVE} AND {_view(subject, view)}
+               updated_at, sensitivity
+        {_LIVE} AND {_view(subject, view, scope, params)}
         ORDER BY updated_at DESC, memory_key
         LIMIT {{lim:UInt32}}
         """,
-        params=_params(org, namespace, subject_id, lim=int(limit)),
+        params=params,
     )
-    pairs = [(r["id"], int(r["version"])) for r in located if not r["high"]]
+    pairs = [(r["id"], int(r["version"])) for r in located if r["sensitivity"] != "high"]
     previews: dict[tuple[str, int], str] = {}
     if pairs:
         rows = await client.query_all(
@@ -145,16 +154,7 @@ async def view_newest(
             (r["id"], int(r["version"])): excerpt(str(r["value_preview"]), bool(r["cut"]))
             for r in rows
         }
-    # A high-sensitivity row gives no excerpt and no hash: a short secret's hash can be
-    # guessed, so it comes only with the value (memory.list withholds it too).
-    return [
-        {
-            **{k: v for k, v in r.items() if k != "high"},
-            "content_sha256": "" if r["high"] else r["content_sha256"],
-            "excerpt": previews.get((r["id"], int(r["version"])), ""),
-        }
-        for r in located
-    ]
+    return [{**r, "excerpt": previews.get((r["id"], int(r["version"])), "")} for r in located]
 
 
 def excerpt(preview: str, cut: bool) -> str:

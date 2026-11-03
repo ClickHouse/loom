@@ -173,7 +173,8 @@ Snapshots and point-in-time rollback (`namespace.snapshot`, `namespace.restore`,
 
 `memory.inspect` (viewer) takes `subject` (`user`, `agent` or `session`) and `id`, the
 `user_id`, agent name or `session_id` to look at; the unset `-` and `*` name no one and
-are refused. It writes nothing: no recall credit, no usage event.
+are refused. It changes nothing it reads: no recall credit, no usage event. Like
+`memory.list`, it writes one exposure-ledger row for the rows it lists.
 
 - **`own`**: the live rows whose identity names the subject. For an agent that is what it
   wrote; the agent name records the writer and is not a read boundary. For a user, the
@@ -187,11 +188,12 @@ are refused. It writes nothing: no recall credit, no usage event.
   agent as well.
 - Each view counts its rows by type, status and source class, lists its top tags and the
   registered categories its rows are filed under, and its newest rows (`sample_limit`,
-  default 10) with `memory_id`, `version`, `content_sha256`, `actor`, the number of
-  versions the history holds (the entity tagger's re-emits included, which
-  `memory.history` leaves out) and a 200-character excerpt (neither the excerpt nor the
-  hash for a high-sensitivity row). `complete` is false when the listing holds fewer rows than the view, or the
-  view's counts could not be read.
+  default 10) with `memory_id`, `version`, the `content_sha256` `memory.get` serves,
+  `actor`, `sensitivity`, the number of versions the history holds (the entity
+  tagger's re-emits included, which `memory.history` leaves out) and a 200-character
+  excerpt. A high-sensitivity row has neither the excerpt nor the hash, and a value
+  larger than `namespace_report_hash_max_bytes` has no hash. `complete` is false when
+  the listing holds fewer rows than the view, or the view's counts could not be read.
 - **`activity`**: the calls the ledger files under the subject per operation in
   `window_seconds` (default 7 days), attempted and succeeded, without the dashboard's
   and the assistant's. The ledger files a call under the `agent`, `user_id` and

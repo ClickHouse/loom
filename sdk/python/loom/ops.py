@@ -12202,7 +12202,7 @@ class InspectRow(TypedDict, total=False):
     memory_key: Required[str]
     memory_id: Required[str]
     version: Required[int]
-    content_sha256: Required[str]
+    content_sha256: NotRequired[str]
     memory_type: Required[str]
     status: Required[str]
     source_class: Required[str]
@@ -12211,6 +12211,7 @@ class InspectRow(TypedDict, total=False):
     session_id: Required[str]
     actor: Required[str]
     updated_at: Required[str]  # date-time as ISO-8601 text
+    sensitivity: Required[str]
     versions: NotRequired[int]
     excerpt: NotRequired[str]
 

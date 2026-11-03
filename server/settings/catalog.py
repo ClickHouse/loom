@@ -3537,8 +3537,8 @@ class NamespaceSettings(BaseModel):
     # Most live rows the namespace audit's value scan reads (it is O(total value
     # bytes)); above it that check is skipped and says so.
     namespace_audit_index_row_scan_cap: Annotated[int, LIVE] = Field(default=20000, ge=1)
-    # Largest value (bytes) namespace.audit and namespace.validate read to cite a row's
-    # content hash; a larger row is cited with none. 0 = cite no hash.
+    # Largest value (bytes) namespace.audit, namespace.validate and memory.inspect read
+    # to cite a row's content hash; a larger row is cited with none. 0 = cite no hash.
     namespace_report_hash_max_bytes: Annotated[int, LIVE] = Field(default=65536, ge=0, le=2**32 - 1)
     # Seconds a namespace's relation cardinalities (one or many) are cached for the
     # triple writer.

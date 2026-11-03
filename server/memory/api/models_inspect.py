@@ -18,7 +18,8 @@ class MemoryInspectInput(BaseModel):
 
     `subject` names which identity column `id` is matched against (`user_id`, `agent`,
     `session_id`). The subject is a filter inside the namespace the caller may already
-    read, never a wider grant. Nothing is written: no recall credit, no usage event.
+    read, never a wider grant. It changes nothing it reads: no recall credit, no usage
+    event; one exposure-ledger row records the rows it lists.
     """
 
     org: str
@@ -55,9 +56,10 @@ class InspectRow(BaseModel):
     memory_key: str
     memory_id: str
     version: int
-    # The value's hash, as memory.get serves it; empty for a high-sensitivity row, whose
-    # hash comes only with the value.
-    content_sha256: str
+    # The hash memory.get serves for this version (what `if_match_sha256` takes); empty
+    # for a high-sensitivity row, whose hash comes only with the value, and for a value
+    # larger than `namespace_report_hash_max_bytes`.
+    content_sha256: str = ""
     memory_type: str
     status: str
     source_class: str
@@ -68,6 +70,8 @@ class InspectRow(BaseModel):
     # `process:<subject>`); empty on rows written before it was recorded.
     actor: str
     updated_at: datetime
+    # `high` rows are listed without an excerpt or a hash.
+    sensitivity: str
     # Versions the history table holds for this row, the entity tagger's re-emits
     # included (memory.history leaves those out).
     versions: int = 0
