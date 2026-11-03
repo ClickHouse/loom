@@ -118,11 +118,11 @@ async def _rerank(
     contexts: dict[tuple[str, str, int], str],
     top: int,
 ) -> tuple[list[_SearchHit], bool]:
-    """The fused head (`top` hits, the pool the legs fetched) in the reranker's order, the
-    rest after it, and whether the reranker produced the order. Each candidate shows the
-    chunk's context (title, description, breadcrumb) before its text. A held or refused
-    model call fails the search; on a timeout, or any other failure (the rerank service
-    hands back its input), the fused order is kept."""
+    """The first `top` fused hits in the reranker's order, the rest after it, and
+    whether the reranker produced the order. Each candidate shows the chunk's context
+    (title, description, breadcrumb) before its text. A held or refused model call fails
+    the search; on a timeout, or any other failure (the rerank service hands back its
+    input), the fused order is kept."""
     from server.memory.app.rerank import RerankCandidate, rerank
 
     chars = settings.knowledge_search_rerank_excerpt_chars

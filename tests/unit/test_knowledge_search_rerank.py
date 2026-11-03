@@ -178,6 +178,36 @@ async def test_the_search_reads_a_rerank_pool_and_reports_the_reranker(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_each_chunk_shows_its_own_namespaces_context(monkeypatch) -> None:
+    """Two namespaces hold the same source URI under different contexts: each chunk is
+    shown its own namespace's context."""
+    from server.knowledge.app.search import ChunkHit
+
+    seen: list[str] = []
+    _stub_handler(monkeypatch, [], seen=seen)
+    per_ns = [
+        (ns, [ChunkHit(ns, "a.md", 0, f"text {ns}", [], distance=d, context=f"ctx {ns}")])
+        for ns, d in (("n", 0.1), ("m", 0.2))
+    ]
+
+    def _search(input: Any, embedder: Any, vec: Any, pool: int):
+        async def _run(namespaces: list[str]) -> list[tuple[str, list[Any]]]:
+            return per_ns
+
+        return _run
+
+    async def _named(input: Any) -> list[str]:
+        return ["n", "m"]
+
+    monkeypatch.setattr(ks, "_namespaces_search", _search)
+    monkeypatch.setattr(ks, "_named_namespaces", _named)
+    await ks.handle_knowledge_search(
+        _input(rerank="builtin:openai", namespaces=["n", "m"], collapse_sections=False)
+    )
+    assert sorted(seen) == ["ctx m\n\ntext m", "ctx n\n\ntext n"]
+
+
+@pytest.mark.asyncio
 async def test_sections_collapse_after_the_rerank_so_its_pick_represents_the_section(
     monkeypatch,
 ) -> None:
