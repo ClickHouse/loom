@@ -1,7 +1,9 @@
-"""What a domain that registers namespaces needs from identity.
+"""What other domains need from identity's namespace directory: registering a
+namespace, and reading its row and retention.
 
-A code repository or a tracker source reads the namespace directory and makes
-its creator the admin through these, not through identity's store.
+A code repository or a tracker source reads the namespace directory and makes its
+creator the admin through these, and a report reads a namespace's retention here, not
+through identity's store.
 """
 
 from __future__ import annotations

@@ -1,12 +1,12 @@
 """memory.inspect against a live Loom + ClickHouse.
 
 Three agents write into one namespace, one of them for two end users and one a
-high-sensitivity row. Inspecting an agent
-lists its own rows apart from the other agent's; inspecting a user lists the rows filed
-under that user apart from the rest; each listed row carries the memory_id, version and
-content hash memory.get serves; the guide and categories are read; the extraction policy
-is not, for a writer on a server that enforces auth; and the inspection changes no
-memory row, writing only the exposure-ledger row for what it listed.
+high-sensitivity row. Inspecting an agent lists its own rows apart from the other
+agents'; inspecting a user lists the rows filed under that user apart from the rest; each
+listed row carries the memory_id, version and content hash memory.get serves; the guide
+and categories are read; the extraction policy is not, for a writer on a server that
+enforces auth; and the inspection changes no memory row, writing only the
+exposure-ledger row for what it listed.
 """
 
 from __future__ import annotations

@@ -908,6 +908,37 @@ async def _mentor_evidence(ch: RecordingCH, c: dict[str, Any]) -> None:
     await mentor_store.graded_runs(*who, ch=ch)
 
 
+async def _inspect_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """Every read `memory.inspect` makes of one view, under the whole namespace or a
+    narrowed scope."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+    from server.memory.store import inspect as store
+
+    scope = (
+        WHOLE_NAMESPACE
+        if c["scope"] == "namespace"
+        else ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    )
+    view = (ORG, NS, c["subject"], "x1", c["view"])
+    await store.view_counts(*view, scope=scope, ch=ch)
+    await store.view_tags(*view, scope=scope, limit=20, ch=ch)
+    await store.view_categories(*view, scope=scope, ch=ch)
+    await store.view_newest(*view, scope=scope, limit=10, ch=ch)
+    await store.version_counts(ORG, NS, [_INSPECT_ID], ch=ch)
+    await store.subject_calls(
+        ORG,
+        NS,
+        c["subject"],
+        "x1",
+        window_seconds=604800,
+        skip_consumers=["loom-ui", "loom-assistant"],
+        ch=ch,
+    )
+
+
+_INSPECT_ID = "00000000-0000-0000-0000-000000000001"
+
+
 def cases() -> list[Case]:
     out = [
         Case(
@@ -939,6 +970,29 @@ def cases() -> list[Case]:
     )
     out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
     out.append(Case("grants_repo", "server.identity.store.grants", _grants_repo, {}))
+    out.append(
+        Case(
+            "memory_inspect",
+            "server.memory.store.inspect",
+            _inspect_reads,
+            {
+                "subject": ("user", "agent", "session"),
+                "view": ("own", "others"),
+                "scope": ("namespace", "own_user"),
+            },
+            # One listed row, so the preview read runs too.
+            rows=lambda sql, params: [
+                {
+                    "id": _INSPECT_ID,
+                    "version": 1,
+                    "versions": 1,
+                    "sensitivity": "",
+                    "value_preview": '"x"',
+                    "cut": 0,
+                }
+            ],
+        )
+    )
     out.append(
         Case(
             "mentor_evidence",
