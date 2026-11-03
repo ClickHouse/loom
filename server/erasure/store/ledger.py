@@ -30,7 +30,7 @@ async def list_stuck_in_progress(
     ch = ch or _default_client()
     rows = await ch.query_all(
         """
-        SELECT id, org, scope_type, scope_value, requester, urgency, purge,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
                attempts, steps_completed, requested_at, failure_reason, residue
         FROM loom.erasure_requests FINAL
         WHERE status IN ('in_progress', 'failed')
@@ -68,7 +68,7 @@ async def list_unabandoned_exhausted(
     ch = ch or _default_client()
     rows = await ch.query_all(
         """
-        SELECT id, org, scope_type, scope_value, requester, urgency, purge,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
                attempts, steps_completed, requested_at, failure_reason,
                residue_count, residue, verified_at
         FROM loom.erasure_requests FINAL
@@ -106,7 +106,7 @@ async def list_failed_requests(
         params["org"] = org
     rows = await ch.query_all(
         f"""
-        SELECT id, org, scope_type, scope_value, requester, urgency, purge,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
                attempts, steps_completed, requested_at, failure_reason,
                residue_count, residue, verified_at
         FROM loom.erasure_requests FINAL
@@ -136,7 +136,7 @@ async def list_completed_requests(
         params["org"] = org
     rows = await ch.query_all(
         f"""
-        SELECT id, org, scope_type, scope_value, requester, urgency,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
                attempts, steps_completed, requested_at, failure_reason,
                residue_count, residue, verified_at
         FROM loom.erasure_requests FINAL

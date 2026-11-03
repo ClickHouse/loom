@@ -103,7 +103,7 @@ async def _completed_saga(org: str, now: datetime) -> str:
     done = [name for name, _ in NAMESPACE_STEPS] + ["verify.residue"]
     await checkpoint(
         row=request_row_template(
-            erasure_id=erasure_id, input=request, requested_at=now, attempts=1
+            erasure_id=erasure_id, input=request, actor="itest", requested_at=now, attempts=1
         ),
         status="completed",
         steps_completed=done,

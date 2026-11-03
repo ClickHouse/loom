@@ -284,6 +284,16 @@ schema. These rules keep that safe. The operator procedure is in
     roles as registered, which also ends its tokens). The mixed-version gate does not check
     this rule.
 
+27. **An erasure saga's audit actor** (`loom.erasure_requests.actor`, migration
+    `081_erasure_request_actor.sql`): N-1 inserts ledger rows without the column, so a
+    saga it checkpoints reads `''` afterwards, and a later resume by N names the resuming
+    process (`erasure-recovery-worker` or the CLI command) on its failed and completed
+    rows instead of the principal that asked. N-1 also still writes the body's
+    `requester` as the `actor` of the `erasure.*` rows of a request or export it serves,
+    or of a saga it resumes. No gate holds the rollout: the cost is the actor named on
+    those audit rows, nothing is lost or refused, and it ends once no N-1 replica serves.
+    The mixed-version gate does not check this rule.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,

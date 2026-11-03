@@ -43,6 +43,7 @@ from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.rows import CheckpointRow, RequestRow, VerifyColumns
 from server.memory.app import webhooks
+from server.memory.app.provenance import writer_actor
 from server.observability import audit
 
 log = logging.getLogger(__name__)
@@ -73,20 +74,34 @@ def input_from_ledger_row(row: Mapping[str, Any]) -> ErasureRequestInput:
     )
 
 
+# The actor the recovery worker writes as: a process, no principal.
+RECOVERY_WORKER_ACTOR = "erasure-recovery-worker"
+
+
+def audit_actor(row: Mapping[str, Any]) -> str:
+    """The actor of a saga's failed and completed rows: the ledger row's, else (a
+    row an older build wrote) the resuming process."""
+    return row["actor"] or writer_actor(RECOVERY_WORKER_ACTOR)
+
+
 def request_row_template(
     *,
     erasure_id: str,
     input: ErasureRequestInput,
+    actor: str,
     requested_at: datetime,
     attempts: int,
 ) -> RequestRow:
-    """Common columns for every erasure_requests row we write."""
+    """Common columns for every erasure_requests row we write. `actor` is the
+    request's audit actor (`writer_actor` at request time, '' on a row an older
+    build wrote); `requester` is what the body declares."""
     return {
         "id": erasure_id,
         "org": input.org,
         "scope_type": input.scope_type,
         "scope_value": input.scope_value,
         "requester": input.requester,
+        "actor": actor,
         "urgency": input.urgency,
         "purge": bool(input.purge),
         "attempts": attempts,
@@ -153,6 +168,9 @@ async def begin_erasure(
     row = request_row_template(
         erasure_id=erasure_id,
         input=input,
+        # Never '': that marks a row an older build wrote, which a resume names
+        # after the resuming process.
+        actor=writer_actor(input.requester) or "-",
         requested_at=now,
         attempts=1,
     )
@@ -168,11 +186,12 @@ async def begin_erasure(
         event_type="erasure.started",
         org=input.org,
         namespace=audit_namespace(input.scope_type, input.scope_value),
-        actor=input.requester,
+        actor=row["actor"],
         subject={
             "erasure_id": erasure_id,
             "scope_type": input.scope_type,
             "scope_value": input.scope_value,
+            "requester": input.requester,
         },
         request_id=erasure_id,
     )
@@ -338,9 +357,10 @@ async def run_saga(
                 event_type="erasure.failed",
                 org=input.org,
                 namespace=audit_namespace(input.scope_type, input.scope_value),
-                actor=input.requester,
+                actor=audit_actor(row),
                 subject={
                     "erasure_id": erasure_id,
+                    "requester": input.requester,
                     "error": str(e)[:512],
                     "steps_completed": sorted(completed),
                 },
@@ -383,11 +403,12 @@ async def run_saga(
         event_type="erasure.completed",
         org=input.org,
         namespace=audit_namespace(input.scope_type, input.scope_value),
-        actor=input.requester,
+        actor=audit_actor(row),
         subject={
             "erasure_id": erasure_id,
             "scope_type": input.scope_type,
             "scope_value": input.scope_value,
+            "requester": input.requester,
             "steps": [s.model_dump() for s in steps],
         },
         request_id=erasure_id,

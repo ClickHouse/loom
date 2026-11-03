@@ -346,7 +346,8 @@ async def test_export_emits_audit_row(admin_agent, ch_client) -> None:
         rows = ch_client.query(
             """
             SELECT count() FROM loom.audit_log
-            WHERE event_type = 'erasure.exported' AND actor = 'compliance@example.com'
+            WHERE event_type = 'erasure.exported' AND actor = 'process:test-suite'
+              AND JSONExtractString(subject, 'requester') = 'compliance@example.com'
               AND position(subject, {u:String}) > 0
             """,
             parameters={"u": user},

@@ -160,7 +160,7 @@ async def _drive(monkeypatch, *, previously_completed, residue):
     )
     out = await h.run_saga(
         input=inp,
-        row={"id": "e1"},
+        row={"id": "e1", "actor": "human:t"},
         erasure_id="e1",
         requested_at=_now(),
         previously_completed=set(previously_completed),
@@ -202,6 +202,7 @@ async def test_the_recovery_worker_hands_the_ledgers_residue_to_the_saga(monkeyp
     ):
         seen["residue"] = residue
         seen["previously_completed"] = set(previously_completed)
+        seen["actor"] = row["actor"]
         return SimpleNamespace(
             status="completed", failure_reason="", steps_completed=[], residue_count=0
         )
@@ -214,6 +215,7 @@ async def test_the_recovery_worker_hands_the_ledgers_residue_to_the_saga(monkeyp
         "scope_type": "namespace_list",
         "scope_value": '{"namespaces": ["lme-1"], "purge": true}',
         "requester": "t",
+        "actor": "human:t",
         "urgency": "normal",
         "attempts": 1,
         "steps_completed": ["memory_chunks.tombstone"],
@@ -225,6 +227,7 @@ async def test_the_recovery_worker_hands_the_ledgers_residue_to_the_saga(monkeyp
     await w._recover_one(row=row, cfg=w.RecoveryConfig(), result=result)
     assert seen["residue"] == json.dumps(_OPERATOR_RESIDUE)
     assert result.completed == 1
+    assert seen["actor"] == "human:t"  # the ledger's actor, carried into the resumed run
 
 
 async def test_the_cli_resume_reopens_from_the_fresh_census_and_reports_what_ran(
@@ -239,6 +242,7 @@ async def test_the_cli_resume_reopens_from_the_fresh_census_and_reports_what_ran
         "scope_type": "namespace_list",
         "scope_value": '{"namespaces": ["lme-1"], "purge": true, "external": false}',
         "requester": "t",
+        "actor": "human:t",
         "urgency": "normal",
         "attempts": 6,
         "requested_at": _now(),
@@ -267,6 +271,7 @@ async def test_the_cli_resume_reopens_from_the_fresh_census_and_reports_what_ran
         *, input, row, erasure_id, requested_at, previously_completed, residue=None
     ):
         seen["previously_completed"] = set(previously_completed)
+        seen["actor"] = row["actor"]
         steps = [
             SimpleNamespace(
                 step="memory.tombstone", rows_affected=0, notes="skipped (resumed from checkpoint)"
@@ -304,6 +309,7 @@ async def test_the_cli_resume_reopens_from_the_fresh_census_and_reports_what_ran
     )
     assert await hygiene._re_verify_run(object(), args) == 0
     assert seen["previously_completed"] == {"memory.tombstone"}
+    assert seen["actor"] == "human:t"  # the ledger's actor, carried into the resumed run
     text = capsys.readouterr().out
     assert (
         "re-opening ['memory_chunks.tombstone', 'source_links.tombstone', 'summaries.tombstone']"
@@ -332,6 +338,7 @@ def test_a_ledger_row_resumes_as_the_request_it_records() -> None:
         "scope_type": "namespace",
         "scope_value": "ns",
         "requester": "t",
+        "actor": "human:t",
         "urgency": "",
     }
     inp = h.input_from_ledger_row(row)
@@ -359,6 +366,7 @@ async def test_a_ledger_row_that_no_longer_validates_is_counted_and_never_runs(m
         "scope_type": "namespace_list",
         "scope_value": "not json",
         "requester": "t",
+        "actor": "human:t",
         "urgency": "normal",
         "attempts": 1,
         "steps_completed": [],
