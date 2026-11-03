@@ -316,6 +316,21 @@ def test_decisions_past_the_ceiling_are_left_out_and_named() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_the_ceiling_is_read_from_its_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_for_file_whole_tokens", 100)
+    ch = _CH([_decision(f"design/{i}", "w" * 200, namespace=None) for i in range(2)])
+    monkeypatch.setattr(mff, "get_client", lambda: ch)
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
+    )
+    # the read limit and the render share the setting: one 200-character decision fits
+    assert ch.params["whole_bytes"] == 400
+    assert out.truncated is True and out.rendered.splitlines()[-1].endswith(": design/1.")
+
+
 def test_a_decision_cut_at_the_read_is_left_out_and_named() -> None:
     # Longer than the ceiling: it cannot print whole, and the rows after it still print.
     cut = _decision("design/huge", value_truncated=True) | {"value": json.dumps("h" * 80)[:40]}
