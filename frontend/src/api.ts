@@ -550,21 +550,28 @@ export async function setMemory(
  *  server derives the others from `source_trace`. */
 const DECLARABLE_SOURCE_CLASSES = new Set(["derived", "external", "imported"]);
 
-/** Pin a row read with `getMemory`. memory.pin writes a whole new version as
- *  memory.set does, so the row's fields go back with it; leaving ttl_seconds out
- *  keeps the row's expiry. */
+/** The identity of a row read with `getMemory`, for a write back to that row:
+ *  memory.get may answer with another agent's or session's row, and a write under
+ *  the caller's identity would land on a second row beside it. */
+export function rowIdentity(id: Identity, row: MemoryDetail): Identity & { user_id: string; session_id: string } {
+  return {
+    ...id,
+    agent: row.agent || id.agent,
+    user_id: row.user_id || "-",
+    session_id: row.session_id || "-",
+  };
+}
+
+/** Pin a row read with `getMemory`, at `rowIdentity`. memory.pin writes a whole new
+ *  version as memory.set does, so the row's fields go back with it; leaving
+ *  ttl_seconds out keeps the row's expiry. */
 export async function pinMemory(
   id: Identity,
   key: string,
   row: MemoryDetail,
 ): Promise<{ version: number; pinned: boolean }> {
   const body: Record<string, unknown> = {
-    ...id,
-    // The row's own identity: memory.get may answer with another agent's, user's or
-    // session's row, and a pin under the caller's would write a second row beside it.
-    agent: row.agent || id.agent,
-    user_id: row.user_id || "-",
-    session_id: row.session_id || "-",
+    ...rowIdentity(id, row),
     memory_key: key,
     value: row.value,
     memory_type: row.memory_type,
