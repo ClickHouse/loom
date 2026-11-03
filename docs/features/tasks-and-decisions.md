@@ -385,10 +385,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
     the row's quote but is refused the document it cites. The rows are the trunk's: erasing the document's namespace
     leaves them, and `memory.delete` in the trunk removes them.
 
-  A row the run keeps as it is (pinned, attested or with a recorded outcome, and the same verbatim fields, or one the
-  retire step keeps because its reasoning is still in the document), and a row it tags `source-changed`, gains the
-  `repo:<id>` tag by a tags-only write; another writer's unconfirmed row gains none, nor does a row that carries
-  another repository's tag already.
+  Under `--into source` for a document outside the trunk, a row the run keeps as it is (pinned, attested or with a
+  recorded outcome, and the same verbatim fields, or one the retire step keeps because its reasoning is still in the
+  document), and a row it tags `source-changed`, gains the `repo:<id>` tag by a tags-only write; another writer's
+  unconfirmed row gains none, nor does a row that carries another repository's tag already.
   The run reads the document's namespace and the repository's, and writes where the rows go; with an auth context
   bound it checks each (viewer, viewer, and writer, or viewer for a dry run) and refuses before any model call. The
   CLI runs with none, as the operator. Every memory row the reconcile and retire steps read is in the namespace the

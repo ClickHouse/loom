@@ -511,8 +511,8 @@ async def _read_own(
             return [], "this document's namespace belongs to a repository you may not read"
         if await _extractor_rows(org, other, t.doc_namespace, source_uri, first=True):
             return [], (
-                f"this document's decisions are in {org}/{other}; run with the --repo and "
-                "--into that wrote them, or delete them there first"
+                f"this document's decisions are in {org}/{other}; run as the run that wrote "
+                "them (with no --repo, or its --repo and --into), or delete them there first"
             )
     return await _own_records(org, t.rows_namespace, rows), ""
 

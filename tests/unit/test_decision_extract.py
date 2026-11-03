@@ -167,7 +167,8 @@ class _World:
 
         async def writer(org, ns, key, ch=None):
             world.writer_reads.append(key)
-            return world.records[key][0] if key in world.records else None
+            here = any(r.memory_key == key and r.namespace == ns for r in world.rows)
+            return world.records[key][0] if key in world.records and here else None
 
         def same(ident, r):
             return all(
@@ -177,10 +178,11 @@ class _World:
 
         async def get_by_key(ident, key, *, scope, fresh=False, strong=False):
             # As the store: a `*` agent drops the identity filter and the newest row wins.
+            rows = [r for r in world.rows if r.namespace == ident.namespace]
             if ident.agent == "*":
-                hits = [r for r in world.rows if r.memory_key == key]
+                hits = [r for r in rows if r.memory_key == key]
             else:
-                hits = [r for r in world.rows if r.memory_key == key and same(ident, r)]
+                hits = [r for r in rows if r.memory_key == key and same(ident, r)]
             return hits[-1] if hits else None
 
         async def many(ident, keys, *, scope, strong=False):
@@ -4079,22 +4081,21 @@ async def test_a_run_the_caller_may_not_make_refuses_before_any_model_call(
 @pytest.mark.parametrize(
     ("kw", "broken", "error"),
     [
-        ({"repo": "acme/widgets"}, TRUNK, "no repository 'acme/widgets' you may read"),
-        # The document's namespace is read-checked first, whatever --into says.
-        ({"repo": "acme/widgets"}, "ns", "not allowed to read o/ns"),
-        ({"repo": "acme/widgets", "into": "repo"}, "ns", "not allowed to read o/ns"),
+        ({"repo": "acme/widgets"}, (TRUNK, "viewer"), "no repository 'acme/widgets' you may read"),
+        ({"repo": "acme/widgets"}, ("ns", "writer"), "not allowed to write o/ns"),
+        ({"repo": "acme/widgets", "into": "repo"}, ("ns", "viewer"), "not allowed to read o/ns"),
     ],
-    ids=["trunk", "rows beside the document", "document's namespace"],
+    ids=["trunk", "where the rows go", "document's namespace"],
 )
 @pytest.mark.asyncio
 async def test_an_access_check_that_fails_refuses(
-    monkeypatch, kw: dict[str, Any], broken: str, error: str
+    monkeypatch, kw: dict[str, Any], broken: tuple[str, str], error: str
 ) -> None:
     world = _World(monkeypatch, [_candidate()])
     _link_repo(monkeypatch, world)
 
     async def flaky(org, ns, role, *, hides_answer=True):
-        if ns == broken:
+        if (ns, role.name.lower()) == broken:
             raise RuntimeError("grants unreadable")
         return True
 
@@ -4194,14 +4195,14 @@ async def test_a_contradicted_pinned_row_is_flagged_and_tagged_in_one_write(monk
         (
             {"repo": "acme/widgets", "into": "repo"},
             "ns",
-            "this document's decisions are in o/ns; run with the --repo and --into that "
-            "wrote them, or delete them there first",
+            "this document's decisions are in o/ns; run as the run that wrote "
+            "them (with no --repo, or its --repo and --into), or delete them there first",
         ),
         (
             {"repo": "acme/widgets", "into": "source"},
             TRUNK,
-            f"this document's decisions are in o/{TRUNK}; run with the --repo and --into that "
-            "wrote them, or delete them there first",
+            f"this document's decisions are in o/{TRUNK}; run as the run that wrote "
+            "them (with no --repo, or its --repo and --into), or delete them there first",
         ),
     ],
     ids=["to the trunk", "to the source"],
@@ -4287,8 +4288,8 @@ async def test_a_flagged_and_tagged_row_says_so(monkeypatch) -> None:
     [
         (
             frozenset(),
-            f"this document's decisions are in o/{TRUNK}; run with the --repo and --into that "
-            "wrote them, or delete them there first",
+            f"this document's decisions are in o/{TRUNK}; run as the run that wrote "
+            "them (with no --repo, or its --repo and --into), or delete them there first",
         ),
         # Whether rows are there is not told to a caller who cannot read the trunk.
         (
@@ -4416,8 +4417,8 @@ async def test_a_run_without_repo_reads_the_registry_for_a_branchs_trunk(monkeyp
     finally:
         set_registry_repos([])
     assert report.error == (
-        f"this document's decisions are in o/{TRUNK}; run with the --repo and --into that "
-        "wrote them, or delete them there first"
+        f"this document's decisions are in o/{TRUNK}; run as the run that wrote "
+        "them (with no --repo, or its --repo and --into), or delete them there first"
     )
     assert world.prompts == []
 
@@ -4480,8 +4481,8 @@ async def test_a_run_naming_another_repo_checks_the_branchs_own_trunk(monkeypatc
     monkeypatch.setattr(repo_scope, "trunk_namespace_of", lambda org, ns: TRUNK)
     report = await _run(repo="acme/gadgets")
     assert report.error == (
-        f"this document's decisions are in o/{TRUNK}; run with the --repo and --into that "
-        "wrote them, or delete them there first"
+        f"this document's decisions are in o/{TRUNK}; run as the run that wrote "
+        "them (with no --repo, or its --repo and --into), or delete them there first"
     )
     assert world.prompts == [] and world.recorded == []
 
