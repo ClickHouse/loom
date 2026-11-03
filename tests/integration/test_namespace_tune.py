@@ -71,11 +71,13 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
             )
 
         def snapshot() -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]]]:
-            """Each row's latest version (FINAL), without `version` and `entities`,
-            which the entity extractor rewrites."""
+            """Each row's latest version (FINAL): the fields a write (a revision,
+            tombstone, pin, reinforce or re-stamp) would change, not `version` or
+            `entities`, which the entity extractor rewrites."""
             rows = ch_client.query(
                 "SELECT agent, memory_key, memory_id, content_sha256, status, pinned, tags,"
-                " tombstoned_at FROM loom.memory FINAL WHERE org = {org:String}"
+                " tombstoned_at, actor, source_class, reinforcement_count"
+                " FROM loom.memory FINAL WHERE org = {org:String}"
                 " ORDER BY agent, memory_key",
                 parameters={"org": ORG},
             ).result_rows
