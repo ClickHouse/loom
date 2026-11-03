@@ -4141,13 +4141,13 @@ async def test_repo_trunk_matches_owner_name_or_a_remote_url(monkeypatch) -> Non
 
 
 @pytest.mark.parametrize(
-    "fields",
-    [{}, {"realized_outcome": "shipped"}],
+    ("fields", "action"),
+    [({}, "unchanged"), ({"realized_outcome": "shipped"}, "outcome_known")],
     ids=["pinned", "outcome recorded"],
 )
 @pytest.mark.asyncio
 async def test_a_row_kept_as_it_is_gains_the_repo_tag_by_a_tag_write(
-    monkeypatch, capsys, fields: dict[str, Any]
+    monkeypatch, capsys, fields: dict[str, Any], action: str
 ) -> None:
     """A pinned row, or one whose outcome is recorded, is not recorded again: the
     repository's tag reaches it by a tags-only write, so the pre-edit block serves it."""
@@ -4169,7 +4169,7 @@ async def test_a_row_kept_as_it_is_gains_the_repo_tag_by_a_tag_write(
     (upd,) = world.updates
     assert sorted(upd.tags) == sorted(["decision", REPO_TAG])
     (rec,) = report.records
-    assert rec.action in ("unchanged", "outcome_known")
+    assert rec.action == action
     assert rec.note.endswith(f"source-changed cleared; tagged {REPO_TAG}")
 
 
