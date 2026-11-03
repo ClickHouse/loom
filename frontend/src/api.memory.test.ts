@@ -104,6 +104,10 @@ describe("pinMemory", () => {
     expect(body).toMatchObject({ agent: "support-bot", user_id: "alice", session_id: "s1" });
   });
 
+  it("guards the write with the hash of the value it read", async () => {
+    expect((await pinBody({ ...row, content_sha256: "abc" })).if_match_sha256).toBe("abc");
+  });
+
   it("declares the row's source_class only when a caller may declare it", async () => {
     expect((await pinBody({ ...row, source_class: "imported" })).source_class).toBe("imported");
     expect(await pinBody({ ...row, source_class: "asserted" })).not.toHaveProperty("source_class");

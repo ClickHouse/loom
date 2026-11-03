@@ -459,12 +459,23 @@ describe("Memories list chrome", () => {
       agent: "claude-desktop",
     };
     vi.mocked(getMemory).mockResolvedValue(detail);
+    vi.mocked(listMemories).mockResolvedValue({
+      entries: [entry("d/plain", { user_id: "alice", session_id: "s1" })],
+      total: 1,
+      today: 0,
+      truncated: false,
+    });
     render(<Recent />);
     await screen.findByText("d/plain");
     const user = userEvent.setup();
     await user.click(screen.getByRole("checkbox", { name: "Select d/plain" }));
     await user.click(within(toolbar()).getByRole("button", { name: "Pin" }));
     await waitFor(() => expect(pinMemory).toHaveBeenCalledTimes(1));
+    // Read by the listed row's own user and session, so the fallback cannot answer another's.
+    expect(vi.mocked(getMemory).mock.calls[0]).toEqual([
+      { org: "dev", namespace: "team", agent: "claude-desktop", user_id: "alice", session_id: "s1" },
+      "d/plain",
+    ]);
     expect(vi.mocked(pinMemory).mock.calls[0]).toEqual([
       { org: "dev", namespace: "team", agent: "claude-desktop" },
       "d/plain",

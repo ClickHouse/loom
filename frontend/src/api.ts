@@ -409,6 +409,8 @@ export interface MemoryDetail {
   source_resource_id?: string;
   /** '' | low | medium | high. */
   sensitivity?: string;
+  /** SHA-256 of the live value; a write sends it as if_match_sha256. */
+  content_sha256?: string;
   /** When the fact became true, and the closing bound of its validity; null when unset. */
   valid_at?: string | null;
   valid_to?: string | null;
@@ -579,6 +581,8 @@ export async function pinMemory(
   if (row.valid_at) body.valid_at = row.valid_at;
   if (row.valid_to) body.valid_to = row.valid_to;
   if (row.char_limit != null) body.char_limit = row.char_limit;
+  // A write since the read answers 409 instead of being reverted to what was read.
+  if (row.content_sha256) body.if_match_sha256 = row.content_sha256;
   return post<{ version: number; pinned: boolean }>("/v1/memory.pin", body);
 }
 

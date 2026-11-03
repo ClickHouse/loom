@@ -409,8 +409,9 @@ function MemoryList() {
       const rowId = identityForRow(entry.agent);
       try {
         // pinMemory writes the whole row back; the list view doesn't carry it, so
-        // refetch the row before pinning.
-        const got = await getMemory(rowId, k);
+        // refetch the row before pinning, by its own user and session.
+        const readId = { ...rowId, user_id: entry.user_id || "-", session_id: entry.session_id || "-" };
+        const got = await getMemory(readId, k);
         if (got && got.found) {
           await pinMemory(rowId, k, got);
           ok++;
