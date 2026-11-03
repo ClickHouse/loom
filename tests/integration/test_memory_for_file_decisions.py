@@ -1,5 +1,5 @@
 """memory.for_file against a live server: a decision row written through memory.set is
-rendered in the pre-edit block with its head, its confirmation state and its source."""
+rendered in the pre-edit block with its head, its pin state and its source."""
 
 from __future__ import annotations
 
@@ -36,13 +36,13 @@ def _poll(
     return out
 
 
-def test_decision_rows_name_their_source_and_whether_they_are_confirmed(
+def test_decision_rows_name_their_source_and_whether_they_are_pinned(
     control_plane_url: str, mint_test_token: Any
 ) -> None:
     token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer"])
     own, team = "dev", "team-rules"
     base = {"org": ORG, "agent": "claude-code", "memory_type": "decision", "files": ["src/a.cpp"]}
-    # pinned the way a maintainer confirms a decision: memory.pin
+    # pinned with memory.pin
     _post(
         control_plane_url,
         "memory.pin",

@@ -567,7 +567,7 @@ async def test_another_writers_unpinned_record_is_not_revised(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_restatement_under_another_key_is_skipped(monkeypatch) -> None:
+async def test_a_frozen_restatement_under_another_key_is_skipped(monkeypatch) -> None:
     world = _World(monkeypatch, [_candidate()])
     world.add("design/spilling/final", agent="alice-agent", pinned=True)
     # A newer unpinned row of the key beside it does not hide the pinned one.
@@ -581,7 +581,7 @@ async def test_a_confirmed_restatement_under_another_key_is_skipped(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_decision_in_another_category_is_a_restatement(monkeypatch) -> None:
+async def test_a_frozen_decision_in_another_category_is_a_restatement(monkeypatch) -> None:
     """The statement leaves the category out, so the same decision filed under another
     category reads the same and is skipped."""
     from server.memory.app import search
@@ -2138,15 +2138,15 @@ def test_an_error_goes_to_stderr(capsys) -> None:
     assert out.out == "" and out.err == "error: no live document\n"
 
 
-def test_an_attestation_binding_the_value_of_a_row_with_no_hash_column_confirms_it() -> None:
+def test_an_attestation_binding_the_value_of_a_row_with_no_hash_column_freezes_it() -> None:
     from server.core.hashing import sha256_value_json
-    from server.memory.app.decision_extract import _confirmed
+    from server.memory.app.decision_extract import _frozen
 
     value = "Decided spill."
     bound = sha256_value_json(json.dumps(value))
     row = _row("decision:k", value=value, content_sha256="", verified_by="human:alice")
-    assert _confirmed(_Row(**{**vars(row), "verified_sha256": bound}))
-    assert not _confirmed(_Row(**{**vars(row), "verified_sha256": "other"}))
+    assert _frozen(_Row(**{**vars(row), "verified_sha256": bound}))
+    assert not _frozen(_Row(**{**vars(row), "verified_sha256": "other"}))
 
 
 def test_a_list_field_the_model_filled_with_something_else_reads_empty() -> None:
@@ -2445,10 +2445,10 @@ def test_a_refused_candidate_or_retire_write_exits_2(dropped, refused, code) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("top_k", "blocked"), [(6, True), (5, False)])
-async def test_a_confirmed_restatement_below_five_closer_hits_blocks_within_top_k(
+async def test_a_frozen_restatement_below_five_closer_hits_blocks_within_top_k(
     monkeypatch, top_k, blocked
 ) -> None:
-    """The confirmed key is the sixth closest: a top_k of 6 reaches it, 5 stops before it
+    """The frozen key is the sixth closest: a top_k of 6 reaches it, 5 stops before it
     though the fetch (5 keys times a per-key cap of 3) still serves it."""
     from server.memory.app import search
     from server.settings import settings
@@ -2458,8 +2458,8 @@ async def test_a_confirmed_restatement_below_five_closer_hits_blocks_within_top_
     for i in range(5):
         world.add(f"design/near{i}", agent="alice-agent")
         hits.append(SimpleNamespace(memory_key=f"design/near{i}", similarity=0.95 - i / 100))
-    world.add("design/confirmed", agent="alice-agent", pinned=True)
-    hits.append(SimpleNamespace(memory_key="design/confirmed", similarity=0.86))
+    world.add("design/frozen", agent="alice-agent", pinned=True)
+    hits.append(SimpleNamespace(memory_key="design/frozen", similarity=0.86))
     asked: list[int] = []
 
     async def mem_search(inp):
@@ -2473,15 +2473,15 @@ async def test_a_confirmed_restatement_below_five_closer_hits_blocks_within_top_
     assert asked == [per_key_fetch(top_k)] and per_key_fetch(top_k) >= len(hits)
     if blocked:
         assert world.recorded == []
-        assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+        assert report.records[0].note == "already recorded by alice-agent under design/frozen"
     else:
         assert len(world.recorded) == 1
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_restatement_below_keys_of_many_rows_still_blocks(monkeypatch) -> None:
+async def test_a_frozen_restatement_below_keys_of_many_rows_still_blocks(monkeypatch) -> None:
     # the search serves a row per writer and session: seven closer keys of three rows each
-    # fill 21 places, and the confirmed key still counts among the 20 closest keys
+    # fill 21 places, and the frozen key still counts among the 20 closest keys
     from server.memory.app import search
     from server.settings import settings
 
@@ -2491,8 +2491,8 @@ async def test_a_confirmed_restatement_below_keys_of_many_rows_still_blocks(monk
     for i in range(7):
         world.add(f"design/near{i}", agent="alice-agent")
         hits += [SimpleNamespace(memory_key=f"design/near{i}", similarity=0.95 - i / 100)] * 3
-    world.add("design/confirmed", agent="alice-agent", pinned=True)
-    hits.append(SimpleNamespace(memory_key="design/confirmed", similarity=0.86))
+    world.add("design/frozen", agent="alice-agent", pinned=True)
+    hits.append(SimpleNamespace(memory_key="design/frozen", similarity=0.86))
 
     async def mem_search(inp):
         return SimpleNamespace(results=hits[: inp.top_k])
@@ -2508,9 +2508,9 @@ async def test_a_confirmed_restatement_below_keys_of_many_rows_still_blocks(monk
     monkeypatch.setattr(de, "_rows_of_key", counted)
     report = await _run()
     assert world.recorded == []
-    assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+    assert report.records[0].note == "already recorded by alice-agent under design/frozen"
     # each key's rows are read once
-    assert read == [*(f"design/near{i}" for i in range(7)), "design/confirmed"]
+    assert read == [*(f"design/near{i}" for i in range(7)), "design/frozen"]
 
 
 @pytest.mark.asyncio
@@ -4355,7 +4355,7 @@ async def test_rows_in_the_repositorys_own_namespace_carry_no_tag(monkeypatch, r
 
 
 @pytest.mark.asyncio
-async def test_another_writers_unconfirmed_row_is_not_tagged(monkeypatch) -> None:
+async def test_another_writers_unfrozen_row_is_not_tagged(monkeypatch) -> None:
     c = _candidate()
     world = _World(monkeypatch, [c])
     world.record(_key(c), _same_fields(c), agent="claude-code", files=[HEADER])
@@ -4489,7 +4489,7 @@ async def test_a_run_naming_another_repo_checks_the_branchs_own_trunk(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_row_linked_to_another_repository_keeps_only_its_link(
+async def test_a_frozen_row_linked_to_another_repository_keeps_only_its_link(
     monkeypatch,
 ) -> None:
     """A pinned row another writer linked to another repository is flagged, never linked

@@ -258,7 +258,7 @@ def test_an_unpinned_decision_has_no_status_note_in_either_namespace() -> None:
 
 def test_an_extracted_decision_is_served_as_it_is() -> None:
     # What `loom decisions extract` writes: unpinned, unattested, by its own agent.
-    row = _decision("design/x", pinned=False, agent="loom-decisions", actor="cli:decisions")
+    row = _decision("design/x", pinned=False, agent="loom-decisions", actor="process:cli:decisions")
     assert _lines([row])[1] == (
         f"- Decision (by cli:decisions, 3 days ago): Decided X because Y. — source: {_SOURCE} "
         "[id: design/x]"

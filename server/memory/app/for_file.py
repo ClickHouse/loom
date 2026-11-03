@@ -161,7 +161,7 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     """`(pinned)` for a pinned row, `(source changed)` for a decision tagged
     `source-changed`, `(outcome: failed)` for a decision whose recorded outcome failed,
     and a note when its linked code changed or went. An extracted decision nobody pinned
-    is the normal case and carries no note."""
+    is the normal case and carries no pin mark."""
     tags = hit.get("tags") or []
     out = " (pinned)" if hit.get("pinned") else ""
     if decision and SOURCE_CHANGED_TAG in tags:
