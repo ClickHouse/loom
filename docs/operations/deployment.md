@@ -750,7 +750,8 @@ and what it leaves:
   self-service index added earlier can still be retired
   ([retiring with the switch off](../features/code-index/repositories.md#self-service-repositories));
   an operator-configured one is removed from `LOOM_CODE_REPO` or `LOOM_CODE_REPOS_JSON`,
-  and `erasure.request` on its namespace purges its rows.
+  and `erasure.request` on its namespace purges its rows; its bare mirror stays on disk
+  until code intelligence is on again, so delete it by hand.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but the coding-agent plugins list them, so agents are offered
   tools that refuse. Set the Claude Code plugin's `toolset` option
@@ -764,7 +765,7 @@ and what it leaves:
 - The plugin hooks find a session's repository through `code.repos`, which is refused,
   and ask again about once a minute. The session-start primer then adds a code-index
   line that points the agent at the `loom_code_*` tools; set `LOOM_CODE_MAP=false` in
-  the plugin's environment to leave it out.
+  the environment the agent runs its hooks with to leave it out.
 - The switch also stops the coverage workers (`code_coverage_notify`, which delivers
   coverage watches, and `code_coverage_import`). Every other code and tracker worker has
   its own `LOOM_*_ENABLED` setting, which this switch does not change; with no repository
