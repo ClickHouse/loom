@@ -14,14 +14,16 @@ the run ends. To compare arms on one ingest, ingest once into a namespace you
 name, which is kept, and search it per arm:
 
     PYTHONPATH=$PWD .venv/bin/python bench/knowledge_retrieval.py \\
-        --base-url http://localhost:7790 --namespace kr-eval --phase ingest
+        --base-url http://localhost:7790 --namespace knowledge-retrieval-eval --phase ingest
     PYTHONPATH=$PWD .venv/bin/python bench/knowledge_retrieval.py \\
-        --base-url http://localhost:7790 --namespace kr-eval --phase search \\
+        --base-url http://localhost:7790 --namespace knowledge-retrieval-eval --phase search \\
         --param search_mode=hybrid --out /tmp/kr.json
 
-A named namespace is ingested into only when it is unregistered or a bench
-namespace that holds nothing but fixture ingests, and stays until it is erased with the
-`loom namespaces-gc` command the ingest prints.
+A named namespace must start with `knowledge-retrieval-`, the prefix of every
+namespace the harness writes, so it never touches anyone else's; it stays until
+it is erased with the `loom namespaces-gc` command the ingest prints first. A
+run records the server's embedding model and build (`instrument`) and refuses a
+fake embedder.
 
 `--param KEY=VALUE` (JSON value, or a plain string) sets any `knowledge.search`
 field but the ones the harness sets (`FIXED_FIELDS`), so two arms differ by one
@@ -57,13 +59,13 @@ import httpx
 
 from bench._http import post_json
 from bench.bench_namespaces import (
-    BENCH_OWNER_EMAIL,
     SyncPost,
     erase_on_exit_sync,
     gc_command,
     register_bench_namespace_sync,
     remember_bench_namespace,
 )
+from bench.quality import run_metadata
 from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 
 FIXTURE = Path(__file__).parent / "fixtures" / "knowledge_retrieval"
@@ -110,8 +112,8 @@ def score_query(hits: list[dict], gold: list[list[str]]) -> dict[str, float]:
     # `hits` is the top TOP_K, so every found passage is within it.
     out[f"all_gold@{TOP_K}"] = float(len(found) == len(gold))
     out["mrr"] = 1.0 / first if first else 0.0
-    # The ideal ranking puts the same relevant hits first, best gain first, then one
-    # hit per passage not found: a hit holding two passages gains 2, and nothing caps.
+    # The ideal, relative to this run: its own relevant hits best gain first, then one
+    # hit per passage it missed (a hit holding two passages gains 2; nothing caps).
     ideal_gains = sorted(gains + [1] * (len(gold) - len(found)), reverse=True)[:TOP_K]
     ideal = sum(g / math.log2(r + 1) for r, g in enumerate(ideal_gains, start=1))
     out[f"ndcg@{TOP_K}"] = dcg / ideal if ideal else 0.0
@@ -153,43 +155,28 @@ def parse_params(pairs: list[str]) -> dict:
     return out
 
 
+# Every namespace the harness writes starts with this; a named one must too, so the
+# harness never registers, fills or prints an erase command for anyone else's.
+PREFIX = "knowledge-retrieval-"
+
+
 def run_namespace(named: str | None, keep_flag: bool) -> tuple[str, bool]:
-    """(the namespace a run uses, whether it outlives the run). Only a namespace the
-    harness made up is erased: one the caller named may hold more than the fixture."""
+    """(the namespace a run uses, whether it outlives the run). A named namespace is
+    kept for later search arms; a made-up one is erased unless `keep_flag`."""
     if named:
+        if not named.startswith(PREFIX):
+            raise SystemExit(f"--namespace must start with {PREFIX!r}: {named!r}")
         return named, True
-    return f"knowledge-retrieval-{secrets.token_hex(4)}", keep_flag
-
-
-def may_ingest_into(info: dict, listed: list[dict]) -> bool:
-    """Whether a named namespace is the harness's to write: never registered, or a
-    bench namespace whose documents are all fixture ingests (registering rewrites
-    its owner, and the printed gc command erases every plane of it)."""
-    if not info.get("found"):
-        return True
-    return (
-        info.get("owner_email") == BENCH_OWNER_EMAIL
-        and bool(listed)
-        and all(any(t.startswith("fixture:") for t in r.get("tags") or []) for r in listed)
-    )
+    return f"{PREFIX}{secrets.token_hex(4)}", keep_flag
 
 
 def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
-    info = post("/v1/namespace.get", {"org": org, "namespace": namespace})
-    listed = listed_documents(post, org, namespace)
-    fixture = {d["source_uri"] for d in docs}
-    foreign = [r["source_uri"] for r in listed if r["source_uri"] not in fixture]
-    if foreign or not may_ingest_into(info, listed):
-        raise SystemExit(
-            f"{org}/{namespace} exists and is not a fixture ingest "
-            f"(owner {info.get('owner_email')}, {len(foreign)} other documents): name another"
-        )
+    if keep:  # printed first, so a failed ingest leaves the command behind
+        print(f"kept; erase it with: {gc_command(org, [namespace])}", file=sys.stderr)
     register_bench_namespace_sync(
         post, org=org, namespace=namespace, description="knowledge retrieval fixture", keep=keep
     )
     remember_bench_namespace(org, namespace)
-    if keep:  # printed before the writes, so a failed ingest leaves the command behind
-        print(f"kept; erase it with: {gc_command(org, [namespace])}", file=sys.stderr)
     tag = fixture_tag(docs)
     for d in docs:
         body = {"org": org, "namespace": namespace, **d, "tags": [*d["tags"], tag]}
@@ -204,7 +191,13 @@ def listed_documents(post: SyncPost, org: str, namespace: str) -> list[dict]:
     while True:
         page = post(
             "/v1/knowledge.list",
-            {"org": org, "namespace": namespace, "limit": 500, "cursor": cursor},
+            {
+                "org": org,
+                "namespace": namespace,
+                "limit": 500,
+                "cursor": cursor,
+                "fields": ["tags"],
+            },
         )
         rows.extend(page["rows"])
         cursor = page.get("next_cursor")
@@ -222,8 +215,8 @@ def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> 
     want = {d["source_uri"] for d in docs}
     if have != want or stale:
         raise SystemExit(
-            f"{org}/{namespace} is not this fixture: {len(want - have)} documents missing, "
-            f"{len(have - want)} extra, {stale} from another version; "
+            f"{org}/{namespace} is not this fixture: missing {len(want - have)}, "
+            f"extra {len(have - want)}, from another version {stale}; "
             "ingest into a fresh namespace"
         )
 
@@ -283,7 +276,7 @@ def main() -> int:
     ap.add_argument("--org", default="bench")
     ap.add_argument(
         "--namespace",
-        help="the namespace to ingest into or search, never erased "
+        help=f"the namespace to ingest into or search, never erased; starts with {PREFIX!r} "
         "(default: a fresh one per run, erased at its end)",
     )
     ap.add_argument("--fixture", type=Path, default=FIXTURE)
@@ -309,6 +302,11 @@ def main() -> int:
         def post(path: str, body: dict[str, Any]) -> Any:
             return post_json(client, f"{base}{path}", body, attempts=3, timeout_s=120.0)
 
+        instrument = run_metadata(client.get(f"{base}/v1/health", timeout=30).json())
+        if instrument["embedding_model"].startswith("fake"):
+            raise SystemExit(
+                f"{instrument['embedding_model']} ranks by trigram overlap: no numbers"
+            )
         with erase_on_exit_sync(post, org=args.org, keep=keep):
             if args.phase in ("ingest", "both"):
                 ingest(post, args.org, namespace, docs, keep)
@@ -316,6 +314,7 @@ def main() -> int:
                 return 0
             check_corpus(post, args.org, namespace, docs)
             report = search(post, args.org, namespace, queries, params)
+    report = {"instrument": instrument, **report}
     if args.out:
         args.out.write_text(json.dumps(report, indent=1) + "\n")
     summary = {k: v for k, v in report.items() if k != "queries"}

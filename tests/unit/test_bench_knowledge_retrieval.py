@@ -7,14 +7,12 @@ import math
 
 import pytest
 
-from bench.bench_namespaces import BENCH_OWNER_EMAIL
 from bench.knowledge_retrieval import (
     FIXTURE,
     check_corpus,
     fixture_tag,
     ingest,
     load_fixture,
-    may_ingest_into,
     mean_by_kind,
     parse_params,
     run_namespace,
@@ -99,22 +97,16 @@ def test_the_fields_that_define_the_measurement_are_refused(field: str) -> None:
 
 
 def test_only_a_namespace_the_harness_made_up_is_erased() -> None:
-    assert run_namespace("docs", False) == ("docs", True)
+    assert run_namespace("knowledge-retrieval-eval", False) == ("knowledge-retrieval-eval", True)
     fresh, keep = run_namespace(None, False)
     assert fresh.startswith("knowledge-retrieval-") and keep is False
     assert run_namespace(None, False)[0] != fresh
     assert run_namespace(None, True)[1] is True
 
 
-def test_a_named_namespace_is_ingested_into_only_when_unregistered_or_bench() -> None:
-    ingested = [{"source_uri": "a.md", "tags": ["fixture:0123"]}]
-    bench = {"found": True, "owner_email": BENCH_OWNER_EMAIL}
-    assert may_ingest_into({"found": False}, [])
-    assert may_ingest_into(bench, ingested)
-    # a bench namespace of another harness: no documents, or not fixture ingests
-    assert not may_ingest_into(bench, [])
-    assert not may_ingest_into(bench, [{"source_uri": "a.md", "tags": []}])
-    assert not may_ingest_into({"found": True, "owner_email": "someone@example.com"}, ingested)
+def test_a_named_namespace_without_the_harness_prefix_is_refused() -> None:
+    with pytest.raises(SystemExit, match="must start with"):
+        run_namespace("docs", False)
 
 
 def test_a_namespace_holding_other_documents_than_the_fixture_is_refused() -> None:
@@ -122,13 +114,13 @@ def test_a_namespace_holding_other_documents_than_the_fixture_is_refused() -> No
     tag = fixture_tag(docs)
     pages = {None: {"rows": [{"source_uri": "a.md", "tags": [tag]}], "next_cursor": "c"}}
     pages["c"] = {"rows": []}
-    with pytest.raises(SystemExit, match="1 documents missing, 0 extra, 0 from another"):
+    with pytest.raises(SystemExit, match="missing 1, extra 0, from another version 0"):
         check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs)
     pages["c"] = {"rows": [{"source_uri": "b.md", "tags": [tag]}]}
     check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs)
     # the same documents from an edited corpus carry another tag
     pages["c"] = {"rows": [{"source_uri": "b.md", "tags": ["fixture:000000000000"]}]}
-    with pytest.raises(SystemExit, match="1 from another version"):
+    with pytest.raises(SystemExit, match="from another version 1"):
         check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs)
     assert fixture_tag([*docs[:1], {**docs[1], "content": "z"}]) != tag
 
@@ -153,29 +145,17 @@ def test_the_top_similarity_is_reported_per_answerability_and_kinds_average_apar
     }
 
 
-def test_an_ingest_refuses_a_namespace_holding_other_documents_and_tags_each_upsert() -> None:
+def test_a_kept_ingest_registers_as_memory_and_tags_each_upsert() -> None:
     docs = [{"source_uri": "a.md", "content": "x", "tags": ["t"]}]
     sent: list[tuple[str, dict]] = []
 
-    def post(listed: list[dict]):
-        def _post(path: str, body: dict) -> dict:
-            sent.append((path, body))
-            if path == "/v1/namespace.get":
-                return {"found": False}
-            if path == "/v1/knowledge.list":
-                return {"rows": listed}
-            return {}
+    def post(path: str, body: dict) -> dict:
+        sent.append((path, body))
+        return {}
 
-        return _post
-
-    with pytest.raises(SystemExit, match="1 other documents"):
-        ingest(post([{"source_uri": "theirs.md"}]), "o", "n", docs, keep=True)
-    # nothing is written, not even the registration that would rewrite its owner
-    assert [path for path, _ in sent] == ["/v1/namespace.get", "/v1/knowledge.list"]
-    ingest(post([{"source_uri": "a.md"}]), "o", "n", docs, keep=True)
+    ingest(post, "o", "knowledge-retrieval-x", docs, keep=True)
     # a kept namespace registers as memory, so the idle-namespace gc leaves it
-    registered = [body for path, body in sent if path == "/v1/namespace.register"]
-    assert registered and registered[0]["kind"] == "memory"
+    assert sent[0][0] == "/v1/namespace.register" and sent[0][1]["kind"] == "memory"
     upserts = [body for path, body in sent if path == "/v1/knowledge.upsert"]
     assert [u["tags"] for u in upserts] == [["t", fixture_tag(docs)]]
 
