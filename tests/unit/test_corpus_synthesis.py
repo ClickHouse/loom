@@ -234,6 +234,9 @@ def test_grounding_removes_the_tags_of_unread_chunks_from_the_answer() -> None:
         ["doc://a#0; doc://a#1"],
         [],
     )
+    # an index past nine digits is prose, not a number to parse
+    long_index = "[doc#" + "9" * 5000 + "]"
+    assert cs.ground_citations(long_index, read) == (long_index, [], [])
     # a non-ASCII digit is no index: the bracket is prose
     assert cs.ground_citations("[doc://a#²,doc://a#1]", read) == ("[doc://a#²,doc://a#1]", [], [])
     # a source holding '#' splits at its last one; a padded tag is named without padding

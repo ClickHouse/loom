@@ -125,9 +125,10 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
 # by `,` or `;` (a window spanning documents is cited as a comma list, `Window.cite`). A
 # source holds no blank, comma or semicolon; a bracket with anything else in it is
 # prose (`[PR #42]`, `[see doc#1]`) and is left as written.
-_ITEM = r"[^\s,;\[\]]+#\d+(?:-\d+)?"
+# An index has at most nine digits: a longer run is prose, not a number to parse.
+_ITEM = r"[^\s,;\[\]]+#\d{1,9}(?:-\d{1,9})?"
 _CITATION = re.compile(rf"\[\s*({_ITEM}(?:\s*[,;]\s*{_ITEM})*)\s*\]", re.ASCII)
-_PART = re.compile(r"(.+)#(\d+)(?:-(\d+))?", re.ASCII)
+_PART = re.compile(r"(.+)#(\d{1,9})(?:-(\d{1,9}))?", re.ASCII)
 _SEPARATOR = re.compile(r"\s*[,;]\s*")
 # A removed tag goes with the blanks before it.
 _SPACED_CITATION = re.compile(r"[ \t]*" + _CITATION.pattern, re.ASCII)
@@ -138,7 +139,7 @@ def citations(text: str) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for m in _CITATION.finditer(text or ""):
-        tag = m.group(1).strip()
+        tag = m.group(1)
         if tag not in seen:
             seen.add(tag)
             out.append(tag)
@@ -169,7 +170,5 @@ def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list
         (kept if cites_what_was_read(tag, read) else removed).append(tag)
     if removed:
         drop = set(removed)
-        answer = _SPACED_CITATION.sub(
-            lambda m: "" if m.group(1).strip() in drop else m.group(0), answer
-        )
+        answer = _SPACED_CITATION.sub(lambda m: "" if m.group(1) in drop else m.group(0), answer)
     return answer.strip(), kept, removed
