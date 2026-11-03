@@ -152,8 +152,10 @@ async def test_a_refused_read_scope_reads_no_run_notes() -> None:
     ch = _RunCH()
     bind_request_read_filters(None, IdentityIncompleteError("no user"))
     try:
-        assert await render_run_blocks("o", "ns", "run-1", ch=ch) == ""
-        # memory.search's reader raises before its statement; the search drops the notes.
+        # memory.ask refuses the call; memory.search's reader raises and the search drops
+        # the notes. Neither runs a statement.
+        with pytest.raises(IdentityIncompleteError):
+            await render_run_blocks("o", "ns", "run-1", ch=ch)
         with pytest.raises(IdentityIncompleteError):
             await scratchpad.load("o", "ns", "*", None, None, "run-1", max_chars=2000, ch=ch)
     finally:

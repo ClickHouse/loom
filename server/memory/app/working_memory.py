@@ -328,9 +328,11 @@ async def render_run_blocks(
     the run_id but not the writer's full identity: memory.ask is asked with agent="*",
     while the run scope wrote its notes as the agent it runs as. The run_id is unique to
     one execution, so (org, namespace, run_id) is the scope, narrowed by the request's
-    read scope (`scratchpad.run_rows`). '' when the run has no blocks; never raises."""
+    read scope (`scratchpad.run_rows`). '' when the run has no blocks or the read fails;
+    a refused read scope raises, as the rest of the call would."""
     if not run_id or run_id == "-":
         return ""
+    request_scope()  # a refusal is the caller's error, not a failed read
     ch = ch or get_client()
     try:
         rows = await run_rows(ch, org, namespace, run_id, limit=limit)
