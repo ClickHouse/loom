@@ -636,7 +636,7 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
         if bucket_error is not None:
             print(f"    bucket: could not be listed ({bucket_error})")
         if args.resume:
-            from server.erasure.app.saga import request_row_template, run_saga
+            from server.erasure.app.saga import ledger_actor, request_row_template, run_saga
 
             try:
                 input_obj = _re_verify_input(row, skip_external=bool(args.skip_external))
@@ -658,6 +658,7 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
                 row=request_row_template(
                     erasure_id=str(row["id"]),
                     input=input_obj,
+                    actor=ledger_actor(row),
                     requested_at=row["requested_at"],
                     attempts=int(row["attempts"]) + 1,
                 ),

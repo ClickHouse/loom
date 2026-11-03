@@ -1210,7 +1210,9 @@ are rebuilt by their workers (`memory/domain/rollback.py` plans the rollback,
 `erasure.request` (`erasure/app/handlers.py`) starts a saga (`erasure/app/saga.py`)
 over a `user_id`, `namespace` or `namespace_list`. Each step is idempotent and
 checkpointed as a new version of the `erasure_requests` row (`steps_completed`), so a
-restart resumes. `erasure_recovery` replays sagas stuck `in_progress`; after
+restart resumes. The row keeps the request token's principal (`actor`), which every
+`erasure.*` audit row of the saga names, a resumed one included; the body's
+`requester` is recorded beside it, never as the actor. `erasure_recovery` replays sagas stuck `in_progress`; after
 `max_attempts` it marks the request `failed` and emits `erasure.abandoned`. Configured
 external backends (Langfuse traces and ClickStack rows) are steps
 too and fail the saga closed.

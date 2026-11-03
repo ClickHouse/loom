@@ -121,8 +121,10 @@ async def _recover_one(
     the abandonment write (checkpoint, audit) propagates to the pass loop,
     which records it and moves on to the next saga."""
     from server.erasure.app.saga import (
+        RESUME_ACTOR,
         audit_namespace,
         input_from_ledger_row,
+        ledger_actor,
         request_row_template,
         run_saga,
     )
@@ -153,6 +155,7 @@ async def _recover_one(
         request_row = request_row_template(
             erasure_id=erasure_id,
             input=input_obj,
+            actor=ledger_actor(row),
             requested_at=row["requested_at"],
             attempts=new_attempts,
         )
@@ -173,7 +176,7 @@ async def _recover_one(
                 event_type="erasure.recovered",
                 org=input_obj.org,
                 namespace=audit_namespace(input_obj.scope_type, input_obj.scope_value),
-                actor="erasure-recovery-worker",
+                actor=RESUME_ACTOR,
                 subject={
                     "erasure_id": erasure_id,
                     "attempts": new_attempts,
@@ -250,9 +253,11 @@ async def _abandon(
     between the two re-runs both next pass (an audit row may repeat; one is
     never missing)."""
     from server.erasure.app.saga import (
+        RESUME_ACTOR,
         audit_namespace,
         checkpoint,
         input_from_ledger_row,
+        ledger_actor,
         request_row_template,
     )
     from server.erasure.store.ledger import ABANDONED_REASON_PREFIX
@@ -265,7 +270,7 @@ async def _abandon(
         event_type="erasure.abandoned",
         org=row["org"],
         namespace=audit_namespace(str(row["scope_type"]), str(row["scope_value"])),
-        actor="erasure-recovery-worker",
+        actor=RESUME_ACTOR,
         subject={
             "erasure_id": erasure_id,
             "attempts": attempts,
@@ -280,6 +285,7 @@ async def _abandon(
         row=request_row_template(
             erasure_id=erasure_id,
             input=input_from_ledger_row(row),
+            actor=ledger_actor(row),
             requested_at=row["requested_at"],
             attempts=attempts,
         ),

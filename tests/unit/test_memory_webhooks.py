@@ -1048,7 +1048,7 @@ async def _run_saga(monkeypatch: pytest.MonkeyPatch, *, scope_type: str, value: 
         input=ErasureRequestInput(
             org="acme", scope_type=scope_type, scope_value=value, requester="t"
         ),
-        row={"id": "e1"},
+        row={"id": "e1", "actor": "human:t"},
         erasure_id="e1",
         requested_at=NOW,
         previously_completed=set(),

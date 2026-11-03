@@ -160,7 +160,7 @@ async def _drive(monkeypatch, *, previously_completed, residue):
     )
     out = await h.run_saga(
         input=inp,
-        row={"id": "e1"},
+        row={"id": "e1", "actor": "human:t"},
         erasure_id="e1",
         requested_at=_now(),
         previously_completed=set(previously_completed),
