@@ -414,11 +414,9 @@ def _entry_path(entry: Any) -> str:
     parts: list[str] = []
     while entry is not None:
         entry, step = entry
-        parts.append(f"[{step}]" if isinstance(step, int) else _path_text([_Step(step)]))
-    parts.reverse()
-    # One join: `+=` copies the path so far at each step once a tracer such as
-    # coverage stops CPython from extending the string in place.
-    return "".join(p if p.startswith("[") or i == 0 else f".{p}" for i, p in enumerate(parts))
+        parts.append(f"[{step}]" if isinstance(step, int) else "." + _path_text([_Step(step)]))
+    # One join, not `+=`, which copies the path at each step under a tracer.
+    return "".join(reversed(parts))[1:]  # the first step is a key: drop its dot
 
 
 def _decoded(text: str) -> dict[str, Any]:
