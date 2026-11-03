@@ -14,6 +14,7 @@ free of ClickHouse so they are unit-testable; the handlers own the I/O.
 from __future__ import annotations
 
 import json
+import unicodedata
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -38,14 +39,33 @@ def decision_key(category: str, scenario: str) -> str:
     return canonical_record_key(SCHEMA_NAME, {"category": category, "scenario": scenario})
 
 
+def _wide(ch: str) -> bool:
+    return unicodedata.east_asian_width(ch) in ("W", "F")
+
+
+def _hangul(ch: str) -> bool:
+    return unicodedata.name(ch, "").startswith("HANGUL")
+
+
+def _wide_pair(a: str, b: str) -> bool:
+    """Whether a cut may fall between `a` and `b`: two wide characters, unless both are
+    Hangul (Korean spaces its words)."""
+    return _wide(a) and _wide(b) and not (_hangul(a) and _hangul(b))
+
+
 def cut_alternative(text: str) -> str:
-    """`text` within ALTERNATIVE_CHARS: cut at a space and ending in CUT_MARK when too long,
-    so the record, the statement and file detection only see whole tokens (a cut path
-    would name another file). A first word longer than the limit leaves CUT_MARK alone."""
+    """`text` within ALTERNATIVE_CHARS: cut and ending in CUT_MARK when too long, so the
+    record, the statement and file detection only see whole tokens (a cut path would name
+    another file). The cut falls at the last space before the limit, or later between two
+    wide (CJK) characters, which unspaced text has no space for. A first token longer than
+    the limit with neither, such as a path or unspaced Thai, leaves CUT_MARK alone."""
     if len(text) <= ALTERNATIVE_CHARS:
         return text
-    space = text.rfind(" ", 0, ALTERNATIVE_CHARS)
-    kept = text[:space] if space > 0 else ""
+    room = ALTERNATIVE_CHARS - len(CUT_MARK)
+    space = text.rfind(" ", 0, room + 1)
+    wide = next((i for i in range(room, space, -1) if _wide_pair(text[i - 1], text[i])), -1)
+    end = max(space, wide)
+    kept = text[:end] if end > 0 else ""
     return kept + CUT_MARK
 
 

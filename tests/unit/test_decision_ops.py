@@ -65,6 +65,16 @@ def test_clean_alternatives_dedupes_and_caps() -> None:
     assert cut == "y" * 279 + "…"
     assert svc.decision_files({"alternatives": [cut]}) is None
     assert detect_value_files(stmt.memory_value({"outcome": "o", "alternatives": [cut]})) == []
+    # Unspaced CJK is cut between two wide characters, so two options that differ after
+    # the limit's first 299 characters are one, and two that differ before are two.
+    cjk = "使用哈希集合存储去重结果" * 30
+    (cut,) = svc.clean_alternatives([cjk])
+    assert cut == cjk[: svc.ALTERNATIVE_CHARS - 1] + "…"
+    assert len(svc.clean_alternatives([cjk + "甲", cjk + "乙"])) == 1
+    assert len(svc.clean_alternatives(["甲" + cjk, "乙" + cjk])) == 2
+    # Unspaced Thai has no wide characters and no space: one token past the limit, it
+    # leaves the mark alone, as a long path does.
+    assert svc.clean_alternatives(["ใช้ตารางแฮช" * 40]) == ["…"]
     # An alternative that fits is kept as written.
     fits = "y" * 270 + " src/cache/LruCache.cpp"
     assert svc.clean_alternatives([fits]) == [fits]

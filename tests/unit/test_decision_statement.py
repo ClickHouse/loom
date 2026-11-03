@@ -88,6 +88,20 @@ def test_every_part_at_its_record_limit_is_stored_whole(ch: str) -> None:
     assert len(embed_text) <= EXCERPT_LIMIT and embed_text.endswith(f" (#{key})")
 
 
+@pytest.mark.parametrize(
+    ("field", "text", "shown"),
+    [
+        # Full-width sentence punctuation is kept, not doubled.
+        ("scenario", "部署失败怎么办？", "部署失败怎么办？ Decided o"),
+        # A full-width full stop gives way to the statement's own.
+        ("outcome", "使用ClickHouse。", "Decided 使用ClickHouse."),
+    ],
+)
+def test_full_width_punctuation_is_not_doubled(field: str, text: str, shown: str) -> None:
+    payload = {"scenario": "s", "outcome": "o", field: text}
+    assert shown in stmt.memory_value(payload)
+
+
 def test_outcome_drops_its_own_full_stop() -> None:
     value = stmt.memory_value({"outcome": "Use sorted runs.", "reasoning": "They merge."})
     assert value == "Decided Use sorted runs because They merge."

@@ -249,8 +249,10 @@ def _more_line(path: str, rest: int) -> str:
     return f'- … {rest} more; memory.for_file(path="{path}") lists them.'
 
 
-# The left-out line names this many keys; a longer list would crowd the block itself.
+# The left-out line names this many keys, each cut at _NAMED_KEY_CHARS, so the line stays
+# short however many rows are left out and however long their keys are.
 _NAMED_KEYS = 5
+_NAMED_KEY_CHARS = 120
 
 
 def _whole_left_out_line(left: list[dict[str, Any]], home: str) -> str:
@@ -258,8 +260,9 @@ def _whole_left_out_line(left: list[dict[str, Any]], home: str) -> str:
     away: the first few keys, then how many more."""
     keys = []
     for h in left[:_NAMED_KEYS]:
-        key = str(h["memory_key"])
-        keys.append(f'{key} (namespace "{h.get("namespace")}")' if _is_team(h, home) else key)
+        key = _one_line(str(h["memory_key"]), _NAMED_KEY_CHARS)
+        ns = _one_line(str(h.get("namespace") or ""), _NAMED_KEY_CHARS)
+        keys.append(f'{key} (namespace "{ns}")' if _is_team(h, home) else key)
     rest = len(left) - len(keys)
     named = ", ".join(keys) + (f" and {rest} more" if rest else "")
     what = "decision or constraint" if len(left) == 1 else "decisions or constraints"

@@ -458,6 +458,15 @@ def test_the_left_out_line_names_five_keys_then_counts_the_rest(
     )
 
 
+def test_a_long_key_is_cut_on_the_left_out_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 50)
+    key = "design/" + "k" * 300
+    hits = [_decision(key, "w" * 300, namespace="me")]
+    text, _, _ = mff.render_block("src/a.cpp", hits, 300, home="me", now=_NOW)
+    named = text.splitlines()[-1].split("loom_search: ", 1)[1]
+    assert named == key[: mff._NAMED_KEY_CHARS - 1] + "…."
+
+
 def test_a_decision_past_the_ceiling_leaves_room_for_a_later_one_that_fits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

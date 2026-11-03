@@ -43,7 +43,8 @@ class DecisionRecordInput(BaseModel):
     outcome: str = Field(min_length=1, max_length=1000)
     # What was considered and not chosen — the field every "why not X"
     # question needs and most decision logs omit. The record keeps each one up to 300
-    # characters, a longer one cut at a space and ending in "…".
+    # characters, a longer one cut at a space (or between two CJK characters) and ending
+    # in "…".
     alternatives: list[str] = Field(default_factory=list, max_length=10)
     # The decider's confidence, 0-1; 0 records none (the memory row and edges then
     # carry 1.0).

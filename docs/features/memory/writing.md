@@ -60,9 +60,8 @@ The write succeeds whatever the shape. `advisories` names a shape recall cannot 
 Long values are split into verbatim chunks (`chunks_written`): any value whose stored JSON
 runs past the 1,200-character excerpt it is embedded by, less its ` (#<key>)` suffix, which
 a non-ASCII text reaches at about 200 characters, since each such character is stored as a
-six-character escape. A
-knowledge document is chunked on its headings and searched with its section. Store the
-document in [knowledge](../knowledge.md) and one short claim in memory.
+six-character escape. A knowledge document is chunked on its headings and searched with its
+section. Store the document in [knowledge](../knowledge.md) and one short claim in memory.
 
 **Size limits.** No fixed value cap. The request body is capped by `LOOM_MAX_REQUEST_BYTES`
 (32 MiB, 413 `PAYLOAD_TOO_LARGE`). A caller may set `char_limit` on a row (422
