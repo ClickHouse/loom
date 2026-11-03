@@ -119,7 +119,8 @@ async def _read(response: httpx.Response, cap: int) -> bytes:
 
 def _capabilities(data: bytes) -> Capabilities:
     d = json.loads(data)
-    if not isinstance(d, dict) or d.get("contract_version") != SCHEMA_VERSION:
+    version = d.get("contract_version") if isinstance(d, dict) else None
+    if type(version) is not int or version != SCHEMA_VERSION:  # not `true`, not `1.0`
         raise ValueError(f"contract_version is not {SCHEMA_VERSION}")
     formats = d.get("formats")
     if not isinstance(formats, list):

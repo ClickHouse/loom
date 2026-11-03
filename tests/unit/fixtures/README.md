@@ -21,7 +21,7 @@ or credential-shaped strings.
 
 ## The knowledge extraction corpus
 
-`knowledge/` holds source files for `test_knowledge_extract.py`: SQL in two dialects and one that does not parse,
+`knowledge/` holds source files for `test_document_extraction.py`: SQL in two dialects and one that does not parse,
 valid and invalid TOML, Markdown and HTML. They are inputs, not golden outputs: every line span, key path and
 statement kind the test asserts was read off the file by hand, so a parser change that moves a locator fails the test.
 The formatters (Prettier, Taplo) skip the directory, since they would rewrite the bytes the locators point into. The

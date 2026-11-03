@@ -155,6 +155,10 @@ def decode(data: bytes, encoding: str = "") -> str:
             f"not valid {(encoding or 'utf-8').upper()} at byte {e.start + skipped};"
             " declare the file's encoding",
         ) from e
+    except UnicodeError as e:  # a codec such as punycode or idna, with no byte offset
+        raise ExtractionError(
+            "encoding", f"not valid {encoding.upper()}: {str(e)[:80]}; declare the file's encoding"
+        ) from e
     # A byte-order codec (`utf-16-le`) keeps its mark as a character; it is not text.
     # The other UTF codecs have consumed theirs, so a U+FEFF left there is the text's.
     if codec in _BYTE_ORDER_CODECS and text.startswith("\ufeff"):

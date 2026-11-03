@@ -1382,3 +1382,10 @@ def test_an_escape_codec_that_decodes_to_a_lone_surrogate_is_an_encoding_error()
         decode(b"a\\ud800b", "unicode_escape")
     assert e.value.code == "encoding"
     assert decode(b"caf\\u00e9", "unicode_escape") == "café"
+
+
+def test_a_codec_that_raises_a_plain_unicode_error_is_an_encoding_error() -> None:
+    for data, codec in ((b"!", "punycode"), (b"xn--a-.com", "idna")):
+        with pytest.raises(ExtractionError) as e:
+            decode(data, codec)
+        assert e.value.code == "encoding", codec

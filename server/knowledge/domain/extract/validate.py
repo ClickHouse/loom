@@ -213,7 +213,7 @@ def parse_artifact(data: bytes, *, fmt: str, max_bytes: int) -> Artifact:
         raise _fail("artifact", "is not JSON") from e
     d = _record(d, "artifact")
     version = d.get("schema_version")
-    if version != SCHEMA_VERSION or isinstance(version, bool):
+    if type(version) is not int or version != SCHEMA_VERSION:  # not `true`, not `1.0`
         raise _fail("artifact.schema_version", f"{repr(version)[:40]} is not {SCHEMA_VERSION}")
     if _str(d, "format", "artifact") != fmt:
         raise _fail("artifact.format", f"is not the {fmt!r} asked for")

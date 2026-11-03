@@ -269,6 +269,7 @@ def _block(**changes: Any) -> dict[str, Any]:
     [
         (_artifact(schema_version=2), "schema_version"),
         (_artifact(schema_version=True), "schema_version"),
+        (_artifact(schema_version=1.0), "schema_version"),
         (_artifact(format="text"), "format"),
         (_artifact(parser=""), "parser"),
         (_artifact(blocks={}), "blocks"),
@@ -597,3 +598,12 @@ async def test_a_listing_reads_an_unreachable_service_once(
     settings_override(document_extractor_url="http://gone")
     assert await extractors.available_formats() == {}
     assert hosts.calls == [("gone", "/v1/capabilities")]
+
+
+@pytest.mark.parametrize("version", [True, 1.0, "1"])
+def test_capabilities_of_a_contract_version_that_is_not_the_integer_1_are_refused(
+    version: Any,
+) -> None:
+    body = {"contract_version": version, "extractor": {"name": "x"}, "max_bytes": 1, "formats": []}
+    with pytest.raises(ValueError, match="contract_version"):
+        extractors._capabilities(json.dumps(body).encode())
