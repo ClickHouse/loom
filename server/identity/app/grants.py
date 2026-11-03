@@ -340,6 +340,7 @@ async def _live_grant_row(org: str, namespace: str, subject: str) -> tuple[str, 
     handle falls back to its verified email only (`read_aliases`): an unverified
     one may name someone else's grant."""
     from server.auth.aliases import canonical_subject, read_aliases, spellings
+    from server.core.ch import own_write_reads
 
     canonical = await canonical_subject(org, subject)
     row = await grants_repo.find_any_grant(org, namespace, canonical)
@@ -348,7 +349,8 @@ async def _live_grant_row(org: str, namespace: str, subject: str) -> tuple[str, 
     if "@" in subject:
         others = await spellings(org, subject)
     else:
-        others = await read_aliases(org, subject, None)
+        with own_write_reads():  # a link another process just made
+            others = await read_aliases(org, subject, None)
     for spelling in others:
         if spelling != canonical:
             row = await grants_repo.find_any_grant(org, namespace, spelling)

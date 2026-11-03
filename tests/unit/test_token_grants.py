@@ -170,6 +170,22 @@ async def test_revoking_the_person_cascades_to_the_tokens_they_minted_on_that_na
 
 
 @pytest.mark.asyncio
+async def test_an_unread_directory_still_cascades_under_the_exact_subject(
+    inserted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeCH([], [])
+    import server.auth.aliases as aliases
+
+    async def _unread(org: str, subject: str, *, ch: Any = None) -> list[str]:
+        raise RuntimeError("directory down")
+
+    monkeypatch.setattr(aliases, "spellings", _unread)
+    await tg.cascade_revoke_to_created_tokens(ORG, "code-private", "alice@x", ch=fake)
+    _, sa_params = next(x for x in fake.sql if "service_accounts" in x[0])
+    assert sa_params["subs"] == ["alice@x"]
+
+
+@pytest.mark.asyncio
 async def test_grants_revoke_handler_calls_the_cascade(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.identity.api.models_grants import GrantsRevokeInput
 

@@ -80,17 +80,18 @@ async def _rows(
     from server.core.ch import get_client
 
     client = ch or get_client()
+    only_verified = f"AND {VERIFIED_EMAIL_SQL}" if verified else ""
     rows: list[dict[str, Any]] = await client.query_all(  # type: ignore[attr-defined]
-        """
+        f"""
         SELECT owner_email, contact_email
         FROM loom.namespaces FINAL
-        WHERE org = {org:String} AND ifNull(active, true) = true
-          AND contact_email != '' AND (NOT {verified:Bool} OR {verified_email})
-          AND (lower({sub:String}) = lower(owner_email)
-               OR lower({sub:String}) = lower(contact_email))
+        WHERE org = {{org:String}} AND ifNull(active, true) = true
+          AND contact_email != '' {only_verified}
+          AND (lower({{sub:String}}) = lower(owner_email)
+               OR lower({{sub:String}}) = lower(contact_email))
         LIMIT 8
-        """.replace("{verified_email}", VERIFIED_EMAIL_SQL),
-        params={"org": org, "sub": subject, "verified": verified},
+        """,
+        params={"org": org, "sub": subject},
     )
     return rows
 

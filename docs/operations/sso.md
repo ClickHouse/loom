@@ -687,10 +687,10 @@ whose subject it is, every token it made or that descends from one of its tokens
 and every refresh of its sign-in sessions are refused at once by the process that
 took the request, and by every other process at its next revocation refresh.
 Every mint reads revocations from ClickHouse, so a sign-in, a device approval or
-an MCP connect for it gets no token either. The service accounts and MCP tokens it ends show as revoked in the Tokens
-list, by `admin:<you>`, and their names are free again, as after a SCIM
-deactivation. The accounts, their grants and their data stay; this is not
-erasure.
+an MCP connect for it gets no token either. The service accounts and MCP tokens
+it ends show as revoked in the Tokens list, by `admin:<you>`, and their names are
+free again, as after a SCIM deactivation. The accounts, their grants and their
+data stay; this is not erasure.
 
 `issued_before` (RFC 3339, with its offset) limits the revocation to what was
 issued before that instant, for good: a platform deprovisioning someone sends the

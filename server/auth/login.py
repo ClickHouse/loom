@@ -284,6 +284,7 @@ async def refreshed_roles(subject: str, org: str, roles: list[str]) -> list[str]
         """
         SELECT contact_email FROM loom.namespaces FINAL
         WHERE org = {org:String} AND owner_email = {sub:String} AND active = 1
+        ORDER BY contact_email DESC  -- the row naming one, not a personal namespace's
         LIMIT 1
         """,
         params={"org": org, "sub": subject},
