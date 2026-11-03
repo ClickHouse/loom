@@ -280,7 +280,7 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | `documents` | `int` | How many of the named documents had chunks to read. |
 | `reduce_rounds` | `int` | How many fold rounds merged the notes into the answer; 1 when they fit one call. |
 | `citations` | `list[str]` | Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning documents) citations in the answer, in the order found; each names chunks the passes read. |
-| `unsupported_citations` | `list[str]` | Citations in the answer naming a chunk the passes did not read; removed from `answer`. |
+| `unsupported_citations` | `list[str]` | Citations the model wrote naming a chunk the passes did not read; removed from `answer`. |
 | `truncated` | `bool` | True when the documents needed more than `max_windows` windows and only the first were read. |
 | `abstain` | `bool` | True when there is no answer to give; `abstain_reason` says why. |
 | `abstain_reason` | `str` | `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents have none) or `empty_answer` (no letter or digit once unread citations are removed); empty otherwise. |

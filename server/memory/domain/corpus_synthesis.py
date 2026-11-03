@@ -125,9 +125,11 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
 # by `,` or `;` (a window spanning documents is cited as a comma list, `Window.cite`). A
 # source holds no blank, comma, semicolon or bracket; a bracket with anything else in it
 # is prose (`[PR #42]`, `[see doc#1]`) and is left as written. Of nested brackets, the
-# innermost is the one read. An index is at most nine digits 0-9: a longer run is prose.
+# innermost is the one read. An index is ASCII digits; one past nine digits names no chunk.
 # One item, as (source, first index, last index); a citation is a list of them.
-_ITEM_PARTS = re.compile(r"([^\s,;\[\]]+)#([0-9]{1,9})(?:-([0-9]{1,9}))?")
+_ITEM_PARTS = re.compile(r"([^\s,;\[\]]+)#([0-9]+)(?:-([0-9]+))?")
+# not a setting: longer than any chunk index, short enough for int() to parse safely
+_MAX_INDEX_DIGITS = 9
 _ITEMS = re.compile(rf"{_ITEM_PARTS.pattern}(?:\s*[,;]\s*{_ITEM_PARTS.pattern})*")
 # The blanks around a list's separators, which do not make it another citation.
 _SEPARATOR = re.compile(r"\s*([,;])\s*")
@@ -147,6 +149,8 @@ def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
     if not _ITEMS.fullmatch(tag):
         return False
     for m in _ITEM_PARTS.finditer(tag):
+        if max(len(m.group(2)), len(m.group(3) or "")) > _MAX_INDEX_DIGITS:
+            return False
         source, a, b = m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))
         if not (a <= b and (source, a) in read and (source, b) in read):
             return False

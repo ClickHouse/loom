@@ -253,10 +253,11 @@ _GROUNDING_CASES = {
     "pass-cap": ("[q#9" * 9 + "]" * 9, ("[q#9]", [], ["q#9"])),
     # of nested brackets the innermost is read
     "innermost-read": ("[[doc://a#1]]", ("[[doc://a#1]]", ["doc://a#1"], [])),
-    # an index past nine digits is prose, not a number to parse
-    "long-index": (_LONG_INDEX, (_LONG_INDEX, [], [])),
+    # an index past nine digits names no chunk, and is never parsed
+    "long-index": (_LONG_INDEX, ("", [], [_LONG_INDEX[1:-1]])),
+    "ten-digit-index": ("x [doc://a#1234567890]", ("x", [], ["doc://a#1234567890"])),
     # a non-ASCII digit is no index: the bracket is prose
-    "non-ascii-digit": ("[doc://a#²,doc://a#1]", ("[doc://a#²,doc://a#1]", [], [])),
+    "non-ascii-digit": ("[doc://a#\u0661,doc://a#1]", ("[doc://a#\u0661,doc://a#1]", [], [])),
     # a padded tag is named without its padding
     "padded": ("x [ doc://a#1]", ("x [ doc://a#1]", ["doc://a#1"], [])),
     # blanks around a separator do not make a second citation

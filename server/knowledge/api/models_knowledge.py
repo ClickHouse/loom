@@ -377,7 +377,7 @@ class KnowledgeSynthesizeOutput(BaseModel):
     # Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning
     # documents) citations in the answer, in the order found; each names chunks the passes read.
     citations: list[str] = Field(default_factory=list)
-    # Citations in the answer naming a chunk the passes did not read; removed from `answer`.
+    # Citations the model wrote naming a chunk the passes did not read; removed from `answer`.
     unsupported_citations: list[str] = Field(default_factory=list)
     # True when the documents needed more than `max_windows` windows and only the first were read.
     truncated: bool = False
