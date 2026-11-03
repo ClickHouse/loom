@@ -18,8 +18,8 @@ class MemoryInspectInput(BaseModel):
 
     `subject` names which identity column `id` is matched against (`user_id`, `agent`,
     `session_id`). The subject is a filter inside the namespace the caller may already
-    read, never a wider grant. It changes nothing it reads: no recall credit, no usage
-    event; one exposure-ledger row records the rows it lists.
+    read, never a wider grant. It changes nothing it reads and gives no recall credit;
+    one exposure-ledger row records the rows it lists, as memory.list's does.
     """
 
     org: str
@@ -57,8 +57,9 @@ class InspectRow(BaseModel):
     memory_id: str
     version: int
     # The hash memory.get serves for this version (what `if_match_sha256` takes); empty
-    # for a high-sensitivity row, whose hash comes only with the value, and for a value
-    # larger than `namespace_report_hash_max_bytes`.
+    # for a high-sensitivity row, whose hash comes only with the value, for a value
+    # larger than `namespace_report_hash_max_bytes` (0 cites none), and for a row
+    # revised between the listing and the citation read.
     content_sha256: str = ""
     memory_type: str
     status: str

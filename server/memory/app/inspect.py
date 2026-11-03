@@ -10,8 +10,9 @@ the namespace guide and categories, and the operator extraction policy only for 
 caller who may read it (an org admin).
 
 It changes nothing it reads: plain reads over `loom.memory`, `loom.memory_categories`,
-`loom.memory_versions`, `loom.namespaces` and `loom.agent_events`, no recall credit or
-usage event, and one exposure-ledger row for the rows it lists, as memory.list writes. A
+`loom.memory_versions`, `loom.namespaces` and `loom.agent_events`, no recall credit, and
+one exposure-ledger row for the rows it lists, as memory.list writes (which, inside a
+run, can feed the usage fold's `acted` credit as memory.list's does). A
 section that cannot be read lands in `skipped`, never raises.
 """
 
@@ -78,9 +79,13 @@ _DEFINITIONS: dict[str, tuple[str, str]] = {
 }
 
 
+_IDENTITY = ("agent", "user_id", "session_id", "memory_key")
+
+
 def _cited_hash(revision: dict[str, Any] | None, row: dict[str, Any]) -> str:
-    """The cited hash of the listed version: none for a high-sensitivity row, whose hash
-    comes only with the value, or when the row moved on between the two reads."""
+    """The cited hash of the listed version: none when the row moved on between the two
+    reads. A high-sensitivity row's is withheld here as well as by the citation read, so
+    the rule holds whichever read serves it."""
     if row["sensitivity"] == "high" or revision is None:
         return ""
     if int(revision["version"]) != int(row["version"]):
@@ -161,11 +166,12 @@ class _Inspect:
                 dict[str, int](),
             )
             # The hash memory.get serves for each listed revision, none for a high row or
-            # one past `namespace_report_hash_max_bytes` (the reports' own citations).
+            # one past `namespace_report_hash_max_bytes` (the reports' own citations). Rows
+            # are named by their whole identity, the table's sort key, not by id.
             cited = await self.guarded(
                 f"{which}.hashes",
                 lambda: revisions_for(
-                    i.org, i.namespace, [{"memory_id": m} for m in ids], scope=scope
+                    i.org, i.namespace, [{c: r[c] for c in _IDENTITY} for r in newest], scope=scope
                 ),
                 dict[Any, dict[str, Any]](),
             )
@@ -173,7 +179,7 @@ class _Inspect:
                 InspectRow(
                     **{k: v for k, v in r.items() if k != "id"},
                     memory_id=str(r["id"]),
-                    content_sha256=_cited_hash(cited.get(str(r["id"])), r),
+                    content_sha256=_cited_hash(cited.get(tuple(r[c] for c in _IDENTITY)), r),
                     versions=versions.get(str(r["id"]), 0),
                 )
                 for r in newest
