@@ -79,9 +79,8 @@ RECOVERY_WORKER_ACTOR = "erasure-recovery-worker"
 
 
 def audit_actor(row: Mapping[str, Any]) -> str:
-    """The actor of a resumed saga's audit rows: the ledger row's, else ('' on a
-    row an older build wrote) the process that resumes it — a CLI command's
-    pipeline actor, or the recovery worker."""
+    """The actor of a saga's failed and completed rows: the ledger row's, else (a
+    row an older build wrote) the resuming process."""
     return row["actor"] or writer_actor(RECOVERY_WORKER_ACTOR)
 
 
@@ -94,7 +93,8 @@ def request_row_template(
     attempts: int,
 ) -> RequestRow:
     """Common columns for every erasure_requests row we write. `actor` is the
-    token's principal at request time; `requester` is what the body declares."""
+    request's audit actor (`writer_actor` at request time, '' on a row an older
+    build wrote); `requester` is what the body declares."""
     return {
         "id": erasure_id,
         "org": input.org,
