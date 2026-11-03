@@ -366,7 +366,49 @@ namespace's cost cap.
 ```bash
 loom decisions extract --org O --namespace NS --source-uri URI            # dry run: prints what it would write
 loom decisions extract --org O --namespace NS --source-uri URI --apply    # writes
+loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME --into source --apply
 ```
+
+- **Repository**: by default the document's namespace is where its code names are looked up and its decisions are
+  written, which fits a document added to a repository's code namespace. A document in a person's or a team's
+  namespace names the repository with `--repo OWNER/NAME` (or a remote URL), matched by owner/name as `code.repos`
+  matches a checkout's remote (a fork's remote is not followed to its upstream: name the upstream); its names are
+  then looked up in that repository's trunk code namespace, and `--into` chooses where the rows go:
+  - `--into source` (the default for a document outside a code namespace): the document's namespace, each row tagged
+    `repo:<id>`, the tag the coding plugins send to `memory.for_file`, so a session whose own namespace (the plugin's
+    `namespace`) is the document's gets the row before editing a file it names. The pre-edit hook reads only that
+    namespace and the repository's trunk, so a team's shared document whose readers work from their own namespaces
+    goes in with `--into repo`. A document in the trunk itself gets untagged rows, read there by every editor.
+  - `--into repo` (the default for a document in a code namespace): the repository's trunk code namespace, where every
+    reader of the repository gets the row before an edit. `source_resource_id` still cites the document in its own
+    namespace; there is no per-document access, so a repository reader who cannot read the document's namespace sees
+    the row's quote but is refused the document it cites. The rows are the trunk's: erasing the document's namespace
+    leaves them, and `memory.delete` in the trunk removes them.
+  - **Tags**: under `--into source` for a document outside the trunk, a row the run keeps as it is (pinned, attested
+    or with a recorded outcome, and the same verbatim fields, or one the retire step keeps because its reasoning is
+    still in the document), and a row it tags `source-changed`, gains the `repo:<id>` tag by a tags-only write;
+    another writer's unconfirmed row gains none, nor does a row that carries another repository's tag already.
+  - **Access**: the run reads the document's namespace and the repository's, and writes where the rows go. With an
+    auth context bound it checks each (viewer, viewer, and writer, or viewer for a dry run) and refuses before any
+    model call; the CLI runs with none, as the operator.
+  - **Rows from an earlier run**: every memory row the reconcile and retire steps read is in the namespace the rows go
+    to, so the run refuses before any model call when this document's rows are in another namespace a run may write
+    them to (the document's namespace, the named repository's trunk, or, for a document in a branch's code namespace,
+    its repository's trunk), or carry another repository's `repo:<id>` tag (any, for a run without `--repo` or with a
+    repository that has no remote): going on would leave the document's decisions in two places, or linked to the
+    wrong repository. The refusal names a linked repository by `owner/name` when the caller may read it, and a caller
+    who cannot read that other namespace is refused. Two cases the run does not see: rows an `--into repo` run wrote
+    to a repository other than the one whose code namespace holds the document (any repository, for a document
+    outside a code namespace), when a later run drops `--repo` or names another repository, so pass the same `--repo`
+    again; and two runs on one document at once with different `--into`, which can both find the other namespace
+    empty.
+  - **Exit 1** before any model call, besides those refusals, for:
+    - a repository that is not configured in the org, or that the caller may not read (one answer for both);
+    - a repository with no remote to tag rows with, under `--into source` for a document outside the trunk;
+    - `--into` without `--repo`;
+    - `--into source` for a document in another repository's code namespace (its rows would link to the named
+      repository's code and be read in the other's);
+    - the repositories added from the dashboard could not be read.
 
 - **Windows**: the document's live chunks for the current embedding model, grouped by section, at most
   `--window-chars` (default 6000) per call. A document chunked under another embedding model has none: the command
@@ -480,18 +522,19 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   "Defer sharding by tenant"; "so v1 cannot evict it" still rejects "evict the largest job".
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
-  `source-kind:design_doc` and `constraint` for a ban or an invariant. The row's `actor` is `process:cli:decisions`.
-  Each `decision.record`, and each `memory.delete_version` that deletes a row, leaves the audit row the transport
-  writes for that op, with the actor `process:cli:decisions`; the tag write, `memory.update_by_id`, declares none, as
-  over HTTP.
+  `source-kind:design_doc`, `constraint` for a ban or an invariant and `repo:<id>` under `--into source` for a document
+  outside the repository's trunk. The row's `actor` is `process:cli:decisions`. Each `decision.record`, and each
+  `memory.delete_version` that deletes a row, leaves the audit row the transport writes for that op, with the actor
+  `process:cli:decisions`; the tag write, `memory.update_by_id`, declares none, as over HTTP.
 - **Files**: each backticked or qualified name and each bare class name the document text holds is looked up with
-  `code.symbol` in the same namespace; exactly one defining file (a class preferred over its constructor) goes into
-  `files`, several or none add nothing. A repository path the quote or the reasoning writes out
-  (`src/Storages/MergeTreeData.cpp`) is added as well, as `memory.set` detects one. When the code index cannot be read
-  for a name, a decision already recorded keeps the files its row has, and a new one is written with the files that
-  did resolve. Pull request numbers and setting names are printed as unresolved in a dry run, for a human to add; a
-  backticked snake_case name is looked up first and reported as a setting only when the index does not define it. A
-  name defined in several files is printed as unresolved too, for a human to pick the file.
+  `code.symbol` in the document's namespace, or in the repository's trunk with `--repo`; exactly one defining file (a
+  class preferred over its constructor) goes into `files`, several or none add nothing. A repository path the quote or
+  the reasoning writes out (`src/Storages/MergeTreeData.cpp`) is added as well, as `memory.set` detects one. When the
+  code index cannot be read for a name, a decision already recorded keeps the files its row has, and a new one is
+  written with the files that did resolve. Pull request numbers and setting names are printed as unresolved in a dry
+  run, for a human to add; a backticked snake_case name is looked up first and reported as a setting only when the
+  index does not define it. A name defined in several files is printed as unresolved too, for a human to pick the
+  file.
 - **Reconcile**: the document says otherwise only when a verbatim field differs: the reasoning, or the set of rejected
   options' reasons, each matched as a prefix where `decision.record` cut a long alternative at its 300-character cap.
   The category, scenario, outcome and option wording are the model's, and a change there alone is no change. Nor is a
@@ -500,9 +543,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   A row counts as confirmed when it is pinned or attested in its current form (`memory.verify`), the rule
   `memory.for_file` marks `(unconfirmed)` by. By the row the key's active record belongs to:
   - **The extractor's own, unconfirmed, from this document**: same verbatim fields and the same `files`,
-    `source_resource_id` and `constraint` tag: no write. A verbatim field differs, or only those row fields do (a file
-    that resolves once the code is indexed, a renamed heading): recorded again (the record is superseded, history
-    keeps it).
+    `source_resource_id`, `constraint` tag and `repo:` tag: no write. A verbatim field differs, or only those row
+    fields do (a file that resolves once the code is indexed, a renamed heading, a first run with `--repo`): recorded
+    again (the record is superseded, history keeps it).
   - **Confirmed, citing this document** (whoever wrote it): a verbatim field differs: no write; the full
     `decision.record` body is printed with the row's agent, user and session, and the row is tagged `source-changed`
     unless it already carries the tag. To accept the body, a maintainer unpins a pinned row with `memory.unpin`
@@ -536,9 +579,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   worded the scenario differently) is deleted too, so the decision is not served twice, unless its realized outcome is
   recorded; another decision resting on the same reasoning has another outcome and stays. Otherwise a row whose
   reasoning is still there stays, whether or not the run emitted it again.
-- **Citing the document**: a row cites it when its `source_resource_id` starts `knowledge:<namespace>/<source_uri>#`,
-  so a heading holding `#` (`C# bindings`) is no obstacle, unless a document `<source_uri>#<part>` it also starts with
-  was ever ingested in the namespace: `doc#v2#Intro` cites `doc#v2` once that document exists.
+- **Citing the document**: a row cites it when its `source_resource_id` starts
+  `knowledge:<document namespace>/<source_uri>#`, the namespace that holds the document (not where the row is), so a
+  heading holding `#` (`C# bindings`) is no obstacle, unless a document `<source_uri>#<part>` it also starts with was
+  ever ingested in that namespace: `doc#v2#Intro` cites `doc#v2` once that document exists.
 - **Clearing `source-changed`**: when a run's candidate for a tagged row's key has the row's verbatim fields again,
   the run drops the tag, pinned or not, as long as the row cites this document. The retire step never drops it: it
   reads the reasoning alone, and the tag may stand for a rejected option's reason the document still contradicts, or
@@ -560,10 +604,11 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   with no API key set, or no provider configured at all. `LOOM_LLM_PROVIDER=fake` set explicitly runs on it on purpose.
   Otherwise a window the fake model answers (a fallback model, `LOOM_LLM_FALLBACK_MODEL`, with no key) is dropped as
   unread. A run whose every window's model call failed or came back unreadable, or answered nothing and failed when read
-  again, reads nothing and retires nothing. The command exits 1 when it could not read the document (no document, no
-  chunks, no usable model, the extractor's own rows unreadable before any model call, no window read), 2 when a write,
-  or a read it needed, was refused or failed (a dry run's reads count too, and so does a window the model could not
-  answer readably while others were read), else 0; a race does not change the exit code.
+  again, reads nothing and retires nothing. The command exits 1 when it could not run on the document (no document, no
+  chunks, no usable model, a refusal under **Repository** above, the extractor's own rows unreadable before any model
+  call, no window read), 2 when a write, or a read it needed, was refused or failed (a dry run's reads count too, and
+  so does a window the model could not answer readably while others were read), else 0; a race does not change the
+  exit code.
 
 The reasoning is the verbatim span the retire step reads: the record has no field for the quote. To confirm an
 extracted decision, a maintainer reads its identity with `memory.get` and calls `memory.pin` under it, or attests its
