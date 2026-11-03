@@ -74,22 +74,15 @@ def input_from_ledger_row(row: Mapping[str, Any]) -> ErasureRequestInput:
     )
 
 
-# The recovery worker's own principal: the actor of its `erasure.recovered` and
-# `erasure.abandoned` rows, and of a resumed saga's rows when the ledger row
-# names no actor and no pipeline actor is bound.
-RESUME_ACTOR = "erasure-recovery-worker"
-
-
-def ledger_actor(row: Mapping[str, Any]) -> str:
-    """The actor a saga's ledger row holds, carried forward unchanged by every
-    checkpoint: '' on a row written or checkpointed by a build before the column."""
-    return str(row.get("actor") or "")
+# The recovery worker's own principal.
+RECOVERY_WORKER_ACTOR = "erasure-recovery-worker"
 
 
 def audit_actor(row: Mapping[str, Any]) -> str:
-    """The actor of a saga's audit rows: the ledger's, else the process that
-    resumes the saga (a CLI command's pipeline actor, or the recovery worker)."""
-    return ledger_actor(row) or writer_actor(RESUME_ACTOR)
+    """The actor of a resumed saga's audit rows: the ledger row's, else ('' on a
+    row an older build wrote) the process that resumes it — a CLI command's
+    pipeline actor, or the recovery worker."""
+    return str(row["actor"]) or writer_actor(RECOVERY_WORKER_ACTOR)
 
 
 def request_row_template(
@@ -191,7 +184,7 @@ async def begin_erasure(
         event_type="erasure.started",
         org=input.org,
         namespace=audit_namespace(input.scope_type, input.scope_value),
-        actor=audit_actor(row),
+        actor=row["actor"],
         subject={
             "erasure_id": erasure_id,
             "scope_type": input.scope_type,

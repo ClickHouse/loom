@@ -130,7 +130,7 @@ async def test_a_resume_carries_the_ledgers_actor_forward_unchanged(
 
 
 @pytest.mark.parametrize(
-    ("stored", "named"), [("human:admin@o", "human:admin@o"), ("", saga.RESUME_ACTOR)]
+    ("stored", "named"), [("human:admin@o", "human:admin@o"), ("", saga.RECOVERY_WORKER_ACTOR)]
 )
 async def test_a_resumed_saga_that_completes_names_the_ledgers_actor(
     recorded: Any, stored: str, named: str
@@ -147,7 +147,7 @@ async def test_a_resumed_saga_that_completes_names_the_ledgers_actor(
     )
     assert [(a["event_type"], a["actor"]) for a in audits] == [
         ("erasure.completed", named),
-        ("erasure.recovered", saga.RESUME_ACTOR),
+        ("erasure.recovered", saga.RECOVERY_WORKER_ACTOR),
     ]
     assert audits[0]["subject"]["requester"] == "dpo@y"
     assert rows and {r["actor"] for r in rows} == {stored}
