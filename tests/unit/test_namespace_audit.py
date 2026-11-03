@@ -1465,7 +1465,8 @@ async def test_version_churn_counts_rewrites_and_drops_status_changes() -> None:
         *(version("u1", "job/state", v, "ab"[v % 2]) for v in range(1, 5)),
         # Versions with no recorded hash (the column's default) are not known to repeat.
         *(version("u1", "old/key", v, "") for v in range(1, 4)),
-        # A writer restating the value bumps its reinforcement count each time.
+        # A writer restating the value, by `memory.set` or `memory.pin`, bumps its
+        # reinforcement count each time.
         *(version("u1", "same/value", v, "c", reinforced=v) for v in range(1, 4)),
     ]
     audit = na.new_audit(_inp(), ch=_LocalCH(["memory_versions"], rows))

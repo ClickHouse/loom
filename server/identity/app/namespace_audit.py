@@ -393,10 +393,11 @@ _CONTRACT: dict[str, RuleContract] = {
         exceptions=(
             "A version of the same row (agent, user, session, key) that keeps the value and "
             "the reinforcement count of the one before it is not counted: a status change "
-            "(conflict marking, supersession), a tags or confidence edit, a pin or lock, and "
-            "the server's own copies of a write. A new value counts, as do a restatement of "
-            "the same value, a value that flips back and forth and a version with no "
-            "recorded hash."
+            "(conflict marking, supersession), a tags or confidence edit through "
+            "`memory.update_by_id`, a lock or an unpin, and the server's own copies of a "
+            "write. A new value counts, as does a restatement of the same value (a "
+            "`memory.set` or `memory.pin` of it), a value that flips back and forth and a "
+            "version with no recorded hash."
         ),
         uncertainty=(
             "A fact that really changes often leaves a long history that is not waste, and a "
@@ -410,7 +411,7 @@ _CONTRACT: dict[str, RuleContract] = {
 # Sample rows from a `count() OVER ()` query: the aggregate columns ride every row and are split
 # off. A value-bearing column is dropped even if a query ever selected one: samples carry keys
 # and counts, never content.
-_AGG_COLS = frozenset({"total", "total_bytes"})
+_AGG_COLS = frozenset({"total", "total_bytes", "stalled"})
 _NEVER_SAMPLED = frozenset({"value", "value_json", "value_preview", "content_excerpt", "query"})
 
 
@@ -721,7 +722,6 @@ class _Audit:
         )
         total, _bytes, samples = _split(rows, self.inp.sample_limit)
         stalled = int(rows[0].get("stalled") or 0) if rows else 0
-        samples = [{k: v for k, v in r.items() if k != "stalled"} for r in samples]
         self.add(
             "index_backlog",
             "warning" if stalled else "info",
@@ -935,8 +935,9 @@ class _Audit:
                    memory_key, versions, bytes
             FROM (SELECT memory_key, count() AS versions, sum(chars) AS bytes
                   -- a version that keeps the value and its reinforcement count of the one
-                  -- before it (a status change, a tags edit, a pin, the server's own
-                  -- copies of a write) rewrites nothing; a restatement bumps the count
+                  -- before it (a status change, a tags edit by id, a lock, the server's
+                  -- own copies of a write) rewrites nothing; a restatement (a set or pin
+                  -- of the same value) bumps the count
                   FROM (SELECT memory_key, value_len AS chars,
                                -- a version with no recorded hash (the column's '0'
                                -- default) is not known to repeat, so it counts

@@ -337,8 +337,8 @@ class NamespaceAuditSummary(BaseModel):
     # Bytes of content_excerpt the embedding rows carry (a copy of each value's head).
     excerpt_bytes: int = 0
     # The versions that rewrite the row (a new value, or a restatement that bumps the
-    # reinforcement count), not a copy that keeps both (a status change, a tags edit, a
-    # pin, the server's own copies); and their bytes.
+    # reinforcement count: a set or pin of the same value), not a copy that keeps both (a
+    # status change, a tags edit by id, a lock, the server's own copies); and their bytes.
     version_rows: int = 0
     version_bytes: int = 0
     # Searchable-type embedding rows with no vector and an embed error of their own (a
