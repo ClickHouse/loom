@@ -196,6 +196,11 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
         return sum(1 for c in w.chunks if c["source_uri"] == uri)
 
     monkeypatch.setattr(chunks_repo, "count_active_for_doc", count_active_for_doc)
+
+    async def count_version(org: str, ns: str, uri: str, version: int, **_: Any) -> int:
+        return sum(1 for c in w.chunks if c["source_uri"] == uri and c["doc_version"] == version)
+
+    monkeypatch.setattr(chunks_repo, "count_version", count_version)
     monkeypatch.setattr(chunks_repo, "mark_doc_superseded", mark_doc_superseded)
     monkeypatch.setattr(documents_repo, "insert_one", insert_one)
     monkeypatch.setattr(documents_repo, "get_one", get_one)
@@ -1040,21 +1045,38 @@ def test_a_rerun_of_a_published_job_keeps_its_chunks_and_publishes_nothing_more(
     assert world.superseded[-1] == ("repo://retention.sql", job["doc_version"])
 
 
-def test_a_rerun_of_a_published_job_after_a_text_write_publishes_nothing_more(world: World) -> None:
-    """A text write names no job: the rerun finds its own publish in an
-    earlier version row of the source, not only in the latest one."""
+@pytest.mark.parametrize("merged", [False, True])
+def test_a_rerun_of_a_published_job_after_a_text_write_publishes_nothing_more(
+    world: World, merged: bool
+) -> None:
+    """A text write names no job. While the job's own version row is still
+    there the rerun finds it and ends published with its own chunk count; once
+    a merge has folded it into the text write's, the rerun cannot tell, and a
+    later write landed after its chunks, so it fails `revision_conflict`. In
+    neither case does it publish the older file again."""
     job_id = _ingest(world, _upload(world))
     assert _run(world, job_id) == "ready"
     job = world.job(job_id)
     assert job is not None
+    own_chunks = int(job["chunks"])
     doc = world.documents[-1]
     world.documents.append(
         {**doc, "version": doc["version"] + 1, "revision": 2, "ingestion_id": ""}
     )
-    world.jobs.append({**job, "state": "processing", "version": job["version"] + 1})
+    if merged:
+        world.documents.remove(doc)
+    world.jobs.append({**job, "state": "processing", "chunks": 0, "version": job["version"] + 1})
     chunks, world.embedded = len(world.chunks), []
-    assert _run(world, job_id) == "ready" and world.job(job_id)["revision"] == 1  # type: ignore[index]
-    assert len(world.chunks) == chunks and len(world.documents) == 2 and world.embedded == []
+    latest = world.job(job_id)
+    assert latest is not None
+    if merged:
+        assert _run(world, job_id) == "failed"
+        assert world.job(job_id)["error_code"] == "revision_conflict"  # type: ignore[index]
+    else:
+        assert _run(world, job_id) == "ready"
+        assert (world.job(job_id)["revision"], world.job(job_id)["chunks"]) == (1, own_chunks)  # type: ignore[index]
+    assert len(world.chunks) == chunks and world.embedded == []
+    assert [d["revision"] for d in world.documents][-1] == 2
 
 
 def test_the_retry_delay_stops_doubling_at_an_hour(world: World, settings_override: Any) -> None:

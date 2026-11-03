@@ -159,6 +159,22 @@ async def _end(job: dict[str, Any], state: str, code: str, message: str) -> str:
     return state
 
 
+async def _overtaken(job: dict[str, Any]) -> bool:
+    """A write of the source landed after this job recorded its chunk version
+    (`doc_version`, the version its document row takes). Whether or not its row
+    landed first, a merge may have folded it away, so a rerun cannot publish
+    without putting this job's older file over that later write."""
+    from server.knowledge.store import documents as documents_repo
+
+    version = int(job["doc_version"])
+    if not version:
+        return False
+    doc = await documents_repo.get_one(
+        job["org"], job["namespace"], job["source_uri"], include_superseded=True
+    )
+    return doc is not None and doc.version > version
+
+
 async def _finish_published(job: dict[str, Any], revision: int) -> str:
     """End a job whose document row landed but whose run did not finish (it
     stopped before its last save, or failed after the row): retire the earlier
@@ -176,7 +192,7 @@ async def _finish_published(job: dict[str, Any], revision: int) -> str:
         state=state,
         stage="",
         revision=revision,
-        chunks=await chunks_repo.count_active_for_doc(org, ns, uri),
+        chunks=await chunks_repo.count_version(org, ns, uri, int(job["doc_version"])),
         error_code="",
         error_message="",
     )
@@ -461,6 +477,13 @@ async def take_and_run(job: dict[str, Any]) -> str | None:
             # if a cancel came after it.
             if (revision := await _own_publish(current)) is not None:
                 return await _finish_published(current, revision)
+            if await _overtaken(current):
+                return await _end(
+                    current,
+                    "failed",
+                    "revision_conflict",
+                    "a later write of this source landed after this job began to publish",
+                )
             if await _cancelled(current):
                 return await _end(
                     current, "cancelled", "cancelled", "cancelled before it was published"
