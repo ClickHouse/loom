@@ -158,9 +158,9 @@ _TEXT: dict[str, tuple[str, str]] = {
     # Runs first: the ledger checks read whether it found the ledger empty.
     "telemetry_unavailable": (
         "Live rows were created in the window but the ledger holds no call for the "
-        "namespace apart from reports on it and the dashboard's or the assistant's reads "
-        "and page views: the read and search counts were not recorded, so the checks built "
-        "on them are skipped rather than reported clean.",
+        "namespace apart from reports on it, the dashboard's or the assistant's reads and "
+        "page views, and a worker's own rows: the read and search counts were not recorded, "
+        "so the checks built on them are skipped rather than reported clean.",
         "Check that the server writes its event ledger (loom.agent_events) and keeps it "
         "for the window (LOOM_RETENTION_AGENT_EVENTS_DAYS), or whether the rows were written "
         "in-process (`loom import-recall` or `import-brain` without `--base-url`), then "
@@ -398,8 +398,8 @@ _CONTRACT: dict[str, RuleContract] = {
             "(conflict marking, supersession), a tags or confidence edit through "
             "`memory.update_by_id`, a lock or an unpin, and the server's own copies of a "
             "write. A new value counts, as does a restatement of the same value (a "
-            "`memory.set` or `memory.pin` of it), a value that flips back and forth and a "
-            "version with no recorded hash."
+            "`memory.set` or `memory.pin` of it), a delete and a set of the same value after "
+            "it, a value that flips back and forth and a version with no recorded hash."
         ),
         uncertainty=(
             "A fact that really changes often leaves a long history that is not waste, and a "
@@ -945,7 +945,9 @@ class _Audit:
                                content_sha256 = toFixedString('0', 64)
                                OR content_sha256 != lagInFrame(content_sha256) OVER w
                                OR reinforcement_count != lagInFrame(reinforcement_count) OVER w
-                                   AS rewrote
+                               -- a delete, and a set after one, are the writer's
+                               OR isNull(tombstoned_at)
+                                   != lagInFrame(isNull(tombstoned_at)) OVER w AS rewrote
                         FROM loom.memory_versions FINAL WHERE {_SCOPE}
                         -- the table's whole sort key, so the window reads in its order
                         WINDOW w AS (PARTITION BY org, namespace, agent, user_id, session_id,

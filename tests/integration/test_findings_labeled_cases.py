@@ -2,11 +2,11 @@
 precision and recall, against a live Loom + ClickHouse.
 
 Each case is a namespace built through the API (and, for the two states an agent cannot
-cause, an insert or a delete on the store the test owns) and labeled with the findings it must raise.
-Every other rule must stay quiet on it. A finding is raised when its count is above zero
-at warning severity or worse, or, for the system-state and intentional-read rules, when
-its count is above zero. The run prints the per-rule table and asserts precision and
-recall of 1.0 over every rule that ran.
+cause, an insert or a delete on the store the test owns) and labeled with the findings
+it must raise. Every other rule must stay quiet on it. A finding is raised when its
+count is above zero at warning severity or worse, or, for the system-state and
+intentional-read rules, when its count is above zero. The run prints the per-rule table
+and asserts precision and recall of 1.0 over every rule that ran.
 
 Run: LOOM_BASE_URL=... LOOM_CH_HOST=... pytest -s tests/integration/test_findings_labeled_cases.py
 """

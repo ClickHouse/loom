@@ -31,7 +31,8 @@ export interface NamespaceAuditSummary {
   // Absent from a server one release older, like the two below.
   typed_gets?: number;
   // Live rows created in the window (not copied in), and the ledger's calls for the
-  // namespace in it, leaving out reports on it and inspector calls that change nothing.
+  // namespace in it, leaving out reports on it, inspector calls that change nothing and
+  // a worker's own rows.
   written_in_window?: number;
   ledger_calls?: number;
 }

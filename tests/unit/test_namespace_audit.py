@@ -1450,12 +1450,14 @@ async def test_a_workers_revision_of_an_old_row_is_not_an_unrecorded_write() -> 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.asyncio
 async def test_version_churn_counts_rewrites_and_drops_status_changes() -> None:
-    def version(user: str, key: str, version: int, sha: str, reinforced: int = 1) -> str:
+    def version(
+        user: str, key: str, version: int, sha: str, reinforced: int = 1, deleted: bool = False
+    ) -> str:
         return (
             "INSERT INTO loom.memory_versions (org, namespace, agent, user_id, session_id, "
-            f"memory_key, value, version, content_sha256, reinforcement_count) VALUES ('o', "
-            f"'ns', 'bot', '{user}', '-', '{key}', 'UTC', {version}, "
-            f"'{sha * 64 if sha else '0'}', {reinforced})"
+            "memory_key, value, version, content_sha256, reinforcement_count, tombstoned_at) "
+            f"VALUES ('o', 'ns', 'bot', '{user}', '-', '{key}', 'UTC', {version}, "
+            f"'{sha * 64 if sha else '0'}', {reinforced}, {'now()' if deleted else 'NULL'})"
         )
 
     rows = [
@@ -1472,15 +1474,20 @@ async def test_version_churn_counts_rewrites_and_drops_status_changes() -> None:
         # A writer restating the value, by `memory.set` or `memory.pin`, bumps its
         # reinforcement count each time.
         *(version("u1", "same/value", v, "c", reinforced=v) for v in range(1, 4)),
+        # Deleted and set again with the same value: each step is the writer's.
+        version("u1", "cycle/key", 1, "d"),
+        version("u1", "cycle/key", 2, "d", deleted=True),
+        version("u1", "cycle/key", 3, "d"),
     ]
     audit = na.new_audit(_inp(), ch=_LocalCH(["memory_versions"], rows))
     await audit.version_churn()
     f = _finding(audit, "version_churn")
-    assert f.count == 12
+    assert f.count == 15
     assert {s["memory_key"]: s["versions"] for s in f.samples} == {
         "job/state": 4,
         "old/key": 3,
         "same/value": 3,
+        "cycle/key": 3,
         "pref/tz": 2,
     }
 
