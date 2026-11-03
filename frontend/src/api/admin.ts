@@ -1,7 +1,7 @@
 // The API client is split by plane behind the `api.ts` barrel, so a view's client rides
 // in that view's chunk and the shell evaluates only the functions it calls. Importers
 // still import from `api.ts`.
-import { ownerArgs, post } from "../api";
+import { post } from "../api";
 import type { Identity, RequestOpts } from "../api";
 
 // ===== Namespace usage audit =====
@@ -811,14 +811,8 @@ export async function memoryHistory(
   memoryKey: string,
   limit: number = 10,
 ): Promise<{ rows: MemoryHistoryEntry[] }> {
-  return post("/v1/memory.history", {
-    org: id.org,
-    namespace: id.namespace,
-    agent: id.agent,
-    ...ownerArgs(id),
-    memory_key: memoryKey,
-    limit,
-  });
+  // The whole writer identity: a row opened under its user and session is read under them.
+  return post("/v1/memory.history", { ...id, memory_key: memoryKey, limit });
 }
 
 export interface RelatedMemoryRow {
@@ -833,14 +827,7 @@ export async function memoryRelated(
   memoryKey: string,
   topK: number = 5,
 ): Promise<{ results: RelatedMemoryRow[] }> {
-  return post("/v1/memory.related", {
-    org: id.org,
-    namespace: id.namespace,
-    agent: id.agent,
-    ...ownerArgs(id),
-    memory_key: memoryKey,
-    top_k: topK,
-  });
+  return post("/v1/memory.related", { ...id, memory_key: memoryKey, top_k: topK });
 }
 
 export interface LineageStep {

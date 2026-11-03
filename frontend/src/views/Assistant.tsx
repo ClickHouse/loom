@@ -17,7 +17,6 @@ import { BusyButton } from "../components/ui/BusyButton";
 import { ListTime } from "../components/ui/ListTime";
 import { Loading, PageHeader, Panel, SectionHeading, Unavailable } from "../components/ui";
 import { PageContainer } from "../layout/PageContainer";
-import { claimsFromToken } from "../lib/boot";
 import { canCall } from "../lib/canCall";
 import { openGraphAt } from "../lib/graphLink";
 import { useNamespaceRole } from "../lib/namespaceRole";
@@ -25,6 +24,7 @@ import { useStore } from "../lib/state";
 import { Inspection } from "./assistant/Inspection";
 import { InventoryPopulations, InventoryScopeNote, InventorySections } from "./assistant/Inventory";
 import { ReviewChanges } from "./assistant/ReviewChanges";
+import { tokenReadScope } from "./assistant/tokenScope";
 import { useScopedRead } from "./assistant/useScopedRead";
 
 /**
@@ -56,7 +56,7 @@ export function Assistant() {
   const role = useNamespaceRole(identity?.namespace ?? "");
   // The answers belong to the namespace and to the token's read scope: a token signed in
   // again with another scope (the page stays mounted) drops what the old one read.
-  const claims = claimsFromToken(storedToken());
+  const claims = tokenReadScope(storedToken());
   const scope = `${identity?.org}/${identity?.namespace}/${claims?.readScope ?? "-"}/${claims?.readUserId ?? "-"}`;
   const inventory = useScopedRead<NamespaceInventory>(scope);
   const inspection = useScopedRead<MemoryInspection>(scope);

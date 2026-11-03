@@ -253,15 +253,6 @@ export interface Identity {
   session_id?: string;
 }
 
-/** The user and session of `id`, for a read that otherwise names only org, namespace and
- *  agent: memory.* matches the whole writer identity. */
-export function ownerArgs(id: Identity): { user_id?: string; session_id?: string } {
-  return {
-    ...(id.user_id ? { user_id: id.user_id } : {}),
-    ...(id.session_id ? { session_id: id.session_id } : {}),
-  };
-}
-
 // In-flight tracking — every active request() bumps the counter; the UI
 // subscribes via subscribeInflight() to drive the top progress bar.
 let _inflight = 0;
@@ -1196,13 +1187,8 @@ export interface MemoryProvenance {
 
 // Resolve where a memory came from (source_trace + retained-transcript check).
 export async function getProvenance(id: Identity, memoryKey: string): Promise<MemoryProvenance> {
-  return post<MemoryProvenance>("/v1/memory.provenance", {
-    org: id.org,
-    namespace: id.namespace,
-    agent: id.agent,
-    ...ownerArgs(id),
-    memory_key: memoryKey,
-  });
+  // The whole writer identity: a row opened under its user and session is read under them.
+  return post<MemoryProvenance>("/v1/memory.provenance", { ...id, memory_key: memoryKey });
 }
 
 export interface CopyToResult {

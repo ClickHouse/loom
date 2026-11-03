@@ -28,31 +28,7 @@ describe("boot claims", () => {
 
   it("reads org, namespaces and subject from the token payload without verifying it", () => {
     const c = claimsFromToken(jwt({ sub: "alice", org: "acme", namespaces: ["team", "code-x"], roles: ["ADMIN"] }));
-    expect(c).toEqual({
-      org: "acme",
-      namespaces: ["team", "code-x"],
-      subject: "alice",
-      session: null,
-      readScope: null,
-      readUserId: null,
-    });
-  });
-
-  it("names a read scope that pins the token to one user or session, and nothing wider", () => {
-    expect(claimsFromToken(jwt({ sub: "a", read_scope: "own_user" }))?.readScope).toBe("own_user");
-    expect(claimsFromToken(jwt({ sub: "a", read_scope: "own_session" }))?.readScope).toBe("own_session");
-    expect(claimsFromToken(jwt({ sub: "a", read_scope: "namespace" }))?.readScope).toBeNull();
-    expect(claimsFromToken(jwt({ sub: "a" }))?.readScope).toBeNull();
-    // A read_user_id alone narrows the token to that user, as the server reads it.
-    expect(claimsFromToken(jwt({ sub: "a", read_user_id: "ada" }))?.readScope).toBe("own_user");
-    expect(claimsFromToken(jwt({ sub: "a", read_user_id: "ada", read_scope: "own_session" }))?.readScope).toBe(
-      "own_session",
-    );
-    expect(claimsFromToken(jwt({ sub: "a", read_user_id: "" }))?.readScope).toBeNull();
-    expect(claimsFromToken(jwt({ sub: "a", read_user_id: " " }))?.readScope).toBeNull();
-    expect(claimsFromToken(jwt({ sub: "a", read_scope: "own_user", read_user_id: " " }))?.readUserId).toBeNull();
-    expect(claimsFromToken(jwt({ sub: "a", read_user_id: "ada" }))?.readUserId).toBe("ada");
-    expect(claimsFromToken(jwt({ sub: "a", read_scope: "own_user" }))?.readUserId).toBeNull();
+    expect(c).toEqual({ org: "acme", namespaces: ["team", "code-x"], subject: "alice", session: null });
   });
 
   it("is null for a missing, malformed or payload-less token", () => {
@@ -72,7 +48,7 @@ describe("boot claims", () => {
 
   it("tolerates a payload with the wrong shapes", () => {
     const c = claimsFromToken(jwt({ org: 7, namespaces: "team", sub: null }));
-    expect(c).toEqual({ org: null, namespaces: [], subject: null, session: null, readScope: null, readUserId: null });
+    expect(c).toEqual({ org: null, namespaces: [], subject: null, session: null });
   });
 
   it("decodes non-ASCII claim text", () => {
