@@ -400,6 +400,9 @@ async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryD
         decision=input.decision,
         canonical_tombstoned=canonical_tombstoned,
         duplicate_tombstoned=duplicate_tombstoned,
+        ignored_args=[
+            name for name in ("canonical_key", "duplicate_key") if name in input.model_fields_set
+        ],
     )
 
 

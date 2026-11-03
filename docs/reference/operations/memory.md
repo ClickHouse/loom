@@ -530,6 +530,8 @@ Resolve one duplicate pair.
 | `duplicate_id` | `str` | required | A `duplicates[].memory_id` of that cluster, marked duplicate of `canonical_id` (else 404). |
 | `decision` | `Literal['keep_canonical', 'keep_duplicate', 'keep_both']` | required | Which side stays live; see the class docstring for each value. |
 | `confirm_canonical_key` | `str` | required | Must equal the canonical row's key, else 400 CONFIRM_CANONICAL_KEY_MISMATCH. |
+| `canonical_key` | `str` | `''` | Removed, as a key does not name one row: accepted, unused and named in `ignored_args`. |
+| `duplicate_key` | `str` | `''` | Removed, as a key does not name one row: accepted, unused and named in `ignored_args`. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -538,6 +540,7 @@ Resolve one duplicate pair.
 | `decision` | `str` | The decision applied, echoed. |
 | `canonical_tombstoned` | `bool` | True when `keep_duplicate` tombstoned the canonical row. |
 | `duplicate_tombstoned` | `bool` | True when `keep_canonical` tombstoned the duplicate row. |
+| `ignored_args` | `list[str]` | Request fields the server did not apply: the removed `canonical_key` / `duplicate_key`. |
 
 ## `memory.delete`
 

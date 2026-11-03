@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from server.memory.api.models_common import MemoryType, _Identity
+from server.operations.base import MCP_HIDDEN
 
 
 class MemoryLineageInput(_Identity):
@@ -155,6 +156,10 @@ class MemoryDedupResolveInput(BaseModel):
     decision: Literal["keep_canonical", "keep_duplicate", "keep_both"]
     # Must equal the canonical row's key, else 400 CONFIRM_CANONICAL_KEY_MISMATCH.
     confirm_canonical_key: str = Field(..., min_length=1, max_length=256)
+    # Removed, as a key does not name one row: accepted, unused and named in `ignored_args`.
+    canonical_key: str = Field(default="", json_schema_extra=MCP_HIDDEN)
+    # Removed, as a key does not name one row: accepted, unused and named in `ignored_args`.
+    duplicate_key: str = Field(default="", json_schema_extra=MCP_HIDDEN)
 
 
 class MemoryDedupResolveOutput(BaseModel):
@@ -168,6 +173,8 @@ class MemoryDedupResolveOutput(BaseModel):
     canonical_tombstoned: bool = False
     # True when `keep_canonical` tombstoned the duplicate row.
     duplicate_tombstoned: bool = False
+    # Request fields the server did not apply: the removed `canonical_key` / `duplicate_key`.
+    ignored_args: list[str] = Field(default_factory=list)
 
 
 class MemoryDedupCollapseInput(BaseModel):

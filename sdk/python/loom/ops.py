@@ -11289,6 +11289,8 @@ class MemoryDedupResolveInput(TypedDict, total=False):
     duplicate_id: Required[str]
     decision: Required[Literal["keep_canonical", "keep_duplicate", "keep_both"]]
     confirm_canonical_key: Required[str]
+    canonical_key: NotRequired[str]
+    duplicate_key: NotRequired[str]
 
 
 class MemoryDedupResolveBody(TypedDict, total=False):
@@ -11300,6 +11302,8 @@ class MemoryDedupResolveBody(TypedDict, total=False):
     duplicate_id: Required[str]
     decision: Required[Literal["keep_canonical", "keep_duplicate", "keep_both"]]
     confirm_canonical_key: Required[str]
+    canonical_key: NotRequired[str]
+    duplicate_key: NotRequired[str]
 
 
 class MemoryDedupResolveOutput(TypedDict, total=False):
@@ -11308,6 +11312,7 @@ class MemoryDedupResolveOutput(TypedDict, total=False):
     decision: Required[str]
     canonical_tombstoned: NotRequired[bool]
     duplicate_tombstoned: NotRequired[bool]
+    ignored_args: NotRequired[list[str]]
 
 
 class MemoryDeleteInput(TypedDict, total=False):

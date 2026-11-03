@@ -260,39 +260,64 @@ async def test_resolve_reads_the_dashed_form_of_any_uuid_spelling(
     assert tombstoned == [DUP]
 
 
-@pytest.mark.parametrize(
-    "extra",
-    [
-        pytest.param({}, id="keys-only"),
-        pytest.param({"canonical_id": CANON, "duplicate_id": DUP}, id="keys-and-ids"),
-    ],
-)
-def test_resolve_with_the_removed_keys_is_refused_and_points_at_the_ids(
-    extra: dict[str, Any],
+_OLD_CALL: dict[str, Any] = {
+    "org": "clickhouse",
+    "namespace": "finance",
+    "canonical_key": "k",
+    "duplicate_key": "k",
+    "decision": "keep_canonical",
+    "confirm_canonical_key": "k",
+}
+
+
+@pytest.mark.asyncio
+async def test_resolve_serves_the_removed_keys_and_names_them_in_ignored_args(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A key does not name the pair, so a call that still sends `canonical_key` /
-    `duplicate_key` tombstones nothing: it is refused with the id field to use."""
+    """`canonical_key` / `duplicate_key` are removed: a call that carries the ids
+    is served by id, and the keys it still sends are named, never applied."""
+    from server.memory.api.models_graph import MemoryDedupResolveInput
+    from server.memory.app.dedup import handle_memory_dedup_resolve
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import arg_check
 
     op = OPERATIONS_BY_NAME["memory.dedup_resolve"]
-    args = {
-        "org": "clickhouse",
-        "namespace": "finance",
-        "canonical_key": "k",
-        "duplicate_key": "k",
-        "decision": "keep_canonical",
-        "confirm_canonical_key": "k",
-        **extra,
-    }
-    refused = arg_check.named_argument_error(op, args)
-    assert refused is not None
-    detail = refused.error_detail()
-    assert detail["code"] == "UNKNOWN_ARGUMENT"
-    assert detail["did_you_mean"] == {
-        "canonical_key": "canonical_id",
-        "duplicate_key": "duplicate_id",
-    }
+    args = _OLD_CALL | {"canonical_id": CANON, "duplicate_id": DUP, "duplicate_key": "other"}
+    assert arg_check.named_argument_error(op, args) is None
+    tombstoned, _ = _fake_store(monkeypatch, _pair())
+    out = await handle_memory_dedup_resolve(MemoryDedupResolveInput.model_validate(args))
+    assert tombstoned == [DUP]
+    body = arg_check.response_body(op, args, out)
+    assert body["ignored_args"] == ["canonical_key", "duplicate_key"]
+    assert arg_check.header_value(op, args, out) == "canonical_key,duplicate_key"
+
+
+@pytest.mark.asyncio
+async def test_resolve_names_no_ignored_args_when_the_keys_are_not_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app.dedup import handle_memory_dedup_resolve
+
+    _fake_store(monkeypatch, _pair())
+    out = await handle_memory_dedup_resolve(_resolve_input("keep_canonical"))
+    assert out.ignored_args == []
+
+
+def test_resolve_with_only_the_removed_keys_fails_validation_naming_the_ids() -> None:
+    """Without the ids the call names no pair: validation fails on the two id
+    fields before the handler runs, so nothing is tombstoned."""
+    from pydantic import ValidationError
+
+    from server.memory.api.models_graph import MemoryDedupResolveInput
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import arg_check
+
+    op = OPERATIONS_BY_NAME["memory.dedup_resolve"]
+    assert arg_check.named_argument_error(op, _OLD_CALL) is None
+    with pytest.raises(ValidationError) as exc:
+        MemoryDedupResolveInput.model_validate(_OLD_CALL)
+    missing = {e["loc"][0] for e in exc.value.errors() if e["type"] == "missing"}
+    assert missing == {"canonical_id", "duplicate_id"}
 
 
 @pytest.mark.asyncio
