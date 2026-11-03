@@ -1,0 +1,218 @@
+"""memory.inspect — one user, agent or session's rows, kept apart from the rest.
+
+The `own` and `shared` views split the namespace on the subject's identity column; the
+column is one of three fixed names and the id is bound; the unset sentinel names no one;
+the activity counts leave out inspector calls and say when the ledger keeps less than
+the window; the extraction policy is read only for an org admin; a failed section is
+reported in `skipped`; nothing is written.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+from server.memory.api.models_inspect import MemoryInspectInput
+from server.memory.app import inspect as mi
+from server.operations.registry import OPERATIONS_BY_NAME
+from tests.unit.ch_fake import RecordingCH
+
+T0, T1 = datetime(2026, 1, 1), datetime(2026, 1, 2)
+MID = "00000000-0000-0000-0000-000000000001"
+
+
+def _counts(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    own = " = {id:String}" in sql
+    return [
+        {
+            "memory_type": "semantic",
+            "status": "active",
+            "source_class": "asserted",
+            "rows": 2 if own else 5,
+            "first_at": T0,
+            "last_at": T1,
+        },
+        {
+            "memory_type": "episodic",
+            "status": "superseded",
+            "source_class": "derived",
+            "rows": 1,
+            "first_at": T0,
+            "last_at": T0,
+        },
+    ]
+
+
+def _newest(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "memory_key": "deploy/window",
+            "id": MID,
+            "version": 7,
+            "content_sha256": "a" * 64,
+            "memory_type": "semantic",
+            "status": "active",
+            "source_class": "asserted",
+            "agent": "bot",
+            "user_id": "u1",
+            "session_id": "-",
+            "actor": "process:bot",
+            "updated_at": T1,
+            "excerpt": "Tuesdays",
+        }
+    ]
+
+
+def _ch() -> RecordingCH:
+    return (
+        RecordingCH()
+        .on("GROUP BY memory_type, status, source_class", _counts)
+        .on("arrayJoin(tags)", [{"tag": "deploy", "rows": 2}])
+        .on("FROM loom.memory_categories FINAL", [{"category_id": "c1", "rows": 1}])
+        .on("ORDER BY updated_at DESC", _newest)
+        .on("FROM loom.memory_versions", [{"id": MID, "versions": 3}])
+        .on(
+            "FROM loom.agent_events",
+            [
+                {
+                    "operation": "memory.search",
+                    "calls": 4,
+                    "succeeded": 3,
+                    "first_at": T0,
+                    "last_at": T1,
+                }
+            ],
+        )
+        .on("FROM loom.namespace_guides", [])
+        .on("loom.namespace_categories", [{"category_id": "c1", "name": "decisions"}])
+    )
+
+
+@pytest.fixture
+def ch(monkeypatch: pytest.MonkeyPatch) -> RecordingCH:
+    fake = _ch()
+    fake.strict = False
+    return fake.install(monkeypatch)
+
+
+def _inp(**kw: Any) -> MemoryInspectInput:
+    return MemoryInspectInput(
+        **{"org": "o", "namespace": "ns", "subject": "user", "id": "u1", **kw}
+    )
+
+
+@pytest.mark.parametrize("sentinel", ["-", "*", " ", ""])
+def test_the_unset_sentinel_names_no_one(sentinel: str) -> None:
+    with pytest.raises(ValidationError):
+        _inp(id=sentinel)
+
+
+def test_registered_read_only_for_viewers() -> None:
+    op = OPERATIONS_BY_NAME["memory.inspect"]
+    assert op.read_only and op.required_role.name == "VIEWER"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("subject", "column"), [("user", "user_id"), ("agent", "agent"), ("session", "session_id")]
+)
+async def test_own_and_shared_split_on_the_subjects_column(
+    ch: RecordingCH, subject: str, column: str
+) -> None:
+    out = await mi.handle_memory_inspect(_inp(subject=subject, id="x1"))
+    assert out.own.live_rows == 3 and out.shared.live_rows == 6
+    assert "not a read boundary" in mi._DEFINITIONS["agent"][0]
+    assert out.own.definition != out.shared.definition
+    reads = [s for s in ch.statements("FROM loom.memory FINAL") if "memory_categories" not in s.sql]
+    assert reads
+    for s in reads:
+        assert f"{column} = {{id:String}}" in s.sql or f"{column} != {{id:String}}" in s.sql
+        assert s.params["id"] == "x1" and "x1" not in s.sql
+    calls = ch.statements("FROM loom.agent_events")[0]
+    assert f"{column} = {{id:String}}" in calls.sql
+
+
+@pytest.mark.asyncio
+async def test_a_view_counts_lists_and_cites(ch: RecordingCH) -> None:
+    out = await mi.handle_memory_inspect(_inp(sample_limit=1))
+    own = out.own
+    assert [(c.name, c.rows) for c in own.by_type] == [("semantic", 2), ("episodic", 1)]
+    assert [(c.name, c.rows) for c in own.by_status] == [("active", 2), ("superseded", 1)]
+    assert [(c.name, c.rows) for c in own.top_tags] == [("deploy", 2)]
+    assert (own.first_updated_at, own.last_updated_at) == (T0, T1)
+    row = own.newest[0]
+    assert (row.memory_id, row.version, row.versions, row.actor) == (MID, 7, 3, "process:bot")
+    # One row listed of three: not a complete listing.
+    assert own.complete is False
+    assert not ch.inserted("memory") and not ch.statements(kind="execute")
+
+
+@pytest.mark.asyncio
+async def test_no_samples_asked_reads_no_rows(ch: RecordingCH) -> None:
+    out = await mi.handle_memory_inspect(_inp(sample_limit=0))
+    assert out.own.newest == [] and out.own.complete is False
+    assert not ch.statements("ORDER BY updated_at DESC")
+
+
+@pytest.mark.asyncio
+async def test_activity_leaves_out_inspectors_and_names_the_retention_gap(
+    ch: RecordingCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "retention_agent_events_days", 3)
+    out = await mi.handle_memory_inspect(_inp(window_seconds=7 * 86400))
+    assert [(c.name, c.rows) for c in out.activity.calls] == [("memory.search", 4)]
+    assert [(c.name, c.rows) for c in out.activity.succeeded] == [("memory.search", 3)]
+    assert "keeps 3 days" in out.activity.gap
+    s = ch.statements("FROM loom.agent_events")[0]
+    assert s.params["skip"] == ["loom-ui", "loom-assistant"]
+    assert s.params["skip_ops"] == ["memory.inspect", "mentor.brief"]
+
+    monkeypatch.setattr(settings, "retention_agent_events_days", 0)
+    assert (await mi.handle_memory_inspect(_inp())).activity.gap == ""
+
+
+@pytest.mark.asyncio
+async def test_the_extraction_policy_is_read_only_for_an_org_admin(
+    ch: RecordingCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def policy(org: str, namespace: str) -> str:
+        return "Never store card numbers."
+
+    monkeypatch.setattr("server.memory.app.extraction_policy.effective", policy)
+
+    async def admin(org: str, ns: str, role: Any, *, hides_answer: bool) -> bool:
+        assert role.name == "ORG_ADMIN" and hides_answer is False
+        return True
+
+    monkeypatch.setattr(mi, "row_in_scope", admin)
+    out = await mi.handle_memory_inspect(_inp())
+    assert out.settings.extraction_policy == "Never store card numbers."
+
+    async def viewer(*a: Any, **k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(mi, "row_in_scope", viewer)
+    out = await mi.handle_memory_inspect(_inp())
+    assert out.settings.extraction_policy is None
+    assert "org admin" in out.settings.extraction_policy_unavailable
+    assert "no user, agent or session setting" in out.settings.extraction_instructions
+
+
+@pytest.mark.asyncio
+async def test_a_failed_section_is_skipped_not_raised(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _ch()
+    fake.strict = False
+    fake._routes.insert(0, type(fake._routes[0])("arrayJoin(tags)", _boom, None))
+    fake.install(monkeypatch)
+    out = await mi.handle_memory_inspect(_inp())
+    assert "own.tags: RuntimeError" in out.skipped and "shared.tags: RuntimeError" in out.skipped
+    assert out.own.top_tags == [] and out.own.live_rows == 3
+
+
+def _boom(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    raise RuntimeError("tags read failed")

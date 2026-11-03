@@ -1062,6 +1062,34 @@ Write exported evidence chunks and digests into a namespace, re-embedded here an
 | `edited` | `list[str]` | Chunks whose body did not hash to the content_sha256 they arrived with. |
 | `skipped` | `int` | Items not written: empty, unembeddable, or refused by a blacklist pattern (Refuse). |
 
+## `memory.inspect`
+
+Inspect one user, agent or session of a namespace, read-only.
+
+`POST /v1/memory.inspect` · MCP `loom_memory_inspect` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `subject` | `Literal['user', 'agent', 'session']` | required | Which identity column `id` names: "user" (user_id), "agent" or "session" (session_id). |
+| `id` | `str` | required | The user_id, agent name or session_id to inspect; the unset sentinel "-" and "*" name no one and are refused. |
+| `sample_limit` | `int` | `10` | Newest rows listed per view, 0 to 50 (default 10). |
+| `window_seconds` | `int` | `604800` | Ledger window for the activity counts, in seconds (default 7 days, 1 hour to 90 days). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `org` | `str` | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | The namespace the op reads or writes. |
+| `subject` | `Literal['user', 'agent', 'session']` |  |
+| `id` | `str` |  |
+| `computed_at` | `datetime` |  |
+| `own` | `InspectView` | Rows whose identity names the subject. |
+| `shared` | `InspectView` | Every other live row of the namespace: what the subject reads as a member but did not write or is not filed under. |
+| `activity` | `InspectActivity` |  |
+| `settings` | `InspectSettings` |  |
+| `skipped` | `list[str]` | Sections that could not be read, as "section: reason". |
+
 ## `memory.keys`
 
 Every live row's identity and key in one read: a set an exporter can check its paged listing against, since a row that moves while pages are read can be skipped.

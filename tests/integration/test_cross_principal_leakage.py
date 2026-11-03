@@ -210,6 +210,7 @@ _CORE = {
     "memory.related",
     "memory.search_trace",
     "memory.lineage",
+    "memory.inspect",
     "facts.list",
     "facts.traverse",
     "knowledge.search",
@@ -392,7 +393,11 @@ def _synth_payload(model: type, *, seed: _Seed, namespace: str) -> dict[str, Any
     }
     out: dict[str, Any] = {}
     for fname, field in model.model_fields.items():
-        if fname in hints:
+        literal = typing.get_args(field.annotation)
+        # A hint that is not one of a Literal field's values would only be refused.
+        if fname in hints and (
+            typing.get_origin(field.annotation) is not typing.Literal or hints[fname] in literal
+        ):
             out[fname] = hints[fname]
             continue
         if not field.is_required():

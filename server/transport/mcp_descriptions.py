@@ -1825,6 +1825,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "namespace.guide_history": (
         "The guide's revisions, newest first, with summary, note, writer and length."
     ),
+    "memory.inspect": (
+        "One user, agent or session of a namespace, read-only: `own` (rows whose "
+        "user_id, agent or session_id is `id`) apart from `shared` (every other live row, "
+        "which it reads too), each with counts, tags, categories and the newest rows "
+        "(key, memory_id, version, content_sha256); its own calls in the window; the guide "
+        "revision and categories. An agent name records the writer, not a read boundary. "
+        "`skipped` names sections not read, which are not empty."
+    ),
     "namespace.inventory": (
         "What a namespace holds and who appears in it, read-only: live counts and "
         "newest write for memories, records, documents, runs and integrations; the "

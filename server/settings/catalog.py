@@ -5447,6 +5447,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.import_curated": 30000,
     # one embed_many over ≤256 chunks + two synchronous inserts
     "memory.import_evidence": 30000,
+    # Eleven reads over one namespace (four per view, versions, activity) plus the guide
+    # and the categories.
+    "memory.inspect": 3000,
     # Bounded by namespace size.
     "memory.keys": 2000,
     # Bounded queries: shared point-lookup, audit by request_id, learnings_queue

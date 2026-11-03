@@ -1669,6 +1669,14 @@ class MemoryOps:
             await self._agent.call("memory.import_evidence", body, **options),
         )
 
+    async def inspect(
+        self, body: _ops.MemoryInspectBody | None = None, /, **options: Any
+    ) -> _ops.MemoryInspectOutput:
+        """`memory.inspect`."""
+        return cast(
+            "_ops.MemoryInspectOutput", await self._agent.call("memory.inspect", body, **options)
+        )
+
     async def keys(
         self, body: _ops.MemoryKeysBody | None = None, /, **options: Any
     ) -> _ops.MemoryKeysOutput:

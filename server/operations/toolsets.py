@@ -351,6 +351,7 @@ MCP_ASSISTANT_OPS: frozenset[str] = frozenset(
         "namespace.get",
         "namespace.summary",
         "namespace.inventory",
+        "memory.inspect",
         "namespace.taxonomy",
         "namespace.audit",
         "namespace.validate",

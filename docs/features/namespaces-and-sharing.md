@@ -102,6 +102,7 @@ halfway leaves the source intact and the target without the row. The learnings q
 | `namespace.summary`                                                              | Counts by memory type, top entities, recent writes and recalls, distinct agents, last activity.                                                                                                                                                                                                                                                                                                                                                                            |
 | `namespace.validate`                                                             | An integrity report: stuck conflicts, low-confidence rows, rows still waiting for an embedding. Run it after a batch of writes or when a recall looks wrong.                                                                                                                                                                                                                                                                                                               |
 | `namespace.audit`                                                                | Whether the namespace is used as a memory or as an object store: exact-key reads against searches, hash-shaped keys, double-encoded or oversized values, leases stored as memories, version churn. It also names the deployment's own state (kind `system_state`: missing telemetry, an indexing backlog), and skips the ledger checks rather than report them clean when the ledger recorded none of the calls behind the window's writes. Each finding carries a remedy. |
+| `memory.inspect`                                                                 | One user, agent or session: its own rows apart from the rest of the namespace, its calls in a window, and the guide, categories and extraction policy that create its memories ([below](#inspecting-one-user-agent-or-session)).                                                                                                                                                                                                                                           |
 | `namespace.taxonomy`                                                             | The live vocabulary: top tags, entities, memory types and communities.                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `agents.connected`                                                               | The agents active in a window (default 24 hours): last and first seen, ops, namespaces touched and cost per agent. Answers "is my client actually talking to Loom?"                                                                                                                                                                                                                                                                                                        |
 
@@ -167,6 +168,36 @@ for the [entity graph](entity-graph.md)).
 Snapshots and point-in-time rollback (`namespace.snapshot`, `namespace.restore`,
 `namespace.rollback`) are covered in
 [history and provenance](memory/history-and-provenance.md).
+
+## Inspecting one user, agent or session
+
+`memory.inspect` (viewer) takes `subject` (`user`, `agent` or `session`) and `id`, the
+`user_id`, agent name or `session_id` to look at; the unset `-` and `*` name no one and
+are refused. It reads and writes nothing else: no recall credit, no usage event.
+
+- **`own`**: the live rows whose identity names the subject. For an agent that is what it
+  wrote; the agent name records the writer and is not a read boundary. For a user, the
+  rows filed under that `user_id`, whoever wrote them: what a token pinned to the user
+  (`read_scope: own_user`) reads.
+- **`shared`**: every other live row of the namespace. A member reads these as well, so
+  `own` alone never stands for everything a user, agent or session can read.
+- Each view counts its rows by type, status and source class, lists its top tags and the
+  registered categories its rows are filed under, and its newest rows (`sample_limit`,
+  default 10) with `memory_id`, `version`, `content_sha256`, `actor`, the number of
+  version rows and a 200-character excerpt (none for a high-sensitivity row). `complete`
+  is false when the listing holds fewer rows than the view.
+- **`activity`**: the calls the ledger files under the subject per operation in
+  `window_seconds` (default 7 days), attempted and succeeded, without the dashboard's
+  and the assistant's, and without the reads about the subject (`memory.inspect`,
+  `mentor.brief`), which name it in their arguments. A call shows that a tool ran, not
+  that its result reached a model. `gap` says when the
+  ledger keeps fewer days than the window.
+- **`settings`**: the guide's revision and summary, the number of registered categories,
+  and the operator extraction policy only for an org admin
+  (`extraction_policy_unavailable` says why it is missing). Extraction instructions are
+  sent per request; no user, agent or session setting stores them.
+- A section that cannot be read is listed in `skipped`; a skipped section is not an empty
+  one. A token narrowed below the namespace (`read_scope`) cannot call it.
 
 ## A namespace's guide
 

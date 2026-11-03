@@ -4879,6 +4879,82 @@ export interface MemoryImportEvidenceOutput {
   skipped?: number;
 }
 
+export interface MemoryInspectInput {
+  org: string;
+  namespace: string;
+  subject: "user" | "agent" | "session";
+  id: string;
+  sample_limit?: number;
+  window_seconds?: number;
+}
+
+export interface InspectView {
+  definition: string;
+  live_rows?: number;
+  by_type?: InspectCount[];
+  by_status?: InspectCount[];
+  by_source_class?: InspectCount[];
+  top_tags?: InspectCount[];
+  categories?: InspectCount[];
+  first_updated_at?: string | null;
+  last_updated_at?: string | null;
+  newest?: InspectRow[];
+  complete?: boolean;
+}
+
+export interface InspectCount {
+  name: string;
+  rows: number;
+}
+
+export interface InspectRow {
+  memory_key: string;
+  memory_id: string;
+  version: number;
+  content_sha256: string;
+  memory_type: string;
+  status: string;
+  source_class: string;
+  agent: string;
+  user_id: string;
+  session_id: string;
+  actor: string;
+  updated_at: string; // date-time
+  versions?: number;
+  excerpt?: string;
+}
+
+export interface InspectActivity {
+  window_seconds: number;
+  calls?: InspectCount[];
+  succeeded?: InspectCount[];
+  first_at?: string | null;
+  last_at?: string | null;
+  gap?: string;
+}
+
+export interface InspectSettings {
+  guide_revision?: number;
+  guide_summary?: string;
+  categories_registered?: number;
+  extraction_policy?: string | null;
+  extraction_policy_unavailable?: string;
+  extraction_instructions?: string;
+}
+
+export interface MemoryInspectOutput {
+  org: string;
+  namespace: string;
+  subject: "user" | "agent" | "session";
+  id: string;
+  computed_at: string; // date-time
+  own: InspectView;
+  shared: InspectView;
+  activity: InspectActivity;
+  settings: InspectSettings;
+  skipped?: string[];
+}
+
 export interface MemoryKeysInput {
   org: string;
   namespace: string;
@@ -9248,6 +9324,7 @@ export type OpName =
   | "memory.import"
   | "memory.import_curated"
   | "memory.import_evidence"
+  | "memory.inspect"
   | "memory.keys"
   | "memory.lineage"
   | "memory.link"
@@ -9589,6 +9666,7 @@ export interface OpMap {
   "memory.import": { input: MemoryImportInput; output: MemoryImportOutput };
   "memory.import_curated": { input: MemoryImportCuratedInput; output: MemoryImportCuratedOutput };
   "memory.import_evidence": { input: MemoryImportEvidenceInput; output: MemoryImportEvidenceOutput };
+  "memory.inspect": { input: MemoryInspectInput; output: MemoryInspectOutput };
   "memory.keys": { input: MemoryKeysInput; output: MemoryKeysOutput };
   "memory.lineage": { input: MemoryLineageInput; output: MemoryLineageOutput };
   "memory.link": { input: MemoryLinkInput; output: MemoryLinkOutput };
@@ -9930,6 +10008,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.import", group: "memory", method: "import", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
   { name: "memory.import_curated", group: "memory", method: "importCurated", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "memory.import_evidence", group: "memory", method: "importEvidence", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "memory.inspect", group: "memory", method: "inspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 3000, audit: false, readOnly: true },
   { name: "memory.keys", group: "memory", method: "keys", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 2000, audit: false, readOnly: true },
   { name: "memory.lineage", group: "memory", method: "lineage", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "memory.link", group: "memory", method: "link", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 60, audit: true, readOnly: false },
@@ -10101,4 +10180,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 338;
+export const GENERATED_OP_COUNT = 339;
