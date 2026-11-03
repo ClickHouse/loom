@@ -199,7 +199,15 @@ class _Inspect:
         if cats is not None:
             out.categories_registered = len(cats.categories)
             self.category_names = {c.category_id: c.name for c in cats.categories}
-        if await row_in_scope(i.org, i.namespace, Role.ORG_ADMIN, hides_answer=False):
+        # A failed grant read is skipped and withholds the policy: the gate fails closed.
+        admin = await self.guarded(
+            "settings.extraction_policy",
+            lambda: row_in_scope(i.org, i.namespace, Role.ORG_ADMIN, hides_answer=False),
+            None,
+        )
+        if admin is None:
+            out.extraction_policy_unavailable = "the caller's access could not be read"
+        elif admin:
             out.extraction_policy = await self.guarded(
                 "settings.extraction_policy",
                 lambda: extraction_policy.effective(i.org, i.namespace),

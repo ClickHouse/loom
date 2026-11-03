@@ -111,7 +111,8 @@ class InspectCall(BaseModel):
 class InspectActivity(BaseModel):
     """The calls the ledger files under the subject in the window.
 
-    A call is filed under the identity its arguments name, whoever made it. The counts
+    A call is filed under the identity its arguments name, or the user and session a
+    narrowed token is pinned to, whoever made it. The counts
     say what was attempted and what succeeded, never whether a result reached a model
     or changed an answer.
     """

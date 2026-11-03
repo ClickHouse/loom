@@ -218,6 +218,16 @@ async def test_the_extraction_policy_is_read_only_for_an_org_admin(
     assert "org admin" in out.settings.extraction_policy_unavailable
     assert "no user, agent or session setting" in out.settings.extraction_instructions
 
+    async def unreadable(*a: Any, **k: Any) -> bool:
+        raise RuntimeError("grant read failed")
+
+    # The access check failing withholds the policy and skips the section, not the call.
+    monkeypatch.setattr(mi, "row_in_scope", unreadable)
+    out = await mi.handle_memory_inspect(_inp())
+    assert out.settings.extraction_policy is None
+    assert "could not be read" in out.settings.extraction_policy_unavailable
+    assert "settings.extraction_policy: RuntimeError" in out.skipped
+
 
 @pytest.mark.asyncio
 async def test_a_failed_section_is_skipped_not_raised(monkeypatch: pytest.MonkeyPatch) -> None:
