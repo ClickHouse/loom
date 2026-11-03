@@ -18,10 +18,11 @@ def request_query_id(query_tag: str) -> str | None:
     parts = query_tag.split(" ")
     if len(parts) < 2 or not parts[1]:
         return None
-    suffix = request_work.next_query_suffix()
-    if suffix is None:
+    seq = request_work.next_query_seq()
+    if seq is None:
         return None
-    return f"{parts[1]}:{suffix}"
+    n, nonce = seq
+    return f"{parts[1]}:{n}:{nonce}"
 
 
 _SUMMARY_SPAN_ATTRS = (

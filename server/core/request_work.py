@@ -142,14 +142,14 @@ def note_ch_summary(summary: Any) -> dict[str, Any]:
         return {}
 
 
-def next_query_suffix() -> str | None:
-    """`<n>:<nonce>` for the request's next statement, or None when no bag is
+def next_query_seq() -> tuple[int, str] | None:
+    """The request's next statement number and its nonce, or None when no bag is
     bound (a worker pass keeps the driver's own query ids)."""
     bag = _current.get()
     if bag is None:
         return None
     bag.ch_seq += 1
-    return f"{bag.ch_seq}:{bag.ch_nonce}"
+    return bag.ch_seq, bag.ch_nonce
 
 
 def note_injected(*, facts: int = 0, chunks: int = 0) -> None:
@@ -183,7 +183,7 @@ __all__ = [
     "begin",
     "current",
     "mark_stage",
-    "next_query_suffix",
+    "next_query_seq",
     "note_ch_summary",
     "note_injected",
     "note_schema_skipped",

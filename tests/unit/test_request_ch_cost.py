@@ -128,7 +128,7 @@ def test_no_bound_bag_records_nothing() -> None:
     def _run() -> Any:
         rw._current.set(None)
         assert rw.note_ch_summary(_CLOUD_SUMMARY)["read_rows"] == 40628  # parsed for the span
-        assert rw.next_query_suffix() is None
+        assert rw.next_query_seq() is None
         rw.note_injected(facts=3)
         rw.note_schema_skipped("x")
         rw.mark_stage("retrieval")
