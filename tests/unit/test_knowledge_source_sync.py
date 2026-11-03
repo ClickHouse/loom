@@ -18,6 +18,7 @@ import pytest
 
 from server.clients import gdrive
 from server.core import leases
+from server.core.errors import ValidationError
 from server.core.secrets_at_rest import seal
 from server.knowledge.app import extractors, source_sync, writes
 from server.knowledge.app import sources as source_ops
@@ -32,6 +33,7 @@ from server.settings import settings
 
 ORG, NS = "acme", "code-acme-app"
 FOLDER = "1AbCdEfGhIjKlMnOp"
+OTHER = "2QrStUvWxYzAbCdEf"
 DOCS = "application/vnd.google-apps.document"
 SLIDES = "application/vnd.google-apps.presentation"
 PDF = "application/pdf"
@@ -93,9 +95,13 @@ class _World:
         self.declared: set[str] = {"pdf", "pptx"}
         self.extractor_down = False
         self.extract_error: Exception | None = None
+        # Per-file extraction failures, by file id.
+        self.extract_errors: dict[str, Exception] = {}
+        self.capability_calls = 0
         # Folders the account no longer sees; per-file answers that override the store's.
         self.lost_folders: set[str] = set()
-        self.file_answers: dict[str, httpx.Response] = {}
+        # A response, or a callable that answers (or raises) for that file.
+        self.file_answers: dict[str, Any] = {}
 
     # store
     async def all_active_sources(self) -> list[KnowledgeSource]:
@@ -149,9 +155,10 @@ class _World:
         path = request.url.path
         file_id = path.rstrip("/").split("/")[-1 if not path.endswith("/export") else -2]
         if file_id in self.file_answers:
-            return self.file_answers[file_id]
-        if path == f"/drive/v3/files/{FOLDER}":
-            if FOLDER in self.lost_folders:
+            answer = self.file_answers[file_id]
+            return answer(request) if callable(answer) else answer
+        if path in (f"/drive/v3/files/{FOLDER}", f"/drive/v3/files/{OTHER}"):
+            if file_id in self.lost_folders:
                 return httpx.Response(404)
             return httpx.Response(200, json={"mimeType": "application/vnd.google-apps.folder"})
         if path == "/drive/v3/files":
@@ -260,6 +267,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
         return f"http://extractor-{fmt}" if fmt in w.routes else ""
 
     async def _capabilities(url: str) -> extractors.Capabilities:
+        w.capability_calls += 1
         if w.extractor_down:
             raise extractors.ExtractorUnavailable("the extractor is unreachable")
         return extractors.Capabilities(name="x", formats=frozenset(w.declared), max_bytes=10**9)
@@ -267,6 +275,9 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     async def _extract(data: bytes, **kw: Any) -> Artifact:
         if w.extract_error is not None:
             raise w.extract_error
+        file_id = kw["name"].removesuffix(" title")
+        if file_id in w.extract_errors:
+            raise w.extract_errors[file_id]
         return Artifact(
             format=kw["declared_format"],
             parser="test",
@@ -292,7 +303,9 @@ def _source(name: str = "decks", **kw: Any) -> KnowledgeSource:
         name=name,
         kind="gdrive",
         source_id=kw.pop("source_id", f"id-{name}"),
-        config={"folder_ids": [FOLDER], "include": ["docs", "slides", "pdf", "pptx"]},
+        config=kw.pop(
+            "config", {"folder_ids": [FOLDER], "include": ["docs", "slides", "pdf", "pptx"]}
+        ),
         credential_enc=kw.pop("credential_enc", seal("knowledge_sources.credential", KEY)),
         **kw,
     )
@@ -704,22 +717,51 @@ def test_a_write_cut_before_its_chunks_is_done_again(
     assert world.docs[_uri("doc1")].get("chunks", True)
 
 
-def test_an_extractor_that_cannot_be_read_holds_the_turn_then_gives_up(world: _World) -> None:
+def test_an_extractor_whose_capabilities_cannot_be_read_holds_the_turn(world: _World) -> None:
     world.extractor_down = True
-    world.files = [_file("pdf1", PDF, "2026-01-03T00:00:00.000Z", size="14")]
-    asyncio.run(source_sync.run_sync())
-    detail = _detail(world)
-    assert detail["status"] == "failed" and "extractor_unavailable" in detail["error"]
-    assert world.states["decks"]["state_value"] == ""
-    asyncio.run(source_sync.run_sync())
-    assert world.states["decks"]["state_value"] == ""
-    # The third pass on the same revision counts it unconverted, and the stamp moves.
-    asyncio.run(source_sync.run_sync())
-    detail = _detail(world)
-    assert detail["unconverted_reasons"] == {"extractor_unavailable": 1}
-    assert detail["status"] == "ok"
-    assert world.states["decks"]["state_value"] == "2026-01-03T00:00:00.000Z"
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("pdf1", PDF, "2026-01-03T00:00:00.000Z", size="14"),
+    ]
+    for _ in range(4):
+        asyncio.run(source_sync.run_sync())
+        detail = _detail(world)
+        assert detail["status"] == "failed" and "extractor_unavailable" in detail["error"]
+        # The whole format is down, which is the turn's: no file is given up on.
+        assert world.states["decks"]["state_value"] == ""
+        assert detail["unconverted"] == 0
+    assert list(world.docs) == [_uri("doc1")]
     assert not [r for r in world.requests if r.url.params.get("alt") == "media"]
+
+
+def test_one_file_s_extraction_outage_waits_for_that_file_alone(world: _World) -> None:
+    world.extract_errors["pdf1"] = extractors.ExtractorUnavailable("timed out")
+    world.files = [
+        _file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14"),
+        _file("pdf2", PDF, "2026-01-02T00:00:00.000Z", size="14"),
+    ]
+    asyncio.run(source_sync.run_sync())
+    # The format's other file is served the same pass.
+    assert list(world.docs) == [_uri("pdf2", "file")]
+    assert _detail(world)["status"] == "failed"
+    assert world.states["decks"]["state_value"] == ""
+    asyncio.run(source_sync.run_sync())
+    asyncio.run(source_sync.run_sync())
+    detail = _detail(world)
+    assert detail["status"] == "ok"
+    assert detail["unconverted_reasons"] == {"extractor_unavailable": 1}
+    assert world.states["decks"]["state_value"] == "2026-01-02T00:00:00.000Z"
+    # Given up on its revision: a full listing does not try it again.
+    del world.extract_errors["pdf1"]
+    asyncio.run(source_sync.run_sync(full=False))
+    world.upserts.clear()
+    world.states["decks"]["detail"] = json.dumps({**_detail(world), "full_listed_at": ""})
+    asyncio.run(source_sync.run_sync())
+    assert world.upserts == []
+    # A new revision is tried again.
+    world.files[0] = _file("pdf1", PDF, "2026-01-05T00:00:00.000Z", size="14")
+    asyncio.run(source_sync.run_sync())
+    assert _uri("pdf1", "file") in world.docs
 
 
 def test_a_file_the_extractor_refuses_is_unconverted(world: _World) -> None:
@@ -871,3 +913,154 @@ def test_an_artifact_fences_its_code_and_reports_its_coverage() -> None:
         "extracted": 3,
         "lost": [],
     }
+
+
+def _waits(world: _World) -> dict[str, Any]:
+    return dict(_detail(world).get("extractor_waits") or {})
+
+
+def test_two_files_that_start_waiting_on_different_passes_each_wait_their_own(
+    world: _World,
+) -> None:
+    world.extract_errors["pdf1"] = extractors.ExtractorUnavailable("timed out")
+    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
+    asyncio.run(source_sync.run_sync())
+    world.files.append(_file("pdf2", PDF, "2026-01-02T00:00:00.000Z", size="14"))
+    world.extract_errors["pdf2"] = extractors.ExtractorUnavailable("timed out")
+    asyncio.run(source_sync.run_sync())
+    assert {k: v[1] for k, v in _waits(world).items()} == {"pdf1": 2, "pdf2": 1}
+    asyncio.run(source_sync.run_sync())
+    # pdf1 gave up on its third pass; pdf2 still holds the turn.
+    detail = _detail(world)
+    assert detail["unconverted_reasons"] == {"extractor_unavailable": 1}
+    assert detail["status"] == "failed"
+    assert {k: v[1] for k, v in _waits(world).items()} == {"pdf1": 3, "pdf2": 2}
+    asyncio.run(source_sync.run_sync())
+    assert _detail(world)["status"] == "ok"
+    assert world.states["decks"]["state_value"] == "2026-01-02T00:00:00.000Z"
+
+
+@pytest.mark.parametrize("ending", ["rate_limited", "cut"])
+def test_a_turn_that_ends_early_keeps_the_stored_waits(
+    world: _World, monkeypatch: pytest.MonkeyPatch, ending: str
+) -> None:
+    world.extract_errors["pdf1"] = extractors.ExtractorUnavailable("timed out")
+    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
+    asyncio.run(source_sync.run_sync())
+    assert _waits(world)["pdf1"][1] == 1
+    if ending == "rate_limited":
+        world.fail_listing = 429
+    else:
+        # A newer file before it uses the whole bound.
+        monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
+        world.files.insert(0, _file("doc0", DOCS, "2025-12-01T00:00:00.000Z"))
+    asyncio.run(source_sync.run_sync())
+    assert _waits(world)["pdf1"][1] == 1
+
+
+def test_an_address_another_writer_holds_reads_no_extractor(world: _World) -> None:
+    uri = _uri("pdf1", "file")
+    world.docs[uri] = {"actor": "human:ann", "tags": [], "metadata": {}}
+    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
+    asyncio.run(source_sync.run_sync())
+    assert world.capability_calls == 0
+    assert _detail(world)["skipped"] == 1
+
+
+def _timeout(request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("timed out", request=request)
+
+
+@pytest.mark.parametrize(
+    ("mime", "answer", "reason"),
+    [
+        (DOCS, httpx.Response(503), "http_503"),
+        (DOCS, _timeout, "unreachable"),
+        (SLIDES, httpx.Response(500), "http_500"),
+        (SLIDES, _timeout, "unreachable"),
+    ],
+)
+def test_one_file_s_store_failure_that_may_pass_waits_for_that_file(
+    world: _World, mime: str, answer: Any, reason: str
+) -> None:
+    world.files = [
+        _file("bad1", mime, "2026-01-01T00:00:00.000Z"),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    world.file_answers["bad1"] = answer
+    asyncio.run(source_sync.run_sync())
+    assert list(world.docs) == [_uri("doc2")]
+    assert _detail(world)["status"] == "failed"
+    assert world.states["decks"]["state_value"] == ""
+    asyncio.run(source_sync.run_sync())
+    asyncio.run(source_sync.run_sync())
+    detail = _detail(world)
+    assert (detail["status"], detail["unconverted_reasons"]) == ("ok", {reason: 1})
+    assert world.states["decks"]["state_value"] == "2026-01-02T00:00:00.000Z"
+
+
+def test_a_401_on_one_file_is_the_turn_s_credential(world: _World) -> None:
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    world.file_answers["doc1"] = httpx.Response(401)
+    asyncio.run(source_sync.run_sync())
+    assert world.docs == {}
+    assert _detail(world)["status"] == "credential_invalid"
+
+
+def test_the_stamp_never_passes_the_listing_s_start(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, "2999-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    stamp = world.states["decks"]["state_value"]
+    assert gdrive.valid_stamp(stamp) and stamp < "2999"
+    # So the file is listed again, and skipped by its revision.
+    world.upserts.clear()
+    asyncio.run(source_sync.run_sync())
+    assert world.upserts == []
+
+
+def test_a_lost_folder_writes_the_visible_ones_and_retires_nothing(world: _World) -> None:
+    config = {"folder_ids": [FOLDER, OTHER], "include": ["docs"]}
+    world.sources = [_source(config=config)]
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    world.lost_folders = {OTHER}
+    world.files = [_file("doc2", DOCS, "2026-01-02T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync(full=True))
+    assert sorted(world.docs) == [_uri("doc1"), _uri("doc2")]
+    assert world.audits == []
+    assert _detail(world)["status"] == "failed"
+
+
+def test_a_maintainer_s_delete_request_goes_before_the_changed_files(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.docs[_uri("old1")] = {
+        "actor": SYNC_WORKER_ACTOR,
+        "tags": ["source:gone"],
+        "metadata": {"ingested_from": "old1", "source_revision": "r"},
+    }
+    world.sources.append(_source("gone", active=False, pending_delete=True, credential_enc=""))
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
+    result = asyncio.run(source_sync.run_sync())
+    assert result.retired == 1 and result.changed == 0
+    assert list(world.docs) == []
+
+
+def test_a_write_the_store_refuses_is_unconverted_at_once(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _refuse(inp: Any) -> Any:
+        raise ValidationError("the original is too large", code="TOO_LARGE")
+
+    monkeypatch.setattr(writes, "handle_knowledge_upsert", _refuse)
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    detail = _detail(world)
+    assert (detail["status"], detail["unconverted_reasons"]) == (
+        "ok",
+        {"write_refused:TOO_LARGE": 1},
+    )

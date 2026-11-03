@@ -168,7 +168,8 @@ A probe's error names the HTTP status (`http_403`), never the store's response t
 
 ### Syncing a source
 
-Every `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` (default 900) the worker gives each
+Every `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` (default 900) the worker first
+retires the documents of removed sources a maintainer asked to delete, then gives each
 active source a turn: sources a maintainer asked for with `sync_now` first, then the
 rest from where the previous pass stopped. A source whose namespace is inactive or no
 longer a repository's trunk is skipped. Each turn holds a lease of its own, so two
@@ -177,8 +178,10 @@ copies of the worker never sync one source at once.
 A turn lists the source's files. Its first turn, a turn `sync_now(full=true)` asked
 for and the first turn after `LOOM_KNOWLEDGE_SOURCE_SYNC_FULL_INTERVAL_SECONDS`
 (default a day) since the last full listing list every file; the others list only the
-files changed after the stored stamp, the newest modification time a complete turn
-saw. A listed file whose stored copy has the same revision, and whose chunks are live,
+files changed after the stored stamp: the newest modification time a complete turn
+saw, but never later than a minute before that turn's listing started. A file added
+to a folder with an older modification time (moved or copied in) is not changed after
+the stamp; it arrives with the next full listing. A listed file whose stored copy has the same revision, and whose chunks are live,
 is skipped without a fetch, so a write cut between its document and its chunks is
 redone. A changed file is fetched and written with `knowledge.upsert`:
 
@@ -203,8 +206,8 @@ stops the turn, which records nothing.
 A document is retired only on positive evidence: absence from a complete full listing
 (a file trashed, deleted or moved out of the folders), or a maintainer's
 `remove(delete_documents=true)`. A folder the account no longer sees lists empty rather
-than refused, so a full turn first checks every folder, and one that fails stops the
-turn with status `failed`, nothing written and nothing retired. A fetch error or a rate
+than refused, so a full turn first checks every folder; while one fails, the turn ends
+`failed`, still writes the files of the folders it sees, and retires nothing. A fetch error or a rate
 limit retires nothing. Each
 retirement is a `knowledge.delete` with its audit row, actor
 `worker:knowledge-source-sync`. Once a removed source has no documents left, its
@@ -216,27 +219,35 @@ wrote are skipped by revision. One pass fetches, writes and retires at most
 `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` documents (default 40) across all
 sources, so a large folder's first sync spans several passes.
 
-Only the token exchange and the listing speak for the credential: a file the store
-refuses on its own (an export over the store's limit, a download turned off) is counted
-`unconverted` with its status, and the turn goes on. So is a file over
-`LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` (default 64 MiB) and one the extractor
-refuses. A file whose extractor cannot be reached leaves the turn incomplete (status
-`failed`, the stamp kept) for three passes on the same revision, then is counted
-`unconverted` too. An unconverted file has no stored copy, so it is fetched again when
-it changes and on every full listing.
+What fails for every file is the turn's: the token exchange, the listing, a `401` on
+any request (`credential_invalid`), a rate limit, and an extractor whose capabilities
+cannot be read. Such a turn keeps the stamp, so the next pass lists the same files
+again. Trouble with one file is that file's:
+
+- A file the store refuses on its own (a `403` or `404` on its export, download or deck
+  read: an export over the store's limit, downloads turned off), one over
+  `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` (default 64 MiB), one the extractor
+  refuses and one the write refuses are counted `unconverted` with their reason, and
+  the turn goes on. Such a file has no stored copy, so it is fetched again when it
+  changes and on every full listing.
+- A failure that may pass (a `5xx` or a timeout on that file, its extractor call, its
+  write) makes the file wait: the turn ends `failed` with the stamp kept, and the next
+  pass tries the file again. After three passes on the same revision the file is
+  counted `unconverted` instead, and it is not tried again until it changes or a
+  maintainer asks for a full sync (`sync_now(full=true)`, `loom knowledge sync --full`).
 
 A source's `sync` in `list` and `inspect` shows what its last turn did:
 
-| Field                    | Meaning                                                                                                                                   |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                            |
-| `last_synced_at`         | When the last turn ended.                                                                                                                 |
-| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`. |
-| `documents_seen`         | Files the turn listed.                                                                                                                    |
-| `changed`, `removed`     | Documents it wrote and retired.                                                                                                           |
-| `unconverted`, `skipped` | Files it did not write: no extractor, refused or too large; another writer's document at the address.                                     |
-| `unconverted_reasons`    | Why, by count: `no_extractor`, `too_large`, `http_<status>`, `extraction_failed:<code>`, `extractor_unavailable`.                         |
-| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text.                                                   |
+| Field                    | Meaning                                                                                                                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                                                                   |
+| `last_synced_at`         | When the last turn ended.                                                                                                                                                        |
+| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                        |
+| `documents_seen`         | Files the turn listed.                                                                                                                                                           |
+| `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                  |
+| `unconverted`, `skipped` | Files it did not write: no extractor, refused or too large; another writer's document at the address.                                                                            |
+| `unconverted_reasons`    | Why, by count: `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `write_refused:<code>`, `write_failed:<error>`. |
+| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text.                                                                                          |
 
 `loom knowledge sync --org O --namespace <trunk namespace> [--source NAME] [--full]` runs
 one such pass over one namespace's sources now, in-process, and leaves a manual
