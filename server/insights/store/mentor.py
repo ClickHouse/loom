@@ -576,16 +576,6 @@ async def indexed_writes(
     return int(row["n"])
 
 
-async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
-    """The namespace's own `retention_days` (0 when it sets none or is not registered)."""
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        f"SELECT retention_days FROM loom.namespaces FINAL WHERE {_SCOPE} LIMIT 1",
-        params={"org": org, "ns": namespace},
-    )
-    return int(row["retention_days"]) if row else 0
-
-
 async def reported_keys(
     org: str, namespace: str, agent: str, window_seconds: int, *, ch: _CHClient | None = None
 ) -> int:

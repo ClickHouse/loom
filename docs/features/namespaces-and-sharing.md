@@ -196,10 +196,10 @@ are refused. It changes nothing it reads and gives no recall credit. Like
   between the listing and the citation read have no hash. `complete` is false when
   the listing holds fewer rows than the view, or the view's counts could not be read.
 - **`activity`**: the calls the ledger files under the subject per operation in
-  `window_seconds` (default 7 days), attempted and succeeded, without the dashboard's
-  and the assistant's. The ledger files a call under the `agent`, `user_id` and
-  `session_id` its arguments name, or the user and session a narrowed token is pinned
-  to, so a call made by anyone that names the subject is counted, and a served
+  `window_seconds` (default 7 days), attempted and succeeded, without worker rows or the
+  dashboard's and the assistant's calls. The ledger files a call under the `agent`,
+  `user_id` and `session_id` its arguments name, or the user and session a narrowed token
+  is pinned to, so a call made by anyone that names the subject is counted, and a served
   `memory.inspect`, which names none, is not. A call shows that a tool ran, not that its
   result reached a model. `gap` says when the ledger keeps fewer days than the window (the
   namespace's own `retention_days`, else the deployment's).

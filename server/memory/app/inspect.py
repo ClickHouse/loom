@@ -29,6 +29,7 @@ from server.identity.api.models_namespace_catalog import NamespaceListCategories
 from server.identity.api.models_namespace_guide import NamespaceGuideGetInput
 from server.identity.app.namespace_catalog import handle_namespace_list_categories
 from server.identity.app.namespace_guide import handle_namespace_guide_get
+from server.identity.app.registration import namespace_retention_days
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_inspect import (
     InspectActivity,
@@ -79,13 +80,10 @@ _DEFINITIONS: dict[str, tuple[str, str]] = {
 }
 
 
-def _cited_hash(revision: dict[str, Any] | None, row: dict[str, Any]) -> str:
-    """The cited hash of the listed version: none when the row moved on between the two
-    reads. A high-sensitivity row's is withheld here as well as by the citation read, so
-    the rule holds whichever read serves it."""
-    if row["sensitivity"] == "high" or revision is None:
-        return ""
-    if int(revision["version"]) != int(row["version"]):
+def _cited_hash(revision: dict[str, Any] | None, version: int) -> str:
+    """The cited hash of the listed version (the citation read gives a high-sensitivity
+    row none); none when the row moved on between the two reads."""
+    if revision is None or int(revision["version"]) != version:
         return ""
     return str(revision["content_sha256"])
 
@@ -176,7 +174,9 @@ class _Inspect:
                 InspectRow(
                     **{k: v for k, v in r.items() if k != "id"},
                     memory_id=str(r["id"]),
-                    content_sha256=_cited_hash(cited.get(tuple(r[c] for c in IDENTITY)), r),
+                    content_sha256=_cited_hash(
+                        cited.get(tuple(r[c] for c in IDENTITY)), int(r["version"])
+                    ),
                     versions=versions.get(str(r["id"]), 0),
                 )
                 for r in newest
@@ -209,7 +209,7 @@ class _Inspect:
             out.first_at = min(r["first_at"] for r in rows)
             out.last_at = max(r["last_at"] for r in rows)
         own = await self.guarded(
-            "activity.retention", lambda: store.namespace_retention_days(i.org, i.namespace), None
+            "activity.retention", lambda: namespace_retention_days(i.org, i.namespace), None
         )
         # A namespace's own retention wins over the table's global one; with neither read,
         # no gap is claimed.

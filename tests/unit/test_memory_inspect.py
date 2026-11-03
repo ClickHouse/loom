@@ -277,6 +277,24 @@ async def test_the_extraction_policy_is_read_only_for_an_org_admin(
 
 
 @pytest.mark.asyncio
+async def test_an_admin_whose_policy_read_fails_is_told_so(
+    ch: RecordingCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def admin(*a: Any, **k: Any) -> bool:
+        return True
+
+    async def unreadable_policy(org: str, namespace: str) -> str:
+        raise RuntimeError("policy read failed")
+
+    monkeypatch.setattr(mi, "row_in_scope", admin)
+    monkeypatch.setattr("server.memory.app.extraction_policy.effective", unreadable_policy)
+    out = await mi.handle_memory_inspect(_inp())
+    assert out.settings.extraction_policy is None
+    assert out.settings.extraction_policy_unavailable == "the policy could not be read"
+    assert "settings.extraction_policy: RuntimeError" in out.skipped
+
+
+@pytest.mark.asyncio
 async def test_an_unreadable_grant_withholds_the_policy_and_says_so(
     ch: RecordingCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -343,9 +361,16 @@ async def test_a_high_sensitivity_row_lists_no_excerpt_and_no_hash(
     def high(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         return [{**_newest(sql, params)[0], "sensitivity": "high"}]
 
+    async def withheld(org: str, ns: str, samples: Any, *, scope: Any) -> Any:
+        # live_revisions gives a high-sensitivity row no hash.
+        return {
+            tuple(s[c] for c in mi.IDENTITY): {"version": 7, "content_sha256": ""} for s in samples
+        }
+
     fake = _ch(newest=high)
     fake.strict = False
     fake.install(monkeypatch, "server.identity.app.namespace_catalog")
+    monkeypatch.setattr(mi, "revisions_for", withheld)
     out = await mi.handle_memory_inspect(_inp(sample_limit=1))
     (row,) = out.own.newest
     assert row.memory_id == MID and row.excerpt == "" and row.content_sha256 == ""

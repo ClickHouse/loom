@@ -906,7 +906,6 @@ async def _mentor_evidence(ch: RecordingCH, c: dict[str, Any]) -> None:
     await mentor_store.indexed_writes(*who, model="fake-ngram-1024", ch=ch)
     await mentor_store.reported_keys(*who, ch=ch)
     await mentor_store.graded_runs(*who, ch=ch)
-    await mentor_store.namespace_retention_days(ORG, NS, ch=ch)
 
 
 def cases() -> list[Case]:

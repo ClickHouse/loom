@@ -23,6 +23,13 @@ async def namespace_row(
     return await namespaces_repo.fetch_row(org, namespace, ch=ch)
 
 
+async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
+    """The namespace's own `retention_days`, which sets its ledger's TTL over the table's
+    global one (0 when it sets none or is not registered)."""
+    row = await namespace_row(org, namespace, ch=ch)
+    return int(row.get("retention_days") or 0) if row else 0
+
+
 async def namespace_claimable(org: str, namespace: str, subject: str) -> bool:
     """Whether a domain may register (org, namespace) as new for `subject`: no
     directory row, or a soft-deleted one `subject` administers. A soft-deleted

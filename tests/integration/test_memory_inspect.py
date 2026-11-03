@@ -1,6 +1,7 @@
 """memory.inspect against a live Loom + ClickHouse.
 
-Two agents write into one namespace, one of them for two end users. Inspecting an agent
+Three agents write into one namespace, one of them for two end users and one a
+high-sensitivity row. Inspecting an agent
 lists its own rows apart from the other agent's; inspecting a user lists the rows filed
 under that user apart from the rest; each listed row carries the memory_id, version and
 content hash memory.get serves; the guide and categories are read; the extraction policy

@@ -11,6 +11,7 @@ from typing import Any, NamedTuple
 
 from server.core.ch import get_client
 from server.embedding import get_embedder
+from server.identity.app.registration import namespace_retention_days
 from server.insights.api.models_mentor import (
     MentorAdoption,
     MentorBriefInput,
@@ -225,7 +226,7 @@ async def _usage_evidence(org: str, namespace: str, agent: str, window_seconds: 
         ("indexed_writes", indexed()),
         ("reported_keys", mentor_store.reported_keys(*who, ch=ch)),
         ("graded_runs", mentor_store.graded_runs(*who, ch=ch)),
-        ("retention", mentor_store.namespace_retention_days(org, namespace, ch=ch)),
+        ("retention", namespace_retention_days(org, namespace, ch=ch)),
     ]
 
     async def read(step: str, coro: Awaitable[Any]) -> tuple[Any, str]:
