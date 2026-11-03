@@ -65,9 +65,7 @@ async def handle_memory_owner_report(input: MemoryOwnerReportInput) -> MemoryOwn
             raise PermissionError(f"namespace {input.namespace!r} is not readable by this token")
         scope = namespace_scope([input.namespace])
     elif auth is None or ("*" in auth.namespaces and not auth.has_ns_roles() and not auth.creator):
-        # Auth off, or a namespace-wildcard token: every namespace of the org
-        # but the restricted ones and collections it cannot read, and the
-        # named claims the gate refuses (`every_namespace_scope`).
+        # Auth off, or a flat `*` token: every namespace the gate lets it read.
         scope = await every_namespace_scope(input.org)
     else:
         # The claim plus grants (a scoped token: its claim alone; a delegated

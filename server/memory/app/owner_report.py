@@ -62,7 +62,7 @@ ORDER BY m.namespace
 
 
 def namespace_scope(namespaces: list[str]) -> OrgScopeFilter:
-    """The predicate bounding the report to `namespaces`; none of them is an
+    """The predicate bounding the report to `namespaces`; an empty list is an
     inaccessible scope, never an unbounded one."""
     return OrgScopeFilter(
         accessible=bool(namespaces),
