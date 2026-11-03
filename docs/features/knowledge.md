@@ -126,9 +126,11 @@ Search finds a passage; three other reads cover the rest of the work with a long
   needing more sets `truncated`. A citation names chunks the passes read
   (`[source#idx]`, `[source#a-b]`, or a list of them separated by `,` or `;`); a
   citation of anything else (a chunk past `max_windows`, an index that does not exist,
-  another document) is removed from `answer` and listed in `unsupported_citations`, since following it would read
-  something the answer did not come from. An answer that is empty once those tags are
-  removed abstains with `abstain_reason="empty_answer"`. It needs a real LLM provider.
+  another document) is removed from `answer` and listed in `unsupported_citations`,
+  since following it would read something the answer did not come from. A bracket
+  holding anything else, or naming a source with a blank, comma or semicolon, is prose
+  and stays as written. An answer that is empty once those citations are removed
+  abstains with `abstain_reason="empty_answer"`. It needs a real LLM provider.
 
 `memory.ask` also reads knowledge: it runs one hybrid knowledge search over the same
 namespace and appends the passages as a citable block (per request `knowledge=false`
