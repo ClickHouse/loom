@@ -396,6 +396,10 @@ def test_probe_output_masks_remote_credentials() -> None:
             "remoteSecure('h:9440', merge('***', '***'), '***', '***')",
         ),
         (
+            "remoteSecure('h:9440', 'default', 'checks', $$play$$, $tag$sec,r)et$tag$)",
+            "remoteSecure('h:9440', 'default', 'checks', '***', '***')",
+        ),
+        (
             "remoteSecure(my_collection, user = 'play', password = 'secret')",
             "remoteSecure(my_collection, user = '***', password = '***')",
         ),

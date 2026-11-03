@@ -396,6 +396,8 @@ _REMOTE_CALL = re.compile(r"^\s*remote(Secure)?\s*\(", re.IGNORECASE)
 _TABLE_NAME = re.compile(r"^\s*[\w`\".]+\s*$")
 # A literal that runs to the end of the clause counts: its text is still a secret.
 _QUOTED = re.compile(r"'(?:[^'\\]|\\.)*(?:'|\\?$)")
+# A heredoc string (`$$...$$`, `$tag$...$tag$`), unterminated ones included.
+_HEREDOC = re.compile(r"\$(\w*)\$[\s\S]*?(?:\$\1\$|$)")
 _SETTING_ARG = re.compile(r"^\s*\w+\s*=")
 _CALL_ARG = re.compile(r"^\s*\w+\s*\(")
 
@@ -437,9 +439,11 @@ def redact_table_function(clause: str) -> str:
     remote) or two (`db`, `table`), and every quoted literal after it and in
     a `key = value` argument is masked. Any other clause (another table
     function, a subquery, a call followed by more text, a malformed call)
-    has every quoted literal masked."""
+    has every quoted literal masked. A heredoc string is masked wherever it
+    sits."""
     if not clause or _TABLE_NAME.match(clause):
         return clause
+    clause = _HEREDOC.sub("'***'", clause)
     m = _REMOTE_CALL.match(clause)
     spans = _call_arguments(clause, m.end() - 1) if m else None
     if spans is None or len(spans) < 2 or clause[spans[-1][1] + 1 :].strip():
