@@ -11,11 +11,11 @@ here, once:
   the request's, else the op's plane default (code.* / tracker.*), else the
   verified token's own org. A namespace is never authorized without an org:
   that is a refusal (IDENTITY_INCOMPLETE), not a flat-role pass.
-- `with_resolved_org` / `with_target`: a blank or "-" org is set to the
-  org the call acts in, and a padded org or namespace stripped, before
-  validation, and an absent code namespace to the
-  authorized one after authorization, so the handler reads and writes where
-  the call was authorized.
+- `with_resolved_org` / `with_target`: before validation a blank or "-"
+  org is set to the org the call acts in and a padded org or namespace is
+  stripped; after authorization an absent code namespace is set to the
+  authorized one, so the handler reads and writes where the call was
+  authorized.
 - `authorize`: first-contact provisioning, the role + namespace gate
   (`authorize_op`, raising PermissionError / IdentityIncompleteError), then
   the restricted-access audit row and the first-write registration.

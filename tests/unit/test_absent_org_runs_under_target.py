@@ -180,7 +180,7 @@ def test_an_org_wide_token_naming_a_dash_org_with_a_namespace_is_incomplete() ->
 
 
 @pytest.mark.parametrize("org", ["-", "  ", " globex "])
-def test_an_mcp_call_with_an_absent_org_runs_under_the_tokens_org(
+def test_an_mcp_call_with_an_absent_or_padded_org_runs_under_the_tokens_org(
     monkeypatch: pytest.MonkeyPatch, org: str
 ) -> None:
     import server.transport.mcp_call as mcp_call

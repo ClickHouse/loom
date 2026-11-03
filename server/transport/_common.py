@@ -57,7 +57,6 @@ def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
     auth = current_auth()
     token_org = present(auth.org) if auth is not None else None
     for k, fill in zip(("org", "namespace"), admitted or (SENTINEL, SENTINEL), strict=True):
-        # A padded name is recorded as the gate read it.
         out[k] = present(out[k]) or fill
     if present(out["org"]) is None and token_org not in (None, "*"):
         out["org"] = token_org
