@@ -28,6 +28,9 @@ spec:
       labels:
         {{- include "loom.extractorSelectorLabels" $ | nindent 8 }}
         app.kubernetes.io/component: extractor
+      annotations:
+        # A new token restarts these pods with the Loom pods (loom.secretChecksum).
+        checksum/secret: {{ include "loom.secretChecksum" $ }}
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false

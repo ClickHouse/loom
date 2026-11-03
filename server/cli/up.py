@@ -88,10 +88,14 @@ def repo_root(explicit: str | None) -> Path | None:
     return None
 
 
+_EXTRACTOR_TOKEN = "LOOM_DOCUMENT_EXTRACTOR_TOKEN"
+
+
 def bootstrap(root: Path, env_file: str) -> list[str]:
     """`make bootstrap` without make: create `.env` and the ClickHouse
-    named_collections.xml bind-mount file when missing. Returns one line per
-    file created (empty when both already existed)."""
+    named_collections.xml bind-mount file when missing, and give an `.env`
+    without an extractor token one. Returns one line per file created or
+    changed (empty when there was nothing to do)."""
     created: list[str] = []
     env_path = root / env_file
     if not env_path.exists():
@@ -115,6 +119,19 @@ def bootstrap(root: Path, env_file: str) -> list[str]:
         )
         write_private(env_path, template)
         created.append(f"created {env_file} from .env.example")
+    elif not read_env_file(env_path).get(_EXTRACTOR_TOKEN):
+        # An .env from before the extractor service: `make dev` would start it
+        # with no token, which it refuses.
+        text = env_path.read_text(encoding="utf-8")
+        line = f"{_EXTRACTOR_TOKEN}={secrets.token_hex(24)}"
+        blank = re.compile(rf"^{_EXTRACTOR_TOKEN}=[ \t]*$", re.MULTILINE)
+        text = (
+            blank.sub(line, text, count=1)
+            if blank.search(text)
+            else text.rstrip("\n") + f"\n{line}\n"
+        )
+        write_private(env_path, text)
+        created.append(f"added {_EXTRACTOR_TOKEN} to {env_file}")
     nc = root / NAMED_COLLECTIONS
     named_collections_template = Path(str(nc) + ".template")
     if not nc.exists() and named_collections_template.exists():

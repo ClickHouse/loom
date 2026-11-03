@@ -218,7 +218,7 @@ root secret, so the pod template carries nothing to test a guess of any one
 key against; a root change itself rolls through the publish token. */}}
 {{- define "loom.secretChecksum" -}}
 {{- $s := .Values.secrets -}}
-{{- $keys := dict "ch" (ternary .Values.devClickhouse.password $s.clickhousePassword .Values.devClickhouse.enabled) "extra" $s.extra "previous" $s.jwtSecretPrevious -}}
+{{- $keys := dict "ch" (ternary .Values.devClickhouse.password $s.clickhousePassword .Values.devClickhouse.enabled) "extra" $s.extra "previous" $s.jwtSecretPrevious "extractor" (ternary $s.extractorToken "" .Values.extractor.enabled) -}}
 {{- printf "%s\n%s" $s.jwtSecret ($keys | toJson) | sha256sum -}}
 {{- end }}
 

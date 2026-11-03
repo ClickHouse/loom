@@ -58,4 +58,6 @@ above 1, a child that a hostile source has taken over could open a concurrent
 child's source in that moment. The service refuses to start as root or with
 `CAP_SYS_RESOURCE` or `CAP_SYS_ADMIN` permitted, as the kernel does not hold such
 a process to a child's limit on new processes. It sets no-new-privileges, so no
-setuid binary or file capability gives a child one.
+setuid binary or file capability gives a child one, and each child sets a seccomp
+filter under which it can make no socket, so it reaches no address (x86_64 and
+aarch64; on another architecture a child refuses to extract).

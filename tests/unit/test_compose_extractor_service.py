@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,3 +47,10 @@ def test_the_dev_stack_builds_the_extractor_and_points_loom_at_it() -> None:
     assert dev["services"]["extractor"]["build"]["dockerfile"] == "extractor/Dockerfile"
     url = dev["services"]["loom"]["environment"]["LOOM_DOCUMENT_EXTRACTOR_URL"]
     assert url == "http://extractor:8790"
+
+
+@pytest.mark.skipif(not shutil.which("helm"), reason="needs helm (the CI helm job runs it)")
+def test_the_charts_extractor_is_selected_by_nothing_of_loom_and_reaches_nothing() -> None:
+    from scripts.gates import helm_extractor_isolation
+
+    helm_extractor_isolation.main()

@@ -102,9 +102,12 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    manifests, no tests in the Claude Code zip, the executable bits git records, and
    that the bundle names the ClickHouse release the `clickhouse` job checked, and
    smoke-tests the wheel in a clean venv with `scripts/gates/sdk_wheel_smoke.py`;
-5. `docker` publishes `ghcr.io/clickhouse/loom` and `docker-extractor`
-   `ghcr.io/clickhouse/loom-extractor` (the document extractor service) for linux/amd64 and
-   linux/arm64, each with provenance and an SBOM, scanned before it is tagged;
+5. `docker` publishes `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor` (the
+   document extractor service), one matrix entry each, for linux/amd64 and linux/arm64, each
+   with provenance and an SBOM, scanned before it is tagged. A package GitHub creates on its
+   first push is private: before the first release that pushes `loom-extractor`, or right
+   after its run creates the package, set the package's visibility to public in its settings
+   (an install pulls it without signing in), or `docker-smoke` fails to pull it;
 6. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64;
 7. `github-release` creates the GitHub Release only after both images exist, with notes

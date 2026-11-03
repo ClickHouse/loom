@@ -359,6 +359,11 @@ jobs:
           refused "secrets.extractorToken must be at least 16 characters" --set extractor.enabled=true --set secrets.extractorToken=short
           refused "through secrets.extractorToken, not secrets.extra" "${extractor[@]}" --set secrets.extra.LOOM_DOCUMENT_EXTRACTOR_TOKEN=x
           refused "extractor.env cannot set LOOM_EXTRACTOR_TOKEN" "${extractor[@]}" --set extractor.env.LOOM_EXTRACTOR_TOKEN=x
+      # What the extractor's pods can be reached by and reach, read off the render.
+      - name: extractor isolation
+        run: |
+          python3 -m pip install --quiet --user pyyaml==6.0.3
+          python3 scripts/gates/helm_extractor_isolation.py
 
   agent-plugins:
     name: coding-agent plugins (node --test)

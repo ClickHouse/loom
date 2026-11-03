@@ -972,7 +972,9 @@ and published as `ghcr.io/clickhouse/loom-extractor` with the same tags. It runs
 `compose.yaml` runs it as the `extractor` service, at `LOOM_VERSION` like the server:
 on a network of its own that is internal (no route out) and that only the `loom`
 service shares, with no published port, a read-only root filesystem, every capability
-dropped, `no-new-privileges` and a memory, CPU and process bound. It gets one variable,
+dropped, `no-new-privileges` and a memory, CPU and process bound. That network lets the
+service's process reach `loom`; each extraction's process can make no socket at all, so
+the one a hostile file could take over reaches neither `loom` nor anything else. It gets one variable,
 the token; the server reads `LOOM_DOCUMENT_EXTRACTOR_URL` (`http://extractor:8790`) and
 `LOOM_DOCUMENT_EXTRACTOR_TOKEN` from `.env`, which the installer writes, a new token
 per install, and adds to an install from before the service. `LOOM_EXTRACTOR_IMAGE_REPOSITORY`

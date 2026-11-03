@@ -407,6 +407,41 @@ async def test_a_child_can_start_no_process(
     assert r.json()["error"]["message"] == "BlockingIOError"
 
 
+async def test_a_child_can_open_no_socket(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The service's network may hold the Loom server (an unauthenticated one, on
+    a laptop): a taken-over extraction reaches no address on it or beyond."""
+    _child(
+        tmp_path,
+        monkeypatch,
+        """
+        import socket
+        refused = []
+        for family in (socket.AF_INET, socket.AF_INET6, socket.AF_UNIX):
+            try:
+                socket.socket(family)
+            except PermissionError:
+                refused.append(family.name)
+        try:
+            socket.socketpair()
+        except PermissionError:
+            refused.append("pair")
+        raise ExtractionError("corrupt", " ".join(refused))
+        """,
+    )
+    r = await _extract()
+    assert r.json()["error"]["message"] == "AF_INET AF_INET6 AF_UNIX pair"
+
+
+def test_a_machine_with_no_socket_filter_refuses_to_extract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom_extractor import child
+
+    monkeypatch.setattr(child.platform, "machine", lambda: "riscv64")
+    with pytest.raises(OSError, match="no socket filter for riscv64"):
+        child.no_sockets()
+
+
 _SCOPE = {
     "type": "http",
     "asgi": {"version": "3.0"},

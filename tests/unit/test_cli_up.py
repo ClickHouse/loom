@@ -138,9 +138,27 @@ def test_bootstrap_creates_env_and_named_collections_once(root: Path) -> None:
         "created .env",
         f"created {up.NAMED_COLLECTIONS.as_posix()}",
     ]
-    (root / ".env").write_text("LOOM_AUTH_REQUIRED=true\n")
+    (root / ".env").write_text("LOOM_AUTH_REQUIRED=true\nLOOM_DOCUMENT_EXTRACTOR_TOKEN=kept\n")
     assert up.bootstrap(root, ".env") == []  # second run: nothing overwritten
-    assert (root / ".env").read_text() == "LOOM_AUTH_REQUIRED=true\n"
+    assert (
+        root / ".env"
+    ).read_text() == "LOOM_AUTH_REQUIRED=true\nLOOM_DOCUMENT_EXTRACTOR_TOKEN=kept\n"
+
+
+@pytest.mark.parametrize(
+    "before",
+    ["LOOM_AUTH_REQUIRED=true\n", "LOOM_AUTH_REQUIRED=true\nLOOM_DOCUMENT_EXTRACTOR_TOKEN=\n"],
+)
+def test_bootstrap_gives_an_older_env_an_extractor_token_once(root: Path, before: str) -> None:
+    """An .env from before the extractor service: `make dev` would start it with none."""
+    (root / ".env").write_text(before)
+    (root / ".env").chmod(0o600)
+    assert up.bootstrap(root, ".env")[0] == "added LOOM_DOCUMENT_EXTRACTOR_TOKEN to .env"
+    env = up.read_env_file(root / ".env")
+    assert env["LOOM_AUTH_REQUIRED"] == "true" and len(env["LOOM_DOCUMENT_EXTRACTOR_TOKEN"]) == 48
+    assert (root / ".env").read_text().count("LOOM_DOCUMENT_EXTRACTOR_TOKEN=") == 1
+    text = (root / ".env").read_text()
+    assert up.bootstrap(root, ".env") == [] and (root / ".env").read_text() == text
 
 
 def test_repo_root_prefers_explicit_then_cwd(

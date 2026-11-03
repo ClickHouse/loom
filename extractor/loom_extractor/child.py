@@ -15,9 +15,12 @@ Linux only.
 from __future__ import annotations
 
 import ctypes
+import errno
 import json
 import logging
+import platform
 import resource
+import struct
 import sys
 from typing import Any
 
@@ -26,6 +29,8 @@ from loom_extractor.source import ExtractionError, Options, extract
 EXIT_REFUSED = 3
 _PR_SET_DUMPABLE = 4
 _PR_SET_NO_NEW_PRIVS = 38
+_PR_SET_SECCOMP = 22
+_SECCOMP_MODE_FILTER = 2
 
 
 def _prctl(option: int, value: int, name: str) -> None:
@@ -47,6 +52,45 @@ def no_dump() -> None:
     _prctl(_PR_SET_DUMPABLE, 0, "PR_SET_DUMPABLE")
 
 
+# The audit arch and the syscalls that make a socket (io_uring can too) on each
+# architecture the image is built for; seccomp filters see raw syscall numbers.
+_NO_SOCKETS = {
+    "x86_64": (0xC000003E, (41, 53, 425)),  # socket, socketpair, io_uring_setup
+    "aarch64": (0xC00000B7, (198, 199, 425)),
+}
+_X32_BIT = 0x40000000  # an x86_64 process can still call the x32 ABI's numbers
+
+
+def _bpf(code: int, k: int, jt: int = 0, jf: int = 0) -> bytes:
+    return struct.pack("=HBBI", code, jt, jf, k)
+
+
+def no_sockets() -> None:
+    """A seccomp filter on this process and all it starts: making a socket fails
+    with EPERM, so an extraction a hostile source has taken over reaches no
+    address, the Loom server on its network included. Needs no-new-privileges
+    (set first) and no privilege. Another architecture refuses to extract."""
+    machine = platform.machine()
+    if machine not in _NO_SOCKETS:
+        raise OSError(f"no socket filter for {machine}: the extractor runs on x86_64 or aarch64")
+    arch, calls = _NO_SOCKETS[machine]
+    ld_w_abs, jeq, jge, ret = 0x20, 0x15, 0x35, 0x06
+    deny = 0x00050000 | errno.EPERM  # SECCOMP_RET_ERRNO
+    # [arch] [arch?] [nr] [x32?] [call?]... [allow] [deny] [kill]
+    prog = [_bpf(ld_w_abs, 4), _bpf(jeq, arch, 0, len(calls) + 4), _bpf(ld_w_abs, 0)]
+    prog.append(
+        _bpf(jge, _X32_BIT, len(calls) + 1, 0) if machine == "x86_64" else _bpf(jeq, 0, 0, 0)
+    )
+    for i, nr in enumerate(calls):
+        prog.append(_bpf(jeq, nr, len(calls) - i, 0))
+    prog += [_bpf(ret, 0x7FFF0000), _bpf(ret, deny), _bpf(ret, 0x80000000)]  # allow, deny, kill
+    filters = ctypes.create_string_buffer(b"".join(prog))
+    fprog = struct.pack("@HP", len(prog), ctypes.addressof(filters))  # struct sock_fprog
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(_PR_SET_SECCOMP, _SECCOMP_MODE_FILTER, ctypes.c_char_p(fprog), 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_SECCOMP) failed")
+
+
 def _limit(memory_bytes: int, cpu_s: int) -> None:
     resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
     resource.setrlimit(resource.RLIMIT_CPU, (cpu_s, cpu_s + 1))
@@ -66,6 +110,7 @@ def main(argv: list[str]) -> int:
     limits = json.loads(argv[1])
     no_new_privileges()
     no_dump()
+    no_sockets()
     _limit(limits["memory_bytes"], limits["cpu_s"])
     # sqlglot warns once per statement it falls back on; coverage records those.
     logging.getLogger("sqlglot").setLevel(logging.ERROR)

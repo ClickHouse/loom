@@ -155,20 +155,34 @@ def smoke(image: str, extractor_image: str, clickhouse_image: str) -> None:
             assert saved["found"] and saved["value"] == "Docker memory persists", saved
             extractor = (ROOT / "scripts/gates/docker_extractor_smoke.py").read_text()
             run(*compose, "exec", "-T", "loom", "python", "-", input=extractor, text=True)
-            # The extractor's network is internal: it reaches nothing outside.
-            egress = subprocess.run(
-                [
-                    *compose,
-                    "exec",
-                    "-T",
-                    "extractor",
-                    "python",
-                    "-c",
-                    "import socket; socket.create_connection(('1.1.1.1', 443), timeout=5)",
-                ],
-                check=False,
+            # The service's network is internal: no route out. Its network does hold
+            # the server, so each extraction runs under a filter that makes no socket:
+            # applied here as a child applies it, it refuses even loom:7777.
+            probe = (
+                "import errno, socket, sys\n"
+                "address = socket.gethostbyname(sys.argv[2])  # DNS needs a socket too\n"
+                "if sys.argv[1] == 'filtered':\n"
+                "    from loom_extractor.child import no_new_privileges, no_sockets\n"
+                "    no_new_privileges(); no_sockets()\n"
+                "try:\n"
+                "    socket.create_connection((address, int(sys.argv[3])), timeout=5)\n"
+                "except OSError as e:\n"
+                "    print(errno.errorcode.get(e.errno, 'timeout'))\n"
+                "else:\n"
+                "    print('connected')\n"
             )
-            assert egress.returncode != 0, "the extractor reached the internet"
+            for mode, host, port, want in (
+                ("plain", "1.1.1.1", "443", {"ENETUNREACH", "EHOSTUNREACH", "timeout"}),
+                ("filtered", "loom", "7777", {"EPERM"}),
+            ):
+                reach = subprocess.run(
+                    [*compose, "exec", "-T", "extractor", "python", "-c", probe, mode, host, port],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                got = reach.stdout.strip()
+                assert got in want, f"the extractor's {mode} connection to {host}:{port}: {got}"
             code = (ROOT / "scripts/gates/docker_code_smoke.py").read_text()
             run(*compose, "exec", "-T", "loom", "python", "-", input=code, text=True)
             run(*compose, "restart", "loom")

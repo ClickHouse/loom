@@ -138,7 +138,12 @@ def test_release_gate_installs_browser_dependencies_before_running_provider_flow
     )
     assert setup < browser < smoke
     assert '--extractor-image "ghcr.io/clickhouse/loom-extractor:$VERSION"' in steps[smoke]["run"]
-    assert "docker-extractor" in job["needs"]
+    images = workflow["jobs"]["docker"]["strategy"]["matrix"]["include"]
+    assert [i["image"] for i in images] == [
+        "ghcr.io/clickhouse/loom",
+        "ghcr.io/clickhouse/loom-extractor",
+    ]
+    assert "docker" in job["needs"]
     assert steps[browser]["working-directory"] == "frontend"
     assert "npm ci" in steps[browser]["run"]
     assert job["timeout-minutes"] >= 30
