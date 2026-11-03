@@ -73,8 +73,15 @@ def test_clean_alternatives_dedupes_and_caps() -> None:
     assert len(svc.clean_alternatives([cjk + "甲", cjk + "乙"])) == 1
     assert len(svc.clean_alternatives(["甲" + cjk, "乙" + cjk])) == 2
     # Unspaced Thai has no wide characters and no space: one token past the limit, it
-    # leaves the mark alone, as a long path does.
+    # leaves the mark alone, as a long path does; so does unspaced Korean, which is cut at
+    # a space only.
     assert svc.clean_alternatives(["ใช้ตารางแฮช" * 40]) == ["…"]
+    assert svc.clean_alternatives(["데이터베이스를사용합니다" * 30]) == ["…"]
+    # The mark follows the last word, not the punctuation or dash the cut left.
+    (cut,) = svc.clean_alternatives(["y" * 290 + " slow, " + "z" * 40])
+    assert cut == "y" * 290 + " slow…"
+    (cut,) = svc.clean_alternatives(["y" * 285 + " option — " + "z" * 40])
+    assert cut == "y" * 285 + " option…"
     # An alternative that fits is kept as written.
     fits = "y" * 270 + " src/cache/LruCache.cpp"
     assert svc.clean_alternatives([fits]) == [fits]

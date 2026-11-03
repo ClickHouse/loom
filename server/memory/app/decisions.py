@@ -63,9 +63,12 @@ def cut_alternative(text: str) -> str:
         return text
     room = ALTERNATIVE_CHARS - len(CUT_MARK)
     space = text.rfind(" ", 0, room + 1)
-    wide = next((i for i in range(room, space, -1) if _wide_pair(text[i - 1], text[i])), -1)
+    # Down to the space, or to 1: never a pair of the last character and the first.
+    lowest = max(space, 0)
+    wide = next((i for i in range(room, lowest, -1) if _wide_pair(text[i - 1], text[i])), -1)
     end = max(space, wide)
-    kept = text[:end] if end > 0 else ""
+    # The mark follows a word, not the punctuation or dash a cut left before it.
+    kept = text[:end].rstrip(" .,;:—-/") if end > 0 else ""
     return kept + CUT_MARK
 
 
