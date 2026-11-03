@@ -328,8 +328,9 @@ async def _target(
         target = Target(namespace, namespace, namespace)
     else:
         trunk, tag = await repo_trunk(org, repo)
-        if not trunk:
-            return f"no repository {repo!r} is configured in {org}"
+        # One answer for a repository that is not there and one the caller may not read.
+        if not trunk or not await _may(org, trunk, Role.VIEWER):
+            return f"no repository {repo!r} you may read is configured in {org}"
         if into is None:
             into = "repo" if repo_for_namespace(org, namespace) else "source"
         target = Target(namespace, trunk, trunk if into == "repo" else namespace, tag)
@@ -775,7 +776,7 @@ def _record_input(
     """The decision.record input for a candidate; raises ValidationError when it does not
     fit the op's field limits (`_fits` checks first)."""
     tags = [DESIGN_DOC_TAG, *([CONSTRAINT_TAG] if cand.is_constraint else [])]
-    if t.repo_tag:
+    if t.row_tag:
         tags.append(t.row_tag)
     return DecisionRecordInput(
         org=org,
@@ -936,7 +937,9 @@ async def _reconcile(
             rec.holds = ours
             rec.held_outcome = str(record.get("outcome") or "").strip()
             if row is not None and this_doc:
-                await _keep_tags(rec, row, dry_run, t.row_tag)
+                # Another writer's unconfirmed row is left as it is, untagged.
+                link = t.row_tag if ours or _confirmed(row) else ""
+                await _keep_tags(rec, row, dry_run, link)
             return rec
         if row is not None and _confirmed(row) and this_doc:
             # The human who confirmed it decides; a pinned writer row refuses decision.record.

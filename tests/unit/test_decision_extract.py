@@ -3989,7 +3989,7 @@ async def test_into_repo_writes_to_the_trunk_citing_the_document_in_its_home(
     seen = _link_repo(monkeypatch, world)
     await _run(repo="acme/widgets", into="repo")
     (inp,) = world.recorded
-    assert inp.namespace == TRUNK and REPO_TAG not in inp.tags
+    assert inp.namespace == TRUNK and inp.tags == ["source-kind:design_doc"]
     assert inp.source_resource_id == f"knowledge:ns/doc.md#{SECTION}"
     assert seen == {"symbol": [TRUNK], "writer": [TRUNK], "list": [TRUNK, "ns"]}
 
@@ -4030,7 +4030,12 @@ async def test_a_row_extracted_before_the_repo_tag_is_revised_to_carry_it(monkey
 @pytest.mark.parametrize(
     ("kw", "refused", "error"),
     [
-        ({"repo": "acme/widgets"}, {(TRUNK, "viewer")}, f"not allowed to read o/{TRUNK}"),
+        # The same answer as for a repository that is not configured.
+        (
+            {"repo": "acme/widgets"},
+            {(TRUNK, "viewer")},
+            "no repository 'acme/widgets' you may read is configured in o",
+        ),
         (
             {"repo": "acme/widgets", "into": "repo"},
             {(TRUNK, "writer")},
@@ -4038,7 +4043,11 @@ async def test_a_row_extracted_before_the_repo_tag_is_revised_to_carry_it(monkey
         ),
         ({"repo": "acme/widgets"}, {("ns", "writer")}, "not allowed to write o/ns"),
         ({"repo": "acme/widgets", "into": "repo"}, {("ns", "viewer")}, "not allowed to read o/ns"),
-        ({"repo": "acme/other"}, set(), "no repository 'acme/other' is configured in o"),
+        (
+            {"repo": "acme/other"},
+            set(),
+            "no repository 'acme/other' you may read is configured in o",
+        ),
         ({"into": "source"}, set(), "--into needs --repo"),
         (
             {"repo": "acme/bare"},
@@ -4069,7 +4078,7 @@ async def test_an_access_check_that_fails_refuses(monkeypatch) -> None:
 
     monkeypatch.setattr(de, "row_in_scope", broken)
     report = await _run(repo="acme/widgets")
-    assert report.error.startswith("not allowed to read") and world.recorded == []
+    assert report.error.startswith("no repository") and world.recorded == []
 
 
 @pytest.mark.asyncio
@@ -4308,3 +4317,32 @@ async def test_rows_in_the_repositorys_own_namespace_carry_no_tag(monkeypatch) -
     await de.extract_document("o", TRUNK, "doc.md", dry_run=False, repo="acme/bare", into="source")
     (inp,) = world.recorded
     assert inp.namespace == TRUNK and not [t for t in inp.tags if t.startswith("repo:")]
+
+
+@pytest.mark.asyncio
+async def test_another_writers_unconfirmed_row_is_not_tagged(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), agent="claude-code", files=[HEADER])
+    _link_repo(monkeypatch, world)
+    report = await _run(repo="acme/widgets")
+    assert world.updates == [] and world.recorded == []
+    assert [r.action for r in report.records] == ["unchanged"]
+
+
+@pytest.mark.asyncio
+async def test_a_flagged_row_whose_reasoning_left_gains_the_repo_tag(monkeypatch, capsys) -> None:
+    world = _World(monkeypatch, [])
+    world.record(
+        "decision:gone",
+        {"reasoning": "gone from the deck"},
+        pinned=True,
+        tags=["decision", SOURCE_CHANGED],
+    )
+    _link_repo(monkeypatch, world)
+    report = await _run(repo="acme/widgets")
+    (upd,) = world.updates
+    assert set(upd.tags) == {"decision", SOURCE_CHANGED, REPO_TAG}
+    assert report.linked == ["decision:gone"] and report.flagged == []
+    cli.print_report(report)
+    assert "- tagged decision:gone with the repository\n" in capsys.readouterr().out

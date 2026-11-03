@@ -384,7 +384,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
     leaves them, and `memory.delete` in the trunk removes them.
 
   A row the run keeps as it is (pinned, attested or with a recorded outcome, and the same verbatim fields, or one the
-  retire step keeps because its reasoning is still in the document) gains the `repo:<id>` tag by a tags-only write.
+  retire step keeps because its reasoning is still in the document) gains the `repo:<id>` tag by a tags-only write;
+  another writer's unconfirmed row is left as it is.
   The run reads the document's namespace and the repository's, and writes where the rows go; with an auth context
   bound it checks each (viewer, viewer, and writer, or viewer for a dry run) and refuses before any model call. The
   CLI runs with none, as the operator. Every memory row the reconcile and retire steps read is in the namespace the
@@ -395,8 +396,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   who cannot read that other namespace is refused. Two cases the run does not see: rows an `--into repo` run wrote,
   when a later run on a document outside any code namespace drops `--repo` or names another repository, so pass the
   same `--repo` again; and two runs on one document at once with different `--into`, which can both find the other
-  namespace empty. An unknown repository, a repository with no remote to tag rows with under `--into source`, or
-  `--into` without `--repo`, exits 1 as well.
+  namespace empty. A repository that is not configured in the org, or that the caller may not read (one answer for
+  both), a repository with no remote to tag rows with under `--into source`, or `--into` without `--repo`, exits 1 as
+  well.
 
 - **Windows**: the document's live chunks for the current embedding model, grouped by section, at most
   `--window-chars` (default 6000) per call. A document chunked under another embedding model has none: the command

@@ -181,7 +181,7 @@ def print_report(report: ExtractReport) -> None:
         print(f"- {retire} {pair}: its reasoning is recorded under the new key")
     tag = "would tag" if report.dry_run else "tagged"
     for key in report.linked:
-        print(f"- {tag} {key} with the repository: its reasoning is still in the document")
+        print(f"- {tag} {key} with the repository")
     for line in report.refused + report.races:
         print(f"- not changed {line}")
     in_records = {r.memory_key for r in report.records}
