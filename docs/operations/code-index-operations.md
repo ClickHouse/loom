@@ -666,7 +666,8 @@ has a gold question set; it is never run in CI, whose embedder is fake
   toolset. The `coding` toolset lists them regardless, and HTTP and the SDKs can always
   call them, so you can evaluate an index before exposing it to chat clients.
 - `LOOM_CODE_INTEL_ENABLED=false` makes every `code.*` operation but `code.repo.remove`
-  return a precondition error. The workers are switched separately.
+  return a precondition error. It also stops the coverage import and notify workers and
+  the mirror host loop; the ingest and index workers are switched separately.
 - **Retire a repository.** A maintainer uses **Retire…** on the repository's Access tab
   (`code.repo.remove` with `confirm` set to the namespace). The entry goes inactive, an
   erasure saga purges every `loom.code_*` table for the namespace, and the bare mirror is
