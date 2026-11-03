@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import pytest
 
+from server.code.api.models_repos import CodeRepoRemoveInput
+from server.code.app.repo_admin import handle_code_repo_remove
 from server.core.errors import PreconditionFailedError, ValidationError
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
@@ -38,11 +40,10 @@ async def test_a_code_op_refuses_with_code_intelligence_off(
 
 @pytest.mark.asyncio
 async def test_a_retirement_is_not_behind_the_switch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With the switch off, a retirement reaches its own confirm check."""
-    from server.code.api.models_repos import CodeRepoRemoveInput
-    from server.code.app.repo_admin import handle_code_repo_remove
-
+    """With the switch off, a retirement passes its confirm check and looks the entry up:
+    with self-service off the registry is empty, so the namespace is not a repository."""
     monkeypatch.setattr(settings, "code_intel_enabled", False)
+    monkeypatch.setattr(settings, "code_self_service_enabled", False)
     with pytest.raises(ValidationError) as refused:
-        await handle_code_repo_remove(CodeRepoRemoveInput(org="o", namespace="n", confirm="x"))
-    assert refused.value.to_detail()["code"] == "CONFIRM_REQUIRED"
+        await handle_code_repo_remove(CodeRepoRemoveInput(org="o", namespace="n", confirm="n"))
+    assert refused.value.to_detail()["code"] == "NOT_A_REPO"
