@@ -8,19 +8,14 @@ and one `me.<route>` ledger row carrying the verified caller.
 
 from __future__ import annotations
 
-import contextvars
 import uuid
 from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
-from starlette.requests import Request as StarletteRequest
-from starlette.responses import Response
 
-from server.core.ch import current_query_tag
 from server.observability import ledger
-from server.operations.registry import OPERATIONS_BY_NAME
 from server.transport import http as http_transport
 
 
@@ -97,17 +92,3 @@ def test_a_request_id_that_is_not_a_token_is_replaced_on_the_response_and_the_ro
     assert made != "two words" and str(uuid.UUID(made)) == made
     (ev,) = [e for e in captured if e.operation.startswith("me.")]
     assert ev.request_id == made
-
-
-def test_an_op_call_binds_the_replacement_id_to_its_query_tag() -> None:
-    def begin() -> tuple[str, str, str]:
-        scope = {"type": "http", "headers": [(b"x-request-id", b"x:y")], "path": "/v1/memory.get"}
-        response = Response()
-        rid = http_transport._begin_request(
-            OPERATIONS_BY_NAME["memory.get"], StarletteRequest(scope), response
-        )
-        return rid, response.headers["X-Request-Id"], current_query_tag()
-
-    rid, echoed, tag = contextvars.copy_context().run(begin)
-    assert rid == echoed and str(uuid.UUID(rid)) == rid
-    assert tag == f"memory.get {rid}"

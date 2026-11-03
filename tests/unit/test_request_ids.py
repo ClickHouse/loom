@@ -1,10 +1,9 @@
 """A caller's request id never breaks the request or its ClickHouse attribution.
 
-The request id is the second word of the query tag and the first field of every
-statement's `query_id`. A caller id with a space split the tag (the query_id took
-the first word only), and two requests sent at once with one id sent the same
-`query_id`, which ClickHouse refuses while the first runs (code 216), so the
-second answered 500.
+The request id is the second word of the query tag and the first field of a request
+statement's `query_id`. A caller id is kept only as one short token, and two requests
+that carry the same id send different `query_id`s: ClickHouse refuses one that is
+already running (code 216).
 """
 
 from __future__ import annotations
@@ -43,3 +42,11 @@ def test_two_requests_with_one_id_send_different_query_ids() -> None:
         assert qid.split(":")[0] == "dbg-0001"
     assert [q.split(":")[1] for q in first] == ["1", "2"]
     assert len({q.split(":")[2] for q in first}) == 1
+
+
+def test_the_longest_op_and_a_kept_id_fit_the_query_tag() -> None:
+    from server.core.ch import _QUERY_TAG_MAX
+    from server.operations.registry import ALL_OPERATIONS
+
+    longest = max(len(op.name) for op in ALL_OPERATIONS)
+    assert longest + 1 + 64 <= _QUERY_TAG_MAX

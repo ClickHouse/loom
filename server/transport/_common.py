@@ -76,8 +76,8 @@ def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-# The request id is the second word of the query tag and the first field of every
-# query_id, so a caller's id is used only when it is one short token.
+# The request id is the second word of the query tag, so a caller's id is used only
+# when it is one short token.
 _CALLER_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 
