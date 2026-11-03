@@ -186,8 +186,9 @@ async def test_gc_candidates_fence_off_excluded_prefixes_and_registered_namespac
         include_registered=False,
         exclude_prefixes=("locomo-seq2-conv-",),
     )
-    assert "namespace LIKE {p0:String} OR namespace LIKE {p1:String}" in ch.sql
-    assert "namespace NOT LIKE {x0:String}" in ch.sql and ch.params["x0"] == "locomo-seq2-conv-%"
+    assert "startsWith(namespace, {p0:String}) OR startsWith(namespace, {p1:String})" in ch.sql
+    assert "NOT startsWith(namespace, {x0:String})" in ch.sql
+    assert ch.params["x0"] == "locomo-seq2-conv-"
     assert "namespace NOT IN (SELECT namespace FROM loom.namespaces FINAL" in ch.sql
     assert "INTERVAL {idle:UInt32} HOUR" in ch.sql and ch.params["idle"] == 24
     ch2 = _CH()
