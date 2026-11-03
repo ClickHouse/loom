@@ -746,39 +746,39 @@ and what it leaves:
 
 - Boot still applies every migration. An empty table costs nothing to serve, and erasure
   covers every table whatever is in use.
-- Every `code.*` operation but `code.repo.remove` answers a precondition error. Retire
-  any code index before turning the switch off:
-  [code-index operations](./code-index-operations.md#rollout-and-shutdown) covers retirement, erasure and what
-  stays on disk. The dashboard's code pages show the precondition error.
+- Every `code.*` operation but `code.repo.remove` answers a precondition error. Retire any
+  code index before turning the switch off: [code-index
+  operations](./code-index-operations.md#rollout-and-shutdown) covers retirement, erasure
+  and what stays on disk. The dashboard's code pages show the precondition error.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but the coding-agent plugins list them, and so does the
   `assistant` toolset (`code.search`, `code.symbol`), so agents are offered tools that
-  refuse. An entry written by `loom install --client claude-code|codex` asks
-  for `?toolset=coding` too: install with `--toolset core`, or edit it to `core`. Set the
-  Claude Code plugin's `toolset` option
-  ([options](../features/integrations/claude-code.md#install)) from `coding` to `core`.
-  The Codex plugin's entry asks for `toolset=core,coding,tracker,tasks`; replace it with
-  a `[mcp_servers.loom]` override in `~/.codex/config.toml` that asks for `core,tasks` and
-  keeps the plugin's `http_headers_helper` line, since the override replaces the entry
-  whole ([the server](../features/integrations/codex.md#the-server)). The `tracker`
-  toolset also lists three `code.*` tools (`code.bisect_candidates`, `code.pr_check`,
-  `code.impact`), which refuse.
-- The plugin hooks find a session's repository through `code.repos`, which is refused,
-  and ask again about once a minute. The session-start primer then adds a code-index
-  line that points the agent at the `loom_code_*` tools; set `LOOM_CODE_MAP=false` in
-  the environment the agent runs its hooks with to leave it out.
+  refuse. An entry written by `loom install --client claude-code|codex`, or pasted from the
+  connect lines `loom up` and `loom init` print, asks for `?toolset=coding` too: install
+  with `--toolset core`, or edit it to `core`. Set the Claude Code plugin's `toolset` option
+  ([options](../features/integrations/claude-code.md#install)) from `coding` to `core`. The
+  Codex plugin's entry asks for `toolset=core,coding,tracker,tasks`; replace it with a
+  `[mcp_servers.loom]` override in `~/.codex/config.toml` that asks for `core,tasks` and
+  keeps the plugin's `http_headers_helper` line, since the override replaces the entry whole
+  ([the server](../features/integrations/codex.md#the-server)). The `tracker` toolset also
+  lists three `code.*` tools (`code.bisect_candidates`, `code.pr_check`, `code.impact`),
+  which refuse.
+- The plugin hooks find a session's repository through `code.repos`, which is refused, and
+  ask again about once a minute. The session-start primer then adds a code-index line that
+  points the agent at the `loom_code_*` tools; set `LOOM_CODE_MAP=false` in the environment
+  the agent runs its hooks with to leave it out.
 - The switch also stops the coverage workers (`code_coverage_notify`, which delivers
-  coverage watches, and `code_coverage_import`). Every other code and tracker worker has
-  its own `LOOM_*_ENABLED` setting, which this switch does not change; with no repository
-  and no tracker source configured, they find nothing to do: each pass reads a few rows
-  and ends. The git mirror warm-up and host loop do not run, and boot probes the
-  repository-job sandbox only when `LOOM_CODE_INGEST_ENABLED` or
-  `LOOM_CODE_SANDBOX_REQUIRED` is on. Every process still re-reads the repository registry
-  (`LOOM_CODE_REPOS_REFRESH_SECONDS`, while self-service is on) and the tracker sources
-  (`LOOM_TRACKER_SOURCES_REFRESH_SECONDS`): one small read per interval.
+  coverage watches, and `code_coverage_import`). Every other code and tracker worker has its
+  own `LOOM_*_ENABLED` setting, which this switch does not change; with no repository and no
+  tracker source configured, they find nothing to do: each pass reads a few rows and ends.
+  The git mirror warm-up and host loop do not run, and boot probes the repository-job
+  sandbox only when `LOOM_CODE_INGEST_ENABLED` or `LOOM_CODE_SANDBOX_REQUIRED` is on. Every
+  process still re-reads the repository registry (`LOOM_CODE_REPOS_REFRESH_SECONDS`) and the
+  tracker sources (`LOOM_TRACKER_SOURCES_REFRESH_SECONDS`), each while its self-service
+  setting is on: one small read per interval.
 - `memory.*`, `knowledge.*`, `conversation.*`, `context.pack` and `search.query`
-  (`loom_search` over MCP) serve as on any deployment; `search.query` has no code or
-  tracker results to add.
+  (`loom_search` over MCP) serve as on any deployment; `search.query` has no code or tracker
+  results to add.
 
 ## Identity modes
 
