@@ -1080,8 +1080,9 @@ when one of them is empty for a namespace in scope (`workers/first_pass.py`).
 Every lifecycle change is a new version built with `build_memory_version_row`:
 tombstone, restore, lock, promote, demote, supersession (`status='superseded'`,
 `superseded_by`, `invalid_at`). Prior versions stay in `memory_versions`. `memory.redact`
-is the one op that edits a stored version. Status flips over many rows (the usage fold,
-`memory.reject` quarantine) are batched lightweight updates; see
+is the one op that edits a stored version. `memory.reject` and negative-outcome
+quarantine write `status='rejected'` as a new version too (`reject_by_identity`). The
+usage fold's counters on `memory` are batched lightweight updates; see
 [ClickHouse](clickhouse.md#deletes-and-mutations).
 
 A caller that must know whether its new version took effect (`write_versions_by_ids`

@@ -83,9 +83,9 @@ class MemoryRejectInput(_Identity):
 
 
 class MemoryRejectOutput(BaseModel):
-    # Always True: the status update is issued whether or not a row matched.
+    # Always True, also when no live row matched (nothing is written then).
     rejected: bool
-    # The server time the update was issued.
+    # The server time of the reject.
     rejected_at: datetime | None = None
 
 
