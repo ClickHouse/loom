@@ -280,7 +280,7 @@ _LABEL_GAP = rf"{_H}*\n({_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_
 # A short line that is no label: structure (a list item, fence, table row, heading, its
 # underline or a rule, HTML tag, quote, definition), a sentence end, or a negation.
 _NOT_A_LABEL = re.compile(
-    rf"^(?:[-*+]\s|(?:[-*_]{_H}*){{3,}}$|[`~|#>:=<]|\d+[.)](?:\s|$))|{_SENTENCE_PUNCT}$"
+    rf"^(?:[-*+]\s|-+$|(?:[-*_]{_H}*){{3,}}$|[`~|#>:=<]|\d+[.)](?:\s|$))|{_SENTENCE_PUNCT}$"
     rf"|\b(?:{_BAN_WORDS}|{_NEGATION_WORDS})\b|n['’]t\b",
     re.I,
 )

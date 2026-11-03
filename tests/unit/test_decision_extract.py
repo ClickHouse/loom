@@ -671,10 +671,10 @@ def test_a_longer_span_costs_linear_time_against_one_text() -> None:
     ids=["labels", "rejected"],
 )
 def test_lines_that_all_look_like_labels_cost_linear_time(text, span) -> None:
-    # 200,000 lines against a tenth of them: a matcher that tried every way to read each
-    # gap would take exponential time on the final mismatch, and one that rescanned the
-    # text per start, quadratic time. Linear time is ten times the small input's, each
-    # the best of three runs.
+    # 200,000 lines against a tenth of them pins linear cost in the text's length: a
+    # matcher that rescanned the text per start would take quadratic time. Linear time is
+    # ten times the small input's, each the best of three runs. The atomic groups are
+    # pinned by the span-length test above.
     def best(t: str) -> float:
         runs = []
         for _ in range(3):
@@ -712,6 +712,7 @@ def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
         "***\n",
         "1. first\n",
         "1) first\n",
+        "3)\n",
         "```\n",
         "~~~\n",
         "| A |\n",
@@ -721,6 +722,8 @@ def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
         "===\n",
         "___\n",
         "---\n",
+        "-\n",
+        "--\n",
         "<h2>Shards</h2>\n",
         "Shards differ.\n",
         "Why shard?\n",
