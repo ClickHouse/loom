@@ -37,7 +37,6 @@ async def _names(ch: LocalCH, prefixes: tuple[str, ...], exclude: tuple[str, ...
     return {r["namespace"] for r in rows}
 
 
-@pytest.mark.asyncio
 async def test_underscore_percent_and_backslash_in_a_prefix_match_only_themselves() -> None:
     ch = _local_ch("lme_r1", "lmeXr1", "lme%r2", "lmeYYr2", "lme\\r3", "lmer3", "other")
     assert await _names(ch, ("lme_r",)) == {"lme_r1"}
@@ -46,7 +45,6 @@ async def test_underscore_percent_and_backslash_in_a_prefix_match_only_themselve
     assert await _names(ch, ("lme_r", "oth")) == {"lme_r1", "other"}
 
 
-@pytest.mark.asyncio
 async def test_an_exclude_prefix_fences_off_only_its_own_names() -> None:
     ch = _local_ch("lme_r1", "lmeXr1", "lme-a")
     assert await _names(ch, ("lme",), exclude=("lme_r",)) == {"lmeXr1", "lme-a"}
