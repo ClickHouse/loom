@@ -152,3 +152,30 @@ async def test_precedents_find_a_decision_past_its_embedded_excerpt(agent) -> No
     assert keys and keys[0] == out["memory_key"], found
     # The distractor shares the head, so it is found too, below the target.
     assert distractor["memory_key"] in keys[1:], found
+
+
+@pytest.mark.asyncio
+async def test_precedents_find_a_cyrillic_decision_past_its_embedded_excerpt(agent) -> None:
+    # Stored as JSON, each Cyrillic letter is a six-character escape: a 250-character
+    # scenario fills the excerpt, and the decision is found through its chunks. The
+    # scenario names one Latin term, as the decision's key needs one.
+    scenario = "MergeTree: " + "как ночное слияние планирует свои части " * 6
+    assert len(scenario) < 1200 < len(json.dumps(scenario))
+    distractor = await agent.decision.record(
+        category="design:scheduler-ru",
+        scenario=scenario,
+        outcome="сливать части по порядку ключа",
+        reasoning="порядок ключа сохраняет части отсортированными",
+    )
+    out = await agent.decision.record(
+        category="design:arena-ru",
+        scenario=scenario,
+        outcome="держать отдельную арену для каждого потока",
+        reasoning="общая арена фрагментируется при одновременных сбросах",
+    )
+    found = await agent.decision.precedents(
+        "отдельная арена для каждого потока фрагментируется при сбросах", top_k=5
+    )
+    keys = [p["memory_key"] for p in found["precedents"]]
+    assert keys and keys[0] == out["memory_key"], found
+    assert distractor["memory_key"] in keys[1:], found

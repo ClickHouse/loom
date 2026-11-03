@@ -301,14 +301,15 @@ def render_block(
     now: datetime | None = None,
 ) -> tuple[str, int, bool]:
     """Prompt-ready block. Returns (text, tokens, truncated).
+
     Decision and constraint rows print whole, in their place in the order, up to
-    `memory_for_file_whole_tokens` between them; one
-    past it is left out and named on a closing line. The other rows are cut at
-    `token_budget`. A row left out with the newer row that supersedes it is counted on the
-    "… more" line. The header and the removal footer always print, and the "… more" line
-    whenever a row is counted on it, so a budget smaller than those can be exceeded.
-    `home` is the caller's namespace; a row from any other is a team row (rule or decision),
-    rendered with its author and age, and the block ends with how to remove one."""
+    `memory_for_file_whole_tokens` between them; one that would pass it is left out and
+    named on a closing line. The other rows are cut at `token_budget`. A row left out with
+    the newer row that supersedes it is counted on the "… more" line. The header and the
+    removal footer always print, and the "… more" line whenever a row is counted on it, so
+    a budget smaller than those can be exceeded. `home` is the caller's namespace; a row
+    from any other is a team row (rule or decision), rendered with its author and age, and
+    the block ends with how to remove one."""
     if not hits:
         return "", 0, False
     now = now or naive_utc_now()

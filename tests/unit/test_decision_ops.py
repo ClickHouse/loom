@@ -59,9 +59,10 @@ def test_clean_alternatives_dedupes_and_caps() -> None:
     assert svc.clean_alternatives(["wait", "z" * 400]) == ["wait", "…"]
     # A path straddling the cut is never kept in half (`LruCache.c` of `LruCache.cpp`), so
     # neither the record's files nor the statement's name a file the decision never names.
-    long = "y" * 286 + " src/cache/LruCache.cpp is slow"
+    long = "y" * 279 + " src/cache/LruCache.cpp is slow"
+    assert long[: svc.ALTERNATIVE_CHARS].endswith(" src/cache/LruCache.c")
     (cut,) = svc.clean_alternatives([long])
-    assert cut == "y" * 286 + "…"
+    assert cut == "y" * 279 + "…"
     assert svc.decision_files({"alternatives": [cut]}) is None
     assert detect_value_files(stmt.memory_value({"outcome": "o", "alternatives": [cut]})) == []
     # An alternative that fits is kept as written.

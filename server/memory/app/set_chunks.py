@@ -356,8 +356,9 @@ def plan_set_chunks(
 
 
 def _chunked_text(value: Any, memory_type: str, limit: int | None) -> str:
-    """The human text of a value that is chunked, or "" when the value is short or the type
-    is not searchable."""
+    """The human text of a value that is chunked, or "" when the row's own excerpt holds all
+    of it or the type is not searchable."""
+    from server.memory.domain.embed_text import procedural_text_source
     from server.memory.domain.memory_types import is_searchable_type
 
     if limit is None:
@@ -367,8 +368,10 @@ def _chunked_text(value: Any, memory_type: str, limit: int | None) -> str:
         limit = EXCERPT_LIMIT
     if not is_searchable_type(memory_type):
         return ""
-    text = human_text(value, memory_type)
-    return text if len(text) > limit else ""
+    # The excerpt is cut from the stored JSON, where a non-ASCII character takes six: a
+    # short Cyrillic or CJK text already runs past it.
+    embedded = procedural_text_source(memory_type, value) or json.dumps(value)
+    return human_text(value, memory_type) if len(embedded) > limit else ""
 
 
 def _chunk_sha(chunk: str) -> str:

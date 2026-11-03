@@ -258,6 +258,17 @@ async def test_a_900_char_value_writes_no_chunks() -> None:
     assert n == 0 and ch.inserts == [] and emb.batches == [] and ch.query_all_sqls == []
 
 
+def test_a_short_value_the_excerpt_holds_only_in_part_is_chunked() -> None:
+    # Stored as JSON, a Cyrillic or CJK character is a six-character escape, so 300 of them
+    # run past the excerpt the row is embedded by; the human text is chunked.
+    cyrillic = "Решили хранить блоки в арене потока. " * 8
+    assert len(cyrillic) < EXCERPT_LIMIT < len(json.dumps(cyrillic))
+    chunks, _ = sc.plan_set_chunks(cyrillic, "semantic")
+    assert chunks and "".join(c for c, _, _ in chunks).startswith("Решили")
+    # The same length of ASCII fits the excerpt whole: no chunks.
+    assert sc.plan_set_chunks("a" * len(cyrillic), "semantic") == ([], 0)
+
+
 @pytest.mark.asyncio
 async def test_a_dict_value_chunks_its_indented_json() -> None:
     value = {
