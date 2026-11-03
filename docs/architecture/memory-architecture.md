@@ -1214,11 +1214,11 @@ restart resumes. The row keeps the request's audit actor (`actor`: the token's
 principal, else the command's pipeline actor, else the body's `requester`, else `-`).
 The saga's `erasure.started`, `erasure.failed` and `erasure.completed` rows name it, on
 a resumed run too (a row an older build checkpointed holds no actor, and its resume
-names the resuming process); the body's `requester` goes in their subject. `erasure_recovery`
-replays sagas stuck `in_progress` and names itself on the `erasure.recovered` row;
-after `max_attempts` it marks the request `failed` and emits `erasure.abandoned`.
-Configured external backends (Langfuse traces and ClickStack rows) are steps too and
-fail the saga closed.
+names the resuming process); the body's `requester` goes in their subject.
+`erasure_recovery` replays sagas stuck `in_progress` and names itself on the
+`erasure.recovered` row; after `max_attempts` it marks the request `failed` and emits
+`erasure.abandoned`. Configured external backends (Langfuse traces and ClickStack rows)
+are steps too and fail the saga closed.
 
 The last step is a residue census over every table the read paths touch and, with a
 document bucket configured, the bucket objects left under the erased namespaces
