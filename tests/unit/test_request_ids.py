@@ -49,7 +49,8 @@ def test_two_requests_with_one_id_send_different_query_ids() -> None:
 
 
 def test_the_longest_op_and_a_kept_id_fit_the_query_tag() -> None:
-
+    """A kept id must fit whole in the tag, or the cut drops its tail and the
+    query_id no longer matches log_comment."""
     longest = max(len(op.name) for op in ALL_OPERATIONS)
     assert longest + 1 + 64 <= _QUERY_TAG_MAX
 
