@@ -274,7 +274,7 @@ async def test_erasure_writes_audit_chain(admin_agent, ch_client) -> None:
 
     rows = ch_client.query(
         """
-        SELECT event_type, actor
+        SELECT event_type, actor, JSONExtractString(subject, 'requester')
         FROM loom.audit_log
         WHERE request_id = {rid:String}
         ORDER BY ts ASC
@@ -284,7 +284,9 @@ async def test_erasure_writes_audit_chain(admin_agent, ch_client) -> None:
     event_types = [r[0] for r in rows]
     assert "erasure.started" in event_types
     assert "erasure.completed" in event_types
-    assert all(r[1] == "legal@x.com" for r in rows)
+    # The actor is the token's principal; the body's requester rides in the subject.
+    assert all(r[1] == "process:test-suite" for r in rows)
+    assert all(r[2] == "legal@x.com" for r in rows)
 
 
 @pytest.mark.asyncio

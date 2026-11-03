@@ -74,7 +74,9 @@ def input_from_ledger_row(row: Mapping[str, Any]) -> ErasureRequestInput:
     )
 
 
-# Who a resumed saga's audit rows name when its ledger row names no actor.
+# The recovery worker's own principal: the actor of its `erasure.recovered` and
+# `erasure.abandoned` rows, and of a resumed saga's rows when the ledger row
+# names no actor and no pipeline actor is bound.
 RESUME_ACTOR = "erasure-recovery-worker"
 
 

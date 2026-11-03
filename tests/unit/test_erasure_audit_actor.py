@@ -16,6 +16,7 @@ from server.erasure.api.erasure import ErasureRequestInput
 from server.erasure.app import saga
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.workers import recovery
+from server.memory.domain.provenance import pipeline_actor
 from server.operations.base import Role
 from tests.unit.erasure_saga_stub import saga_runner
 
@@ -127,3 +128,30 @@ async def test_a_resumed_saga_keeps_the_ledgers_actor(
         result=recovery.RecoveryResult(),
     )
     assert seen == [named, named]  # the resumed run, then the abandonment's terminal row
+
+
+async def test_a_resumed_saga_that_completes_names_the_ledgers_actor(recorded: Any) -> None:
+    """The real saga, resumed by the worker with no token: its `erasure.completed`
+    row names the ledger's actor, the worker's own `erasure.recovered` row the
+    worker."""
+    _, audits, rows = recorded
+    set_current_auth(None)
+    await recovery._recover_one(
+        row=_ledger_row(),  # type: ignore[arg-type]
+        cfg=recovery.RecoveryConfig(max_attempts=5),
+        result=recovery.RecoveryResult(),
+    )
+    assert [(a["event_type"], a["actor"]) for a in audits] == [
+        ("erasure.completed", "human:admin@o"),
+        ("erasure.recovered", saga.RESUME_ACTOR),
+    ]
+    assert audits[0]["subject"]["requester"] == "dpo@y"
+    assert rows and {r["actor"] for r in rows} == {"human:admin@o"}
+
+
+def test_a_cli_resume_of_a_row_with_no_actor_names_the_command() -> None:
+    """`loom erasure-re-verify --resume` binds its pipeline actor: a ledger row
+    with an actor keeps it, one without names the command, never `requester`."""
+    with pipeline_actor("process:cli:erasure-re-verify"):
+        assert saga.ledger_actor(_ledger_row()) == "human:admin@o"
+        assert saga.ledger_actor(_ledger_row(actor="")) == "process:cli:erasure-re-verify"
