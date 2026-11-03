@@ -13,7 +13,6 @@ from bench.knowledge_retrieval import (
     FIXED_FIELDS,
     FIXTURE,
     check_corpus,
-    cluster_of,
     fixture_tag,
     ingest,
     load_fixture,
@@ -154,8 +153,8 @@ def test_a_namespace_holding_other_documents_than_the_fixture_is_refused() -> No
 
 def test_the_top_similarity_is_reported_per_answerability() -> None:
     queries = [
-        {"id": "a", "query": "x", "gold": [["a.md", "y"]], "kind": "context"},
-        {"id": "b", "query": "z", "gold": [], "kind": "unanswerable"},
+        {"id": "a", "query": "x", "gold": [["a.md", "y"]], "kind": "context", "cluster": "c"},
+        {"id": "b", "query": "z", "gold": [], "kind": "unanswerable", "cluster": "u"},
     ]
     hit = {"source_uri": "a.md", "content": "y", "similarity": 0.25, "lexical_score": 1.0}
     report = search(lambda path, body: {"results": [hit]}, "o", "n", queries, {})
@@ -165,7 +164,7 @@ def test_the_top_similarity_is_reported_per_answerability() -> None:
         "no_hits": {"answerable": 0, "unanswerable": 0},
     }
     # an unanswerable query with no hit is counted apart, not averaged as 0
-    queries.append({"id": "c", "query": "w", "gold": [], "kind": "unanswerable"})
+    queries.append({"id": "c", "query": "w", "gold": [], "kind": "unanswerable", "cluster": "u"})
     report = search(
         lambda path, body: {"results": [] if body["query"] == "w" else [hit]}, "o", "n", queries, {}
     )
@@ -178,7 +177,10 @@ def test_the_top_similarity_is_reported_per_answerability() -> None:
 
 
 def test_lexical_fired_counts_the_queries_whose_hits_the_lexical_leg_scored() -> None:
-    queries = [{"id": i, "query": i, "gold": [["a.md", "y"]], "kind": "context"} for i in "pq"]
+    queries = [
+        {"id": i, "query": i, "gold": [["a.md", "y"]], "kind": "context", "cluster": i}
+        for i in "pq"
+    ]
     scored = {"source_uri": "a.md", "content": "y", "similarity": 0.5, "lexical_score": 1.0}
     vector_only = {**scored, "lexical_score": 0.0}
     report = search(
@@ -219,7 +221,9 @@ def test_a_kept_ingest_registers_as_memory_and_tags_each_upsert() -> None:
 
 
 def test_a_lexical_arm_whose_lexical_leg_never_fired_fails() -> None:
-    queries = [{"id": "q", "query": "x", "gold": [["a.md", "y"]], "kind": "context"}]
+    queries = [
+        {"id": "q", "query": "x", "gold": [["a.md", "y"]], "kind": "context", "cluster": "c"}
+    ]
     vector_only = {"source_uri": "a.md", "content": "y", "similarity": 0.5}
     with pytest.raises(SystemExit, match="lexical leg never fired"):
         search(lambda path, body: {"results": [vector_only]}, "o", "n", queries, {})
@@ -229,7 +233,9 @@ def test_a_lexical_arm_whose_lexical_leg_never_fired_fails() -> None:
 
 
 def test_a_search_that_finds_nothing_or_ignores_a_param_fails() -> None:
-    queries = [{"id": "q", "query": "x", "gold": [["a.md", "y"]], "kind": "context"}]
+    queries = [
+        {"id": "q", "query": "x", "gold": [["a.md", "y"]], "kind": "context", "cluster": "c"}
+    ]
     with pytest.raises(SystemExit, match="was it ingested"):
         search(lambda path, body: {"results": []}, "o", "n", queries, {})
     with pytest.raises(SystemExit, match="ignored"):
@@ -277,10 +283,13 @@ def test_one_phase_alone_needs_a_named_namespace(monkeypatch, phase: str) -> Non
     assert exit_info.value.code == 2  # argparse's usage error, before any request
 
 
-def test_the_handbook_questions_cluster_by_template_and_the_rest_stand_alone() -> None:
-    assert cluster_of("harbor-retention") == cluster_of("lantern-retention") == "retention"
-    assert cluster_of("rb-E4031") == cluster_of("rb-E4031-how") == "rb-E4031"
-    assert cluster_of("all-sla") == "all-sla"
+def test_queries_scored_on_the_same_chunks_share_a_cluster() -> None:
+    _, queries = load_fixture(FIXTURE)
+    cluster = {q["id"]: q["cluster"] for q in queries}
+    assert cluster["harbor-retention"] == cluster["lantern-retention"] == "retention"
+    assert cluster["rb-E4031"] == cluster["rb-E4031-how"]
+    assert cluster["all-saml"] == cluster["harbor-sso"] == "sso"
+    assert cluster["meridian-backup"] == cluster["meridian-retention"]
 
 
 def test_the_corpus_check_returns_the_chunk_count_the_run_measured() -> None:

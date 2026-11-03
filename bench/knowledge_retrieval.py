@@ -45,8 +45,8 @@ documents: a few cents with a hosted embedder, free with a local one.
 Two arms are compared per query, not by their means: pair the `queries` rows of
 two `--out` reports by `id`, only when their `instrument` names the same corpus,
 queries and chunk count, and pass the metric deltas to
-`bench.bootstrap.paired_bootstrap` with each row's `cluster` as `clusters` (the
-handbook questions are one template per product). Its lower bound is what a
+`bench.bootstrap.paired_bootstrap` with each row's `cluster` (the fixture's: the
+queries scored on the same chunks) as `clusters`. Its lower bound is what a
 change ships on.
 """
 
@@ -78,8 +78,6 @@ from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 
 FIXTURE = Path(__file__).parent / "fixtures" / "knowledge_retrieval"
 KS = (1, 5, 10)
-# The handbook products: their queries share one template per question.
-PRODUCTS = ("harbor", "lantern", "quill", "meridian")
 TOP_K = max(KS)
 
 
@@ -91,16 +89,6 @@ def fixture_tag(docs: list[dict]) -> str:
     """A tag naming this version of the corpus, put on every ingested document so a
     search can tell an ingest of an older corpus from this one."""
     return f"fixture:{_digest(docs)}"
-
-
-def cluster_of(query_id: str) -> str:
-    """The items a query moves with: `harbor-retention` and `lantern-retention` are one
-    question asked of two products, and `rb-E4031-how` scores the runbook `rb-E4031`
-    does."""
-    stem = query_id.split("-", 1)
-    if len(stem) == 2 and stem[0] in PRODUCTS:
-        return stem[1]
-    return query_id.removesuffix("-how")
 
 
 def load_fixture(root: Path) -> tuple[list[dict], list[dict]]:
@@ -299,9 +287,7 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
             continue
         any_hits = any_hits or bool(hits)
         m = score_query(hits, q["gold"])
-        rows.append(
-            {"id": q["id"], "cluster": cluster_of(q["id"]), "kind": q["kind"], "metrics": m}
-        )
+        rows.append({"id": q["id"], "cluster": q["cluster"], "kind": q["kind"], "metrics": m})
     if not any_hits:
         raise SystemExit(f"no query found anything in {org}/{namespace}: was it ingested?")
     # A hybrid search over a corpus with no lexical statistics runs its vector leg alone.
