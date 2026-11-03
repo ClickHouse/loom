@@ -72,19 +72,20 @@ def test_an_http_write_with_an_absent_org_runs_under_the_tokens_org(
     assert seen == [("MemorySetInput", "globex", "ns1")]
 
 
-def test_an_absent_namespace_takes_the_authorized_namespace() -> None:
+def test_an_absent_namespace_takes_the_authorized_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A code read naming namespace "-" reads the code namespace it is
     authorized against."""
     from server.code.api.models_search import CodeSearchInput
-    from server.transport.gates import Target, with_target
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport.gates import Target, authz_target, with_target
 
+    monkeypatch.setattr(settings, "code_org", "globex")
+    monkeypatch.setattr(settings, "code_namespace", "code-shared")
+    op = OPERATIONS_BY_NAME["code.search"]
     inp = CodeSearchInput(org="globex", namespace="-", query="q")
-    target = Target(
-        org="globex",
-        namespace="code-shared",
-        named_namespace=None,
-        register_namespace="code-shared",
-    )
+    target = authz_target(op, org=inp.org, namespace=inp.namespace, auth=None)
     out = with_target(inp, target)
     assert (out.org, out.namespace) == ("globex", "code-shared")
     # A named namespace, or nothing resolved, leaves the input as sent.
@@ -146,7 +147,7 @@ def test_a_tracker_read_with_an_absent_org_takes_the_tracker_org(
     from server.transport.gates import authz_target, with_target
 
     op = OPERATIONS_BY_NAME["tracker.item"]
-    inp = TrackerItemInput.model_construct(org="-", namespace="-")
+    inp = TrackerItemInput.model_validate({"org": "-", "namespace": "-", "numbers": [1]})
     target = authz_target(op, org=inp.org, namespace=inp.namespace, auth=None)
     out = with_target(inp, target)
     # The org takes the tracker plane's; a tracker namespace has no plane default.

@@ -123,22 +123,20 @@ def authz_target(op: Operation, *, org: Any, namespace: Any, auth: AuthInfo | No
 
 
 def with_target(input_obj: Any, target: Target) -> Any:
-    """The input with an absent `org` / `namespace` (blank or "-") set to the
-    target the gate authorized, so the handler writes and reads where the call
-    was authorized: a literal "-" org is a tenant every token reaches. The org
-    is filled even where the op requires it (every memory op does): it is the
-    one the gate authorized, the plane's for code.* / tracker.*. A namespace
-    the op requires is left as sent: an admin write on "-" (a code repository's
-    access or source) must name its repository, not land on the plane's
-    default index."""
+    """The input with an absent org / namespace set to the target the gate
+    authorized; a namespace the op requires is left as sent."""
     fields = type(input_obj).model_fields
     update: dict[str, str] = {}
-    for name, resolved in (("org", target.org), ("namespace", target.register_namespace)):
-        if name not in fields or not resolved or present(getattr(input_obj, name)) is not None:
-            continue
-        if name == "namespace" and fields[name].is_required():
-            continue
-        update[name] = resolved
+    # Every memory op requires `org`, so a required org is filled too.
+    if target.org and "org" in fields and present(input_obj.org) is None:
+        update["org"] = target.org
+    # An admin write on "-" (a code repository's access or source) must name
+    # its repository, never land on the plane's default index.
+    ns_field = fields.get("namespace")
+    resolved_ns = target.register_namespace
+    if resolved_ns and ns_field is not None and not ns_field.is_required():
+        if present(input_obj.namespace) is None:
+            update["namespace"] = resolved_ns
     return input_obj.model_copy(update=update) if update else input_obj
 
 
