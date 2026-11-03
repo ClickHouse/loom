@@ -70,20 +70,25 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
                 },
             )
 
-        def counts() -> tuple[int, int]:
-            # FINAL: a background merge, or a worker's new version of a row (entity
-            # extraction), must not read as a change.
+        def snapshot() -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]]]:
+            """The live rows as a write would change them. FINAL: a background merge
+            must not read as a change; the columns leave out `version` and
+            `entities`, which a worker's new version of a row (entity extraction)
+            moves."""
             rows = ch_client.query(
-                "SELECT count() FROM loom.memory FINAL WHERE org = {org:String}",
+                "SELECT agent, memory_key, memory_id, content_sha256, status, pinned, tags,"
+                " tombstoned_at FROM loom.memory FINAL WHERE org = {org:String}"
+                " ORDER BY agent, memory_key",
                 parameters={"org": ORG},
-            ).result_rows[0][0]
+            ).result_rows
             cats = ch_client.query(
-                "SELECT count() FROM loom.categories FINAL WHERE org = {org:String}",
+                "SELECT name, category_id, description, tombstoned_at FROM loom.categories"
+                " FINAL WHERE org = {org:String} ORDER BY name",
                 parameters={"org": ORG},
-            ).result_rows[0][0]
-            return int(rows), int(cats)
+            ).result_rows
+            return [tuple(r) for r in rows], [tuple(r) for r in cats]
 
-        before = counts()
+        before = snapshot()
         out = await post("namespace.tune", {"sample_limit": 3}, viewer)
         assert out["model_used"] is False
         # Extraction writes nothing here yet: the one skipped note says no rule is drafted.
@@ -116,7 +121,7 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
         assert guide["current_revision"] == 0 and guide["apply"]["args"]["expected_revision"] == 0
         assert "`billing/…`: 10 rows" in guide["proposed"]
 
-        assert counts() == before
+        assert snapshot() == before
         assert (await post("namespace.guide_get", {}))["found"] is False
 
         # Extraction now writes here, but none of the flagged rows came from it: the rule
