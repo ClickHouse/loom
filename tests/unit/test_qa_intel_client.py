@@ -395,6 +395,7 @@ def test_budget_timeout_matches_the_server_code_in_the_body() -> None:
             "remoteSecure('h', 'db', 'a', ...)",
         ),
         # any other shape is named by its function alone
+        ("remote('h', 'db')", "remote(...)"),
         ("remoteSecure('h:9440', view(SELECT 1 FROM db.t), 'play', 'secret')", "remoteSecure(...)"),
         ("remoteSecure(my_collection, user = play, password = secret)", "remoteSecure(...)"),
         ("mysql('h:3306', 'db', 'checks', 'play', 'secret')", "mysql(...)"),
