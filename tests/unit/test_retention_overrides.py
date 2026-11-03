@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 
 from server.storage import retention_overrides
-from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, KeptCH, ddl, run
 
 
 @dataclass
@@ -251,7 +251,7 @@ async def test_apply_uses_provided_overrides_without_ch_query() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_per_namespace_emits_alters_for_all_tables() -> None:
-    """One namespace override → one ALTER per managed table (8)."""
+    """One namespace override → one ALTER per managed table (7)."""
     ch = _DiffCH({})
     n = await retention_overrides.apply(
         _FakeSettings(),
@@ -413,7 +413,7 @@ def test_no_managed_table_has_a_schema_ttl() -> None:
     """apply issues REMOVE TTL on a managed table with no window set, which
     would strip a TTL the schema defines; a schema TTL on one of these tables
     needs retention_overrides to restore it instead."""
-    schema = Path("schemas/schema.sql").read_text()
+    schema = (ROOT / "schemas" / "schema.sql").read_text()
     for target in retention_overrides.TARGETS:
         m = re.search(rf"CREATE TABLE IF NOT EXISTS {re.escape(target.table)}\b.*?;", schema, re.S)
         assert m, target.table
@@ -423,49 +423,30 @@ def test_no_managed_table_has_a_schema_ttl() -> None:
         )
 
 
-class _LocalCH:
-    """The two calls apply makes, run on clickhouse-local in a database kept under
-    `path`, so each statement sees what the one before it did."""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self.execute_calls: list[str] = []
-
-    async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
-        rows = run([], sql, params, path=self.path)
-        return rows[0] if rows else None
-
-    async def execute(self, sql: str, params: Any = None) -> None:
-        self.execute_calls.append(sql)
-        run([sql], "SELECT 1", path=self.path)
-
-    def engine_full(self, table: str) -> str:
-        (row,) = run(
-            [], f"SELECT engine_full FROM system.tables WHERE name = '{table}'", path=self.path
-        )
-        return str(row["engine_full"])
+def _engine_full(path: Path, table: str) -> str:
+    (row,) = run([], f"SELECT engine_full FROM system.tables WHERE name = '{table}'", path=path)
+    return str(row["engine_full"])
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
 @pytest.mark.asyncio
-async def test_a_cleared_window_removes_the_ttl_on_a_real_table(tmp_path: Path) -> None:
-    ch = _LocalCH(tmp_path)
-    run([ddl("audit_log")], "SELECT 1", path=tmp_path)
+async def test_a_cleared_window_removes_the_ttl_on_real_tables(tmp_path: Path) -> None:
+    tables = [t.table.removeprefix("loom.") for t in retention_overrides.TARGETS]
+    ch = KeptCH(tmp_path, "SET enable_quantized_codec = 1", *(ddl(t) for t in tables))
     set_ttl = await retention_overrides.apply(
         _FakeSettings(),
         ch=ch,
         namespace_overrides=[{"org": "o", "namespace": "ns1", "retention_days": 30}],
         leader=True,
     )
-    # the other managed tables do not exist here and read as having no TTL
-    assert set_ttl == 1 and " TTL " in ch.engine_full("audit_log")
+    assert set_ttl == len(tables)
+    assert all(" TTL " in _engine_full(tmp_path, t) for t in tables)
 
     removed = await retention_overrides.apply(
         _FakeSettings(), ch=ch, namespace_overrides=[], leader=True
     )
-    assert removed == 1
-    assert ch.execute_calls[-1] == "ALTER TABLE loom.audit_log REMOVE TTL"
-    assert " TTL " not in ch.engine_full("audit_log")
+    assert removed == len(tables)
+    assert not [t for t in tables if " TTL " in _engine_full(tmp_path, t)]
 
     # an overlapping pass sends the same statement; the text apply matches is ClickHouse's
     with pytest.raises(AssertionError, match=retention_overrides._NO_TTL_TO_REMOVE):
