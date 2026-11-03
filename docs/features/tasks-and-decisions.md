@@ -613,10 +613,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
 The reasoning is the verbatim span the retire step reads: the record has no field for the quote. An extracted row is
 served as it is; nobody needs to review it. Pinning is optional: to freeze a row against re-extraction, read its
 identity with `memory.get` and call `memory.pin` under it, or attest its current value with `memory.verify`; a later run
-then tags the row `source-changed` instead of revising or deleting it. Before an edit, `memory.for_file` marks a pinned
-extracted row `(pinned)` and one tagged `source-changed` `(source changed)`, as it does every decision row
-([Decisions](#decisions)). Extracted into a repository's trunk code namespace, the rows also reach `loom_search` from a
-checkout of the repository, as every decision recorded there does
+whose document no longer says it then tags the row `source-changed` instead of revising or deleting it. Before an edit,
+`memory.for_file` marks a pinned extracted row `(pinned)` and one tagged `source-changed` `(source changed)`, as it does
+every decision row ([Decisions](#decisions)). Extracted into a repository's trunk code namespace, the rows also reach
+`loom_search` from a checkout of the repository, as every decision recorded there does
 ([unified search](unified-search.md#reading-the-memory-section)); that surface marks no pin state, nor whether its
 source changed, so an extracted row reads there as any decision does.
 
