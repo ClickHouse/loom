@@ -72,7 +72,8 @@ def test_params_take_json_values_or_plain_strings() -> None:
 
 
 @pytest.mark.parametrize(
-    "field", ["top_k", "org", "query", "namespace", "namespaces", "namespace_scope"]
+    "field",
+    ["top_k", "org", "query", "namespace", "namespaces", "namespace_scope", "session_id", "agent"],
 )
 def test_the_fields_that_define_the_measurement_are_refused(field: str) -> None:
     with pytest.raises(SystemExit, match=field):

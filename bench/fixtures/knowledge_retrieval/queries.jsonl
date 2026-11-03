@@ -25,7 +25,7 @@
 {"id": "quill-backup", "query": "How often is Quill data backed up?", "gold": [["handbook/quill.md", "Workspaces are backed up nightly at 02:00 UTC"]], "kind": "context"}
 {"id": "quill-price", "query": "How much does the Plus plan of Quill cost?", "gold": [["handbook/quill.md", "$8 per editor per month"]], "kind": "context"}
 {"id": "quill-limit", "query": "What happens when a Quill client sends too many requests?", "gold": [["handbook/quill.md", "50 concurrent editors per document"]], "kind": "context"}
-{"id": "meridian-retention", "query": "How long does Meridian keep deleted or old data?", "gold": [["handbook/meridian.md", "Booking records are deleted 180 days after the meeting"]], "kind": "context"}
+{"id": "meridian-retention", "query": "How long does Meridian keep deleted or old data?", "gold": [["handbook/meridian.md", "Booking records are deleted 180 days after the meeting"], ["handbook/meridian.md", "kept for 35 days"]], "kind": "context"}
 {"id": "meridian-sev1", "query": "What is the first response time for a severity 1 incident on Meridian?", "gold": [["handbook/meridian.md", "2 hours"]], "kind": "context"}
 {"id": "meridian-refund", "query": "Can a Meridian customer get their money back?", "gold": [["handbook/meridian.md", "only within the first 7 days"]], "kind": "context"}
 {"id": "meridian-region", "query": "Where is Meridian hosted?", "gold": [["handbook/meridian.md", "us-east only"]], "kind": "context"}
@@ -73,7 +73,7 @@
 {"id": "dn-rollout", "query": "In which order was storage tiering rolled out?", "gold": [["design/lantern-tiering.md", "Starter workspaces first"]], "kind": "context"}
 {"id": "mt-handover", "query": "How often does the on-call handover happen after the change?", "gold": [["notes/ops-review-2025-03.md", "twice weekly"]], "kind": "paraphrase"}
 {"id": "mt-postmortem", "query": "What is the deadline for writing a postmortem?", "gold": [["notes/ops-review-2025-03.md", "five working days"]], "kind": "paraphrase"}
-{"id": "mt-cause", "query": "What caused the Lantern ingestion incidents?", "gold": [["notes/ops-review-2025-03.md", "load balancer health check"]], "kind": "context"}
+{"id": "mt-cause", "query": "What caused the Lantern ingestion incidents?", "gold": [["notes/ops-review-2025-03.md", "load balancer health check"]], "kind": "paraphrase"}
 {"id": "none-0", "query": "What is the parental leave policy?", "gold": [], "kind": "unanswerable"}
 {"id": "none-1", "query": "Which database does Meridian use internally?", "gold": [], "kind": "unanswerable"}
 {"id": "none-2", "query": "How many employees work in the Lisbon office?", "gold": [], "kind": "unanswerable"}

@@ -116,7 +116,7 @@ built from it is right.
   nDCG@10 and all-gold recall per query kind (shared section layouts, error
   codes, paraphrases, old and current policy versions, multi-document
   questions), and the top-hit similarity on unanswerable queries; `--param KEY=VALUE`
-  sets any search field.
+  sets any search field the harness does not fix.
 - **`narrativeqa.py`** — NarrativeQA through the knowledge plane:
   long-document QA with F1 / ROUGE-L, build time and tokens per question.
 - **`time_dialog.py`** — Time-Dialog temporal reasoning over multi-session

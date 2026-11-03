@@ -108,9 +108,21 @@ def mean_by_kind(rows: list[dict]) -> dict[str, dict[str, float]]:
     return out
 
 
-# Fields that define the measurement: the depth the metrics are computed at, and what
-# is searched.
-FIXED_FIELDS = ("top_k", "org", "namespace", "namespaces", "namespace_scope", "query")
+# Fields that define the measurement (the depth the metrics are computed at, and what
+# is searched), and the identity keys, which the server takes from the caller without
+# naming them in `ignored_args`.
+FIXED_FIELDS = (
+    "top_k",
+    "org",
+    "namespace",
+    "namespaces",
+    "namespace_scope",
+    "query",
+    "agent",
+    "user_id",
+    "session_id",
+    "run_id",
+)
 
 
 def parse_params(pairs: list[str]) -> dict:
