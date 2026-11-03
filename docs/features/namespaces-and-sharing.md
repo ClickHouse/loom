@@ -196,8 +196,7 @@ are refused. It writes nothing: no recall credit, no usage event.
   `session_id` its arguments name, or the user and session a narrowed token is pinned
   to, so a call made by anyone that names the subject is counted, and a served
   `memory.inspect`, which names none, is not. A call shows that a tool ran, not that its
-  result reached a model. `gap` says when the ledger keeps fewer
-  days than the window.
+  result reached a model. `gap` says when the ledger keeps fewer days than the window.
 - **`settings`**: the guide's revision and summary, the number of registered categories,
   and the operator extraction policy only for an org admin
   (`extraction_policy_unavailable` says why it is missing). Extraction instructions are
