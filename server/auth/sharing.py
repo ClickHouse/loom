@@ -39,7 +39,7 @@ log = logging.getLogger(__name__)
 MAX_DEPTH = 8  # not a setting: a lower value would cut inheritance in trees already stored
 # A collection is known by its name, so the gate needs no read to tell one,
 # and nothing that fails to load can let another rule admit one. The prefixes
-# are reserved: `namespace.register` refuses them.
+# are reserved: `namespace.register` and `namespace.restore` refuse them.
 COLLECTION_PREFIX = "col-"
 # What a request names its end user's personal collection by.
 PERSONAL_ALIAS = "@me"

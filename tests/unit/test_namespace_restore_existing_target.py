@@ -1,7 +1,7 @@
 """`namespace.restore` into a registered target — active or soft-deleted — applies
 the same admin + restricted check as `namespace.register`, and reactivating a
-soft-deleted target carries its row forward. `namespace.register` keeps the
-row's `created_at` and `duplicate_threshold`."""
+soft-deleted target carries its row forward. Both refuse a collection name.
+`namespace.register` keeps the row's `created_at` and `duplicate_threshold`."""
 
 from __future__ import annotations
 
@@ -16,7 +16,8 @@ import server.auth.authz as authz
 import server.identity.app.namespace_classification as nc
 from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
-from server.core.errors import AuthInsufficientError
+from server.core.errors import AuthInsufficientError, ValidationError
+from server.core.principals import personal_name
 from server.identity.api.models import (
     NamespaceDeleteInput,
     NamespaceRegisterInput,
@@ -114,7 +115,7 @@ def wire(monkeypatch: pytest.MonkeyPatch):
     set_current_auth(None)
 
 
-def _restore_input() -> NamespaceRestoreInput:
+def _restore_input(target: str = NS) -> NamespaceRestoreInput:
     payload = NamespaceSnapshotOutput(
         snapshot_id="snap-1",
         org=ORG,
@@ -130,7 +131,33 @@ def _restore_input() -> NamespaceRestoreInput:
         grants=[],
         audit_tail=[],
     )
-    return NamespaceRestoreInput(org=ORG, target_namespace=NS, payload=payload)
+    return NamespaceRestoreInput(org=ORG, target_namespace=target, payload=payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", [personal_name(ORG, "user:alice"), "col-team-notes", "@me"])
+async def test_a_restore_into_a_collection_name_is_refused(wire, target: str) -> None:
+    """A collection, an end user's personal one included, is reached only through its
+    grants: a restore that found no row for the name would write a directory row, an
+    admin grant and the payload's memories into it, as `namespace.register` may not."""
+    install, _grants = wire
+    ch = install(None, "mallory@x", Role.VIEWER)
+    with pytest.raises(ValidationError):
+        await namespace_snapshot.handle_namespace_restore(_restore_input(target))
+    assert ch.inserts == []
+
+
+@pytest.mark.asyncio
+async def test_register_refuses_a_collection_name(wire) -> None:
+    install, _grants = wire
+    ch = install(None, "mallory@x", Role.VIEWER)
+    with pytest.raises(ValidationError):
+        await h.handle_namespace_register(
+            NamespaceRegisterInput(
+                org=ORG, namespace=personal_name(ORG, "user:alice"), owner_email="mallory@x"
+            )
+        )
+    assert ch.inserts == []
 
 
 @pytest.mark.asyncio
