@@ -263,14 +263,29 @@ def check_corpus(
     return sum(int(row.get("chunk_count") or 0) for row in rows)
 
 
+def check_reranked(rerank: str, reranked: int) -> None:
+    """Fail an arm whose reranker did not run as it says: `rerank="none"` with an answer
+    naming a reranker (a deployment default reached the baseline), or a named reranker
+    no answer names. A reranker that keeps the fused order names none, so a rerank arm
+    needs one reranked answer, not every one."""
+    if rerank == "none" and reranked:
+        raise SystemExit(f"{reranked} answers name a reranker, though the arm names none")
+    if rerank != "none" and not reranked:
+        raise SystemExit("no answer names a reranker: the rerank arm did not run")
+
+
 def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params: dict) -> dict:
     rows, top_answerable, top_unanswerable = [], [], []
     any_hits = False
     lexical_fired = 0  # queries with a hit the lexical leg scored
+    reranked = 0
+    # An arm that names no reranker runs without one, whatever the deployment default.
+    rerank = params.get("rerank") or "none"
     no_hits = {"answerable": 0, "unanswerable": 0}
     for q in queries:
         body = {
             **params,
+            "rerank": rerank,
             "org": org,
             "namespace": namespace,
             "namespace_scope": "this",
@@ -282,6 +297,7 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
             raise SystemExit(f"knowledge.search ignored {out['ignored_args']}: the arm did not run")
         hits = out["results"]
         lexical_fired += any(h.get("lexical_score", 0) > 0 for h in hits)
+        reranked += bool(out.get("reranked_by"))
         if not hits:
             no_hits["answerable" if q["gold"] else "unanswerable"] += 1
         elif q["gold"]:
@@ -299,6 +315,7 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
     mode = params.get("search_mode", KnowledgeSearchInput.model_fields["search_mode"].default)
     if mode != "semantic" and not lexical_fired:
         raise SystemExit("the lexical leg never fired: the arm ran as semantic")
+    check_reranked(rerank, reranked)
     return {
         "params": params,
         "metrics": mean_by_kind(rows),

@@ -327,3 +327,37 @@ def test_the_corpus_check_returns_the_chunk_count_the_run_measured() -> None:
     docs = [{"source_uri": "a.md", "content": "x"}]
     row = {"source_uri": "a.md", "tags": [fixture_tag(docs)], "chunk_count": 3}
     assert check_corpus(lambda path, body: {"rows": [row]}, "o", "n", docs) == 3
+
+
+@pytest.mark.parametrize(
+    ("rerank", "reranked", "fails"),
+    [
+        ("none", 0, False),
+        ("none", 3, True),
+        ("builtin:openai", 0, True),
+        ("builtin:openai", 1, False),
+    ],
+    ids=["baseline", "baseline-reranked", "rerank-never-ran", "rerank-ran"],
+)
+def test_an_arm_whose_reranker_did_not_run_as_it_says_fails(rerank, reranked, fails) -> None:
+    from bench.knowledge_retrieval import check_reranked
+
+    if fails:
+        with pytest.raises(SystemExit):
+            check_reranked(rerank, reranked)
+    else:
+        check_reranked(rerank, reranked)
+
+
+def test_an_arm_naming_no_reranker_pins_none() -> None:
+    queries = [
+        {"id": "a", "query": "x", "gold": [["a.md", "y"]], "kind": "context", "cluster": "c"}
+    ]
+    hit = {"source_uri": "a.md", "content": "y", "similarity": 0.5, "lexical_score": 1.0}
+    sent: list[dict] = []
+    search(lambda path, body: sent.append(body) or {"results": [hit]}, "o", "n", queries, {})
+    assert sent[0]["rerank"] == "none"
+    # a deployment default that reranks anyway fails the baseline
+    answer = {"results": [hit], "reranked_by": "builtin:openai"}
+    with pytest.raises(SystemExit, match="names none"):
+        search(lambda path, body: answer, "o", "n", queries, {})

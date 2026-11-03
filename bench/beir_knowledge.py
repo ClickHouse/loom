@@ -27,10 +27,10 @@ the namespace does not hold yet, so a failed one is resumed by running it again.
 A search over a namespace that does not hold exactly this corpus fails the run.
 `--param KEY=VALUE` sets any `knowledge.search` field but the depth, scope,
 filters and `collapse_sections`; an arm that names no reranker runs with
-`rerank="none"`, whatever the deployment default. A run records the server's embedding model and build and the corpus,
-queries and judgements it scored, and refuses a fake embedder; a hybrid or
-lexical arm whose lexical leg never fired, and a rerank arm no answer of which
-names a reranker, fail.
+`rerank="none"`, whatever the deployment default. A run records the server's
+embedding model and build and the corpus, queries and judgements it scored, and
+refuses a fake embedder; a hybrid or lexical arm whose lexical leg never fired,
+and an arm whose reranker did not run as it says (`check_reranked`), fail.
 
 A search returns at most 100 hits, which are chunks: recall@100 is over the
 documents they hold (`depth` in the report, 100 when every passage is one
@@ -66,14 +66,15 @@ from bench.bench_namespaces import (
 )
 from bench.knowledge_retrieval import (
     check_corpus,
+    check_reranked,
     digest,
     listed_documents,
     parse_params,
     require_real_embedder,
     run_namespace,
 )
-from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 from bench.quality import run_metadata
+from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 
 RELEASE = "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{name}.zip"
 # The small datasets and the MD5 the BEIR release publishes for each archive.
@@ -148,10 +149,10 @@ def corpus_tag(docs: list[dict]) -> str:
 
 def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
     """Add the passages the namespace does not hold yet. `knowledge.bulk_add` never
-    replaces a document, so a passage sent twice would be indexed twice: one already
-    there with its chunks is skipped (one an interrupted write left without chunks is
-    sent again), and the caller sends each batch once. A namespace holding anything
-    but this corpus is refused before anything is written."""
+    supersedes a document's chunks, so a passage sent twice would have its chunks
+    indexed twice: one already there with its chunks is skipped (one an interrupted
+    write left without chunks is sent again), and the caller sends each batch once. A
+    namespace holding anything but this corpus is refused before anything is written."""
     if keep:  # printed first, so a failed ingest leaves the command behind
         print(f"kept; erase it with: {gc_command(org, [namespace])}", file=sys.stderr)
     register_bench_namespace_sync(
@@ -235,12 +236,7 @@ def search(
     mode = params.get("search_mode", KnowledgeSearchInput.model_fields["search_mode"].default)
     if mode != "semantic" and not lexical_fired:
         raise SystemExit("the lexical leg never fired: the arm ran as semantic")
-    # A reranker that keeps the fused order names none, so a rerank arm fails only when
-    # no answer names one, and an arm without one when any does.
-    if rerank == "none" and reranked:
-        raise SystemExit(f"{reranked} answers name a reranker, though the arm names none")
-    if rerank != "none" and not reranked:
-        raise SystemExit("no answer names a reranker: the rerank arm did not run")
+    check_reranked(rerank, reranked)
     keys = rows[0]["metrics"] if rows else {}
     means = {k: round(sum(r["metrics"][k] for r in rows) / len(rows), 4) for k in keys}
     return {
@@ -250,6 +246,14 @@ def search(
         "lexical_fired": lexical_fired,
         "queries": rows,
     }
+
+
+def arm_params(pairs: list[str]) -> dict:
+    """`parse_params`, refusing `collapse_sections` too: the harness scores documents."""
+    params = parse_params(pairs)
+    if "collapse_sections" in params:
+        raise SystemExit("--param collapse_sections is refused: the harness fixes it")
+    return params
 
 
 def main() -> int:
@@ -277,9 +281,7 @@ def main() -> int:
     if args.phase != "both" and not args.namespace:
         ap.error(f"--phase {args.phase} needs a --namespace (one ingest, many searches)")
 
-    if any(p.partition("=")[0] == "collapse_sections" for p in args.param):
-        raise SystemExit("--param collapse_sections is refused: the harness scores documents")
-    params = parse_params(args.param)
+    params = arm_params(args.param)
     namespace, keep = run_namespace(args.namespace, PREFIX)
     docs, queries, qrels = load(args.data)
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}

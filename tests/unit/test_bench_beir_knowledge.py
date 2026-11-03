@@ -226,3 +226,9 @@ def test_the_ingest_adds_only_what_the_namespace_lacks_in_tagged_batches(monkeyp
 
 def test_a_rerank_arm_is_a_search_field_the_harness_takes() -> None:
     assert bk.parse_params(["rerank=builtin:openai"]) == {"rerank": "builtin:openai"}
+
+
+def test_a_collapse_arm_is_refused() -> None:
+    with pytest.raises(SystemExit, match="collapse_sections is refused"):
+        bk.arm_params(["collapse_sections=true"])
+    assert bk.arm_params(["search_mode=semantic"]) == {"search_mode": "semantic"}
