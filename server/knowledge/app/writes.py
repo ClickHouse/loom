@@ -472,7 +472,7 @@ async def handle_knowledge_update_metadata(
     edited fields applied and existing fields carried forward. Chunks
     stay untouched: their stored context (the old title and description)
     and their embeddings remain as-is, so both search legs keep matching
-    the old header until `reindex=True` or a re-upload (`knowledge.upsert`).
+    the old context until `reindex=True` or a re-upload (`knowledge.upsert`).
     """
     from server.knowledge.store import documents as documents_repo
 

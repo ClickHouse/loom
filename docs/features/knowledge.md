@@ -50,7 +50,7 @@ the operations reference.
 | `knowledge.list`            | viewer | Documents of a namespace, paged by an opaque cursor, filterable by tag and URI prefix. |
 | `knowledge.outline`         | viewer | A document's table of contents, and optionally one section's assembled text.           |
 | `knowledge.synthesize`      | viewer | Complete a task over whole documents (summaries, spread-out evidence) with the LLM.    |
-| `knowledge.update_metadata` | writer | Edit `title`, `description` or `tags`; `reindex=true` rewrites the chunks' header.     |
+| `knowledge.update_metadata` | writer | Edit `title`, `description` or `tags`; `reindex=true` rewrites the chunks' context.    |
 | `knowledge.delete`          | writer | Supersede a document and its chunks.                                                   |
 | `knowledge.bulk_delete`     | writer | The same for up to 500 `source_uris`.                                                  |
 | `knowledge.reads`           | viewer | How often agents opened each document over the last `days` (1–30).                     |
@@ -104,7 +104,7 @@ its text alone until `loom rechunk` rewrites its document; run
 document frequencies until then. Rechunk such documents before changing the
 embedding model in Settings → Models & keys too: the provider rebuild embeds a
 chunk's stored context and text, and an older chunk's empty context would drop the
-header its vector was written with (and a titled document with no text, which has
+context its vector was written with (and a titled document with no text, which has
 nothing else to embed, fails the rebuild until it is rechunked).
 
 ## Reading a document
@@ -136,7 +136,7 @@ knowledge search concentrates on a few documents. See
 | You want to                            | Use                                                     | What happens                                                                                           |
 | -------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | Replace a changed document             | `knowledge.upsert` (same `source_uri`)                  | New chunks are written; the previous version's chunks are marked superseded and kept for history.      |
-| Change the title, tags or blurb        | `knowledge.update_metadata`                             | The document row changes; chunks keep the old header in both legs unless `reindex=true` rewrites them. |
+| Change the title, tags or blurb        | `knowledge.update_metadata`                             | The document row changes; chunks keep the old context in both legs unless `reindex=true` rewrites it.  |
 | Rename a document                      | `knowledge.delete`, then `knowledge.add` at the new URI | `source_uri` is the identity agents cite, so it is not editable.                                       |
 | Remove a document                      | `knowledge.delete`                                      | Chunks and the document row are superseded; searches stop returning them at once.                      |
 | Erase a person's or a namespace's data | [`erasure.request`](./memory/retention-and-erasure.md)  | The erasure saga deletes documents, chunks and stored originals, and cascades to external systems.     |
