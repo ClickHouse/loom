@@ -74,7 +74,7 @@ def input_from_ledger_row(row: Mapping[str, Any]) -> ErasureRequestInput:
     )
 
 
-# The recovery worker's own principal.
+# The actor the recovery worker writes as: a process, no principal.
 RECOVERY_WORKER_ACTOR = "erasure-recovery-worker"
 
 
