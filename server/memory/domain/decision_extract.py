@@ -266,8 +266,9 @@ _H = r"[^\S\n]"
 # What ends a sentence: a full stop, a question or exclamation mark, a semicolon, ASCII
 # or full-width.
 _SENTENCE_PUNCT = "[.!?;。！？；]"
-# A word that ends a sentence, closing brackets, quotes and emphasis after the mark aside.
-_SENTENCE_END_WORD = re.compile(rf"{_SENTENCE_PUNCT}[)\]\"'”’*_]*$")
+# The end of a sentence, closing brackets, quotes and emphasis after the mark aside.
+_SENTENCE_TAIL = rf"{_SENTENCE_PUNCT}[)\]\"'”’*_]*$"
+_SENTENCE_END_WORD = re.compile(_SENTENCE_TAIL)
 # A label line: one to three words on a line of their own, as a slide or diagram
 # converted to text puts box labels between a sentence's two halves.
 _LABEL_LINE = rf"{_H}*\S+(?:{_H}+\S+){{0,2}}{_H}*\n"
@@ -280,17 +281,19 @@ _LABEL_GAP = rf"{_H}*\n({_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_
 # A short line that is no label: structure (a list item, fence, table row, heading, its
 # underline or a rule, HTML tag, quote, definition), a sentence end, or a negation.
 _NOT_A_LABEL = re.compile(
-    rf"^(?:[-*+]\s|-+$|(?:[-*_]{_H}*){{3,}}$|[`~|#>:=<]|\d+[.)](?:\s|$))|{_SENTENCE_PUNCT}$"
+    rf"^(?:[-*+]\s|-+$|(?:[-*_]{_H}*){{3,}}$|[`~|#>:=<]|\d+[.)](?:\s|$))|{_SENTENCE_TAIL}"
     rf"|\b(?:{_BAN_WORDS}|{_NEGATION_WORDS})\b|n['’]t\b",
     re.I,
 )
 
 
 def _is_label(line: str) -> bool:
-    """A label is title-like: it does not start lower case, which a line of wrapped prose
-    continuing its sentence does ("We keep the / old / index"), and is no structure,
-    sentence end or negation (`_NOT_A_LABEL`)."""
-    return not line[:1].islower() and not _NOT_A_LABEL.search(line)
+    """A label is title-like: its first letter or digit, after any markup (`**Proxy**`,
+    `+3 nodes`), is an upper-case letter or a digit, which a line of wrapped prose
+    continuing its sentence ("We keep the / old / index") and a line of a script without
+    case never are; and it is no structure, sentence end or negation (`_NOT_A_LABEL`)."""
+    first = next((ch for ch in line if ch.isalnum()), "")
+    return (first.isupper() or first.isdigit()) and not _NOT_A_LABEL.search(line)
 
 
 def _only_labels(lines: str | None) -> bool:
@@ -329,9 +332,13 @@ def find_span(span: str, texts: Sequence[str]) -> str:
     """The first text's own span that reads as `span`, or '': each run of whitespace
     taken as one space, letter case ignored, and up to three label lines read across
     between two words, as a model copies a span from a converted slide. What is returned
-    is the text's, labels included, so it is always a substring of the text. Not found:
-    a label line whose first word reads as the next word ("The proxy" over "the nearest
-    replica")."""
+    is the text's, labels included, so it is always a substring of the text. A label
+    starts with an upper-case letter or a digit, so a line of a script without case is
+    never read across. Not found: a label line whose first word reads as the next word
+    ("The proxy" over "the nearest replica"), and a last word that would end inside a
+    document word where a rejected label reading of its gap comes first ("cache plan"
+    over "cache / plans / not / plan"): the label reading is tried before the partial
+    end."""
     m = _span_match(span, texts)
     return m.group(0) if m else ""
 

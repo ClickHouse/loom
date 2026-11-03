@@ -706,6 +706,15 @@ def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
         "not\n",
         "don't\n",
         "never twice\n",
+        # One word list each: a ban word, then a contrast word.
+        "Only\n",
+        "Always\n",
+        "Instead\n",
+        "Rather\n",
+        "Costs.)\n",
+        "**Done.**\n",
+        # A script without case has no title-like line.
+        "代理\n",
         "- Shard A\n",
         "+ Shard A\n",
         "* Shard A\n",
@@ -775,6 +784,12 @@ def test_no_label_is_read_after_a_sentence_end(end) -> None:
 def test_a_number_or_emphasis_that_is_no_list_marker_is_a_label(label) -> None:
     text = SPLIT.format(labels=label)
     assert dx.find_span(REPLICA_SPAN, [text]) == text
+
+
+def test_a_line_of_a_script_without_case_is_not_read_across() -> None:
+    text = "分片按租户\n代理\n划分以保持本地。"
+    assert dx.find_span("分片按租户 划分以保持本地。", [text]) == ""
+    assert dx.find_span("分片按租户 代理 划分以保持本地。", [text]) == text
 
 
 def test_a_negation_line_is_not_skipped() -> None:
@@ -3746,6 +3761,30 @@ async def test_an_option_a_list_item_states_is_inverted_on_the_documents_lines(m
         "rejected option 'sort the runs in memory' left out: the quote states it as part of "
         "the choice"
     ]
+
+
+@pytest.mark.asyncio
+async def test_the_blank_lines_around_a_label_end_no_sentence(monkeypatch) -> None:
+    # Left in place of the label, the blank lines would end "We avoid" and leave
+    # "sharding by tenant." a sentence of its own that states the option as chosen.
+    text = (
+        "We shard by time. We avoid\n\nShards\n\nsharding by tenant. "
+        "Joins would split across shards."
+    )
+    cand = _candidate(
+        scenario="how tables are sharded",
+        outcome="shard by time",
+        reasoning="Joins would split across shards.",
+        quote="We shard by time. We avoid sharding by tenant.",
+        alternatives=[{"option": "shard by tenant", "reason": "Joins would split across shards."}],
+        mentions=[],
+    )
+    world = _World(monkeypatch, [cand])
+    _chunks(monkeypatch, (text, ("Sharding",)))
+    report = await _run()
+    (inp,) = world.recorded
+    assert inp.alternatives == ["shard by tenant — rejected: Joins would split across shards."]
+    assert report.dropped == []
 
 
 @pytest.mark.asyncio

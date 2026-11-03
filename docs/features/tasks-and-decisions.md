@@ -410,30 +410,32 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
   of its words: a model copying a span drops line breaks and doubled spaces and capitalises a sentence's first word,
   and a slide or diagram converted to text puts short labels between a sentence's two halves. A label line is one to
   three words on a line of its own, with a line break before and after it (blank lines around it are read too), that
-  is title-like: it does not start with a lower-case letter ("Proxy", "API", "Shard A", "3 replicas"), since a
-  lower-case line of narrow-wrapped prose continues its sentence ("We keep the / old / index"); that does not start as
-  a list item (`-`, `*`, `+` followed by a space, or `1.`, `1)` followed by a space or alone), so `**Proxy**`,
-  `_Proxy_`, `+3 nodes` and `2.5 GB` are labels), a fence or code (a backtick, `~`), a table row (`|`), a heading
-  (`#`), a heading's underline (`===`, or a line of dashes such as `-` or `--`) or a rule (`---`, `***`, `___`), an
-  HTML tag (`<`), a quote (`>`) or a definition (`:`); that does not end in `.`, `!`, `?` or `;` (or their full-width
-  forms), as the last line of a wrapped paragraph does; and that holds none of the ban words of a reason-less ban
-  below, nor the contrast words of the inverted-alternatives check, nor a word ending in `n't`: skipping `not` would
-  read "Retries are / not / safe" as "Retries are safe". A fourth label line, a line of four words, a line that is no
-  label, or a label inside a line ends the match. A label sits inside a sentence, so none is read after a word that
-  ends in `.`, `!`, `?` or `;` (or their full-width forms), closing brackets, quotes and emphasis after the mark
-  aside: "We cache plans per tenant. / Costs / Each plan expires after an hour." is two sentences with a heading
-  between, never one span. Between two words, the fewest label lines that reach the next word are read, so a later
-  line reading as that word is not taken for a label. Each word of the span but the last ends where a word of the text
-  ends, so `so` does not take the start of a label `Something`. The word right after the whitespace is read before any
-  label, so a label line whose first word reads as the next word ("The proxy" over "the nearest replica") is taken as
-  that word and the span is not found. Chunk texts hold a section's body without its heading line. What is recorded is
-  the document's own span on one line, its words and case, with the label lines it read across left out: the same text
-  on every run, and a recorded span reads as the document's span again, across the same labels, when the retire step
-  looks for it. Each is at least 12 characters long, counted on the model's span: a shorter span ("We", "the") is in
-  every document, so a decision resting on it could never retire. At most `--max-per-section` (default 3) are kept per
-  section. A candidate whose category or scenario holds no letter or digit from a-z, 0-9 has no key and is dropped. Of
-  two candidates with one key, or with one outcome and reasoning (overlapping chunks give two windows the same text),
-  the first is kept.
+  is title-like: its first letter or digit, after any markup, is an upper-case letter or a digit ("Proxy", "API",
+  "Shard A", "3 replicas"), since a lower-case line of narrow-wrapped prose continues its sentence ("We keep the / old
+  / index"), and a line of a script without case (Chinese, Japanese) is never read across, the check failing closed
+  where case says nothing; that does not start as a list item (`-`, `*`, `+` followed by a space, or `1.`, `1)`
+  followed by a space or alone), so `**Proxy**`, `_Proxy_`, `+3 nodes` and `2.5 GB` are labels), a fence or code (a
+  backtick, `~`), a table row (`|`), a heading (`#`), a heading's underline (`===`, or a line of dashes such as `-` or
+  `--`) or a rule (`---`, `***`, `___`), an HTML tag (`<`), a quote (`>`) or a definition (`:`); that does not end in
+  `.`, `!`, `?` or `;` (or their full-width forms), closing brackets, quotes and emphasis after the mark aside, as the
+  last line of a wrapped paragraph does; and that holds none of the ban words of a reason-less ban below, nor the
+  contrast words of the inverted-alternatives check, nor a word ending in `n't`: skipping `not` would read "Retries
+  are / not / safe" as "Retries are safe". A fourth label line, a line of four words, a line that is no label, or a
+  label inside a line ends the match. A label sits inside a sentence, so none is read after a word that ends in `.`,
+  `!`, `?` or `;` (or their full-width forms), closing brackets, quotes and emphasis after the mark aside: "We cache
+  plans per tenant. / Costs / Each plan expires after an hour." is two sentences with a heading between, never one
+  span. Between two words, the fewest label lines that reach the next word are read, so a later line reading as that
+  word is not taken for a label. Each word of the span but the last ends where a word of the text ends, so `so` does
+  not take the start of a label `Something`. The word right after the whitespace is read before any label, so a label
+  line whose first word reads as the next word ("The proxy" over "the nearest replica") is taken as that word and the
+  span is not found. Chunk texts hold a section's body without its heading line. What is recorded is the document's
+  own span on one line, its words and case, with the label lines it read across left out: the same text on every run,
+  and a recorded span reads as the document's span again, across the same labels, when the retire step looks for it.
+  Each is at least 12 characters long, counted on the model's span: a shorter span ("We", "the") is in every document,
+  so a decision resting on it could never retire. At most `--max-per-section` (default 3) are kept per section. A
+  candidate whose category or scenario holds no letter or digit from a-z, 0-9 has no key and is dropped. Of two
+  candidates with one key, or with one outcome and reasoning (overlapping chunks give two windows the same text), the
+  first is kept.
 - **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
   `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
   punctuation, as their English (Snowball) stems, so `stored` meets `store` and `running` meets `run`. Filler words
