@@ -283,7 +283,7 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | `unsupported_citations` | `list[str]` | Citations in the answer naming a chunk the passes did not read; removed from `answer`. |
 | `truncated` | `bool` | True when the documents needed more than `max_windows` windows and only the first were read. |
 | `abstain` | `bool` | True when there is no answer to give; `abstain_reason` says why. |
-| `abstain_reason` | `str` | `budget_capped` (over the cost cap), `no_chunks` (no chunks) or `empty_answer` (no letter or digit once unread citations are removed); empty otherwise. |
+| `abstain_reason` | `str` | `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents have none) or `empty_answer` (no letter or digit once unread citations are removed); empty otherwise. |
 | `model` | `str` | LLM that wrote the notes and the answer; empty when it abstained before any call. |
 
 ## `knowledge.update_metadata`

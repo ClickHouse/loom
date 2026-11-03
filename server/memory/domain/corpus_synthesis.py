@@ -136,6 +136,7 @@ _SEPARATOR = re.compile(r"\s*([,;])\s*")
 _SPACED_CITATION = re.compile(rf"(?<![ \t])[ \t]*\[\s*({_ITEMS.pattern})\s*\]")
 # A citation formed only after this many removals is left as written and unchecked: a
 # model writes none, and each one is one more pass over the answer.
+# not a setting: a bound on adversarial nesting, not a quality trade-off to tune
 _MAX_PASSES = 8
 
 
