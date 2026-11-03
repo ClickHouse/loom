@@ -519,10 +519,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   "Defer sharding by tenant"; "so v1 cannot evict it" still rejects "evict the largest job".
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
-  `source-kind:design_doc`, `constraint` for a ban or an invariant and `repo:<id>` under `--into source`. The row's
-  `actor` is `process:cli:decisions`. Each `decision.record`, and each `memory.delete_version` that deletes a row,
-  leaves the audit row the transport writes for that op, with the actor `process:cli:decisions`; the tag write,
-  `memory.update_by_id`, declares none, as over HTTP.
+  `source-kind:design_doc`, `constraint` for a ban or an invariant and `repo:<id>` under `--into source` for a document
+  outside the repository's trunk. The row's `actor` is `process:cli:decisions`. Each `decision.record`, and each
+  `memory.delete_version` that deletes a row, leaves the audit row the transport writes for that op, with the actor
+  `process:cli:decisions`; the tag write, `memory.update_by_id`, declares none, as over HTTP.
 - **Files**: each backticked or qualified name and each bare class name the document text holds is looked up with
   `code.symbol` in the document's namespace, or in the repository's trunk with `--repo`; exactly one defining file (a
   class preferred over its constructor) goes into `files`, several or none add nothing. A repository path the quote or

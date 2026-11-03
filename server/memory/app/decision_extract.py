@@ -485,7 +485,7 @@ async def _read_own(
     linked to the wrong repository."""
     from server.code.app.repo_scope import trunk_namespace_of
 
-    rows = await _extractor_rows(org, t, source_uri)
+    rows = await _extractor_rows(org, t.rows_namespace, t.doc_namespace, source_uri)
     tagged = sorted({x for r in rows for x in r.tags if x.startswith("repo:")} - {t.repo_tag})
     if tagged:
         names = await _readable_names(org)
@@ -503,7 +503,7 @@ async def _read_own(
         if other not in checked and not await _may(org, other, Role.VIEWER):
             # Neither the trunk's name nor whether rows are there is the caller's to learn.
             return [], "this document's namespace belongs to a repository you may not read"
-        if await _extractor_rows(org, replace(t, rows_namespace=other), source_uri):
+        if await _extractor_rows(org, other, t.doc_namespace, source_uri):
             return [], (
                 f"this document's decisions are in {org}/{other}; run with the --repo and "
                 "--into that wrote them, or delete them there first"
@@ -1238,13 +1238,16 @@ async def _audit(op_name: str, inp: Any) -> None:
     )
 
 
-async def _extractor_rows(org: str, t: Target, source_uri: str) -> list[MemoryRow]:
-    """The extractor's live decision rows in the target namespace citing this document,
-    whole: listed a page at a time (the listing carries no source), each page read back in
-    one bulk read. The cost grows with every decision the extractor holds in the
-    namespace, not with this document's: no store read filters on `source_resource_id`."""
+async def _extractor_rows(
+    org: str, namespace: str, doc_namespace: str, source_uri: str
+) -> list[MemoryRow]:
+    """The extractor's live decision rows in `namespace` citing this document (in
+    `doc_namespace`), whole: listed a page at a time (the listing carries no source), each
+    page read back in one bulk read. The cost grows with every decision the extractor holds
+    in the namespace, not with this document's: no store read filters on
+    `source_resource_id`."""
     ident = Identity(
-        org=org, namespace=t.rows_namespace, agent=EXTRACTOR_AGENT, user_id="-", session_id="-"
+        org=org, namespace=namespace, agent=EXTRACTOR_AGENT, user_id="-", session_id="-"
     )
     out: list[MemoryRow] = []
     offset = 0
@@ -1263,7 +1266,7 @@ async def _extractor_rows(org: str, t: Target, source_uri: str) -> list[MemoryRo
             ident, [r.memory_key for r in page], scope=WHOLE_NAMESPACE, strong=True
         )
         for row in rows:
-            if await cites_document(org, row.source_resource_id, t.doc_namespace, source_uri):
+            if await cites_document(org, row.source_resource_id, doc_namespace, source_uri):
                 out.append(row)
         if len(page) < _PAGE:
             return out

@@ -68,10 +68,10 @@ def register_decisions_cli(sub: Any) -> None:
         "when it could not read the document (no document, no chunks, no usable model, an "
         "unknown --repo or a namespace it may not use, --into without --repo or source on "
         "another repository's namespace, a --repo with no remote to tag rows with, the "
-        "dashboard's repositories unread, its own rows "
-        "unreadable or left in another namespace, no window read), 2 when a write, or a read "
-        "it needed (a window included), was refused or failed (a row changed since the run "
-        "read it is reported, not counted).",
+        "dashboard's repositories unread, its own rows unreadable, left in another namespace "
+        "or linked to another repository, no window read), 2 when a write, or a read it "
+        "needed (a window included), was refused or failed (a row changed since the run read "
+        "it is reported, not counted).",
     )
     p_ext.add_argument("--org", required=True)
     p_ext.add_argument("--namespace", required=True, help="The namespace holding the document")
@@ -134,8 +134,8 @@ def exit_code(report: ExtractReport) -> int:
     """1 when the run could not read the document (no document, no chunks, no usable model, an
     unknown --repo or a namespace it may not use, --into without --repo or source on another
     repository's namespace, a --repo with no remote to tag rows with, the dashboard's
-    repositories unread, the extractor's rows unreadable or left in another namespace, no
-    window read), 2 when a write, or a read it needed (a window
+    repositories unread, the extractor's rows unreadable, left in another namespace or linked
+    to another repository, no window read), 2 when a write, or a read it needed (a window
     the model could not answer readably included), was refused or failed (in a dry run too),
     else 0. A row deleted or rewritten since the run read it is reported, not counted: the
     next run settles it."""
