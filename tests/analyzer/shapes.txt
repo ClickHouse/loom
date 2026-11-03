@@ -1099,7 +1099,6 @@
 919b26f50c2c	SELECT count() AS n FROM loom.delete_version_checks WHERE org = {org:String} AND namespace = {ns:String}
 91be01a12caf	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
 91d550909ae3	ALTER TABLE loom.operator_edges UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mut
-91efeca0aeba	SELECT toString(failure_id) AS failure_id, org, namespace, agent, projection, source_operation, source_resource_id, memory_keys, error_type, error_message, payload, status, created_at, resolved_at FRO
 91f3c5b65004	SELECT count() AS n FROM loom.entity_vectors FINAL WHERE org = {org:String} AND (user_id = {uid:String} OR (namespace, memory_key) IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:St
 91f981e96977	SELECT path, scope, symbol_ids, start_line, end_line, content FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, tombstoned_at FROM loom.code_chunks WHERE org = {org:Strin
 920f55498792	SELECT path FROM loom.code_files FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND startsWith(path, ?) AND extract(path, ?) IN {nums:Array(String)} ORDER BY path
@@ -1287,6 +1286,7 @@ a86e1a806af2	SELECT DISTINCT src_path FROM loom.code_test_map FINAL WHERE org = 
 a883073e33de	SELECT count() AS n, if(n = ?, NULL, max(created_at)) AS latest FROM loom.memory_webhooks FINAL WHERE org = {org:String} AND namespace = {ns:String} AND is_deleted = ?
 a89b0f382e73	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
 a8c161d6c1ed	WITH spend AS ( SELECT org, namespace, sum(upstream_cost_usd) AS spent, sumIf(upstream_cost_usd, operation = {op:String}) AS own FROM loom.agent_events WHERE (org, namespace) IN {pairs:Array(Tuple(Str
+a8e9fc0d338e	SELECT toString(failure_id) AS failure_id, org, namespace, agent, projection, source_operation, source_resource_id, memory_keys, error_type, error_message, payload, status, created_at, resolved_at FRO
 a8ef32fbad8c	SELECT content_sha256, count() AS chunk_count, uniqExact(source_uri) AS uri_count, groupArray(?)((source_uri, chunk_idx)) AS samples FROM loom.chunks WHERE org = {org:String} AND namespace = {ns:Strin
 a90054f8b1c7	SELECT DISTINCT b.? AS qid FROM system.mutations ARRAY JOIN {versions:Array(Tuple(String, UInt64))} AS b WHERE database = {db:String} AND table = {t:String} AND is_done = ? AND position(command, {pat:
 a92198f269fa	SELECT day, runs, fails, prs, groups, steps, flips, same_commit_flips, branch_fails, last_true_fail, last_true_fail_head, last_fail_at, first_run_at, fail_hours, fail_hour_prs, fail_prs, fail_pr_fails

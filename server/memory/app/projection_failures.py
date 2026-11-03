@@ -244,7 +244,7 @@ async def list_projection_failures(
     (`resolve_org_scope`)."""
 
     ch = ch or get_client()
-    where = ["org = {org:String}" + scope_where]
+    where = ["org = {org:String}"]
     params: dict[str, Any] = {**(scope_params or {}), "org": org, "lim": int(limit)}
     if namespace:
         where.append("namespace = {ns:String}")
@@ -273,7 +273,7 @@ async def list_projection_failures(
             created_at,
             resolved_at
         FROM loom.memory_projection_failures
-        WHERE {" AND ".join(where)}
+        WHERE {" AND ".join(where)}{scope_where}
         ORDER BY created_at DESC, failure_id DESC
         LIMIT {{lim:UInt32}}
         """,

@@ -29,6 +29,16 @@ from server.identity.domain.read_scope import (
 from tests.analyzer.cases._common import AGENT, NS, ORG, SMALL_VEC, rows_by_substring
 from tests.analyzer.corpus import Case, RecordingCH, is_drive_defect
 
+# An org admin's scope as `resolve_org_scope` builds it: a hidden restricted namespace and
+# the collections it cannot read (`tests/unit/test_projection_failures_org_scope.py` pins
+# it to the builder).
+ADMIN_SCOPE = (
+    " AND (NOT startsWith(namespace, {col_prefix:String})"
+    " OR namespace IN {col_readable:Array(String)})"
+    " AND namespace NOT IN {ns_hidden:Array(String)}"
+)
+ADMIN_SCOPE_PARAMS = {"col_prefix": "col-", "col_readable": [NS], "ns_hidden": ["restricted"]}
+
 _UUID = "00000000-0000-0000-0000-000000000001"
 _DT = _dt.datetime(2026, 1, 1, tzinfo=_dt.UTC)
 
@@ -673,19 +683,15 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await PF.scan_active_projection_failures(ch=ch)
     await PF.scan_active_projection_failures(after=(_DT, _UUID), ch=ch)
     await PF.mark_projection_failures_resolved(org=ORG, failure_ids=[_UUID], ch=ch)
-    # An org admin's scope (`resolve_org_scope`): a hidden restricted namespace and the
-    # collections it cannot read.
-    admin_scope = (
-        " AND (NOT startsWith(namespace, {col_prefix:String})"
-        " OR namespace IN {col_readable:Array(String)})"
-        " AND namespace NOT IN {ns_hidden:Array(String)}"
-    )
-    admin_params = {"col_prefix": "col-", "col_readable": [NS], "ns_hidden": ["restricted"]}
     await PF.list_projection_failures(
-        org=ORG, scope_where=admin_scope, scope_params=admin_params, ch=ch
+        org=ORG, scope_where=ADMIN_SCOPE, scope_params=ADMIN_SCOPE_PARAMS, ch=ch
     )
     await PF.mark_projection_failures_resolved(
-        org=ORG, failure_ids=[_UUID], scope_where=admin_scope, scope_params=admin_params, ch=ch
+        org=ORG,
+        failure_ids=[_UUID],
+        scope_where=ADMIN_SCOPE,
+        scope_params=ADMIN_SCOPE_PARAMS,
+        ch=ch,
     )
     await EQ.claim_batch(
         limit=10,

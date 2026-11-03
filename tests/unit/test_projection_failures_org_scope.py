@@ -126,3 +126,66 @@ async def test_an_unreadable_classification_reads_and_changes_nothing(
         )
         assert resolved.resolved == 0
     assert org_admin_with_hidden.calls == []
+
+
+@pytest.mark.asyncio
+async def test_the_corpus_scope_is_the_one_the_builder_makes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The analyzer corpus EXPLAINs these statements with a copied admin scope; it must be
+    the fragment `resolve_org_scope` builds."""
+    import server.auth.context as ctx
+    from server.auth import sharing
+    from server.auth.context import resolve_org_scope
+    from tests.analyzer.cases._common import NS, ORG
+    from tests.analyzer.cases.planes import ADMIN_SCOPE, ADMIN_SCOPE_PARAMS
+
+    admin = AuthInfo(
+        subject="ops", org=ORG, namespaces=("*",), roles=(Role.ORG_ADMIN,), is_service_account=False
+    )
+    monkeypatch.setattr(ctx, "current_auth", lambda: admin)
+
+    async def hidden(org: str) -> list[str]:
+        return ["restricted"]
+
+    async def readable(auth: AuthInfo, org: str) -> list[str]:
+        return [NS]
+
+    monkeypatch.setattr(ctx, "restricted_namespaces_hidden_from", hidden)
+    monkeypatch.setattr(sharing, "readable", readable)
+    scope = await resolve_org_scope(ORG)
+    assert (scope.where, scope.params) == (ADMIN_SCOPE, ADMIN_SCOPE_PARAMS)
+
+
+@pytest.mark.asyncio
+async def test_a_platform_admin_is_held_to_the_restricted_rule_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A platform admin reads every collection but no restricted namespace it cannot read."""
+    import server.auth.context as ctx
+    from server.insights.api.models_ops import ProjectionFailureListInput
+    from server.insights.app.ops import handle_projection_failures_list
+
+    platform = AuthInfo(
+        subject="root",
+        org="*",
+        namespaces=("*",),
+        roles=(Role.PLATFORM_ADMIN,),
+        is_service_account=False,
+    )
+    monkeypatch.setattr(ctx, "current_auth", lambda: platform)
+
+    async def hidden(org: str) -> list[str]:
+        return ["restricted-ns"]
+
+    monkeypatch.setattr(ctx, "restricted_namespaces_hidden_from", hidden)
+    ch = (
+        RecordingCH()
+        .on("FROM loom.memory_projection_failures", [])
+        .install(monkeypatch, "server.memory.app.projection_failures")
+    )
+    await handle_projection_failures_list(ProjectionFailureListInput(org="dev"))
+    (call,) = ch.calls
+    assert "namespace NOT IN {ns_hidden:Array(String)}" in call.sql
+    assert call.params["ns_hidden"] == ["restricted-ns"]
+    assert "col_prefix" not in call.params
