@@ -187,6 +187,10 @@ worker retries. "Nothing to delete" (404, zero rows) counts as success.
 | Langfuse   | `LOOM_LANGFUSE_URL` + `LOOM_LANGFUSE_ADMIN_TOKEN`          | Traces found by `userId` within the org's tag, or by the `org:` + `namespace:` tag pair.          |
 | ClickStack | `LOOM_CLICKSTACK_DATABASE`, `LOOM_CLICKSTACK_USER_ID_KEYS` | OTel rows in the same ClickHouse service, matched on the user-id attribute keys or the namespace. |
 
+A ClickStack namespace erasure matches a `loom.namespace` row only when it carries the
+erasing org's `loom.org`, so Loom's own op and domain metrics, which carry no org, keep
+the namespace label ([ClickStack erasure](../integrations/clickstack.md#erasure)).
+
 An unconfigured backend logs the intent and deletes nothing. Only a `namespace_list`
 erasure may pass `external=false`; `user_id` and `namespace` erasures always include the
 backends. `LOOM_EXTERNAL_ERASURE_TIMEOUT_S` bounds each call. Setup:
