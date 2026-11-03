@@ -1,9 +1,10 @@
-"""The SQL a read of `loom.namespace_grants` uses to find the rows that
-confer access, and to put a subject's highest grant first.
+"""The SQL fragments the grant reads share: the rows of `loom.namespace_grants`
+that confer access, a subject's highest grant first, the subjects the
+directory may tie to a person, and the account emails that tie.
 
 The authorization gate (`server/auth`) and the identity plane read the same
-table, and a platform package may not import a domain package nor a domain
-store a platform one, so the two fragments live here, once.
+tables, and a platform package may not import a domain package nor a domain
+store a platform one, so the fragments live here, once.
 """
 
 from __future__ import annotations
@@ -33,13 +34,9 @@ def has_aliases_sql(column: str) -> str:
     return " AND ".join([f"{column} NOT IN ('', '*', '{EVERYONE}')", *one_spelling])
 
 
-# Whether a `loom.namespaces` row's `contact_email` is its owner's own address, so
-# another spelling of them: an SSO account's (it has no password; the identity provider
-# verified the email) or one linked to the address (`loom.sso_links`). Self-signup never
-# verifies the email it is given, and whoever typed an address first must not hold the
-# grants written under it. It binds `{org:String}`. `loom.sso_links` holds one row per
-# linked account and is keyed by email, so the org filter scans it; bounding the scan by
-# the org's emails first costs more than it saves.
+# Whether a `loom.namespaces` row's `contact_email` is verified, so another spelling of
+# its owner: an SSO account's (no password) or one linked in `loom.sso_links`. Binds
+# `{org:String}`.
 VERIFIED_EMAIL_SQL = (
     "(password_hash = '' OR (org, namespace, contact_email) IN ("
     "SELECT org, namespace, email FROM loom.sso_links FINAL"

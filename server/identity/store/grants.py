@@ -405,11 +405,12 @@ async def stored_spellings(
         """
         SELECT DISTINCT subject FROM loom.namespace_grants FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
-          AND lowerUTF8(subject) IN {subs:Array(String)} AND revoked_at IS NULL
+          AND has(arrayMap(s -> lower(s), {subs:Array(String)}), lower(subject))
+          AND revoked_at IS NULL
         ORDER BY subject
         LIMIT 64
         """,
-        params={"org": org, "ns": namespace, "subs": sorted({s.lower() for s in spellings})},
+        params={"org": org, "ns": namespace, "subs": sorted(set(spellings))},
     )
     return [str(r["subject"]) for r in rows]
 

@@ -292,6 +292,42 @@ async def test_grants_revoke_admin_fans_out(
     assert set(_handler_env["revoke"]) == {("clickhouse", "code-x", "alice")}
 
 
+async def test_an_admin_revoked_meanwhile_stops_the_persons_later_row(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # dave holds admin under his handle and his verified email, beside one other
+    # admin who is revoked between dave's two rows: the first row stays revoked,
+    # the second is refused, and the namespace keeps an admin.
+    from server.core.errors import PreconditionFailedError
+    from server.identity.app import token_grants
+
+    async def _any(org: str, ns: str, sub: str, **_k: Any) -> GrantState | None:
+        if sub in {"dave", "dave@x.io"} and sub not in {r["subject"] for r in _handler_env["rows"]}:
+            return GrantState.from_row({"role": "admin", "status": "active", "granted_by": "ops"})
+        return None
+
+    async def _verified(org: str, subject: str, ch: Any) -> list[str]:
+        return ["dave", "dave@x.io"]
+
+    counts = iter([3, 3, 3])  # before any write, then dave's first row twice
+
+    async def _admins(*_a: Any, **_k: Any) -> int:
+        return next(counts, 1)  # the other admin is gone by dave's second row
+
+    async def _no_cascade(*_a: Any, **_k: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _any)
+    monkeypatch.setattr("server.auth.aliases.read_aliases", _verified)
+    monkeypatch.setattr(grants_repo, "count_active_admins", _admins)
+    monkeypatch.setattr(token_grants, "cascade_revoke_to_created_tokens", _no_cascade)
+    with pytest.raises(PreconditionFailedError, match="only admin"):
+        await grants_mod.handle_grants_revoke(
+            GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="dave")
+        )
+    assert [r["subject"] for r in _handler_env["rows"]] == ["dave"]
+
+
 @pytest.mark.parametrize(
     ("lowered_after_the_admin_grant", "mirrored"), [(True, False), (False, True)]
 )

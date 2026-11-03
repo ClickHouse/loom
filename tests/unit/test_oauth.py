@@ -446,25 +446,32 @@ def test_refresh_carries_the_re_derived_roles(monkeypatch: pytest.MonkeyPatch) -
 
 
 class _RowCH:
-    def __init__(self, row: dict[str, str] | None) -> None:
+    def __init__(self, row: dict[str, object] | None) -> None:
         self.row = row
 
-    async def query_one(self, sql: str, params: object = None) -> dict[str, str] | None:
+    async def query_one(self, sql: str, params: object = None) -> dict[str, object] | None:
         return self.row
 
 
 @pytest.mark.parametrize(
     ("row", "roles", "want"),
     [
-        (None, ["writer"], None),
-        ({"contact_email": "a@example.com"}, ["writer"], ["writer"]),
-        ({"contact_email": "host@example.com"}, ["platform_admin"], ["platform_admin"]),
-        ({"contact_email": "gone@example.com"}, ["platform_admin"], ["writer"]),
-        ({"contact_email": "host@example.com"}, ["writer"], ["writer"]),  # never promotes
+        ({"accounts": 0, "verified_email": ""}, ["writer"], None),
+        ({"accounts": 1, "verified_email": "a@example.com"}, ["writer"], ["writer"]),
+        (
+            {"accounts": 1, "verified_email": "host@example.com"},
+            ["platform_admin"],
+            ["platform_admin"],
+        ),
+        ({"accounts": 1, "verified_email": "gone@example.com"}, ["platform_admin"], ["writer"]),
+        # never promotes
+        ({"accounts": 1, "verified_email": "host@example.com"}, ["writer"], ["writer"]),
+        # an unverified email (none read back) keeps no role
+        ({"accounts": 1, "verified_email": ""}, ["platform_admin"], ["writer"]),
     ],
 )
 async def test_refreshed_roles(
-    monkeypatch: pytest.MonkeyPatch, row: dict[str, str] | None, roles: list[str], want: object
+    monkeypatch: pytest.MonkeyPatch, row: dict[str, object] | None, roles: list[str], want: object
 ) -> None:
     from server.settings import settings
 

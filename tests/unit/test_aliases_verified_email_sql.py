@@ -342,13 +342,23 @@ async def test_a_revoke_takes_the_rows_its_spellings_reach(
 
 
 @pytest.mark.asyncio
-async def test_a_refresh_reads_the_owners_email_not_a_personal_namespaces(
-    ch: _CH, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("subject", "roles"),
+    [
+        # Its personal namespace's row names no email; the account's verified one counts.
+        ("u-carol", ["platform_admin"]),
+        # An unverified email keeps no role, whoever's address it is.
+        ("mallory", ["writer"]),
+        ("nobody", None),  # no account left: the refresh chain ends
+    ],
+)
+async def test_a_refresh_keeps_platform_admin_by_a_verified_email_only(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch, subject: str, roles: list[str] | None
 ) -> None:
     from server.auth import login
     from server.settings import settings
 
     monkeypatch.setattr(login, "get_client", lambda: ch)
-    listed = {"carol@corp.example"}
+    listed = {"carol@corp.example", "bob@corp.example"}
     monkeypatch.setattr(type(settings), "platform_admins_set", property(lambda _s: listed))
-    assert await login.refreshed_roles("u-carol", ORG, ["platform_admin"]) == ["platform_admin"]
+    assert await login.refreshed_roles(subject, ORG, ["platform_admin"]) == roles
