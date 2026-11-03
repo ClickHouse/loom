@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getMySharingSummary, listServiceAccounts, subscribeInflight } from "./api";
+import { getMySharingSummary, listServiceAccounts, onSignInRejected, post, setToken, subscribeInflight } from "./api";
 import { ApiError } from "./lib/errors";
 
 // The GET reads ride the same request path as post(): a failure is an ApiError with the
@@ -78,5 +78,47 @@ describe("listServiceAccounts", () => {
     await expect(pending).resolves.toEqual([{ name: "ci" }]);
     expect(seen.at(-1)).toBe(0);
     unsubscribe();
+  });
+});
+
+describe("a refused sign-in token", () => {
+  afterEach(() => {
+    localStorage.clear();
+    onSignInRejected(() => undefined);
+  });
+
+  it("ends the session once on a 401 for the stored token, and still rejects the call", async () => {
+    const ended = vi.fn();
+    onSignInRejected(ended);
+    setToken("tok-a");
+    stubFetch(401, '{"detail":{"code":"AUTH_INVALID","message":"token expired: Signature has expired"}}');
+    const err = await rejection(post("/v1/collection.list", { org: "o" }));
+    expect(err.status).toBe(401);
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a 403 and a token stored while the request was in flight alone", async () => {
+    const ended = vi.fn();
+    onSignInRejected(ended);
+    setToken("tok-a");
+    stubFetch(403, '{"detail":{"code":"FORBIDDEN","message":"no grant"}}');
+    await rejection(post("/v1/collection.list", { org: "o" }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        setToken("tok-b"); // a fresh sign-in finished meanwhile
+        return new Response("{}", { status: 401 });
+      }),
+    );
+    await rejection(post("/v1/collection.list", { org: "o" }));
+    expect(ended).not.toHaveBeenCalled();
+  });
+
+  it("does nothing without a stored token", async () => {
+    const ended = vi.fn();
+    onSignInRejected(ended);
+    stubFetch(401, "{}");
+    await rejection(post("/v1/auth/login", {}));
+    expect(ended).not.toHaveBeenCalled();
   });
 });

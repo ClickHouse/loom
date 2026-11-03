@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { PasswordField } from "@clickhouse/click-ui/PasswordField";
@@ -56,8 +56,33 @@ function rememberSignInStart(): void {
   }
 }
 
-/** Sends the browser to the identity provider; it comes back to `/me#token=…`. */
+// When the gate last started an SSO sign-in on its own, so a provider that sends the
+// browser straight back with a token the server refuses cannot loop.
+const SSO_RESUMED_AT = "loom_sso_resumed_v1";
+const SSO_RESUME_GAP_MS = 5 * 60 * 1000;
+
+/** Start one SSO sign-in without a click after an expired session; false when one was
+ *  started in the last few minutes (the button is shown instead). */
+export function resumeSsoOnce(now: number = Date.now()): boolean {
+  try {
+    const last = Number(sessionStorage.getItem(SSO_RESUMED_AT) ?? 0);
+    if (now - last < SSO_RESUME_GAP_MS) return false;
+    sessionStorage.setItem(SSO_RESUMED_AT, String(now));
+  } catch {
+    return false; // no session storage: no loop guard, so no automatic sign-in
+  }
+  return true;
+}
+
+/** Sends the browser to the identity provider; it comes back to `/me#token=…`. After an
+ *  expired session it goes there by itself, so a person still signed in at the provider
+ *  returns to the page they were on. */
 function SsoGate({ reason }: { reason?: GateReason }) {
+  useEffect(() => {
+    if (reason !== "expired" || !resumeSsoOnce()) return;
+    rememberSignInStart();
+    window.location.assign("/oauth/sso");
+  }, [reason]);
   return (
     <GateShell>
       <Panel className="space-y-4">

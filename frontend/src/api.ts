@@ -78,6 +78,13 @@ export function clearToken(): void {
   localStorage.removeItem(KEY_TOKEN);
 }
 
+// The app's answer to a stored token the server refuses (expired or revoked): it sends the
+// person back to sign in. Registered by App, so this module stays free of the store.
+let signInRejected: (() => void) | null = null;
+export function onSignInRejected(fn: () => void): void {
+  signInRejected = fn;
+}
+
 /** Sign out: forget the stored token here at once, and end its session on the server
  *  when it belongs to one (the dashboard's SSO token, or a `loom login` token pasted in).
  *  The revocation is sent without waiting for it: `keepalive` lets it finish across the
@@ -250,6 +257,7 @@ function asDashboardCall(path: string, body: unknown): unknown {
 async function request(method: "GET" | "POST", path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
   _bump(+1);
   noteCallStart(); // the view's call count and span
+  const sent = token();
   try {
     const r = await fetch(
       path,
@@ -262,6 +270,9 @@ async function request(method: "GET" | "POST", path: string, body?: unknown, sig
           }
         : { method, headers: authHeader(), signal: boundedSignal(signal) },
     );
+    // A 401 on the token this request carried ends the session for every view at once.
+    // A newer token stored while the request was in flight is left alone.
+    if (r.status === 401 && sent && sent === token()) signInRejected?.();
     if (!r.ok) throw await apiErrorFromResponse(r);
     return r;
   } finally {

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SIGN_IN_FROM } from "../lib/boot";
 import { ApiError } from "../lib/errors";
 import { axeViolations } from "../test/axe";
-import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, TokenGate } from "./TokenGate";
+import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, TokenGate, resumeSsoOnce } from "./TokenGate";
 
 // The gate says why it is showing, tells a stranger how to get in, and every field is
 // labelled.
@@ -150,6 +150,31 @@ describe("TokenGate", () => {
   describe("with single sign-on on", () => {
     afterEach(() => {
       delete window.__LOOM_SSO;
+      sessionStorage.clear();
+    });
+
+    it("starts one sign-in by itself after a session expired, and no second within minutes", () => {
+      expect(resumeSsoOnce(1_000_000)).toBe(true);
+      expect(resumeSsoOnce(1_000_000 + 60_000)).toBe(false);
+      expect(resumeSsoOnce(1_000_000 + 6 * 60_000)).toBe(true);
+    });
+
+    it("on an expired session remembers the page and leaves for the identity provider", () => {
+      window.__LOOM_SSO = true;
+      history.replaceState(null, "", "/knowledge?namespace=group-a-shared");
+      render(<TokenGate onLogin={() => undefined} reason="expired" />);
+      // jsdom does not navigate; the stamp and the remembered page show the gate left.
+      expect(sessionStorage.getItem("loom_sso_resumed_v1")).not.toBeNull();
+      expect(JSON.parse(sessionStorage.getItem(SIGN_IN_FROM) ?? "{}")).toMatchObject({
+        path: "/knowledge?namespace=group-a-shared",
+      });
+      history.replaceState(null, "", "/");
+    });
+
+    it("waits for a click on a first visit", () => {
+      window.__LOOM_SSO = true;
+      render(<TokenGate onLogin={() => undefined} reason={null} />);
+      expect(sessionStorage.getItem("loom_sso_resumed_v1")).toBeNull();
     });
 
     it("sends the person to the identity provider, with no password field", () => {
@@ -162,6 +187,7 @@ describe("TokenGate", () => {
 
     it("says a session expired", () => {
       window.__LOOM_SSO = true;
+      resumeSsoOnce(); // one sign-in already started on its own: the button waits for a click
       render(<TokenGate onLogin={() => undefined} reason="expired" />);
       expect(screen.getByRole("status")).toHaveTextContent("Your session expired — sign in again.");
     });
@@ -169,6 +195,7 @@ describe("TokenGate", () => {
     it("remembers the page the sign-in starts on, so the way back opens it", () => {
       window.__LOOM_SSO = true;
       history.replaceState(null, "", "/memories?namespace=group-a-shared");
+      resumeSsoOnce();
       render(<TokenGate onLogin={() => undefined} reason="expired" />);
       const link = screen.getByRole("link", { name: "Sign in with SSO" });
       // jsdom does not navigate; the return from the provider is lib/linkToken.test.ts.

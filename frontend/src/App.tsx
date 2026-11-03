@@ -14,6 +14,7 @@ import {
   setToken,
   hasToken,
   clearToken,
+  onSignInRejected,
   storedToken,
   type MyNamespaceEntry,
 } from "./api";
@@ -40,6 +41,14 @@ import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
 import { ProblemsBanner } from "./components/ProblemsBanner";
 import { shortcutOff } from "./lib/shortcuts";
+
+// A token the server refuses mid-session (it expired or was revoked) returns every view to
+// the sign-in gate at once, instead of each view showing the refusal as its error.
+onSignInRejected(() => {
+  clearToken();
+  useStore.getState().setGateReason("expired");
+  useStore.getState().setAuthed(false);
+});
 
 // One view per chunk, so a person opening Memories does not pay for the code index
 // explorer, the graph and every admin page. React.lazy loads a view the first time it is

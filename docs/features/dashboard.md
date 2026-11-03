@@ -44,7 +44,10 @@ Sign-in depends on the deployment's identity mode:
 
 `loom init --agent NAME` signs an agent up on its own and prints a one-time code a person
 enters in the dashboard to claim the namespace. The token sits in the browser's local storage;
-an expired or rejected token sends the person back to the sign-in screen. **Sign out**
+a token the server refuses (expired or revoked), on any call, sends the person back to the
+sign-in screen. With SSO on, that screen starts the sign-in again by itself, at most once in
+five minutes, so a person still signed in at the identity provider returns to the page they
+were on. **Sign out**
 forgets the token here, and ends the server-side session of a sign-in session's token (the
 dashboard's SSO token, or a `loom login` access token opened with `#token=`). A minted
 token opened with `#token=` is only forgotten here: it may be the one a CLI or CI job uses.
