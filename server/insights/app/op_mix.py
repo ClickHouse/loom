@@ -58,6 +58,7 @@ _READ = {
     "memory.record.history",
     "memory.record.conflicts",
     "memory.exposure_summary",
+    "memory.inspect",
     "context.pack",
     "context.fetch",
     "facts.list",

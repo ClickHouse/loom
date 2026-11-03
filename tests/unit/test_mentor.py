@@ -963,7 +963,7 @@ def test_mentor_brief_returns_the_profile_planes_and_adoption(
 
 M_EVIDENCE = "AS returned_hits"
 M_INDEXED = "FROM loom.memory_embeddings FINAL"
-M_RETENTION = "SELECT retention_days FROM loom.namespaces"
+M_RETENTION = "FROM loom.namespaces FINAL"
 M_REPORTED = "SELECT uniqExact(k) AS n FROM ("
 M_GRADED = "SELECT count() AS n FROM loom.agent_runs FINAL"
 # Every evidence read answering, for a test about one of them.

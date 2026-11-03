@@ -4748,7 +4748,7 @@
           "maximum": 4294967295,
           "minimum": 0,
           "type": "integer",
-          "description": "Largest value (bytes) namespace.audit and namespace.validate read to cite a row's content hash; a larger row is cited with none. 0 = cite no hash."
+          "description": "Largest value (bytes) namespace.audit, namespace.validate and memory.inspect read to cite a row's content hash; a larger row is cited with none. 0 = cite no hash."
         },
         "namespace_taxonomy_ttl_s": {
           "default": 300.0,

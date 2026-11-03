@@ -3537,8 +3537,8 @@ class NamespaceSettings(BaseModel):
     # Most live rows the namespace audit's value scan reads (it is O(total value
     # bytes)); above it that check is skipped and says so.
     namespace_audit_index_row_scan_cap: Annotated[int, LIVE] = Field(default=20000, ge=1)
-    # Largest value (bytes) namespace.audit and namespace.validate read to cite a row's
-    # content hash; a larger row is cited with none. 0 = cite no hash.
+    # Largest value (bytes) namespace.audit, namespace.validate and memory.inspect read
+    # to cite a row's content hash; a larger row is cited with none. 0 = cite no hash.
     namespace_report_hash_max_bytes: Annotated[int, LIVE] = Field(default=65536, ge=0, le=2**32 - 1)
     # Seconds a namespace's relation cardinalities (one or many) are cached for the
     # triple writer.
@@ -5447,6 +5447,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.import_curated": 30000,
     # one embed_many over ≤256 chunks + two synchronous inserts
     "memory.import_evidence": 30000,
+    # Eight reads per view (two of them the citation read, by sort key), the ledger and
+    # the namespace's retention, plus the guide, the categories, the access check and,
+    # for an org admin, the extraction policy: about 27 statements.
+    "memory.inspect": 3000,
     # Bounded by namespace size.
     "memory.keys": 2000,
     # Bounded queries: shared point-lookup, audit by request_id, learnings_queue

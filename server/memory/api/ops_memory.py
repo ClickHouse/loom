@@ -62,6 +62,7 @@ from server.memory.api.ops_graph import (
     memory_related,
 )
 from server.memory.api.ops_import import memory_import
+from server.memory.api.ops_inspect import memory_inspect
 from server.memory.api.ops_lifecycle import (
     memory_copy_to,
     memory_cross_promote,
@@ -96,6 +97,7 @@ from server.operations.base import Operation
 # The registry (server.operations.__init__) imports this name; transports iterate it.
 OPERATIONS: list[Operation] = [
     memory_get,
+    memory_inspect,
     memory_set,
     memory_pin,
     memory_unpin,

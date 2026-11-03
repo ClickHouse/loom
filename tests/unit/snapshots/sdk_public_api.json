@@ -1013,6 +1013,10 @@
               "body",
               "options"
             ],
+            "inspect": [
+              "body",
+              "options"
+            ],
             "keys": [
               "body",
               "options"

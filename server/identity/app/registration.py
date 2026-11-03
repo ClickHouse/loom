@@ -1,7 +1,9 @@
-"""What a domain that registers namespaces needs from identity.
+"""What other domains need from identity's namespace directory: registering a
+namespace, and reading its row and retention.
 
-A code repository or a tracker source reads the namespace directory and makes
-its creator the admin through these, not through identity's store.
+A code repository or a tracker source reads the namespace directory and makes its
+creator the admin through these, and a report reads a namespace's retention here, not
+through identity's store.
 """
 
 from __future__ import annotations
@@ -21,6 +23,13 @@ async def namespace_row(
     """The directory row of (org, namespace), every column (a re-insert must carry each
     one forward), active or soft-deleted; None when the name was never registered."""
     return await namespaces_repo.fetch_row(org, namespace, ch=ch)
+
+
+async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
+    """The namespace's own `retention_days`, which sets its ledger's TTL over the table's
+    global one (0 when it sets none or is not registered)."""
+    row = await namespace_row(org, namespace, ch=ch)
+    return int(row.get("retention_days") or 0) if row else 0
 
 
 async def namespace_claimable(org: str, namespace: str, subject: str) -> bool:
@@ -60,4 +69,4 @@ async def grant_self_admin(org: str, namespace: str, subject: str) -> None:
     )
 
 
-__all__ = ["grant_self_admin", "namespace_claimable", "namespace_row"]
+__all__ = ["grant_self_admin", "namespace_claimable", "namespace_retention_days", "namespace_row"]

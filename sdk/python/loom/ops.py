@@ -212,6 +212,7 @@ OpName = Literal[
     "memory.import",
     "memory.import_curated",
     "memory.import_evidence",
+    "memory.inspect",
     "memory.keys",
     "memory.lineage",
     "memory.link",
@@ -553,6 +554,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.import",
     "memory.import_curated",
     "memory.import_evidence",
+    "memory.inspect",
     "memory.keys",
     "memory.lineage",
     "memory.link",
@@ -2796,6 +2798,18 @@ OPS: dict[str, OpSpec] = {
         30000,
         True,
         False,
+    ),
+    "memory.inspect": OpSpec(
+        "memory.inspect",
+        "MemoryInspectInput",
+        "MemoryInspectBody",
+        "MemoryInspectOutput",
+        True,
+        "viewer",
+        "experimental",
+        3000,
+        False,
+        True,
     ),
     "memory.keys": OpSpec(
         "memory.keys",
@@ -12124,6 +12138,109 @@ class MemoryImportEvidenceOutput(TypedDict, total=False):
     embedding_dim: NotRequired[int]
     edited: NotRequired[list[str]]
     skipped: NotRequired[int]
+
+
+class MemoryInspectInput(TypedDict, total=False):
+    "Inspect one user, agent or session of a namespace, read-only."
+
+    org: Required[str]
+    namespace: Required[str]
+    subject: Required[Literal["user", "agent", "session"]]
+    id: Required[str]
+    sample_limit: NotRequired[int]
+    window_seconds: NotRequired[int]
+
+
+class MemoryInspectBody(TypedDict, total=False):
+    "Inspect one user, agent or session of a namespace, read-only."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    subject: Required[Literal["user", "agent", "session"]]
+    id: Required[str]
+    sample_limit: NotRequired[int]
+    window_seconds: NotRequired[int]
+
+
+class MemoryInspectOutput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    subject: Required[Literal["user", "agent", "session"]]
+    id: Required[str]
+    computed_at: Required[str]  # date-time as ISO-8601 text
+    own: Required["InspectView"]
+    others: Required["InspectView"]
+    activity: Required["InspectActivity"]
+    settings: Required["InspectSettings"]
+    skipped: NotRequired[list[str]]
+
+
+class InspectView(TypedDict, total=False):
+    "One set of live rows of the namespace, described the same way."
+
+    definition: Required[str]
+    live_rows: NotRequired[int]
+    by_type: NotRequired[list["InspectCount"]]
+    by_status: NotRequired[list["InspectCount"]]
+    by_source_class: NotRequired[list["InspectCount"]]
+    top_tags: NotRequired[list["InspectCount"]]
+    categories: NotRequired[list["InspectCount"]]
+    first_updated_at: NotRequired[Optional[str]]
+    last_updated_at: NotRequired[Optional[str]]
+    newest: NotRequired[list["InspectRow"]]
+    complete: NotRequired[bool]
+
+
+class InspectCount(TypedDict, total=False):
+    name: Required[str]
+    rows: Required[int]
+
+
+class InspectRow(TypedDict, total=False):
+    "One live row, with the identifiers a citation needs and a short excerpt."
+
+    memory_key: Required[str]
+    memory_id: Required[str]
+    version: Required[int]
+    content_sha256: NotRequired[str]
+    memory_type: Required[str]
+    status: Required[str]
+    source_class: Required[str]
+    agent: Required[str]
+    user_id: Required[str]
+    session_id: Required[str]
+    actor: Required[str]
+    updated_at: Required[str]  # date-time as ISO-8601 text
+    sensitivity: Required[str]
+    versions: NotRequired[int]
+    excerpt: NotRequired[str]
+
+
+class InspectActivity(TypedDict, total=False):
+    "The calls the ledger files under the subject in the window."
+
+    window_seconds: Required[int]
+    calls: NotRequired[list["InspectCall"]]
+    first_at: NotRequired[Optional[str]]
+    last_at: NotRequired[Optional[str]]
+    gap: NotRequired[str]
+
+
+class InspectCall(TypedDict, total=False):
+    operation: Required[str]
+    calls: Required[int]
+    succeeded: Required[int]
+
+
+class InspectSettings(TypedDict, total=False):
+    "What creates the subject's memories, as far as the caller may read it."
+
+    guide_revision: NotRequired[int]
+    guide_summary: NotRequired[str]
+    categories_registered: NotRequired[int]
+    extraction_policy: NotRequired[Optional[str]]
+    extraction_policy_unavailable: NotRequired[str]
+    extraction_instructions: NotRequired[str]
 
 
 class MemoryKeysInput(TypedDict, total=False):
