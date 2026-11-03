@@ -2138,17 +2138,64 @@
         "document_blob_gc_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "The sweep that deletes originals no live document points at: those of deleted and re-uploaded documents, and of documents that retention (retention_documents_days, a namespace's retention_days) aged out, so the bytes leave with their rows."
+          "description": "The sweep that deletes originals no live document points at: those of deleted and re-uploaded documents, and of documents that retention (retention_documents_days, a namespace's retention_days) aged out. Their bucket objects go with them; a walk of the bucket deletes any object left."
         },
         "document_blob_gc_interval_seconds": {
           "default": 3600,
           "type": "integer",
           "description": "Seconds between document-original GC sweeps."
         },
+        "document_blob_gc_object_pages": {
+          "default": 20,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Pages of 1,000 bucket keys the sweep's walk reads a pass, from where the last stopped: one walk takes a pass per this many thousand keys."
+        },
         "document_blob_min_age_seconds": {
           "default": 3600,
           "type": "integer",
-          "description": "Seconds an original must have gone unwritten before the sweep may remove it. A write stores its original before the document row that names it, so a younger original may belong to a write still in flight. Erasure ignores it and deletes every original of its scope."
+          "description": "Seconds an original must have gone unwritten before the sweep may remove it. A write stores its original before the document row that names it, so a younger original may belong to a write still in flight. Erasure ignores it and deletes every original of its scope. With a bucket, the settings refuse one under a minimum: a write's upload budget plus its row insert's retries (906 s at the defaults; a much larger value leaves room for what the minimum does not count), or an unbounded write timeout, read timeout or pool wait."
+        },
+        "document_object_store": {
+          "default": "clickhouse",
+          "enum": [
+            "clickhouse",
+            "s3"
+          ],
+          "type": "string",
+          "description": "Where a new original's bytes go: `clickhouse` (the row's `data`) or `s3` (an object in document_s3_bucket); an original is read from where its row says."
+        },
+        "document_s3_bucket": {
+          "default": "",
+          "type": "string",
+          "description": "The S3-compatible bucket originals are written to, read from and erased from; required with document_object_store=s3 and while any object is left under the prefix."
+        },
+        "document_s3_connect_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a request to document_s3_bucket may take to connect; past it the request fails as a store error (503)."
+        },
+        "document_s3_endpoint_url": {
+          "default": "",
+          "type": "string",
+          "description": "Endpoint of an S3-compatible store; empty is AWS S3 for document_s3_region."
+        },
+        "document_s3_prefix": {
+          "default": "loom/originals",
+          "type": "string",
+          "description": "Key prefix inside document_s3_bucket; each object is `<prefix>/<org>/<namespace>/<sha256>/<write id>`."
+        },
+        "document_s3_read_timeout_s": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a request to document_s3_bucket may take to answer (a streamed download, per chunk); past it the request fails as a store error (503)."
+        },
+        "document_s3_region": {
+          "default": "",
+          "type": "string",
+          "description": "Region of document_s3_bucket; empty takes the credential chain's region."
         },
         "duplicate_threshold": {
           "default": 0.97,

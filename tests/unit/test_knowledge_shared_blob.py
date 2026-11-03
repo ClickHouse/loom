@@ -112,6 +112,43 @@ def test_a_re_upload_that_fails_after_its_put_keeps_the_live_download(monkeypatc
     assert store.put_calls == 1  # stored, then the write failed: no release ran
 
 
+def test_an_upload_the_store_refuses_leaves_the_current_version_searchable(
+    monkeypatch, store
+) -> None:
+    """The bucket is down or busy: the original is stored before the current
+    version's chunks are retired, so a refused upload retires nothing."""
+    from server.core.object_store import ObjectStoreError
+    from server.knowledge.store import blobs
+    from server.knowledge.store import chunks as chunks_repo
+
+    retired: list[str] = []
+
+    async def _none(*a, **kw):
+        return None
+
+    async def _one(*a, **kw):
+        return 1
+
+    async def _get_one(*a, **kw):
+        return _prior()
+
+    async def _retire(*a, **kw):
+        retired.append(a[2])
+
+    async def _busy(*a, **kw):
+        raise ObjectStoreError("object store write failed (SlowDown)", operation="write")
+
+    monkeypatch.setattr(chunks_repo, "find_doc_by_content_sha256", _none)
+    monkeypatch.setattr(chunks_repo, "count_active_for_doc", _one)
+    monkeypatch.setattr(chunks_repo, "mark_doc_superseded", _retire)
+    monkeypatch.setattr(documents_repo, "get_one", _get_one)
+    monkeypatch.setattr(blobs, "put", _busy)
+    monkeypatch.setattr(kh, "get_embedder", lambda: SimpleNamespace(model_name="f", dim=4))
+    with pytest.raises(ObjectStoreError):
+        asyncio.run(kh.handle_knowledge_upsert(_add()))
+    assert retired == []
+
+
 @pytest.mark.parametrize(
     "prior_state, carried",
     [

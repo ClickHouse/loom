@@ -185,7 +185,7 @@ HTTP 504, raised as `server.core.errors.BackendTimeoutError`. 504 — a ClickHou
 
 #### `BACKEND_UNAVAILABLE`
 
-HTTP 503, raised as `server.core.errors.BackendUnavailableError`. 503 — ClickHouse could not be reached after the bounded reconnect.
+HTTP 503, raised as `server.core.errors.BackendUnavailableError`. 503 — ClickHouse could not be reached after the bounded reconnect, or the document bucket failed a read, write or delete.
 
 #### `BAD_BRANCH`
 
@@ -561,7 +561,7 @@ Raised in `server/transport/mcp_auth.py`.
 
 #### `OVERLOADED`
 
-HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool, an override's lock or a conversation delete or compaction stayed contended. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool or its streams, the document bucket's transfers or streams, an override's lock or a conversation delete or compaction stayed contended. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `OVERRIDE_NOT_STORED`
 

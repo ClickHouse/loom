@@ -11,8 +11,9 @@ belongs here ([writing memories](./memory/writing.md)).
 1. **Stores the text and, optionally, the original file.** `knowledge.add` takes
    `content` as a string plus a `source_uri`, which is the document's stable identity
    and the thing an agent cites. `original_bytes_b64` (with `original_filename` and
-   `blob_content_type`) keeps the uploaded file beside the extracted text, in the
-   ClickHouse table `loom.document_blobs` addressed by its SHA-256, so a person can
+   `blob_content_type`) keeps the uploaded file beside the extracted text: a catalog row
+   in `loom.document_blobs` addressed by its SHA-256, with the bytes in that row or in a
+   bucket ([where originals are stored](#where-originals-are-stored)), so a person can
    download exactly what they uploaded.
 2. **Chunks it on its structure.** The text is split on its headings and windowed
    inside each section (`LOOM_KNOWLEDGE_CHUNK_SIZE` characters, stepping by
@@ -146,10 +147,89 @@ reads them. No table TTL removes them unless an operator configured one
 stored original stays until the `document_blob_gc` worker finds no live document naming
 it: every `LOOM_DOCUMENT_BLOB_GC_INTERVAL_SECONDS` it removes, one namespace at a time,
 the originals of deleted and re-uploaded documents and of documents a retention TTL
-removed, so originals age out with their documents. It spares an original written in
-the last `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS` (3600): a concurrent upload of the same
-bytes may be about to name it. No write deletes an original itself, so a re-upload that
-fails after storing its bytes keeps the document's current download.
+removed, so originals age out with their documents. It spares an original written in the
+last `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS` (3600): a concurrent upload of the same bytes
+may be about to name it. A re-upload that fails after storing its bytes keeps the
+document's current download: no write deletes the original a document names.
+
+With a bucket, the min age must outlast a write from the start of its upload to its row
+landing, since the store may date an object from the start of its upload. The settings
+refuse a min age below this floor (906 seconds at the defaults). It is a minimum, not a
+bound on every path a slow write can take (it does not count the client's reconnects or
+its periodic schema check one by one), so keep the min age well above it, as the 3600
+default does:
+
+- 300 seconds for the upload: a write whose upload takes longer is refused with 503, and
+  its new object, which no row names, is left to the bucket walk;
+- the row insert with every retry, a describe of the table and the insert each run twice;
+- a minute for reconnects.
+
+```text
+floor = 300 + 2 x (1 + LOOM_CH_REPLICA_BOUND_RETRIES)
+            x (LOOM_CH_TIMEOUT_READ_S + LOOM_CH_TIMEOUT_WRITE_S + 2 x LOOM_CH_POOL_WAIT_MS / 1000)
+        + 60
+```
+
+They also refuse an unbounded (0) `LOOM_CH_TIMEOUT_WRITE_S`, `LOOM_CH_TIMEOUT_READ_S` or
+`LOOM_CH_POOL_WAIT_MS`, which no floor can outlast.
+
+The floor assumes the walk's catalog read sees every acknowledged row, which holds on
+one server and on SharedMergeTree. On a self-managed ReplicatedMergeTree cluster with more
+than one replica, a sequential read waits only for inserts written with `insert_quorum`,
+which Loom's do not use, so a replica behind a write could call its object unnamed: keep
+the min age well above the floor there (the 3600 default leaves about 45 minutes), or send
+every Loom process to one replica. `loom doctor` warns about this topology
+(`replica_consistency`).
+
+## Where originals are stored
+
+An original's catalog row in `loom.document_blobs` says where its bytes are. With
+`LOOM_DOCUMENT_OBJECT_STORE=clickhouse` (the default) they are the row's `data`. With `s3`
+(which needs boto3, the `aws` extra the Docker image installs) each upload is written as its
+own object, `<LOOM_DOCUMENT_S3_PREFIX>/<org>/<namespace>/<sha256>/<write id>`, in
+`LOOM_DOCUMENT_S3_BUCKET` of an S3-compatible store (`LOOM_DOCUMENT_S3_ENDPOINT_URL`,
+`LOOM_DOCUMENT_S3_REGION`; credentials from the AWS credential chain), with the store's
+SHA-256 check, before the row naming it is written. The org and namespace segments of a
+key are percent-encoded. A row is read from wherever it says, so originals stored before
+a switch keep downloading. A download over 4 MB streams from the bucket; an object
+missing from the bucket answers `410 BLOB_GONE` and a bucket that fails answers
+`503 BACKEND_UNAVAILABLE`, never an empty file. Each process runs at most 8 bucket
+transfers (uploads, and downloads up to 4 MB) and 4 bucket streams at once; one more
+waits up to `LOOM_CH_POOL_WAIT_MS` and then answers `503 OVERLOADED`.
+
+The server's credentials need `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and
+`s3:ListBucket` on the bucket and prefix. Without `s3:ListBucket`, S3 answers a read of a
+missing object with `403 AccessDenied` instead of `404 NoSuchKey`, so a gone original
+answers `503` rather than `410`, and the sweep's walk and every erasure of the bucket fail.
+
+The `document_blob_gc` sweep, with a bucket:
+
+- deletes an unreferenced original's objects with its rows, and the record of who uploaded
+  it only once they are gone (when the bucket refuses, the walk drops the record with the
+  last object);
+- keeps a row naming an object outside the configured bucket, and records it as the
+  pass's failure. A pass reads a namespace from its first original, so after a bucket
+  change that leaves 20,000 or more such rows first in a namespace, the rest of that
+  namespace waits until the rows are fixed;
+- walks the bucket, `LOOM_DOCUMENT_BLOB_GC_OBJECT_PAGES` (20) pages of 1,000 keys per
+  pass from where the last pass stopped, and deletes an object no row names (one a
+  re-upload replaced, once the replaced row is merged away, a write whose row never
+  landed, one a failed delete kept) once it is older than
+  `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`. One walk takes one pass per 20,000 keys (at the
+  hourly default, a day per 480,000 objects).
+
+The bucket and prefix are this deployment's alone: two deployments sharing one prefix
+delete each other's originals. Erasure does not wait for the walk: it deletes the scope's
+objects before their rows ([retention and erasure](./memory/retention-and-erasure.md)).
+
+Switch to `s3` only when every replica runs a build that reads the row's location: an
+older build reads the empty `data` column and answers the download `410 BLOB_GONE`. For
+the same reason, do not roll back past this build while rows name objects: an older
+build's erasure deletes those rows and cannot reach their objects, and its sweep never
+walks the bucket. Keep the bucket and prefix fixed while any row names an object under
+them; an erasure that finds a row naming an object elsewhere fails rather than leave the
+bytes. The bucket needs its own backup, and a versioned bucket keeps erased originals until
+a lifecycle rule expires their noncurrent versions ([backup and recovery](../operations/backup-and-recovery.md)).
 
 ## Getting files in: the ingest CLI
 

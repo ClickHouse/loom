@@ -57,6 +57,9 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
 - Run the server with `LOOM_BACKGROUND_WORKERS=off`: tests that exercise a worker call its
   `run_pass` in-process against their own namespace, and a live supervisor's workers have
   no namespace filter and would drain those tests' rows.
+- `tests/integration/test_document_object_store_live.py` also needs an S3-compatible store
+  in `LOOM_TEST_S3_ENDPOINT` (CI runs a local one, see `.github/workflows/ci.yml`) and
+  skips without it.
 - CI sets `LOOM_LATENCY_BUDGET_MULTIPLIER=10`: shared runners are noisy enough that the
   default per-op budgets fire violations.
 - Tests that depend on self-signup skip in CI, which has no `LOOM_SELF_SIGNUP=open`; prefer

@@ -195,3 +195,27 @@ async def test_the_edge_undo_binds_parameters_only() -> None:
         ch, org="o", namespace="ns", close_ids=["c1"], pairs=[("alice", "carol")]
     )
     assert len(ch.executed) == 1 and "SELECT" not in ch.executed[0]
+
+
+async def test_the_document_blob_sweep_mutates_by_bound_parameters_only() -> None:
+    """The original sweep's deletes of `loom.document_blobs` and `loom.blob_uploads`."""
+    from server.knowledge.store import blobs
+
+    class _Recorder:
+        def __init__(self) -> None:
+            self.executed: list[str] = []
+
+        async def query_one(self, sql: str, params: Any = None, **kw: Any) -> Any:
+            return {"cutoff_ms": 0}
+
+        async def query_all(self, sql: str, params: Any = None, **kw: Any) -> list[Any]:
+            return []
+
+        async def execute(self, sql: str, params: Any = None, **kw: Any) -> None:
+            self.executed.append(sql)
+
+    ch = _Recorder()
+    await blobs.delete("o", "ns", ["a" * 64], min_age_s=3600, ch=ch)
+    await blobs.forget_uploads([("o", "ns", "a" * 64)], 3600, ch=ch)
+    assert {s.split()[2] for s in ch.executed} == {"loom.document_blobs", "loom.blob_uploads"}
+    assert _refused(ch.executed) == []

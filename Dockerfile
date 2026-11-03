@@ -17,7 +17,8 @@ COPY sdk ./sdk
 # lemmatizer and needs build-essential to compile, which is why it is an
 # extra rather than a core dep (a host that only runs the `loom` CLI must
 # `pip install -e .` without a compiler).
-# [aws] (boto3) ships in the image for `loom export-analytics`.
+# [aws] (boto3) ships in the image for `loom export-analytics` and for
+# LOOM_DOCUMENT_OBJECT_STORE=s3 (document originals in a bucket).
 # [code] extras (tree-sitter, numpy) ship in the image: the code-plane
 # workers and the async code.refresh path lazy-import them at runtime,
 # so a plain "." install boots green and then crashes on first ingest.

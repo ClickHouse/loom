@@ -342,7 +342,6 @@ server/knowledge/app/download_routes.py::_BUFFER_MAX_BYTES
 server/knowledge/app/knowledge_search.py::PRIVATE_HIT_THRESHOLD
 server/knowledge/app/repo_docs.py::DOCS_SECTION_MAX_DOCS
 server/knowledge/app/repo_docs.py::DOCS_SECTION_MAX_TOKENS
-server/knowledge/workers/blob_gc.py::_BATCH
 server/knowledge/workers/blob_gc.py::_MAX_BATCHES
 server/llm/client.py::_MAX_OVERRIDE_CLIENTS
 server/llm/gateway.py::_MAX_LIFE_S

@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any
 
+from server.core import object_store
+from server.core.background import gather_or_cancel
+from server.core.ch import sequential_reads
 from server.core.ch_params import chunks
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
@@ -19,10 +21,18 @@ from server.erasure.store.mutations import (
     purge_mode,
     tombstone_scoped,
 )
-from server.erasure.store.predicates import CHUNK_KEYS_IN, NS_EQ, ORG_NS, ORG_UID, UID
+from server.erasure.store.predicates import (
+    CHUNK_KEYS_IN,
+    NS_EQ,
+    NS_IN,
+    ORG_NS,
+    ORG_UID,
+    UID,
+)
 from server.erasure.store.scope_reads import hashes, slices_or_one_empty, user_key_pairs
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
+from server.settings import settings
 
 
 async def purge_code_index_by_namespace(
@@ -851,79 +861,192 @@ async def tombstone_documents_by_user(
     )
 
 
-# The originals the user uploaded (`loom.blob_uploads`: a document version
-# naming one may since have been replaced and merged away), or that a version
-# of their documents still names, that no other writer's live document shares
-# (two documents with the same bytes share one row). Read, then deleted by name.
-_USERS_OWN_BLOBS = (
-    "org = {org:String} AND (namespace, toString(sha256)) IN ("
-    " SELECT namespace, toString(sha256) FROM loom.blob_uploads"
+# The (namespace, sha256) of every original the user wrote that no other writer's
+# live document shares (two documents with the same bytes share one row), read
+# from the record of their uploads (`loom.blob_uploads`: a document version that
+# named one may since have been replaced and merged away) and from their
+# documents, so bytes whose catalog row never landed are found too.
+_USERS_OWN_ORIGINALS = (
+    "SELECT DISTINCT namespace, sha FROM ("
+    " SELECT namespace, toString(sha256) AS sha FROM loom.blob_uploads"
     " WHERE org = {org:String} AND user_id = {uid:String}"
-    " UNION ALL SELECT namespace, blob_path FROM loom.documents"
+    " UNION ALL SELECT namespace, blob_path AS sha FROM loom.documents"
     " WHERE org = {org:String} AND user_id = {uid:String} AND blob_path != '')"
-    " AND (namespace, toString(sha256)) NOT IN ("
+    " WHERE (namespace, sha) NOT IN ("
     " SELECT namespace, blob_path FROM loom.documents FINAL"
     " WHERE org = {org:String} AND user_id != {uid:String} AND blob_path != ''"
     " AND superseded_at IS NULL)"
 )
+# The catalog rows of those originals, by the pairs bound: reading the subquery
+# again could name rows whose objects the step did not delete.
+_USERS_OWN_BLOBS = (
+    "org = {org:String} AND (namespace, toString(sha256)) IN {pairs:Array(Tuple(String, String))}"
+)
 _USERS_UNERASED = ORG_UID + " AND blob_path != '' AND blob_erased_at IS NULL"
-_BLOBS_IN = "(namespace, toString(sha256)) IN {blobs:Array(Tuple(String, String))}"
 
 
-async def _users_own_blobs(
-    org: str, user_id: str, ch: _CHClient, among: list[tuple[str, str]] | None = None
-) -> list[tuple[str, str]]:
-    """The (namespace, sha256) of the originals `_USERS_OWN_BLOBS` names, of `among`
-    when given."""
-    where = _USERS_OWN_BLOBS
-    params: dict[str, Any] = {"org": org, "uid": user_id}
-    if among is not None:
-        where += f" AND {_BLOBS_IN}"
-        params["blobs"] = among
-    rows = await ch.query_all(
-        "SELECT DISTINCT namespace, toString(sha256) AS sha "
-        f"FROM loom.document_blobs WHERE {where}",
-        params=params,
+async def _erasure_bucket(scope_where: str, params: dict[str, object], ch: _CHClient) -> str:
+    """The bucket the scope's objects are deleted from ('' for none configured).
+    The step fails closed when a row of the scope names an object it cannot
+    reach: no bucket is configured, or the row's object lies outside the
+    configured bucket and prefix (written under a former setting)."""
+    bucket = settings.document_s3_bucket
+    root = object_store.Location(bucket, object_store.root_prefix()).uri()
+    row = await ch.query_one(
+        "SELECT countIf(location != '') AS stored,"
+        # Four segments below the root, as Loom lays a key out; not matched to the scope.
+        " countIf(location != '' AND NOT (startsWith(location, {root:String}) AND"
+        " length(splitByChar('/', substring(location, length({root:String}) + 1))) = 4))"
+        " AS elsewhere"
+        f" FROM loom.document_blobs WHERE {scope_where}",
+        params={**params, "root": root},
     )
-    return sorted({(str(r["namespace"]), str(r["sha"])) for r in rows})
+    stored = int((row or {}).get("stored") or 0)
+    elsewhere = int((row or {}).get("elsewhere") or 0)
+    if stored and not bucket:
+        raise RuntimeError(
+            "originals of this scope are in an object store and LOOM_DOCUMENT_S3_BUCKET is unset"
+        )
+    if elsewhere:
+        raise RuntimeError(
+            f"{elsewhere} original(s) of this scope are outside LOOM_DOCUMENT_S3_BUCKET and"
+            " LOOM_DOCUMENT_S3_PREFIX"
+        )
+    return bucket
+
+
+async def _listed(
+    org: str, pairs: list[tuple[str, str]], bucket: str
+) -> tuple[list[str], list[list[str]]]:
+    """Each original's prefix of `pairs` and the keys listed under it; a prefix holds
+    a write or two, and the listings share the store's listing threads."""
+    prefixes = [object_store.original_prefix(org, ns, sha) for ns, sha in pairs]
+    found = await gather_or_cancel(*(object_store.keys_under(bucket, p) for p in prefixes))
+    return prefixes, found
+
+
+async def _erase_user_objects(org: str, pairs: list[tuple[str, str]], bucket: str) -> None:
+    """Delete every object holding bytes of the originals `pairs` names (each
+    write of them, named by a row or not), and check the store kept none."""
+    prefixes, found = await _listed(org, pairs, bucket)
+    await object_store.delete(bucket, [k for listed in found for k in listed])
+    # A prefix that listed nothing has nothing to recount.
+    left = sum(
+        await gather_or_cancel(
+            *(
+                object_store.count_under(bucket, p)
+                for p, listed in zip(prefixes, found, strict=True)
+                if listed
+            )
+        )
+    )
+    if left:
+        raise object_store.ObjectStoreError(
+            f"the object store still holds {left} erased object(s)", operation="erase"
+        )
+
+
+async def _clear_unnamed_user_objects(
+    org: str, pairs: list[tuple[str, str]], bucket: str, ch: _CHClient
+) -> None:
+    """After the batch's rows are gone: delete the objects under `pairs`' prefixes
+    that no catalog row names. A write whose row the mutation took is one; a write
+    whose row is in by the read below keeps its object. A write of those bytes still in
+    flight, by anyone (object stored, row not yet in), loses its object, and its row,
+    when it lands, names a deleted one: its download answers 410."""
+    _, found = await _listed(org, pairs, bucket)
+    keys = [k for listed in found for k in listed]
+    if not keys:
+        return
+    rows = await ch.query_all(
+        "SELECT DISTINCT location FROM loom.document_blobs"
+        f" WHERE {_USERS_OWN_BLOBS} AND location != ''",
+        params={"org": org, "pairs": pairs},
+    )
+    named = {str(r["location"]) for r in rows}
+    unnamed = [k for k in keys if object_store.Location(bucket, k).uri() not in named]
+    await object_store.delete(bucket, unnamed)
 
 
 async def erase_blobs_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
-    """Delete the user's uploaded originals no other writer shares, stamp
-    `blob_erased_at` on every document of the user's that had one, then delete
-    the record of their uploads. Returns the originals deleted.
+    """Delete the user's uploaded originals no other writer shares (their
+    objects first, then the rows naming them), stamp `blob_erased_at` on every
+    document of the user's that had one, then delete the record of their
+    uploads. Returns the originals deleted.
 
-    Each slice of originals is read again right before its DELETE, so an original that
-    another writer's document named since the first read stays."""
+    The originals are the user's while no other writer's live document names
+    the same bytes; each batch is read again right before its delete. Another
+    writer storing the same bytes in the same namespace between that read and the
+    delete can lose them, as with the ClickHouse store, where the bytes are the
+    row the step deletes.
+
+    Every read runs with sequential consistency: the pairs decide what is
+    deleted and the counts decide whether a delete is sent, while the upload
+    records go by user id at the end, so a replica behind a fresh upload would
+    leave its bytes with nothing left to find them by."""
     ch = ch or _default_client()
+    with sequential_reads():
+        n = await _erase_user_originals_by_batch(org, user_id, ch)
+        await count_then_mutate(
+            "loom.documents",
+            count_where=_USERS_UNERASED,
+            mutation="UPDATE blob_erased_at = {now:DateTime}",
+            mutation_where=_USERS_UNERASED,
+            params={"org": org, "uid": user_id},
+            ch=ch,
+        )
+        await count_then_mutate(
+            "loom.blob_uploads",
+            count_where=ORG_UID,
+            mutation="DELETE",
+            mutation_where=ORG_UID,
+            params={"org": org, "uid": user_id},
+            final=False,
+            ch=ch,
+        )
+    return n
+
+
+async def _still_own(
+    org: str, user_id: str, pairs: list[tuple[str, str]], ch: _CHClient
+) -> list[tuple[str, str]]:
+    """The originals of `pairs` that are still the user's alone."""
+    rows = await ch.query_all(
+        f"SELECT namespace, sha FROM ({_USERS_OWN_ORIGINALS})"
+        " WHERE (namespace, sha) IN {pairs:Array(Tuple(String, String))}",
+        params={"org": org, "uid": user_id, "pairs": pairs},
+    )
+    return sorted((str(r["namespace"]), str(r["sha"])) for r in rows)
+
+
+async def _erase_user_originals_by_batch(org: str, user_id: str, ch: _CHClient) -> int:
+    """The user's originals, read, then a batch at a time, each batch read again right
+    before it is deleted, so an original another writer's document named since stays;
+    with a bucket, its objects go before and after its rows."""
+    rows = await ch.query_all(_USERS_OWN_ORIGINALS, params={"org": org, "uid": user_id})
+    pairs = sorted((str(r["namespace"]), str(r["sha"])) for r in rows)
     n = 0
-    for part in chunks(await _users_own_blobs(org, user_id, ch)):
-        still_own = await _users_own_blobs(org, user_id, ch, part)
-        if still_own:
-            n += await delete_scoped(
-                "loom.document_blobs",
-                org=org,
-                scope_where=_BLOBS_IN,
-                params={"blobs": still_own},
-                ch=ch,
-            )
-    await count_then_mutate(
-        "loom.documents",
-        count_where=_USERS_UNERASED,
-        mutation="UPDATE blob_erased_at = {now:DateTime}",
-        mutation_where=_USERS_UNERASED,
-        params={"org": org, "uid": user_id},
-        ch=ch,
-    )
-    await count_then_mutate(
-        "loom.blob_uploads",
-        count_where=ORG_UID,
-        mutation="DELETE",
-        mutation_where=ORG_UID,
-        params={"org": org, "uid": user_id},
-        final=False,
-        ch=ch,
-    )
+    # As many originals per statement as one bound parameter carries.
+    for part in chunks(pairs):
+        batch = await _still_own(org, user_id, part, ch)
+        if not batch:
+            continue
+        batch_params: dict[str, object] = {"org": org, "pairs": batch}
+        bucket = await _erasure_bucket(_USERS_OWN_BLOBS, batch_params, ch)
+        if bucket:
+            await _erase_user_objects(org, batch, bucket)
+        # A mutation: a row from before a store switch holds its bytes in `data`.
+        n += await count_then_mutate(
+            "loom.document_blobs",
+            count_where=_USERS_OWN_BLOBS,
+            mutation="DELETE",
+            mutation_where=_USERS_OWN_BLOBS,
+            params=batch_params,
+            final=False,
+            ch=ch,
+        )
+        if bucket:
+            await _clear_unnamed_user_objects(org, batch, bucket, ch)
     return n
 
 
@@ -953,7 +1076,22 @@ _UNERASED_BLOBS = (
 async def delete_document_blobs_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
-    """Every uploaded original stored for the scope (loom.document_blobs)."""
+    """Every uploaded original stored for the scope: every object of the scope
+    under its prefixes, then the loom.document_blobs rows."""
+    ch = ch or _default_client()
+    names = namespaces_of(namespace)
+    scope = "org = {org:String} AND " + NS_IN
+    # Sequential: a replica behind a row naming an object outside the bucket
+    # would let the step pass instead of failing closed.
+    with sequential_reads():
+        bucket = await _erasure_bucket(scope, {"org": org, "ns": names}, ch)
+    if bucket:
+        own = set(names)
+        await object_store.delete_under(
+            bucket,
+            [object_store.namespace_prefix(org, n) for n in names],
+            owned=lambda key: object_store.in_namespaces(key, org, own),
+        )
     return await delete_scoped(
         "loom.document_blobs", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
     )

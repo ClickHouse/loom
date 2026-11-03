@@ -66,12 +66,14 @@ def _serve(
 
     monkeypatch.setattr(documents_repo, "get_one", fake_get_one)
 
-    async def fake_size(org: str, namespace: str, sha: str, **_: Any) -> int | None:
+    async def fake_locate(org: str, namespace: str, sha: str, **_: Any) -> blob_store.Stored | None:
         data = (blobs or {}).get(sha)
-        return None if data is None else len(data)
+        return None if data is None else blob_store.Stored(len(data), "")
 
     @asynccontextmanager
-    async def fake_stream(org: str, namespace: str, sha: str, **_: Any) -> AsyncIterator[Any]:
+    async def fake_stream(
+        org: str, namespace: str, sha: str, *, stored: blob_store.Stored, **_: Any
+    ) -> AsyncIterator[Any]:
         data = (blobs or {}).get(sha, b"")
 
         async def chunks() -> AsyncIterator[bytes]:
@@ -84,10 +86,14 @@ def _serve(
         finally:
             closed.append(sha)
 
-    async def fake_read(org: str, namespace: str, sha: str, **_: Any) -> bytes:
-        return (blobs or {}).get(sha, b"")
+    async def fake_read(
+        org: str, namespace: str, sha: str, *, stored: blob_store.Stored, **_: Any
+    ) -> bytes | None:
+        # As `blobs.read`: None when no row holds the original whole.
+        data = (blobs or {}).get(sha)
+        return data if data is not None and len(data) == stored.size else None
 
-    monkeypatch.setattr(blob_store, "size", fake_size)
+    monkeypatch.setattr(blob_store, "locate", fake_locate)
     monkeypatch.setattr(blob_store, "read", fake_read)
     monkeypatch.setattr(blob_store, "stream", fake_stream)
 
@@ -197,14 +203,14 @@ def test_an_original_deleted_after_its_size_was_read_is_410(
     data = b"x" * 1000
     store = {"e" * 64: data}
     _serve(monkeypatch, _row(blob_path="e" * 64), store)
-    size = blob_store.size
+    locate = blob_store.locate
 
-    async def size_then_delete(*a: Any, **k: Any) -> int | None:
-        n = await size(*a, **k)
+    async def locate_then_delete(*a: Any, **k: Any) -> blob_store.Stored | None:
+        found = await locate(*a, **k)
         store.clear()
-        return n
+        return found
 
-    monkeypatch.setattr(blob_store, "size", size_then_delete)
+    monkeypatch.setattr(blob_store, "locate", locate_then_delete)
     monkeypatch.setattr(download_routes, "_BUFFER_MAX_BYTES", buffer_max)
     r = client.get(URL)
     assert r.status_code == 410 and r.json()["detail"]["code"] == "BLOB_GONE"
@@ -218,12 +224,12 @@ def test_an_original_this_replica_has_not_seen_is_read_again_sequentially(
 
     data = b"%PDF-1.7 fresh"
     _serve(monkeypatch, _row(blob_path="f" * 64), {"f" * 64: data})
-    size = blob_store.size
+    locate = blob_store.locate
 
-    async def lagging_size(*a: Any, **k: Any) -> int | None:
-        return await size(*a, **k) if sequential_reads_active() else None
+    async def lagging_locate(*a: Any, **k: Any) -> blob_store.Stored | None:
+        return await locate(*a, **k) if sequential_reads_active() else None
 
-    monkeypatch.setattr(blob_store, "size", lagging_size)
+    monkeypatch.setattr(blob_store, "locate", lagging_locate)
     r = client.get(URL)
     assert r.status_code == 200 and r.content == data
 

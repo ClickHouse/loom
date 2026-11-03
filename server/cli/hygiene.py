@@ -13,6 +13,21 @@ from typing import Any
 from server.cli._apply import add_apply_flags
 from server.cli._ch import run_connected
 
+
+def _bucket_client_installed() -> bool:
+    """With a document bucket set, boto3 must be installed: an erasure or its
+    census lists the bucket, and would otherwise stop partway on the import.
+    Prints why and answers False when it is not."""
+    from server.core import object_store
+
+    try:
+        object_store.require_client()
+    except RuntimeError as e:
+        print(f"loom: {e}", file=sys.stderr)
+        return False
+    return True
+
+
 # ----------------------------------------------------------------------
 # loom drops — memory ingest drop ledger (loom.memory_drops)
 # ----------------------------------------------------------------------
@@ -213,7 +228,8 @@ def _cmd_namespaces_gc(args: argparse.Namespace) -> int:
     step. Bench harnesses do this themselves at the end of a run; this
     command is for the backlog and for runs that died before cleanup.
     """
-
+    if args.erase and not _bucket_client_installed():
+        return 2
     prefixes = (
         tuple(args.prefix) if args.prefix else (() if args.namespace else _gc_default_prefixes())
     )
@@ -467,6 +483,10 @@ def _cmd_erasure_re_verify(args: argparse.Namespace) -> int:
     with `--erase` each batch leaves in one loom-only purge saga. The
     closing line reads the two integrity gauges the fix must bring to 0.
     """
+    # Only a run that submits a saga needs the bucket client: a read-only one still
+    # prints the table counts when the bucket cannot be listed (`evidence_census`).
+    if (args.resume or args.erase) and not _bucket_client_installed():
+        return 2
 
     async def _run(ch: Any) -> int:
         # One connection for the whole command (see `_cmd_namespaces_gc`).
@@ -602,10 +622,10 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
         scope_type, scope_value, purge, _external = _re_verify_scope(row)
         names = scope_value if isinstance(scope_value, list) else [scope_value]
         with erasure_mutations.purge_scope(purge):
-            census = await erasure_census.residue_census(
+            census, bucket_error = await erasure_census.evidence_census(
                 str(row["org"]), scope_type, scope_value, ch=ch
             )
-        residue = {t.split(".", 1)[-1]: n for t, n in census.items() if n}
+        residue = {t.removeprefix("loom."): n for t, n in census.items() if n}
         done = list(row.get("steps_completed") or [])
         print(
             f"  {row['id']} {row['org']}/{row['scope_type']} attempts={row['attempts']} "
@@ -613,6 +633,8 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
         )
         print(f"    last: {str(row.get('failure_reason') or '')[:160]}")
         print(f"    residue now: {sum(residue.values())} {json.dumps(residue, sort_keys=True)}")
+        if bucket_error is not None:
+            print(f"    bucket: could not be listed ({bucket_error})")
         if args.resume:
             from server.erasure.app.saga import request_row_template, run_saga
 

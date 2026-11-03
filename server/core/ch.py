@@ -620,6 +620,25 @@ def _as_utc_instant(value: Any) -> Any:
     return value
 
 
+async def acquire_slot(slots: asyncio.Semaphore, what: str) -> None:
+    """One of `slots`, or 503 OVERLOADED after `ch_pool_wait_ms`. Each caller
+    (ClickHouse streams, the document bucket's streams and transfers) passes
+    slots of its own and names them in `what` for the error."""
+    wait_ms = int(settings.ch_pool_wait_ms)
+    if wait_ms <= 0:
+        await slots.acquire()
+        return
+    try:
+        await asyncio.wait_for(slots.acquire(), timeout=wait_ms / 1000.0)
+    except TimeoutError:
+        from server.core.errors import OverloadedError
+
+        raise OverloadedError(
+            f"every {what} of this process is busy; retry shortly",
+            retry_after_s=1,
+        ) from None
+
+
 class CHClient:
     """Singleton-ish wrapper. Use `get_client()` to fetch."""
 
@@ -1019,7 +1038,7 @@ class CHClient:
 
         self._ensure_state()
         await guard_pending_schema("raw_stream", sql, "read")
-        await self._acquire_stream_slot()
+        await acquire_slot(self._stream_slots, "streaming read")
         try:
             stream = await self._retry_ladder("raw_stream", _open, cls="read")
             async with stream:
@@ -1029,21 +1048,6 @@ class CHClient:
                 self._inflight[gen] = self._inflight.get(gen, 1) - 1
                 await self._retire_if_done(gen)
             self._stream_slots.release()
-
-    async def _acquire_stream_slot(self) -> None:
-        """One of the `STREAM_SLOTS`, or 503 OVERLOADED after `ch_pool_wait_ms`."""
-        wait_ms = int(settings.ch_pool_wait_ms)
-        if wait_ms <= 0:
-            await self._stream_slots.acquire()
-            return
-        try:
-            await asyncio.wait_for(self._stream_slots.acquire(), timeout=wait_ms / 1000.0)
-        except TimeoutError:
-            from server.core.errors import OverloadedError
-
-            raise OverloadedError(
-                "every streaming read of this process is busy; retry shortly", retry_after_s=1
-            ) from None
 
     async def execute(
         self,

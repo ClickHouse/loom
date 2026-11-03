@@ -201,8 +201,9 @@ def _settings_left_as_found() -> Iterator[None]:
 _KNOWN_PROCESS_STATE_LEAKS: frozenset[str] = frozenset()
 # pytest rewrites this for every phase; it is not a test's state.
 _PYTEST_ENV = frozenset({"PYTEST_CURRENT_TEST"})
-# The session loop's default executor threads outlive every test by design.
-_LOOP_THREAD_PREFIX = "asyncio_"
+# The session loop's default executor threads, and the document bucket's own pool
+# (`server.core.object_store`), outlive every test by design.
+_SHARED_THREAD_PREFIXES = ("asyncio_", "loom-object-store")
 _THREAD_JOIN_SECONDS = 2.0
 
 
@@ -239,11 +240,11 @@ def _reset_root_logger(level: int, handlers: list[logging.Handler], latch: bool)
 def _leaked_threads(before: set[threading.Thread]) -> list[str]:
     """Non-daemon threads the test started that are still running after a
     bounded join. Daemon threads die with the process; the session loop's
-    executor threads are shared by design."""
+    executor threads and the bucket pool are shared by design."""
     leaked = [
         t
         for t in threading.enumerate()
-        if t not in before and not t.daemon and not t.name.startswith(_LOOP_THREAD_PREFIX)
+        if t not in before and not t.daemon and not t.name.startswith(_SHARED_THREAD_PREFIXES)
     ]
     deadline = time.monotonic() + _THREAD_JOIN_SECONDS
     for t in leaked:

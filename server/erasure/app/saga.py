@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.background import register_deferred_task
+from server.core.errors import BackendUnavailableError
 from server.erasure.api.erasure import (
     ErasureRequestInput,
     ErasureRequestOutput,
@@ -299,11 +300,14 @@ async def run_saga(
             else:  # pragma: no cover — Pydantic enforces ScopeType
                 raise ValueError(f"unsupported scope_type: {input.scope_type}")
         except Exception as e:
-            # A backend that refused or timed out is the fail-closed path working:
-            # the recovery worker retries it, so one line names the step and the
-            # cause; a traceback is for the unexpected case.
+            # A backend that refused or timed out (ClickHouse, or the document
+            # bucket) is the fail-closed path working: the recovery worker retries
+            # it, so one line names the step and the cause; a traceback is for the
+            # unexpected case.
             cause = getattr(e, "cause", None)
-            if isinstance(e, ErasureStepError) and isinstance(cause, ErasureBackendError):
+            if isinstance(e, ErasureStepError) and isinstance(
+                cause, (ErasureBackendError, BackendUnavailableError)
+            ):
                 log.warning(
                     "erasure %s failed at step %s (backend, will retry): %s",
                     erasure_id,
@@ -418,10 +422,14 @@ async def _census_tail(
         return
     try:
         with erasure_mutations.purge_scope(purge):
-            per_table = await erasure_census.residue_census(org, scope_type, scope_value)
+            per_table, bucket_error = await erasure_census.evidence_census(
+                org, scope_type, scope_value
+            )
     except Exception as e:  # noqa: BLE001 — the step's error is the reason; this is a footnote
         log.warning("erasure: census tail failed after a step failure: %s", e)
         return
+    if bucket_error is not None:
+        log.warning("erasure: census tail could not list the bucket: %s", bucket_error)
     verify["per_table"] = per_table
     verify["count"] = sum(per_table.values())
     verify["verified_at"] = datetime.now(UTC).replace(tzinfo=None)

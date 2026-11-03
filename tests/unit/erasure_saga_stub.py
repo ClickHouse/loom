@@ -42,6 +42,8 @@ class _TraceCH:
             return {"engine": "KeeperMap"}
         if " AS keys" in sql:
             return {"keys": ["k"]}
+        if "location != ''" in sql:  # originals in an object store: none here
+            return {"stored": 0, "elsewhere": 0}
         if "count()" not in sql:
             return None
         done = any(f"FROM {t} " in sql for step, t in self.rewritten if step == _STEP.get())

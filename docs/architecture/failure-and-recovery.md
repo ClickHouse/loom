@@ -57,6 +57,9 @@ keeps the write to one round trip.
 No request waits unboundedly on a shared resource:
 
 - **ClickHouse pool:** a bounded wait, then `OVERLOADED` ([ClickHouse client](#clickhouse-client)).
+- **Document bucket:** 8 transfers and 4 streams per process, each a bounded wait
+  (`LOOM_CH_POOL_WAIT_MS`), then `OVERLOADED`; listings and deletes (erasure, the sweep)
+  wait for one of 4 slots of their own.
 - **Rate limits:** 429 `RATE_LIMITED` with `Retry-After`. Over MCP the transport waits once
   for a short hint (`LOOM_MCP_RATELIMIT_RETRY_MAX_WAIT_S`) and re-checks.
 - **Query embedding:** `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` (2.5 s) per attempt, retried
@@ -144,6 +147,7 @@ the audit insert, boot calibration, the embedding caches and every telemetry wri
 | Embedding provider    | `memory.set` and `memory.bulk_set` fail: no fact is stored without its vector. Paths that can wait (`memory.promote`, chunk embeds) store a stub for `embedding_worker`. A conversation turn is stored with its embed error recorded and stays unembedded (nothing retries it); `conversation.compact` writes no summary and tombstones no turn (`embed-failed`). `memory.search` fails with 503 `EMBED_TIMEOUT` unless the query's vector is in the embedding cache. A hung provider sets no health flag (the log shows `query embed exceeded`); one that answers errors shows `provider_failing:<name>` on `/v1/health`. |
 | Embedding key missing | The process serves the fake embedder, with an error log and a `problems` entry; searches match only rows written under the fake model.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | LLM provider          | Each call retries (four attempts). Fail-open stages (HyDE, rerank, the extraction verifier, titles) are skipped; extraction and `memory.ask` synthesis have no substitute. `LOOM_LLM_FALLBACK_MODEL` hands an outage to a second model.                                                                                                                                                                                                                                                                                                                                                                                    |
+| Document bucket       | Uploads and downloads of originals kept in the bucket answer 503 `BACKEND_UNAVAILABLE`, and a download of one that is gone 410. An erasure step that reaches the bucket fails closed and `erasure_recovery` retries it. The originals sweep records the pass's failure and its bucket walk resumes from its cursor on the next pass.                                                                                                                                                                                                                                                                                       |
 | Langfuse, ClickStack  | Tracing and export drop; requests are unaffected. A configured erasure backend that is down fails its saga step, and recovery retries it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 **Why `memory.set` fails instead of storing a stub:** a stub is invisible to every search
@@ -205,11 +209,15 @@ transition until it resumes and drains, or an operator retires it.
   `BACKUP` or native backups; `dev/backup_loom.py` moves a deployment, an org or a
   namespace, it is not disaster recovery. See [backup and recovery](../operations/backup-and-recovery.md).
 - **Files outside ClickHouse.** Document originals are in ClickHouse
-  (`loom.document_blobs`). Code mirrors live on a volume and re-clone from the remote
-  ClickHouse records on a host without them. Provider reconfiguration keeps nothing on
-  the host ([provider reconfiguration](provider-reconfiguration.md)).
-- **A move to another host or ClickHouse.** Carry ClickHouse, the env config and
-  `LOOM_JWT_SECRET`; everything else comes back
+  (`loom.document_blobs`), or, for those written with `LOOM_DOCUMENT_OBJECT_STORE=s3`,
+  in an S3-compatible bucket, which is backed up with the bucket's own versioning or
+  replication; a lifecycle rule bounds how long those copies keep erased originals. Code
+  mirrors live on a volume and re-clone from the remote ClickHouse records on a host
+  without them. Provider reconfiguration keeps nothing on the host
+  ([provider reconfiguration](provider-reconfiguration.md)).
+- **A move to another host or ClickHouse.** Carry ClickHouse, the env config,
+  `LOOM_JWT_SECRET` and, while rows name objects in it, the document bucket; everything
+  else comes back
   ([moving a deployment](../operations/backup-and-recovery.md#moving-a-deployment)).
 
 ## Capacity

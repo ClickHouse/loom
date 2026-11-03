@@ -24,6 +24,8 @@ class StubCH:
         self.execute_calls: list[tuple[str, dict[str, Any]]] = []
 
     async def query_one(self, sql, params=None):
+        if "location != ''" in sql:  # originals in an object store: none here
+            return {"stored": 0, "elsewhere": 0}
         self.query_one_calls.append((sql, params or {}))
         return self.query_one_returns.pop(0) if self.query_one_returns else None
 

@@ -97,12 +97,15 @@ dev = [
 # lazy-imports them with an actionable error message when missing.
 ingest = [
   "pypdf>=4.0",
-  "boto3>=1.34",
+  "boto3>=1.36",      # the document bucket client's checksum options; see `aws`
   "trafilatura>=2.0",
 ]
-# `loom export-analytics` uploads to S3 under an assumed role; ships in the image.
+# `loom export-analytics` uploads to S3 under an assumed role, and
+# LOOM_DOCUMENT_OBJECT_STORE=s3 keeps document originals in a bucket; ships in the image.
 aws = [
-  "boto3>=1.35.2", # the first whose put_object takes IfNoneMatch
+  # 1.36: the first whose client config takes the checksum options the document
+  # bucket client sets (put_object's IfNoneMatch came in 1.35.2)
+  "boto3>=1.36",
 ]
 # Code intelligence plane: tree-sitter parses C++ for
 # the fast tier, numpy runs the weekly PageRank. Needed only when the code
@@ -209,7 +212,7 @@ module = ["re2"]
 ignore_missing_imports = true
 
 # boto3 is the SDK's and the server's optional `aws` extra (a bot key in Secrets
-# Manager, `loom export-analytics`), and ships no types.
+# Manager, `loom export-analytics`, the document bucket), and ships no types.
 [[tool.mypy.overrides]]
 module = ["boto3", "boto3.*", "botocore", "botocore.*"]
 ignore_missing_imports = true

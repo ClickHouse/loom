@@ -30,11 +30,13 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         state["reads"].append((org, ns, after))
         return [s for s in sorted(state["orphans"][(org, ns)]) if s > after][:limit]
 
-    async def delete(org: str, ns: str, shas: list[str], *, min_age_s: int = 0, **_: Any) -> int:
+    async def delete(
+        org: str, ns: str, shas: list[str], *, min_age_s: int = 0, **_: Any
+    ) -> blobs.Deleted:
         gone = [s for s in shas if s not in state["spared"]]
         state["deleted"].append((org, ns, gone, min_age_s))
         state["orphans"][(org, ns)] -= set(gone)
-        return len(gone)
+        return blobs.Deleted(len(gone))
 
     monkeypatch.setattr(blobs, "namespaces", namespaces)
     monkeypatch.setattr(blobs, "unreferenced", unreferenced)
@@ -77,3 +79,62 @@ def test_the_sweep_runs_on_its_own_switch_and_cadence(monkeypatch: pytest.Monkey
     monkeypatch.setattr(settings, "document_blob_gc_enabled", False)
     assert registry.worker_meta()["document_blob_gc"]["enabled"] is False
     assert "document_blob_gc" not in {s.name for s in registry.enabled_workers()}
+
+
+def test_a_kept_row_and_a_refused_object_delete_are_each_the_pass_s_failure(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.object_store import ObjectStoreError
+
+    answers = iter(
+        [
+            blobs.Deleted(0, kept=1),  # a row naming an object outside the bucket
+            blobs.Deleted(1, error=ObjectStoreError("delete failed", operation="delete")),
+        ]
+    )
+
+    async def delete(*args: Any, **kw: Any) -> blobs.Deleted:
+        return next(answers)
+
+    failures: list[str] = []
+    monkeypatch.setattr(blobs, "delete", delete)
+    monkeypatch.setattr(
+        blob_gc.pass_context, "note_failure", lambda e, what="": failures.append(what)
+    )
+    monkeypatch.setattr(blob_gc, "_BATCH", 1)
+    store["orphans"] = {("o", "a"): {"1", "2"}}
+    asyncio.run(blob_gc.sweep_namespace("o", "a", settings.document_blob_min_age_seconds))
+    assert failures == [
+        "document_blob_gc: unreachable objects",
+        "document_blob_gc: object delete",
+    ]
+
+
+def test_a_pass_s_bucket_deletes_count_in_the_worker_s_written_rows(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import contextlib
+    from types import SimpleNamespace
+
+    from server.workers import status_store
+
+    async def two_objects(min_age_s: int) -> int:
+        return 2
+
+    rec = SimpleNamespace(outcome=None)
+    monkeypatch.setattr(blob_gc, "_sweep_bucket", two_objects)
+    monkeypatch.setattr(blob_gc.settings, "document_s3_bucket", "b")
+    monkeypatch.setattr(blob_gc, "record_pass", lambda name: contextlib.nullcontext(rec))
+    store["orphans"] = {("o", "a"): {"1"}}
+    asyncio.run(blob_gc.run_pass())
+    _, _, written = status_store.counts(rec.outcome)
+    assert written == 3, rec.outcome  # one original's rows and two bucket objects
+
+
+def test_a_batch_of_originals_binds_as_one_parameter() -> None:
+    """The delete binds a batch's shas in one parameter: it must fit the field."""
+    from server.core.ch_params import chunks
+
+    batch = [f"{i:064x}" for i in range(blob_gc._BATCH)]
+    assert len(list(chunks(batch))) == 1
+    assert blob_gc._BATCH * blob_gc._MAX_BATCHES == 20_000  # the docs' bound per namespace

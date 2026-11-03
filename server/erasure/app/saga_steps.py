@@ -61,6 +61,10 @@ async def _step_verify_residue(
     substrate the read paths touch. Fills `holder` for the terminal
     checkpoint; zero is the only pass."""
     per_table = await erasure_census.residue_census(org, scope_type, scope_value)
+    if scope_type == "namespace":  # and the scope's objects left in the document bucket
+        per_table[erasure_census.OBJECT_RESIDUE] = await erasure_census.object_residue(
+            org, scope_value
+        )
     holder["per_table"] = per_table
     holder["count"] = sum(per_table.values())
     holder["verified_at"] = datetime.now(UTC).replace(tzinfo=None)

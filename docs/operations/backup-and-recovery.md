@@ -1,23 +1,27 @@
 # Backup and recovery
 
-A Loom backup is a ClickHouse backup. All durable state is in ClickHouse, uploaded
-document originals (`loom.document_blobs`), token signing keys (`loom.signing_keys`) and
-admin runtime overrides (`loom.runtime_overrides`) included. Two things sit outside it:
+A Loom backup is a ClickHouse backup, plus the document bucket while any catalog row
+names an object in it. ClickHouse holds the originals' catalog (`loom.document_blobs`,
+and on the default store their bytes), the token signing keys (`loom.signing_keys`) and
+the admin runtime overrides (`loom.runtime_overrides`). These sit outside ClickHouse:
 
 - `LOOM_JWT_SECRET`, the root secret. It seals the stored credentials and the signing
   keys, so a backup restored without it opens neither. Keep it with the env config.
 - the code index's git mirrors under `var/code_repos`, a cache of the remotes recorded in
   ClickHouse. A host without a mirror clones it again.
+- `LOOM_DOCUMENT_S3_BUCKET`, holding the bytes of the originals written while
+  `LOOM_DOCUMENT_OBJECT_STORE=s3` (switching back keeps them there); ClickHouse keeps
+  each object's location.
 
 ## Choosing a backup
 
-| Method                                                                  | Covers                                                    | Consistent snapshot          | Use for                                                              |
-| ----------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------- | -------------------------------------------------------------------- |
-| ClickHouse Cloud backups                                                | every table of the service                                | yes (service-level)          | disaster recovery on Cloud                                           |
-| `BACKUP DATABASE loom TO Disk(...)` / `S3(...)`, or `clickhouse-backup` | every `loom.*` table                                      | yes                          | disaster recovery on self-managed OSS                                |
-| `BACKUP DATABASE loom_telemetry TO ...`                                 | the SLI rollup (`loom_telemetry.sli_minute`)              | yes                          | keeping SLO history past the 31 days a refold of the ledger recovers |
-| `dev/backup_loom.py` portable dump                                      | every Loom table (below)                                  | per table, not across tables | moving a deployment, an org or a namespace; cold copies              |
-| `namespace.snapshot`                                                    | one namespace's curated memory, types, grants, audit tail | one call                     | copying or freezing a namespace through the API                      |
+| Method                                                                  | Covers                                                    | Consistent snapshot          | Use for                                                                                                      |
+| ----------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| ClickHouse Cloud backups                                                | every table of the service                                | yes (service-level)          | disaster recovery on Cloud                                                                                   |
+| `BACKUP DATABASE loom TO Disk(...)` / `S3(...)`, or `clickhouse-backup` | every `loom.*` table                                      | yes                          | disaster recovery on self-managed OSS                                                                        |
+| `BACKUP DATABASE loom_telemetry TO ...`                                 | the SLI rollup (`loom_telemetry.sli_minute`)              | yes                          | keeping SLO history past the 31 days a refold of the ledger recovers                                         |
+| `dev/backup_loom.py` portable dump                                      | every Loom table (below)                                  | per table, not across tables | moving a deployment, an org or a namespace (originals in a bucket: [below](#the-portable-dump)); cold copies |
+| `namespace.snapshot`                                                    | one namespace's curated memory, types, grants, audit tail | one call                     | copying or freezing a namespace through the API                                                              |
 
 ## The portable dump
 
@@ -54,24 +58,45 @@ is cut off, its last line names the table it was in; check that table's count be
 rerun with `--into-nonempty`, which would append it again.
 
 The manifest records each insert-fired materialized view's source and target table.
-Because an attach fires no view, restore refuses a selection that holds one end of a
-view without the other: `memory` without `memory_versions` (and
-`memory_code_link_queue`) would leave `memory.history`, `memory.redact` and
-`namespace.rollback` blind to the restored versions, and `code_term_freq` without
-`code_chunks` would be filled again when the code is re-ingested. No view joins `documents`
-and `document_blobs`, but restore refuses one without the other too: documents without
-their originals answer 410 on every download, and originals without their documents are
-what the originals sweep deletes. Both tools take `documents` before every other table,
-so with `--into-live` and workers running, the sweep never sees a restored original
-before the document that names it. Select both ends, or pass `--allow-view-split` when
-the target already holds the rows. `dev/backup_loom.py
---exclude t1,t2` leaves out tables a pass rebuilds, together with every table a view
-fills from them (`code_chunks` takes `code_term_freq` and `code_doc_stats` with it);
-`restore_loom.py --exclude` leaves tables of a backup out.
+Because an attach fires no view, restore refuses a selection that holds one end of a view
+without the other: `memory` without `memory_versions` (and `memory_code_link_queue`) would
+leave `memory.history`, `memory.redact` and `namespace.rollback` blind to the restored
+versions, and `code_term_freq` without `code_chunks` would be filled again when the code
+is re-ingested. No view joins `documents` and `document_blobs`, but restore refuses one
+without the other too: documents without their originals answer 410 on every download, and
+originals without their documents are what the originals sweep deletes. Both tools take
+`documents` before every other table, so with `--into-live` and workers running, the sweep
+never sees a restored original row before the document that names it (for the bucket's
+objects, see below). Select both ends, or pass `--allow-view-split` when the target
+already holds the rows. `dev/backup_loom.py --exclude t1,t2` leaves out tables a pass
+rebuilds, together with every table a view fills from them (`code_chunks` takes
+`code_term_freq` and `code_doc_stats` with it); `restore_loom.py --exclude` leaves tables
+of a backup out.
 
 Document originals (`document_blobs`) are binary. The dump writes them as raw bytes and
 sets `output_format_json_validate_utf8 = 0` itself, so a profile that validates UTF-8
 cannot replace them; a binary original takes about 1.6 times its size in the dump.
+
+A row written with `LOOM_DOCUMENT_OBJECT_STORE=s3` holds only the object's location, and
+the bytes are in the bucket. Back the bucket up with its own versioning or replication,
+and restore it, into the bucket of the same name (each row names it), after the
+ClickHouse backup that names its objects, or with `LOOM_DOCUMENT_BLOB_GC_ENABLED=false`
+until both are back: a restored object may keep its old modification time (it depends on
+how it is restored), so the bucket walk would delete each one whose `document_blobs` row
+has not landed yet.
+
+A versioned bucket keeps every deleted object as a noncurrent version, and replication
+does not replicate deletes by default, so erased and swept originals stay in the bucket
+(or its replica) until a lifecycle rule (`NoncurrentVersionExpiration`, and expiry on the
+replica) removes them. That rule's window is how long an erased original can still be
+restored, as a ClickHouse backup's retention is for rows.
+
+A dump carries no original's bytes for such rows, so it cannot move them: rows restored
+into another deployment still name the source bucket, its erasure refuses them as outside
+its bucket and prefix, the source's sweep deletes the objects once the source's rows are
+gone, and a target pointed at the source's bucket and prefix would sweep every object of
+the source that the target's catalog does not name. Move them by re-uploading the
+documents into the target, or move the whole deployment with the source stopped.
 
 The staging copy repeats its table's engine, except that a replicated engine in a
 database that is not `Replicated` becomes its local form with the same parameters (a
@@ -203,18 +228,23 @@ when that colour has no workers container does the rolled-forward one keep runni
 ## Moving a deployment
 
 A new Loom process pointed at the same ClickHouse, or at a moved or restored one, gets
-back every feature. Carry three things:
+back every feature. Carry these:
 
 - ClickHouse: the same service, a copy with its Keeper state, or a `dev/backup_loom.py`
   dump restored into a ClickHouse that `loom migrate` prepared;
 - the env config (`.env` or the container environment);
 - `LOOM_JWT_SECRET`. Without it no token verifies, and the stored credentials and
-  signing keys do not open.
+  signing keys do not open;
+- while any catalog row names an object in it, `LOOM_DOCUMENT_S3_BUCKET` under the same
+  name and prefix: the same bucket reached from the new host, or a bucket of that name on
+  another endpoint (`LOOM_DOCUMENT_S3_ENDPOINT_URL` is not part of a row's location).
+  Every row names its bucket, and Loom has no tool to rewrite it: a copy under another
+  name leaves every download and erasure pointed at the old one.
 
-Everything else comes back from ClickHouse: document originals, signing keys, runtime
-overrides, the supervisor lease, revocations, sign-in attempt counts and graph-walk
-invalidation marks. Git mirrors re-clone from their recorded remotes on the next ingest
-pass, or on the first history read on the new host.
+Everything else comes back from ClickHouse: document originals stored in it, signing keys,
+runtime overrides, the supervisor lease, revocations, sign-in attempt counts and
+graph-walk invalidation marks. Git mirrors re-clone from their recorded remotes on the
+next ingest pass, or on the first history read on the new host.
 
 Bounded exceptions:
 
