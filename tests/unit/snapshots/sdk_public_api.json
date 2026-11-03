@@ -2207,6 +2207,7 @@
           "outcome",
           "alternatives",
           "confidence",
+          "stage",
           "decision_maker",
           "caused_by",
           "influenced_by",

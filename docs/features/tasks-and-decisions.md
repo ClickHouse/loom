@@ -272,6 +272,30 @@ it whole, or names it when it would pass the block's ceiling, and search embeds 
 characters less its ` (#<key>)` suffix, so it opens with the scenario; a longer statement is also stored as chunks,
 which search reads too.
 
+`stage` is `decided` (the default) or `proposed`: an option put forward and not yet chosen or built, such as a proposal,
+a plan or an action item. A proposed decision's statement reads `Proposed <outcome> because <reasoning>.` and its row
+carries the `decision:proposed` tag, so the pre-edit block and search present it as a proposal. A proposed ban keeps its
+`constraint` tag: the pre-edit block still shows it first, worded as a proposal, and reads `Proposed <outcome>.` when no
+reason is stated.
+
+The stage is kept on the row, not the record: `context.pack` lists a proposed decision as `→ proposed: <outcome>`, and
+`decision.precedents` and `decision.chain` answer its `stage`, read from the tag on the row that holds the record (a
+decision whose outcome is recorded reads as decided).
+
+`decision.outcome` drops the stage, since an outcome records that the decision was acted on: the statement then reads
+`Decided … Realized: …`. Recording the decision again with `stage: "decided"` drops it too. `decision.record` ignores a
+caller's own `decision:proposed` tag; `memory.update`, which replaces a row's tags, edits the tag like any other, and
+the readers follow it.
+
+A `loom decisions extract` run keeps an extracted row's stage, in either direction, while the document's words for it
+stay the same, and records a changed text at the stage it reads as. The words are the decision's reasoning and its
+rejected options' reasons: a proposal whose status line or title changes to accepted keeps its rows proposed, with a
+note that the document reads as decided. Mark such a decision decided by sending the body a `--dry-run` reports for it
+(it carries the extractor's identity, so it replaces the row) with `stage: "decided"`, record its outcome with
+`decision.outcome`, or delete the document's extracted rows that are not pinned or attested and extract it again, which
+reads every row's stage afresh. Pinning a row, or attesting it with `memory.verify`, keeps a stage set by hand: a run
+never records that row again.
+
 - **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the stored
   category, scenario, outcome, reasoning, alternatives and realized outcome (not `decision_maker` or `run_id`, which
   the row never holds).
@@ -281,8 +305,9 @@ which search reads too.
   ([how the block reads](../concepts/memory.md#tags-entities-and-files)).
 - **Source**: `source_resource_id` and `source_class` set those columns as on `memory.set`; `source_resource_id`
   cites the document the decision was taken from.
-- **Outcome**: `decision.outcome` keeps the row's files, source, declared class and the caller's tags. It sets the
-  `decision` tags again and works out the server's `sensitivity:` and `attribute:` labels again.
+- **Outcome**: `decision.outcome` keeps the row's files, source, declared class and the caller's tags. It drops the
+  `decision:proposed` tag, sets the `decision` tags again and works out the server's `sensitivity:` and `attribute:`
+  labels again.
 
 A decision is identified by its key, not its text. The write-time conflict check never merges a decision into another
 decision's row, files it as a duplicate of one, lets one replace it or lets a pinned one refuse it, however alike they
@@ -428,7 +453,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   the text gives no reason for is left out, except a ban or an invariant stated without one: the model emits it with
   `is_constraint` true and its own sentence as the reasoning, which the restatement check keeps (below). It says
   nothing about images or captions: what is image-only is the filter's call below, and a section it sends, such as a
-  one-line caption over a diagram beside more text, may state a decision.
+  one-line caption over a diagram beside more text, may state a decision. When the document has a title, the window's
+  text opens with a `[document: <title>]` line (its first 200 characters), so a proposal's sentences read as a
+  proposal.
 - **Second read**: a window gets at most one extra model call, reported as `read again`. When the reply holds no
   decision and the window's text is more than a caption (80 characters once images and link markup are removed), the
   window is read once more with the same prompt and the second reply is the window's. When a candidate's quote is in the
@@ -502,8 +529,18 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   restates its outcome or is its whole quote (an outcome shorter than the sentence), and whose reasoning fits an outcome
   (1000 characters; a longer one is judged as any other candidate), is kept with its reasoning as its outcome (a
   reasoning with fewer words than the outcome, such as "no server retry setting" of that ban, gives way to the quote
-  when the quote holds a ban word too), so it is recorded with the `constraint` tag and reads `Decided <outcome>.` with
-  no reason. The flag alone is not enough: models mark plain descriptions as constraints too.
+  when the quote holds a ban word too), so it is recorded with the `constraint` tag and reads `Decided <outcome>.`
+  (`Proposed <outcome>.` when proposed) with no reason. The flag alone is not enough: models mark plain descriptions
+  as constraints too.
+- **Stage**: the model marks each candidate `decided` or `proposed`; anything but a plain `decided` (a proposal, an RFC,
+  a feature request, a plan, future work, an action item, or no answer) is recorded with `stage: "proposed"`, because a
+  proposal served as a choice made misleads an agent more than a choice served as a proposal. The stage is the model's
+  reading and flips between runs on an unchanged document, so the same words keep the row's stage in either direction,
+  also under a key the model reworded when its outcome, reasoning and rejected options' reasons are those of one of the
+  extractor's rows on the document; a stage taken from each run would drift with every re-run. The run's note names the
+  stage the document reads as when it differs, except for a row whose outcome is recorded, which reads as decided
+  whatever the document says. A changed text is recorded at the stage it reads as. A pinned or attested row is never
+  re-recorded by a run, so its stage changes only by hand.
 - **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading at
   any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. The
   section stays in the window, since its text may give a later decision's reason.
