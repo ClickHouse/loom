@@ -336,7 +336,7 @@ class NamespaceAuditSummary(BaseModel):
     live_bytes: int = 0
     # Bytes of content_excerpt the embedding rows carry (a copy of each value's head).
     excerpt_bytes: int = 0
-    # The versions whose content differs from the same writer's previous version (a
+    # The versions whose content differs from the previous version of the same row (a
     # status-only version repeats it and is not counted), and their bytes.
     version_rows: int = 0
     version_bytes: int = 0

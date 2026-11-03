@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 import pytest
 
+from server.identity.app.namespace_audit import EMBED_HOLDS
 from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
 from tests.integration._eventually import eventually
 from tests.integration._resources import unique_org
@@ -127,8 +128,8 @@ async def stale_records(ns: _Ns) -> None:
 
 async def delayed_indexing(ns: _Ns) -> None:
     await _claims(ns)
-    # A row the embedding worker has not reached yet: written, no embedding row. The
-    # embedding row is inserted asynchronously; wait for it, then remove it.
+    # A row whose model call the deployment held: a newer embedding version with no vector,
+    # the held marker and a retry far ahead, which the worker leaves alone until then.
     await ns.set("team/fresh", "The new deploy freeze starts Monday.")
 
     async def embedded() -> int:
@@ -139,9 +140,11 @@ async def delayed_indexing(ns: _Ns) -> None:
 
     await eventually(embedded, description="the embedding row lands")
     ns.ch.command(
-        "DELETE FROM loom.memory_embeddings WHERE org = {org:String} "
-        "AND namespace = {ns:String} AND memory_key = 'team/fresh'",
-        parameters={"org": ORG, "ns": ns.name},
+        "INSERT INTO loom.memory_embeddings SELECT * REPLACE (0 AS embedding_dim, "
+        "{held:String} AS embed_last_error, now64(3) + INTERVAL 1 DAY AS embed_retry_at, "
+        "version + 1 AS version) FROM loom.memory_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = 'team/fresh'",
+        parameters={"org": ORG, "ns": ns.name, "held": EMBED_HOLDS[0]},
     )
 
 

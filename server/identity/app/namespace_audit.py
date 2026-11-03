@@ -389,9 +389,10 @@ _CONTRACT: dict[str, RuleContract] = {
         # 2: a version that repeats the one before it (a status change) is not counted.
         2,
         exceptions=(
-            "A version whose content repeats the one before it under the same writer (a "
-            "status change: conflict marking, supersession) is not counted; a value that "
-            "flips back and forth counts every time."
+            "A version whose content repeats the one before it of the same row (agent, user, "
+            "session, key; a status change: conflict marking, supersession) is not counted; a "
+            "value that flips back and forth counts every time, and so does a version with no "
+            "recorded hash."
         ),
         uncertainty="A fact that really changes often leaves a long history that is not waste.",
     ),
@@ -922,10 +923,13 @@ class _Audit:
             SELECT sum(versions) OVER () AS total, sum(bytes) OVER () AS total_bytes,
                    memory_key, versions, bytes
             FROM (SELECT memory_key, count() AS versions, sum(chars) AS bytes
-                  -- a version that repeats the one before it under the same writer (a
-                  -- status change: conflict marking, supersession) rewrites nothing
+                  -- a version that repeats the one before it of the same row (a status
+                  -- change: conflict marking, supersession) rewrites nothing
                   FROM (SELECT memory_key, length(value) AS chars,
-                               content_sha256 != lagInFrame(content_sha256) OVER (
+                               -- a version with no recorded hash (the column's '0'
+                               -- default) is not known to repeat, so it counts
+                               content_sha256 = toFixedString('0', 64)
+                               OR content_sha256 != lagInFrame(content_sha256) OVER (
                                    PARTITION BY agent, user_id, session_id, memory_key
                                    ORDER BY version
                                    ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rewrote

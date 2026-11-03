@@ -1439,7 +1439,7 @@ async def test_version_churn_counts_each_writers_distinct_contents() -> None:
         return (
             "INSERT INTO loom.memory_versions (org, namespace, agent, user_id, session_id, "
             f"memory_key, value, version, content_sha256) VALUES ('o', 'ns', 'bot', '{user}', "
-            f"'-', '{key}', 'UTC', {version}, '{sha * 64}')"
+            f"'-', '{key}', 'UTC', {version}, '{sha * 64 if sha else '0'}')"
         )
 
     rows = [
@@ -1451,12 +1451,18 @@ async def test_version_churn_counts_each_writers_distinct_contents() -> None:
         version("u2", "pref/tz", 1, "a"),
         # A status that flips back and forth is rewritten every time.
         *(version("u1", "job/state", v, "ab"[v % 2]) for v in range(1, 5)),
+        # Versions with no recorded hash (the column's default) are not known to repeat.
+        *(version("u1", "old/key", v, "") for v in range(1, 4)),
     ]
     audit = na.new_audit(_inp(), ch=_LocalCH(["memory_versions"], rows))
     await audit.version_churn()
     f = _finding(audit, "version_churn")
-    assert f.count == 6
-    assert {s["memory_key"]: s["versions"] for s in f.samples} == {"job/state": 4, "pref/tz": 2}
+    assert f.count == 9
+    assert {s["memory_key"]: s["versions"] for s in f.samples} == {
+        "job/state": 4,
+        "old/key": 3,
+        "pref/tz": 2,
+    }
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
