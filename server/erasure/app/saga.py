@@ -81,10 +81,15 @@ RESUME_ACTOR = "erasure-recovery-worker"
 
 
 def ledger_actor(row: Mapping[str, Any]) -> str:
-    """The audit actor a resumed saga keeps: the one its request's token named,
-    as the ledger holds it. A row written before the ledger kept the actor
-    names the process that resumes it."""
-    return str(row.get("actor") or "") or writer_actor(RESUME_ACTOR)
+    """The actor a saga's ledger row holds, carried forward unchanged by every
+    checkpoint: '' on a row written or checkpointed by a build before the column."""
+    return str(row.get("actor") or "")
+
+
+def audit_actor(row: Mapping[str, Any]) -> str:
+    """The actor of a saga's audit rows: the ledger's, else the process that
+    resumes the saga (a CLI command's pipeline actor, or the recovery worker)."""
+    return ledger_actor(row) or writer_actor(RESUME_ACTOR)
 
 
 def request_row_template(
@@ -186,7 +191,7 @@ async def begin_erasure(
         event_type="erasure.started",
         org=input.org,
         namespace=audit_namespace(input.scope_type, input.scope_value),
-        actor=row["actor"],
+        actor=audit_actor(row),
         subject={
             "erasure_id": erasure_id,
             "scope_type": input.scope_type,
@@ -357,7 +362,7 @@ async def run_saga(
                 event_type="erasure.failed",
                 org=input.org,
                 namespace=audit_namespace(input.scope_type, input.scope_value),
-                actor=row["actor"],
+                actor=audit_actor(row),
                 subject={
                     "erasure_id": erasure_id,
                     "requester": input.requester,
@@ -403,7 +408,7 @@ async def run_saga(
         event_type="erasure.completed",
         org=input.org,
         namespace=audit_namespace(input.scope_type, input.scope_value),
-        actor=row["actor"],
+        actor=audit_actor(row),
         subject={
             "erasure_id": erasure_id,
             "scope_type": input.scope_type,

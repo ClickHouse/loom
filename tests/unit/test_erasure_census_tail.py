@@ -320,7 +320,7 @@ async def test_the_terminal_row_keeps_the_last_step_reason_and_the_verify_column
     assert t["row"] == h.request_row_template(
         erasure_id="e9",
         input=h.input_from_ledger_row(ledger_row),
-        actor=h.RESUME_ACTOR,  # the ledger row names no actor
+        actor="",  # the ledger row names no actor and the terminal row keeps none
         requested_at=ledger_row["requested_at"],
         attempts=5,
     )
