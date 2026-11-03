@@ -242,6 +242,12 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   server or another, and a pending or rejected request caps it at no access. A scoped
   token keeps its own role there, capped at the grant. A namespace an operator named at
   mint that was never granted to the subject keeps its claim; revoke the token for that.
+- **A grant under an email reaches the account only once the email is verified.** An SSO
+  account's email is (the identity provider vouched for it), and so is one linked to its
+  password account (`loom sso adopt`, or its owner proving the password from an SSO
+  sign-in). A self-signup email is not: whoever typed the address first does not hold the
+  grants written under it, which still cap that account's claims. Grant a self-signup
+  account under its login handle.
 - **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.
   With self-signup (`LOOM_IDENTITY_PROVIDER=trust-network`) the first principal to claim a
   name owns it; `loom claim-release --org <org> --namespace <ns>` revokes its grants,
@@ -261,7 +267,7 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
 ### List every grant
 
 `grants.list` answers one row per person, newest grant first: a login handle and the
-contact email tied to it fold into one row, the other spelling in `also`. A person with an
+verified email tied to it fold into one row, the other spelling in `also`. A person with an
 active grant reads `active` at their highest active role, with any request of theirs in
 `pending_role`. A page holds up to `limit` rows (default 100, at most 500). When more people
 follow, the answer carries `truncated: true` and a `next_cursor`; send it back as `cursor`,

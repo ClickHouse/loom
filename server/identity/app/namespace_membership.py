@@ -502,8 +502,8 @@ async def handle_namespace_list_mine(
     # this handler stays read-only.
     # Union of grant rows + JWT namespaces. LEFT JOIN namespace_visits
     # for the `is_new` flag — true when the caller hasn't visited since
-    # the grant was made. A grant written under the person's email before
-    # their first sign-in (an operator's, an invitation's, a sync's) is
+    # the grant was made. A grant written under the person's verified email
+    # before their first sign-in (an operator's, an invitation's, a sync's) is
     # theirs as much as one under the login handle: the gate reads both,
     # so this list names both — else the dashboard would refuse a namespace
     # the server serves.

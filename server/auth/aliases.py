@@ -9,15 +9,17 @@ spelling when they arrive under the other, and list the same human twice as
 a namespace's readers.
 
 `subject_aliases(org, subject)` returns the subject and every spelling the
-directory ties to the same self-signup row: the row whose `owner_email` is
-the subject gives its `contact_email`, the row whose `contact_email` is the
-subject gives its `owner_email`. Only rows a person signed up (a non-empty
-`contact_email`) take part; the pair is the person's own login identity —
-`self_signup` refuses a second account for an email already used — so a
-grant under either spelling is a grant to that person and nobody else.
+directory ties to the same account: the row whose `owner_email` is the
+subject gives its `contact_email`, the row whose `contact_email` is the
+subject gives its `owner_email`. Only rows whose email is verified take part
+(`VERIFIED_EMAIL_SQL`): an SSO account's, or one linked to the address. A
+self-signup email is unverified, so it ties nothing: a grant written under an
+address before its owner signs in is not handed to whoever typed it first.
 Service-account subjects (`sa:` prefix) and wildcards have no aliases. The
 gate's grant map (`server.core.grant_cache`) and the `grants.list` fold
-(`server.identity.store.grants`) read the same tie in SQL.
+(`server.identity.store.grants`) read the same tie in SQL. Where reaching
+further fails closed, an unverified pair still ties: the grant map reads it
+to cap a claim, never to admit one, and a revocation (`spellings`) reaches it.
 
 Reads are cached per (org, subject) for `grant_cache_ttl_seconds`, the bound
 other processes see a grant change within: the auth context, the login
@@ -35,6 +37,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from server.auth.fail_closed import note_unreadable
+from server.core.grant_sql import VERIFIED_EMAIL_SQL
 from server.core.principals import has_aliases
 
 log = logging.getLogger("loom.auth.aliases")
@@ -69,8 +72,11 @@ async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -
     return out
 
 
-async def _rows(org: str, subject: str, ch: object | None) -> list[dict[str, Any]]:
-    """The accounts tying `subject` to another spelling, matched in any case."""
+async def _rows(
+    org: str, subject: str, ch: object | None, *, verified: bool = True
+) -> list[dict[str, Any]]:
+    """The accounts tying `subject` to another spelling, matched in any case:
+    by a verified email only, unless `verified` is False."""
     from server.core.ch import get_client
 
     client = ch or get_client()
@@ -79,12 +85,12 @@ async def _rows(org: str, subject: str, ch: object | None) -> list[dict[str, Any
         SELECT owner_email, contact_email
         FROM loom.namespaces FINAL
         WHERE org = {org:String} AND ifNull(active, true) = true
-          AND contact_email != ''
+          AND contact_email != '' AND (NOT {verified:Bool} OR {verified_email})
           AND (lower({sub:String}) = lower(owner_email)
                OR lower({sub:String}) = lower(contact_email))
         LIMIT 8
-        """,
-        params={"org": org, "sub": subject},
+        """.replace("{verified_email}", VERIFIED_EMAIL_SQL),
+        params={"org": org, "sub": subject, "verified": verified},
     )
     return rows
 
@@ -111,7 +117,8 @@ def invalidate(org: str, subjects: Iterable[str]) -> None:
 async def spellings(org: str, subject: str) -> list[str]:
     """Every spelling of `subject` a change keyed by exact spelling must reach
     (a revocation): itself, an email's lower case, and each spelling the
-    directory ties to it, as stored. Read uncached, and raising when the
+    directory ties to it, as stored, an unverified email too: a revocation
+    reaching further fails closed. Read uncached, and raising when the
     directory cannot be read: never guess."""
     from server.core.ch import own_write_reads
 
@@ -123,7 +130,7 @@ async def spellings(org: str, subject: str) -> list[str]:
     if not has_aliases(subject):
         return out
     with own_write_reads():
-        rows = await _rows(org, subject, None)
+        rows = await _rows(org, subject, None, verified=False)
     for r in rows:
         for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
             if spelling and spelling not in out:

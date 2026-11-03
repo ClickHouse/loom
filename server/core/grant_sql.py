@@ -31,3 +31,14 @@ def has_aliases_sql(column: str) -> str:
     whether the directory may tie it to a person's other spellings."""
     one_spelling = [f"NOT startsWith({column}, '{prefix}')" for prefix in ONE_SPELLING]
     return " AND ".join([f"{column} NOT IN ('', '*', '{EVERYONE}')", *one_spelling])
+
+
+# Whether a `loom.namespaces` row's `contact_email` is its owner's own address, so
+# another spelling of them: an SSO account's (it has no password; the identity provider
+# verified the email) or one linked to the address (`loom.sso_links`). Self-signup never
+# verifies the email it is given, and whoever typed an address first must not hold the
+# grants written under it.
+VERIFIED_EMAIL_SQL = (
+    "(password_hash = '' OR (org, namespace, contact_email) IN ("
+    "SELECT org, namespace, email FROM loom.sso_links FINAL WHERE linked = 1))"
+)

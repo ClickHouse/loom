@@ -13,7 +13,13 @@ from typing import Any
 
 from server.core import grant_cache
 from server.core.datetimes import to_naive_utc
-from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT, grant_rank_sql, has_aliases_sql
+from server.core.grant_sql import (
+    GRANT_RANK_SQL,
+    LIVE_GRANT,
+    VERIFIED_EMAIL_SQL,
+    grant_rank_sql,
+    has_aliases_sql,
+)
 from server.core.principals import AGENT, EVERYONE, GROUP, SERVICE_ACCOUNT
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.grants import GrantPerson, GrantState, PendingGrant
@@ -185,6 +191,7 @@ FROM (
                        arrayJoin([handle, lowerUTF8(contact_email)]) AS spelling
                 FROM loom.namespaces FINAL
                 WHERE org = {org:String} AND ifNull(active, true) = true AND contact_email != ''
+                  AND {verified}
             )
             -- Only spellings that ever held a grant here (a superset of the live ones
             -- needs no FINAL): the map then grows with the namespace, not the org.
@@ -207,6 +214,7 @@ _PEOPLE_PAGE = (
     .replace("{rank}", GRANT_RANK_SQL)
     .replace("{rank_asked}", grant_rank_sql("asked"))
     .replace("{has_aliases}", has_aliases_sql("g.subject"))
+    .replace("{verified}", VERIFIED_EMAIL_SQL)
 )
 
 

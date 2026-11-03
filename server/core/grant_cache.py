@@ -37,7 +37,7 @@ from typing import Any
 
 from server.core import readiness
 from server.core.errors import BackendUnavailableError
-from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
+from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT, VERIFIED_EMAIL_SQL
 from server.core.principals import has_aliases
 from server.settings import settings
 
@@ -361,10 +361,12 @@ async def _load(key: _Key, hit: _Entry | None, writes: int | None) -> GrantMap:
 async def _read(org: str, subject: str) -> GrantMap:
     """One read: the subject's rows under every spelling the directory ties to
     it (`server.auth.aliases`), folded per namespace. Only the spelling itself
-    and its active account's pair (`held`) set the rank there. Its deactivated
-    account's pair, and the spellings a release kept (`released_aliases`, never
-    the row's current owner), still tie it at rank 0 (`capping`): their rows
-    may be the revocations that cap, never a grant that admits. One row: the
+    and its active account's pair, when the account's email is verified
+    (`held`), set the rank there. An unverified pair (a self-signup's email,
+    which anyone could have typed), its deactivated account's pair, and the
+    spellings a release kept (`released_aliases`, never the row's current
+    owner), still tie it at rank 0 (`capping`): their rows may be the
+    revocations that cap, never a grant that admits. One row: the
     namespaces' ranks, and every spelling read, for `invalidate`."""
     from server.core.ch import get_client, own_write_reads
 
@@ -374,10 +376,11 @@ async def _read(org: str, subject: str) -> GrantMap:
             """
             WITH (
                 SELECT (
-                    arrayFlatten(groupArrayIf(pair, own AND live)),
-                    arrayFlatten(groupArray(
-                        arrayConcat(if(own AND NOT live, pair, []), if(own, [], released_aliases))
-                    ))
+                    arrayFlatten(groupArrayIf(pair, own AND live AND verified)),
+                    arrayFlatten(groupArray(arrayConcat(
+                        if(own AND NOT (live AND verified), pair, []),
+                        if(own, [], released_aliases)
+                    )))
                 )
                 FROM (
                     -- `own`: the row is the subject's account; else it matched on
@@ -385,7 +388,8 @@ async def _read(org: str, subject: str) -> GrantMap:
                     SELECT [lower(owner_email), lower(contact_email)] AS pair,
                            released_aliases,
                            contact_email != '' AND has(pair, {sub:String}) AS own,
-                           active AS live
+                           active AS live,
+                           {verified} AS verified
                     FROM loom.namespaces FINAL
                     WHERE {human:Bool} AND org = {org:String}
                       AND ((contact_email != ''
@@ -405,7 +409,9 @@ async def _read(org: str, subject: str) -> GrantMap:
                   AND (has(held, lower(subject)) OR has(capping, lower(subject)))
                 GROUP BY namespace
             )
-            """.replace("{live}", LIVE_GRANT).replace("{rank}", GRANT_RANK_SQL),
+            """.replace("{live}", LIVE_GRANT)
+            .replace("{rank}", GRANT_RANK_SQL)
+            .replace("{verified}", VERIFIED_EMAIL_SQL),
             params={"org": org, "sub": subject, "human": human},
         )
     row = row or {}

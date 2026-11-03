@@ -51,7 +51,7 @@ class _LocalCH:
         return run(
             # Each namespace's classification and the accounts that tie a
             # person's spellings.
-            [ddl("namespace_grants"), ddl("namespaces"), _ROWS],
+            [ddl("namespace_grants"), ddl("namespaces"), ddl("sso_links"), _ROWS],
             sql,
             params,
         )
