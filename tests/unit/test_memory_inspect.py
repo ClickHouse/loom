@@ -185,8 +185,10 @@ async def test_a_view_counts_lists_and_cites(ch: RecordingCH, cited: list[Any]) 
     # The excerpt is the decoded preview of the listed version, read for that row only.
     assert row.excerpt == "Deploys on Tuesdays."
     # The newest rows break a tie by the whole identity, as memory.list does.
-    for located in ch.statements("ORDER BY updated_at DESC"):
-        assert "ORDER BY updated_at DESC, memory_key, agent, user_id, session_id" in located.sql
+    located = ch.statements("ORDER BY updated_at DESC")
+    assert len(located) == 2  # one per view
+    for s in located:
+        assert "ORDER BY updated_at DESC, memory_key, agent, user_id, session_id" in s.sql
     previews = ch.statements("value_preview")
     assert len(previews) == 2  # one per view
     for preview in previews:
