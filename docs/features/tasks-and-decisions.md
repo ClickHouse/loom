@@ -375,8 +375,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   checkout's remote; its names are then looked up in that repository's trunk code namespace, and `--into` chooses
   where the rows go:
   - `--into source` (the default for a document outside a code namespace): the document's namespace, each row tagged
-    `repo:<id>`, the tag the coding plugins send to `memory.for_file`, so whoever reads that namespace gets the row
-    before editing a file it names. A document in the trunk itself gets untagged rows, read there by every editor.
+    `repo:<id>`, the tag the coding plugins send to `memory.for_file`, so a session whose own namespace (the plugin's
+    `namespace`) is the document's gets the row before editing a file it names. The pre-edit hook reads only that
+    namespace and the repository's trunk, so a team's shared document whose readers work from their own namespaces
+    goes in with `--into repo`. A document in the trunk itself gets untagged rows, read there by every editor.
   - `--into repo` (the default for a document in a code namespace): the repository's trunk code namespace, where every
     reader of the repository gets the row before an edit. `source_resource_id` still cites the document in its own
     namespace; there is no per-document access, so a repository reader who cannot read the document's namespace sees

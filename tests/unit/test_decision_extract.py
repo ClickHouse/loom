@@ -4134,7 +4134,7 @@ async def test_repo_trunk_matches_owner_name_or_a_remote_url(monkeypatch) -> Non
     assert repo_scope.repo_trunk("o", "git@github.com:Acme/Widgets.git") == want
     assert repo_scope.repo_trunk("other-org", "acme/widgets") == ("", "")
     assert repo_scope.repo_trunk("o", "widgets") == ("", "")
-    assert repo_scope.repo_names("o") == {want[1]: "Acme/Widgets"}
+    assert repo_scope.repo_names("o") == {want[1]: ("Acme/Widgets", "code-widgets")}
 
 
 @pytest.mark.parametrize(
@@ -4226,7 +4226,7 @@ async def test_a_run_without_repo_refuses_over_rows_linked_to_a_repository(monke
     _link_repo(monkeypatch, world)
     from server.code.app import repo_scope
 
-    monkeypatch.setattr(repo_scope, "repo_names", lambda org: {REPO_TAG: "acme/widgets"})
+    monkeypatch.setattr(repo_scope, "repo_names", lambda org: {REPO_TAG: ("acme/widgets", TRUNK)})
     report = await _run()
     # The repository by its name, which --repo takes.
     assert report.error.startswith(
@@ -4336,12 +4336,14 @@ async def test_a_dry_run_needs_only_read_where_the_rows_go(monkeypatch) -> None:
     assert applied.error == f"not allowed to write o/{TRUNK}" and world.recorded == []
 
 
+@pytest.mark.parametrize("repo", ["acme/widgets", "acme/bare"], ids=["tagged repo", "no remote"])
 @pytest.mark.asyncio
-async def test_rows_in_the_repositorys_own_namespace_carry_no_tag(monkeypatch) -> None:
-    """A document in the trunk: --into source writes to the trunk, served there untagged."""
+async def test_rows_in_the_repositorys_own_namespace_carry_no_tag(monkeypatch, repo: str) -> None:
+    """A document in the trunk: --into source writes to the trunk, served there untagged,
+    whether or not the repository has a remote to tag rows with."""
     world = _World(monkeypatch, [_candidate()])
     _link_repo(monkeypatch, world, code_namespaces=frozenset({TRUNK}))
-    await de.extract_document("o", TRUNK, "doc.md", dry_run=False, repo="acme/bare", into="source")
+    await de.extract_document("o", TRUNK, "doc.md", dry_run=False, repo=repo, into="source")
     (inp,) = world.recorded
     assert inp.namespace == TRUNK and not [t for t in inp.tags if t.startswith("repo:")]
 
@@ -4437,7 +4439,7 @@ async def test_a_linked_repository_the_caller_may_not_read_stays_a_tag(monkeypat
     world = _World(monkeypatch, [c])
     world.record(_key(c), _same_fields(c), files=[HEADER], tags=["decision", REPO_TAG])
     _link_repo(monkeypatch, world, refused=frozenset({(TRUNK, "viewer")}))
-    monkeypatch.setattr(repo_scope, "repo_names", lambda org: {REPO_TAG: "acme/widgets"})
+    monkeypatch.setattr(repo_scope, "repo_names", lambda org: {REPO_TAG: ("acme/widgets", TRUNK)})
     report = await _run()
     assert report.error.startswith(
         f"this document's decisions are linked to a repository ({REPO_TAG})"

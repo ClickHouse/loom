@@ -87,7 +87,8 @@ def register_decisions_cli(sub: Any) -> None:
         default=None,
         help="With --repo, where the rows go: the repository's trunk code namespace (repo; "
         "the default for a document in a code namespace), or the document's namespace, "
-        "tagged with the repository (source; the default otherwise). A repository reader "
+        "tagged with the repository (source; the default otherwise), served before an edit "
+        "to a session whose own namespace is the document's. A repository reader "
         "who cannot read the document's namespace sees a repo row's quote but is refused "
         "its source link.",
     )

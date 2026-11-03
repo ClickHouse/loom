@@ -510,11 +510,10 @@ async def _read_own(
 async def _readable_names(org: str) -> dict[str, str]:
     """`repo:<id>` tag -> owner/name of each repository the caller may read; another
     stays a tag, as `_target` answers for a repository the caller may not read."""
-    from server.code.app.repo_scope import repo_names, repo_trunk
+    from server.code.app.repo_scope import repo_names
 
     out: dict[str, str] = {}
-    for tag, name in repo_names(org).items():
-        trunk, _tag = repo_trunk(org, name)
+    for tag, (name, trunk) in repo_names(org).items():
         if trunk and await _may(org, trunk, Role.VIEWER):
             out[tag] = name
     return out
