@@ -3532,7 +3532,7 @@
            "nargs": null,
            "type": null,
            "required": false,
-           "help": "The repository (owner/name) whose trunk code index resolves the document's code names, when the document is not in that repository's code namespace",
+           "help": "The repository (owner/name or a remote URL) whose trunk code index resolves the document's code names, when the document is not in that repository's code namespace",
            "metavar": null
           },
           {
@@ -3622,7 +3622,7 @@
        "choices_help": [
         {
          "dest": "extract",
-         "help": "Mine one knowledge document into decision records: one model call per window of its sections (a heading over only an image and its caption is not sent), two when the first reply holds no decision or a reason that is not one span of the text, candidates kept only when their quote, reasoning and rejected options' reasons are the document's own words, the reasoning says more than the outcome (a ban may give no reason) and the quote is not in a recap, summary or background section, written through decision.record as agent loom-decisions. A re-run revises or retires the extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row source-changed. Dry run by default (still calls the model); --apply writes. Exits 1 when it could not read the document (no document, no chunks, no usable model, an unknown --repo or a namespace it may not use, its own rows unreadable, no window read), 2 when a write, or a read it needed (a window included), was refused or failed (a row changed since the run read it is reported, not counted).",
+         "help": "Mine one knowledge document into decision records: one model call per window of its sections (a heading over only an image and its caption is not sent), two when the first reply holds no decision or a reason that is not one span of the text, candidates kept only when their quote, reasoning and rejected options' reasons are the document's own words, the reasoning says more than the outcome (a ban may give no reason) and the quote is not in a recap, summary or background section, written through decision.record as agent loom-decisions. A re-run revises or retires the extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row source-changed. Dry run by default (still calls the model); --apply writes. Exits 1 when it could not read the document (no document, no chunks, no usable model, an unknown --repo or a namespace it may not use, its own rows unreadable or left in another namespace, no window read), 2 when a write, or a read it needed (a window included), was refused or failed (a row changed since the run read it is reported, not counted).",
          "metavar": "extract"
         }
        ]

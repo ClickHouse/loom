@@ -380,12 +380,18 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   - `--into repo` (the default for a document in a code namespace): the repository's trunk code namespace, where every
     reader of the repository gets the row before an edit. `source_resource_id` still cites the document in its own
     namespace; there is no per-document access, so a repository reader who cannot read the document's namespace sees
-    the row's quote but is refused the document it cites.
+    the row's quote but is refused the document it cites. The rows are the trunk's: erasing the document's namespace
+    leaves them, and `memory.delete` in the trunk removes them.
 
-  The run reads the document's namespace and the repository's, and writes where the rows go; with an auth context bound
-  it checks each (viewer, viewer, writer) and refuses before any model call. The CLI runs with none, as the operator.
-  An unknown repository, or `--into` without `--repo`, exits 1. Every read the reconcile and retire steps make is in
-  the namespace the rows go to.
+  A row the run keeps as it is (pinned, attested or with a recorded outcome, and the same verbatim fields) gains the
+  `repo:<id>` tag by a tags-only write. The run reads the document's namespace and the repository's, and writes where
+  the rows go; with an auth context bound it checks each (viewer, viewer, writer) and refuses before any model call.
+  The CLI runs with none, as the operator. Every memory row the reconcile and retire steps read is in the namespace the
+  rows go to, so the run exits 1 before any model call when this document's rows from an earlier run are in the other
+  namespace a run may write them to (the trunk, or the document's namespace; for a document in a release branch's code
+  namespace, run without `--repo`, its trunk), or when a run without `--repo` finds them tagged `repo:<id>`: going on
+  would leave the document's decisions in two places, or unlinked. An unknown repository, a repository with no remote
+  to tag rows with under `--into source`, or `--into` without `--repo`, exits 1 as well.
 
 - **Windows**: the document's live chunks for the current embedding model, grouped by section, at most
   `--window-chars` (default 6000) per call. A document chunked under another embedding model has none: the command
@@ -508,9 +514,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   class preferred over its constructor) goes into `files`, several or none add nothing. A repository path the quote or
   the reasoning writes out (`src/Storages/MergeTreeData.cpp`) is added as well, as `memory.set` detects one. When the
   code index cannot be read for a name, a decision already recorded keeps the files its row has, and a new one is
-  written with the files that did resolve. Pull request numbers and setting names are printed as unresolved in a dry run, for a human to add; a
-  backticked snake_case name is looked up first and reported as a setting only when the index does not define it. A
-  name defined in several files is printed as unresolved too, for a human to pick the file.
+  written with the files that did resolve. Pull request numbers and setting names are printed as unresolved in a dry
+  run, for a human to add; a backticked snake_case name is looked up first and reported as a setting only when the
+  index does not define it. A name defined in several files is printed as unresolved too, for a human to pick the
+  file.
 - **Reconcile**: the document says otherwise only when a verbatim field differs: the reasoning, or the set of rejected
   options' reasons, each matched as a prefix where `decision.record` cut a long alternative at its 300-character cap.
   The category, scenario, outcome and option wording are the model's, and a change there alone is no change. Nor is a
