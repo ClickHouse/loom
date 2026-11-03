@@ -628,8 +628,8 @@ carried). It is visible to the next `FINAL` read, keeps prior versions in
 `memory_versions` and leaves `memory.restore` a window. Physical removal is for erasure
 with `purge=true` and runner state.
 
-- **Status flips and counter folds** on `loom.memory` (the usage fold's `evidence_count` /
-  `recall_count`, quarantine) use batched lightweight `UPDATE`: one statement per chunk of
+- **Counter folds** on `loom.memory` (the usage fold's `evidence_count` /
+  `recall_count`) use batched lightweight `UPDATE`: one statement per chunk of
   targets, with per-row values as parallel arrays through `transform()`
   (`server/memory/workers/usage_fold.py`). On ClickHouse Cloud each statement is a patch part and
   a Keeper entry, so cost is per statement. A pass is skipped while the table has too many

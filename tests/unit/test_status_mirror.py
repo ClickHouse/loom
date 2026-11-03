@@ -457,6 +457,9 @@ async def test_reject_writes_version_rows_and_updates_no_embeddings_part(
         ("s1", "rejected", drawn),
         ("s2", "rejected", drawn),
     ]
+    # A vector row written just before, on another replica, is found.
+    assert ch.vector_reads
+    assert all("select_sequential_consistency = 1" in sql for sql in ch.vector_reads)
 
 
 @pytest.mark.asyncio
@@ -490,6 +493,7 @@ class _RejectCH(_CH):
     def __init__(self) -> None:
         super().__init__()
         self.executed: list[str] = []
+        self.vector_reads: list[str] = []
 
     async def query_all(
         self, sql: str, params: dict[str, Any] | None = None
@@ -497,6 +501,7 @@ class _RejectCH(_CH):
         if "FROM loom.memory FINAL" in sql:
             assert (params or {})["key"] == "home"
             return [{"memory_id": "m1"}, {"memory_id": "m2"}]
+        self.vector_reads.append(sql)
         rows = await super().query_all(sql, params)
         # Each vector row was copied at read + 1 since its memory row (version 1).
         return [{**r, "version": 2} for r in rows]

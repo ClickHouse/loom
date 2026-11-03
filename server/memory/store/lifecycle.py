@@ -54,7 +54,8 @@ async def write_versions_by_ids(
 ) -> int:
     """Write a new version of each live row in `memory_ids`: `update(existing)`'s
     overrides on every persisted column carried forward, a fresh `version` unless it
-    sets one. `skip` leaves a row as it is; `strong` reads read-your-writes.
+    sets one. `skip` leaves a row as it is; `strong` reads read-your-writes, the
+    status mirror's vector rows included.
     `on_written` / `on_unconfirmed` hear what the re-read confirmed or could not (see
     Lifecycle in memory-architecture.md). `judged`: the rows land a verdict reached
     after the write (the conflict resolver's) on the write it judged
@@ -117,7 +118,9 @@ async def write_versions_by_ids(
     # admitting superseded and unpenalised conflicted rows.
     status_changes = [r for r in rows if r.get("status") and r.get("status") != "active"]
     if status_changes:
-        await mirror_status_to_embeddings(status_changes, ch=ch, judged=judged, strict=strict)
+        await mirror_status_to_embeddings(
+            status_changes, ch=ch, judged=judged, strict=strict, sequential=strong
+        )
     return len(confirmed)
 
 
