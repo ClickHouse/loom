@@ -384,28 +384,31 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
     namespace; there is no per-document access, so a repository reader who cannot read the document's namespace sees
     the row's quote but is refused the document it cites. The rows are the trunk's: erasing the document's namespace
     leaves them, and `memory.delete` in the trunk removes them.
-
-  Under `--into source` for a document outside the trunk, a row the run keeps as it is (pinned, attested or with a
-  recorded outcome, and the same verbatim fields, or one the retire step keeps because its reasoning is still in the
-  document), and a row it tags `source-changed`, gains the `repo:<id>` tag by a tags-only write; another writer's
-  unconfirmed row gains none, nor does a row that carries another repository's tag already.
-  The run reads the document's namespace and the repository's, and writes where the rows go; with an auth context
-  bound it checks each (viewer, viewer, and writer, or viewer for a dry run) and refuses before any model call. The
-  CLI runs with none, as the operator. Every memory row the reconcile and retire steps read is in the namespace the
-  rows go to, so the run exits 1 before any model call when this document's rows from an earlier run are in another
-  namespace a run may write them to (the document's namespace, the named repository's trunk, or, for a document in a
-  branch's code namespace, its repository's trunk), or carry another repository's `repo:<id>` tag (any, for a run
-  without `--repo`): going on would leave the document's decisions in two places, or linked to the wrong repository.
-  A caller who cannot read that other namespace is refused. Two cases the run does not see: rows an `--into repo` run
-  wrote to a repository other than the one whose code namespace holds the document (any repository, for a document
-  outside a code namespace), when a later run drops `--repo` or names another repository, so pass the same `--repo`
-  again; and two runs on one document at once with different `--into`, which can both find the other
-  namespace empty. A repository that is not configured in the org, or that the caller may not read (one answer for
-  both), a repository with no remote to tag rows with under `--into source` for a document outside the trunk,
-  `--into` without `--repo`, or `--into source` for a document in another repository's code namespace (its rows would
-  link to the named repository's code and be read in the other's), exits 1 as well, as does a run when the
-  repositories added from the dashboard could not be read. The refusal for rows linked to another repository names it
-  by `owner/name` when the caller may read it.
+  - **Tags**: under `--into source` for a document outside the trunk, a row the run keeps as it is (pinned, attested
+    or with a recorded outcome, and the same verbatim fields, or one the retire step keeps because its reasoning is
+    still in the document), and a row it tags `source-changed`, gains the `repo:<id>` tag by a tags-only write;
+    another writer's unconfirmed row gains none, nor does a row that carries another repository's tag already.
+  - **Access**: the run reads the document's namespace and the repository's, and writes where the rows go. With an
+    auth context bound it checks each (viewer, viewer, and writer, or viewer for a dry run) and refuses before any
+    model call; the CLI runs with none, as the operator.
+  - **Rows from an earlier run**: every memory row the reconcile and retire steps read is in the namespace the rows go
+    to, so the run refuses before any model call when this document's rows are in another namespace a run may write
+    them to (the document's namespace, the named repository's trunk, or, for a document in a branch's code namespace,
+    its repository's trunk), or carry another repository's `repo:<id>` tag (any, for a run without `--repo` or with a
+    repository that has no remote): going on would leave the document's decisions in two places, or linked to the
+    wrong repository. The refusal names a linked repository by `owner/name` when the caller may read it, and a caller
+    who cannot read that other namespace is refused. Two cases the run does not see: rows an `--into repo` run wrote
+    to a repository other than the one whose code namespace holds the document (any repository, for a document
+    outside a code namespace), when a later run drops `--repo` or names another repository, so pass the same `--repo`
+    again; and two runs on one document at once with different `--into`, which can both find the other namespace
+    empty.
+  - **Exit 1** before any model call, besides those refusals, for:
+    - a repository that is not configured in the org, or that the caller may not read (one answer for both);
+    - a repository with no remote to tag rows with, under `--into source` for a document outside the trunk;
+    - `--into` without `--repo`;
+    - `--into source` for a document in another repository's code namespace (its rows would link to the named
+      repository's code and be read in the other's);
+    - the repositories added from the dashboard could not be read.
 
 - **Windows**: the document's live chunks for the current embedding model, grouped by section, at most
   `--window-chars` (default 6000) per call. A document chunked under another embedding model has none: the command

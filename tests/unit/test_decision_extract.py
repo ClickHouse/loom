@@ -4058,6 +4058,7 @@ async def test_a_row_extracted_before_the_repo_tag_is_revised_to_carry_it(monkey
             "no repository 'acme/other' you may read is configured in o",
         ),
         ({"into": "source"}, set(), "--into needs --repo"),
+        ({}, {("ns", "viewer")}, "not allowed to read o/ns"),
         ({"into": "elsewhere"}, set(), "--into is repo or source, not 'elsewhere'"),
         (
             {"repo": "acme/bare"},

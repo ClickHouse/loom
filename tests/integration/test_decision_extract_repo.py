@@ -117,10 +117,13 @@ async def env(ch_client, monkeypatch):
 
 async def _extract(person: str, into: str) -> Any:
     from server.memory.app.decision_extract import extract_document
+    from server.memory.domain.provenance import cli_actor, pipeline_actor
 
-    report = await extract_document(
-        ORG, person, "design/storage.md", dry_run=False, repo="acme/widgets", into=into
-    )
+    # As the CLI runs it.
+    with pipeline_actor(cli_actor("decisions")):
+        report = await extract_document(
+            ORG, person, "design/storage.md", dry_run=False, repo="acme/widgets", into=into
+        )
     assert report.error == "", report.error
     assert [r.action for r in report.records] == ["written"], report
     assert any(f"exact -> {PATH}" in s for s in report.records[0].signals)
@@ -151,8 +154,18 @@ async def _for_file(namespace: str, tags: list[str], extra: list[str], auth: Any
     return [h for h in out.hits if h.memory_type == "decision"]
 
 
-def _assert_written(hit: Any, person: str) -> None:
+async def _assert_written(hit: Any, person: str) -> None:
     """The row as the extractor wrote it, wherever it went."""
+    import server.memory.store as memory_store
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+
+    ident = memory_store.Identity(
+        org=ORG, namespace=hit.namespace, agent="loom-decisions", user_id="-", session_id="-"
+    )
+    row = await memory_store.get_by_key(ident, hit.memory_key, scope=WHOLE_NAMESPACE, strong=True)
+    assert row is not None
+    assert (row.user_id, row.session_id) == ("-", "-")
+    assert row.source_class == "derived" and row.actor == "process:cli:decisions"
     assert hit.memory_key.startswith("decision:") and hit.memory_type == "decision"
     assert hit.agent == "loom-decisions" and hit.status == "active"
     assert hit.confidence == 0.5 and not hit.pinned
@@ -173,7 +186,7 @@ async def test_into_source_serves_the_decision_in_the_documents_namespace(env) -
     hook_tags = ["project:widgets", tag]
     (hit,) = await _for_file(person, hook_tags, [trunk], _auth(person))
     assert hit.namespace == person and tag in hit.tags
-    _assert_written(hit, person)
+    await _assert_written(hit, person)
     # A session in another repository (another tag) is not served it.
     assert await _for_file(person, ["project:other", "repo:0000000000"], [], _auth(person)) == []
     # Nor is a repository reader working from their own namespace: the row is the person's.
@@ -188,7 +201,7 @@ async def test_into_repo_serves_the_decision_to_repository_readers_only(env) -> 
     hook_tags = ["project:widgets", tag]
     (hit,) = await _for_file(reader, hook_tags, [trunk], _auth(reader, trunk))
     assert hit.namespace == trunk and tag not in hit.tags
-    _assert_written(hit, person)
+    await _assert_written(hit, person)
     # Nothing was written beside the document.
     assert await _for_file(person, hook_tags, [], _auth(person)) == []
     # A caller who cannot read the trunk is not served it.
