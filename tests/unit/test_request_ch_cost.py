@@ -2,7 +2,7 @@
 
 The ClickHouse client reads the driver's response summary after every
 statement into the request's work bag and onto the enclosing `ch.*` span,
-sends `query_id = "<request_id>:<n>"` per statement, and the ask service
+sends `query_id = "<request_id>:<n>:<nonce>"` per statement, and the ask service
 marks its stages and its injection counts into the same bag; `event_args`
 flattens the bag onto the ledger row beside `out_stage_ms`.
 """
@@ -128,7 +128,7 @@ def test_no_bound_bag_records_nothing() -> None:
     def _run() -> Any:
         rw._current.set(None)
         assert rw.note_ch_summary(_CLOUD_SUMMARY)["read_rows"] == 40628  # parsed for the span
-        assert rw.next_query_seq() is None
+        assert rw.next_query_suffix() is None
         rw.note_injected(facts=3)
         rw.note_schema_skipped("x")
         rw.mark_stage("retrieval")
@@ -185,13 +185,13 @@ def test_summary_lands_on_the_enclosing_span(monkeypatch: pytest.MonkeyPatch) ->
 # ------------------------------------------------------------------ query_id
 
 
-def test_query_id_is_request_id_colon_n_and_counts_attempts() -> None:
-    rw.begin()
+def test_query_id_is_request_id_n_nonce_and_counts_attempts() -> None:
+    bag = rw.begin()
     ch_mod.set_query_tag("memory.ask 123e4567-e89b-12d3-a456-426614174000")
     a = ch_mod.statement_settings("SELECT 1")
     b = ch_mod.statement_settings("SELECT 2")
-    assert a["query_id"] == "123e4567-e89b-12d3-a456-426614174000:1"
-    assert b["query_id"] == "123e4567-e89b-12d3-a456-426614174000:2"
+    assert a["query_id"] == f"123e4567-e89b-12d3-a456-426614174000:1:{bag.ch_nonce}"
+    assert b["query_id"] == f"123e4567-e89b-12d3-a456-426614174000:2:{bag.ch_nonce}"
     assert a["log_comment"] == "memory.ask 123e4567-e89b-12d3-a456-426614174000"
     # A caller's own id is kept.
     assert ch_mod.statement_settings("SELECT 3", {"query_id": "mine"})["query_id"] == "mine"
@@ -216,13 +216,14 @@ async def test_each_driver_call_of_a_request_carries_its_own_id(
 ) -> None:
     fake = _FakeAsync(_CLOUD_SUMMARY)
     c = _client(fake)
-    rw.begin()
+    bag = rw.begin()
     ch_mod.set_query_tag("memory.search rid-1")
     await c.query_all("SELECT 1")
     await c.insert("loom.t", [{"a": 1}])
     await c.execute("ALTER TABLE loom.t UPDATE a = 1 WHERE 1")
     ids = [s.get("query_id") for _, s in fake.calls]
-    assert ids == ["rid-1:1", "rid-1:2", "rid-1:3", "rid-1:4"]  # query, describe, insert, command
+    # query, describe, insert, command
+    assert ids == [f"rid-1:{n}:{bag.ch_nonce}" for n in (1, 2, 3, 4)]
     assert len(set(ids)) == 4
 
 

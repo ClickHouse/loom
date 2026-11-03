@@ -9,22 +9,24 @@ from server.core import request_work
 
 
 # Every statement of a request carries `query_id =
-# "<request_id>:<n>"` (the request id is the second token of the query
-# tag; n counts statements, and attempts, within the request), so
-# `system.query_log` joins `agent_events` by equality instead of `LIKE` over
+# "<request_id>:<n>:<nonce>"` (the request id is the second token of the query
+# tag; n counts statements, and attempts, within the request; the nonce is the
+# request's own, so a caller that sends one id twice at once gets two sets of
+# ids), so `system.query_log` joins `agent_events` on
+# `splitByChar(':', query_id)[1] = request_id` instead of `LIKE` over
 # `log_comment`. `query_id` is a URL parameter the driver passes through
 # unvalidated, never a server setting. A worker pass (no request id) keeps the
 # driver's own uuid.
 def request_query_id(query_tag: str) -> str | None:
-    """`<request_id>:<n>` for the next statement under `query_tag`, or None
-    outside a request."""
+    """`<request_id>:<n>:<nonce>` for the next statement under `query_tag`, or
+    None outside a request."""
     parts = query_tag.split(" ")
     if len(parts) < 2 or not parts[1]:
         return None
-    seq = request_work.next_query_seq()
-    if seq is None:
+    suffix = request_work.next_query_suffix()
+    if suffix is None:
         return None
-    return f"{parts[1]}:{seq}"
+    return f"{parts[1]}:{suffix}"
 
 
 _SUMMARY_SPAN_ATTRS = (

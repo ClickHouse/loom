@@ -23,6 +23,7 @@ Never raises.
 from __future__ import annotations
 
 import contextvars
+import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -42,8 +43,11 @@ class RequestWork:
     ch_read_rows: int = 0
     ch_read_bytes: int = 0
     ch_elapsed_ms: float = 0.0
-    # Per-request statement sequence, for `query_id = <request_id>:<n>`.
+    # Per-request statement sequence and nonce, for `query_id =
+    # <request_id>:<n>:<nonce>`: two requests that carry the same caller id
+    # never send the same query_id, which ClickHouse refuses while one runs.
     ch_seq: int = 0
+    ch_nonce: str = field(default_factory=lambda: secrets.token_hex(4))
     # Identifier injection: rows the exact reads put in the
     # synthesis pool, facts and verbatim chunks.
     injected_facts: int = 0
@@ -139,14 +143,14 @@ def note_ch_summary(summary: Any) -> dict[str, Any]:
         return {}
 
 
-def next_query_seq() -> int | None:
-    """The next per-request statement number, or None when no bag is bound
-    (a worker pass keeps the driver's own query ids)."""
+def next_query_suffix() -> str | None:
+    """`<n>:<nonce>` for the request's next statement, or None when no bag is
+    bound (a worker pass keeps the driver's own query ids)."""
     bag = _current.get()
     if bag is None:
         return None
     bag.ch_seq += 1
-    return bag.ch_seq
+    return f"{bag.ch_seq}:{bag.ch_nonce}"
 
 
 def note_injected(*, facts: int = 0, chunks: int = 0) -> None:
@@ -180,7 +184,7 @@ __all__ = [
     "begin",
     "current",
     "mark_stage",
-    "next_query_seq",
+    "next_query_suffix",
     "note_ch_summary",
     "note_injected",
     "note_schema_skipped",
