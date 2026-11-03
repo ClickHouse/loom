@@ -739,9 +739,10 @@ Each is off until configured; `.env.example` has a commented block for each.
 
 ### Memory and documents only
 
-Code intelligence is on by default. A deployment that serves memory, documents and
-conversations, and no code index, turns it off with `LOOM_CODE_INTEL_ENABLED=false`.
-What that changes, and what it leaves:
+The code plane's ops are served by default (`LOOM_CODE_INTEL_ENABLED=true`), even with no
+repository configured. A deployment that serves memory, documents and conversations, and
+no code index, turns them off with `LOOM_CODE_INTEL_ENABLED=false`. What that changes,
+and what it leaves:
 
 - Boot still applies every migration. An empty table costs nothing to serve, and erasure
   covers every table whatever is in use.
@@ -749,22 +750,26 @@ What that changes, and what it leaves:
   precondition error.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but the coding-agent plugins list them, so agents are offered
-  tools that refuse. Set the Claude Code plugin's `toolset` option from `coding` to `core`.
+  tools that refuse. Set the Claude Code plugin's `toolset` option
+  ([options](../features/integrations/claude-code.md#install)) from `coding` to `core`.
   The Codex plugin's entry asks for `toolset=core,coding,tracker,tasks`; replace it with
-  a `[mcp_servers.loom]` override in `~/.codex/config.toml`
-  ([Codex](../features/integrations/codex.md)) that asks for `core,tasks`. The
-  `tracker` toolset also lists three `code.*` tools (`code.bisect_candidates`,
-  `code.pr_check`, `code.impact`), which refuse.
+  a `[mcp_servers.loom]` override in `~/.codex/config.toml` that asks for `core,tasks` and
+  keeps the plugin's `http_headers_helper` line, since the override replaces the entry
+  whole ([the server](../features/integrations/codex.md#the-server)). The `tracker`
+  toolset also lists three `code.*` tools (`code.bisect_candidates`, `code.pr_check`,
+  `code.impact`), which refuse.
 - The plugin hooks find a session's repository through `code.repos`, which is refused,
   and ask again about once a minute. The session-start primer then adds a code-index
   line that points the agent at the `loom_code_*` tools; set `LOOM_CODE_MAP=false` in
   the plugin's environment to leave it out.
-- With no repository and no tracker source configured, the code and tracker workers find
-  nothing to do: each pass reads a few rows and ends. The git mirror warm-up does not
-  run, and boot probes the repository-job sandbox only when `LOOM_CODE_INGEST_ENABLED` or
+- The switch stops no worker: each code and tracker worker has its own `LOOM_*_ENABLED`
+  setting. With no repository and no tracker source configured, they find nothing to do:
+  each pass reads a few rows and ends. The git mirror warm-up does not run, and boot
+  probes the repository-job sandbox only when `LOOM_CODE_INGEST_ENABLED` or
   `LOOM_CODE_SANDBOX_REQUIRED` is on.
-- `memory.*`, `knowledge.*`, `conversation.*`, `context.pack` and `loom_search` serve as
-  on any deployment; `loom_search` has no code or tracker results to add.
+- `memory.*`, `knowledge.*`, `conversation.*`, `context.pack` and `search.query`
+  (`loom_search` over MCP) serve as on any deployment; `search.query` has no code or
+  tracker results to add.
 
 ## Identity modes
 
