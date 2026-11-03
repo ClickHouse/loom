@@ -266,6 +266,8 @@ _H = r"[^\S\n]"
 # What ends a sentence: a full stop, a question or exclamation mark, a semicolon, ASCII
 # or full-width.
 _SENTENCE_MARK = re.compile(r"[.!?;。！？；]")
+# A word that ends a sentence, closing brackets, quotes and emphasis after the mark aside.
+_SENTENCE_END_WORD = re.compile(r"[.!?;。！？；][)\]\"'”’*_]*$")
 # A label line: one to three words on a line of their own, as a slide or diagram
 # converted to text puts box labels between a sentence's two halves.
 _LABEL_LINE = rf"{_H}*\S+(?:{_H}+\S+){{0,2}}{_H}*\n"
@@ -276,12 +278,13 @@ _BLANK_LINES = rf"(?:{_H}*\n)*"
 # a group, which `_only_labels` checks.
 _LABEL_GAP = rf"{_H}*\n({_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_LINES_MAX}}}?){_H}*"
 # A short line that is still no label: one that starts as a list item, a fence or code,
-# a table row, a heading or its underline (`===`, `---`), an HTML tag, a quote or a
+# a table row, a heading or its underline (`===`, `---`), a rule (`___`), an HTML tag, a
+# quote or a
 # definition (the document's structure); one that ends a sentence, as the last line of
 # a wrapped paragraph does; or one that holds a ban or a negation word: skipping `not`
 # would read "Retries are\nnot\nsafe" as "Retries are safe".
 _NOT_A_LABEL = re.compile(
-    rf"^(?:[-*+`~|#>:=<]|\d+[.)])|{_SENTENCE_MARK.pattern}$"
+    rf"^(?:[-*+`~|#>:=<_]|\d+[.)](?:\s|$))|{_SENTENCE_MARK.pattern}$"
     rf"|\b(?:{_BAN_WORDS}|{_NEGATION_WORDS})\b|n['’]t\b",
     re.I,
 )
@@ -311,7 +314,7 @@ def _span_match(span: str, texts: Sequence[str]) -> re.Match[str] | None:
         end = r"(?=\s)" if n < len(words) else r"(?!\w)"
         # A label sits inside a sentence: no label gap after a sentence's end, which
         # would join two sentences across a heading between them.
-        label = "" if _SENTENCE_MARK.search(words[n - 2][-1:]) else rf"|{_LABEL_GAP}{w}{end}"
+        label = "" if _SENTENCE_END_WORD.search(words[n - 2]) else rf"|{_LABEL_GAP}{w}{end}"
         # The last word may still end inside a document word (a CJK span has no spaces).
         partial = rf"|\s+{w}" if n == len(words) else ""
         parts.append(rf"(?>\s+{w}{end}{label}{partial})")
@@ -467,7 +470,7 @@ _BAN_MARKER = re.compile(rf"\b(?:{_BAN_WORDS})\b", re.I)
 
 
 def states_a_ban(cand: Candidate) -> bool:
-    """A constraint whose reasoning, the model's span, says only, no, never, must,
+    """A constraint whose reasoning, the span that is stored, says only, no, never, must,
     not, always, at most or at least. The model's constraint flag alone is not enough: it
     marks plain descriptions as constraints too."""
     return cand.is_constraint and bool(_BAN_MARKER.search(cand.reasoning))
@@ -484,16 +487,15 @@ def reasonless_ban(cand: Candidate) -> bool:
     too long to be an outcome is judged as any other candidate."""
     if not states_a_ban(cand) or len(collapse_ws(cand.reasoning)) > OUTCOME_MAX_CHARS:
         return False
-    whole_quote = collapse_ws(cand.reasoning).casefold() == collapse_ws(cand.quote).casefold()
-    return restates_outcome(cand) or whole_quote
+    return restates_outcome(cand) or collapse_ws(cand.reasoning) == collapse_ws(cand.quote)
 
 
 def without_reason(cand: Candidate) -> Candidate:
-    """A ban the text states with no reason: its outcome is its reasoning, which the
-    statement reads as no stated reason. Read on the model's spans; the caller stores
-    the document's. A reasoning that is a fragment of the ban (fewer words than the
-    outcome) gives way to the quote when the quote states the ban too: "no server retry
-    setting" alone loses "client-side retries only"."""
+    """A ban the text states with no reason: its outcome is its reasoning, the document's
+    span on one line, which the statement reads as no stated reason. A reasoning that is
+    a fragment of the ban (fewer words than the outcome) gives way to the quote when the
+    quote states the ban too: "no server retry setting" alone loses "client-side
+    retries only"."""
     span = cand.reasoning
     fragment = _content_words(cand.reasoning) < _content_words(cand.outcome)
     quote_fits = len(collapse_ws(cand.quote)) <= OUTCOME_MAX_CHARS

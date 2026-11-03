@@ -555,7 +555,7 @@ def _repairs(
     out: list[dx.Candidate] = []
     for cand in again:
         # Stored as a kept candidate's reasoning is: the model's copy may differ in case.
-        reasoning = dx.stored_span(cand.reasoning, texts) or collapse_ws(cand.reasoning)
+        reasoning = dx.stored_span(cand.reasoning, texts)
         if collapse_ws(cand.outcome) in outcomes or reasoning not in reasonings:
             out.append(cand)
         else:
@@ -582,17 +582,12 @@ def _check_window(
         reason = dx.verbatim_failure(cand, texts)
         span = dx.unfound_reason(cand, texts) if reason else ""
         if not reason:
-            # Judged on the model's spans, then stored as the document's. A reason-less
-            # ban is kept as one, its outcome the stored reasoning; any other restatement
-            # is dropped.
-            ban = dx.reasonless_ban(cand)
-            if ban:
+            cand = dx.document_spans(cand, texts)
+            # A reason-less ban is kept as one; any other restatement is dropped.
+            if dx.reasonless_ban(cand):
                 cand = dx.without_reason(cand)
             elif dx.restates_outcome(cand):
                 reason = dx.RESTATED
-            cand = dx.document_spans(cand, texts)
-            if ban:
-                cand = replace(cand, outcome=cand.reasoning)
         # The quote as the chunk writes it, so a re-wrapped one still names its section.
         section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
         if dx.in_recap(section):

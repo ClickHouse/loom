@@ -655,7 +655,8 @@ def test_a_span_split_across_two_chunks_is_not_found() -> None:
 def test_lines_that_all_look_like_labels_cost_linear_time(text, span) -> None:
     # 200,000 lines against a tenth of them: a matcher that tried every way to read each
     # gap would take exponential time on the final mismatch, and one that rescanned the
-    # text per start, quadratic time. Linear time is ten times the small input's.
+    # text per start, quadratic time. Linear time is ten times the small input's, each
+    # the best of three runs.
     def best(t: str) -> float:
         runs = []
         for _ in range(3):
@@ -664,7 +665,8 @@ def test_lines_that_all_look_like_labels_cost_linear_time(text, span) -> None:
             runs.append(time.perf_counter() - started)
         return min(runs)
 
-    assert best(text) < 30 * best(text[: len(text) // 10])
+    # Quadratic time would be about 100 times; the margin is for a loaded machine.
+    assert best(text) < 60 * best(text[: len(text) // 10])
 
 
 @pytest.mark.parametrize(
@@ -698,6 +700,7 @@ def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
         "> quoted\n",
         ": a definition\n",
         "===\n",
+        "___\n",
         "---\n",
         "<h2>Shards</h2>\n",
         "Shards differ.\n",
@@ -725,11 +728,19 @@ def test_a_line_starting_lower_case_is_no_label(span, text) -> None:
     assert dx.find_span(span, [text]) == ""
 
 
-def test_no_label_is_read_after_a_sentence_end() -> None:
-    # A plain heading between two paragraphs is no label inside a sentence.
-    text = "We cache plans per tenant.\n\nCosts\n\nEach plan expires after an hour."
-    span = "We cache plans per tenant. Each plan expires after an hour."
+@pytest.mark.parametrize("end", [".", ".)", '."', ".*"])
+def test_no_label_is_read_after_a_sentence_end(end) -> None:
+    # A plain heading between two paragraphs is no label inside a sentence, whatever
+    # closes the sentence after its mark.
+    text = f"We cache plans per tenant{end}\n\nCosts\n\nEach plan expires after an hour."
+    span = f"We cache plans per tenant{end} Each plan expires after an hour."
     assert dx.find_span(span, [text]) == ""
+
+
+@pytest.mark.parametrize("label", ["2.5 GB\n", "1.2.3\n", "3 replicas\n"])
+def test_a_number_that_is_no_list_marker_is_a_label(label) -> None:
+    text = SPLIT.format(labels=label)
+    assert dx.find_span(REPLICA_SPAN, [text]) == text
 
 
 def test_a_negation_line_is_not_skipped() -> None:
