@@ -145,8 +145,12 @@ def _fire_flush() -> None:
 
 async def _flush_and_rearm() -> None:
     global _flush_scheduled
+    from server.core.ch import query_tag
+
     try:
-        await flush_drops()
+        # A detached timer task: no request or pass tag reaches it.
+        with query_tag("drops.flush"):
+            await flush_drops()
     except Exception as e:  # noqa: BLE001 — the timer re-arms whatever the flush did
         log.debug("drops: scheduled flush failed: %s", e)
     finally:

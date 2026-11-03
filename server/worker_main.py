@@ -27,8 +27,16 @@ log = logging.getLogger("loom.workers.child")
 
 
 async def _start_services(ch: Any) -> list[asyncio.Task[None]]:
+    from server.core.ch import query_tag
+
+    with query_tag("workers_child.boot"):
+        return await _start_services_tagged(ch)
+
+
+async def _start_services_tagged(ch: Any) -> list[asyncio.Task[None]]:
     from server.code.app.index import repo_registry
     from server.core.background import register_buffer_drainer
+    from server.core.ch import set_query_tag
     from server.core.model_work_gate import get_model_work_gate
     from server.insights.app.provider_barrier import register_process
     from server.insights.app.provider_runtime import load_active_configuration, refresh_loop
@@ -44,6 +52,7 @@ async def _start_services(ch: Any) -> list[asyncio.Task[None]]:
         await boot.calibrate_similarity_gates()
 
     async def _trackers() -> None:
+        set_query_tag("tracker.sources_refresh")  # its own task: the tag stays in it
         while True:
             await asyncio.sleep(max(5.0, float(settings.tracker_sources_refresh_seconds)))
             await registry_sources.refresh_db_sources()
