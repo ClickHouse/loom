@@ -689,7 +689,7 @@ async def _restate_after_a_rewrite(org: str, monkeypatch: pytest.MonkeyPatch, **
     merge = ConflictResult(verdict="merge", peers=[peer], existing_memory_id=target_id)
 
     async def alias_merges(
-        _input: Any, rows: list[dict[str, Any]], *a: Any, **_kw: Any
+        _input: Any, rows: list[dict[str, Any]], *a: Any, cap: int | None = None
     ) -> dict[int, Any]:
         return {i: merge for i, r in enumerate(rows) if r["memory_key"] == "alias"}
 
