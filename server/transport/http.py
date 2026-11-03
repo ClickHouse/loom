@@ -414,6 +414,18 @@ async def _authorize(
     return target
 
 
+def _with_target(payload: Any, target: gates.Target) -> Any:
+    """The input with an absent `org` / `namespace` (blank or "-") set to the
+    target the gate authorized. The handler must write and read where the call
+    was authorized: a literal "-" org is a tenant every token reaches."""
+    fields = getattr(type(payload), "model_fields", {})
+    update: dict[str, str] = {}
+    for name, resolved in (("org", target.org), ("namespace", target.register_namespace)):
+        if name in fields and resolved and gates.present(getattr(payload, name)) is None:
+            update[name] = resolved
+    return payload.model_copy(update=update) if update else payload
+
+
 def _rate_limit(op: Operation, response: Response, call: _HttpCall, target: gates.Target) -> None:
     """The per-namespace / org / actor buckets, after authorization — a 429
     when one is empty. A request that names no namespace skips the limiter;
@@ -750,6 +762,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # The shared admission sequence (server/transport/gates.py):
         # authorization target, authorization, read scope, policy, then the limiter.
         call.target = target = await _authorize(op, response, call, payload)
+        payload = _with_target(payload, target)
         payload = await _bind_context_and_policy(op, request, call, target, payload)
         _rate_limit(op, response, call, target)
         replay = await _idempotency_gate(op, request, response, call, target, payload)
