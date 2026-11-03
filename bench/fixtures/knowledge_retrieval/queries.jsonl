@@ -7,7 +7,7 @@
 {"id": "harbor-backup", "query": "How often is Harbor data backed up?", "gold": [["handbook/harbor.md", "Object versions are replicated to a second zone within 15 minutes"]], "kind": "context"}
 {"id": "harbor-price", "query": "How much does the Team plan of Harbor cost?", "gold": [["handbook/harbor.md", "$0.018 per GB-month"]], "kind": "context"}
 {"id": "harbor-limit", "query": "What happens when a Harbor client sends too many requests?", "gold": [["handbook/harbor.md", "3,500 PUT requests per second per prefix"]], "kind": "paraphrase"}
-{"id": "lantern-retention", "query": "How long does Lantern keep deleted or old data?", "gold": [["handbook/lantern.md", "Raw logs are kept for 45 days and aggregates for 13 months"]], "kind": "context"}
+{"id": "lantern-retention", "query": "How long does Lantern keep deleted or old data?", "gold": [["handbook/lantern.md", "Raw logs are kept for 45 days and aggregates for 13 months"], ["design/lantern-tiering.md", "retention keeps 45 days of raw logs"]], "kind": "context"}
 {"id": "lantern-sev1", "query": "What is the first response time for a severity 1 incident on Lantern?", "gold": [["handbook/lantern.md", "30 minutes"]], "kind": "context"}
 {"id": "lantern-refund", "query": "Can a Lantern customer get their money back?", "gold": [["handbook/lantern.md", "within 14 days of the purchase"]], "kind": "paraphrase"}
 {"id": "lantern-region", "query": "Where is Lantern hosted?", "gold": [["handbook/lantern.md", "eu-central, us-east and ap-south"]], "kind": "paraphrase"}
@@ -15,13 +15,13 @@
 {"id": "lantern-sla", "query": "What compensation does a Lantern customer get when the uptime target is missed?", "gold": [["handbook/lantern.md", "5% of the monthly fee for each hour of downtime"]], "kind": "paraphrase"}
 {"id": "lantern-backup", "query": "How often is Lantern data backed up?", "gold": [["handbook/lantern.md", "Indexes are snapshotted every 6 hours"]], "kind": "context"}
 {"id": "lantern-price", "query": "How much does the Pro plan of Lantern cost?", "gold": [["handbook/lantern.md", "$0.38 per ingested GB"]], "kind": "context"}
-{"id": "lantern-limit", "query": "What happens when a Lantern client sends too many requests?", "gold": [["handbook/lantern.md", "200,000 events per second per workspace"]], "kind": "paraphrase"}
+{"id": "lantern-limit", "query": "What happens when a Lantern client sends too many requests?", "gold": [["handbook/lantern.md", "200,000 events per second per workspace"], ["runbooks/lt-2207.md", "exceeded its events-per-second cap"]], "kind": "paraphrase"}
 {"id": "quill-retention", "query": "How long does Quill keep deleted or old data?", "gold": [["handbook/quill.md", "Document history is kept for 90 days on Plus and forever on Business"]], "kind": "context"}
 {"id": "quill-sev1", "query": "What is the first response time for a severity 1 incident on Quill?", "gold": [["handbook/quill.md", "4 hours"]], "kind": "context"}
 {"id": "quill-refund", "query": "Can a Quill customer get their money back?", "gold": [["handbook/quill.md", "pro rata for the unused months of an annual plan"]], "kind": "paraphrase"}
 {"id": "quill-region", "query": "Where is Quill hosted?", "gold": [["handbook/quill.md", "eu-west and us-central"]], "kind": "paraphrase"}
 {"id": "quill-sso", "query": "Which single sign-on protocols does Quill support?", "gold": [["handbook/quill.md", "OIDC on Business"]], "kind": "context"}
-{"id": "quill-sla", "query": "What compensation does a Quill customer get when the uptime target is missed?", "gold": [["handbook/quill.md", "a free month when monthly uptime is below target"]], "kind": "paraphrase"}
+{"id": "quill-sla", "query": "What compensation does a Quill customer get when the uptime target is missed?", "gold": [["handbook/quill.md", "a free month"]], "kind": "paraphrase"}
 {"id": "quill-backup", "query": "How often is Quill data backed up?", "gold": [["handbook/quill.md", "Workspaces are backed up nightly at 02:00 UTC"]], "kind": "context"}
 {"id": "quill-price", "query": "How much does the Plus plan of Quill cost?", "gold": [["handbook/quill.md", "$8 per editor per month"]], "kind": "context"}
 {"id": "quill-limit", "query": "What happens when a Quill client sends too many requests?", "gold": [["handbook/quill.md", "50 concurrent editors per document"]], "kind": "paraphrase"}
@@ -30,7 +30,7 @@
 {"id": "meridian-refund", "query": "Can a Meridian customer get their money back?", "gold": [["handbook/meridian.md", "only within the first 7 days"]], "kind": "paraphrase"}
 {"id": "meridian-region", "query": "Where is Meridian hosted?", "gold": [["handbook/meridian.md", "us-east only"]], "kind": "paraphrase"}
 {"id": "meridian-sso", "query": "Which single sign-on protocols does Meridian support?", "gold": [["handbook/meridian.md", "SAML 2.0 and SCIM provisioning on Org"]], "kind": "context"}
-{"id": "meridian-sla", "query": "What compensation does a Meridian customer get when the uptime target is missed?", "gold": [["handbook/meridian.md", "15% of the monthly fee when uptime is below target"]], "kind": "paraphrase"}
+{"id": "meridian-sla", "query": "What compensation does a Meridian customer get when the uptime target is missed?", "gold": [["handbook/meridian.md", "15% of the monthly fee"]], "kind": "paraphrase"}
 {"id": "meridian-backup", "query": "How often is Meridian data backed up?", "gold": [["handbook/meridian.md", "The booking database is backed up every hour and kept for 35 days"]], "kind": "context"}
 {"id": "meridian-price", "query": "How much does the Team plan of Meridian cost?", "gold": [["handbook/meridian.md", "$12 per user per month"]], "kind": "context"}
 {"id": "meridian-limit", "query": "What happens when a Meridian client sends too many requests?", "gold": [["handbook/meridian.md", "20 API calls per second per token"]], "kind": "paraphrase"}

@@ -10,8 +10,8 @@ one chunk. Queries the corpus cannot answer carry no gold and measure how
 similar the top hit still looks.
 
 Two phases, run together by default into a fresh namespace that is erased when
-the run ends. To compare arms on one ingest, ingest once into a named namespace
-(`--phase ingest` keeps it) and search it per arm:
+the run ends. A namespace named with `--namespace` is never erased. To compare
+arms on one ingest, ingest once into a named namespace and search it per arm:
 
     PYTHONPATH=$PWD .venv/bin/python bench/knowledge_retrieval.py \\
         --base-url http://localhost:7790 --namespace kr-eval --phase ingest
@@ -23,7 +23,8 @@ A kept namespace stays until it is erased:
 `loom namespaces-gc --org bench --include-registered --erase --namespace kr-eval`.
 
 `--param KEY=VALUE` (JSON value, or a plain string) sets any `knowledge.search`
-field but `top_k`, so two arms differ by one flag. Reports recall@1/5/10 (a
+field but the ones the harness sets (`FIXED_FIELDS`), so two arms differ by
+one flag. Reports recall@1/5/10 (a
 query counts when any relevant passage is in the top k), all-gold recall@10
 (every relevant passage found, for the multi-document questions), MRR and
 nDCG@10, overall and per query kind, plus the mean top-hit cosine similarity on
@@ -83,12 +84,13 @@ def score_query(hits: list[dict], gold: list[list[str]]) -> dict[str, float]:
             found.setdefault(g, rank)
     first = min(found.values(), default=None)
     out = {f"recall@{k}": float(first is not None and first <= k) for k in KS}
-    out["all_gold@10"] = float(len([r for r in found.values() if r <= 10]) == len(gold))
+    # `hits` is the top TOP_K, so every found passage is within it.
+    out[f"all_gold@{TOP_K}"] = float(len(found) == len(gold))
     out["mrr"] = 1.0 / first if first else 0.0
-    dcg = sum(1.0 / math.log2(r + 1) for r in found.values() if r <= 10)
-    ideal = sum(1.0 / math.log2(r + 1) for r in range(1, min(len(gold), 10) + 1))
+    dcg = sum(1.0 / math.log2(r + 1) for r in found.values())
+    ideal = sum(1.0 / math.log2(r + 1) for r in range(1, min(len(gold), TOP_K) + 1))
     # Capped: one chunk holding two gold passages credits both at its rank.
-    out["ndcg@10"] = min(1.0, dcg / ideal) if ideal else 0.0
+    out[f"ndcg@{TOP_K}"] = min(1.0, dcg / ideal) if ideal else 0.0
     return out
 
 
@@ -105,13 +107,18 @@ def mean_by_kind(rows: list[dict]) -> dict[str, dict[str, float]]:
     return out
 
 
+# Fields that define the measurement: the depth the metrics are computed at, and what
+# is searched.
+FIXED_FIELDS = ("top_k", "org", "namespace", "namespaces", "namespace_scope", "query")
+
+
 def parse_params(pairs: list[str]) -> dict:
-    """`KEY=VALUE` pairs as search fields; `top_k` is refused, since the metrics are @10."""
+    """`KEY=VALUE` pairs as search fields; a field in FIXED_FIELDS is refused."""
     out = {}
     for pair in pairs:
         key, _, raw = pair.partition("=")
-        if key == "top_k":
-            raise SystemExit("--param top_k is refused: the metrics are computed at depth 10")
+        if key in FIXED_FIELDS:
+            raise SystemExit(f"--param {key} is refused: the harness sets it")
         try:
             out[key] = json.loads(raw)
         except json.JSONDecodeError:
@@ -119,11 +126,20 @@ def parse_params(pairs: list[str]) -> dict:
     return out
 
 
+def run_namespace(named: str | None, phase: str, keep_flag: bool) -> tuple[str, bool]:
+    """(the namespace a run uses, whether it outlives the run). Only a namespace the
+    harness made up is erased: one the caller named may hold more than the fixture."""
+    if named:
+        return named, True
+    return f"knowledge-retrieval-{secrets.token_hex(4)}", keep_flag or phase == "ingest"
+
+
 def ingest(post: Post, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
     register_bench_namespace_sync(
         post, org=org, namespace=namespace, description="knowledge retrieval fixture", keep=keep
     )
-    remember_bench_namespace(org, namespace)
+    if not keep:
+        remember_bench_namespace(org, namespace)
     for d in docs:
         post("/v1/knowledge.upsert", {"org": org, "namespace": namespace, **d})
     print(f"ingested {len(docs)} documents into {org}/{namespace}", file=sys.stderr)
@@ -134,11 +150,11 @@ def search(post: Post, org: str, namespace: str, queries: list[dict], params: di
     any_hits = False
     for q in queries:
         body = {
+            **params,
             "org": org,
             "namespace": namespace,
             "namespace_scope": "this",
             "query": q["query"],
-            **params,
             "top_k": TOP_K,
         }
         hits = post("/v1/knowledge.search", body)["results"]
@@ -165,7 +181,8 @@ def main() -> int:
     ap.add_argument("--org", default="bench")
     ap.add_argument(
         "--namespace",
-        help="the namespace to ingest into or search (default: a fresh one per run)",
+        help="the namespace to ingest into or search, never erased "
+        "(default: a fresh one per run, erased at its end)",
     )
     ap.add_argument("--fixture", type=Path, default=FIXTURE)
     ap.add_argument("--phase", choices=("ingest", "search", "both"), default="both")
@@ -173,7 +190,7 @@ def main() -> int:
     ap.add_argument(
         "--keep-namespaces",
         action="store_true",
-        help="keep the ingested namespace for later --phase search runs (implied by --phase ingest)",
+        help="keep the fresh namespace a run ingests into (implied by --phase ingest)",
     )
     ap.add_argument("--out", type=Path, help="write the full report (per query) as JSON")
     args = ap.parse_args()
@@ -181,11 +198,10 @@ def main() -> int:
         ap.error("--phase search needs the --namespace an earlier --phase ingest filled")
 
     params = parse_params(args.param)
-    namespace = args.namespace or f"knowledge-retrieval-{secrets.token_hex(4)}"
+    namespace, keep = run_namespace(args.namespace, args.phase, args.keep_namespaces)
     docs, queries = load_fixture(args.fixture)
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
     base = args.base_url.rstrip("/")
-    keep = args.keep_namespaces or args.phase == "ingest"
     with httpx.Client(timeout=120, headers=headers) as client:
 
         def post(path: str, body: dict) -> Any:

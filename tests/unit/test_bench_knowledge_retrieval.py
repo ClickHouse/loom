@@ -7,7 +7,13 @@ import math
 
 import pytest
 
-from bench.knowledge_retrieval import FIXTURE, load_fixture, parse_params, score_query
+from bench.knowledge_retrieval import (
+    FIXTURE,
+    load_fixture,
+    parse_params,
+    run_namespace,
+    score_query,
+)
 
 GOLD = [["a.md", "answer one"], ["b.md", "answer two"]]
 
@@ -60,9 +66,20 @@ def test_params_take_json_values_or_plain_strings() -> None:
     }
 
 
-def test_top_k_is_refused_since_the_metrics_are_at_depth_ten() -> None:
-    with pytest.raises(SystemExit, match="top_k"):
-        parse_params(["top_k=5"])
+@pytest.mark.parametrize("field", ["top_k", "query", "namespace", "namespaces", "namespace_scope"])
+def test_the_fields_that_define_the_measurement_are_refused(field: str) -> None:
+    with pytest.raises(SystemExit, match=field):
+        parse_params([f"{field}=x"])
+
+
+def test_only_a_namespace_the_harness_made_up_is_erased() -> None:
+    assert run_namespace("docs", "both", False) == ("docs", True)
+    assert run_namespace("docs", "search", False) == ("docs", True)
+    fresh, keep = run_namespace(None, "both", False)
+    assert fresh.startswith("knowledge-retrieval-") and keep is False
+    assert run_namespace(None, "both", False)[0] != fresh
+    assert run_namespace(None, "ingest", False)[1] is True
+    assert run_namespace(None, "both", True)[1] is True
 
 
 def test_every_gold_passage_is_in_its_document() -> None:
@@ -71,5 +88,5 @@ def test_every_gold_passage_is_in_its_document() -> None:
     assert len(content) == len(docs)
     for q in queries:
         for uri, text in q["gold"]:
-            assert text in content[uri], q["id"]
+            assert content[uri].count(text) == 1, q["id"]
     assert len({q["id"] for q in queries}) == len(queries)
