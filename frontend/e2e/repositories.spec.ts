@@ -37,6 +37,9 @@ function collectErrors(page: Page): string[] {
   return errors;
 }
 
+/** The `namespace.join` body the dashboard sends for a viewer's join. */
+const joined = (namespace: string) => ({ op: "join", org: "dev", namespace, role: "viewer", consumer: "loom-ui" });
+
 const card = (page: Page) => page.getByRole("region", { name: CODE_REPO, exact: true });
 
 /** Opens a folded card by its heading and waits for the facets. */
@@ -124,7 +127,7 @@ test.describe("desktop 1360", () => {
     // The row's Join joins the open trunk directly — one namespace.join.
     await c.getByRole("button", { name: "Join", exact: true }).click();
     await expect(table.getByRole("row", { name: /master/ })).toContainText("Reading");
-    expect(calls.join).toEqual([{ op: "join", org: "dev", namespace: "code-clickhouse", role: "viewer" }]);
+    expect(calls.join).toEqual([joined("code-clickhouse")]);
     await expect(c.getByRole("button", { name: "Open", exact: true })).toBeVisible();
     await expect(c.getByText("3 branches · 31,539 files · indexed 2h ago · you read 1 of 3")).toBeVisible();
 
@@ -134,7 +137,7 @@ test.describe("desktop 1360", () => {
     await expect(dialog.getByText("Join the tracker?")).toBeVisible();
     await dialog.getByRole("button", { name: "Join", exact: true }).click();
     await expect(rec.getByRole("button", { name: "Public: reading" })).toBeVisible();
-    expect(calls.join[1]).toEqual({ op: "join", org: "dev", namespace: TRACKER_PUBLIC_NS, role: "viewer" });
+    expect(calls.join[1]).toEqual(joined(TRACKER_PUBLIC_NS));
     await expect(page.locator("[data-toast-viewport]")).toContainText(
       `Joined ${TRACKER_PUBLIC_NS} (${CODE_REPO}) · read-only`,
     );
@@ -148,7 +151,7 @@ test.describe("desktop 1360", () => {
     await dialog.getByRole("button", { name: "Request access" }).click();
     await expect(privRec.getByRole("button", { name: "Private (restricted): requested" })).toBeVisible();
     await expect(priv.getByText("Requested", { exact: true })).toBeVisible();
-    expect(calls.join[2]).toEqual({ op: "join", org: "dev", namespace: TRACKER_PRIVATE_NS, role: "viewer" });
+    expect(calls.join[2]).toEqual(joined(TRACKER_PRIVATE_NS));
     await expect(page.locator("[data-toast-viewport]")).toContainText("Access requested");
 
     // Request access on the restricted branch from its row's menu: the request dialog with its role choice.
@@ -159,7 +162,7 @@ test.describe("desktop 1360", () => {
     await expect(dialog.getByRole("radio", { name: /Maintainer/ })).toBeVisible();
     await dialog.getByRole("button", { name: "Request access" }).click();
     await expect(table.getByRole("row", { name: /25\.7/ })).toContainText("Requested");
-    expect(calls.join[3]).toEqual({ op: "join", org: "dev", namespace: "code-clickhouse-25-7", role: "viewer" });
+    expect(calls.join[3]).toEqual(joined("code-clickhouse-25-7"));
     // A request waiting on a maintainer is information, not a warning.
     await expect(page.getByText("Waiting for a maintainer.")).toBeVisible();
     // The repository's verbs sit in the split button's menu.
