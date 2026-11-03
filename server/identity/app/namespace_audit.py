@@ -85,10 +85,10 @@ HASH_KEY_WARNING_SHARE = 0.25
 # with the mentor: server/memory/domain/namespace_shapes.py.
 # telemetry_unavailable: a write younger than this may not have reached the ledger yet (it
 # is flushed in batches), so only older writes are judged.
-TELEMETRY_LAG_SECONDS = 60
+TELEMETRY_LAG_SECONDS = 60  # not a setting: part of the rule; a change is a new rule_version
 # index_backlog: a searchable row with no vector that the worker has not given up on, younger
 # than this, is the embedding worker's normal lag (namespace.validate's default grace).
-INDEX_GRACE_SECONDS = 600
+INDEX_GRACE_SECONDS = 600  # not a setting: part of the rule; a change is a new rule_version
 # version_churn: version rows ≥ ROWS × live rows, or version bytes ≥ BYTES × live bytes.
 VERSION_CHURN_ROWS_RATIO = 3.0
 VERSION_CHURN_BYTES_RATIO = 2.0
