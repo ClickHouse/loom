@@ -394,6 +394,9 @@ def test_budget_timeout_matches_the_server_code_in_the_body() -> None:
             "remoteSecure('h', 'db', 'a', 'u', 'p') AS a JOIN remoteSecure('h', 'db', 'b', 'play', 'secret') AS b USING (x)",
             "remoteSecure('h', 'db', 'a', ...)",
         ),
+        ("remote('h', 'db', 'checks')", "remote('h', 'db', 'checks')"),
+        ("remote('h', db.t)", "remote('h', db.t)"),
+        ("remote('h', db.t, 'play')", "remote('h', db.t, ...)"),
         # any other shape is named by its function alone
         ("remote('h', 'db')", "remote(...)"),
         ("remoteSecure('h:9440', view(SELECT 1 FROM db.t), 'play', 'secret')", "remoteSecure(...)"),

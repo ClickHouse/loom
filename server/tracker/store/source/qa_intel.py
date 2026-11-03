@@ -396,7 +396,7 @@ _TABLE_NAME = re.compile(r"^\s*[\w`\".]+\s*$")
 # The address and the table of a `remote` / `remoteSecure` call: the table is
 # one argument (`db.table`) or two (`db`, `table`), each quoted or bare.
 _REMOTE_HEAD = re.compile(
-    r"^\s*(remote(?:Secure)?)\s*\(\s*('[^'\\]*')\s*,\s*('?[\w.]+'?)\s*(?:,\s*('?\w+'?)\s*)?[,)]",
+    r"^\s*(remote(?:Secure)?)\s*\(\s*('[^'\\]*')\s*,\s*('?[\w.]+'?)\s*(?:,\s*('?\w+'?)\s*)?([,)])",
     re.IGNORECASE,
 )
 _CALL_NAME = re.compile(r"^\s*(\w+)\s*\(")
@@ -406,17 +406,21 @@ def redact_table_function(clause: str) -> str:
     """`clause` as operators and callers may read it, built only from parts
     that cannot hold a credential: a table name as is; a `remote` /
     `remoteSecure` call as its address and table, with every argument after
-    the table (the user, the password, a sharding key) shown as `...`; any
-    other clause as its function name alone, or `(...)` when it is no call."""
+    the table (the user, the password, a sharding key) shown as `...` when
+    there is one; any other clause as its function name alone, or `(...)`
+    when it is no call."""
     if not clause or _TABLE_NAME.match(clause):
         return clause
     m = _REMOTE_HEAD.match(clause)
     if m:
-        fn, address, first, second = m.groups()
+        fn, address, first, second, end = m.groups()
         if "." in first:
-            return f"{fn}({address}, {first}, ...)"
+            # a second word after `db.table` is the user, never shown
+            more = ", ..." if second or end == "," else ""
+            return f"{fn}({address}, {first}{more})"
         if second:
-            return f"{fn}({address}, {first}, {second}, ...)"
+            more = ", ..." if end == "," else ""
+            return f"{fn}({address}, {first}, {second}{more})"
     call = _CALL_NAME.match(clause)
     return f"{call.group(1)}(...)" if call else "(...)"
 
