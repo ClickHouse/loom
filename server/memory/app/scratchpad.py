@@ -79,46 +79,9 @@ def render(blocks: list[dict[str, Any]], *, max_chars: int) -> ScratchpadBlocks:
     )
 
 
-def _where(agent: str, user_id: str, run_scope: bool) -> tuple[str, dict[str, Any]]:
-    clauses = ["org = {org:String}", "namespace = {ns:String}", "tombstoned_at IS NULL"]
-    params: dict[str, Any] = {}
-    if run_scope:
-        # The run id is unique to one execution: it IS the scope.
-        clauses.append("run_id = {run:String}")
-        return " AND ".join(clauses), params
-    clauses.append("session_id = {sid:String}")
-    if agent:
-        clauses.append("agent = {agent:String}")
-        params["agent"] = agent
-    if user_id:
-        clauses.append("user_id = {uid:String}")
-        params["uid"] = user_id
-    clauses.append("run_id = {norun:String}")
-    params["norun"] = SENTINEL
-    return " AND ".join(clauses), params
-
-
-async def _rows(
-    ch: Any,
-    *,
-    org: str,
-    namespace: str,
-    agent: str,
-    user_id: str,
-    session_id: str,
-    run_id: str,
-    run_scope: bool,
-    limit: int,
-) -> list[dict[str, Any]]:
-    where, extra = _where(agent, user_id, run_scope)
-    params: dict[str, Any] = {
-        "org": org,
-        "ns": namespace,
-        "sid": session_id,
-        "run": run_id,
-        "lim": int(limit),
-        **extra,
-    }
+async def _select(ch: Any, where: str, params: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    """Blocks matching `where`, newest first, inside the request's read scope."""
+    params = {**params, "lim": int(limit)}
     where += scope_and(request_scope(), params)
     rows = await ch.query_all(
         f"""
@@ -133,21 +96,31 @@ async def _rows(
     return [dict(r) for r in (rows or [])]
 
 
+_LIVE = "org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL"
+
+
 async def run_rows(
     ch: Any, org: str, namespace: str, run_id: str, *, limit: int
 ) -> list[dict[str, Any]]:
-    """The run's blocks, newest first, inside the request's read scope."""
-    return await _rows(
-        ch,
-        org=org,
-        namespace=namespace,
-        agent="",
-        user_id="",
-        session_id=SENTINEL,
-        run_id=run_id,
-        run_scope=True,
-        limit=limit,
-    )
+    """The run's blocks. The run id is unique to one execution: it IS the scope."""
+    params = {"org": org, "ns": namespace, "run": run_id}
+    return await _select(ch, f"{_LIVE} AND run_id = {{run:String}}", params, limit)
+
+
+async def _session_rows(
+    ch: Any, org: str, namespace: str, agent: str, user_id: str, session_id: str, *, limit: int
+) -> list[dict[str, Any]]:
+    """The session axis's blocks written without a run, on the identity axes the
+    caller named."""
+    clauses = [_LIVE, "session_id = {sid:String}", "run_id = {norun:String}"]
+    params: dict[str, Any] = {"org": org, "ns": namespace, "sid": session_id, "norun": SENTINEL}
+    if agent:
+        clauses.append("agent = {agent:String}")
+        params["agent"] = agent
+    if user_id:
+        clauses.append("user_id = {uid:String}")
+        params["uid"] = user_id
+    return await _select(ch, " AND ".join(clauses), params, limit)
 
 
 async def load(
@@ -188,17 +161,7 @@ async def load(
     # '-' too, which is where the plugin's agent-scope note lives.
     if len(rows) < limit:
         seen = {str(r.get("block_key")) for r in rows}
-        session_rows = await _rows(
-            ch,
-            org=org,
-            namespace=namespace,
-            agent=ag,
-            user_id=uid,
-            session_id=sid_axis,
-            run_id=SENTINEL,
-            run_scope=False,
-            limit=limit,
-        )
+        session_rows = await _session_rows(ch, org, namespace, ag, uid, sid_axis, limit=limit)
         rows.extend(r for r in session_rows if str(r.get("block_key")) not in seen)
         if session_rows and not scope:
             scope = "session"
