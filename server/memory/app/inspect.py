@@ -9,10 +9,10 @@ attempted and what succeeded in the window, nothing more. The settings section r
 the namespace guide and categories, and the operator extraction policy only for a
 caller who may read it (an org admin).
 
-It changes nothing it reads: plain reads over `loom.memory`, `loom.memory_categories`,
-`loom.memory_versions`, `loom.namespaces` and `loom.agent_events`, no recall credit, and
-one exposure-ledger row for the rows it lists, as memory.list writes (which, inside a
-run, can feed the usage fold's `acted` credit as memory.list's does). A
+It changes nothing it reads: plain reads of the namespace's rows, ledger, directory row,
+guide, categories, grants and extraction policy, no recall credit, and one
+exposure-ledger row for the rows it lists, as memory.list writes (which, inside a run,
+can feed the usage fold's `acted` credit as memory.list's does). A
 section that cannot be read lands in `skipped`, never raises.
 """
 
@@ -271,7 +271,8 @@ def _record_exposure(input: MemoryInspectInput, keys: list[str]) -> None:
             org=input.org,
             namespace=input.namespace,
             keys=keys,
-            top_k=input.sample_limit,
+            # The most rows one call lists: `sample_limit` per view.
+            top_k=2 * input.sample_limit,
         )
     except Exception as e:  # noqa: BLE001 — telemetry never fails a read
         log.warning("exposure-ledger schedule failed (non-fatal): %s", e)

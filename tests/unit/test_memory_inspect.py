@@ -387,7 +387,7 @@ async def test_the_listed_rows_are_recorded_in_the_exposure_ledger(
     await mi.handle_memory_inspect(_inp(sample_limit=1))
     (row,) = rows
     assert row["operation"] == "memory.inspect" and row["keys"] == ["deploy/window"] * 2
-    assert (row["org"], row["namespace"], row["top_k"]) == ("o", "ns", 1)
+    assert (row["org"], row["namespace"], row["top_k"]) == ("o", "ns", 2)
 
     # Nothing listed: no keys, which the ledger writes no row for.
     rows.clear()

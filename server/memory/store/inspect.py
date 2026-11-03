@@ -133,7 +133,7 @@ async def view_newest(
                toString(status) AS status, source_class, agent, user_id, session_id, actor,
                updated_at, sensitivity
         {_LIVE} AND {_view(subject, view, scope, params)}
-        ORDER BY updated_at DESC, memory_key
+        ORDER BY updated_at DESC, memory_key, agent, user_id, session_id
         LIMIT {{lim:UInt32}}
         """,
         params=params,
