@@ -51,6 +51,7 @@ class World:
     retired: list[int] = field(default_factory=list)  # one chunk version each
     cancels: list[str] = field(default_factory=list)  # ingestion ids with a cancel
     fail_document: Exception | None = None
+    late_documents: list[dict[str, Any]] = field(default_factory=list)  # timed out, land later
     fail_retire_older: Exception | None = None  # raised once, by the next older-chunks retire
     log: list[str] = field(default_factory=list)
     stored_vectors: dict[str, list[float]] = field(default_factory=dict)
@@ -123,6 +124,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
 
     async def insert_one(row: dict[str, Any], **_: Any) -> None:
         if w.fail_document is not None:
+            w.late_documents.append(dict(row))
             raise w.fail_document
         w.documents.append(dict(row))
         w.log.append("document")
@@ -907,7 +909,8 @@ def test_a_publish_that_stops_after_its_chunks_retires_them(
     world.fail_document = None
     assert _run(world, again) == "ready"
     published = world.job(again)["doc_version"]  # type: ignore[index]
-    assert world.retired == [first] and published != first
+    # Retired again before the new insert: a no-op, unless an insert landed late.
+    assert set(world.retired) == {first} and published != first
     assert world.documents[-1]["version"] == published
 
 
@@ -1065,7 +1068,15 @@ def test_a_rerun_of_a_published_job_after_a_text_write_publishes_nothing_more(
     )
     if merged:
         world.documents.remove(doc)
-    world.jobs.append({**job, "state": "processing", "chunks": 0, "version": job["version"] + 1})
+    world.jobs.append(
+        {
+            **job,
+            "state": "processing",
+            "stage": "publish",
+            "chunks": 0,
+            "version": job["version"] + 1,
+        }
+    )
     chunks, world.embedded = len(world.chunks), []
     if merged:
         assert _run(world, job_id) == "failed"
@@ -1091,15 +1102,35 @@ def test_the_retry_delay_stops_doubling_at_an_hour(world: World, settings_overri
 
 
 def test_a_retry_publishes_over_a_write_that_landed_while_it_waited(world: World) -> None:
-    """A retry retires its chunks and clears its chunk version, so a metadata
-    edit while it waits is not taken for a later write that overtook a publish."""
+    """A job a retry put back to pending is not judged as a run that stopped
+    mid-publish, so a metadata edit while it waits does not fail it."""
     _run(world, _ingest(world, _upload(world)))
     world.fail_document = BackendUnavailableError("store down")
     job_id = _ingest(world, _upload(world))
     assert _run(world, job_id) == "pending"
-    assert world.job(job_id)["doc_version"] == 0  # type: ignore[index]
     doc = world.documents[-1]
     world.documents.append({**doc, "title": "Edited", "version": time.time_ns()})
     world.fail_document = None
     assert _run(world, job_id) == "ready"
     assert world.job(job_id)["revision"] == 2  # type: ignore[index]
+
+
+def test_a_document_insert_that_timed_out_and_landed_later_ends_the_job_published(
+    world: World,
+) -> None:
+    """A client-side timeout does not stop the insert: the row lands after the
+    retry put the job back to pending. The next run finds it and finishes from
+    the job's own chunk version: the earlier revision's chunks retired, its own
+    chunks counted."""
+    _run(world, _ingest(world, _upload(world)))
+    world.fail_document = BackendUnavailableError("timed out")
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "pending"
+    version = world.job(job_id)["doc_version"]  # type: ignore[index]
+    world.fail_document = None
+    world.documents.extend(world.late_documents)  # the insert lands
+    assert _run(world, job_id) == "ready"
+    job = world.job(job_id)
+    assert job is not None and (job["revision"], job["doc_version"]) == (2, version)
+    assert job["chunks"] == sum(1 for c in world.chunks if c["doc_version"] == version)
+    assert world.superseded[-1] == ("repo://retention.sql", version)

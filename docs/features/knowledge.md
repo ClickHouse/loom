@@ -492,8 +492,9 @@ block ids, and its `keys` the exact names it defines or reads. Text writes
 (`knowledge.add`, `upsert`) number revisions too. Ingests of one source run one at a
 time, in the order they were asked, so `expected_revision` guards an ingest against
 another; a text write takes no such claim, so one that races a write of the same source
-can reuse its revision number, and the later version wins (an ingest a text write
-overtook fails `revision_conflict`).
+can reuse its revision number, and the later version wins (an ingest a later write of
+the source overtook, a text write, a metadata edit or a delete, fails
+`revision_conflict`).
 
 `knowledge.ingest_status` follows a job: `pending`, `processing` (with its `stage`:
 `parse`, `embed`, `publish`), then `ready`, `partial`, `failed` or `cancelled`, with the
@@ -515,7 +516,7 @@ last change, an upload's for 7 days after it expires. A failed job names why in
 | `incomplete_extraction` | coverage is incomplete and `allow_partial` was off                                                                                      |
 | `no_text`               | the file holds no text to index                                                                                                         |
 | `too_large`             | the original is over the extractor's `max_bytes`, or it cut more chunks than `LOOM_KNOWLEDGE_INGEST_MAX_CHUNKS`                         |
-| `revision_conflict`     | the live revision is not `expected_revision`, or a text write of the source landed after this ingest began to publish                   |
+| `revision_conflict`     | the live revision is not `expected_revision`, or a later write of the source landed after this ingest began to publish                  |
 | `original_gone`         | the upload's bytes are no longer stored                                                                                                 |
 | `retries_exhausted`     | the extractor, a provider or a store failed `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS` times (`retrying` before)                              |
 | `invalid_artifact`      | the extractor answered with an artifact that breaks the contract                                                                        |
