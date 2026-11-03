@@ -5,7 +5,8 @@ with no LLM/embedding. `observe.crystallize` tags a session's observations
 READY (`crystallize:ready`). This worker picks up READY rows per session,
 replays their narratives through `memory.set_from_messages` (LLM extraction
 + embedding + conflict-surfacing + blacklist), and rewrites each source row
-`crystallize:done` so the next pass skips it — idempotent.
+`crystallize:done` so the next pass skips it — idempotent. A row deleted or
+given new text during the replay is left as it now is.
 
 Off by default (`LOOM_OBSERVE_EXTRACT_ENABLED`); requires LLM credentials.
 """
@@ -26,6 +27,7 @@ from server.memory.domain.observation_tags import (
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.domain.trust import subject_of
 from server.memory.store.rows import next_version
+from server.memory.store.sql import _identity_key
 from server.settings import settings
 from server.workers.status import record_pass
 
@@ -174,12 +176,10 @@ async def _load_session_observations(
     ch: Any,
 ) -> list[Any]:
     """Full-projection rows for one session's READY observations, oldest
-    first (chronological replay order). Full projection so the DONE rewrite
-    can mirror every persisted column."""
+    first (chronological replay order). The DONE rewrite re-reads each head
+    before it writes; the `content_sha256` read here is what it compares against."""
     import server.memory.store as memory_repo
 
-    # One statement: the listing reads the full projection, so the rows it
-    # returns are the rows the DONE rewrite re-emits (no per-key re-read).
     rows = await ch.query_all(
         f"""{memory_repo._MEMORY_FINAL_PROJECTION}
         WHERE org = {{org:String}}
@@ -227,7 +227,8 @@ async def _distill_session(
     observations: list[Any],
 ) -> DistilledSession:
     """Replay one session's observations through memory.set_from_messages
-    (one synthetic `user` turn per narrative) and mark the sources DONE."""
+    (one synthetic `user` turn per narrative) and mark the sources DONE, except a
+    source deleted or given new text since it was read."""
     import server.memory.store as memory_repo
 
     # An observation that holds a high shape is never sent to the model, labelled or not:
@@ -255,25 +256,35 @@ async def _distill_session(
     context = await _load_session_context(session, ch=get_client_for_context())
     extras = await _distill_extras(session, readable, context=context)
 
-    # Mark sources DONE. RMT: mirror every column, only tags + version change.
+    # Mark sources DONE from the head as it is now: a key deleted or rewritten during the
+    # replay is skipped. The stamp is drawn first so a later write wins.
     from server.core.ch import get_client
 
+    ch = get_client()
+    version = next_version()
+    keys = [_identity_key(vars(o)) for o in observations]
+    heads = await memory_repo.memory_rows_by_identity_keys(keys, ch=ch, sequential=True)
     version_rows = []
-    for existing in observations:
-        new_tags = [t for t in (existing.tags or []) if t != CRYSTALLIZE_READY_TAG]
+    for key, existing in zip(keys, observations, strict=True):
+        head = heads.get(key)
+        if head is None or head.content_sha256 != existing.content_sha256:
+            continue
+        new_tags = [t for t in (head.tags or []) if t != CRYSTALLIZE_READY_TAG]
         if CRYSTALLIZE_DONE_TAG not in new_tags:
             new_tags.append(CRYSTALLIZE_DONE_TAG)
+        # a head written after the stamp is the one this row copies, so outrank it
+        row_version = max(version, int(head.version) + 1)
         version_rows.append(
-            memory_repo.build_memory_version_row(existing, version=next_version(), tags=new_tags)
+            memory_repo.build_memory_version_row(head, version=row_version, tags=new_tags)
         )
     # One committed insert for the session's observations.
-    await memory_repo.insert_memory_versions(version_rows, ch=get_client())
+    await memory_repo.insert_memory_versions(version_rows, ch=ch)
 
     return DistilledSession(
         org=str(session["org"]),
         namespace=str(session["namespace"]),
         session_id=str(session["session_id"]),
-        observations=len(observations),
+        observations=len(version_rows),
         written=written,
         events=int(extras.events_written),
         notes=int(extras.procedure_written) + int(extras.hint_written),
@@ -428,7 +439,7 @@ async def run_pass(
 
     if result.distilled_count or result.failures:
         log.info(
-            "observe_extract: distilled=%d sessions, %d memories from %d observations, %d failed",
+            "observe_extract: distilled=%d sessions, %d memories, %d observations done, %d failed",
             result.distilled_count,
             result.written_memories,
             result.observations_consumed,

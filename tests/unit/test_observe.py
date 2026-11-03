@@ -284,6 +284,12 @@ async def test_worker_promotes_ready_observation_via_existing_extraction(monkeyp
     stored = memory_repo.build_memory_version_row(ready_row)
     ch.query_all_returns.append([{**stored, "value_text": stored["value"]}])
 
+    # The re-read right before the DONE insert: the head is unchanged.
+    async def _heads(keys, **_k):
+        return {k: ready_row for k in keys}
+
+    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", _heads)
+
     calls: dict[str, Any] = {}
 
     class _FakeWritten:
@@ -326,6 +332,12 @@ async def test_worker_promotes_ready_observation_via_existing_extraction(monkeyp
     assert CRYSTALLIZE_READY_TAG not in done["tags"]
     assert OBSERVATION_TAG in done["tags"]
     assert "error" in done["tags"]
+    # Every column is the head's; only tags and version move, and the version is a fresh
+    # stamp, so the namespace's change watermark moves with it.
+    assert done["version"] > ready_row.version
+    assert done == memory_repo.build_memory_version_row(
+        ready_row, version=done["version"], tags=[OBSERVATION_TAG, "error", CRYSTALLIZE_DONE_TAG]
+    )
 
 
 @pytest.mark.asyncio
