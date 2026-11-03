@@ -749,7 +749,7 @@ and what it leaves:
 - Every `code.*` operation but `code.repo.remove` answers a precondition error. Retire
   any code index before turning the switch off:
   [code-index operations](./code-index-operations.md#rollout-and-shutdown) covers retirement, erasure and what
-  stays on disk.
+  stays on disk. The dashboard's code pages show the precondition error.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but the coding-agent plugins list them, and so does the
   `assistant` toolset (`code.search`, `code.symbol`), so agents are offered tools that
