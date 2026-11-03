@@ -122,7 +122,7 @@ class _TooLarge(Exception):
 
 async def _read(response: httpx.Response, cap: int) -> bytes:
     out = bytearray()
-    # As sent: a compressed body is not inflated past the bound, and is no JSON.
+    # Raw bytes: the bound counts what was received.
     async for chunk in response.aiter_raw():
         out += chunk
         if len(out) > cap:
