@@ -121,8 +121,9 @@ async def _rerank(
 ) -> tuple[list[_SearchHit], bool]:
     """The fused head (`knowledge_search_rerank_top` hits) in the reranker's order, the
     rest after it, and whether the reranker produced the order. Each candidate shows the
-    chunk's context (title, breadcrumb) before its text. Fail-open: the rerank service
-    hands back its input on any failure, and the fused order is kept."""
+    chunk's context (title, description, breadcrumb) before its text. A held or refused
+    model call fails the search; on any other failure the rerank service hands back its
+    input and the fused order is kept."""
     from server.memory.app.rerank import RerankCandidate, rerank
 
     top = settings.knowledge_search_rerank_top

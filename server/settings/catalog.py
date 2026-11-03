@@ -1990,7 +1990,7 @@ class KnowledgeSettings(BaseModel):
     # How many fused hits a rerank reads (the legs fetch at least this many).
     knowledge_search_rerank_top: Annotated[int, LIVE] = Field(default=30, ge=2, le=100)
     # Characters of each hit a reranker reads: its context (title, description,
-    # breadcrumb; at most half), then the chunk text.
+    # breadcrumb; at most half), then the chunk text. builtin:cohere reads at most 1024.
     knowledge_search_rerank_excerpt_chars: Annotated[int, LIVE] = Field(
         default=800, ge=100, le=4000
     )

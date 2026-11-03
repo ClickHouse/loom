@@ -2421,7 +2421,8 @@ settings:
   # knowledge_search_rerank_top: 30
 
   # Characters of each hit a reranker reads: its context (title, description,
-  # breadcrumb; at most half), then the chunk text. [live]
+  # breadcrumb; at most half), then the chunk text. builtin:cohere reads at most 1024.
+  # [live]
   # knowledge_search_rerank_excerpt_chars: 800
 
   # --- chunking ---

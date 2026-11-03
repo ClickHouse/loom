@@ -113,9 +113,8 @@ async def knowledge_with_repo_docs(
         more = merge_hits(
             [], [h for h in extra if (h.namespace, h.source_uri, h.chunk_idx) not in listed], top_k
         )
-        page = max(1, top_k)
-        repo_slots = min(len(more), max(page - len(base.results), page // 2))
-        results = [*base.results[: page - repo_slots], *more[:repo_slots]]
+        repo_slots = min(len(more), max(top_k - len(base.results), top_k // 2))
+        results = [*base.results[: top_k - repo_slots], *more[:repo_slots]]
         return base.model_copy(update={"results": results})
     return base.model_copy(update={"results": merge_hits(list(base.results), extra, top_k)})
 

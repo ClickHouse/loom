@@ -104,9 +104,13 @@ async def test_a_rerank_that_keeps_the_fused_order_says_none_ran(monkeypatch, co
     assert reranked is False and out is hits
 
 
-def _stub_handler(monkeypatch, hits: list[Any], pools: list[int] | None = None) -> None:
+def _stub_handler(
+    monkeypatch, hits: list[Any], pools: list[int] | None = None, seen: list[str] | None = None
+) -> None:
     """The handler over fixed fused `hits` in namespace "n", a reranker that reverses
-    its candidates, and the legs' pool size recorded in `pools`."""
+    its candidates (their excerpts recorded in `seen`), and the legs' pool size recorded
+    in `pools`."""
+    seen = seen if seen is not None else []
 
     class _Embedder:
         model_name = "m"
@@ -130,6 +134,7 @@ def _stub_handler(monkeypatch, hits: list[Any], pools: list[int] | None = None) 
         return ["n"]
 
     async def _reversed(**kw: Any) -> list[Any]:
+        seen.extend(c.content_excerpt for c in kw["candidates"])
         return list(reversed(kw["candidates"]))
 
     monkeypatch.setattr(ks, "get_embedder", _Embedder)
@@ -151,11 +156,14 @@ async def test_the_search_reads_a_rerank_pool_and_reports_the_reranker(monkeypat
         ChunkHit("n", f"{c}.md", 0, c, [], distance=0.1 * i, context=f"ctx {c}")
         for i, c in enumerate("abcd")
     ]
-    _stub_handler(monkeypatch, hits, pools)
+    seen: list[str] = []
+    _stub_handler(monkeypatch, hits, pools, seen)
     out = await ks.handle_knowledge_search(
         _input(rerank="builtin:openai", top_k=2, namespaces=["n"], collapse_sections=False)
     )
     assert pools == [4]
+    # each chunk's stored context reaches the reranker, joined by its namespace and key
+    assert seen == ["ctx a\n\na", "ctx b\n\nb", "ctx c\n\nc", "ctx d\n\nd"]
     assert [h.source_uri for h in out.results] == ["d.md", "c.md"]
     assert out.reranked_by == "builtin:openai"
     plain = await ks.handle_knowledge_search(
