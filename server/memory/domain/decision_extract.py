@@ -19,6 +19,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from server.code.domain.anchor import mentions as code_mentions
+from server.code.domain.extract.lang_markdown import is_markdown_path
 from server.knowledge.domain.chunking import SEPARATOR, Section, detect_sections
 from server.memory.domain.corpus_synthesis import Window
 from server.memory.domain.decision_statement import collapse_ws
@@ -605,7 +606,8 @@ def sort_mentions(names: list[str], text: str, *, cap: int = 8) -> Mentions:
             unresolved.append((name, "pr"))
         elif "::" in name or "." in name or f"`{name}`" in text:
             # Backticked first: `handle_decision_record` is code, though shaped like a
-            # setting; one the index does not define is reported as a setting after all.
+            # setting; one the index does not define, or only tests and pages define with a page
+            # among them, is reported as a setting after all.
             if code_mentions(f"`{name}`"):
                 symbols.append((name, "qualified"))
         elif looks_like_setting(name):
@@ -624,6 +626,22 @@ def _constructor(qualified_name: str) -> bool:
     """`DB::Foo::Foo`: a constructor, named like its class."""
     parts = re.split(r"::|\.", qualified_name)
     return len(parts) >= 2 and parts[-1] == parts[-2]
+
+
+# Common test, mock and end-to-end layouts; one it misses keeps its link. Unlike
+# is_test_unit_path, a module named `test_*` or `*Test` is code.
+_TEST_FILE = re.compile(
+    r"(?:^|/)(?:tests?|__tests__|__mocks__|mocks|testdata|testFixtures|integrationTest|e2e"
+    r"|cypress)/"
+    r"|\.(?:test|spec)\.[A-Za-z]+$|_(?:unit)?test\.[A-Za-z]+$|_mock\.go$|_spec\.rb$"
+    r"|(?:^|/)(?:tests\.rs|tests\.py|conftest\.py|mock_\w+\.go)$"
+)
+
+
+def governs(path: str) -> bool:
+    """A decision can govern the file: code, not a test that names the thing (a mocked op's
+    key) or a Markdown heading that writes about it."""
+    return not _TEST_FILE.search(path) and not is_markdown_path(path)
 
 
 def definition_path(definitions: list[tuple[str, str]]) -> str:

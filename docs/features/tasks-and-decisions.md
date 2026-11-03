@@ -529,13 +529,17 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   `process:cli:decisions`; the tag write, `memory.update_by_id`, declares none, as over HTTP.
 - **Files**: each backticked or qualified name and each bare class name the document text holds is looked up with
   `code.symbol` in the document's namespace, or in the repository's trunk with `--repo`; exactly one defining file (a
-  class preferred over its constructor) goes into `files`, several or none add nothing. A repository path the quote or
-  the reasoning writes out (`src/Storages/MergeTreeData.cpp`) is added as well, as `memory.set` detects one. When the
-  code index cannot be read for a name, a decision already recorded keeps the files its row has, and a new one is
-  written with the files that did resolve. Pull request numbers and setting names are printed as unresolved in a dry
-  run, for a human to add; a backticked snake_case name is looked up first and reported as a setting only when the
-  index does not define it. A name defined in several files is printed as unresolved too, for a human to pick the
-  file.
+  class preferred over its constructor) goes into `files`, several or none add nothing. A name only tests or Markdown
+  pages define links nothing: a decision governs code, and an edit of a test or a page would show it instead. The dry
+  run says `only a test or a page defines it` and lists the name as unresolved (`only tests or pages`) for a human to
+  add the code file. Which paths count as tests is `governs` in `server/memory/domain/decision_extract.py`: common test,
+  mock and end-to-end layouts; one it misses keeps its link. A repository path the quote or the reasoning writes out
+  (`src/Storages/MergeTreeData.cpp`) is added as well, as `memory.set` detects one. When the code index cannot be read
+  for a name, a decision already recorded keeps the files its row has, and a new one is written with the files that did
+  resolve. Pull request numbers and setting names are printed as unresolved in a dry run, for a human to add; a
+  backticked snake_case name is looked up first and reported as a setting when the index does not define it, or only
+  tests and Markdown pages do and a page is among them; one only tests define is a helper and is not listed. A name
+  defined in several files is printed as unresolved, for a human to pick the file.
 - **Reconcile**: the document says otherwise only when a verbatim field differs: the reasoning, or the set of rejected
   options' reasons, each matched as a prefix where `decision.record` cut a long alternative at its 300-character cap.
   The category, scenario, outcome and option wording are the model's, and a change there alone is no change. Nor is a
