@@ -113,26 +113,26 @@ For real providers, set the provider block in `.env` ([deployment](../operations
 
 Every target below exists in the [`Makefile`](../../Makefile).
 
-| Target                                           | Does                                                                                                           |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `make bootstrap`                                 | creates `.env` and `deploy/clickhouse-config/named_collections.xml` if missing                                 |
-| `make dev` / `make dev-cloud`                    | the local stack with bundled ClickHouse / Loom against the ClickHouse in `.env` (both `--build`)               |
-| `make down` / `make down-all`                    | stop both stacks / also delete their volumes                                                                   |
-| `make server`                                    | the server from source with `--reload`                                                                         |
-| `make migrate`, `migrate-status`, `migrate-dry`  | apply / list / preview migrations                                                                              |
-| `make schema-dump`, `schema-check`               | regenerate / verify `schemas/schema.sql`                                                                       |
-| `make frontend-build`, `frontend-dev`            | build the dashboard / run Vite                                                                                 |
-| `make format`, `format-check`                    | ruff, Biome, Prettier, Taplo, shfmt (pinned versions)                                                          |
-| `make lint`                                      | ruff, the function-length and secret gates, every generator's `--check`, Biome's dashboard accessibility rules |
-| `make typecheck`                                 | the mypy ratchet (`mypy-gate`) and `mypy --strict` on the Python SDK                                           |
-| `make test-unit`                                 | `pytest tests/unit` and `pytest bench`                                                                         |
-| `make test` / `test-integration`                 | `pytest tests/integration` (needs a server and ClickHouse)                                                     |
-| `make test-unit-cov`                             | the unit suite with the coverage floor CI enforces                                                             |
-| `make ingest FILE=… [TAGS=…]`                    | load a file into the knowledge plane with `dev/loom_ingest.py`                                                 |
-| `make init` / `make onboard NAMESPACE=… AGENT=…` | provision a service account and `.env` for an agent / plus raised limits and a smoke test                      |
-| `make bench OP=… C=… D=…`                        | concurrent load against one op (`scripts/ops/benchmark.py`)                                                    |
-| `make bench-quick`, `bench-*`                    | quality and regression gates; need real providers ([benchmarks](../benchmarks/running.md))                     |
-| `make clean`                                     | `down-all` and remove Python caches                                                                            |
+| Target                                           | Does                                                                                                                                    |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `make bootstrap`                                 | creates `.env` and `deploy/clickhouse-config/named_collections.xml` if missing; gives an existing `.env` without an extractor token one |
+| `make dev` / `make dev-cloud`                    | the local stack with bundled ClickHouse / Loom against the ClickHouse in `.env` (both `--build`)                                        |
+| `make down` / `make down-all`                    | stop both stacks / also delete their volumes                                                                                            |
+| `make server`                                    | the server from source with `--reload`                                                                                                  |
+| `make migrate`, `migrate-status`, `migrate-dry`  | apply / list / preview migrations                                                                                                       |
+| `make schema-dump`, `schema-check`               | regenerate / verify `schemas/schema.sql`                                                                                                |
+| `make frontend-build`, `frontend-dev`            | build the dashboard / run Vite                                                                                                          |
+| `make format`, `format-check`                    | ruff, Biome, Prettier, Taplo, shfmt (pinned versions)                                                                                   |
+| `make lint`                                      | ruff, the function-length and secret gates, every generator's `--check`, Biome's dashboard accessibility rules                          |
+| `make typecheck`                                 | the mypy ratchet (`mypy-gate`) and `mypy --strict` on the Python SDK                                                                    |
+| `make test-unit`                                 | `pytest tests/unit` and `pytest bench`                                                                                                  |
+| `make test` / `test-integration`                 | `pytest tests/integration` (needs a server and ClickHouse)                                                                              |
+| `make test-unit-cov`                             | the unit suite with the coverage floor CI enforces                                                                                      |
+| `make ingest FILE=… [TAGS=…]`                    | load a file into the knowledge plane with `dev/loom_ingest.py`                                                                          |
+| `make init` / `make onboard NAMESPACE=… AGENT=…` | provision a service account and `.env` for an agent / plus raised limits and a smoke test                                               |
+| `make bench OP=… C=… D=…`                        | concurrent load against one op (`scripts/ops/benchmark.py`)                                                                             |
+| `make bench-quick`, `bench-*`                    | quality and regression gates; need real providers ([benchmarks](../benchmarks/running.md))                                              |
+| `make clean`                                     | `down-all` and remove Python caches                                                                                                     |
 
 Before a pull request, run `make format`, `make lint`, `make typecheck` and `make test-unit` ([testing](./testing.md)).
 

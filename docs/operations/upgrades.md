@@ -1,6 +1,7 @@
 # Upgrades
 
-An upgrade replaces the image and applies the migrations the new build carries. No other
+An upgrade replaces the image (and the document extractor's, which holds no state) and
+applies the migrations the new build carries. No other
 state moves: everything durable is in ClickHouse (and in the document bucket, for
 originals written with `LOOM_DOCUMENT_OBJECT_STORE=s3`), and the code mirrors are mounted
 unchanged. This page is the

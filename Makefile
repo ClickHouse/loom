@@ -13,13 +13,14 @@ BENCH_PYTHON = PYTHONPATH=$(CURDIR)$(if $(PYTHONPATH),:$(PYTHONPATH)) $(PYTHON)
 
 # Create the two gitignored files a fresh clone lacks but the dev stack needs:
 # .env (compose env_file) and the ClickHouse named-collections config (a bind
-# mount). Idempotent — only fills what's missing, so it's safe as a dev prereq.
+# mount), and give an .env without one an extractor token. Idempotent — only
+# fills what's missing, so it's safe as a dev prereq.
 bootstrap:
 	@PYTHONPATH="$(CURDIR)" python3 -c 'from pathlib import Path; from server.cli.up import bootstrap; [print("✓ " + line) for line in bootstrap(Path.cwd(), ".env")]'
 
-# Local evaluation stack — Loom built from this checkout + the bundled
-# ClickHouse (compose.yaml with the dev/docker-compose.dev.yml override). CH is
-# Loom's only direct dependency; Langfuse and HyperDX are optional integrations
+# Local evaluation stack — Loom and its document extractor built from this
+# checkout + the bundled ClickHouse (compose.yaml with the
+# dev/docker-compose.dev.yml override). CH is Loom's only direct dependency; Langfuse and HyperDX are optional integrations
 # that each have their own deployment story (see docs/operations/deployment.md).
 # --build so a code change is actually reflected: plain `up` reuses the cached
 # image and silently runs stale code. Docker layer caching keeps a no-change

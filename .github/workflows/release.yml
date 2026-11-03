@@ -4,9 +4,9 @@ name: release
 # GitHub Release; nothing leaves GitHub. A manual dispatch on the same tag
 # (`gh workflow run release.yml --ref vX.Y.Z`) runs the same jobs and then
 # publishes the verified SDK files to PyPI and npm and lists the server in the
-# MCP Registry. Every tag publishes the server and extractor images to ghcr.io before making
-# the GitHub Release visible, so the release's one-line installer never points
-# at an image that does not exist.
+# MCP Registry. Every tag publishes the server and extractor images to ghcr.io
+# before making the GitHub Release visible, so the release's one-line installer
+# never points at an image that does not exist.
 # docs/development/release-process.md is the maintainer procedure.
 #
 # Jobs: version (derive and gate the version) -> clickhouse (the ClickHouse
