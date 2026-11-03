@@ -381,12 +381,13 @@ class KnowledgeSynthesizeOutput(BaseModel):
     unsupported_citations: list[str] = Field(default_factory=list)
     # True when the documents needed more than `max_windows` windows and only the first were read.
     truncated: bool = False
-    # True when no answer was attempted; `abstain_reason` says why.
+    # True when there is no answer to give; `abstain_reason` says why.
     abstain: bool = False
     # `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents
-    # have no chunks) or `empty_answer` (the passes ran and wrote nothing); empty otherwise.
+    # have no chunks) or `empty_answer` (the answer was empty once citations of chunks the
+    # passes did not read were removed); empty otherwise.
     abstain_reason: str = ""
-    # LLM that wrote the notes and the answer; empty when it abstained.
+    # LLM that wrote the notes and the answer; empty when it abstained before any call.
     model: str = ""
 
 

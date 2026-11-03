@@ -127,8 +127,8 @@ Search finds a passage; three other reads cover the rest of the work with a long
   (`[source#idx]` or `[source#a-b]`); a tag the model wrote for anything else (a chunk
   past `max_windows`, an index that does not exist, another document) is removed from
   `answer` and listed in `unsupported_citations`, since following it would read
-  something the answer did not come from. An answer the passes left empty abstains
-  with `abstain_reason="empty_answer"`. It needs a real LLM provider.
+  something the answer did not come from. An answer that is empty once those tags are
+  removed abstains with `abstain_reason="empty_answer"`. It needs a real LLM provider.
 
 `memory.ask` also reads knowledge: it runs one hybrid knowledge search over the same
 namespace and appends the passages as a citable block (per request `knowledge=false`

@@ -282,9 +282,9 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | `citations` | `list[str]` | Distinct `source#idx` (or `source#a-b`) citations in the answer, in reading order; each names chunks the passes read. |
 | `unsupported_citations` | `list[str]` | Tags the model wrote for chunks it was not shown, removed from `answer`. |
 | `truncated` | `bool` | True when the documents needed more than `max_windows` windows and only the first were read. |
-| `abstain` | `bool` | True when no answer was attempted; `abstain_reason` says why. |
-| `abstain_reason` | `str` | `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents have no chunks) or `empty_answer` (the passes ran and wrote nothing); empty otherwise. |
-| `model` | `str` | LLM that wrote the notes and the answer; empty when it abstained. |
+| `abstain` | `bool` | True when there is no answer to give; `abstain_reason` says why. |
+| `abstain_reason` | `str` | `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents have no chunks) or `empty_answer` (the answer was empty once citations of chunks the passes did not read were removed); empty otherwise. |
+| `model` | `str` | LLM that wrote the notes and the answer; empty when it abstained before any call. |
 
 ## `knowledge.update_metadata`
 

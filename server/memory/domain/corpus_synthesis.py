@@ -121,7 +121,9 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
     )
 
 
-_CITATION = re.compile(r"\[([^\[\]\s]+#\d+(?:-\d+)?)\]")
+# A tag ends in `#idx` or `#a-b`; its source may hold spaces, and a window spanning
+# documents is cited as a comma list (`Window.cite`).
+_CITATION = re.compile(r"\[([^\[\]\n]*#\d+(?:-\d+)?)\]")
 
 
 def citations(text: str) -> list[str]:
@@ -137,12 +139,18 @@ def citations(text: str) -> list[str]:
 
 
 def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
-    """Whether `source#idx` (or `source#a-b`, a <= b) names chunks in `read`, the
-    (source, idx) pairs the passes were shown. A range needs both of its ends read."""
-    source, _, span = tag.rpartition("#")
-    first, _, last = span.partition("-")
-    a, b = int(first), int(last or first)
-    return a <= b and (source, a) in read and (source, b) in read
+    """Whether `source#idx` (or `source#a-b`, a <= b, or a comma list of them) names
+    chunks in `read`, the (source, idx) pairs the passes were shown. A range needs both
+    of its ends read, a list every part."""
+    for part in tag.split(","):
+        source, _, span = part.strip().rpartition("#")
+        first, _, last = span.partition("-")
+        if not (first.isdigit() and (not last or last.isdigit())):
+            return False
+        a, b = int(first), int(last or first)
+        if not (a <= b and (source, a) in read and (source, b) in read):
+            return False
+    return True
 
 
 def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list[str], list[str]]:
