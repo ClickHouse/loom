@@ -21,7 +21,7 @@ vulnerability, and for the deployment hardening checklist, see
 | Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows, and chunks, digests and turns that read as high, are never embedded                    | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
 | Audit rows are edited or deleted                     | Per-row hashes plus a hash-chained checkpoint per window                                                                   | `server/observability/audit.py`, `audit_verifier` worker                                                             |
 | Erasure leaves residue                               | Checkpointed saga ending in a residue census                                                                               | `server/erasure/app/saga.py`, `server/erasure/store/census.py`                                                       |
-| A service signs beyond its end users                 | Each issuer signs for its listed orgs alone, no two for one org; a token names one user and agent, never a group or a role | `server/auth/jwt.py` (`_verify_end_user`), `server/settings/_auth.py` (`EndUserIssuer`)                              |
+| A service signs beyond its end users                 | Each issuer signs for its listed orgs alone, no two for one org; a token names one user and agent, never a group or a role | `server/auth/jwt.py` (`_verify_end_user`), `server/settings/catalog.py` (`EndUserIssuer`)                            |
 | A collection is read without a grant                 | Only grants of the request's principals, inherited down the tree, open one                                                 | `server/auth/sharing.py`, `server/auth/authz.py` (`check_authorized`)                                                |
 
 Out of scope: an attacker who already operates the ClickHouse database, vulnerabilities
@@ -892,7 +892,7 @@ only those with a vector (`embedding_dim > 0`), so no search leg returns it.
   two chunks with no overlap are not joined. The check reads one call's chunks only (at
   most 256), so a key cut at the boundary between the last chunk of one call and the
   first chunk of the next reads as high in neither, and both chunks are
-  embedded. `loom okf import` sends each session's chunks whole in one call, so only a
+  embedded. `loom import-okf` sends each session's chunks whole in one call, so only a
   session of more than 256 chunks can still hit this gap. `memory.get` on a `chunk:` key
   leaves out a neighbour with no vector, as it leaves out one that reads as high, and
   audits a key read of either.
