@@ -288,8 +288,6 @@ async def _rerank_with_builtin_cohere(
 
     results = payload.get("results") if isinstance(payload, dict) else None
     if not isinstance(results, list):
-        log.warning("Cohere rerank returned malformed payload; falling back")
-        _degradations.note("rerank:cohere", "input_order_kept", "malformed payload")
         return candidates
 
     ordered: list[RerankCandidate] = []

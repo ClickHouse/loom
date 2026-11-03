@@ -21,7 +21,6 @@ from server.knowledge.api.models_knowledge import (
 )
 from server.knowledge.domain.chunking import embedding_text
 from server.memory.app.log_once import LogOnce
-from server.observability import degradations as _degradations
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -155,8 +154,9 @@ async def _rerank(
                 candidates=candidates,
                 excerpt_chars=chars,
             )
-    except TimeoutError as e:
-        _degradations.note("rerank:knowledge", "fused_order_kept", e)
+    except TimeoutError:
+        # The search's own deadline, not the provider's failure: no health record.
+        log.info("knowledge.search rerank cut at %ss", settings.knowledge_search_rerank_timeout_s)
         return hits, False
     # The service hands back its input on a failure, or an order it could not read in
     # input order: either way no reranker ordered the page.
