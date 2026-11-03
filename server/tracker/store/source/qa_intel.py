@@ -393,15 +393,17 @@ def is_budget_timeout(e: BaseException) -> bool:
 
 
 _REMOTE_CALL = re.compile(r"^\s*remote(Secure)?\s*\(", re.IGNORECASE)
-_QUOTED = re.compile(r"'(?:[^'\\]|\\.)*'")
+_TABLE_NAME = re.compile(r"^\s*[\w`\".]+\s*$")
+# A literal that runs to the end of the clause counts: its text is still a secret.
+_QUOTED = re.compile(r"'(?:[^'\\]|\\.)*(?:'|\\?$)")
 _SETTING_ARG = re.compile(r"^\s*\w+\s*=")
-_ONE_ARG_TABLE = re.compile(r"^\s*(view|viewIfPermitted)\s*\(", re.IGNORECASE)
+_CALL_ARG = re.compile(r"^\s*\w+\s*\(")
 
 
-def _call_arguments(clause: str, open_at: int) -> list[tuple[int, int]]:
+def _call_arguments(clause: str, open_at: int) -> list[tuple[int, int]] | None:
     """The (start, end) span of each top-level argument of the call whose `(`
     is at `open_at`: commas inside quotes or nested parentheses do not split.
-    An unclosed call's last argument runs to the end of the clause."""
+    None when the call is not closed."""
     spans: list[tuple[int, int]] = []
     depth, quote, start, i = 0, "", open_at + 1, open_at + 1
     while i < len(clause):
@@ -420,28 +422,28 @@ def _call_arguments(clause: str, open_at: int) -> list[tuple[int, int]]:
         elif c in ",)" and depth == 0:
             spans.append((start, i))
             if c == ")":
-                break
+                return spans
             start = i + 1
         i += 1
-    else:
-        spans.append((start, len(clause)))
-    return spans
+    return None
 
 
 def redact_table_function(clause: str) -> str:
-    """`clause` with the user and password of a `remote` / `remoteSecure`
-    call masked: every quoted literal in the arguments after the table, which
-    is one argument (`db.table`, `view(...)`) or two (`db`, `table`), and in
-    every `key = value` argument of the named-collection form. Any other
-    clause (a table, a view) carries no credential and is returned as is."""
-    m = _REMOTE_CALL.match(clause or "")
-    if not m:
+    """`clause` as operators and callers may read it: a table name as is,
+    and any other clause with its credentials masked. In a closed `remote` /
+    `remoteSecure` call that is every quoted literal after the table, which
+    is one argument (`db.table`, a call such as `view(...)`) or two (`db`,
+    `table`), and every literal of a `key = value` argument. Any other clause
+    (another table function, a subquery, a malformed call) has every quoted
+    literal masked."""
+    if not clause or _TABLE_NAME.match(clause):
         return clause
-    spans = _call_arguments(clause, m.end() - 1)
-    if len(spans) < 2:
-        return clause
+    m = _REMOTE_CALL.match(clause)
+    spans = _call_arguments(clause, m.end() - 1) if m else None
+    if spans is None or len(spans) < 2:
+        return _QUOTED.sub("'***'", clause)
     second = clause[spans[1][0] : spans[1][1]]
-    one_arg_table = "." in second or _ONE_ARG_TABLE.match(second) is not None
+    one_arg_table = "." in second or _CALL_ARG.match(second) is not None
     first_credential = 2 if one_arg_table else 3
     out, last = [], 0
     for i, (a, b) in enumerate(spans):

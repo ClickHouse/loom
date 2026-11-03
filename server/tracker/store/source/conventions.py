@@ -8,6 +8,7 @@ import re
 
 from server.settings import settings
 from server.tracker.store.source import contract_reports
+from server.tracker.store.source.qa_intel import redact_table_function
 
 
 def checks_config(org: str, namespace: str) -> tuple[str, str]:
@@ -43,9 +44,7 @@ def checks_config(org: str, namespace: str) -> tuple[str, str]:
 
 def checks_source_label(org: str, namespace: str) -> str:
     """The checks FROM clause as callers read it and the rollup ledger stores
-    it: a `remote` call's user and password masked."""
-    from server.tracker.store.source.qa_intel import redact_table_function
-
+    it: its credentials masked (`redact_table_function`)."""
     return redact_table_function(checks_config(org, namespace)[0])
 
 

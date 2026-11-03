@@ -373,21 +373,55 @@ def test_probe_output_masks_remote_credentials() -> None:
 
 
 @pytest.mark.parametrize(
-    "clause",
+    ("clause", "masked"),
     [
-        "remoteSecure('h:9440', default.checks, 'play', 'secret')",
-        "remoteSecure('h:9440', default, checks, 'play', 'secret')",
-        "remote('h:9000', 'db', 'checks', 'play', 'secret', rand())",
-        "remoteSecure('h:9440', view(SELECT 'a,b' FROM db.t), 'play', 'secret')",
-        "remoteSecure(my_collection, user = 'play', password = 'secret')",
+        (
+            "remoteSecure('h:9440', default.checks, 'play', 'secret')",
+            "remoteSecure('h:9440', default.checks, '***', '***')",
+        ),
+        (
+            "remoteSecure('h:9440', default, checks, 'play', 'secret')",
+            "remoteSecure('h:9440', default, checks, '***', '***')",
+        ),
+        (
+            "remote('h:9000', 'db', 'checks', 'play', 'secret', rand())",
+            "remote('h:9000', 'db', 'checks', '***', '***', rand())",
+        ),
+        (
+            "remoteSecure('h:9440', view(SELECT 'a,b' FROM db.t), 'play', 'secret')",
+            "remoteSecure('h:9440', view(SELECT 'a,b' FROM db.t), '***', '***')",
+        ),
+        (
+            "remoteSecure('h:9440', merge('default', '^checks'), 'play', 'secret')",
+            "remoteSecure('h:9440', merge('default', '^checks'), '***', '***')",
+        ),
+        (
+            "remoteSecure(my_collection, user = 'play', password = 'secret')",
+            "remoteSecure(my_collection, user = '***', password = '***')",
+        ),
     ],
 )
-def test_remote_credentials_are_masked_by_argument_position(clause: str) -> None:
+def test_remote_credentials_are_masked_by_argument_position(clause: str, masked: str) -> None:
     """The user and password follow the table argument in every form of the
-    call, whether the database and table are quoted, bare or one `db.table`."""
+    call, whether the database and table are quoted, bare, one `db.table` or
+    a table function; the address, the table and a sharding key stay."""
+    assert qi.redact_table_function(clause) == masked
+
+
+@pytest.mark.parametrize(
+    "clause",
+    [
+        "mysql('h:3306', 'db', 'checks', 'play', 'secret')",
+        "s3('https://b.example.com/k', 'play', 'secret')",
+        "(SELECT * FROM remoteSecure('h', 'db', 'checks', 'play', 'secret'))",
+        "remoteSecure('h', 'db', 'checks', 'play', 'secret",
+        "remoteSecure('h', view(SELECT 1 FROM t, 'play', 'secret')",
+    ],
+)
+def test_any_other_clause_has_every_literal_masked(clause: str) -> None:
+    """Another table function, a subquery or a malformed call fails closed."""
     masked = qi.redact_table_function(clause)
     assert "secret" not in masked and "play" not in masked
-    assert masked.split("(", 1)[0] == clause.split("(", 1)[0]
 
 
 def test_printable_endpoint_masks_checks_from() -> None:
