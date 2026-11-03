@@ -82,6 +82,8 @@ def test_clean_alternatives_dedupes_and_caps() -> None:
     assert cut == "y" * 290 + " slow…"
     (cut,) = svc.clean_alternatives(["y" * 285 + " option — " + "z" * 40])
     assert cut == "y" * 285 + " option…"
+    (cut,) = svc.clean_alternatives(["甲" * 298 + "，" + "乙" * 10])
+    assert cut == "甲" * 298 + "…"
     # An alternative that fits is kept as written.
     fits = "y" * 270 + " src/cache/LruCache.cpp"
     assert svc.clean_alternatives([fits]) == [fits]

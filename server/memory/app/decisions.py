@@ -28,6 +28,9 @@ MAX_ALTERNATIVES = 10
 ALTERNATIVE_CHARS = 300
 # What a cut alternative ends in, so a reader and a re-extraction know it was cut.
 CUT_MARK = "…"
+# What a cut drops before the mark: spaces, ASCII and full-width clause punctuation, the
+# ideographic space, and the dashes and slashes a cut may leave.
+_CUT_ENDINGS = " .,;:。，、；：\u3000—-/"
 MAX_CHAIN_NODES = 200
 
 
@@ -68,7 +71,7 @@ def cut_alternative(text: str) -> str:
     wide = next((i for i in range(room, lowest, -1) if _wide_pair(text[i - 1], text[i])), -1)
     end = max(space, wide)
     # The mark follows a word, not the punctuation or dash a cut left before it.
-    kept = text[:end].rstrip(" .,;:—-/") if end > 0 else ""
+    kept = text[:end].rstrip(_CUT_ENDINGS) if end > 0 else ""
     return kept + CUT_MARK
 
 
