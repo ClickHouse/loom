@@ -244,6 +244,12 @@ def test_grounding_removes_the_tags_of_unread_chunks_from_the_answer() -> None:
     # a long run of blanks before a removed citation is removed in one scan
     many = " " * 40000 + "[doc://z#0]"
     assert cs.ground_citations("x" + many, read) == ("x", [], ["doc://z#0"])
+    # a removal that closes an outer bracket into a citation checks that one too
+    assert cs.ground_citations("see [doc://q#7[doc://z#0]] now", read) == (
+        "see now",
+        [],
+        ["doc://z#0", "doc://q#7"],
+    )
     # of nested brackets the innermost is read
     assert cs.ground_citations("[[doc://a#1]]", read) == ("[[doc://a#1]]", ["doc://a#1"], [])
     # an index past nine digits is prose, not a number to parse

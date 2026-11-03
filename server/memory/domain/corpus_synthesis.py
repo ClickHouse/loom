@@ -126,13 +126,16 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
 # source holds no blank, comma, semicolon or bracket; a bracket with anything else in it
 # is prose (`[PR #42]`, `[see doc#1]`) and is left as written. Of nested brackets, the
 # innermost is the one read. An index is at most nine digits 0-9: a longer run is prose.
-_ITEM = r"[^\s,;\[\]]+#[0-9]{1,9}(?:-[0-9]{1,9})?"
-_CITATION = rf"\[\s*({_ITEM}(?:\s*[,;]\s*{_ITEM})*)\s*\]"
-# One item of a matched citation, as (source, first index, last index).
+# One item, as (source, first index, last index); a citation is a list of them.
 _ITEM_PARTS = re.compile(r"([^\s,;\[\]]+)#([0-9]{1,9})(?:-([0-9]{1,9}))?")
+_ITEM = _ITEM_PARTS.pattern
+_CITATION = rf"\[\s*({_ITEM}(?:\s*[,;]\s*{_ITEM})*)\s*\]"
 # A removed citation goes with the blanks before it; the lookbehind starts the blanks at
 # the start of their run, so a long run is scanned once.
 _SPACED_CITATION = re.compile(r"(?<![ \t])[ \t]*" + _CITATION)
+# Citations nested deeper than this are not looked for: a model writes none, and each
+# level is one more pass over the answer.
+_MAX_PASSES = 8
 
 
 def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
@@ -162,4 +165,12 @@ def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list
             (kept if supported else removed).append(tag)
         return m.group(0) if supported else ""
 
-    return _SPACED_CITATION.sub(check, answer).strip(), kept, removed
+    # Removing an inner citation can close an outer bracket into a new one
+    # (`[a#7[b#0]]`), so the pass repeats until it removes nothing; each nesting level
+    # takes one pass, and past _MAX_PASSES levels the rest is left as written.
+    for _ in range(_MAX_PASSES):
+        grounded = _SPACED_CITATION.sub(check, answer)
+        if grounded == answer:
+            break
+        answer = grounded
+    return answer.strip(), kept, removed
