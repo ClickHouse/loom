@@ -18,7 +18,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Exporting usage to a data warehouse](docs/operations/analytics-export.md): `loom export-analytics` writes one UTC day of usage and a snapshot of the namespaces to an S3 bucket as Parquet files, one file per entity per day, for a data warehouse to load.
 - [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup, plus the document bucket while any catalog row names an object in it.
 - [Code index operations](docs/operations/code-index-operations.md): The code index runs only when an operator enables its workers and configures repositories.
-- [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse.
+- [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse, with the document extractor service as an image of its own (container images).
 - [Kubernetes](docs/operations/kubernetes.md): `deploy/helm/loom` runs Loom as N identical replicas on Kubernetes: one Deployment of web pods over one ClickHouse service, each pod a full replica.
 - [Maintenance](docs/operations/maintenance.md): Every command here is a `loom` subcommand; run it inside the container that has the deployment's environment (`docker exec loom-server loom …`, or `loom-workers` in a split deployment).
 - [Monitoring](docs/operations/monitoring.md): This page says what to watch.
