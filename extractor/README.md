@@ -43,10 +43,13 @@ route out and the token alone
 
 ```bash
 docker run --read-only --cap-drop ALL --security-opt no-new-privileges \
-  --env-file /etc/loom-extractor.env ghcr.io/clickhouse/loom-extractor
+  -p 127.0.0.1:8790:8790 --env-file /etc/loom-extractor.env ghcr.io/clickhouse/loom-extractor
 ```
 
-with `/etc/loom-extractor.env` a root-only file holding `LOOM_EXTRACTOR_TOKEN=...`.
+with `/etc/loom-extractor.env` a root-only file holding `LOOM_EXTRACTOR_TOKEN=...`,
+for a server on the same host at `http://127.0.0.1:8790`. Unlike the compose stack
+and the chart, this leaves the service's own process a route out; the extractions
+can make no socket either way.
 
 Point the server at it with `LOOM_DOCUMENT_EXTRACTOR_URL` and the token file's
 contents in `LOOM_DOCUMENT_EXTRACTOR_TOKEN`.

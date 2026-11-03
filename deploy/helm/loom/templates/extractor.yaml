@@ -10,6 +10,17 @@ egress. */}}
 {{- fail (printf "extractor.env cannot set %s: the chart sets it" $k) }}
 {{- end }}
 {{- end }}
+{{- /* The token both sides use is the Secret key the extractor reads; one set
+anywhere else would reach the Loom pods alone, and every format would read as
+unavailable. */}}
+{{- $refused := "the extractor's token is the release Secret's LOOM_DOCUMENT_EXTRACTOR_TOKEN: set it through secrets.extractorToken (or secrets.existingSecret)" }}
+{{- range $k := list "LOOM_DOCUMENT_EXTRACTOR_TOKEN" "LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON" }}
+{{- if hasKey $.Values.env $k }}{{ fail (printf "%s, not env.%s" $refused $k) }}{{ end }}
+{{- range $.Values.extraEnv }}{{ if eq .name $k }}{{ fail (printf "%s, not extraEnv %s" $refused $k) }}{{ end }}{{ end }}
+{{- end }}
+{{- range $k := list "document_extractor_token" "document_extractor_tokens_json" }}
+{{- if hasKey ($.Values.settingsFile | default dict) $k }}{{ fail (printf "%s, not settingsFile.%s" $refused $k) }}{{ end }}
+{{- end }}
 {{- $name := include "loom.extractorName" $ }}
 apiVersion: apps/v1
 kind: Deployment
