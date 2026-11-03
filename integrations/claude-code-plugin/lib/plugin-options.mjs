@@ -20,21 +20,43 @@ import {
   normalizeUrl,
   pluginDefaults,
   readConfigFile,
+  resolveServerUrl,
   writeConfigMerged,
 } from "./loom-client.mjs";
 import { readJsonFile, removeFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
 
-/** The server the MCP entry was told to call: the install option, else the
- *  plugin's shipped default (the Codex plugin's fixed entry), else
- *  `LOOM_BASE_URL`, which Claude Code's `server_url` default reads. "" when
- *  none names one and the entry falls back to localhost. */
+/** The server Claude Code's MCP entry was told to call: the install option,
+ *  else `LOOM_BASE_URL`, which the `server_url` default reads. "" when
+ *  neither names one and the entry falls back to localhost. */
 function namedServerUrl(env) {
-  return normalizeUrl(env.CLAUDE_PLUGIN_OPTION_SERVER_URL || pluginDefaults().server_url || env.LOOM_BASE_URL);
+  return normalizeUrl(env.CLAUDE_PLUGIN_OPTION_SERVER_URL || env.LOOM_BASE_URL);
 }
 
-/** The URL the plugin's MCP entry calls. */
+/** The URL Claude Code's MCP entry calls. */
 export function mcpServerUrl(env = process.env) {
   return namedServerUrl(env) || "http://localhost:7777";
+}
+
+/** The Codex plugin ships a fixed MCP entry (`plugin-defaults.json`), which
+ *  the person may replace whole in Codex's own config; these scripts cannot
+ *  read that, so under Codex nothing here reasons about the entry's URL. */
+export function entryIsFixed() {
+  return Boolean(pluginDefaults().server_url);
+}
+
+/** Whether two base URLs name one server: origins compared, with the
+ *  loopback spellings folded. Unparsable values compare as strings. */
+export function sameServer(a, b) {
+  const origin = (u) => {
+    const parsed = new URL(normalizeUrl(u));
+    const host = parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]" ? "localhost" : parsed.hostname;
+    return `${parsed.protocol}//${host}${parsed.port ? `:${parsed.port}` : ""}`;
+  };
+  try {
+    return origin(a) === origin(b);
+  } catch {
+    return normalizeUrl(a) === normalizeUrl(b);
+  }
 }
 
 /** One state file per installed plugin: the Codex copy of these scripts
@@ -56,9 +78,11 @@ export function installServerUrl({ tmp } = {}) {
   return String(readJsonFile(installStatePath(tmp), {}).url || "");
 }
 
-/** The server the status script checks: the one the MCP entry calls, with
- *  the saved install URL standing in for the option the agent's shell lacks. */
+/** The server the status script checks: under Claude Code the one the MCP
+ *  entry calls, with the saved install URL standing in for the option the
+ *  agent's shell lacks; under Codex the hooks' server. */
 export function statusServerUrl({ tmp } = {}) {
+  if (entryIsFixed()) return resolveServerUrl();
   return installServerUrl({ tmp }) || mcpServerUrl();
 }
 
@@ -75,20 +99,20 @@ export function planMaterialize(env, { configExists, configToken, tokenFileExist
 }
 
 /** The primer line when the token the MCP header helper will send is the
- *  config's, saved for another server than the MCP entry calls, which
- *  refuses it. The helper reads LOOM_API_KEY, then the config: no notice
- *  when the env var is set, when this hook has just written the config's
- *  token itself, or when the config names no server. The remedy depends on
- *  whether anything named the entry's server: when nothing did, the entry
- *  fell back to localhost and the fix is to name the config's server. Pure. */
+ *  config's, saved for another server than Claude Code's MCP entry calls,
+ *  which refuses it. The helper reads LOOM_API_KEY, then the config: no
+ *  notice when the env var is set, when this hook has just written the
+ *  config's token itself, or when the config names no server. The remedy
+ *  depends on whether anything named the entry's server: when nothing did,
+ *  the entry fell back to localhost and the fix is to name the config's
+ *  server. Pure. */
 export function installTokenNotice(plan, env = process.env) {
   if (String(env.LOOM_API_KEY || "").trim() || plan.write || !plan.configHasToken) return "";
   const saved = normalizeUrl(plan.configUrl);
-  const named = namedServerUrl(env);
-  const inUse = named || mcpServerUrl(env);
-  if (!saved || saved === inUse) return "";
+  const inUse = mcpServerUrl(env);
+  if (!saved || sameServer(saved, inUse)) return "";
   const where = `Loom: ${loomConfigPath(env)} holds a token saved for ${saved}, which the loom MCP tools send to `;
-  if (!named) {
+  if (!namedServerUrl(env)) {
     return (
       `${where}${inUse}, the MCP entry's default, since nothing names its server. Point the entry at ` +
       `${saved}: install with --config server_url=${saved}, or export LOOM_BASE_URL=${saved}, and restart.`

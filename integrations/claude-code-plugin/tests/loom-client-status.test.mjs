@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 process.env.LOOM_HOOK_NO_MAIN = "1";
 const { clientStatus } = await import("../bin/loom-client-status.mjs");
@@ -132,4 +133,50 @@ test("the source line sits between token and auth, names the lookup, and warns w
     none.checks.some((c) => c.name === "source"),
     false,
   );
+});
+
+test("the agent-mode line names the server the exchange went to, not the one checked", async () => {
+  const { fetchImpl } = responses();
+  const saved = { ...process.env };
+  process.env.LOOM_CLIENT_ID = "ci";
+  process.env.LOOM_WORKLOAD_TOKEN = "proof";
+  try {
+    const r = await clientStatus({ serverUrl, token: "", scope, now, fetchImpl, exchangeUrl: "https://hooks.test" });
+    assert.match(r.checks.find((c) => c.name === "token").detail, /exchange at https:\/\/hooks\.test failed/);
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+});
+
+test("the Codex copy checks the hooks' server and makes no source comparison", async () => {
+  // Codex's MCP entry may be replaced whole in Codex's own config, which the
+  // script cannot read: it checks the hooks' server and the source line only
+  // names the lookup.
+  const { spawn } = await import("node:child_process");
+  const codexScript = fileURLToPath(new URL("../../codex-plugin/bin/loom-client-status.mjs", import.meta.url));
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-status-codex-")));
+  fs.mkdirSync(path.join(home, ".loom"));
+  fs.writeFileSync(
+    path.join(home, ".loom", "config.json"),
+    JSON.stringify({ url: "https://elsewhere.test", token: token() }),
+  );
+  try {
+    const out = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [codexScript], {
+        env: { PATH: process.env.PATH, HOME: home, TMPDIR: home, LOOM_BASE_URL: "http://127.0.0.1:9" },
+      });
+      let stdout = "";
+      child.stdout.on("data", (c) => (stdout += c));
+      child.on("close", () => resolve(stdout));
+    });
+    const result = JSON.parse(out);
+    assert.match(result.checks.find((c) => c.name === "server").detail, /127\.0\.0\.1:9/);
+    const source = result.checks.find((c) => c.name === "source");
+    assert.equal(source.grade, "PASS");
+    assert.ok(source.detail.endsWith("config.json"), source.detail);
+    assert.equal(out.includes(token()), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

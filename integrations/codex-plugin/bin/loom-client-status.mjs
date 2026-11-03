@@ -15,7 +15,7 @@ import {
   resolveServerUrl,
   tokenLookup,
 } from "../lib/loom-client.mjs";
-import { statusServerUrl } from "../lib/plugin-options.mjs";
+import { entryIsFixed, sameServer, statusServerUrl } from "../lib/plugin-options.mjs";
 
 const FLUSH_RE = /^loom-flush-\d{13}-\d+\.json$/;
 const WRITER_ROLES = new Set(["writer", "admin", "jwt", "org_admin", "platform_admin"]);
@@ -89,7 +89,7 @@ export async function clientStatus({
     // sends to this one; the hooks may hold a different token.
     const source = tokenSourceName(tokenKind);
     const saved = normalizeUrl(configUrl);
-    const other = tokenKind === "config" && saved && saved !== normalizeUrl(serverUrl);
+    const other = tokenKind === "config" && saved && !sameServer(saved, serverUrl);
     add(
       "source",
       other ? "WARN" : "PASS",
@@ -148,7 +148,8 @@ if (process.env.LOOM_HOOK_NO_MAIN !== "1") {
     token,
     scope: resolveScope(process.cwd()),
     tokenKind: kind,
-    configUrl: loomConfig().url,
+    // Under Codex the entry's URL is unknown here, so no comparison is made.
+    configUrl: entryIsFixed() ? "" : loomConfig().url,
     exchangeUrl: resolveServerUrl(),
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

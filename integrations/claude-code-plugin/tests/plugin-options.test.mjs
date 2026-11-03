@@ -11,6 +11,7 @@ import {
   installTokenNotice,
   mcpServerUrl,
   planMaterialize,
+  sameServer,
   saveInstallServerUrl,
   statusServerUrl,
 } from "../lib/plugin-options.mjs";
@@ -121,6 +122,15 @@ test("mcpServerUrl follows the MCP entry: the option, then LOOM_BASE_URL, then l
   );
   assert.equal(mcpServerUrl({ LOOM_BASE_URL: "https://env/" }), "https://env");
   assert.equal(mcpServerUrl({}), "http://localhost:7777");
+});
+
+test("sameServer compares origins and folds the loopback spellings", () => {
+  assert.equal(sameServer("http://127.0.0.1:7777", "http://localhost:7777/"), true);
+  assert.equal(sameServer("https://a.example/", "https://A.example"), true);
+  assert.equal(sameServer("https://a.example", "https://a.example:8443"), false);
+  assert.equal(sameServer("https://a.example", "http://a.example"), false);
+  assert.equal(sameServer("not a url", "not a url/"), true); // unparsable: string compare
+  assert.equal(sameServer("", "http://localhost:7777"), false);
 });
 
 test("the hook saves the install URL for the status script, removes it when the option is gone", () => {
