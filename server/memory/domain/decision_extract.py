@@ -265,9 +265,9 @@ _NEGATION_WORDS = (
 _H = r"[^\S\n]"
 # What ends a sentence: a full stop, a question or exclamation mark, a semicolon, ASCII
 # or full-width.
-_SENTENCE_MARK = re.compile(r"[.!?;。！？；]")
+_SENTENCE_PUNCT = "[.!?;。！？；]"
 # A word that ends a sentence, closing brackets, quotes and emphasis after the mark aside.
-_SENTENCE_END_WORD = re.compile(r"[.!?;。！？；][)\]\"'”’*_]*$")
+_SENTENCE_END_WORD = re.compile(rf"{_SENTENCE_PUNCT}[)\]\"'”’*_]*$")
 # A label line: one to three words on a line of their own, as a slide or diagram
 # converted to text puts box labels between a sentence's two halves.
 _LABEL_LINE = rf"{_H}*\S+(?:{_H}+\S+){{0,2}}{_H}*\n"
@@ -277,14 +277,10 @@ _BLANK_LINES = rf"(?:{_H}*\n)*"
 # word: a later line reading as it is not taken for a label. The lines read across are
 # a group, which `_only_labels` checks.
 _LABEL_GAP = rf"{_H}*\n({_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_LINES_MAX}}}?){_H}*"
-# A short line that is still no label: one that starts as a list item, a fence or code,
-# a table row, a heading or its underline (`===`, `---`), a rule (`___`), an HTML tag, a
-# quote or a
-# definition (the document's structure); one that ends a sentence, as the last line of
-# a wrapped paragraph does; or one that holds a ban or a negation word: skipping `not`
-# would read "Retries are\nnot\nsafe" as "Retries are safe".
+# A short line that is no label: structure (a list item, fence, table row, heading, its
+# underline or a rule, HTML tag, quote, definition), a sentence end, or a negation.
 _NOT_A_LABEL = re.compile(
-    rf"^(?:[-*+`~|#>:=<_]|\d+[.)](?:\s|$))|{_SENTENCE_MARK.pattern}$"
+    rf"^(?:[-*+]\s|(?:[-*_]{_H}*){{3,}}$|[`~|#>:=<]|\d+[.)](?:\s|$))|{_SENTENCE_PUNCT}$"
     rf"|\b(?:{_BAN_WORDS}|{_NEGATION_WORDS})\b|n['’]t\b",
     re.I,
 )

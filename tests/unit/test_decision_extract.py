@@ -642,6 +642,24 @@ def test_a_span_split_across_two_chunks_is_not_found() -> None:
     assert dx.find_span(REPLICA_SPAN, [first + "Shard A\n", second]) == ""
 
 
+def test_a_longer_span_costs_linear_time_against_one_text() -> None:
+    # Twice the span's words against one text: a matcher that read a gap more than one way
+    # would take exponential time in the words on the final mismatch (about 200 times
+    # here); linear time is about twice. Each the best of five runs.
+    text = "a\nX\n" * 30
+
+    def best(words: int) -> float:
+        span = " ".join(["a"] * words + ["b"])
+        runs = []
+        for _ in range(5):
+            started = time.perf_counter()
+            assert dx.find_span(span, [text]) == ""
+            runs.append(time.perf_counter() - started)
+        return min(runs)
+
+    assert best(20) < 20 * best(10)
+
+
 @pytest.mark.parametrize(
     ("text", "span"),
     [
@@ -688,14 +706,15 @@ def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
         "not\n",
         "don't\n",
         "never twice\n",
-        "- a list item\n",
-        "+ a list item\n",
-        "* a list item\n",
+        "- Shard A\n",
+        "+ Shard A\n",
+        "* Shard A\n",
+        "***\n",
         "1. first\n",
         "1) first\n",
         "```\n",
         "~~~\n",
-        "| a | b |\n",
+        "| A |\n",
         "## Heading\n",
         "> quoted\n",
         ": a definition\n",
@@ -737,8 +756,20 @@ def test_no_label_is_read_after_a_sentence_end(end) -> None:
     assert dx.find_span(span, [text]) == ""
 
 
-@pytest.mark.parametrize("label", ["2.5 GB\n", "1.2.3\n", "3 replicas\n"])
-def test_a_number_that_is_no_list_marker_is_a_label(label) -> None:
+@pytest.mark.parametrize(
+    "label",
+    [
+        "2.5 GB\n",
+        "1.2.3\n",
+        "3 replicas\n",
+        "+3 nodes\n",
+        "-5 °C\n",
+        "**Proxy**\n",
+        "*Proxy*\n",
+        "_Proxy_\n",
+    ],
+)
+def test_a_number_or_emphasis_that_is_no_list_marker_is_a_label(label) -> None:
     text = SPLIT.format(labels=label)
     assert dx.find_span(REPLICA_SPAN, [text]) == text
 

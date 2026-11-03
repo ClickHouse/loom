@@ -639,8 +639,8 @@ def _drop_inverted(
     and blank lines that end a sentence, and a label naming an option states nothing."""
     raw = replace(
         cand,
-        quote=dx.unlabelled_span(cand.quote, texts) or cand.quote,
-        alternatives=[(o, dx.unlabelled_span(r, texts) or r) for o, r in cand.alternatives],
+        quote=dx.unlabelled_span(cand.quote, texts),
+        alternatives=[(o, dx.unlabelled_span(r, texts)) for o, r in cand.alternatives],
     )
     inverted = dx.inverted_options(raw)
     for option in inverted:
