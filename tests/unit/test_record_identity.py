@@ -63,6 +63,8 @@ def test_a_key_with_latin_letters_or_digits_is_unchanged() -> None:
         == "invoice:bef11f75f1b36a62"
     )
     assert canonical_value("scenario", "Выбор БД v2") == "v2", "the Latin form wins when it exists"
+    # The documented limit: any a-z or 0-9 is the whole key, whatever else the value says.
+    assert canonical_value("scenario", "30 дней") == canonical_value("scenario", "30 часов")
 
 
 def test_text_without_latin_letters_keys_on_its_own_script() -> None:
