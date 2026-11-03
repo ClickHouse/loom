@@ -80,7 +80,7 @@ log = logging.getLogger(__name__)
 EXTRACTOR_AGENT = "loom-decisions"
 DESIGN_DOC_TAG = "source-kind:design_doc"
 CONSTRAINT_TAG = "constraint"
-# The confidence of a row the extractor writes.
+# A model's reading of a document, ranked below a row someone wrote directly.
 EXTRACTED_CONFIDENCE = 0.5
 _PAGE = 500
 
