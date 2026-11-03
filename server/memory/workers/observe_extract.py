@@ -26,6 +26,7 @@ from server.memory.domain.observation_tags import (
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.domain.trust import subject_of
 from server.memory.store.rows import next_version
+from server.memory.store.sql import _identity_key
 from server.settings import settings
 from server.workers.status import record_pass
 
@@ -259,7 +260,7 @@ async def _distill_session(
 
     ch = get_client()
     version = next_version()
-    keys = [_identity(o) for o in observations]
+    keys = [_identity_key(vars(o)) for o in observations]
     heads = await memory_repo.memory_rows_by_identity_keys(keys, ch=ch, sequential=True)
     version_rows = []
     for key, existing in zip(keys, observations, strict=True):
@@ -286,17 +287,6 @@ async def _distill_session(
         events=int(extras.events_written),
         notes=int(extras.procedure_written) + int(extras.hint_written),
         extra_failures=tuple(extras.failures),
-    )
-
-
-def _identity(o: Any) -> tuple[str, str, str, str, str, str]:
-    return (
-        str(o.org),
-        str(o.namespace),
-        str(o.agent),
-        str(o.user_id),
-        str(o.session_id),
-        str(o.memory_key),
     )
 
 
