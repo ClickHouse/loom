@@ -406,6 +406,21 @@ def test_a_more_line_from_a_left_out_constraint_fits_the_budget() -> None:
     assert any(ln.startswith("- … ") and "lists them" in ln for ln in lines)
 
 
+def test_notes_that_fit_exactly_print_beside_a_constraint_left_out_at_the_ceiling() -> None:
+    # The constraint supersedes nothing, so no "… more" line can appear and none is reserved.
+    rule = _row("rules/long", json.dumps("n" * 400), tags=["constraint"], namespace="me")
+    header = "Loom: 2 memories anchored to src/a.cpp — read before editing:"
+    size = 240 - len(header) - 1 - len("- notes/f: ")
+    note = _row("notes/f", json.dumps("f" * size), namespace="me")
+    text, _, truncated = mff.render_block(
+        "src/a.cpp", [rule, note], 60, home="me", now=_NOW, whole_tokens=50
+    )
+    lines = text.splitlines()
+    assert truncated is True and lines[1] == "- notes/f: " + "f" * size
+    assert len("\n".join(lines[:2])) == 60 * mff._CHARS_PER_TOKEN
+    assert lines[2].endswith("loom_search: rules/long.")
+
+
 def test_a_left_out_constraint_takes_the_older_row_it_supersedes() -> None:
     older = _row("notes/old", json.dumps("Keep 32."), namespace="me")
     newer = _superseding("rules/new", older, "n" * 400, "me", tags=["constraint"])

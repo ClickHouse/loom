@@ -45,12 +45,14 @@ def cut_alternative(text: str) -> str:
     if len(text) <= ALTERNATIVE_CHARS:
         return text
     space = text.rfind(" ", 0, ALTERNATIVE_CHARS)
-    kept = text[:space].rstrip() if space > 0 else ""
+    kept = text[:space] if space > 0 else ""
     return kept + CUT_MARK
 
 
 def is_cut(alternative: str) -> bool:
-    return alternative.endswith(CUT_MARK)
+    """Whether the record cut `alternative`: it ends in CUT_MARK, or it is ALTERNATIVE_CHARS
+    long, as a stored one cut there with no mark is."""
+    return alternative.endswith(CUT_MARK) or len(alternative) >= ALTERNATIVE_CHARS
 
 
 def clean_alternatives(items: list[str], *, cut: bool = True) -> list[str]:
@@ -60,9 +62,11 @@ def clean_alternatives(items: list[str], *, cut: bool = True) -> list[str]:
     seen: set[str] = set()
     for a in items or []:
         t = collapse_ws(a)
+        t = cut_alternative(t) if cut and t else t
+        # Two alternatives that read alike once cut are one in the record.
         if t and t.lower() not in seen:
             seen.add(t.lower())
-            out.append(cut_alternative(t) if cut else t)
+            out.append(t)
         if len(out) >= MAX_ALTERNATIVES:
             break
     return out

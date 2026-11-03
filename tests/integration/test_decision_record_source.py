@@ -129,9 +129,16 @@ async def test_decisions_that_read_alike_each_keep_a_live_row(agent, ch_client) 
 @pytest.mark.asyncio
 async def test_precedents_find_a_decision_past_its_embedded_excerpt(agent) -> None:
     # The scenario alone fills the first 1,200 stored characters, so the outcome and the
-    # reasoning are found through the statement's chunks, not its head.
+    # reasoning are found through the statement's chunks, not its head. A distractor with
+    # the same scenario, so the same head, decides something else.
     scenario = "how the nightly compaction schedules its merges " * 30
     assert len(scenario) > 1200
+    distractor = await agent.decision.record(
+        category="design:scheduler",
+        scenario=scenario,
+        outcome="run the merges in key order",
+        reasoning="key order keeps the parts sorted for the next read",
+    )
     out = await agent.decision.record(
         category="design:allocator",
         scenario=scenario,
@@ -142,4 +149,5 @@ async def test_precedents_find_a_decision_past_its_embedded_excerpt(agent) -> No
         "per-thread arena for spilled blocks fragments under concurrent spills", top_k=5
     )
     keys = [p["memory_key"] for p in found["precedents"]]
-    assert out["memory_key"] in keys, found
+    assert keys and keys[0] == out["memory_key"], found
+    assert distractor["memory_key"] != out["memory_key"]

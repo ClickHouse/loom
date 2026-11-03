@@ -277,6 +277,21 @@ def _row_line(h: dict[str, Any], now: datetime, home: str) -> str:
     return f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}"
 
 
+def _ceiling_hides(hits: list[dict[str, Any]], rows: list[str], whole_chars: int) -> bool:
+    """Whether a decision or constraint left out at the ceiling supersedes older rows, with
+    every other row kept: then the block has a "… more" line for those."""
+    used = 0
+    for h, row in zip(hits, rows, strict=True):
+        if not _is_whole(h):
+            continue
+        if h.get("value_truncated") or used + len(row) + 1 > whole_chars:
+            if h.get("supersedes_ids"):
+                return True
+            continue
+        used += len(row) + 1
+    return False
+
+
 def render_block(
     path: str,
     hits: list[dict[str, Any]],
@@ -309,14 +324,10 @@ def render_block(
     used = len(lines[0]) + (len(footer) + 1 if footer else 0)
     rows = [_row_line(h, now, home) for h in hits]
     budgeted = [not _is_whole(h) for h in hits]
-    # A block that leaves no row out needs no "… more" line, so nothing is reserved. Any row
-    # left out may take older rows with it onto that line, so then room is kept for it.
-    sized = [len(r) + 1 for r in rows]
-    fits = (
-        used + sum(k for k, b in zip(sized, budgeted, strict=True) if b) <= budget_chars
-        and sum(k for k, b in zip(sized, budgeted, strict=True) if not b) <= whole_chars
-        and not any(h.get("value_truncated") and _is_whole(h) for h in hits)
-    )
+    # No "… more" line can appear when every budgeted row fits and no decision or constraint
+    # left out at the ceiling takes older rows with it, so then nothing is reserved for one.
+    fits = used + sum(len(r) + 1 for r, b in zip(rows, budgeted, strict=True) if b) <= budget_chars
+    fits = fits and not _ceiling_hides(hits, rows, whole_chars)
     left_out = 0
     whole_used = 0
     whole_left: list[dict[str, Any]] = []

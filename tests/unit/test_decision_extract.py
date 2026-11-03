@@ -2012,6 +2012,20 @@ async def test_a_flag_on_a_value_changed_since_the_read_is_a_race(monkeypatch) -
     assert cli.exit_code(report) == 0
 
 
+def test_a_stored_alternative_cut_at_the_limit_without_a_mark_matches_as_cut() -> None:
+    from server.memory.app.decision_extract import _same_reasons
+
+    full = "a hash set — rejected: " + "costs random reads " * 20
+    stored = full[: svc.ALTERNATIVE_CHARS]
+    assert svc.is_cut(stored) and not stored.endswith(svc.CUT_MARK)
+    assert _same_reasons([stored], [full])
+
+
+def test_alternatives_alike_once_cut_are_one() -> None:
+    head = "a hash set — rejected: " + "costs random reads " * 20
+    assert svc.clean_alternatives([head + "one", head + "two"]) == [svc.cut_alternative(head)]
+
+
 def test_an_exact_reason_is_matched_before_a_cut_one_takes_it() -> None:
     from server.memory.app.decision_extract import _same_reasons
 
