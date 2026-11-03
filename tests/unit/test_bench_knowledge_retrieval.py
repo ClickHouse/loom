@@ -8,6 +8,7 @@ import math
 import pytest
 
 from bench.knowledge_retrieval import (
+    FIXED_FIELDS,
     FIXTURE,
     check_corpus,
     fixture_tag,
@@ -46,16 +47,16 @@ def test_all_gold_needs_every_passage_and_counts_each_once() -> None:
     assert m["all_gold@10"] == 1.0
 
 
-def test_one_hit_holding_two_gold_passages_credits_both() -> None:
+def test_one_hit_holding_two_gold_passages_credits_both_at_its_rank() -> None:
     gold = [["a.md", "first"], ["a.md", "second"]]
     m = score_query([_hit("a.md", "first then second")], gold)
     assert m["all_gold@10"] == 1.0
     assert m["ndcg@10"] == 1.0
-    # a third passage four ranks too low still costs nDCG: nothing caps it at 1
-    gold = [*gold, ["c.md", "third"]]
-    other = [_hit("x.md", "noise")] * 3
-    m = score_query([_hit("a.md", "first then second"), *other, _hit("c.md", "third")], gold)
-    assert m["ndcg@10"] == (2 + 1 / math.log2(6)) / (2 + 1 / math.log2(3))
+    # finding both lower never scores above finding both in one chunk at the same rank
+    noise = _hit("x.md", "noise")
+    together = score_query([noise, _hit("a.md", "first then second")], gold)["ndcg@10"]
+    apart = score_query([noise, _hit("a.md", "first"), _hit("a.md", "second")], gold)["ndcg@10"]
+    assert together > apart
 
 
 def test_a_miss_scores_zero() -> None:
@@ -78,11 +79,9 @@ def test_params_take_json_values_or_plain_strings() -> None:
     }
 
 
-@pytest.mark.parametrize(
-    "field", ["top_k", "org", "query", "namespace", "namespaces", "namespace_scope", "tags"]
-)
+@pytest.mark.parametrize("field", FIXED_FIELDS)
 def test_the_fields_that_define_the_measurement_are_refused(field: str) -> None:
-    with pytest.raises(SystemExit, match=f"--param {field} is refused: the harness sets it"):
+    with pytest.raises(SystemExit, match=f"--param {field} is refused: the harness fixes"):
         parse_params([f"{field}=x"])
 
 

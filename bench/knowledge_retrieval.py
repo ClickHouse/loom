@@ -26,15 +26,16 @@ run records the server's embedding model and build (`instrument`) and refuses a
 fake embedder.
 
 `--param KEY=VALUE` (JSON value, or a plain string) sets any `knowledge.search`
-field but the ones the harness sets (`FIXED_FIELDS`), so two arms differ by one
-flag; any other key is refused, and a search over a namespace that does not hold
-exactly the fixture's documents fails the run. Reports recall@1/5/10 (a query
-counts when any relevant passage is in the top k, so a query listing two
-accepted passages counts either), MRR, and all-gold recall@10 and nDCG@10 (both
-reward finding every listed passage), overall and per query kind, plus the mean
-cosine similarity of the top hit on answerable and on unanswerable queries
-(every hit carries one, in every mode). A hybrid or lexical arm whose lexical leg
-never fired fails the run.
+field but the depth, scope and filters the harness fixes (`FIXED_FIELDS`), so
+two arms differ by one flag; any other key is refused, and a search over a
+namespace that does not hold exactly the fixture's documents fails the run.
+
+Reports recall@1/5/10 (a query counts when any relevant passage is in the top k,
+so a query listing two accepted passages counts either), MRR, all-gold recall@10
+and passage-level nDCG@10 (both reward finding every listed passage; see
+`score_query`), overall and per query kind, plus the mean cosine similarity of
+the top hit on answerable and on unanswerable queries (every hit carries one, in
+every mode). A hybrid or lexical arm whose lexical leg never fired fails the run.
 The `freshness` and `multi` kinds hold three and five queries, so their per-kind
 figures are coarse; a superseded policy ranked above the current one shows in a
 freshness query's R@1, MRR and nDCG@10, not its R@5. Ingesting embeds 21
@@ -96,28 +97,24 @@ def relevant(hit: dict, gold: list[list[str]]) -> list[int]:
 
 
 def score_query(hits: list[dict], gold: list[list[str]]) -> dict[str, float]:
-    """Per-query metrics. A gold passage counts once, at its best rank; nDCG gains one
-    per gold passage a hit holds."""
+    """Per-query metrics. A gold passage counts once, at the rank of the first hit that
+    holds it. nDCG is passage-level: each passage discounted at that rank, over the
+    ideal of one passage per rank, capped at 1 (a chunk holding two passages credits
+    both at its rank). At the default chunk size every fixture passage sits in a chunk
+    of its own, so the cap never applies there; compare nDCG across chunkings with that
+    in mind."""
     found: dict[int, int] = {}
-    gains: list[int] = []  # per relevant hit, the gold passages it finds first
-    dcg = 0.0
     for rank, hit in enumerate(hits, start=1):
-        new = [g for g in relevant(hit, gold) if g not in found]
-        for g in new:
-            found[g] = rank
-        if new:
-            gains.append(len(new))
-            dcg += len(new) / math.log2(rank + 1)
+        for g in relevant(hit, gold):
+            found.setdefault(g, rank)
     first = min(found.values(), default=None)
     out = {f"recall@{k}": float(first is not None and first <= k) for k in KS}
     # `hits` is the top TOP_K, so every found passage is within it.
     out[f"all_gold@{TOP_K}"] = float(len(found) == len(gold))
     out["mrr"] = 1.0 / first if first else 0.0
-    # The ideal, relative to this run: its own relevant hits best gain first, then one
-    # hit per passage it missed (a hit holding two passages gains 2; nothing caps).
-    ideal_gains = sorted(gains + [1] * (len(gold) - len(found)), reverse=True)[:TOP_K]
-    ideal = sum(g / math.log2(r + 1) for r, g in enumerate(ideal_gains, start=1))
-    out[f"ndcg@{TOP_K}"] = dcg / ideal if ideal else 0.0
+    dcg = sum(1.0 / math.log2(r + 1) for r in found.values())
+    ideal = sum(1.0 / math.log2(r + 1) for r in range(1, min(len(gold), TOP_K) + 1))
+    out[f"ndcg@{TOP_K}"] = min(1.0, dcg / ideal) if ideal else 0.0
     return out
 
 
@@ -158,7 +155,9 @@ def parse_params(pairs: list[str]) -> dict:
     for pair in pairs:
         key, _, raw = pair.partition("=")
         if key in FIXED_FIELDS:
-            raise SystemExit(f"--param {key} is refused: the harness sets it")
+            raise SystemExit(
+                f"--param {key} is refused: the harness fixes depth, scope and filters"
+            )
         if key not in SEARCH_FIELDS:
             raise SystemExit(f"--param {key} is refused: not a knowledge.search field")
         try:
