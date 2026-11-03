@@ -1253,6 +1253,7 @@ def test_a_listed_file_with_no_usable_address_keeps_its_document(world: _World) 
     asyncio.run(source_sync.run_sync(full=True))
     assert list(world.docs) == [_uri("doc1")]
     assert world.audits == []
+    assert _detail(world)["unconverted_reasons"] == {"no_address": 1}
 
 
 @pytest.mark.parametrize("why", ["incomplete_search", "lost_folder"])
@@ -1283,5 +1284,16 @@ def test_a_folder_error_is_not_hidden_by_an_incomplete_listing(world: _World) ->
     world.lost_folders = {OTHER}
     world.incomplete_search = True
     asyncio.run(source_sync.run_sync(full=True))
+    detail = _detail(world)
+    assert detail["status"] == "failed" and OTHER in detail["error"]
+
+
+def test_the_first_error_of_a_turn_is_the_one_it_reports(world: _World) -> None:
+    config = {"folder_ids": [FOLDER, OTHER], "include": ["docs"]}
+    world.sources = [_source(config=config)]
+    world.lost_folders = {OTHER}
+    world.files = [_file("bad1", DOCS, "2026-01-01T00:00:00.000Z")]
+    world.file_answers["bad1"] = httpx.Response(503)
+    asyncio.run(source_sync.run_sync())
     detail = _detail(world)
     assert detail["status"] == "failed" and OTHER in detail["error"]

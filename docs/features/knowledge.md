@@ -206,14 +206,16 @@ A document is retired only on positive evidence: its file is missing from a comp
 full listing and the store, asked about that file, reports it gone, trashed or in none
 of the source's folders (a listing paged while files change can miss one); its document
 sits at an address that is no longer its file's; or a maintainer asked with
-`remove(delete_documents=true)`. A listing the store marks incomplete
-(`incompleteSearch`) has its files written, but keeps the stamp, retires nothing and
-reports `listing: incomplete search`. A folder the account no longer sees lists empty
-rather than refused, so a full turn first checks every folder; while one fails, the turn
-ends `failed`, still writes the files of the folders it sees, and retires nothing. A
-fetch error or a rate limit retires nothing. Each retirement is a `knowledge.delete`
-with its audit row, actor `worker:knowledge-source-sync`. Once a removed source has no
-documents left, its delete request is cleared.
+`remove(delete_documents=true)`. A listed file the store gives no https link for is not
+written (`no_address`) and counts as missing, so its stored document stays while the
+lookup still finds the file. A listing the store marks incomplete (`incompleteSearch`)
+has its files written, but keeps the stamp, retires nothing and reports
+`listing: incomplete search`. A folder the account no longer sees lists empty rather
+than refused, so a full turn first checks every folder; while one fails, the turn ends
+`failed`, still writes the files of the folders it sees, and retires nothing. A fetch
+error or a rate limit retires nothing. Each retirement is a `knowledge.delete` with its
+audit row, actor `worker:knowledge-source-sync`. Once a removed source has no documents
+left, its delete request is cleared.
 
 The stamp moves only when every listed file was handled. A turn cut short (a rate limit,
 a failure, the pass bound) is listed again on the next pass, and the files it wrote are
@@ -242,16 +244,16 @@ Trouble with one file is that file's:
 
 A source's `sync` in `list` and `inspect` shows what its last turn did:
 
-| Field                    | Meaning                                                                                                                                                                                                  |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                                                                                           |
-| `last_synced_at`         | When the last turn ended.                                                                                                                                                                                |
-| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                                                |
-| `documents_seen`         | Files the turn listed.                                                                                                                                                                                   |
-| `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                                          |
-| `unconverted`, `skipped` | Files it did not write: no extractor, refused or too large, or given up after three passes on the same revision; another writer's document at the address.                                               |
-| `unconverted_reasons`    | Why, by count: `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`. |
-| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text.                                                                                                                  |
+| Field                    | Meaning                                                                                                                                                                                                                                               |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                                                                                                                                        |
+| `last_synced_at`         | When the last turn ended.                                                                                                                                                                                                                             |
+| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                                                                                             |
+| `documents_seen`         | Files the turn listed.                                                                                                                                                                                                                                |
+| `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                                                                                       |
+| `unconverted`, `skipped` | Files it did not write: no extractor, refused or too large, or given up after three passes on the same revision; another writer's document at the address.                                                                                            |
+| `unconverted_reasons`    | Why, by count: `no_address` (the store gave no https link), `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`. |
+| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text.                                                                                                                                                               |
 
 `loom knowledge sync --org O --namespace <trunk namespace> [--source NAME] [--full]` runs
 one such pass over one namespace's sources now, in-process, and leaves a manual

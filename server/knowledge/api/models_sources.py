@@ -41,10 +41,10 @@ class KnowledgeSourceSync(BaseModel):
     # refused them, they are over LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES, or they
     # were given up after three passes on the same revision.
     unconverted: int = 0
-    # Why, as reason -> files: no_extractor, too_large, http_<status> (the source
-    # refused or failed that file), unreachable, extraction_failed:<code>,
-    # extractor_unavailable, fetch_failed:<error>, write_refused:<code>,
-    # write_failed:<error>.
+    # Why, as reason -> files: no_address (no https link), no_extractor, too_large,
+    # http_<status> (the source refused or failed that file), unreachable,
+    # extraction_failed:<code>, extractor_unavailable, fetch_failed:<error>,
+    # write_refused:<code>, write_failed:<error>.
     unconverted_reasons: dict[str, int] = Field(default_factory=dict)
     # Files not written because a live document at their address is another writer's
     # or another source's.

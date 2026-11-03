@@ -138,7 +138,9 @@ class TurnResult:
     full: bool = False
 
     def fail(self, status: str, error: str) -> None:
-        self.status, self.error, self.complete = status, error, False
+        """The turn ends `status`; the first error stays, as the one that held it."""
+        self.status, self.complete = status, False
+        self.error = self.error or error
 
     def unconverted_for(self, reason: str) -> None:
         self.unconverted += 1
@@ -516,7 +518,7 @@ async def _sync_file(
     revision = str(f.get("modifiedTime") or "")
     uri = source_uri_of(f)
     if not uri.startswith("https://"):
-        turn.skipped += 1
+        turn.unconverted_for("no_address")
         return True
     if prior and prior["source_revision"] == revision and prior["source_uri"] == uri:
         waits.pop(str(f["id"]), None)
