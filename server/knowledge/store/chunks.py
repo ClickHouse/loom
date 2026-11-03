@@ -307,12 +307,11 @@ async def count_active_for_doc(
 async def count_version(
     org: str, namespace: str, source_uri: str, doc_version: int, *, ch: _CHClient | None = None
 ) -> int:
-    """Chunks of one ingestion of a document (`doc_version`), live or retired
-    since: what that ingestion published."""
+    """Live chunks of one ingestion of a document (`doc_version`)."""
     ch = ch or _default_client()
     row = await ch.query_one(
         "SELECT count() AS n FROM loom.chunks WHERE org = {org:String} AND namespace = {ns:String}"
-        " AND source_uri = {uri:String} AND doc_version = {v:UInt64}",
+        f" AND source_uri = {{uri:String}} AND doc_version = {{v:UInt64}} AND {LIVE_CHUNK_SQL}",
         params={"org": org, "ns": namespace, "uri": source_uri, "v": doc_version},
     )
     return int(row["n"]) if row else 0

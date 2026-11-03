@@ -233,8 +233,10 @@ any version row of the source that names it, so a text write since does not hide
 (still `processing` at the publish stage, which is saved with its chunk version), when a later write of the source (a
 text write, a metadata edit or a delete) has landed since and the job's row is not found (a merge may have folded it
 away), fails `revision_conflict` rather than perhaps publish its older file over that write; a job a retry put back to
-pending is not judged so, and keeps its chunk version, so a document insert that timed out and landed later still
-finishes it published; a rerun of a job that published finishes without publishing again or retiring the chunks it
+pending is not judged so. A document insert that failed transiently (a timeout among them) may still land, so its chunks
+are kept and the job goes back to pending even on its last attempt: the next run finishes it published when the row
+landed and its chunks are live, publishes again at a fresh version over a row that landed after its chunks were retired,
+and otherwise retires them; a rerun of a job that published finishes without publishing again or retiring the chunks it
 published. A cancel is a row of its own (`loom.knowledge_ingest_cancels`), never a version of the job's, which only the
 worker holding the job's lease writes; the worker reads it before the publish and when it takes the job, and a job whose
 own publish is found ends published whatever cancel came after. A pass runs one job under
