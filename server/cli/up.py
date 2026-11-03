@@ -143,8 +143,8 @@ def bootstrap(root: Path, env_file: str) -> list[str]:
 
 def read_env_file(path: Path) -> dict[str, str]:
     """KEY=VALUE lines of a dotenv file; comments and blanks skipped, a
-    surrounding pair of quotes stripped. Enough for the six LOOM_* keys the
-    mode detection reads — the container itself gets the file via compose."""
+    surrounding pair of quotes stripped. Not a full dotenv parser: the
+    containers get the file through compose."""
     out: dict[str, str] = {}
     if not path.is_file():
         return out
