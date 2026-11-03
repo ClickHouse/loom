@@ -69,8 +69,9 @@ Read `summary` first:
 Then read the findings. Stop when `healthy` is true and nothing is `warning` or
 `critical`: an `info` finding is a note for the writer, not a rework. A
 `system_state` finding (an indexing backlog, missing telemetry) is about the
-deployment, never the writer; while `telemetry_unavailable` is a warning, the ledger
-checks are in `skipped`, not clean.
+deployment, never the writer; while `telemetry_unavailable` is a warning,
+`exact_key_store` and `intentional_exact_key_reads` are in `skipped`, not clean, and
+`coordination_as_memory` runs its key-segment arm only (`samples_complete: false`).
 
 The dashboard's namespace audit panel shows the same audit. `context.pack` carries a
 `namespace_health` block when the namespace is unhealthy (one critical finding, or two

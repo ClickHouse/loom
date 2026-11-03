@@ -14,7 +14,7 @@ it follows is `docs/guides/investigation-agent-memory.md`.
 | `exact_key_store` | a writer change: exact-key reads of one key belong in working memory; recall goes through `memory.search`. No data change | none — list the keys |
 | `version_churn` | a writer change: the same key rewritten again and again, with new or restated content (a copy that keeps the value and its count, such as a conflict marking, a tags edit by id or a lock, is not counted); no data change | none — list the keys |
 | `unembedded_rows` | covered by `oversized_values` / `episodic_blobs` when the same rows appear there; otherwise list them for the owner | none |
-| `telemetry_unavailable`, `index_backlog`, `intentional_exact_key_reads` | nothing for the writer: the deployment's state (kind `system_state`) or a workflow. While `telemetry_unavailable` warns, the ledger checks are in `skipped`, not clean: rerun once the ledger covers the window; a stalled `index_backlog` goes to the deployment's owner | none — no section in the plan |
+| `telemetry_unavailable`, `index_backlog`, `intentional_exact_key_reads` | nothing for the writer: the deployment's state (kind `system_state`) or a workflow. While `telemetry_unavailable` warns, `exact_key_store` and `intentional_exact_key_reads` are in `skipped`, not clean, and `coordination_as_memory` checks key names only: rerun once the ledger covers the window; a stalled `index_backlog` goes to the deployment's owner | none — no section in the plan |
 
 ## Mentor hints that are data changes
 

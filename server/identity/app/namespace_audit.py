@@ -929,6 +929,8 @@ class _Audit:
             samples,
             bytes_=total_bytes,
             population=self.measured("summary_live", self.summary.live_rows),
+            # With its read-count arm off, the samples cannot list every match.
+            samples_complete=False if self.telemetry_gap else None,
         )
 
     async def version_churn(self) -> None:

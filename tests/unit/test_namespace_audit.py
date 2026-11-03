@@ -1527,9 +1527,10 @@ async def test_a_hot_short_procedure_is_not_coordination_state() -> None:
     audit = na.new_audit(_inp(window_seconds=3600), ch=ch)
     audit.telemetry_gap = True
     await audit.coordination_as_memory()
-    assert [s["memory_key"] for s in _finding(audit, "coordination_as_memory").samples] == [
-        "lease/y"
-    ]
+    gap = _finding(audit, "coordination_as_memory")
+    assert [s["memory_key"] for s in gap.samples] == ["lease/y"]
+    # Its read-count arm is off, so the samples are not every match.
+    assert gap.samples_complete is False
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
