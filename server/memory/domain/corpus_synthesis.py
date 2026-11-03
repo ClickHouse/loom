@@ -128,14 +128,12 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
 # innermost is the one read. An index is at most nine digits 0-9: a longer run is prose.
 # One item, as (source, first index, last index); a citation is a list of them.
 _ITEM_PARTS = re.compile(r"([^\s,;\[\]]+)#([0-9]{1,9})(?:-([0-9]{1,9}))?")
-_ITEM = _ITEM_PARTS.pattern
-_ITEMS = re.compile(rf"{_ITEM}(?:\s*[,;]\s*{_ITEM})*")
-_CITATION = rf"\[\s*({_ITEMS.pattern})\s*\]"
+_ITEMS = re.compile(rf"{_ITEM_PARTS.pattern}(?:\s*[,;]\s*{_ITEM_PARTS.pattern})*")
 # The blanks around a list's separators, which do not make it another citation.
 _SEPARATOR = re.compile(r"\s*([,;])\s*")
 # A removed citation goes with the blanks before it; the lookbehind starts the blanks at
 # the start of their run, so a long run is scanned once.
-_SPACED_CITATION = re.compile(r"(?<![ \t])[ \t]*" + _CITATION)
+_SPACED_CITATION = re.compile(rf"(?<![ \t])[ \t]*\[\s*({_ITEMS.pattern})\s*\]")
 # A citation formed only after this many removals is left as written and unchecked: a
 # model writes none, and each one is one more pass over the answer.
 _MAX_PASSES = 8

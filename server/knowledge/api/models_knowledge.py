@@ -383,9 +383,8 @@ class KnowledgeSynthesizeOutput(BaseModel):
     truncated: bool = False
     # True when there is no answer to give; `abstain_reason` says why.
     abstain: bool = False
-    # `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents
-    # have no chunks) or `empty_answer` (the answer had no letter or digit, as written or
-    # once citations of chunks the passes did not read were removed); empty otherwise.
+    # `budget_capped` (over the cost cap), `no_chunks` (no chunks) or `empty_answer` (no
+    # letter or digit once unread citations are removed); empty otherwise.
     abstain_reason: str = ""
     # LLM that wrote the notes and the answer; empty when it abstained before any call.
     model: str = ""
