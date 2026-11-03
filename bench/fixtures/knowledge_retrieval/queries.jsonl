@@ -71,7 +71,7 @@
 {"id": "dn-crc", "query": "Which checksum do Harbor upload parts use?", "gold": [["design/harbor-multipart.md", "CRC32C"]], "kind": "context"}
 {"id": "dn-gc", "query": "When are abandoned partial uploads cleaned up?", "gold": [["design/harbor-multipart.md", "after 7 days"]], "kind": "paraphrase"}
 {"id": "dn-why-not-resume", "query": "Why did we not choose resumable single-stream uploads?", "gold": [["design/harbor-multipart.md", "proxy in the path"]], "kind": "paraphrase"}
-{"id": "dn-cold", "query": "After how many days does log data move to cheaper storage?", "gold": [["design/lantern-tiering.md", "older than 3 days"]], "kind": "paraphrase"}
+{"id": "dn-cold", "query": "When is a log entry shipped off to the cheap tier?", "gold": [["design/lantern-tiering.md", "older than 3 days"]], "kind": "paraphrase"}
 {"id": "dn-saving", "query": "How much did the tiering change save on storage?", "gold": [["design/lantern-tiering.md", "about 40 percent"]], "kind": "paraphrase"}
 {"id": "dn-rollout", "query": "In which order was storage tiering rolled out?", "gold": [["design/lantern-tiering.md", "Starter workspaces first"]], "kind": "context"}
 {"id": "mt-handover", "query": "How often does the on-call handover happen after the change?", "gold": [["notes/ops-review-2025-03.md", "twice weekly"]], "kind": "paraphrase"}

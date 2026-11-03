@@ -39,8 +39,11 @@ every mode). A hybrid or lexical arm whose lexical leg never fired fails the run
 The `freshness` and `multi` kinds hold three and five queries, so their per-kind
 figures are coarse; a superseded policy ranked above the current one shows in a
 freshness query's R@1, MRR and nDCG@10, not its R@5. Ingesting embeds 21
-documents (97 chunks at the default chunk size): a few cents with a hosted
-embedder, free with a local one.
+documents: a few cents with a hosted embedder, free with a local one.
+
+Two arms are compared per query, not by their means: pair the `queries` rows of
+two `--out` reports by `id` and pass the metric deltas to
+`bench.bootstrap.paired_bootstrap`, whose lower bound is what a change ships on.
 """
 
 from __future__ import annotations
@@ -172,14 +175,14 @@ def parse_params(pairs: list[str]) -> dict:
 PREFIX = "knowledge-retrieval-"
 
 
-def run_namespace(named: str | None, keep_flag: bool) -> tuple[str, bool]:
+def run_namespace(named: str | None) -> tuple[str, bool]:
     """(the namespace a run uses, whether it outlives the run). A named namespace is
-    kept for later search arms; a made-up one is erased unless `keep_flag`."""
+    kept for later search arms; a made-up one is erased when the run ends."""
     if named:
         if not named.startswith(PREFIX):
             raise SystemExit(f"--namespace must start with {PREFIX!r}: {named!r}")
         return named, True
-    return f"{PREFIX}{secrets.token_hex(4)}", keep_flag
+    return f"{PREFIX}{secrets.token_hex(4)}", False
 
 
 def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
@@ -278,7 +281,6 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
             "unanswerable": round(sum(top_unanswerable) / max(1, len(top_unanswerable)), 3),
             "no_hits": no_hits,
         },
-        # A query whose lexical statistics failed to load runs the vector leg alone.
         "lexical_fired": lexical_fired,
         "misses@5": [r["id"] for r in rows if not r["metrics"]["recall@5"]],
         "queries": rows,
@@ -298,18 +300,13 @@ def main() -> int:
     ap.add_argument("--fixture", type=Path, default=FIXTURE)
     ap.add_argument("--phase", choices=("ingest", "search", "both"), default="both")
     ap.add_argument("--param", action="append", default=[], help="knowledge.search KEY=VALUE")
-    ap.add_argument(
-        "--keep-namespaces",
-        action="store_true",
-        help="keep the fresh namespace a run ingests into",
-    )
     ap.add_argument("--out", type=Path, help="write the full report (per query) as JSON")
     args = ap.parse_args()
     if args.phase != "both" and not args.namespace:
         ap.error(f"--phase {args.phase} needs a --namespace (one ingest, many searches)")
 
     params = parse_params(args.param)
-    namespace, keep = run_namespace(args.namespace, args.keep_namespaces)
+    namespace, keep = run_namespace(args.namespace)
     docs, queries = load_fixture(args.fixture)
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
     base = args.base_url.rstrip("/")

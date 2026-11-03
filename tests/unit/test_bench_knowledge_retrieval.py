@@ -3,10 +3,12 @@ document, and every gold passage of the fixture is in its document."""
 
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
 
+from bench.bench_namespaces import erase_on_exit_sync
 from bench.knowledge_retrieval import (
     FIXED_FIELDS,
     FIXTURE,
@@ -91,17 +93,31 @@ def test_a_key_that_is_no_search_field_is_refused(field: str) -> None:
         parse_params([f"{field}=x"])
 
 
-def test_only_a_namespace_the_harness_made_up_is_erased() -> None:
-    assert run_namespace("knowledge-retrieval-eval", False) == ("knowledge-retrieval-eval", True)
-    fresh, keep = run_namespace(None, False)
+def test_a_named_namespace_is_kept_and_a_made_up_one_is_not() -> None:
+    assert run_namespace("knowledge-retrieval-eval") == ("knowledge-retrieval-eval", True)
+    fresh, keep = run_namespace(None)
     assert fresh.startswith("knowledge-retrieval-") and keep is False
-    assert run_namespace(None, False)[0] != fresh
-    assert run_namespace(None, True)[1] is True
+    assert run_namespace(None)[0] != fresh
+
+
+def test_a_fresh_ingest_is_erased_when_the_run_ends() -> None:
+    sent: list[tuple[str, dict]] = []
+
+    def post(path: str, body: dict) -> dict:
+        sent.append((path, body))
+        return {}
+
+    docs = [{"source_uri": "a.md", "content": "x", "tags": []}]
+    fresh, keep = run_namespace(None)
+    with erase_on_exit_sync(post, org="o", keep=keep):
+        ingest(post, "o", fresh, docs, keep)
+    erasures = [body for path, body in sent if path == "/v1/erasure.request"]
+    assert len(erasures) == 1 and fresh in json.dumps(erasures[0])
 
 
 def test_a_named_namespace_without_the_harness_prefix_is_refused() -> None:
     with pytest.raises(SystemExit, match="must start with"):
-        run_namespace("docs", False)
+        run_namespace("docs")
 
 
 def test_a_namespace_holding_other_documents_than_the_fixture_is_refused() -> None:
@@ -216,3 +232,4 @@ def test_every_gold_passage_lies_inside_one_chunk_at_the_default_size() -> None:
             holders.append((uri, held[0]))
         # each passage of a query in a chunk of its own: nDCG's cap never applies here
         assert len(set(holders)) == len(holders), q["id"]
+    assert sum(len(c) for c in chunks.values()) == 97  # one chunk per non-empty section
