@@ -339,22 +339,21 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass, full: b
     except gdrive.DriveError as e:
         turn.fail("failed", _error(e))
         return turn
-    # A folder it lost leaves the turn incomplete (status `failed`): the visible
-    # folders' files are still written, nothing is retired. Anything else ends it.
     if turn.full and not await _folders_visible(token, folders, turn):
-        if turn.status != "failed":
-            return turn
+        return turn
     if not whole:
         # The store could not search everything: write what it listed, but keep the
         # stamp and retire nothing, and list again next pass.
         turn.complete = False
-        turn.error = "listing: incomplete search"
+        turn.error = turn.error or "listing: incomplete search"
+    # Only a whole listing of folders the account still sees says what is absent.
+    trusted = turn.full and turn.complete
     files = [f for f in files if gdrive.valid_file_id(str(f.get("id") or ""))]
     turn.documents_seen = len(files)
     turn.newest = _capped(
         max((str(f.get("modifiedTime") or "") for f in files), default=""), listed_at
     )
-    if turn.full:
+    if trusted:
         listed_ids = {str(f["id"]) for f in files}
         turn.waits = {k: v for k, v in turn.waits.items() if k in listed_ids}
     stored = {
@@ -363,8 +362,12 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass, full: b
     for f in files:
         if not await _sync_file(src, token, f, stored.get(str(f["id"])), run, turn):
             break
-    if turn.full and turn.complete:
-        await _retire_absent(src, token, {str(f["id"]): source_uri_of(f) for f in files}, run, turn)
+    if trusted and turn.complete:
+        # A file listed without an address it can be stored at counts as absent, so
+        # its document is kept only if the lookup finds the file still there.
+        addresses = {str(f["id"]): source_uri_of(f) for f in files}
+        listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
+        await _retire_absent(src, token, listed, run, turn)
     return turn
 
 
@@ -408,10 +411,11 @@ def _capped(newest: str, listed_at: datetime) -> str:
 
 
 async def _folders_visible(token: str, folders: list[str], turn: TurnResult) -> bool:
-    """Whether the account still sees every folder. A folder it lost lists empty,
-    not refused, so a full listing is trusted for removals only after this; one that
-    fails with `failed` leaves the turn incomplete, so nothing is retired, while the
-    files of the folders it still sees are written; a rate limit or a 401 ends it."""
+    """Check that the account still sees every folder; whether the turn may go on.
+    A folder it lost lists empty, not refused, so a full listing is trusted for
+    removals only after this. A folder that fails leaves the turn `failed` and
+    incomplete, so nothing is retired while the files of the folders it still sees
+    are written; a rate limit or a 401 ends the turn."""
     for folder in folders:
         try:
             await gdrive.require_folder(token, folder)
@@ -423,7 +427,7 @@ async def _folders_visible(token: str, folders: list[str], turn: TurnResult) -> 
                 turn.fail("credential_invalid", _error(e))
                 return False
             turn.fail("failed", _error(e))
-            return False
+            return True
     return True
 
 

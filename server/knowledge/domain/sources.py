@@ -137,8 +137,8 @@ def json_object(raw: str) -> dict[str, Any]:
 
 
 # The parts of a stored sync state a reader sees, with their types. The rest
-# (`full`, `full_listed_at`, `file_waits`, `waits_reset_for`) is the worker's own
-# bookkeeping.
+# (`full`, `full_listed_at`, `file_waits`, `waits_reset_for`, `retry_granted_for`) is
+# the worker's own bookkeeping.
 SYNC_FIELDS: dict[str, type] = {
     "requested_at": str,
     "last_synced_at": str,

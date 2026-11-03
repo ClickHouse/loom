@@ -234,19 +234,24 @@ async def require_folder(token: str, folder_id: str) -> None:
         raise NotFound(f"{what}: not a folder")
 
 
+def _folder_query(folder_ids: list[str], mime_types: list[str]) -> str:
+    """The listing query for files of `mime_types` in any of `folder_ids`, not trashed.
+    The ids and types were checked by the caller (`parse_config`)."""
+    parents = " or ".join(f"'{f}' in parents" for f in folder_ids)
+    kinds = " or ".join(f"mimeType = '{m}'" for m in mime_types)
+    return f"({parents}) and trashed = false and ({kinds})"
+
+
 async def list_files(
     token: str, folder_ids: list[str], mime_types: list[str]
 ) -> tuple[list[dict[str, Any]], bool]:
     """One page (1000 at most) of the files of `mime_types` in any of `folder_ids`,
-    and whether more follow: one call for every folder. The ids and types were
-    checked by the caller (`parse_config`)."""
-    parents = " or ".join(f"'{f}' in parents" for f in folder_ids)
-    kinds = " or ".join(f"mimeType = '{m}'" for m in mime_types)
+    and whether more follow: one call for every folder."""
     data = await _get(
         _FILES_URL,
         token,
         {
-            "q": f"({parents}) and trashed = false and ({kinds})",
+            "q": _folder_query(folder_ids, mime_types),
             "fields": "nextPageToken,files(id,name,mimeType,modifiedTime)",
             "pageSize": "1000",
             "orderBy": "modifiedTime desc",
@@ -289,9 +294,7 @@ async def list_all(
     paced; a failure on any page raises, so every page was read."""
     if modified_after and not valid_stamp(modified_after):
         raise ValueError("modified_after is not a modification stamp")
-    parents = " or ".join(f"'{f}' in parents" for f in folder_ids)
-    kinds = " or ".join(f"mimeType = '{m}'" for m in mime_types)
-    query = f"({parents}) and trashed = false and ({kinds})"
+    query = _folder_query(folder_ids, mime_types)
     if modified_after:
         query += f" and modifiedTime > '{modified_after}'"
     params = {

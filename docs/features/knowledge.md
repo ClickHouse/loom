@@ -116,18 +116,17 @@ writes stay ordered while those clocks differ by less than the time between them
 A removed source's row stays, inactive and with its credential cleared. With
 `delete_documents`, the row also carries the request for the sync worker, even when no
 document is counted yet (a sync turn running at that moment may still write one); the
-worker clears it once none is left. Removing a repository (`code.repo.remove`) retires the sources registered
-on its namespace the same way and names them in `sources_deactivated`; the purge of
-the repository's code index that follows deletes their sync state (it lives in
-`loom.code_index_state`) and the namespace's documents, and leaves the inactive
-source rows. A source can
-still outlive its repository's trunk namespace (a repository retired by editing the
-deployment's configuration, a branch that now outranks the trunk, or a repository
-removed by a replica of the previous release, which does not retire sources): its row
-stays active, keeps its sealed credential and counts toward the namespace's quota
-until `knowledge.source.remove` retires it. `check`, `rotate` and `sync_now` refuse it
-with `NOT_A_CODE_NAMESPACE`; `list`, `inspect` and `remove` still serve it, and the sync
-worker skips it.
+worker clears it once none is left. Removing a repository (`code.repo.remove`) retires
+the sources registered on its namespace the same way and names them in
+`sources_deactivated`; the purge of the repository's code index that follows deletes
+their sync state (it lives in `loom.code_index_state`) and the namespace's documents,
+and leaves the inactive source rows. A source can still outlive its repository's trunk
+namespace (a repository retired by editing the deployment's configuration, a branch that
+now outranks the trunk, or a repository removed by a replica of the previous release,
+which does not retire sources): its row stays active, keeps its sealed credential and
+counts toward the namespace's quota until `knowledge.source.remove` retires it. `check`,
+`rotate` and `sync_now` refuse it with `NOT_A_CODE_NAMESPACE`; `list`, `inspect` and
+`remove` still serve it, and the sync worker skips it.
 
 A source's documents are the live documents of its namespace that carry the tag
 `source:<name>` and that the sync worker wrote (actor `worker:knowledge-source-sync`).
@@ -193,9 +192,9 @@ and its chunks is redone. A changed file is fetched and written with `knowledge.
 
 Each document's address (`source_uri`) is the link the store reports for the file,
 without its query, so a `knowledge.synthesize` citation of it reads `<link>#<chunk>`.
-Its title is the file's name, its description the first paragraph, its tags `source-
-kind:design_doc`, the repository's `repo:<id>` and `source:<name>`, and its metadata the
-source's kind and name, the file's id (`ingested_from`), its revision
+Its title is the file's name, its description the first paragraph, its tags
+`source-kind:design_doc`, the repository's `repo:<id>` and `source:<name>`, and its
+metadata the source's kind and name, the file's id (`ingested_from`), its revision
 (`source_revision`) and the conversion (`ingested_format`). Every document a sync writes
 has the actor `worker:knowledge-source-sync` and the class `imported`. A live document
 at the same address that another writer or another source holds is never overwritten or
@@ -209,12 +208,12 @@ of the source's folders (a listing paged while files change can miss one); its d
 sits at an address that is no longer its file's; or a maintainer asked with
 `remove(delete_documents=true)`. A listing the store marks incomplete
 (`incompleteSearch`) has its files written, but keeps the stamp, retires nothing and
-reports `listing: incomplete search`. A folder the account no longer sees lists empty rather than refused, so a full
-turn first checks every folder; while one fails, the turn ends `failed`, still writes
-the files of the folders it sees, and retires nothing. A fetch error or a rate limit
-retires nothing. Each retirement is a `knowledge.delete` with its audit row, actor
-`worker:knowledge-source-sync`. Once a removed source has no documents left, its delete
-request is cleared.
+reports `listing: incomplete search`. A folder the account no longer sees lists empty
+rather than refused, so a full turn first checks every folder; while one fails, the turn
+ends `failed`, still writes the files of the folders it sees, and retires nothing. A
+fetch error or a rate limit retires nothing. Each retirement is a `knowledge.delete`
+with its audit row, actor `worker:knowledge-source-sync`. Once a removed source has no
+documents left, its delete request is cleared.
 
 The stamp moves only when every listed file was handled. A turn cut short (a rate limit,
 a failure, the pass bound) is listed again on the next pass, and the files it wrote are
@@ -238,9 +237,8 @@ Trouble with one file is that file's:
   kept, and the next pass tries the file again. After three passes on the same revision
   the file is counted `unconverted` instead and is given up on: it is tried again when
   it changes, once on a periodic full listing after each completed one (one more failure
-  gives it up again),
-  and on a full sync a person asks for (`sync_now(full=true)` resets the waits once per
-  request, `loom knowledge sync --full` on every run).
+  gives it up again), and on a full sync a person asks for (`sync_now(full=true)` resets
+  the waits once per request, `loom knowledge sync --full` on every run).
 
 A source's `sync` in `list` and `inspect` shows what its last turn did:
 
@@ -251,7 +249,7 @@ A source's `sync` in `list` and `inspect` shows what its last turn did:
 | `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                                                |
 | `documents_seen`         | Files the turn listed.                                                                                                                                                                                   |
 | `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                                          |
-| `unconverted`, `skipped` | Files it did not write: no extractor, refused or too large; another writer's document at the address.                                                                                                    |
+| `unconverted`, `skipped` | Files it did not write: no extractor, refused or too large, or given up after three passes on the same revision; another writer's document at the address.                                               |
 | `unconverted_reasons`    | Why, by count: `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`. |
 | `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text.                                                                                                                  |
 

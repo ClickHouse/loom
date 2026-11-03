@@ -38,7 +38,8 @@ class KnowledgeSourceSync(BaseModel):
     # Documents the turn retired: files the source no longer has.
     removed: int = 0
     # Files not ingested: no extractor serves their format, the extractor or the source
-    # refused them, or they are over LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES.
+    # refused them, they are over LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES, or they
+    # were given up after three passes on the same revision.
     unconverted: int = 0
     # Why, as reason -> files: no_extractor, too_large, http_<status> (the source
     # refused or failed that file), unreachable, extraction_failed:<code>,

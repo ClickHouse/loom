@@ -1242,3 +1242,46 @@ def _listed_long_ago(world: _World, days: int = 2) -> dict[str, Any]:
     detail = _detail(world)
     stamp = datetime.fromisoformat(detail["full_listed_at"]) - timedelta(days=days)
     return {**detail, "full_listed_at": stamp.isoformat()}
+
+
+def test_a_listed_file_with_no_usable_address_keeps_its_document(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", webViewLink="")]
+    # The lookup finds the file still in the folder.
+    world.file_answers["doc1"] = httpx.Response(200, json={"trashed": False, "parents": [FOLDER]})
+    asyncio.run(source_sync.run_sync(full=True))
+    assert list(world.docs) == [_uri("doc1")]
+    assert world.audits == []
+
+
+@pytest.mark.parametrize("why", ["incomplete_search", "lost_folder"])
+def test_waits_survive_a_full_listing_that_is_not_whole(world: _World, why: str) -> None:
+    config = {"folder_ids": [FOLDER, OTHER], "include": ["docs"]}
+    world.sources = [_source(config=config)]
+    world.files = [_file("bad1", DOCS, "2026-01-01T00:00:00.000Z")]
+    world.file_answers["bad1"] = httpx.Response(503)
+    asyncio.run(source_sync.run_sync())
+    assert _waits(world)["bad1"][1] == 1
+    # The file is not listed this time, but the listing cannot say it is gone.
+    world.files = []
+    if why == "incomplete_search":
+        world.incomplete_search = True
+    else:
+        world.lost_folders = {OTHER}
+    # A periodic full listing (an explicit full sync would reset the waits).
+    world.states["decks"]["detail"] = json.dumps(
+        {**_detail(world), "full_listed_at": "2026-01-01T00:00:00+00:00"}
+    )
+    asyncio.run(source_sync.run_sync())
+    assert _waits(world)["bad1"][1] == 1
+
+
+def test_a_folder_error_is_not_hidden_by_an_incomplete_listing(world: _World) -> None:
+    config = {"folder_ids": [FOLDER, OTHER], "include": ["docs"]}
+    world.sources = [_source(config=config)]
+    world.lost_folders = {OTHER}
+    world.incomplete_search = True
+    asyncio.run(source_sync.run_sync(full=True))
+    detail = _detail(world)
+    assert detail["status"] == "failed" and OTHER in detail["error"]
