@@ -672,7 +672,8 @@ has a gold question set; it is never run in CI, whose embedder is fake
   erasure saga purges every `loom.code_*` table for the namespace, and the bare mirror is
   deleted when no other branch uses it. Search telemetry is kept. An operator-configured
   entry is refused with `REPO_FROM_CONFIG`: remove it from `LOOM_CODE_REPOS_JSON`
-  instead. It is served with `LOOM_CODE_INTEL_ENABLED=false` too; the other replicas then
+  instead. With `LOOM_CODE_INTEL_ENABLED=false` the page cannot list repositories, but
+  `code.repo.remove` over HTTP, MCP or the SDK is still served; the other replicas then
   sweep their copy of the mirror only once code intelligence is on again.
 - **Erase an index.** `erasure.request` with `scope_type = namespace` on a code namespace
   also purges the `loom.code_*` tables. An entry that is still configured is re-indexed

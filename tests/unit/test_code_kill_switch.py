@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from server.core.errors import PreconditionFailedError
+from server.core.errors import PreconditionFailedError, ValidationError
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
 from server.settings import settings
@@ -38,8 +38,11 @@ async def test_a_code_op_refuses_with_code_intelligence_off(
 
 @pytest.mark.asyncio
 async def test_a_retirement_is_not_behind_the_switch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Past the switch, an empty input fails on its first field, not on the switch."""
+    """With the switch off, a retirement reaches its own confirm check."""
+    from server.code.api.models_repos import CodeRepoRemoveInput
+    from server.code.app.repo_admin import handle_code_repo_remove
+
     monkeypatch.setattr(settings, "code_intel_enabled", False)
-    op = next(op for op in ALL_OPERATIONS if op.name == "code.repo.remove")
-    with pytest.raises(AttributeError):
-        await op.handler(op.input_model.model_construct())
+    with pytest.raises(ValidationError) as refused:
+        await handle_code_repo_remove(CodeRepoRemoveInput(org="o", namespace="n", confirm="x"))
+    assert refused.value.code == "CONFIRM_REQUIRED"
