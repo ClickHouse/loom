@@ -751,18 +751,16 @@ and what it leaves:
   operations](./code-index-operations.md#rollout-and-shutdown) covers retirement, erasure
   and what stays on disk. The dashboard's code pages show the precondition error.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
-  leaves the code tools out, but the coding-agent plugins list them, and so does the
-  `assistant` toolset (`code.search`, `code.symbol`), so agents are offered tools that
-  refuse. An entry written by `loom install --client claude-code|codex`, or pasted from the
-  connect lines `loom up` and `loom init` print, asks for `?toolset=coding` too: install
-  with `--toolset core`, or edit it to `core`. Set the Claude Code plugin's `toolset` option
-  ([options](../features/integrations/claude-code.md#install)) from `coding` to `core`. The
-  Codex plugin's entry asks for `toolset=core,coding,tracker,tasks`; replace it with a
-  `[mcp_servers.loom]` override in `~/.codex/config.toml` that asks for `core,tasks` and
-  keeps the plugin's `http_headers_helper` line, since the override replaces the entry whole
-  ([the server](../features/integrations/codex.md#the-server)). The `tracker` toolset also
-  lists three `code.*` tools (`code.bisect_candidates`, `code.pr_check`, `code.impact`),
-  which refuse.
+  leaves the code tools out, but any client entry whose toolset includes `coding`, `tracker`
+  (`code.bisect_candidates`, `code.pr_check`, `code.impact`) or `assistant` (`code.search`,
+  `code.symbol`) lists code tools that refuse. Every connect path Loom offers coding agents
+  asks for `coding`: the plugins, `loom install`, the lines `loom up` and `loom init` print,
+  and the dashboard's connect page. Point those entries at `core` (with `tasks` added where
+  agents use the task inbox): the Claude Code plugin's `toolset` option
+  ([options](../features/integrations/claude-code.md#install)),
+  `loom install --toolset core`, or for the Codex plugin a `[mcp_servers.loom]` override in
+  `~/.codex/config.toml` that keeps the plugin's `http_headers_helper` line, since the override replaces the entry
+  whole ([the server](../features/integrations/codex.md#the-server)).
 - The plugin hooks find a session's repository through `code.repos`, which is refused, and
   ask again about once a minute. The session-start primer then adds a code-index line that
   points the agent at the `loom_code_*` tools; set `LOOM_CODE_MAP=false` in the environment
@@ -773,9 +771,9 @@ and what it leaves:
   tracker source configured, they find nothing to do: each pass reads a few rows and ends.
   The git mirror warm-up and host loop do not run, and boot probes the repository-job
   sandbox only when `LOOM_CODE_INGEST_ENABLED` or `LOOM_CODE_SANDBOX_REQUIRED` is on. Every
-  process still re-reads the repository registry (`LOOM_CODE_REPOS_REFRESH_SECONDS`) and the
-  tracker sources (`LOOM_TRACKER_SOURCES_REFRESH_SECONDS`), each while its self-service
-  setting is on: one small read per interval.
+  process still re-reads the repository registry while `LOOM_CODE_SELF_SERVICE_ENABLED` is
+  on and the tracker sources while `LOOM_TRACKER_SELF_SERVICE_ENABLED` is on: one small read
+  per interval (`LOOM_CODE_REPOS_REFRESH_SECONDS`, `LOOM_TRACKER_SOURCES_REFRESH_SECONDS`).
 - `memory.*`, `knowledge.*`, `conversation.*`, `context.pack` and `search.query`
   (`loom_search` over MCP) serve as on any deployment; `search.query` has no code or tracker
   results to add.
