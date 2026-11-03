@@ -225,6 +225,41 @@ async def test_resolve_a_row_that_is_not_the_pair_raises_404(
     assert (tombstoned, cleared) == ([], [])
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param({}, id="keys-only"),
+        pytest.param({"canonical_id": CANON, "duplicate_id": DUP}, id="keys-and-ids"),
+    ],
+)
+def test_resolve_with_the_removed_keys_is_refused_and_points_at_the_ids(
+    extra: dict[str, Any],
+) -> None:
+    """A key does not name the pair, so a call that still sends `canonical_key` /
+    `duplicate_key` tombstones nothing: it is refused with the id field to use."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import arg_check
+
+    op = OPERATIONS_BY_NAME["memory.dedup_resolve"]
+    args = {
+        "org": "clickhouse",
+        "namespace": "finance",
+        "canonical_key": "k",
+        "duplicate_key": "k",
+        "decision": "keep_canonical",
+        "confirm_canonical_key": "k",
+        **extra,
+    }
+    refused = arg_check.named_argument_error(op, args)
+    assert refused is not None
+    detail = refused.error_detail()
+    assert detail["code"] == "UNKNOWN_ARGUMENT"
+    assert detail["did_you_mean"] == {
+        "canonical_key": "canonical_id",
+        "duplicate_key": "duplicate_id",
+    }
+
+
 @pytest.mark.asyncio
 async def test_knowledge_dedup_list_doc_clusters_only_by_default(
     monkeypatch: pytest.MonkeyPatch,
