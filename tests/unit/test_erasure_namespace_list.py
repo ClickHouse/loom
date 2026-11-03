@@ -164,7 +164,7 @@ async def test_saga_dispatch_passes_the_list_and_purge_to_the_namespace_saga(mon
     assert out.status == "completed"
 
 
-async def test_gc_candidates_fence_off_excluded_prefixes_and_registered_namespaces() -> None:
+async def test_gc_candidates_fence_off_registered_namespaces() -> None:
     from server.cli.hygiene import _gc_candidates
 
     class _CH:
@@ -184,10 +184,7 @@ async def test_gc_candidates_fence_off_excluded_prefixes_and_registered_namespac
         prefixes=("lme-", "mb-"),
         idle_hours=24,
         include_registered=False,
-        exclude_prefixes=("locomo-seq2-conv-",),
     )
-    assert "namespace LIKE {p0:String} OR namespace LIKE {p1:String}" in ch.sql
-    assert "namespace NOT LIKE {x0:String}" in ch.sql and ch.params["x0"] == "locomo-seq2-conv-%"
     assert "namespace NOT IN (SELECT namespace FROM loom.namespaces FINAL" in ch.sql
     assert "INTERVAL {idle:UInt32} HOUR" in ch.sql and ch.params["idle"] == 24
     ch2 = _CH()

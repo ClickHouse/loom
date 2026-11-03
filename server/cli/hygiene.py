@@ -125,21 +125,21 @@ async def _gc_candidates(
     registered namespace is somebody's, even when its name matches)."""
     if not prefixes and not explicit:
         return []
+    params: dict[str, Any] = {"org": org, "idle": int(idle_hours)}
+    params.update({f"p{i}": p for i, p in enumerate(prefixes)})
+    # startsWith: a prefix is matched as literal text, `_` and `%` included.
     name_pred = " OR ".join(
-        [f"namespace LIKE {{p{i}:String}}" for i in range(len(prefixes))]
+        [f"startsWith(namespace, {{p{i}:String}})" for i in range(len(prefixes))]
         + (["namespace IN {explicit:Array(String)}"] if explicit else [])
     )
-    params: dict[str, Any] = {"org": org, "idle": int(idle_hours)}
-    for i, p in enumerate(prefixes):
-        params[f"p{i}"] = p.replace("%", r"\%") + "%"
     if explicit:
         params["explicit"] = list(explicit)
     # A reuse set another run still reads (a paired A/B, a --namespaces-json
     # map) is fenced off by prefix, whatever its last write says.
     exclude_pred = ""
     for i, p in enumerate(exclude_prefixes):
-        params[f"x{i}"] = p.replace("%", r"\%") + "%"
-        exclude_pred += f" AND namespace NOT LIKE {{x{i}:String}}"
+        params[f"x{i}"] = p
+        exclude_pred += f" AND NOT startsWith(namespace, {{x{i}:String}})"
     registered_pred = (
         ""
         if include_registered
