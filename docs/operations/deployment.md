@@ -746,8 +746,8 @@ and what it leaves:
 
 - Boot still applies every migration. An empty table costs nothing to serve, and erasure
   covers every table whatever is in use.
-- Every `code.*` operation, the `code.repo.*` administration included, answers a
-  precondition error.
+- Every `code.*` operation answers a precondition error but `code.repo.remove`, so an
+  index registered earlier can still be retired.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but the coding-agent plugins list them, so agents are offered
   tools that refuse. Set the Claude Code plugin's `toolset` option
