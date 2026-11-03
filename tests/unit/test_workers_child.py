@@ -387,11 +387,15 @@ def child_services(monkeypatch) -> list[str]:
     tag each tracker-registry refresh saw."""
     from server import boot
     from server.code.app.index import repo_registry
+    from server.core import runtime_overrides
     from server.core.ch import current_query_tag
     from server.insights.app import provider_barrier, provider_runtime
     from server.tracker.app import registry_sources
 
     tags: list[str] = []
+
+    async def _no_overrides(*, ch=None) -> runtime_overrides.Snapshot:
+        return {}
 
     async def _noop(*_a, **_k) -> None:
         return None
@@ -409,6 +413,7 @@ def child_services(monkeypatch) -> list[str]:
     monkeypatch.setattr(repo_registry, "start_refresher", _refresher)
     monkeypatch.setattr(boot, "calibrate_similarity_gates", _noop)
     monkeypatch.setattr("server.observability.get_emitter", lambda: SimpleNamespace(start=_noop))
+    monkeypatch.setattr(runtime_overrides, "load", _no_overrides)
     monkeypatch.setattr(boot, "_WARM", {})  # no earlier test's first load counts
     return tags
 
@@ -451,9 +456,7 @@ async def test_the_child_tags_its_boot_reads_and_its_tracker_loop(
     tag reaches; each carries its own, and the caller's context keeps none."""
     from server import worker_main
     from server.core.ch import current_query_tag
-    from server.settings import settings
 
-    monkeypatch.setattr(settings, "tracker_sources_refresh_seconds", 0.0)
     real_sleep = asyncio.sleep
     monkeypatch.setattr(asyncio, "sleep", lambda _s: real_sleep(0))
     tasks = await worker_main._start_services(object())
