@@ -726,7 +726,8 @@ query hashes are unaffected.
 Request statements also send
 `query_id = "<request_id>:<n>:<nonce>"`. `n` counts the request's statements and the
 nonce is drawn once per request, so two requests that carry the same caller id never
-send the same `query_id`. `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST=true` appends a
+send the same `query_id`. A carried insert prefixes it with `loom-carry/<process>/`.
+`LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST=true` appends a
 statement-shape hash and the first 200 characters. A new background loop calls
 `server.core.ch.set_query_tag(...)`; work scheduled from a request keeps the request's tag.
 
