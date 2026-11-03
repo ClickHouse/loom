@@ -53,11 +53,12 @@ def no_dump() -> None:
     _prctl(_PR_SET_DUMPABLE, 0, "PR_SET_DUMPABLE")
 
 
-# The audit arch and the syscalls a child is refused on each architecture the
-# image is built for (seccomp filters see raw numbers): those that make a socket
-# (io_uring can too), and the direct ways into another process's memory or
-# sockets. /proc/<pid>/mem is a file, so a sibling that is still dumpable (with
-# LOOM_EXTRACTOR_CONCURRENCY above 1) stays reachable that way.
+# The "socket filter", which refuses more than sockets: on each architecture the
+# image is built for, the audit arch and the syscalls a child is refused (seccomp
+# filters see raw numbers). Those that make a socket (io_uring can too), and the
+# direct ways into another process's memory or sockets. /proc/<pid>/mem is a file,
+# so a sibling still dumpable (with LOOM_EXTRACTOR_CONCURRENCY above 1) stays
+# reachable that way.
 _NO_SOCKETS = {
     # socket, socketpair, io_uring_setup, ptrace, process_vm_readv/writev, pidfd_getfd
     "x86_64": (0xC000003E, (41, 53, 425, 101, 310, 311, 438)),
