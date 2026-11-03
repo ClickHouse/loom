@@ -16,8 +16,8 @@ import {
   clearToken,
   onSignInRejected,
   onTokenStored,
-  setPageOwner,
   ownsToken,
+  setPageOwner,
   signedOut,
   storedToken,
   ApiError,
@@ -585,10 +585,10 @@ export default function App() {
         // Still unavailable after whoami's retries: the toast says so, and the token stays
         // for the next load. A sign-in link refused on the way says so and leaves no note,
         // so the next load does not start a sign-in by itself (the link may be the way in).
-        if (link?.token) {
-          sessionEndedNote(true);
-          if (!storedToken()) useStore.getState().setGateReason("refused");
-        }
+        // A token refused on the way (the early read) says so on the gate, as the try would.
+        const ended = sessionEndedNote(true) && !signedOut();
+        if (!storedToken() && (link?.token || ended))
+          useStore.getState().setGateReason(link?.token ? "refused" : "expired");
         toastError("Auth bootstrap failed", e);
         setAuthed(false);
       }

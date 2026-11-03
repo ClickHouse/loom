@@ -294,8 +294,8 @@ interface AppState {
   whoami: WhoAmI | null;
   identity: Identity | null;
   gateReason: GateReason;
-  /** The server refused the stored token mid-session: sign-in shows over the page, which
-   *  stays mounted so nothing typed into it is lost. */
+  /** The server refused the stored token mid-session: a card among the toasts says so and
+   *  offers the sign-in, and the page stays as it is, so nothing typed into it is lost. */
   sessionExpired: boolean;
   /** The caller's namespaces with roles (`namespace.list_mine`), set once at
    *  boot. null = not fetched / the fetch failed, which the role helpers

@@ -130,10 +130,12 @@ export function onSignInRejected(fn: () => void): void {
  *  sign-in session (a minted one, maybe a CI job's too) is only forgotten here. */
 export function signOut(): void {
   const t = token();
+  // Another person's token, which another tab stored a moment ago, is not this page's to end:
+  // the reload that follows opens their page.
+  if (!ownsToken(t)) return;
   localStorage.setItem(KEY_SIGNED_OUT, "1");
   clearToken();
-  // Another person's token another tab stored a moment ago is not this page's to end.
-  if (!t || !claimsFromToken(t)?.session || !ownsToken(t)) return;
+  if (!t || !claimsFromToken(t)?.session) return;
   fetch("/oauth/revoke", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -321,7 +323,7 @@ async function send(
   // of it (and reloads): this page's call never carries it.
   if (!ownsToken(sent)) {
     // Its words are the ended session's (sessionEnded): no message of its own is shown.
-    const err = new ApiError({ status: 401, code: "AUTH_INVALID" });
+    const err = new ApiError({ status: 401 });
     err.sessionEnded = true;
     throw err;
   }
