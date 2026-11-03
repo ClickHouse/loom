@@ -473,7 +473,7 @@ class Transport:
             headers["Idempotency-Key"] = idempotency_key
         if request_id and not _REQUEST_ID.fullmatch(request_id):
             logger.warning(
-                "%s request_id %r is not 1-64 letters, digits, '.', '_' or '-'; a generated id is sent",
+                "%s request_id %r is not 1-64 letters, digits, '.', '_' or '-'; sent a new one",
                 op_path,
                 request_id,
             )

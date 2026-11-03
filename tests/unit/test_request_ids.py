@@ -57,6 +57,7 @@ def test_the_sdks_keep_the_ids_the_server_keeps() -> None:
     from pathlib import Path
 
     from loom import transport as py_sdk
+
     from server.transport._common import _CALLER_REQUEST_ID
 
     assert py_sdk._REQUEST_ID.pattern == _CALLER_REQUEST_ID.pattern
