@@ -42,13 +42,27 @@ import { PendingRequestBanner } from "./components/PendingRequestBanner";
 import { ProblemsBanner } from "./components/ProblemsBanner";
 import { shortcutOff } from "./lib/shortcuts";
 
-// A token the server refuses mid-session (it expired or was revoked) returns every view to
-// the sign-in gate at once, instead of each view showing the refusal as its error.
+// A token the server refuses mid-session (it expired or was revoked) puts sign-in over the
+// page, instead of each view showing the refusal as its error. The page stays mounted.
 onSignInRejected(() => {
   clearToken();
-  useStore.getState().setGateReason("expired");
-  useStore.getState().setAuthed(false);
+  // A single-user install has no sign-in: its next call goes without the stale token.
+  if (isAuthDisabled()) return;
+  useStore.getState().setSessionExpired(true);
 });
+
+/** After signing in again over the page: the same person carries on where they were; anyone
+ *  else gets a fresh page, so nothing the last person read stays on screen. */
+function afterSignInAgain(): void {
+  const before = useStore.getState().whoami;
+  const now = claimsFromToken(storedToken());
+  if (!before?.subject || now?.subject !== before.subject || now?.org !== before.org) {
+    location.reload();
+    return;
+  }
+  useStore.getState().setSessionExpired(false);
+  toast("Signed in again. Retry what failed while the session was away.", "ok");
+}
 
 // One view per chunk, so a person opening Memories does not pay for the code index
 // explorer, the graph and every admin page. React.lazy loads a view the first time it is
@@ -154,6 +168,7 @@ export default function App() {
   const inspect = useStore((s) => s.inspect);
   const setAuthed = useStore((s) => s.setAuthed);
   const gateReason = useStore((s) => s.gateReason);
+  const sessionExpired = useStore((s) => s.sessionExpired);
   const setWhoami = useStore((s) => s.setWhoami);
   // Boot settles the identity (a provisional namespace, then the answer): not a switch, so
   // the deep link's memory or thread stays open.
@@ -285,6 +300,8 @@ export default function App() {
         // case the bootstrap exists to prevent. Equivalently: the reachable set
         // here is exactly one name, so validating a pick can only ever return it.
         if (isAuthDisabled()) {
+          // A token left from an auth-on run, or a #token= link, would only be refused.
+          clearToken();
           const authOffNs = defaultNamespace();
           setAuthed(true);
           setWhoami({
@@ -489,7 +506,8 @@ export default function App() {
       >
         Skip to main content
       </a>
-      <div className="flex flex-1 min-h-0">
+      {/* Out of reach while sign-in shows over it; still mounted, so nothing typed is lost. */}
+      <div className="flex flex-1 min-h-0" {...(sessionExpired ? { inert: "" } : {})}>
         <Sidebar />
         <div className="flex-1 flex flex-col min-w-0">
           <ReloadBar />
@@ -546,6 +564,13 @@ export default function App() {
         <Suspense fallback={null}>
           <HelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
         </Suspense>
+      )}
+      {sessionExpired && !isProxyMode() && (
+        <div className="fixed inset-0 z-[70] overflow-y-auto bg-bg">
+          <Suspense fallback={null}>
+            <TokenGate onLogin={afterSignInAgain} reason="expired" resume={false} />
+          </Suspense>
+        </div>
       )}
       <NetworkProgress />
       <ToastViewport />

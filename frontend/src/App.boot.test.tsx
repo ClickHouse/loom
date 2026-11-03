@@ -9,6 +9,7 @@
 //   - the page's first data read leaves while list_mine is still pending,
 //   - the late list_mine answer does not replay the page's reads.
 import { act, cleanup, fireEvent, render, screen } from "./test/rtl";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { preloadView } = vi.hoisted(() => ({ preloadView: vi.fn() }));
@@ -525,5 +526,91 @@ describe("login link", () => {
     await settle();
     expect(stored).toEqual(["frag.jwt.value"]);
     expect(window.location.href).not.toContain("frag.jwt.value");
+  });
+});
+
+describe("a refused token", () => {
+  let refuse = false;
+  let whoamiStatus = 200;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    sessionStorage.clear();
+    invalidateShared();
+    resetNamespaceRoleCache();
+    refuse = false;
+    whoamiStatus = 200;
+    useStore.setState({
+      authed: true,
+      sessionExpired: false,
+      gateReason: null,
+      whoami: null,
+      myNamespaces: null,
+      identity: null,
+    });
+    Element.prototype.scrollTo = vi.fn();
+    window.history.replaceState(null, "", "/memories");
+    localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] }));
+    localStorage.setItem("loom_namespace_v1", NS);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes("/v1/whoami")) {
+          if (whoamiStatus !== 200) return new Response("{}", { status: whoamiStatus });
+          return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+        }
+        if (url.includes("/v1/auth/login")) {
+          refuse = false;
+          return json({ token: fresh, expires_at: null });
+        }
+        if (refuse && url.includes("/v1/") && !url.includes("/v1/health"))
+          return new Response('{"detail":{"code":"AUTH_INVALID","message":"token expired"}}', { status: 401 });
+        if (url.includes("namespace.list_mine")) return json({ ...GENERIC, rows: MINE });
+        return json(GENERIC);
+      }),
+    );
+  });
+  const fresh = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 2 });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    useStore.setState({ sessionExpired: false, whoami: null, myNamespaces: null, identity: null });
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("mid-session puts sign-in over the page, which stays mounted and out of reach", async () => {
+    render(<App />);
+    await until(() => !!document.getElementById("main"));
+    refuse = true;
+    // Any call now: the store's own read path, as a view's refresh would make it.
+    await act(async () => {
+      await import("./api").then((api) => api.post("/v1/memory.list", { org: ORG, namespace: NS }).catch(() => null));
+    });
+    await until(() => useStore.getState().sessionExpired);
+    // The gate's chunk loads on first use.
+    await until(() => !!document.body.textContent?.includes("Your session expired — sign in again."), 20_000);
+    expect(localStorage.getItem("loom_token_v1")).toBeNull();
+    const main = document.getElementById("main");
+    expect(main).not.toBeNull();
+    expect(main?.closest("[inert]")).not.toBeNull();
+    expect(useStore.getState().authed).toBe(true);
+
+    // The same person signs in again: the page they were on comes back, as it was.
+    await userEvent.type(screen.getByLabelText("Email or namespace"), "alice@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "secret-pass");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await until(() => !useStore.getState().sessionExpired);
+    expect(localStorage.getItem("loom_token_v1")).toBe(fresh);
+    expect(document.getElementById("main")?.closest("[inert]")).toBeNull();
+  }, 40_000);
+
+  it("keeps the token when whoami cannot answer at boot (a replica still loading keys)", async () => {
+    whoamiStatus = 503;
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    expect(localStorage.getItem("loom_token_v1")).not.toBeNull();
+    expect(useStore.getState().gateReason).toBeNull();
   });
 });

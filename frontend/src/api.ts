@@ -136,7 +136,9 @@ export interface WhoAmI {
 
 export async function whoami(): Promise<WhoAmI> {
   const r = await fetch("/v1/whoami", { headers: authHeader(), signal: boundedSignal() });
-  if (!r.ok) return { authenticated: false };
+  // A refused token answers 200 with authenticated=false. Anything else not ok (a replica
+  // whose keys are still loading answers 503) says nothing about the token: it is kept.
+  if (!r.ok) throw await apiErrorFromResponse(r);
   return r.json();
 }
 

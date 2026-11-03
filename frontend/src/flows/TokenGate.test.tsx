@@ -19,6 +19,8 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 import { loginWithPassword, selfSignup } from "../api";
+vi.mock("../lib/ssoStart", () => ({ goToSso: vi.fn() }));
+import { goToSso } from "../lib/ssoStart";
 
 describe("TokenGate", () => {
   afterEach(() => vi.clearAllMocks());
@@ -163,8 +165,7 @@ describe("TokenGate", () => {
       window.__LOOM_SSO = true;
       history.replaceState(null, "", "/knowledge?namespace=group-a-shared");
       render(<TokenGate onLogin={() => undefined} reason="expired" />);
-      // jsdom does not navigate; the stamp and the remembered page show the gate left.
-      expect(sessionStorage.getItem("loom_sso_resumed_v1")).not.toBeNull();
+      expect(goToSso).toHaveBeenCalledTimes(1);
       expect(JSON.parse(sessionStorage.getItem(SIGN_IN_FROM) ?? "{}")).toMatchObject({
         path: "/knowledge?namespace=group-a-shared",
       });
@@ -174,7 +175,14 @@ describe("TokenGate", () => {
     it("waits for a click on a first visit", () => {
       window.__LOOM_SSO = true;
       render(<TokenGate onLogin={() => undefined} reason={null} />);
-      expect(sessionStorage.getItem("loom_sso_resumed_v1")).toBeNull();
+      expect(goToSso).not.toHaveBeenCalled();
+    });
+
+    it("waits for a click over a page mid-session, where leaving would lose what was typed", () => {
+      window.__LOOM_SSO = true;
+      render(<TokenGate onLogin={() => undefined} reason="expired" resume={false} />);
+      expect(goToSso).not.toHaveBeenCalled();
+      expect(screen.getByRole("status")).toHaveTextContent("Your session expired — sign in again.");
     });
 
     it("sends the person to the identity provider, with no password field", () => {

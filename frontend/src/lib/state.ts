@@ -293,6 +293,9 @@ interface AppState {
   whoami: WhoAmI | null;
   identity: Identity | null;
   gateReason: GateReason;
+  /** The server refused the stored token mid-session: sign-in shows over the page, which
+   *  stays mounted so nothing typed into it is lost. */
+  sessionExpired: boolean;
   /** The caller's namespaces with roles (`namespace.list_mine`), set once at
    *  boot. null = not fetched / the fetch failed, which the role helpers
    * treat as "unknown", not "no access". */
@@ -335,6 +338,7 @@ interface AppState {
   // actions
   setAuthed: (v: boolean) => void;
   setGateReason: (r: GateReason) => void;
+  setSessionExpired: (v: boolean) => void;
   setMyNamespaces: (rows: MyNamespaceEntry[] | null) => void;
   setWhoami: (w: WhoAmI | null) => void;
   setIdentity: (i: Identity | null) => void;
@@ -399,6 +403,7 @@ export const useStore = create<AppState>((set, get) => ({
   whoami: null,
   identity: null,
   gateReason: null,
+  sessionExpired: false,
   myNamespaces: null,
   deniedNamespace: null,
   linkOpened: null,
@@ -417,6 +422,7 @@ export const useStore = create<AppState>((set, get) => ({
   sidebarCollapsed: typeof localStorage !== "undefined" && localStorage.getItem("loom_sidebar_collapsed") === "1",
   setAuthed: (authed) => set({ authed }),
   setGateReason: (gateReason) => set({ gateReason }),
+  setSessionExpired: (sessionExpired) => set({ sessionExpired }),
   setMyNamespaces: (myNamespaces) => set({ myNamespaces }),
   setWhoami: (whoami) => set({ whoami }),
   // A memory belongs to its namespace: a switch, from any picker, closes the open one. The
