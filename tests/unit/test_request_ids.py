@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import contextvars
 import uuid
+from pathlib import Path
 
 import pytest
+from loom import transport as py_sdk
 
 from server.core import request_work as rw
+from server.core.ch import _QUERY_TAG_MAX
 from server.core.ch_request_cost import request_query_id
-from server.transport._common import request_id_from
+from server.operations.registry import ALL_OPERATIONS
+from server.transport._common import _CALLER_REQUEST_ID, request_id_from
 
 
 @pytest.mark.parametrize("given", ["dbg-0001", "rid_7.retry", "a" * 64, str(uuid.uuid4())])
@@ -45,8 +49,6 @@ def test_two_requests_with_one_id_send_different_query_ids() -> None:
 
 
 def test_the_longest_op_and_a_kept_id_fit_the_query_tag() -> None:
-    from server.core.ch import _QUERY_TAG_MAX
-    from server.operations.registry import ALL_OPERATIONS
 
     longest = max(len(op.name) for op in ALL_OPERATIONS)
     assert longest + 1 + 64 <= _QUERY_TAG_MAX
@@ -54,11 +56,6 @@ def test_the_longest_op_and_a_kept_id_fit_the_query_tag() -> None:
 
 def test_the_sdks_keep_the_ids_the_server_keeps() -> None:
     """Each SDK replaces an id the server would replace, so both name one id."""
-    from pathlib import Path
-
-    from loom import transport as py_sdk
-
-    from server.transport._common import _CALLER_REQUEST_ID
 
     assert py_sdk._REQUEST_ID.pattern == _CALLER_REQUEST_ID.pattern
     ts = Path(__file__).parents[2] / "sdk/typescript/src/transport.ts"

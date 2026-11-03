@@ -180,6 +180,21 @@ class _Call:
 # The request ids the server keeps as sent; it replaces any other with its own.
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
+
+def _request_id_to_send(op_path: str, request_id: str | None) -> str:
+    """The caller's id when the server keeps it as sent, else a new uuid (with a
+    warning when the caller's id is replaced)."""
+    if request_id and _REQUEST_ID.fullmatch(request_id):
+        return request_id
+    if request_id:
+        logger.warning(
+            "%s request_id %r is not 1-64 letters, digits, '.', '_' or '-'; sent a new one",
+            op_path,
+            request_id,
+        )
+    return str(uuid.uuid4())
+
+
 # Read by `_post_once` (a contextvar so a per-call override is safe under
 # concurrent calls and the `_post_once` signature tests stub stays
 # four-positional).
@@ -471,14 +486,7 @@ class Transport:
             idempotency_key = str(uuid.uuid4())
         if idempotency_key is not None:
             headers["Idempotency-Key"] = idempotency_key
-        if request_id and not _REQUEST_ID.fullmatch(request_id):
-            logger.warning(
-                "%s request_id %r is not 1-64 letters, digits, '.', '_' or '-'; sent a new one",
-                op_path,
-                request_id,
-            )
-            request_id = None
-        headers["X-Request-Id"] = request_id or str(uuid.uuid4())
+        headers["X-Request-Id"] = _request_id_to_send(op_path, request_id)
         payload = self.with_consumer(payload)
         if self.before_post is not None:
             extra = await self.before_post(op_path, payload)
