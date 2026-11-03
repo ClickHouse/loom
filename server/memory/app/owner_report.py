@@ -62,9 +62,10 @@ ORDER BY m.namespace
 
 
 def namespace_scope(namespaces: list[str]) -> OrgScopeFilter:
-    """The predicate bounding the report to `namespaces`."""
+    """The predicate bounding the report to `namespaces`; none of them is an
+    inaccessible scope, never an unbounded one."""
     return OrgScopeFilter(
-        accessible=True,
+        accessible=bool(namespaces),
         where=" AND namespace IN {nss:Array(String)}",
         params={"nss": sorted(set(namespaces))},
     )
@@ -102,9 +103,12 @@ async def owner_report(
     ch: Any | None = None,
 ) -> dict[str, Any]:
     """{rows: [...], reads: [...], usage: [...]} for one owner. Each list is a
-    list of plain dicts; empty lists when the user owns nothing."""
+    list of plain dicts; empty lists when the user owns nothing, and no
+    statement runs when `scope` reaches no namespace."""
     from server.core.ch import get_client
 
+    if not scope.accessible:
+        return {"rows": [], "reads": [], "usage": []}
     ch = ch or get_client()
     (rows_q, reads_q, usage_q), _ = build_queries(
         org=org, user_id=user_id, scope=scope, since_hours=since_hours, limit=limit

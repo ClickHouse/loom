@@ -60,28 +60,20 @@ async def handle_memory_owner_report(input: MemoryOwnerReportInput) -> MemoryOwn
         requested="own_user", user_id=input.user_id, session_id=None, auth=auth
     )
     uid = str(rf.user_id or "")
-    empty = MemoryOwnerReportOutput(
-        user_id=uid, since_hours=input.since_hours, live_rows=0, rows=[], reads=[], usage=[]
-    )
     if input.namespace:
         if not await row_in_scope(input.org, input.namespace, Role.VIEWER):
             raise PermissionError(f"namespace {input.namespace!r} is not readable by this token")
         scope = namespace_scope([input.namespace])
     elif auth is None or ("*" in auth.namespaces and not auth.has_ns_roles() and not auth.creator):
         # Auth off, or a namespace-wildcard token: every namespace of the org
-        # but the restricted ones and collections it may not read (a `*` never
-        # counts toward those).
+        # but the restricted ones, the collections and the named claims the
+        # gate refuses it (`every_readable_namespace`).
         scope = await every_readable_namespace(input.org)
-        if not scope.accessible:
-            return empty
     else:
         # The claim plus grants (a scoped token: its claim alone; a delegated
         # token: its creator's live grants), less the restricted namespaces it
         # may not read. Empty is "none", never "all".
-        readable = await rollup_member_namespaces(input.org)
-        if not readable:
-            return empty
-        scope = namespace_scope(readable)
+        scope = namespace_scope(await rollup_member_namespaces(input.org))
     rep = await owner_report(
         org=input.org,
         user_id=uid,

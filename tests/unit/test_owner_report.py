@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from server.auth.context import OrgScopeFilter
 from server.auth.jwt import AuthInfo
 from server.memory.app import owner_report as R
 from server.operations.base import Role
@@ -38,6 +39,16 @@ def test_queries_are_owner_scoped_and_namespace_bounded() -> None:
         "lim": 20,
         "nss": ["shop", "support"],
     }
+
+
+@pytest.mark.asyncio
+async def test_an_inaccessible_scope_runs_no_statement() -> None:
+    """Its empty predicate would read every namespace, so it reads none."""
+    ch = _CH()
+    for scope in (R.namespace_scope([]), OrgScopeFilter(accessible=False, where="", params={})):
+        rep = await R.owner_report(org="acme", user_id="u1", scope=scope, ch=ch)
+        assert rep == {"rows": [], "reads": [], "usage": []}
+    assert ch.calls == []
 
 
 @pytest.mark.asyncio
