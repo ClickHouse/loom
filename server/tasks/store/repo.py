@@ -18,6 +18,7 @@ Handlers own the state machine; this module owns the statements.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -366,7 +367,9 @@ async def insert_created_task(row: TaskRow, *, ch: _CHClient | None = None) -> T
     Why the dedup token and its retry: docs/architecture/rolling-upgrades.md, rule 10."""
     org, inbox, key = row["org"], row["inbox"], row["idempotency_key"]
     subject = row["from_subject"]
-    token = f"task.create:{org}:{inbox}:{subject}:{key}"
+    # Subjects and keys may hold any separator: join with one neither takes, then hash.
+    ident = "\x1f".join((org, inbox, subject, key))
+    token = "task.create:" + hashlib.sha256(ident.encode()).hexdigest()
     await insert_task_version(row, dedup_token=token, ch=ch)
     if await fetch_task(org, str(row["task_id"]), ch=ch) is not None:
         return row

@@ -564,6 +564,9 @@ async def test_another_posters_create_with_the_key_is_not_dropped_by_its_token(
     assert str(answered["task_id"]) == other["task_id"]
     assert len(tokens) == 1  # not dropped and inserted again under a fresh token
     assert sorted(await _live_tasks(ch, org)) == sorted([first.task.task_id, other["task_id"]])
+    landed = await repo.fetch_task(org, other["task_id"])
+    assert landed is not None
+    assert {**landed, "task_id": str(landed["task_id"])} == other
     own = await repo.fetch_task_by_idempotency_key(org, "bot", str(stored["from_subject"]), "k1")
     assert own is not None and str(own["task_id"]) == first.task.task_id
 

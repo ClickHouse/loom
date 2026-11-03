@@ -115,12 +115,11 @@ schema. These rules keep that safe. The operator procedure is in
     before its insert can still race the next, so both insert under one dedup token (the
     poster and its key, or the event's task id) and storage drops the later row. An
     erased row's token can outlive it and drop a new row too: with nothing stored, the
-    row goes in again under a fresh token. The build before names both the lease and the
-    token without the poster, so the key's token drops neither build's row for the
-    other. A create of each build racing on one key can store two tasks, and two
-    deliveries two ready events, as two replicas of the previous build already can. A
-    build that looks a key up without the poster answers another poster's task to a
-    create with the same key until it stops serving.
+    row goes in again under a fresh token. The build before names the create's lease and
+    token without the poster, so the two builds' creates of one key exclude neither the
+    other: racing, they can store two tasks. A build that looks a key up without the
+    poster answers another poster's task to a create with the same key until it stops
+    serving.
     Each task is whole (its event and its lease row) and claimable: a create of N cut
     off after its task row is finished by its retry, which under the key's lease writes
     the created event the first one left out, and by the lease sweep, which writes its
