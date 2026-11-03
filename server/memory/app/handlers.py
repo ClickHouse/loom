@@ -934,7 +934,7 @@ async def _restore_newer_chunks(existing: Any, *, tombstone: int) -> None:
     found them retired and left them has them retired again."""
     from server.memory.app import set_chunks as _set_chunks
 
-    removed = _set_chunks.set_chunk_identities(existing.value, existing.memory_type)
+    removed = _set_chunks.passage_identities(existing.value, existing.memory_type)
     if not removed:
         return  # a value too short to chunk shares nothing
     ch = get_client()
@@ -986,7 +986,7 @@ async def _served_chunks(existing: Any, *, tombstone: int) -> frozenset[tuple[in
         return frozenset()
     if not is_embedded(newer.memory_type, newer.sensitivity):
         return frozenset()
-    return _set_chunks.set_chunk_identities(newer.value, newer.memory_type)
+    return _set_chunks.set_chunk_identities(newer.value, newer.memory_type, newer.memory_key)
 
 
 async def _after_checked(
@@ -1122,10 +1122,11 @@ async def _retire_derived(
         from server.memory.app import set_chunks as _set_chunks
 
         # memory.delete_version removes one version: a newer value's chunks stay.
-        await _set_chunks.tombstone_row_chunks_fail_open(
+        retired = await _set_chunks.tombstone_row_chunks_fail_open(
             existing, ch=ch, only_its_own=only_its_chunks
         )
-        if only_its_chunks:
+        # Nothing retired, nothing a newer value could need back.
+        if only_its_chunks and retired:
             await _restore_newer_chunks(existing, tombstone=version)
 
     # A procedure's run ledger must not outlive the procedure.

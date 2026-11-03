@@ -1222,11 +1222,30 @@ async def test_a_delete_that_stands_closes_its_check(ch: KeptCH) -> None:
     assert [(int(c["checked"]), c["done"]) for c in await _recorded_checks(ch)] == [(head, 1)]
 
 
+def _chunk_row_base() -> dict[str, Any]:
+    from server.memory.app import set_chunks
+
+    return {
+        "org": "o",
+        "namespace": "n",
+        "agent": _ID["agent"],
+        "user_id": "-",
+        "session_id": set_chunks.set_chunk_session_id(_KEY),
+        "run_id": "-",
+        "embedding": [0.0] * 3072,
+        "embedding_model": "m",
+        "embedding_dim": 3072,
+        "parent_memory_key": _KEY,
+        "created_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+        "tombstoned_at": None,
+    }
+
+
 def _chunk_rows(value: Any) -> list[dict[str, Any]]:
     """The chunk rows memory.set writes for a long semantic `value` of the key."""
     from server.memory.app import set_chunks
 
-    chunks, _ = set_chunks.plan_set_chunks(value, "semantic")
+    chunks, _ = set_chunks.plan_set_chunks(value, "semantic", _KEY)
     assert chunks, "the value is long enough to chunk"
     return [
         {
@@ -1264,6 +1283,44 @@ async def _seed_long_value_with_chunks(
     removed, newer = _chunk_rows(existing.value), _chunk_rows(newer_value)
     await ch.insert("loom.memory_chunks", removed + newer)
     return head, removed, newer
+
+
+@pytest.mark.asyncio
+async def test_delete_version_retires_chunks_the_excerpt_rule_no_longer_writes(
+    ch: KeptCH,
+) -> None:
+    # A dict whose compact JSON fits the excerpt is not chunked, but chunks of its indented
+    # text written under another rule are still live: shared-scope search would serve them
+    # after the delete, so the delete retires every chunk the value's passages hold.
+    from server.memory.app import set_chunks
+    from server.memory.app.chunk_projection import chunk_text
+
+    ch.create("SET enable_quantized_codec = 1", ddl("memory_chunks"))
+    head = time.time_ns() - 10_000_000_000
+    value = {"steps": ["ok"] * 180}
+    assert len(json.dumps(value)) <= 1100
+    assert set_chunks.plan_set_chunks(value, "semantic", _KEY) == ([], 0)
+    await ch.insert("loom.memory", [{**_row(value, head), "memory_type": "semantic"}])
+    passages = chunk_text(set_chunks.human_text(value, "semantic"))
+    assert len(passages) >= 2
+    rows = [
+        {
+            **_chunk_row_base(),
+            "chunk_index": i,
+            "content": text,
+            "content_sha256": set_chunks._chunk_sha(text),
+        }
+        for i, (text, _s, _e) in enumerate(passages)
+    ]
+    await ch.insert("loom.memory_chunks", rows)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is True
+    live = await ch.query_all(
+        "SELECT content FROM loom.memory_chunks FINAL WHERE tombstoned_at IS NULL"
+    )
+    assert live == []
 
 
 @pytest.mark.asyncio
