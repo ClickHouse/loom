@@ -79,7 +79,7 @@ on stdout and keeps the human report on stderr.
 ### Run and check a deployment
 
 ```bash
-loom up                          # from a checkout: create .env, boot Loom + ClickHouse, print how to connect
+loom up                          # from a checkout: create .env, boot Loom, its extractor and ClickHouse, print how to connect
 docker exec loom-server loom doctor          # pre-boot checks + the /v1/health problem list, each with its fix
 docker exec loom-server loom doctor --json   # the same, machine-readable
 loom doctor --client             # also examine this machine as a coding-agent client
