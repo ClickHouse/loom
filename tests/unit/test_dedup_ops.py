@@ -202,7 +202,7 @@ async def test_resolve_confirm_mismatch_raises_400(monkeypatch: pytest.MonkeyPat
     ("rows", "duplicate_id"),
     [
         pytest.param({}, DUP, id="missing"),
-        pytest.param({"not-a-uuid": _pair()[DUP]}, "not-a-uuid", id="not-a-uuid"),
+        pytest.param(_pair() | {"not-a-uuid": _pair()[DUP]}, "not-a-uuid", id="not-a-uuid"),
         pytest.param(
             _pair(duplicate_of="33333333-3333-3333-3333-333333333333"),
             DUP,
