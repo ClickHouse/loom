@@ -746,12 +746,14 @@ and what it leaves:
 
 - Boot still applies every migration. An empty table costs nothing to serve, and erasure
   covers every table whatever is in use.
-- Every `code.*` operation but `code.repo.remove` answers a precondition error, so a
-  self-service index added earlier can still be retired
+- Every `code.*` operation but `code.repo.remove` answers a precondition error. While
+  `LOOM_CODE_SELF_SERVICE_ENABLED` stays on, a self-service index added earlier can still
+  be retired by namespace over HTTP, MCP or the SDK
   ([retiring with the switch off](../features/code-index/repositories.md#self-service-repositories));
-  an operator-configured one is removed from `LOOM_CODE_REPO` or `LOOM_CODE_REPOS_JSON`,
-  and `erasure.request` on its namespace purges its rows; its bare mirror stays on disk
-  until code intelligence is on again, so delete it by hand.
+  otherwise, and for an operator-configured one (removed from `LOOM_CODE_REPO` or
+  `LOOM_CODE_REPOS_JSON`), `erasure.request` on its namespace purges its rows. A removed
+  repository's bare mirror (`LOOM_CODE_GIT_DIR`, by default `var/code_repos/<name>.git`)
+  stays on disk while the mirror host loop is off, so delete it by hand.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but the coding-agent plugins list them, so agents are offered
   tools that refuse. Set the Claude Code plugin's `toolset` option
@@ -770,7 +772,7 @@ and what it leaves:
   coverage watches, and `code_coverage_import`). Every other code and tracker worker has
   its own `LOOM_*_ENABLED` setting, which this switch does not change; with no repository
   and no tracker source configured, they find nothing to do: each pass reads a few rows
-  and ends. The git mirror warm-up does not run, and boot probes the repository-job
+  and ends. The git mirror warm-up and host loop do not run, and boot probes the repository-job
   sandbox only when `LOOM_CODE_INGEST_ENABLED` or `LOOM_CODE_SANDBOX_REQUIRED` is on.
 - `memory.*`, `knowledge.*`, `conversation.*`, `context.pack` and `search.query`
   (`loom_search` over MCP) serve as on any deployment; `search.query` has no code or
