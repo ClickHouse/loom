@@ -478,6 +478,22 @@ async def test_a_pinned_row_with_the_same_text_is_left_alone_whatever_its_files(
 
 
 @pytest.mark.asyncio
+async def test_a_pinned_row_whose_document_changed_only_in_case_is_left_alone(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    # Recorded when the document wrote the reasoning and the reason in upper case.
+    fields = {
+        **_same_fields(c),
+        "reasoning": c["reasoning"].upper(),
+        "alternatives": "a plain set on disk — rejected: COSTS RANDOM READS",
+    }
+    world.record(_key(c), fields, pinned=True)
+    report = await _run()
+    assert report.records[0].action == "unchanged"
+    assert report.flagged == [] and world.recorded == [] and world.updates == []
+
+
+@pytest.mark.asyncio
 async def test_a_row_from_another_document_is_not_revised(monkeypatch) -> None:
     c = _candidate()
     world = _World(monkeypatch, [c])
@@ -810,9 +826,7 @@ def test_a_negation_or_hedge_line_is_not_skipped(word) -> None:
 
 
 def test_a_wrapped_paragraph_end_is_not_read_across() -> None:
-    text = (
-        "We cache plans per tenant because\nplanning is costly.\n\nEach plan expires after an hour."
-    )
+    text = "We cache plans per tenant because\nPlanning costs.\n\nEach plan expires after an hour."
     span = "We cache plans per tenant because each plan expires after an hour."
     assert dx.find_span(span, [text]) == ""
 

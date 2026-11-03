@@ -700,9 +700,9 @@ def _same_reasons(stored: list[str], candidate: list[str]) -> bool:
     alternative cut at ALTERNATIVE_CHARS keeps only the start of its reason, and where the
     cut falls moves with the option's wording, so it matches as a prefix. One cut before
     its reason (inside the option or the marker) holds none, and matches whichever
-    candidate reason is left."""
+    candidate reason is left. Letter case aside, as the verbatim check reads a span."""
     # `candidate` is the input's list, already kept as decision.record keeps it, uncut.
-    remaining = [a.rpartition(dx.REJECTED)[2] for a in candidate]
+    remaining = [a.rpartition(dx.REJECTED)[2].casefold() for a in candidate]
     if len(remaining) != len(stored):
         return False
     # Reasoned before reasonless, uncut before cut, the longest cut reason first.
@@ -715,7 +715,7 @@ def _same_reasons(stored: list[str], candidate: list[str]) -> bool:
         ),
     )
     for alt in order:
-        reason = alt.rpartition(dx.REJECTED)[2]
+        reason = alt.rpartition(dx.REJECTED)[2].casefold()
         cut = len(alt) >= svc.ALTERNATIVE_CHARS
         if dx.REJECTED not in alt:
             match = remaining[0] if cut and remaining else None
@@ -733,9 +733,11 @@ def _same_decision(record: dict[str, Any], inp: DecisionRecordInput) -> bool:
     """The document still says what the record says: the verbatim fields, the reasoning
     and the rejected options' reasons, as decision.record stores them, are the same. The
     model words the category, scenario, outcome and options anew on each run; a change
-    there alone is no change in the document. Nor is a change in whitespace: a re-wrapped
-    line leaves every row as it is, the stored span still found by the retire step."""
-    if collapse_ws(str(record.get("reasoning") or "")) != collapse_ws(inp.reasoning):
+    there alone is no change in the document. Nor is a change in whitespace or letter
+    case alone: a re-wrapped line leaves every row as it is, the stored span still found
+    by the retire step, which reads case as the verbatim check does."""
+    stored = collapse_ws(str(record.get("reasoning") or "")).casefold()
+    if stored != collapse_ws(inp.reasoning).casefold():
         return False
     return _same_reasons(alternatives(record), inp.alternatives)
 

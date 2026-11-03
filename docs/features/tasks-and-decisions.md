@@ -495,8 +495,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --apply    # writ
 - **Reconcile**: the document says otherwise only when a verbatim field differs: the reasoning, or the set of rejected
   options' reasons, each matched as a prefix where `decision.record` cut a long alternative at its 300-character cap.
   The category, scenario, outcome and option wording are the model's, and a change there alone is no change. Nor is a
-  change in whitespace alone (a re-wrapped line): the row keeps its stored span, which the retire step still finds,
-  and `decision.record` stores rejected options' reasons on one line already. A row counts as confirmed when it is
+  change in whitespace or letter case alone (a re-wrapped line, a capitalised first word): the row keeps its stored
+  span, which the retire step still finds, and `decision.record` stores rejected options' reasons on one line
+  already. A row counts as confirmed when it is
   pinned or attested in its current form (`memory.verify`), the rule `memory.for_file` marks `(unconfirmed)` by. By
   the row the key's active record belongs to:
   - **The extractor's own, unconfirmed, from this document**: same verbatim fields and the same `files`,
