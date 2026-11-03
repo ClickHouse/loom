@@ -125,7 +125,9 @@ def _heads(monkeypatch: pytest.MonkeyPatch, heads: list[Any], order: list[str]) 
     """The re-read before the DONE insert answers `heads`, keyed by identity."""
     import server.memory.store as memory_repo
 
-    async def _read(keys: list[Any], **_k: Any) -> dict[Any, Any]:
+    async def _read(keys: list[Any], **k: Any) -> dict[Any, Any]:
+        # a plain read can miss a tombstone another replica wrote a moment ago
+        assert k.get("sequential") is True
         order.append("re-read")
         # keyed by `_identity_key`, as the store keys its answer
         live = {_identity_key(vars(h)): h for h in heads}
