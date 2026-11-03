@@ -471,16 +471,14 @@ class Transport:
             idempotency_key = str(uuid.uuid4())
         if idempotency_key is not None:
             headers["Idempotency-Key"] = idempotency_key
-        headers["X-Request-Id"] = (
-            request_id if request_id and _REQUEST_ID.fullmatch(request_id) else str(uuid.uuid4())
-        )
-        if request_id and headers["X-Request-Id"] != request_id:
+        if request_id and not _REQUEST_ID.fullmatch(request_id):
             logger.warning(
-                "%s request_id %r is not 1-64 letters, digits, '.', '_' or '-'; sent %s",
+                "%s request_id %r is not 1-64 letters, digits, '.', '_' or '-'; a generated id is sent",
                 op_path,
                 request_id,
-                headers["X-Request-Id"],
             )
+            request_id = None
+        headers["X-Request-Id"] = request_id or str(uuid.uuid4())
         payload = self.with_consumer(payload)
         if self.before_post is not None:
             extra = await self.before_post(op_path, payload)

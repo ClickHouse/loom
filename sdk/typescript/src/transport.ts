@@ -252,12 +252,14 @@ export class Transport {
   private async send<T>(method: "GET" | "POST", op: string, body: unknown, opts: CallOptions): Promise<CallResult<T>> {
     const headers: Record<string, string> = { ...this.headers };
     if (this.#apiKey) headers.Authorization = `Bearer ${this.#apiKey}`;
-    const requestId = opts.requestId && REQUEST_ID.test(opts.requestId) ? opts.requestId : randomId();
-    if (opts.requestId && requestId !== opts.requestId) {
+    const asked = opts.requestId;
+    const kept = !asked || REQUEST_ID.test(asked);
+    if (!kept) {
       this.log.warn(
-        `${op} requestId ${JSON.stringify(opts.requestId)} is not 1-64 letters, digits, '.', '_' or '-'; sent ${requestId}`,
+        `${op} requestId ${JSON.stringify(asked)} is not 1-64 letters, digits, '.', '_' or '-'; a generated id is sent`,
       );
     }
+    const requestId = asked && kept ? asked : randomId();
     headers["X-Request-Id"] = requestId;
     const isGet = method === "GET";
     if (isGet) delete headers["Content-Type"];

@@ -259,7 +259,9 @@ Pass a `logger` (debug, info, warn, error; `console` by default) and a
 `logLevel` (`debug`, `info`, `warn`, `error`, `off`; default from
 `LOOM_LOG_LEVEL`, else `warn`). One line per completed
 call is logged at info, retries at warn, the final failure at error, and the
-request with redacted headers at debug. Every request carries `X-Request-Id`,
+request with redacted headers at debug. Every request carries `X-Request-Id` (a
+`requestId` that is not 1 to 64 letters, digits, `.`, `_` or `-` is replaced by a
+generated one before sending, with a warning),
 `X-Loom-SDK` (`loom-ts/<version>`), `X-Loom-Runtime` and
 `X-Loom-Retry-Count`, plus `User-Agent` outside a browser (browsers forbid
 setting it) and an `Idempotency-Key` for a registry-idempotent op.

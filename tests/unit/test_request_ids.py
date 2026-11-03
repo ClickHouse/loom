@@ -50,3 +50,15 @@ def test_the_longest_op_and_a_kept_id_fit_the_query_tag() -> None:
 
     longest = max(len(op.name) for op in ALL_OPERATIONS)
     assert longest + 1 + 64 <= _QUERY_TAG_MAX
+
+
+def test_the_sdks_keep_the_ids_the_server_keeps() -> None:
+    """Each SDK replaces an id the server would replace, so both name one id."""
+    from pathlib import Path
+
+    from loom import transport as py_sdk
+    from server.transport._common import _CALLER_REQUEST_ID
+
+    assert py_sdk._REQUEST_ID.pattern == _CALLER_REQUEST_ID.pattern
+    ts = Path(__file__).parents[2] / "sdk/typescript/src/transport.ts"
+    assert f"REQUEST_ID = /^{_CALLER_REQUEST_ID.pattern}$/;" in ts.read_text()
