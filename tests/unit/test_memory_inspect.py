@@ -398,7 +398,7 @@ async def test_every_read_that_selects_rows_applies_its_scope(
 
     narrowed = ReadFilters(scope="own_user", user_id="u9", session_id=None)
     await getattr(mi.store, read)("o", "ns", "agent", "bot", "others", scope=narrowed, **extra)
-    (s,) = ch.statements(needle)[:1]
+    (s,) = ch.statements(needle)
     assert "user_id = {" in s.sql and "u9" in s.params.values()
 
 
