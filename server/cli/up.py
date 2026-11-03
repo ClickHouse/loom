@@ -179,11 +179,10 @@ def stack_mode(env: dict[str, str]) -> str:
 # ---- 2. docker compose -------------------------------------------------------
 
 
-def compose_names(compose_text: str) -> tuple[str, str]:
-    """(service, container_name) of the Loom server in a compose file,
-    without PyYAML (not a server dependency): scan two-space service keys
-    under `services:` and their `container_name:`. Prefers the service named
-    `loom`; else the first non-clickhouse service with a container name."""
+def compose_services(compose_text: str) -> dict[str, str]:
+    """Each service of a compose file and its `container_name` ('' when it has
+    none), without PyYAML (not a server dependency): the two-space keys under
+    `services:` only, so a network or volume of the same name is not one."""
     services: dict[str, str] = {}
     in_services = False
     current = ""
@@ -202,6 +201,14 @@ def compose_names(compose_text: str) -> tuple[str, str]:
             services.setdefault(current, "")
         elif current and stripped.startswith("container_name:"):
             services[current] = stripped.split(":", 1)[1].strip().strip("\"'")
+    return services
+
+
+def compose_names(compose_text: str) -> tuple[str, str]:
+    """(service, container_name) of the Loom server in a compose file. Prefers
+    the service named `loom`; else the first non-clickhouse service with a
+    container name."""
+    services = compose_services(compose_text)
     if _FALLBACK_SERVICE in services:
         return _FALLBACK_SERVICE, services[_FALLBACK_SERVICE] or _FALLBACK_CONTAINER
     for name, container in services.items():
@@ -635,7 +642,7 @@ def _cmd_up(args: argparse.Namespace) -> int:
     service, container = compose_names(texts[-1])
     # A stack started before the extractor service lacks its container: a rerun
     # recreates it with loom.
-    extractor = any(re.search(r"^  extractor:\s*$", t, re.MULTILINE) for t in texts)
+    extractor = any("extractor" in compose_services(t) for t in texts)
     recreate = (service, "extractor") if extractor else (service,)
 
     status_code, body = _http_get_json(health_url, timeout=2.0)

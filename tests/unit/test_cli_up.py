@@ -356,6 +356,11 @@ def test_up_rerun_on_a_stack_from_before_the_extractor_starts_it(root: Path, sta
     assert call[-6:] == ["up", "-d", "--force-recreate", "--no-deps", "loom", "extractor"]
 
 
+def test_a_network_named_extractor_is_not_a_service() -> None:
+    text = "services:\n  loom:\n    image: x\nnetworks:\n  extractor:\n    internal: true\n"
+    assert up.compose_services(text) == {"loom": ""}
+
+
 def test_up_rebuild_runs_compose_even_when_healthy(root: Path, stack) -> None:
     fake = stack([(200, OK_BODY)])
     assert up._cmd_up(_args(root, rebuild=True)) == 0
