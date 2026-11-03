@@ -473,7 +473,7 @@ def document_spans(cand: Candidate, texts: list[str]) -> Candidate:
     )
 
 
-# Words that say a choice was made, or join a sentence, rather than give a reason.
+# Words that say a choice was made or put forward, or join a sentence, rather than give a reason.
 _FILLER_WORDS = (
     "a an the and or of to in on at for with as is are was were be been being has have had "
     "it its this that these those we our us they will would should must can so decide "
