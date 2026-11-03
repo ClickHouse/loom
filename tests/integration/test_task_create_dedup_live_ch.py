@@ -23,6 +23,7 @@ from server.core.leases import ClaimExpired
 from server.tasks.api import models_task as wire
 from server.tasks.app import inboxes, transitions
 from server.tasks.store import repo
+from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("LOOM_CH_HOST"),
@@ -412,7 +413,7 @@ def _old_key_token(org: str) -> dict[str, Any]:
 
 
 async def _registered(prefix: str) -> tuple[str, dict[str, Any]]:
-    org = f"{prefix}-{uuid.uuid4().hex[:8]}"
+    org = unique_org(prefix)
     ident = {"org": org, "namespace": "private", "agent": "admin"}
     await inboxes.handle_inbox_register(
         wire.InboxRegisterInput(
