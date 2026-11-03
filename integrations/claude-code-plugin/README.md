@@ -135,8 +135,10 @@ loom mint-token --subject you --org <your-org> --namespaces coding --roles write
 
 ### Hosted / remote Loom — one config file
 
-Pointing the plugin at a remote server? Rather than exporting `LOOM_BASE_URL` (and
-friends) in your shell profile, drop a single `~/.loom/config.json`:
+Pointing the plugin at a remote server? Give the MCP entry the server at install
+time (`--config server_url=https://loom.your-host.example`, or `LOOM_BASE_URL` in the
+shell that starts Claude Code; the entry never reads `~/.loom/config.json`), and drop
+a single `~/.loom/config.json` for the hooks and the header helper:
 
 ```json
 {

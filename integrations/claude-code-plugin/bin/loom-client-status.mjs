@@ -12,6 +12,7 @@ import {
   normalizeUrl,
   requestJson,
   resolveScope,
+  resolveServerUrl,
   tokenLookup,
 } from "../lib/loom-client.mjs";
 import { statusServerUrl } from "../lib/plugin-options.mjs";
@@ -46,6 +47,9 @@ export async function clientStatus({
   scope,
   tokenKind = "",
   configUrl = "",
+  // The server an agent's exchange went to: the hooks' server, which may
+  // differ from the MCP entry's checked here.
+  exchangeUrl = serverUrl,
   fetchImpl = fetch,
   now = Date.now(),
   tempDirectory = tmpdir(),
@@ -71,7 +75,7 @@ export async function clientStatus({
     add(
       "token",
       "FAIL",
-      `no Loom token: the workload-token exchange at ${serverUrl} failed (agent mode, LOOM_CLIENT_ID)`,
+      `no Loom token: the workload-token exchange at ${exchangeUrl} failed (agent mode, LOOM_CLIENT_ID)`,
     );
   } else if (!validJwt) {
     add("token", "FAIL", token ? "token is not a readable JWT" : "no Loom token resolved");
@@ -145,6 +149,7 @@ if (process.env.LOOM_HOOK_NO_MAIN !== "1") {
     scope: resolveScope(process.cwd()),
     tokenKind: kind,
     configUrl: loomConfig().url,
+    exchangeUrl: resolveServerUrl(),
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.ok) process.exitCode = 1;

@@ -24,18 +24,17 @@ import {
 } from "./loom-client.mjs";
 import { readJsonFile, removeFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
 
-/** The install option's URL, else `LOOM_BASE_URL`: the order of the MCP
- *  entry's `${user_config.server_url}`, whose default is
- *  `${LOOM_BASE_URL:-http://localhost:7777}` (`.mcp.json`). "" when neither. */
-function optionServerUrl(env) {
-  return normalizeUrl(env.CLAUDE_PLUGIN_OPTION_SERVER_URL || env.LOOM_BASE_URL);
+/** The server the MCP entry was told to call: the install option, else the
+ *  plugin's shipped default (the Codex plugin's fixed entry), else
+ *  `LOOM_BASE_URL`, which Claude Code's `server_url` default reads. "" when
+ *  none names one and the entry falls back to localhost. */
+function namedServerUrl(env) {
+  return normalizeUrl(env.CLAUDE_PLUGIN_OPTION_SERVER_URL || pluginDefaults().server_url || env.LOOM_BASE_URL);
 }
 
-/** The URL the plugin's MCP entry calls: the option, then `LOOM_BASE_URL`,
- *  then the plugin's shipped default (the Codex plugin's fixed entry), then
- *  localhost. */
+/** The URL the plugin's MCP entry calls. */
 export function mcpServerUrl(env = process.env) {
-  return optionServerUrl(env) || normalizeUrl(pluginDefaults().server_url) || "http://localhost:7777";
+  return namedServerUrl(env) || "http://localhost:7777";
 }
 
 /** One state file per installed plugin: the Codex copy of these scripts
@@ -63,33 +62,39 @@ export function statusServerUrl({ tmp } = {}) {
   return installServerUrl({ tmp }) || mcpServerUrl();
 }
 
-/** What a run would do, without doing it: {write, url, reason}. Pure. */
+/** What a run would do, without doing it: {write, url, reason}. `url` is
+ *  the server the option token is for, "" when nothing names one. Pure. */
 export function planMaterialize(env, { configExists, configToken, tokenFileExists }) {
   const option = String(env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
   if (!option) return { write: false, reason: "no option" };
   if (String(env.LOOM_API_KEY || "").trim()) return { write: false, reason: "LOOM_API_KEY set" };
   if (String(configToken || "").trim()) return { write: false, reason: "config has a token" };
   if (tokenFileExists) return { write: false, reason: "token file exists" };
-  // The token is saved beside the server its MCP entry sends it to.
-  const url = mcpServerUrl(env);
+  const url = namedServerUrl(env);
   return { write: true, url, reason: configExists ? "config lacks a token" : "no config" };
 }
 
 /** The primer line when the token the MCP header helper will send is the
- *  config's, saved for another server than `mcpUrl`, the one the MCP entry
- *  calls, which refuses it. The helper reads LOOM_API_KEY, then the config:
- *  no notice when the env var is set, when this hook has just written the
- *  config's token itself, or when the config names no server. Pure. */
-export function installTokenNotice(plan, mcpUrl, env = process.env) {
+ *  config's, saved for another server than the MCP entry calls, which
+ *  refuses it. The helper reads LOOM_API_KEY, then the config: no notice
+ *  when the env var is set, when this hook has just written the config's
+ *  token itself, or when the config names no server. The remedy depends on
+ *  whether anything named the entry's server: when nothing did, the entry
+ *  fell back to localhost and the fix is to name the config's server. Pure. */
+export function installTokenNotice(plan, env = process.env) {
   if (String(env.LOOM_API_KEY || "").trim() || plan.write || !plan.configHasToken) return "";
   const saved = normalizeUrl(plan.configUrl);
-  const inUse = normalizeUrl(mcpUrl);
-  if (!saved || !inUse || saved === inUse) return "";
-  return (
-    `Loom: ${loomConfigPath(env)} holds a token saved for ${saved}, which the loom MCP tools send to ` +
-    `${inUse}. If the loom tools fail to connect, put a ${inUse} token in that file or in ` +
-    `LOOM_API_KEY and restart.`
-  );
+  const named = namedServerUrl(env);
+  const inUse = named || mcpServerUrl(env);
+  if (!saved || saved === inUse) return "";
+  const where = `Loom: ${loomConfigPath(env)} holds a token saved for ${saved}, which the loom MCP tools send to `;
+  if (!named) {
+    return (
+      `${where}${inUse}, the MCP entry's default, since nothing names its server. Point the entry at ` +
+      `${saved}: install with --config server_url=${saved}, or export LOOM_BASE_URL=${saved}, and restart.`
+    );
+  }
+  return `${where}${inUse}. If the loom tools fail to connect, put a ${inUse} token in that file or in LOOM_API_KEY and restart.`;
 }
 
 export function applyPluginOptions(env = process.env, paths = {}) {
@@ -106,9 +111,12 @@ export function applyPluginOptions(env = process.env, paths = {}) {
   plan.configHasToken = Boolean(String(existing.token || "").trim());
   if (!plan.write) return plan;
   try {
-    // The token and the url it is for go in as a pair, over a url another
-    // install left: the notice and the status check read them together.
-    writeConfigMerged(configPath, { token: String(env.CLAUDE_PLUGIN_OPTION_TOKEN).trim(), url: plan.url });
+    // The token goes in beside the server named for it, over a url another
+    // install left: the notice and the status check read them as a pair. A
+    // url the file already holds stays when nothing names a server.
+    const patch = { token: String(env.CLAUDE_PLUGIN_OPTION_TOKEN).trim() };
+    if (plan.url) patch.url = plan.url;
+    writeConfigMerged(configPath, patch);
     return { ...plan, path: configPath };
   } catch (e) {
     return { write: false, reason: `write failed: ${e && e.code ? e.code : "error"}` };

@@ -78,6 +78,12 @@ test("applyPluginOptions writes token + url once, 0600, merging other keys", () 
     url: "https://loom.test",
     token: "opt.tok",
   });
+  // nothing names a server: the token goes in and the url the file holds stays
+  fs.writeFileSync(configPath, JSON.stringify({ url: "https://mine" }));
+  const r4 = applyPluginOptions({ CLAUDE_PLUGIN_OPTION_TOKEN: "opt.tok" }, { configPath, tokenPath });
+  assert.equal(r4.write, true);
+  assert.equal(r4.url, "");
+  assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")), { url: "https://mine", token: "opt.tok" });
   // a token file present → not written
   fs.unlinkSync(configPath);
   fs.writeFileSync(tokenPath, "file.tok\n");
@@ -87,16 +93,25 @@ test("applyPluginOptions writes token + url once, 0600, merging other keys", () 
 
 test("installTokenNotice: when the helper will send a config token saved for another server", () => {
   const stale = { write: false, reason: "no option", configUrl: "https://old", configHasToken: true };
-  const env = {};
-  assert.match(installTokenNotice(stale, "https://new/", env), /saved for https:\/\/old.*send to https:\/\/new\./);
+  const named = { CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://new/" };
+  const line = installTokenNotice(stale, named);
+  assert.ok(line.includes("saved for https://old, which the loom MCP tools send to https://new."), line);
+  assert.ok(line.includes("put a https://new token in that file"), line);
+  // LOOM_BASE_URL names the entry's server too
+  assert.ok(installTokenNotice(stale, { LOOM_BASE_URL: "https://new" }).includes("send to https://new."));
   // with a token option the skip reason differs; the same config still misleads the helper
-  assert.match(installTokenNotice({ ...stale, reason: "config has a token" }, "https://new", env), /https:\/\/old/);
-  assert.equal(installTokenNotice({ ...stale, configUrl: "https://new" }, "https://new", env), "");
-  assert.equal(installTokenNotice({ ...stale, configUrl: "" }, "https://new", env), "");
-  assert.equal(installTokenNotice({ ...stale, configHasToken: false }, "https://new", env), "");
-  assert.equal(installTokenNotice(stale, "https://new", { LOOM_API_KEY: "e" }), ""); // the helper sends the env token
+  assert.ok(installTokenNotice({ ...stale, reason: "config has a token" }, named).includes("https://old"));
+  // nothing names the entry's server: it fell back to localhost, and the fix is to name the config's server
+  const fallback = installTokenNotice(stale, {});
+  assert.ok(fallback.includes("send to http://localhost:7777, the MCP entry's default"), fallback);
+  assert.ok(fallback.includes("--config server_url=https://old, or export LOOM_BASE_URL=https://old"), fallback);
+  assert.equal(fallback.includes("localhost:7777 token"), false);
+  assert.equal(installTokenNotice({ ...stale, configUrl: "https://new" }, named), "");
+  assert.equal(installTokenNotice({ ...stale, configUrl: "" }, named), "");
+  assert.equal(installTokenNotice({ ...stale, configHasToken: false }, named), "");
+  assert.equal(installTokenNotice(stale, { ...named, LOOM_API_KEY: "e" }), ""); // the helper sends the env token
   // the hook has just written the install token into the config: that token is the right one
-  assert.equal(installTokenNotice({ ...stale, write: true, reason: "config lacks a token" }, "https://new", env), "");
+  assert.equal(installTokenNotice({ ...stale, write: true, reason: "config lacks a token" }, named), "");
 });
 
 test("mcpServerUrl follows the MCP entry: the option, then LOOM_BASE_URL, then localhost", () => {

@@ -61,6 +61,17 @@ test("the primer names the mismatch in Claude Code, and not for Codex or an agen
     const claude = await session({});
     assert.ok(claude.includes(`${NOTICE} ${SAVED_FOR}, which the loom MCP tools send to ${url}.`), claude);
     assert.equal(claude.includes("cfg.tok"), false);
+    // the one-file setup: nothing names the entry's server, so the fix is to name it, not to swap the token
+    const oneFile = home({ token: "cfg.tok", url: url });
+    dirs.push(oneFile);
+    const fallback = await run(oneFile, {});
+    assert.ok(
+      fallback.includes(
+        `${NOTICE} ${url}, which the loom MCP tools send to http://localhost:7777, the MCP entry's default`,
+      ),
+      fallback,
+    );
+    assert.ok(fallback.includes(`--config server_url=${url}`), fallback);
     const codex = await session({}, ["SessionStart", "codex"]);
     assert.ok(codex.length > 0, "the Codex primer still renders");
     assert.equal(codex.includes(NOTICE), false);
