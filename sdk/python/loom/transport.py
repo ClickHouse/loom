@@ -188,7 +188,7 @@ def _request_id_to_send(op_path: str, request_id: str | None) -> str:
         return request_id
     if request_id:
         logger.warning(
-            "%s request_id %r is not 1-64 letters, digits, '.', '_' or '-'; sent a new one",
+            "%s request_id %r is not 1-64 letters, digits, '.', '_' or '-'; sending a generated id",
             op_path,
             request_id,
         )
