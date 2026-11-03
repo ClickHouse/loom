@@ -775,7 +775,7 @@ def _duplicate_or_unfit(
     try:
         key = svc.decision_key(cand.category, cand.scenario)
     except ValueError:
-        # A category or scenario of punctuation alone has nothing to key on.
+        # No letter or digit (punctuation, symbols or marks alone): nothing to key on.
         return "no letters or digits to build a key from", ""
     if key in state.keys:
         return "same key as an earlier candidate", key

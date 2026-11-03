@@ -8,7 +8,7 @@ guarantee; a key derived from the record's own identity values can.
 
 Canonicalisation is per field kind, because one global normaliser both
 over- and under-merges:
-  name-like fields (name, title, label, and *_name / *_title) — NFKD, strip
+  name-like fields (name, title, label, and *_name / *_title / *_label) — NFKD, strip
     combining marks, drop a leading article and a possessive, split on
     whitespace / '_' / '-', join with '_', uppercase: "The Vendor's name"
     and "vendor name" agree.

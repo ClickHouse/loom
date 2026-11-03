@@ -43,8 +43,8 @@ def decision_key(category: str, scenario: str) -> str:
 
 
 def fields_without_key_text(category: str, scenario: str) -> list[str]:
-    """The identity fields with no letter or digit to build the key from, such as a
-    scenario of punctuation alone."""
+    """The identity fields with no letter or digit to build the key from: punctuation,
+    symbols or marks alone."""
     from server.memory.domain.record_identity import canonical_value
 
     fields = {"category": category, "scenario": scenario}
