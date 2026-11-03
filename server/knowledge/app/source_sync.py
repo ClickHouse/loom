@@ -18,7 +18,7 @@ a PDF or `.pptx` sent to the extractor service its format is routed to (the
 server parses no original itself); the bytes are kept as the document's
 original. A file that cannot be stored is counted `unconverted` with its reason
 and not written. One the store or the extractor refuses, one over the size bound
-and one whose write is refused is also given up on its revision at once, so later
+and one whose write is refused are also given up on its revision at once, so later
 passes skip it without a fetch; one with no https link or a format no extractor
 declares costs no fetch and is counted again each pass. A file whose fetch,
 extraction or write fails in a way that may pass (a 5xx or a timeout on that
@@ -172,7 +172,8 @@ class PassResult:
     retired: int = 0
     # Sources whose turn ended with a status other than ok, or failed outright.
     failed: int = 0
-    # The pass stopped before every source had its turn.
+    # The pass bound stopped the pass before every source, or every file of one, was
+    # handled.
     cut: bool = False
     errors: list[str] = field(default_factory=list)
 
@@ -845,6 +846,7 @@ async def _retire_removed_sources(
         if only and src.name != only:
             continue
         if run.spent():
+            result.cut = True
             return
         try:
             async with _source_turn(src):
@@ -862,6 +864,7 @@ async def _retire_all(src: KnowledgeSource, run: _Pass, result: PassResult) -> N
     docs = await store.source_documents(src.org, src.namespace, src.name)
     for doc in docs:
         if run.spent():
+            result.cut = True
             return
         run.left -= 1
         if await retire(src, str(doc["source_uri"])):

@@ -1382,20 +1382,33 @@ def test_a_file_refused_at_once_is_tried_again_when_it_changes_and_on_a_full_lis
         monkeypatch.setattr(writes, "handle_knowledge_upsert", _refuse)
         world.files = [_file("f1", DOCS, "2026-01-01T00:00:00.000Z")]
     asyncio.run(source_sync.run_sync())
-    tried = len(world.requests)
+    tried = _requests_for(world, "f1")
+    assert tried >= 1
     asyncio.run(source_sync.run_sync())
-    # Given up on its revision: the next incremental turn lists nothing new.
+    # Given up on its revision: the next incremental turn does not fetch it.
     assert _waits(world)["f1"][1] == 3
-    # A periodic full listing tries it once more...
+    assert _requests_for(world, "f1") == tried
+    # A periodic full listing tries it exactly once more...
     world.states["decks"]["detail"] = json.dumps(_listed_long_ago(world))
     asyncio.run(source_sync.run_sync())
-    assert len(world.requests) > tried
+    assert _requests_for(world, "f1") == tried * 2
     assert _waits(world)["f1"][1] == 3
-    # ...and so does a new revision.
-    world.files[0] = {**world.files[0], "modifiedTime": "2026-02-01T00:00:00.000Z"}
-    before = len(world.requests)
+    # ...a full listing that grants no new retry skips it without a fetch...
+    detail = _detail(world)
+    world.states["decks"]["detail"] = json.dumps(
+        {**detail, "full_listed_at": detail["retry_granted_for"]}
+    )
     asyncio.run(source_sync.run_sync())
-    assert len(world.requests) > before + 1
+    assert _requests_for(world, "f1") == tried * 2
+    # ...and a new revision is tried again.
+    world.files[0] = {**world.files[0], "modifiedTime": "2026-02-01T00:00:00.000Z"}
+    asyncio.run(source_sync.run_sync())
+    assert _requests_for(world, "f1") == tried * 3
+
+
+def _requests_for(world: _World, file_id: str) -> int:
+    """Requests about one file: its export, deck read, download or lookup."""
+    return sum(1 for r in world.requests if f"/{file_id}" in r.url.path)
 
 
 def test_a_turn_cut_by_the_bound_marks_the_pass_cut(
@@ -1417,3 +1430,18 @@ def test_a_size_that_is_not_a_number_is_left_to_the_download_bound(world: _World
     world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="big")]
     asyncio.run(source_sync.run_sync())
     assert _uri("pdf1", "file") in world.docs
+
+
+def test_a_delete_request_cut_by_the_bound_marks_the_pass_cut(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.sources = [_source("gone", active=False, pending_delete=True, credential_enc="")]
+    for n in ("old1", "old2"):
+        world.docs[_uri(n)] = {
+            "actor": SYNC_WORKER_ACTOR,
+            "tags": ["source:gone"],
+            "metadata": {"ingested_from": n, "source_revision": "r"},
+        }
+    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
+    result = asyncio.run(source_sync.run_sync())
+    assert (result.retired, result.cut) == (1, True)

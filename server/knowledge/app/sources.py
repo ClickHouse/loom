@@ -448,7 +448,14 @@ async def request_full_sync(src: KnowledgeSource) -> None:
         detail = domain.json_object((states.get(src.name) or {}).get("detail", ""))
         if detail.get("full") and detail.get("requested_at"):
             return
-        await _update_state(src, {"requested_at": _now_iso(), "full": True})
+        detail.update(requested_at=_now_iso(), full=True)
+        await store.write_state(
+            src.org,
+            src.namespace,
+            src.name,
+            state_value=(states.get(src.name) or {}).get("state_value", ""),
+            detail=detail,
+        )
 
 
 async def _update_state(src: KnowledgeSource, changes: dict[str, Any]) -> None:
