@@ -45,4 +45,4 @@ async def test_a_retirement_is_not_behind_the_switch(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(settings, "code_intel_enabled", False)
     with pytest.raises(ValidationError) as refused:
         await handle_code_repo_remove(CodeRepoRemoveInput(org="o", namespace="n", confirm="x"))
-    assert refused.value.code == "CONFIRM_REQUIRED"
+    assert refused.value.to_detail()["code"] == "CONFIRM_REQUIRED"
