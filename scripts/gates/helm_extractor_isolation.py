@@ -98,7 +98,14 @@ def main() -> None:
             before, after = annotations(docs), annotations(rotated)
             changed = [name for name in before if before[name] != after[name]]
             assert sorted(changed) == sorted(before), f"a new token restarts only {changed}"
-    print("extractor isolation: selectors, policy, token key and restarts checked")
+    # An operator's own URL, through env or extraEnv, is left alone.
+    for own in (
+        "env.LOOM_DOCUMENT_EXTRACTOR_URL=http://mine:8790",
+        "extraEnv[0].name=LOOM_DOCUMENT_EXTRACTOR_URL",
+    ):
+        docs = render("values-kind.yaml", "secrets.extractorToken=" + "t" * 24, own)
+        assert "loom-extractor:8790" not in yaml.safe_dump_all(docs), own
+    print("extractor isolation: selectors, policy, token key, restarts and URL checked")
 
 
 if __name__ == "__main__":

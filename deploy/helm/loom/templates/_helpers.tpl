@@ -147,7 +147,9 @@ LOOM_CH_READER_USER: {{ . | quote }}
 LOOM_SHUTDOWN_READY_DELAY_S: {{ .Values.shutdown.readyDelaySeconds | quote }}
 LOOM_GRACEFUL_SHUTDOWN_S: {{ .Values.shutdown.gracefulSeconds | quote }}
 LOOM_KEEP_ALIVE_S: {{ .Values.keepAliveSeconds | quote }}
-{{- if and .Values.extractor.enabled (not (hasKey .Values.env "LOOM_DOCUMENT_EXTRACTOR_URL")) }}
+{{- $ownUrl := hasKey .Values.env "LOOM_DOCUMENT_EXTRACTOR_URL" }}
+{{- range .Values.extraEnv }}{{ if eq .name "LOOM_DOCUMENT_EXTRACTOR_URL" }}{{ $ownUrl = true }}{{ end }}{{ end }}
+{{- if and .Values.extractor.enabled (not $ownUrl) }}
 # The release's extractor (extractor.yaml); its token is in the release Secret.
 LOOM_DOCUMENT_EXTRACTOR_URL: {{ printf "http://%s:8790" (include "loom.extractorName" .) | quote }}
 {{- end }}

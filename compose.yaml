@@ -117,8 +117,8 @@ services:
   # credential, its network is internal (no route out) and shared with the loom
   # service alone, which reaches it at LOOM_DOCUMENT_EXTRACTOR_URL with the token
   # .env holds. Each extraction runs under a filter that makes no socket, so one
-  # a hostile file takes over reaches nothing, loom included
-  # (docs/architecture/document-extraction.md).
+  # a hostile file takes over reaches nothing, loom included, while extractions
+  # run one at a time, as here (docs/architecture/document-extraction.md).
   extractor:
     image: "${LOOM_EXTRACTOR_IMAGE_REPOSITORY:-ghcr.io/clickhouse/loom-extractor}:${LOOM_VERSION:-latest}"
     restart: unless-stopped
