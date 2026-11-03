@@ -3,8 +3,8 @@ column, the subject's ledger calls, and the version counts of the rows it lists.
 
 Every statement filters on (org, namespace), the prefix of each table's sort key. Every
 read of memory rows that selects them takes the caller's read `scope`; the preview and
-version reads are keyed by the ids those reads returned. The subject's column is one of three fixed
-names, never a caller's value; the id is bound.
+version reads are keyed by the ids those reads returned. The subject's column is one of
+three fixed names, never a caller's value; the id is bound.
 """
 
 from __future__ import annotations
