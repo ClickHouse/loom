@@ -151,8 +151,9 @@ def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
 
 def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list[str], list[str]]:
     """(the answer without the citations that name no chunk it read, the citations it
-    keeps, the ones it removed, each in the order found). A model can cite a part it was never shown;
-    a caller that follows it would read something the answer did not come from."""
+    keeps, the ones it removed, each in the order found). A model can cite a part it was
+    never shown; a caller that follows it would read something the answer did not come
+    from."""
     kept: list[str] = []
     removed: list[str] = []
     seen: set[str] = set()
