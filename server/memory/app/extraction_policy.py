@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import NamedTuple
 
+from server.auth import fail_closed
+from server.auth.authz import row_in_scope
 from server.auth.sharing import PERSONAL_ALIAS
 from server.core.ch import own_write_reads
 from server.core.datetimes import naive_utc_now
@@ -32,6 +35,7 @@ from server.memory.api.models_extraction_policy import (
 )
 from server.memory.domain.extraction_policy import combine
 from server.memory.store import extraction_policy as repo
+from server.operations.base import Role
 from server.settings import settings
 
 
@@ -60,6 +64,36 @@ async def effective(org: str, namespace: str) -> str:
     if policies is None:
         raise customer.SwitchUnread("the extraction policy could not be read; try again")
     return combine(policies.get((org, ""), ""), policies.get((org, namespace), ""))
+
+
+class CallerPolicy(NamedTuple):
+    """The policy in force for (org, namespace), as a report shows it to its caller."""
+
+    # The effective policy for an org admin ("" when none is set); None otherwise.
+    policy: str | None
+    # Why `policy` is None, or "".
+    unavailable: str
+    # The reason to list the section as skipped, or "" when it was read or refused cleanly.
+    skipped: str
+
+
+async def for_caller(org: str, namespace: str) -> CallerPolicy:
+    """The policy extractions in (org, namespace) run under, read for the caller of a
+    report: an org admin reads it, anyone else is told why not. A grant read that fails
+    refuses (fails closed) and is reported as unreadable, not as a non-admin's refusal;
+    a process copy too old to trust withholds the policy."""
+    # Cleared first: a clean refusal restores a note an earlier check in the request left.
+    fail_closed.reset()
+    if await row_in_scope(org, namespace, Role.ORG_ADMIN):
+        try:
+            return CallerPolicy(await effective(org, namespace), "", "")
+        except customer.SwitchUnread as exc:
+            return CallerPolicy(None, "the policy could not be read", type(exc).__name__)
+    if fail_closed.unreadable():
+        return CallerPolicy(
+            None, "the caller's access could not be read", "the caller's access was unreadable"
+        )
+    return CallerPolicy(None, "only an org admin reads the operator extraction policy", "")
 
 
 def note_policy_change() -> None:

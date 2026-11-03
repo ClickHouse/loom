@@ -50,15 +50,18 @@ async def write_versions_by_ids(
     on_written: Callable[[list[dict[str, Any]]], None] | None = None,
     on_unconfirmed: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
     judged: bool = False,
+    strict: bool = False,
 ) -> int:
     """Write a new version of each live row in `memory_ids`: `update(existing)`'s
     overrides on every persisted column carried forward, a fresh `version` unless it
-    sets one. `skip` leaves a row as it is; `strong` reads read-your-writes.
+    sets one. `skip` leaves a row as it is; `strong` reads read-your-writes, the
+    status mirror's vector rows included.
     `on_written` / `on_unconfirmed` hear what the re-read confirmed or could not (see
     Lifecycle in memory-architecture.md). `judged`: the rows land a verdict reached
     after the write (the conflict resolver's) on the write it judged
     (`conflicts.judged_write`), and the status mirror copies only that write's vector
-    rows (`mirror_status_to_embeddings(judged=True)`).
+    rows (`mirror_status_to_embeddings(judged=True)`). `strict`: a failed status
+    mirror raises instead of being logged.
     Returns the rows written, or confirmed."""
 
     if not memory_ids:
@@ -115,7 +118,9 @@ async def write_versions_by_ids(
     # admitting superseded and unpenalised conflicted rows.
     status_changes = [r for r in rows if r.get("status") and r.get("status") != "active"]
     if status_changes:
-        await mirror_status_to_embeddings(status_changes, ch=ch, judged=judged)
+        await mirror_status_to_embeddings(
+            status_changes, ch=ch, judged=judged, strict=strict, sequential=strong
+        )
     return len(confirmed)
 
 
@@ -211,6 +216,48 @@ async def supersede_duplicates(
         on_written=on_written,
         on_unconfirmed=on_unconfirmed,
         judged=judged,
+    )
+
+
+async def reject_by_identity(
+    org: str,
+    namespace: str,
+    agent: str,
+    user_id: str,
+    memory_key: str,
+    reason: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Mark the live rows of `memory_key` in every session of the identity
+    `rejected`, by version re-emit on loom.memory and its vector rows. Never a
+    lightweight UPDATE: on loom.memory_embeddings it leaves a patch part, and
+    the fact leg's codes-first read stays off while one exists
+    (`server.core.vectors.patch_parts`). The rows land at one version drawn
+    before the read: a write drawn after it stays the head, and it sits above
+    any vector row an earlier metadata copy left at read + 1 (`reemit_version`).
+    A failed vector write raises: recall reads the vector row. Returns the rows
+    written."""
+    ch = ch or _default_client()
+    version = next_version()
+    rows = await ch.query_all(
+        """
+        SELECT toString(memory_id) AS memory_id
+        FROM loom.memory FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND agent = {agent:String} AND user_id = {uid:String}
+          AND memory_key = {key:String} AND tombstoned_at IS NULL
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": org, "ns": namespace, "agent": agent, "uid": user_id, "key": memory_key},
+    )
+    return await write_versions_by_ids(
+        org,
+        [str(r["memory_id"]) for r in rows],
+        lambda row: {"status": "rejected", "rejection_reason": reason, "version": version},
+        ch=ch,
+        strong=True,
+        strict=True,
     )
 
 

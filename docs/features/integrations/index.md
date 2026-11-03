@@ -80,7 +80,8 @@ The plugins capture sessions with their own hooks and do not need these template
 
 ## Joining a request across systems
 
-Every HTTP response carries an `X-Request-Id` (yours, if sent; else a generated UUID).
+Every HTTP response carries an `X-Request-Id`: yours, if you sent one of 1 to 64 letters,
+digits, `.`, `_` or `-`; else a generated UUID.
 The same id is written to:
 
 | System              | Where                                                     |
