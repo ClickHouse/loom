@@ -301,6 +301,21 @@ async def rollup_member_namespaces(org: str) -> list[str]:
     return ns_list
 
 
+async def every_readable_namespace(org: str, *, column: str = "namespace") -> OrgScopeFilter:
+    """WHERE fragment for a caller that reads every namespace of `org` (an org
+    admin, or a flat `*` claim): all of them EXCEPT the restricted namespaces
+    it holds no grant + claim for, and the collections it cannot read. Empty
+    with auth disabled."""
+    hidden = await restricted_namespaces_hidden_from(org)
+    if hidden == ["*"]:
+        return OrgScopeFilter(accessible=False, where="", params={})
+    where, params = await collection_clause(org, column)
+    if hidden:
+        where += f" AND {column} NOT IN {{ns_hidden:Array(String)}}"
+        params["ns_hidden"] = hidden
+    return OrgScopeFilter(accessible=True, where=where, params=params)
+
+
 async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeFilter:
     """WHERE fragment scoping an org-wide read to the namespaces the caller
     may see. Org/platform admins (and the auth-off path) get an empty filter;
@@ -321,16 +336,7 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
     if auth.has_role(Role.PLATFORM_ADMIN) or (
         auth.has_role(Role.ORG_ADMIN) and auth.org in ("*", org)
     ):
-        # An org admin sees everything EXCEPT the restricted namespaces it
-        # holds no grant + claim for, and the collections it cannot read.
-        hidden = await restricted_namespaces_hidden_from(org)
-        if hidden == ["*"]:
-            return OrgScopeFilter(accessible=False, where="", params={})
-        where, params = await collection_clause(org, column)
-        if hidden:
-            where += f" AND {column} NOT IN {{ns_hidden:Array(String)}}"
-            params["ns_hidden"] = hidden
-        return OrgScopeFilter(accessible=True, where=where, params=params)
+        return await every_readable_namespace(org, column=column)
     ns_list = await rollup_member_namespaces(org)
     if not ns_list:
         return OrgScopeFilter(accessible=False, where="", params={})
@@ -346,6 +352,7 @@ __all__ = [
     "current_auth",
     "current_auth_var",
     "delegated_reach",
+    "every_readable_namespace",
     "named_claims",
     "readable_named_claims",
     "resolve_my_namespaces",

@@ -46,9 +46,13 @@ async def handle_memory_exposure_summary(input: ExposureSummaryInput) -> Exposur
 
 async def handle_memory_owner_report(input: MemoryOwnerReportInput) -> MemoryOwnerReportOutput:
     from server.auth.authz import row_in_scope
-    from server.auth.context import current_auth, rollup_member_namespaces
+    from server.auth.context import (
+        current_auth,
+        every_readable_namespace,
+        rollup_member_namespaces,
+    )
     from server.identity.domain.read_scope import resolve_read_filters
-    from server.memory.app.owner_report import owner_report
+    from server.memory.app.owner_report import NamespaceScope, namespace_scope, owner_report
     from server.operations.base import Role
 
     auth = current_auth()
@@ -56,25 +60,33 @@ async def handle_memory_owner_report(input: MemoryOwnerReportInput) -> MemoryOwn
         requested="own_user", user_id=input.user_id, session_id=None, auth=auth
     )
     uid = str(rf.user_id or "")
+    empty = MemoryOwnerReportOutput(
+        user_id=uid, since_hours=input.since_hours, live_rows=0, rows=[], reads=[], usage=[]
+    )
     if input.namespace:
         if not await row_in_scope(input.org, input.namespace, Role.VIEWER):
             raise PermissionError(f"namespace {input.namespace!r} is not readable by this token")
-        readable = [input.namespace]
+        scope = namespace_scope([input.namespace])
     elif auth is None or ("*" in auth.namespaces and not auth.has_ns_roles()):
-        # Auth off, or a namespace-wildcard token: every namespace of the org.
-        readable = ["*"]
+        # Auth off, or a namespace-wildcard token: every namespace of the org
+        # but the restricted ones and collections it may not read (a `*` never
+        # counts toward those).
+        every = await every_readable_namespace(input.org)
+        if not every.accessible:
+            return empty
+        every_e = await every_readable_namespace(input.org, column="e.namespace")
+        scope = NamespaceScope(every.where, every_e.where, every.params)
     else:
         # The claim plus grants (a scoped token: its claim alone), less the
         # restricted namespaces it may not read. Empty is "none", never "all".
         readable = await rollup_member_namespaces(input.org)
         if not readable:
-            return MemoryOwnerReportOutput(
-                user_id=uid, since_hours=input.since_hours, live_rows=0, rows=[], reads=[], usage=[]
-            )
+            return empty
+        scope = namespace_scope(readable)
     rep = await owner_report(
         org=input.org,
         user_id=uid,
-        namespaces=readable,
+        scope=scope,
         since_hours=input.since_hours,
         limit=input.limit,
     )
