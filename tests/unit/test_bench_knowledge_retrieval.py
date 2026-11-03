@@ -12,6 +12,7 @@ from bench.knowledge_retrieval import (
     FIXTURE,
     check_corpus,
     fixture_tag,
+    ingest,
     load_fixture,
     may_ingest_into,
     mean_by_kind,
@@ -140,6 +141,29 @@ def test_the_top_similarity_is_reported_per_answerability_and_kinds_average_apar
         "context": {"mrr": 1.0, "n": 1},
         "paraphrase": {"mrr": 0.0, "n": 1},
     }
+
+
+def test_an_ingest_refuses_a_namespace_holding_other_documents_and_tags_each_upsert() -> None:
+    docs = [{"source_uri": "a.md", "content": "x", "tags": ["t"]}]
+    sent: list[tuple[str, dict]] = []
+
+    def post(listed: list[dict]):
+        def _post(path: str, body: dict) -> dict:
+            sent.append((path, body))
+            if path == "/v1/namespace.get":
+                return {"found": False}
+            if path == "/v1/knowledge.list":
+                return {"rows": listed}
+            return {}
+
+        return _post
+
+    with pytest.raises(SystemExit, match="holds 1 other documents"):
+        ingest(post([{"source_uri": "theirs.md"}]), "o", "n", docs, keep=True)
+    assert not any(path == "/v1/knowledge.upsert" for path, _ in sent)
+    ingest(post([{"source_uri": "a.md"}]), "o", "n", docs, keep=True)
+    upserts = [body for path, body in sent if path == "/v1/knowledge.upsert"]
+    assert [u["tags"] for u in upserts] == [["t", fixture_tag(docs)]]
 
 
 def test_a_search_that_finds_nothing_or_ignores_a_param_fails() -> None:

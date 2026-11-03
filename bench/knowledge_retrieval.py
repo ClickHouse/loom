@@ -30,11 +30,12 @@ exactly the fixture's documents fails the run. Reports recall@1/5/10 (a query
 counts when any relevant passage is in the top k), all-gold recall@10 (every
 relevant passage found, for the multi-document questions), MRR and nDCG@10,
 overall and per query kind, plus the mean cosine similarity of the top hit on
-answerable and on unanswerable queries (every hit carries one, in every mode). The `freshness` and `multi` kinds hold three and four
-queries, so their per-kind figures are coarse; a superseded policy ranked above the
-current one shows in a freshness query's R@1, MRR and nDCG@10, not its R@5. Ingesting embeds 21 documents
-(97 chunks at the default chunk size): a few cents with a hosted embedder, free
-with a local one.
+answerable and on unanswerable queries (every hit carries one, in every mode).
+The `freshness` and `multi` kinds hold three and four queries, so their per-kind
+figures are coarse; a superseded policy ranked above the current one shows in a
+freshness query's R@1, MRR and nDCG@10, not its R@5. Ingesting embeds 21
+documents (97 chunks at the default chunk size): a few cents with a hosted
+embedder, free with a local one.
 """
 
 from __future__ import annotations
@@ -160,6 +161,11 @@ def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: boo
     info = post("/v1/namespace.get", {"org": org, "namespace": namespace})
     if not may_ingest_into(info):
         raise SystemExit(f"{org}/{namespace} belongs to {info.get('owner_email')}: name another")
+    fixture = {d["source_uri"] for d in docs}
+    foreign = [r["source_uri"] for r in listed_documents(post, org, namespace)]
+    foreign = [uri for uri in foreign if uri not in fixture]
+    if foreign:
+        raise SystemExit(f"{org}/{namespace} holds {len(foreign)} other documents: name another")
     register_bench_namespace_sync(
         post, org=org, namespace=namespace, description="knowledge retrieval fixture", keep=keep
     )
@@ -171,23 +177,28 @@ def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: boo
     print(f"ingested {len(docs)} documents into {org}/{namespace}", file=sys.stderr)
 
 
-def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> None:
-    """Refuse a namespace whose documents are not exactly this fixture's: an older or
-    partial ingest skews every number without failing a query."""
-    tag = fixture_tag(docs)
-    have: set[str] = set()
-    stale = 0
+def listed_documents(post: SyncPost, org: str, namespace: str) -> list[dict]:
+    """Every live document of the namespace (`knowledge.list`, all pages)."""
+    rows: list[dict] = []
     cursor = None
     while True:
         page = post(
             "/v1/knowledge.list",
             {"org": org, "namespace": namespace, "limit": 500, "cursor": cursor},
         )
-        have.update(row["source_uri"] for row in page["rows"])
-        stale += sum(tag not in (row.get("tags") or []) for row in page["rows"])
+        rows.extend(page["rows"])
         cursor = page.get("next_cursor")
         if not cursor:
-            break
+            return rows
+
+
+def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> None:
+    """Refuse a namespace whose documents are not exactly this fixture's: an older or
+    partial ingest skews every number without failing a query."""
+    tag = fixture_tag(docs)
+    rows = listed_documents(post, org, namespace)
+    have = {row["source_uri"] for row in rows}
+    stale = sum(tag not in (row.get("tags") or []) for row in rows)
     want = {d["source_uri"] for d in docs}
     if have != want or stale:
         raise SystemExit(
