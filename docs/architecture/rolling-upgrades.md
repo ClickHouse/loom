@@ -290,8 +290,9 @@ schema. These rules keep that safe. The operator procedure is in
     process (`erasure-recovery-worker` or the CLI command) on its failed and completed
     rows instead of the principal that asked. N-1 also still writes the body's
     `requester` as the `actor` of the `erasure.*` rows of a request or export it serves.
-    Both last until no N-1 replica serves; no gate holds the write, since N-1 never reads
-    the column. The mixed-version gate does not check this rule.
+    No gate holds the rollout: the cost is the actor named on those audit rows, nothing is
+    lost or refused, and it ends once no N-1 replica serves. The mixed-version gate does
+    not check this rule.
 
 ## What checks them
 
