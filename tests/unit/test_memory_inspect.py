@@ -181,8 +181,10 @@ async def test_a_view_counts_lists_and_cites(ch: RecordingCH, cited: list[Any]) 
     assert cited[0] == [("bot", "u1", "-", "deploy/window")]
     # The excerpt is the decoded preview of the listed version, read for that row only.
     assert row.excerpt == "Deploys on Tuesdays."
-    (preview,) = ch.statements("value_preview")[:1]
-    assert preview.params["pairs"] == [(MID, 7)] and "FINAL" not in preview.sql
+    previews = ch.statements("value_preview")
+    assert len(previews) == 2  # one per view
+    for preview in previews:
+        assert preview.params["pairs"] == [(MID, 7)] and "FINAL" not in preview.sql
     # One row listed of three: not a complete listing.
     assert own.complete is False
     assert not ch.inserted("memory") and not ch.statements(kind="execute")

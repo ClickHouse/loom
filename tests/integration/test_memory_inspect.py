@@ -140,8 +140,9 @@ async def test_inspect_splits_own_from_others_and_changes_nothing(
         assert settings["guide_revision"] == 1 and settings["guide_summary"] == "key layout"
         assert settings["categories_registered"] == 1
         async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as anon:
+            # An inspection names no agent, so the probe adds no call to the agent's count.
             anonymous = await anon.post(
-                "/v1/memory.get", json={**base, "agent": "bot", "memory_key": "u1/pref"}
+                "/v1/memory.inspect", json={**base, "subject": "user", "id": "u1"}
             )
         if anonymous.status_code == 200:
             # Auth is off: every caller may read the policy, and none is set.
