@@ -203,11 +203,11 @@ def test_the_mentor_hint_is_keyed_on_the_admitted_org(
         for op in ALL_OPERATIONS
     ]
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", ops)
-    keyed: list[tuple[str, str]] = []
+    keyed: list[tuple[str, str, str]] = []
 
-    def _hint(*_a: Any, org: str, namespace: str, **_k: Any) -> None:
-        keyed.append((org, namespace))
+    def _hint(*_a: Any, org: str, namespace: str, session_key: str, **_k: Any) -> None:
+        keyed.append((org, namespace, session_key))
 
     monkeypatch.setattr(mentor, "call_hint", _hint)
     _post("memory.get", {"org": "-", "namespace": "ns1", "agent": "a", "memory_key": "k"})
-    assert keyed == [("globex", "ns1")]
+    assert keyed == [("globex", "ns1", "globex/ns1/a")]

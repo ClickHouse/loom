@@ -284,7 +284,7 @@ def _mentor_hint(
             op_name,
             arguments,
             result,
-            session_key=_mentor.session_key_for(mcp_session_id, arguments),
+            session_key=_mentor.session_key_for(mcp_session_id, {**arguments, **tenant}),
             org=tenant["org"],
             namespace=tenant["namespace"],
             agent=str(arguments.get("agent") or "-"),

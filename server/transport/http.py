@@ -795,7 +795,7 @@ def _mentor_headers(
             op.name,
             raw_body,
             result,
-            session_key=_mentor.session_key_for("", raw_body),
+            session_key=_mentor.session_key_for("", {**raw_body, **tenant}),
             org=tenant["org"],
             namespace=tenant["namespace"],
             agent=str(raw_body.get("agent") or "-"),
