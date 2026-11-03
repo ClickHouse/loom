@@ -83,6 +83,8 @@ describe("pinMemory", () => {
       org: "dev",
       namespace: "local",
       agent: "loom-ui",
+      user_id: "-",
+      session_id: "-",
       memory_key: "deploy/freeze",
       value: "deploys freeze on Fridays",
       memory_type: "procedural",
@@ -95,6 +97,11 @@ describe("pinMemory", () => {
       valid_at: "2026-09-01T00:00:00Z",
       char_limit: 200,
     });
+  });
+
+  it("writes to the row's own agent, user and session, not the caller's", async () => {
+    const body = await pinBody({ ...row, agent: "support-bot", user_id: "alice", session_id: "s1" });
+    expect(body).toMatchObject({ agent: "support-bot", user_id: "alice", session_id: "s1" });
   });
 
   it("declares the row's source_class only when a caller may declare it", async () => {

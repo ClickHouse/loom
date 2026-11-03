@@ -558,6 +558,11 @@ export async function pinMemory(
 ): Promise<{ version: number; pinned: boolean }> {
   const body: Record<string, unknown> = {
     ...id,
+    // The row's own identity: memory.get may answer with another agent's, user's or
+    // session's row, and a pin under the caller's would write a second row beside it.
+    agent: row.agent || id.agent,
+    user_id: row.user_id || "-",
+    session_id: row.session_id || "-",
     memory_key: key,
     value: row.value,
     memory_type: row.memory_type,
