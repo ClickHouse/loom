@@ -9,7 +9,7 @@ import unicodedata
 from typing import Any
 
 # Caps counted JSON-encoded, so the longest statement fits the excerpt less its key
-# suffix, and memory.for_file's line reaches the outcome.
+# suffix, and the excerpt reaches the outcome.
 STATEMENT_SCENARIO_CHARS = 80
 STATEMENT_OUTCOME_CHARS = 200
 STATEMENT_REASONING_CHARS = 360

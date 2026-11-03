@@ -3930,6 +3930,13 @@
           "type": "number",
           "description": "Seconds a facts.traverse result is reused for the same walk."
         },
+        "memory_for_file_whole_tokens": {
+          "default": 1500,
+          "maximum": 4000,
+          "minimum": 50,
+          "type": "integer",
+          "description": "Tokens (4 characters each) memory.for_file gives its decision and constraint rows, which print whole and outside the request's token_budget; a row past it is left out and named. 1500 keeps the whole block under the 10,000 characters a coding-agent hook may inject."
+        },
         "memory_harm_reinforcement_weight": {
           "anyOf": [
             {

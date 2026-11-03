@@ -122,8 +122,8 @@ def test_a_recorded_decision_reads_as_its_statement_before_an_edit(
 def test_a_long_recorded_decision_prints_as_text(
     control_plane_url: str, mint_test_token: Any
 ) -> None:
-    # A statement past 600 stored bytes is cut by memory.for_file's select and still printed
-    # decoded: no quotes, no escapes.
+    # A statement past 600 stored bytes is read and printed whole, decoded: no quotes, no
+    # escapes, every rejected option.
     token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer"])
     _post(
         control_plane_url,
@@ -144,7 +144,8 @@ def test_a_long_recorded_decision_prints_as_text(
     request = {"org": ORG, "namespace": "recorded-long", "path": "src/c.cpp"}
     out = _poll(control_plane_url, token, request, lambda out: out["total"] == 1)
     assert out["total"] == 1, out
-    assert out["hits"][0]["value_truncated"] is True
+    assert out["hits"][0]["value_truncated"] is False
     line = out["rendered"].splitlines()[1]
-    assert line.endswith("…") and ": Réécrire la jointure ? Decided" in line
+    assert ": Réécrire la jointure ? Decided" in line and "…" not in line
+    assert "Rejected: garder la jointure actuelle" in line and "attendre la version" in line
     assert "\\u" not in line and '"' not in line

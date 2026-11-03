@@ -12,9 +12,12 @@ or through a link to code in it (`server.memory.app.code_links`).
 
 Read-only, VIEWER. Rows tagged `constraint` sort first, then pinned, then
 confidence; a row the conflict check linked to an older one of its namespace is
-placed above it (two typed decisions keep their order). `rendered` is cut at
-`token_budget` (its header and removal footer always print, and its "… more"
-line whenever a row is left out). `extra_namespaces` (a repository's primary
+placed above it (two typed decisions keep their order). In `rendered` a decision
+or constraint prints whole, outside `token_budget`, up to the
+`memory_for_file_whole_tokens` ceiling between them (one past it is named on a
+closing line); the other rows are cut at `token_budget` (its header and removal
+footer always print, and its "… more" line whenever a row is left out).
+`extra_namespaces` (a repository's primary
 code namespace, where its team file rules and design decisions live) runs the
 same query per readable namespace, merged in the same order, team rows marked
 with their author. Each hit carries its `source_resource_id` and its
@@ -43,9 +46,10 @@ class MemoryForFileInput(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=16)
     # At most this many rows, across every namespace read.
     top_k: int = Field(default=8, ge=1, le=50)
-    # Cap on the rendered block, which its header, removal footer and "… more" line can
-    # exceed; the hook injects `rendered` verbatim. The header and footer always print, the
-    # "… more" line whenever a row is left out.
+    # Cap on the rendered block's rows other than decisions and constraints, which print
+    # whole outside it; the hook injects `rendered` verbatim. The header, removal footer and
+    # "… more" line can exceed it: the header and footer always print, the "… more" line
+    # whenever a row is left out.
     token_budget: int = Field(default=300, ge=50, le=4000)
     # Conflicted rows are still live facts a reader should see; duplicates,
     # superseded and rejected rows are not.
@@ -62,8 +66,9 @@ class MemoryForFileInput(BaseModel):
 class _MemoryForFileHit(BaseModel):
     memory_key: str
     memory_type: str
-    # The stored JSON text, cut at 600 bytes; `rendered` prints it decoded. The full row is a
-    # memory.get away.
+    # The stored JSON text, cut at 600 bytes (a decision or constraint at the
+    # memory_for_file_whole_tokens ceiling, 4 bytes a token); `rendered` prints it decoded.
+    # The full row is a memory.get away.
     value: str
     # True when `value` was cut.
     value_truncated: bool = False
@@ -107,9 +112,11 @@ class MemoryForFileOutput(BaseModel):
     # then newest; a row the conflict check linked to an older one of its namespace is
     # placed above it (two typed decisions keep their order).
     hits: list[_MemoryForFileHit]
-    # Prompt-ready block, cut at token_budget. Empty when total == 0.
+    # Prompt-ready block: decisions and constraints whole, the other rows cut at token_budget.
+    # Empty when total == 0.
     rendered: str = ""
     # Size of `rendered` at 4 chars per token; 0 when it is empty.
     tokens_estimate: int = 0
-    # True when `token_budget` cut rows from `rendered`; `hits` still lists them.
+    # True when `token_budget` or the decision ceiling left rows out of `rendered`; `hits`
+    # still lists them.
     truncated: bool = False

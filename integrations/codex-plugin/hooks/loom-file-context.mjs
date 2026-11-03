@@ -17,7 +17,8 @@
 // shunt write it).
 //
 //   LOOM_FILE_CONTEXT=off             disable
-//   LOOM_FILE_CONTEXT_TOKENS=300      budget for the injected block
+//   LOOM_FILE_CONTEXT_TOKENS=300      budget for the block's rows other than decisions
+//                                     and constraints, which the server prints whole
 //   LOOM_FILE_CONTEXT_TTL_MIN=30      re-inject for the same file after this
 
 import {

@@ -2215,6 +2215,12 @@ class MemorySettings(BaseModel):
     # Characters each injected working-memory block renders before it is cut with "(truncated)".
     memory_scratchpad_max_chars: int = Field(default=2000, ge=1)
 
+    # ---- pre-edit block ----
+    # Tokens (4 characters each) memory.for_file gives its decision and constraint rows, which
+    # print whole and outside the request's token_budget; a row past it is left out and named.
+    # 1500 keeps the whole block under the 10,000 characters a coding-agent hook may inject.
+    memory_for_file_whole_tokens: Annotated[int, LIVE] = Field(default=1500, ge=50, le=4000)
+
     # ---- deployment-specific names the fact filters recognise ----
     # Comma-separated names of the people whose sessions this deployment records
     # ("jane,jane doe"). The junk-fact filters read "Jane ran a command …" like

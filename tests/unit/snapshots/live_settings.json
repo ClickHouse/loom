@@ -205,6 +205,7 @@
  "memory_extract_verify_timeout_s",
  "memory_facts_projection_wait_s",
  "memory_facts_traverse_ttl_s",
+ "memory_for_file_whole_tokens",
  "memory_namespace_health_failure_ttl_s",
  "memory_namespace_retrieval_defaults_ttl_s",
  "memory_observe_extract_session_context_limit",
