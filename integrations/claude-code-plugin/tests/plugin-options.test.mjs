@@ -14,6 +14,7 @@ import {
   saveInstallServerUrl,
   statusServerUrl,
 } from "../lib/plugin-options.mjs";
+import { resolveServerUrl } from "../lib/loom-client.mjs";
 
 function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "loom-opts-"));
@@ -113,7 +114,7 @@ test("the hook saves the install URL for the status script, removes it when the 
     assert.equal(statusServerUrl({ LOOM_BASE_URL: "https://env/" }), "https://env");
     saveInstallServerUrl({});
     assert.equal(installServerUrl(), "");
-    assert.equal(statusServerUrl({}), "http://localhost:7777");
+    assert.equal(statusServerUrl({}), resolveServerUrl()); // the hooks' server, whatever this machine's is
   } finally {
     if (before) saveInstallServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: before });
   }
