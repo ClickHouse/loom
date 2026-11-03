@@ -173,7 +173,7 @@ async def test_the_search_reads_a_rerank_pool_and_reports_the_reranker(monkeypat
     plain = await ks.handle_knowledge_search(
         _input(top_k=2, namespaces=["n"], collapse_sections=False)
     )
-    assert pools[-1] == 2 and plain.reranked_by == ""
+    assert pools[-1] == 0 and plain.reranked_by == ""  # no reranker: no head to fetch
     assert [h.source_uri for h in plain.results] == ["a.md", "b.md"]
 
 
@@ -192,3 +192,17 @@ async def test_sections_collapse_after_the_rerank_so_its_pick_represents_the_sec
     out = await ks.handle_knowledge_search(_input(rerank="builtin:openai", namespaces=["n"]))
     # the reranker's first chunk of the section survives and folds the other three
     assert [(h.chunk_idx, h.siblings_folded) for h in out.results] == [(3, 3)]
+
+
+@pytest.mark.asyncio
+async def test_a_held_model_call_fails_the_search_instead_of_keeping_the_fused_order(
+    monkeypatch,
+) -> None:
+    from server.llm import customer
+
+    async def _held(**kw: Any) -> list[Any]:
+        raise customer.HOLDS[0]("held")
+
+    monkeypatch.setattr(rerank_mod, "rerank", _held)
+    with pytest.raises(customer.HOLDS):
+        await ks._rerank("builtin:openai", "q", [_hit("a.md"), _hit("b.md")], {})

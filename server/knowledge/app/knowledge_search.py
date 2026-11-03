@@ -54,7 +54,7 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     with traced("embed.compute.query", model=embedder.model_name):
         query_vec = await embedder.embed(input.query)
     endpoint = _rerank_endpoint(input)
-    pool = max(input.top_k, settings.knowledge_search_rerank_top) if endpoint else input.top_k
+    pool = settings.knowledge_search_rerank_top if endpoint else 0
     search = _namespaces_search(input, embedder, query_vec, pool)
     skipped: list[str] = []
     if input.namespaces:
@@ -175,7 +175,7 @@ def _namespaces_search(
     tokens = knowledge_bm25.tokenize(input.query) if input.search_mode != "semantic" else []
 
     # Collapsing sections folds sibling chunks after the statement: ask for more,
-    # so the page still fills. `pool` is a reranker's head when one applies: the legs
+    # so the page still fills. `pool` is a reranker's head when one applies (0 otherwise): the legs
     # fetch at least that many, not that many times three.
     top_k = max(input.top_k * 3 if input.collapse_sections else input.top_k, pool)
 

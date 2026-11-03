@@ -287,12 +287,19 @@ async def test_the_repository_leg_never_reranks_and_a_reranked_answer_keeps_its_
 
 
 @pytest.mark.asyncio
-async def test_a_full_reranked_page_still_gives_the_repository_half_of_it(monkeypatch) -> None:
+async def test_a_reranked_page_admits_repository_hits_by_score_and_keeps_its_order(
+    monkeypatch,
+) -> None:
+    """Which repository hits join is the fused-score rule of the unreranked merge; a
+    reranked page keeps its own order for the rest and the admitted hits follow it."""
+
     async def handle_knowledge_search(inp: KnowledgeSearchInput) -> KnowledgeSearchOutput:
         if inp.namespace == "code-kj":
-            hits = [_hit(f"doc://r{i}", 0.9 - i / 10) for i in range(3)]
+            # one strong repository hit, two weak ones
+            hits = [_hit("doc://strong", 0.9), _hit("doc://weak1", 0.05), _hit("doc://weak2", 0.04)]
             return KnowledgeSearchOutput(results=hits, embedding_model="fake")
-        hits = [_hit(f"n://{c}", 0.2, "me") for c in "xyzw"]
+        # reranked: fused scores 0.2-0.5, in the reranker's order
+        hits = [_hit(f"n://{c}", s, "me") for c, s in zip("xyzw", (0.2, 0.5, 0.3, 0.4))]
         return KnowledgeSearchOutput(results=hits, embedding_model="fake", reranked_by="builtin:x")
 
     monkeypatch.setattr(
@@ -300,5 +307,5 @@ async def test_a_full_reranked_page_still_gives_the_repository_half_of_it(monkey
     )
     page = BASE.model_copy(update={"top_k": 4})
     out = await rd.knowledge_with_repo_docs(page, repo_namespace="code-kj")
-    # the reranked head keeps its order; the repository's two best take the other half
-    assert [h.source_uri for h in out.results] == ["n://x", "n://y", "doc://r0", "doc://r1"]
+    # only the strong repository hit beats a base hit; the reranked head keeps its order
+    assert [h.source_uri for h in out.results] == ["n://x", "n://y", "n://z", "doc://strong"]

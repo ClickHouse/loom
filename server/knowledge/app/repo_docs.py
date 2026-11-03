@@ -106,18 +106,15 @@ async def knowledge_with_repo_docs(
     if not extra:
         return base
     top_k = int(know_input.top_k)
+    picked = merge_hits(list(base.results), extra, top_k)
     if base.reranked_by:
-        # A reranked answer keeps its order, and its fused scores no longer rank it against
-        # the repository's: the repository's best hits take the rest of the page, and half
-        # of a full one, after it.
+        # The fused scores still decide which repository hits earn a place; a reranked
+        # answer keeps its own order, and those hits follow it.
         listed = {(h.namespace, h.source_uri, h.chunk_idx) for h in base.results}
-        more = merge_hits(
-            [], [h for h in extra if (h.namespace, h.source_uri, h.chunk_idx) not in listed], top_k
-        )
-        repo_slots = min(len(more), max(top_k - len(base.results), top_k // 2))
-        results = [*base.results[: top_k - repo_slots], *more[:repo_slots]]
+        repo = [h for h in picked if (h.namespace, h.source_uri, h.chunk_idx) not in listed]
+        results = [*base.results[: top_k - len(repo)], *repo]
         return base.model_copy(update={"results": results})
-    return base.model_copy(update={"results": merge_hits(list(base.results), extra, top_k)})
+    return base.model_copy(update={"results": picked})
 
 
 class RepoDoc(TypedDict):
