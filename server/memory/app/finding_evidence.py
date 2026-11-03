@@ -17,7 +17,8 @@ from server.identity.domain.read_scope import ReadFilters
 from server.memory.store.reads import RowKey, live_revisions
 from server.settings import settings
 
-_IDENTITY = ("agent", "user_id", "session_id", "memory_key")
+# A row's whole identity, the sort key a citation names it by.
+IDENTITY = ("agent", "user_id", "session_id", "memory_key")
 
 
 def sample_ref(sample: dict[str, Any]) -> str | RowKey | None:
@@ -25,7 +26,7 @@ def sample_ref(sample: dict[str, Any]) -> str | RowKey | None:
     mid = sample.get("memory_id")
     if isinstance(mid, str) and mid:
         return mid
-    parts = [sample.get(c) for c in _IDENTITY]
+    parts = [sample.get(c) for c in IDENTITY]
     if all(isinstance(p, str) and p for p in parts):
         return cast(RowKey, tuple(parts))
     return None

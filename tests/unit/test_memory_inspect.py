@@ -111,7 +111,7 @@ def cited(monkeypatch: pytest.MonkeyPatch) -> list[list[tuple[str, ...]]]:
     calls: list[list[tuple[str, ...]]] = []
 
     async def revisions_for(org: str, ns: str, samples: Any, *, scope: Any) -> Any:
-        refs = [tuple(s[c] for c in mi._IDENTITY) for s in samples]
+        refs = [tuple(s[c] for c in mi.IDENTITY) for s in samples]
         calls.append(refs)
         return {ref: {"version": 7, "content_sha256": "a" * 64} for ref in refs}
 
@@ -371,7 +371,7 @@ async def test_a_row_revised_between_reads_is_listed_without_a_hash(
 ) -> None:
     async def moved_on(org: str, ns: str, samples: Any, *, scope: Any) -> Any:
         return {
-            tuple(s[c] for c in mi._IDENTITY): {"version": 8, "content_sha256": "b" * 64}
+            tuple(s[c] for c in mi.IDENTITY): {"version": 8, "content_sha256": "b" * 64}
             for s in samples
         }
 
@@ -382,13 +382,23 @@ async def test_a_row_revised_between_reads_is_listed_without_a_hash(
 
 
 @pytest.mark.asyncio
-async def test_a_view_read_applies_its_scope(ch: RecordingCH) -> None:
+@pytest.mark.parametrize(
+    ("read", "needle", "extra"),
+    [
+        ("view_counts", "GROUP BY memory_type, status, source_class", {}),
+        ("view_tags", "arrayJoin(tags)", {"limit": 5}),
+        ("view_categories", "FROM loom.memory_categories FINAL", {}),
+        ("view_newest", "ORDER BY updated_at DESC", {"limit": 5}),
+    ],
+)
+async def test_every_read_that_selects_rows_applies_its_scope(
+    ch: RecordingCH, read: str, needle: str, extra: dict[str, Any]
+) -> None:
     from server.identity.domain.read_scope import ReadFilters
 
     narrowed = ReadFilters(scope="own_user", user_id="u9", session_id=None)
-    rows = await mi.store.view_counts("o", "ns", "agent", "bot", "others", scope=narrowed)
-    assert rows is not None
-    (s,) = ch.statements("GROUP BY memory_type, status, source_class")
+    await getattr(mi.store, read)("o", "ns", "agent", "bot", "others", scope=narrowed, **extra)
+    (s,) = ch.statements(needle)[:1]
     assert "user_id = {" in s.sql and "u9" in s.params.values()
 
 

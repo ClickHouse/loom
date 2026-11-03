@@ -42,7 +42,7 @@ from server.memory.api.models_inspect import (
 )
 from server.memory.app import extraction_policy
 from server.memory.app.exposure_ledger import record_exposure
-from server.memory.app.finding_evidence import revisions_for
+from server.memory.app.finding_evidence import IDENTITY, revisions_for
 from server.memory.store import inspect as store
 from server.observability.consumer import INSPECTOR_CONSUMERS
 from server.operations.base import Role
@@ -77,9 +77,6 @@ _DEFINITIONS: dict[str, tuple[str, str]] = {
         "token pinned to a user and this session does not." + _PROMOTED,
     ),
 }
-
-
-_IDENTITY = ("agent", "user_id", "session_id", "memory_key")
 
 
 def _cited_hash(revision: dict[str, Any] | None, row: dict[str, Any]) -> str:
@@ -171,7 +168,7 @@ class _Inspect:
             cited = await self.guarded(
                 f"{which}.hashes",
                 lambda: revisions_for(
-                    i.org, i.namespace, [{c: r[c] for c in _IDENTITY} for r in newest], scope=scope
+                    i.org, i.namespace, [{c: r[c] for c in IDENTITY} for r in newest], scope=scope
                 ),
                 dict[Any, dict[str, Any]](),
             )
@@ -179,7 +176,7 @@ class _Inspect:
                 InspectRow(
                     **{k: v for k, v in r.items() if k != "id"},
                     memory_id=str(r["id"]),
-                    content_sha256=_cited_hash(cited.get(tuple(r[c] for c in _IDENTITY)), r),
+                    content_sha256=_cited_hash(cited.get(tuple(r[c] for c in IDENTITY)), r),
                     versions=versions.get(str(r["id"]), 0),
                 )
                 for r in newest
