@@ -163,6 +163,7 @@ async def handle_namespace_restore(
 
     from server.observability import audit as _audit
 
+    _registry.refuse_collection_name(input.target_namespace)
     ch = get_client()
     caller = _registry.resolve_subject()
     payload = input.payload

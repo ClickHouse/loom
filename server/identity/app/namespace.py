@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from server.auth.grant_claims import account_change
+from server.auth.sharing import is_collection
 from server.core import grant_cache
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds
@@ -333,15 +334,19 @@ def refuse_sso_name(namespace: str) -> None:
         )
 
 
+def refuse_collection_name(namespace: str) -> None:
+    """A collection, an end user's personal one included, is reached only through its
+    grants; no namespace operation writes its rows."""
+    if is_collection(namespace):
+        raise ValidationError("a collection is changed with the collection operations only")
+
+
 async def handle_namespace_register(
     input: NamespaceRegisterInput,
 ) -> NamespaceRegisterOutput:
     ch = get_client()
     caller = resolve_subject()
-    from server.auth.sharing import COLLECTION_PREFIX
-
-    if input.namespace.startswith(COLLECTION_PREFIX):
-        raise ValidationError("a collection is changed with the collection operations only")
+    refuse_collection_name(input.namespace)
 
     # Create-or-update. Fresh row ⇒ caller becomes admin; existing row ⇒
     # only an admin may update it. The whole stored row is read, so every setting the

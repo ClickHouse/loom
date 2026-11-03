@@ -28,8 +28,9 @@ flowchart LR
   document lives in one collection and follows its grants from the moment it is written.
 - **Only grants open a collection**, and only one in the tree: a `col-` name that was
   deleted, or never created, admits no one but a platform admin. A collection is known by
-  its name (`col-…`; the prefix is reserved), so `check_authorized` hands it to
-  `server/auth/sharing.py` before any other rule, with no read. A token's namespace claim,
+  its name (`col-…`; the prefix is reserved: `namespace.register` and `namespace.restore`
+  refuse it), so `check_authorized` hands it to `server/auth/sharing.py` before any other
+  rule, with no read. A token's namespace claim,
   an org admin role and the code-namespace rules reach no collection; a scoped or
   delegated token reaches one no further than its own claim names it, and a delegated one
   no further than its creator's role there. A token with an `ns_write` claim writes no
