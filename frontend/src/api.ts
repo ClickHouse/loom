@@ -102,8 +102,9 @@ export function onTokenStored(fn: (token: string | null) => void): () => void {
   return () => window.removeEventListener("storage", listener);
 }
 
-// The app's answer to a stored token the server refuses (expired or revoked): it sends the
-// person back to sign in. Registered by App, so this module stays free of the store.
+// The app's answer to a stored token the server refuses (expired or revoked): the session
+// ends (a card over the page, or the gate while booting). Registered by App, so this
+// module stays free of the store.
 let signInRejected: (() => void) | null = null;
 export function onSignInRejected(fn: () => void): void {
   signInRejected = fn;
@@ -294,13 +295,6 @@ async function request(method: "GET" | "POST", path: string, body?: unknown, sig
   }
 }
 
-/** Whether two tokens name the same person in the same org. */
-function samePerson(a: string, b: string): boolean {
-  const x = claimsFromToken(a);
-  const y = claimsFromToken(b);
-  return !!x?.subject && x.subject === y?.subject && x.org === y?.org;
-}
-
 async function send(
   method: "GET" | "POST",
   path: string,
@@ -325,11 +319,11 @@ async function send(
     // concurrent ones end it once.
     const ending = sent === token();
     if (ending) signInRejected?.();
-    // The same person signed in again in another tab while this call was out: a 401 ran
-    // nothing, so it goes again, once, with the new token. Anyone else's token never
-    // carries this page's call.
-    const now = token();
-    if (!ending && !retried && now && samePerson(sent, now)) return send(method, path, body, signal, true);
+    // A single-user install has no sign-in: the stale token is gone, so the call goes again
+    // without it.
+    if (ending && isAuthDisabled() && !retried) return send(method, path, body, signal, true);
+    // A call raced by another tab's sign-in is never sent again under that token, whose
+    // person this tab has not checked: it fails as the ended session, and Retry sends it.
     const err = await apiErrorFromResponse(r);
     err.sessionEnded = true;
     throw err;

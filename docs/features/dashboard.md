@@ -49,8 +49,8 @@ any page, and so does another tab dropping the token (a sign-out in another tab 
 one to the sign-in screen instead). Mid-session a card among the toasts says so, over any open
 dialog (a keyboard user closes the dialog to reach it; a pointer reaches it at once), and the
 page stays as it is: **Sign in in a new tab** signs in there,
-and this tab takes the new token and carries on once the server confirms it is the same person
-(anyone else gets a fresh page). **Reload** signs in in this tab instead. While the page loads,
+and this tab uses the new token. One naming someone else reloads the page as soon as the tab
+hears of it; for the same person, the card goes away once the server accepts the token. **Reload** signs in in this tab instead. While the page loads,
 a refused token shows the sign-in screen saying the session ended, and with SSO on that
 screen starts the sign-in again by itself (once in five minutes per tab), so a person still
 signed in at the identity provider returns to the page they were on. A refused `#token=` link

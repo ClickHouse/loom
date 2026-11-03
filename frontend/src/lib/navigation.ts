@@ -6,7 +6,11 @@ export function goToSso(): void {
   window.location.assign("/oauth/sso");
 }
 
-/** Load the page again from the server. */
+let reloading = false;
+
+/** Load the page again from the server; once, however many changes ask for it. */
 export function reloadPage(): void {
+  if (reloading) return;
+  reloading = true;
   window.location.reload();
 }

@@ -127,26 +127,25 @@ describe("a refused sign-in token", () => {
     expect(errors.every((e) => e.sessionEnded)).toBe(true);
   });
 
-  it("leaves a 403 and a token stored while the request was in flight alone", async () => {
+  it("leaves a 403, and a token stored while the request was in flight, alone", async () => {
     const ended = vi.fn();
     onSignInRejected(ended);
     setToken(ALICE_1);
     stubFetch(403, '{"detail":{"code":"FORBIDDEN","message":"no grant"}}');
     await rejection(post("/v1/collection.list", { org: "o" }));
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: string, init?: RequestInit) => {
-        if (new Headers(init?.headers).get("Authorization") === `Bearer ${ALICE_2}`) return new Response("{}");
-        setToken(ALICE_2); // a fresh sign-in finished meanwhile
-        return new Response("{}", { status: 401 });
-      }),
-    );
-    await post("/v1/collection.list", { org: "o" });
+    const fetchMock = vi.fn(async () => {
+      setToken(ALICE_2); // a fresh sign-in finished meanwhile
+      return new Response("{}", { status: 401 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const err = await rejection(post("/v1/collection.list", { org: "o" }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(err.sessionEnded).toBe(true);
     expect(localStorage.getItem("loom_token_v1")).toBe(ALICE_2);
     expect(ended).not.toHaveBeenCalled();
   });
 
-  it("never sends a refused call again with another person's token", async () => {
+  it("never sends a refused call again under a token another tab stored meanwhile", async () => {
     const ended = vi.fn(() => clearToken());
     onSignInRejected(ended);
     setToken(ALICE_1);
@@ -158,28 +157,6 @@ describe("a refused sign-in token", () => {
     const err = await rejection(post("/v1/memory.delete", { org: "o" }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(err.sessionEnded).toBe(true);
-    expect(ended).not.toHaveBeenCalled();
-  });
-
-  it("sends a call refused for a token replaced meanwhile again, once, with the new one", async () => {
-    const ended = vi.fn(() => clearToken());
-    onSignInRejected(ended);
-    setToken(ALICE_1);
-    const sentWith: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: string, init?: RequestInit) => {
-        const auth = new Headers(init?.headers).get("Authorization") ?? "";
-        sentWith.push(auth);
-        if (auth === `Bearer ${ALICE_1}`) {
-          setToken(ALICE_2); // another tab signed in while this call was out
-          return new Response("{}", { status: 401 });
-        }
-        return new Response('{"ok": true}', { status: 200 });
-      }),
-    );
-    await expect(post("/v1/memory.list", { org: "o" })).resolves.toEqual({ ok: true });
-    expect(sentWith).toEqual([`Bearer ${ALICE_1}`, `Bearer ${ALICE_2}`]);
     expect(ended).not.toHaveBeenCalled();
   });
 

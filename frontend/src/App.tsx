@@ -110,18 +110,18 @@ let recheck: ReturnType<typeof setTimeout> | undefined;
 
 async function tokenChangedElsewhere(token: string | null): Promise<void> {
   clearTimeout(recheck); // this change decides
-  const s = useStore.getState();
-  const before = s.whoami;
+  const s = useStore.getState;
+  const before = s().whoami;
   if (!before) return;
   if (token === null) {
     if (signedOut()) reloadPage();
-    else if (!s.sessionExpired) endSession();
+    else if (!s().sessionExpired) endSession();
     return;
   }
   // A token naming someone else is a fresh page at once: until a reload, every call here
   // would carry it under the last person's page.
   const claims = claimsFromToken(token);
-  if (!before.subject || claims?.subject !== before.subject || claims?.org !== before.org) {
+  if (!before.subject || claims?.subject !== before.subject || (claims?.org ?? "") !== (before.org ?? "")) {
     reloadPage();
     return;
   }
@@ -131,7 +131,7 @@ async function tokenChangedElsewhere(token: string | null): Promise<void> {
   } catch {
     // Unconfirmed: a healthy page stays as it is; an ended one keeps its card and asks
     // again shortly, while that token is still the stored one.
-    if (useStore.getState().sessionExpired)
+    if (s().sessionExpired)
       recheck = setTimeout(() => storedToken() === token && void tokenChangedElsewhere(token), 30_000);
     return;
   }
@@ -140,16 +140,16 @@ async function tokenChangedElsewhere(token: string | null): Promise<void> {
   // A token the server refuses is nobody's: this session ended, and the page stays. One it
   // accepts is the person its claims named, already checked above.
   if (!now.authenticated) {
-    if (!useStore.getState().sessionExpired) endSession();
+    if (!s().sessionExpired) endSession();
     return;
   }
   // The card going away is the sign that the session is back.
-  useStore.getState().setWhoami(now);
-  useStore.getState().setSessionExpired(false);
+  s().setWhoami(now);
+  s().setSessionExpired(false);
   sessionEndedNote(true);
   try {
     invalidateShared();
-    useStore.getState().setMyNamespaces(await sharedMine(now.org ?? ""));
+    s().setMyNamespaces(await sharedMine(now.org ?? ""));
   } catch {
     /* the roles read at boot stay; a reload reads them again */
   }
@@ -568,9 +568,12 @@ export default function App() {
         }
       } catch (e) {
         // Still unavailable after whoami's retries: the toast says so, and the token stays
-        // for the next load. A sign-in link refused on the way leaves no note, so the next
-        // load does not start a sign-in by itself (the link may be the way in).
-        if (link?.token) sessionEndedNote(true);
+        // for the next load. A sign-in link refused on the way says so and leaves no note,
+        // so the next load does not start a sign-in by itself (the link may be the way in).
+        if (link?.token) {
+          sessionEndedNote(true);
+          if (!storedToken()) useStore.getState().setGateReason("refused");
+        }
         toastError("Auth bootstrap failed", e);
         setAuthed(false);
       }
