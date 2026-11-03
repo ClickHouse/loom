@@ -304,10 +304,10 @@ def test_the_mcp_mentor_hint_is_keyed_on_the_admitted_org(monkeypatch: pytest.Mo
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
     RecordingCH(strict=False).install(monkeypatch)
-    keyed: list[tuple[str, str]] = []
+    keyed: list[tuple[str, str, str]] = []
 
-    def _hint(*_a: Any, org: str, namespace: str, **_k: Any) -> None:
-        keyed.append((org, namespace))
+    def _hint(*_a: Any, org: str, namespace: str, session_key: str, **_k: Any) -> None:
+        keyed.append((org, namespace, session_key))
 
     monkeypatch.setattr(mentor, "call_hint", _hint)
     auth = verify_token(
@@ -317,7 +317,7 @@ def test_the_mcp_mentor_hint_is_keyed_on_the_admitted_org(monkeypatch: pytest.Mo
     )
     args = {"org": "-", "namespace": "ns1", "agent": "a", "memory_key": "k"}
     asyncio.run(mcp_call._call_tool(1, {"name": tool, "arguments": args}, auth=auth))
-    assert keyed == [("globex", "ns1")]
+    assert keyed == [("globex", "ns1", "globex/ns1/a")]
 
 
 def _code_plane(monkeypatch: pytest.MonkeyPatch) -> None:
