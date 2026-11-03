@@ -376,9 +376,10 @@ NetworkPolicy, rendered whatever `networkPolicy.enabled` says, admits the releas
 pods on 8790 and allows no egress; with `networkPolicy.enabled`, the Loom pods' policy
 allows egress to them. `extractor.env` takes the service's `LOOM_EXTRACTOR_*` limits
 ([extractor](../../extractor/README.md)), and `extractor.resources` bounds each pod.
-Each side holds one token, so changing `secrets.extractorToken` restarts both
-Deployments, and while they roll, a Loom pod and an extractor pod may hold different
-tokens: extraction answers unavailable until both rolls finish.
+Each side holds one token, so changing `secrets.extractorToken` restarts the Loom
+Deployments (web, and workers when enabled) and the extractor's, and while they roll, a
+Loom pod and an extractor pod may hold different tokens: extraction answers unavailable
+until every roll finishes.
 
 ## Analytics export
 

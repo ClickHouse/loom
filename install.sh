@@ -283,9 +283,10 @@ else
   set_env LOOM_VERSION "$version"
   # An install from before the extractor service: give it the token and the
   # server its URL, as a new install's template does; a URL already there is
-  # the operator's and stays.
-  if ! grep -q '^LOOM_DOCUMENT_EXTRACTOR_TOKEN=.' "$INSTALL_DIR/.env"; then
-    grep -q '^LOOM_DOCUMENT_EXTRACTOR_URL=' "$INSTALL_DIR/.env" \
+  # the operator's and stays. Values are read as Compose reads them (quotes and
+  # comments stripped), so `TOKEN=""` is empty.
+  if [ -z "$(get_env LOOM_DOCUMENT_EXTRACTOR_TOKEN)" ]; then
+    [ -n "$(get_env LOOM_DOCUMENT_EXTRACTOR_URL)" ] \
       || set_env LOOM_DOCUMENT_EXTRACTOR_URL http://extractor:8790
     set_env LOOM_DOCUMENT_EXTRACTOR_TOKEN "$(LC_ALL=C od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
   fi

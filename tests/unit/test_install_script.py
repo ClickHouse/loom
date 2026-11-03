@@ -483,7 +483,12 @@ def test_an_upgrade_from_before_the_extractor_gives_it_a_token_and_keeps_one_it_
     assert _env(target)["LOOM_DOCUMENT_EXTRACTOR_TOKEN"] == kept  # a rerun keeps it
     lines = env_path.read_text().splitlines()
     kept_lines = [x for x in lines if not x.startswith("LOOM_DOCUMENT_")]
-    for extra in ([], ["LOOM_DOCUMENT_EXTRACTOR_TOKEN="]):  # no line, or an empty one
+    # no line, an empty one, a quoted empty one (with an empty URL line too)
+    for extra in (
+        [],
+        ["LOOM_DOCUMENT_EXTRACTOR_TOKEN="],
+        ['LOOM_DOCUMENT_EXTRACTOR_TOKEN=""', "LOOM_DOCUMENT_EXTRACTOR_URL="],
+    ):
         env_path.write_text("\n".join(kept_lines + extra) + "\n")
         result = run()
         assert result.returncode == 0, result.stderr
