@@ -288,7 +288,7 @@ _ROWS = {
 def test_namespace_erasure_matches_only_this_orgs_rows(table, attr_col, many, namespace):
     """A namespace name is unique per org only. A row keyed by Loom's
     `loom.namespace` is this org's only when it also carries this org's
-    `loom.org`; Loom's metric points carry no org, so they are never matched
+    `loom.org`; Loom's op and domain counters carry no org, so they are never matched
     by name alone. Evaluated on clickhouse-local over the predicate the
     backend builds."""
     backend = ClickStackBackend(database="default", timeout_s=5.0)

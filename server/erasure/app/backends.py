@@ -367,7 +367,7 @@ class ClickStackBackend:
     # ORed: service.namespace covers non-Loom emitters an operator points at
     # the same ClickStack.
     TENANT_NAMESPACE_KEY = "loom.namespace"
-    # The org Loom stamps on its spans. A subject or namespace name is unique
+    # The org Loom stamps beside `loom.namespace`. A subject or namespace name is unique
     # per org only, so a row tagged with ANOTHER org is never erased; for a
     # user scope a row with no org tag (a non-Loom emitter) still is, since it
     # may hold the subject.
@@ -462,8 +462,8 @@ class ClickStackBackend:
         )
         op = "IN {u:Array(String)}" if many else "= {u:String}"
         # A row keyed by Loom's own `loom.namespace` is this org's only when it
-        # also carries this org's `loom.org`: Loom's metric points carry the
-        # namespace and no org, so by name alone they may be another org's.
+        # also carries this org's `loom.org`: Loom's op and domain counters carry
+        # the namespace and no org, so by name alone they may be another org's.
         # Another emitter's `service.namespace` keeps the untagged allowance,
         # but never Loom's deployment constant, which every Loom row carries.
         return (
