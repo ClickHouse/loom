@@ -376,11 +376,13 @@ async def handle_code_repo_add(input: CodeRepoAddInput) -> CodeRepoAddOutput:
 
 def repo_add_audit_subject(input: CodeRepoAddInput, response: Any) -> dict[str, Any]:
     """What an add's audit row records: the request without the access token,
-    whether one was given (`authenticated`), and the namespaces the indexes got.
-    `loom.audit_log` outlives the repository and must hold no secret."""
+    whether one was given (`authenticated`), and what was registered (the branch
+    a blank one resolved to, the effective join policy) with the namespaces the
+    indexes got. `loom.audit_log` outlives the repository and must hold no secret."""
     subject = input.model_dump(mode="json", exclude={"access_token"})
     subject["authenticated"] = bool(input.access_token)
-    subject["namespace"] = response["namespace"]
+    for registered in ("repo", "branch", "join_policy", "classification", "namespace"):
+        subject[registered] = response[registered]
     subject["also"] = [extra["namespace"] for extra in response.get("also", [])]
     return subject
 

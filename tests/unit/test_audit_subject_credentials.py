@@ -20,16 +20,31 @@ from server.transport import post_rows
 
 SECRET = "s3cret-value-never-audited"
 # Parts of a field name that mark a credential. A bare `key` is not one (memory
-# ops address rows by `key`), so only the compounds below count.
-CREDENTIAL_PARTS = {"password", "secret", "token", "credential", "credentials"}
-CREDENTIAL_COMPOUNDS = ("api_key", "private_key")
+# ops address rows by `key`), so only the compounds below count. `tokens` is not a
+# part either: `*_tokens` fields count model tokens.
+CREDENTIAL_PARTS = {
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "credential",
+    "credentials",
+    "authorization",
+    "bearer",
+    "cookie",
+}
+CREDENTIAL_COMPOUNDS = ("api_key", "private_key", "signing_key", "encryption_key")
 
 
 def _is_credential(field: str) -> bool:
+    parts = set(field.split("_"))
     # `*_ref` names an environment variable that holds the secret, not the secret.
     if field.endswith("_ref"):
         return False
-    return bool(CREDENTIAL_PARTS & set(field.split("_"))) or any(
+    # `token_budget`, `section_token_budgets`: a size in model tokens.
+    if parts & {"budget", "budgets"}:
+        return False
+    return bool(CREDENTIAL_PARTS & parts) or any(
         compound in field for compound in CREDENTIAL_COMPOUNDS
     )
 
@@ -41,17 +56,22 @@ def _models_in(annotation: Any) -> list[type[BaseModel]]:
     return [model for arg in typing.get_args(annotation) for model in _models_in(arg)]
 
 
-def _credential_fields(model: type[BaseModel], prefix: str = "") -> list[str]:
+def _credential_fields(
+    model: type[BaseModel], prefix: str = "", seen: frozenset[type] = frozenset()
+) -> list[str]:
     """Credential-named fields of a model and of the models its fields hold. A
     `dict[str, Any]` field has no declared keys, so it cannot be checked here;
     what the audited ops put in one (a tracker mapping, a contract report) holds
     no credential."""
+    if model in seen:  # a model that holds itself, directly or not
+        return []
+    seen = seen | {model}
     found = []
     for name, info in model.model_fields.items():
         if _is_credential(name):
             found.append(prefix + name)
         for inner in _models_in(info.annotation):
-            found.extend(_credential_fields(inner, f"{prefix}{name}."))
+            found.extend(_credential_fields(inner, f"{prefix}{name}.", seen))
     return found
 
 
@@ -102,6 +122,9 @@ def test_code_repo_add_audits_the_repository_without_its_token() -> None:
     response = {
         "namespace": "code-acme-app",
         "repo": "acme/app",
+        "branch": "main",
+        "join_policy": "open",
+        "classification": "standard",
         "also": [{"branch": "dev", "namespace": "code-acme-app-dev", "remote_head": "abc"}],
     }
     subject = _subject("code.repo.add", body, response)
@@ -111,6 +134,43 @@ def test_code_repo_add_audits_the_repository_without_its_token() -> None:
     assert subject["namespace"] == "code-acme-app"
     assert subject["also"] == ["code-acme-app-dev"]
     assert subject["authenticated"] is True
+
+
+def test_code_repo_add_audits_what_was_registered_not_what_was_asked() -> None:
+    # A blank branch resolves to the remote's default; a restricted repository is
+    # always registered as `approval`.
+    body = CodeRepoAddInput(
+        org="acme", repo="acme/app", branch="", classification="restricted", join_policy="open"
+    )
+    response = {
+        "namespace": "code-acme-app",
+        "repo": "acme/app",
+        "branch": "trunk",
+        "join_policy": "approval",
+        "classification": "restricted",
+    }
+    subject = _subject("code.repo.add", body, response)
+    assert subject["branch"] == "trunk"
+    assert subject["join_policy"] == "approval"
+    assert subject["classification"] == "restricted"
+    assert subject["also"] == []
+    assert subject["authenticated"] is False
+
+
+def test_the_matcher_tells_credentials_from_lookalikes() -> None:
+    for name in ("password", "db_passwd", "access_token", "authorization", "signing_key"):
+        assert _is_credential(name), name
+    for name in ("key", "secret_ref", "token_budget", "section_token_budgets", "max_tokens"):
+        assert not _is_credential(name), name
+
+
+class _Node(BaseModel):
+    child: _Node | None = None
+    password: str = ""
+
+
+def test_the_scan_stops_at_a_model_that_holds_itself() -> None:
+    assert _credential_fields(_Node) == ["password"]
 
 
 def test_the_audit_row_of_a_real_op_carries_its_subject(monkeypatch: pytest.MonkeyPatch) -> None:
