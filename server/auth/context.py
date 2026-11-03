@@ -304,11 +304,17 @@ async def rollup_member_namespaces(org: str) -> list[str]:
 async def every_readable_namespace(org: str, *, column: str = "namespace") -> OrgScopeFilter:
     """WHERE fragment for a caller that reads every namespace of `org` (an org
     admin, or a flat `*` claim): all of them EXCEPT the restricted namespaces
-    it holds no grant + claim for, and the collections it cannot read. Empty
-    with auth disabled."""
+    it holds no grant + claim for, the namespaces its claim names that the
+    gate refuses (a claim capped at a revoked grant), and the collections it
+    cannot read. Empty with auth disabled."""
     hidden = await restricted_namespaces_hidden_from(org)
     if hidden == ["*"]:
         return OrgScopeFilter(accessible=False, where="", params={})
+    auth = current_auth()
+    if auth is not None:
+        named = named_claims(auth)
+        refused = set(named) - set(await _gate_readable(auth, org, named))
+        hidden = sorted(set(hidden) | refused)
     where, params = await collection_clause(org, column)
     if hidden:
         where += f" AND {column} NOT IN {{ns_hidden:Array(String)}}"

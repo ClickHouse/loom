@@ -115,11 +115,30 @@ def test_wildcard_token_never_resolves_restricted(world) -> None:
     assert asyncio.run(resolve_my_namespaces(ORG)) == []
 
 
+def test_a_wildcard_scope_excludes_a_named_claim_capped_at_a_revoked_grant(
+    world, monkeypatch
+) -> None:
+    """`*` plus a named `x` whose grant was revoked: the claim on `x` is capped
+    at nothing live (`authz.claim_cap`), so the gate refuses `x`, and the
+    every-namespace scope leaves it out with the restricted ones."""
+    from server.auth.context import every_readable_namespace
+
+    async def _revoked(org, subject):
+        return grant_cache.GrantMap(ranks={"x": 0})
+
+    monkeypatch.setattr(grant_cache, "_read", _revoked)
+    grant_cache.clear()
+    set_current_auth(_flat(["*", "x", "shop"]))
+    f = asyncio.run(every_readable_namespace(ORG))
+    assert f.accessible and f.params["ns_hidden"] == [PRIV, "x"]
+
+
 def test_org_admin_rollup_excludes_restricted_by_name(world) -> None:
     set_current_auth(_flat(["*"], roles=(Role.ORG_ADMIN,)))
     f = asyncio.run(resolve_org_scope(ORG))
     assert f.accessible and "NOT IN {ns_hidden" in f.where and f.params["ns_hidden"] == [PRIV]
     world["grants"][(ORG, PRIV, "alice@x")] = Role.VIEWER
+    grant_cache.clear()
     set_current_auth(_flat([PRIV], roles=(Role.ORG_ADMIN,)))
     f = asyncio.run(resolve_org_scope(ORG))
     assert f.accessible and "ns_hidden" not in f.params, "nothing restricted is hidden now"
