@@ -1034,11 +1034,20 @@ def test_a_dash_org_is_the_tokens_own_org(control_plane_url, seed, tokens) -> No
     # another org: the reproduction of the leak.
     dash = {"org": "-", "namespace": "-", "agent": "a", "memory_key": f"{key}_dash"}
     r = _post(control_plane_url, tokens["a_writer"], "memory.set", {**dash, "value": nonce})
-    assert r.status_code in (200, 403), r.text[:200]
-    reads = [{"org": "-", "namespace": seed.ns_a, "agent": "a", "memory_key": key}]
-    if r.status_code == 200:
-        reads.append(dash)
-    for body in reads:
+    assert r.status_code == 200, r.text[:200]
+    dash_id = r.json()["memory_id"]
+    r = _post(control_plane_url, tokens["a_writer"], "memory.get", {**dash, "org": seed.org})
+    assert r.status_code == 200, r.text
+    row = r.json()
+    assert row["found"] is True, r.text[:200]
+    assert (row["memory_id"], row["agent"], row["value"], row["actor"], row["source_class"]) == (
+        dash_id,
+        "a",
+        nonce,
+        "process:alice",
+        "asserted",
+    )
+    for body in ({"org": "-", "namespace": seed.ns_a, "agent": "a", "memory_key": key}, dash):
         r = _post(control_plane_url, tokens["other_org"], "memory.get", body)
         assert r.status_code in _OK_STATUSES, r.text[:200]
         assert nonce not in r.text, f"another org read a '-'-org write: {r.text[:200]}"
