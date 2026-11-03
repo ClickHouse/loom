@@ -167,7 +167,8 @@ class _World:
 
         async def writer(org, ns, key, ch=None):
             world.writer_reads.append(key)
-            return world.records[key][0] if key in world.records else None
+            here = any(r.memory_key == key and r.namespace == ns for r in world.rows)
+            return world.records[key][0] if key in world.records and here else None
 
         def same(ident, r):
             return all(
@@ -177,18 +178,23 @@ class _World:
 
         async def get_by_key(ident, key, *, scope, fresh=False, strong=False):
             # As the store: a `*` agent drops the identity filter and the newest row wins.
+            rows = [r for r in world.rows if r.namespace == ident.namespace]
             if ident.agent == "*":
-                hits = [r for r in world.rows if r.memory_key == key]
+                hits = [r for r in rows if r.memory_key == key]
             else:
-                hits = [r for r in world.rows if r.memory_key == key and same(ident, r)]
+                hits = [r for r in rows if r.memory_key == key and same(ident, r)]
             return hits[-1] if hits else None
 
         async def many(ident, keys, *, scope, strong=False):
             world.bulk_reads += 1
-            return [r for r in world.rows if r.memory_key in keys and same(ident, r)]
+            return [
+                r
+                for r in world.rows
+                if r.memory_key in keys and same(ident, r) and r.namespace == ident.namespace
+            ]
 
         async def list_rows(ident, *, scope, memory_type, order_by="", limit=200, offset=0, **kw):
-            rows = [r for r in world.rows if same(ident, r)]
+            rows = [r for r in world.rows if same(ident, r) and r.namespace == ident.namespace]
             if kw.get("pinned_only"):
                 rows = [r for r in rows if r.pinned]
             if kw.get("key_prefix"):
@@ -240,6 +246,13 @@ class _World:
             defs = world.symbols.get(inp.name, [])
             return SimpleNamespace(definitions=[SimpleNamespace(path=p, symbol=s) for p, s in defs])
 
+        from server.code.app.index import repo_registry
+
+        async def no_refresh(**kw):
+            return []
+
+        mp.setattr(repo_registry, "refresh_db_repos", no_refresh)
+        mp.setattr(repo_registry, "registry_read", lambda: True)
         mp.setattr(llm_client, "get_llm_client", lambda: _LLM())
         mp.setattr(document_reads, "handle_knowledge_get", knowledge_get)
         mp.setattr(document_reads, "document_chunks", chunks)
@@ -554,7 +567,7 @@ async def test_another_writers_unpinned_record_is_not_revised(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_restatement_under_another_key_is_skipped(monkeypatch) -> None:
+async def test_a_frozen_restatement_under_another_key_is_skipped(monkeypatch) -> None:
     world = _World(monkeypatch, [_candidate()])
     world.add("design/spilling/final", agent="alice-agent", pinned=True)
     # A newer unpinned row of the key beside it does not hide the pinned one.
@@ -568,7 +581,7 @@ async def test_a_confirmed_restatement_under_another_key_is_skipped(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_decision_in_another_category_is_a_restatement(monkeypatch) -> None:
+async def test_a_frozen_decision_in_another_category_is_a_restatement(monkeypatch) -> None:
     """The statement leaves the category out, so the same decision filed under another
     category reads the same and is skipped."""
     from server.memory.app import search
@@ -2125,15 +2138,15 @@ def test_an_error_goes_to_stderr(capsys) -> None:
     assert out.out == "" and out.err == "error: no live document\n"
 
 
-def test_an_attestation_binding_the_value_of_a_row_with_no_hash_column_confirms_it() -> None:
+def test_an_attestation_binding_the_value_of_a_row_with_no_hash_column_freezes_it() -> None:
     from server.core.hashing import sha256_value_json
-    from server.memory.app.decision_extract import _confirmed
+    from server.memory.app.decision_extract import _frozen
 
     value = "Decided spill."
     bound = sha256_value_json(json.dumps(value))
     row = _row("decision:k", value=value, content_sha256="", verified_by="human:alice")
-    assert _confirmed(_Row(**{**vars(row), "verified_sha256": bound}))
-    assert not _confirmed(_Row(**{**vars(row), "verified_sha256": "other"}))
+    assert _frozen(_Row(**{**vars(row), "verified_sha256": bound}))
+    assert not _frozen(_Row(**{**vars(row), "verified_sha256": "other"}))
 
 
 def test_a_list_field_the_model_filled_with_something_else_reads_empty() -> None:
@@ -2432,10 +2445,10 @@ def test_a_refused_candidate_or_retire_write_exits_2(dropped, refused, code) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("top_k", "blocked"), [(6, True), (5, False)])
-async def test_a_confirmed_restatement_below_five_closer_hits_blocks_within_top_k(
+async def test_a_frozen_restatement_below_five_closer_hits_blocks_within_top_k(
     monkeypatch, top_k, blocked
 ) -> None:
-    """The confirmed key is the sixth closest: a top_k of 6 reaches it, 5 stops before it
+    """The frozen key is the sixth closest: a top_k of 6 reaches it, 5 stops before it
     though the fetch (5 keys times a per-key cap of 3) still serves it."""
     from server.memory.app import search
     from server.settings import settings
@@ -2445,8 +2458,8 @@ async def test_a_confirmed_restatement_below_five_closer_hits_blocks_within_top_
     for i in range(5):
         world.add(f"design/near{i}", agent="alice-agent")
         hits.append(SimpleNamespace(memory_key=f"design/near{i}", similarity=0.95 - i / 100))
-    world.add("design/confirmed", agent="alice-agent", pinned=True)
-    hits.append(SimpleNamespace(memory_key="design/confirmed", similarity=0.86))
+    world.add("design/frozen", agent="alice-agent", pinned=True)
+    hits.append(SimpleNamespace(memory_key="design/frozen", similarity=0.86))
     asked: list[int] = []
 
     async def mem_search(inp):
@@ -2460,15 +2473,15 @@ async def test_a_confirmed_restatement_below_five_closer_hits_blocks_within_top_
     assert asked == [per_key_fetch(top_k)] and per_key_fetch(top_k) >= len(hits)
     if blocked:
         assert world.recorded == []
-        assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+        assert report.records[0].note == "already recorded by alice-agent under design/frozen"
     else:
         assert len(world.recorded) == 1
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_restatement_below_keys_of_many_rows_still_blocks(monkeypatch) -> None:
+async def test_a_frozen_restatement_below_keys_of_many_rows_still_blocks(monkeypatch) -> None:
     # the search serves a row per writer and session: seven closer keys of three rows each
-    # fill 21 places, and the confirmed key still counts among the 20 closest keys
+    # fill 21 places, and the frozen key still counts among the 20 closest keys
     from server.memory.app import search
     from server.settings import settings
 
@@ -2478,8 +2491,8 @@ async def test_a_confirmed_restatement_below_keys_of_many_rows_still_blocks(monk
     for i in range(7):
         world.add(f"design/near{i}", agent="alice-agent")
         hits += [SimpleNamespace(memory_key=f"design/near{i}", similarity=0.95 - i / 100)] * 3
-    world.add("design/confirmed", agent="alice-agent", pinned=True)
-    hits.append(SimpleNamespace(memory_key="design/confirmed", similarity=0.86))
+    world.add("design/frozen", agent="alice-agent", pinned=True)
+    hits.append(SimpleNamespace(memory_key="design/frozen", similarity=0.86))
 
     async def mem_search(inp):
         return SimpleNamespace(results=hits[: inp.top_k])
@@ -2495,9 +2508,9 @@ async def test_a_confirmed_restatement_below_keys_of_many_rows_still_blocks(monk
     monkeypatch.setattr(de, "_rows_of_key", counted)
     report = await _run()
     assert world.recorded == []
-    assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+    assert report.records[0].note == "already recorded by alice-agent under design/frozen"
     # each key's rows are read once
-    assert read == [*(f"design/near{i}" for i in range(7)), "design/confirmed"]
+    assert read == [*(f"design/near{i}" for i in range(7)), "design/frozen"]
 
 
 @pytest.mark.asyncio
@@ -3885,3 +3898,690 @@ async def test_an_inverted_alternative_is_left_out_and_the_decision_kept(monkeyp
         "the choice"
     )
     assert cli.exit_code(report) == 0
+
+
+# ------------------------------------------------------------------ linked to a repository
+
+TRUNK = "code-widgets"
+REPO_TAG = "repo:0123456789"
+SOURCE_CHANGED = "source-changed"
+
+
+def _link_repo(
+    monkeypatch: pytest.MonkeyPatch,
+    world: _World,
+    *,
+    refused: frozenset[tuple[str, str]] = frozenset(),
+    code_namespaces: frozenset[str] = frozenset(),
+) -> dict[str, list[str]]:
+    """A repository acme/widgets with trunk TRUNK, the caller refused the `refused`
+    (namespace, role) pairs; returns the namespaces each read went to."""
+    from server.code.app import repo_scope
+    from server.code.app import symbol as code_symbol
+    from server.code.domain.index import repos
+
+    seen: dict[str, list[str]] = {"symbol": [], "writer": [], "list": []}
+
+    def trunk(org, repo):
+        # acme/bare: a repository with no remote to tag rows with
+        known = {
+            "acme/widgets": (TRUNK, REPO_TAG),
+            "acme/bare": (TRUNK, ""),
+            "acme/gadgets": ("code-gadgets", "repo:9999999999"),
+        }
+        return known.get(repo, ("", ""))
+
+    async def may(org, ns, role, *, hides_answer=True):
+        return (ns, role.name.lower()) not in refused
+
+    symbol = code_symbol.handle_code_symbol
+
+    async def code_symbol_handler(inp):
+        seen["symbol"].append(inp.namespace)
+        return await symbol(inp)
+
+    writer = de.live_writer_record
+
+    async def writer_in(org, ns, key, ch=None):
+        seen["writer"].append(ns)
+        return await writer(org, ns, key)
+
+    listing = de.list_by_namespace
+
+    async def list_in(ident, **kw):
+        seen["list"].append(ident.namespace)
+        return await listing(ident, **kw)
+
+    monkeypatch.setattr(repo_scope, "repo_trunk", trunk)
+    monkeypatch.setattr(repos, "repo_for_namespace", lambda org, ns: ns in code_namespaces or None)
+    monkeypatch.setattr(de, "row_in_scope", may)
+    monkeypatch.setattr(code_symbol, "handle_code_symbol", code_symbol_handler)
+    monkeypatch.setattr(de, "live_writer_record", writer_in)
+    monkeypatch.setattr(de, "list_by_namespace", list_in)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_without_a_repo_the_documents_namespace_resolves_names_and_holds_rows(
+    monkeypatch,
+) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    seen = _link_repo(monkeypatch, world)
+    await _run()
+    (inp,) = world.recorded
+    assert inp.namespace == "ns" and REPO_TAG not in inp.tags
+    assert seen == {"symbol": ["ns"], "writer": ["ns"], "list": ["ns"]}
+
+
+@pytest.mark.asyncio
+async def test_into_source_resolves_in_the_trunk_and_tags_the_row_beside_the_document(
+    monkeypatch,
+) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    seen = _link_repo(monkeypatch, world)
+    report = await _run(repo="acme/widgets")  # the document's namespace is no code namespace
+    assert report.error == ""
+    (inp,) = world.recorded
+    assert inp.namespace == "ns"
+    assert inp.tags == ["source-kind:design_doc", REPO_TAG]
+    assert inp.files == [HEADER]
+    assert inp.source_resource_id == f"knowledge:ns/doc.md#{SECTION}"
+    # The trunk is listed too, for this document's rows a run may have written there.
+    assert seen == {"symbol": [TRUNK], "writer": ["ns"], "list": ["ns", TRUNK]}
+
+
+@pytest.mark.asyncio
+async def test_into_repo_writes_to_the_trunk_citing_the_document_in_its_home(
+    monkeypatch,
+) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    seen = _link_repo(monkeypatch, world)
+    await _run(repo="acme/widgets", into="repo")
+    (inp,) = world.recorded
+    assert inp.namespace == TRUNK and inp.tags == ["source-kind:design_doc"]
+    assert inp.source_resource_id == f"knowledge:ns/doc.md#{SECTION}"
+    assert seen == {"symbol": [TRUNK], "writer": [TRUNK], "list": [TRUNK, "ns"]}
+
+
+@pytest.mark.asyncio
+async def test_a_document_in_a_code_namespace_defaults_into_the_repo(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    _link_repo(monkeypatch, world, code_namespaces=frozenset({"ns"}))
+    await _run(repo="acme/widgets")
+    (inp,) = world.recorded
+    assert inp.namespace == TRUNK
+
+
+@pytest.mark.asyncio
+async def test_into_repo_reconciles_against_the_trunks_own_row(monkeypatch) -> None:
+    """The trunk's row for this document, unchanged, is left as it is: the reconcile read
+    the record and the row where the run writes."""
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), namespace=TRUNK, files=[HEADER], tags=["decision"])
+    _link_repo(monkeypatch, world)
+    report = await _run(repo="acme/widgets", into="repo")
+    assert world.recorded == []
+    assert [r.action for r in report.records] == ["unchanged"]
+
+
+@pytest.mark.asyncio
+async def test_a_row_extracted_before_the_repo_tag_is_revised_to_carry_it(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), files=[HEADER], tags=["decision"])
+    _link_repo(monkeypatch, world)
+    report = await _run(repo="acme/widgets", into="source")
+    assert [r.action for r in report.records] == ["revised"]
+    assert REPO_TAG in world.recorded[0].tags
+
+
+@pytest.mark.parametrize(
+    ("kw", "refused", "error"),
+    [
+        # The same answer as for a repository that is not configured.
+        (
+            {"repo": "acme/widgets"},
+            {(TRUNK, "viewer")},
+            "no repository 'acme/widgets' you may read is configured in o",
+        ),
+        (
+            {"repo": "acme/widgets", "into": "repo"},
+            {(TRUNK, "writer")},
+            f"not allowed to write o/{TRUNK}",
+        ),
+        ({"repo": "acme/widgets"}, {("ns", "writer")}, "not allowed to write o/ns"),
+        ({"repo": "acme/widgets", "into": "repo"}, {("ns", "viewer")}, "not allowed to read o/ns"),
+        (
+            {"repo": "acme/other"},
+            set(),
+            "no repository 'acme/other' you may read is configured in o",
+        ),
+        ({"into": "source"}, set(), "--into needs --repo"),
+        ({}, {("ns", "viewer")}, "not allowed to read o/ns"),
+        ({"into": "elsewhere"}, set(), "--into is repo or source, not 'elsewhere'"),
+        (
+            {"repo": "acme/bare"},
+            set(),
+            "repository 'acme/bare' has no remote to tag its rows with; use --into repo",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_run_the_caller_may_not_make_refuses_before_any_model_call(
+    monkeypatch, kw: dict[str, Any], refused: set[tuple[str, str]], error: str
+) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    _link_repo(monkeypatch, world, refused=frozenset(refused))
+    report = await _run(**kw)
+    assert report.error == error
+    assert world.prompts == [] and world.recorded == []
+    assert cli.exit_code(report) == 1
+
+
+@pytest.mark.parametrize(
+    ("kw", "broken", "error"),
+    [
+        ({"repo": "acme/widgets"}, (TRUNK, "viewer"), "no repository 'acme/widgets' you may read"),
+        ({"repo": "acme/widgets"}, ("ns", "writer"), "not allowed to write o/ns"),
+        ({"repo": "acme/widgets", "into": "repo"}, ("ns", "viewer"), "not allowed to read o/ns"),
+    ],
+    ids=["trunk", "where the rows go", "document's namespace"],
+)
+@pytest.mark.asyncio
+async def test_an_access_check_that_fails_refuses(
+    monkeypatch, kw: dict[str, Any], broken: tuple[str, str], error: str
+) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    _link_repo(monkeypatch, world)
+
+    async def flaky(org, ns, role, *, hides_answer=True):
+        if (ns, role.name.lower()) == broken:
+            raise RuntimeError("grants unreadable")
+        return True
+
+    monkeypatch.setattr(de, "row_in_scope", flaky)
+    report = await _run(**kw)
+    assert report.error.startswith(error) and world.recorded == [] and world.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_repo_trunk_matches_owner_name_or_a_remote_url(monkeypatch) -> None:
+    from server.code.app import repo_scope
+    from server.code.app.index import repo_registry
+    from server.code.domain.index import repos
+    from server.code.domain.index.remote import repo_tag
+    from tests.unit.code_fixtures import repo_config
+
+    trunk = repo_config(
+        namespace="code-widgets",
+        repo="Acme/Widgets",
+        git_remote="https://github.com/acme/widgets.git",
+        git_branch="main",
+    )
+    # Listed first and with no remote of its own: the trunk's entry names it.
+    branch = repo_config(
+        namespace="code-widgets-26-1",
+        repo="Acme/Widgets",
+        git_branch="release-26.1",
+    )
+
+    async def no_refresh(**kw):
+        return []
+
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", no_refresh)
+    monkeypatch.setattr(repos, "configured_repos", lambda: [branch, trunk])
+    monkeypatch.setattr(repo_scope, "configured_repos", lambda: [branch, trunk])
+    want = ("code-widgets", repo_tag("https://github.com/acme/widgets.git"))
+    assert repo_scope.repo_trunk("o", "acme/widgets") == want
+    assert repo_scope.repo_trunk("o", "git@github.com:Acme/Widgets.git") == want
+    assert repo_scope.repo_trunk("other-org", "acme/widgets") == ("", "")
+    assert repo_scope.repo_trunk("o", "widgets") == ("", "")
+    assert repo_scope.repo_names("o") == {want[1]: ("acme/widgets", "code-widgets")}
+
+
+@pytest.mark.parametrize(
+    ("fields", "action"),
+    [({}, "unchanged"), ({"realized_outcome": "shipped"}, "outcome_known")],
+    ids=["pinned", "outcome recorded"],
+)
+@pytest.mark.asyncio
+async def test_a_row_kept_as_it_is_gains_the_repo_tag_by_a_tag_write(
+    monkeypatch, capsys, fields: dict[str, Any], action: str
+) -> None:
+    """A pinned row, or one whose outcome is recorded, is not recorded again: the
+    repository's tag reaches it by a tags-only write, so the pre-edit block serves it."""
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        _same_fields(c) | fields,
+        files=[HEADER],
+        tags=["decision", SOURCE_CHANGED],
+        pinned=not fields,
+    )
+    _link_repo(monkeypatch, world)
+    dry = await _run(dry_run=True, repo="acme/widgets")
+    cli.print_report(dry)
+    assert f"would tag {REPO_TAG}" in capsys.readouterr().out and world.updates == []
+    report = await _run(repo="acme/widgets")
+    assert world.recorded == []
+    (upd,) = world.updates
+    assert sorted(upd.tags) == sorted(["decision", REPO_TAG])
+    (rec,) = report.records
+    assert rec.action == action
+    assert rec.note.endswith(f"source-changed cleared; tagged {REPO_TAG}")
+
+
+@pytest.mark.asyncio
+async def test_a_contradicted_pinned_row_is_flagged_and_tagged_in_one_write(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        _same_fields(c) | {"reasoning": "We spill like ORDER BY does."},
+        files=[HEADER],
+        pinned=True,
+    )
+    _link_repo(monkeypatch, world)
+    report = await _run(repo="acme/widgets")
+    (upd,) = world.updates
+    assert set(upd.tags) == {"decision", REPO_TAG, SOURCE_CHANGED}
+    assert [r.action for r in report.records] == ["flagged"]
+
+
+@pytest.mark.parametrize(
+    ("kw", "home", "error"),
+    [
+        (
+            {"repo": "acme/widgets", "into": "repo"},
+            "ns",
+            "this document's decisions are in o/ns; run as the run that wrote "
+            "them (with no --repo, or its --repo and --into), or delete them there first",
+        ),
+        (
+            {"repo": "acme/widgets", "into": "source"},
+            TRUNK,
+            f"this document's decisions are in o/{TRUNK}; run as the run that wrote "
+            "them (with no --repo, or its --repo and --into), or delete them there first",
+        ),
+    ],
+    ids=["to the trunk", "to the source"],
+)
+@pytest.mark.asyncio
+async def test_a_run_that_would_leave_the_documents_rows_behind_refuses(
+    monkeypatch, kw: dict[str, Any], home: str, error: str
+) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), namespace=home, files=[HEADER])
+    _link_repo(monkeypatch, world)
+    report = await _run(**kw)
+    assert report.error == error
+    assert world.prompts == [] and world.recorded == [] and world.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_a_run_without_repo_refuses_over_rows_linked_to_a_repository(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), files=[HEADER], tags=["decision", REPO_TAG])
+    _link_repo(monkeypatch, world)
+    from server.code.app import repo_scope
+
+    monkeypatch.setattr(repo_scope, "repo_names", lambda org: {REPO_TAG: ("acme/widgets", TRUNK)})
+    report = await _run()
+    # The repository by its name, which --repo takes.
+    assert report.error.startswith(
+        "this document's decisions are linked to a repository (acme/widgets)"
+    )
+    assert world.prompts == [] and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_row_the_model_did_not_emit_again_gains_the_repo_tag(monkeypatch, capsys) -> None:
+    """Its reasoning is still in the document, so the retire step keeps it, linked."""
+    world = _World(monkeypatch, [])
+    world.record(
+        "decision:kept",
+        {"reasoning": "A plain set on disk costs random reads.", "outcome": "no plain set"},
+        files=[HEADER],
+    )
+    _link_repo(monkeypatch, world)
+    dry = await _run(dry_run=True, repo="acme/widgets")
+    assert dry.linked == ["decision:kept"] and world.updates == []
+    cli.print_report(dry)
+    assert "- would tag decision:kept with the repository" in capsys.readouterr().out
+    report = await _run(repo="acme/widgets")
+    (upd,) = world.updates
+    assert upd.tags == ["decision", REPO_TAG]
+    assert report.linked == ["decision:kept"] and world.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_a_kept_row_whose_reasoning_left_is_flagged_and_tagged(monkeypatch) -> None:
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone from the deck"}, pinned=True)
+    _link_repo(monkeypatch, world)
+    report = await _run(repo="acme/widgets")
+    (upd,) = world.updates
+    assert set(upd.tags) == {"decision", SOURCE_CHANGED, REPO_TAG}
+    assert report.flagged == ["decision:gone"] and report.linked == ["decision:gone"]
+
+
+@pytest.mark.asyncio
+async def test_a_flagged_and_tagged_row_says_so(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        _same_fields(c) | {"reasoning": "We spill like ORDER BY does."},
+        files=[HEADER],
+        pinned=True,
+    )
+    _link_repo(monkeypatch, world)
+    (rec,) = (await _run(repo="acme/widgets")).records
+    assert rec.action == "flagged" and rec.note.endswith(f"tagged {REPO_TAG}")
+
+
+@pytest.mark.parametrize(
+    ("refused", "error"),
+    [
+        (
+            frozenset(),
+            f"this document's decisions are in o/{TRUNK}; run as the run that wrote "
+            "them (with no --repo, or its --repo and --into), or delete them there first",
+        ),
+        # Whether rows are there is not told to a caller who cannot read the trunk.
+        (
+            frozenset({(TRUNK, "viewer")}),
+            "this document's namespace belongs to a repository you may not read",
+        ),
+    ],
+    ids=["rows in the trunk", "trunk unreadable"],
+)
+@pytest.mark.asyncio
+async def test_a_run_without_repo_in_a_branch_namespace_checks_its_trunk(
+    monkeypatch, refused: frozenset[tuple[str, str]], error: str
+) -> None:
+    from server.code.app import repo_scope
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), namespace=TRUNK, files=[HEADER])
+    _link_repo(monkeypatch, world, refused=refused)
+    # The document is in a release branch's code namespace whose trunk is TRUNK.
+    monkeypatch.setattr(repo_scope, "trunk_namespace_of", lambda org, ns: TRUNK)
+    report = await _run()
+    assert report.error == error
+    assert world.prompts == [] and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_run_with_another_repo_refuses_over_rows_linked_to_the_first(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), files=[HEADER], tags=["decision", REPO_TAG])
+    _link_repo(monkeypatch, world)
+    report = await _run(repo="acme/gadgets", into="source")
+    # The tag names no configured repository here, so the run prints the tag itself.
+    assert report.error == (
+        f"this document's decisions are linked to a repository ({REPO_TAG}); run with its "
+        "--repo and --into source, or delete them first"
+    )
+    assert world.prompts == [] and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_needs_only_read_where_the_rows_go(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    _link_repo(monkeypatch, world, refused=frozenset({(TRUNK, "writer")}))
+    dry = await _run(dry_run=True, repo="acme/widgets", into="repo")
+    assert dry.error == "" and [r.action for r in dry.records] == ["written"]
+    applied = await _run(repo="acme/widgets", into="repo")
+    assert applied.error == f"not allowed to write o/{TRUNK}" and world.recorded == []
+
+
+@pytest.mark.parametrize("repo", ["acme/widgets", "acme/bare"], ids=["tagged repo", "no remote"])
+@pytest.mark.asyncio
+async def test_rows_in_the_repositorys_own_namespace_carry_no_tag(monkeypatch, repo: str) -> None:
+    """A document in the trunk: --into source writes to the trunk, served there untagged,
+    whether or not the repository has a remote to tag rows with."""
+    world = _World(monkeypatch, [_candidate()])
+    _link_repo(monkeypatch, world, code_namespaces=frozenset({TRUNK}))
+    await de.extract_document("o", TRUNK, "doc.md", dry_run=False, repo=repo, into="source")
+    (inp,) = world.recorded
+    assert inp.namespace == TRUNK and not [t for t in inp.tags if t.startswith("repo:")]
+
+
+@pytest.mark.asyncio
+async def test_another_writers_unfrozen_row_is_not_tagged(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), agent="claude-code", files=[HEADER])
+    _link_repo(monkeypatch, world)
+    report = await _run(repo="acme/widgets")
+    assert world.updates == [] and world.recorded == []
+    assert [r.action for r in report.records] == ["unchanged"]
+
+
+@pytest.mark.asyncio
+async def test_a_flagged_row_whose_reasoning_left_gains_the_repo_tag(monkeypatch, capsys) -> None:
+    world = _World(monkeypatch, [])
+    world.record(
+        "decision:gone",
+        {"reasoning": "gone from the deck"},
+        pinned=True,
+        tags=["decision", SOURCE_CHANGED],
+    )
+    _link_repo(monkeypatch, world)
+    report = await _run(repo="acme/widgets")
+    (upd,) = world.updates
+    assert set(upd.tags) == {"decision", SOURCE_CHANGED, REPO_TAG}
+    assert report.linked == ["decision:gone"] and report.flagged == []
+    cli.print_report(report)
+    assert "- tagged decision:gone with the repository\n" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_run_without_repo_reads_the_registry_for_a_branchs_trunk(monkeypatch) -> None:
+    """A repository added from the dashboard is known only once the snapshot is read: the
+    run reads it before looking up the trunk of the document's branch namespace."""
+    from server.code.app.index import repo_registry
+    from server.code.domain.index.repos import set_registry_repos
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    entries = [
+        repo_config(
+            namespace=ns,
+            repo="acme/widgets",
+            git_remote="https://github.com/acme/widgets.git",
+            git_branch=branch,
+            source="registry",
+        )
+        for ns, branch in ((TRUNK, "main"), ("ns", "release-26.1"))
+    ]
+
+    async def refresh(**kw):
+        set_registry_repos(entries)
+        return entries
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), namespace=TRUNK, files=[HEADER])
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", refresh)
+    set_registry_repos([])
+    try:
+        report = await _run()
+    finally:
+        set_registry_repos([])
+    assert report.error == (
+        f"this document's decisions are in o/{TRUNK}; run as the run that wrote "
+        "them (with no --repo, or its --repo and --into), or delete them there first"
+    )
+    assert world.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_a_run_refuses_when_the_dashboards_repositories_could_not_be_read(
+    monkeypatch,
+) -> None:
+    from server.code.app.index import repo_registry
+
+    world = _World(monkeypatch, [_candidate()])
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
+    report = await _run()
+    assert report.error == "could not read the repositories added from the dashboard; try again"
+    assert world.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_a_linked_repository_the_caller_may_not_read_stays_a_tag(monkeypatch) -> None:
+    from server.code.app import repo_scope
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), files=[HEADER], tags=["decision", REPO_TAG])
+    _link_repo(monkeypatch, world, refused=frozenset({(TRUNK, "viewer")}))
+    monkeypatch.setattr(repo_scope, "repo_names", lambda org: {REPO_TAG: ("acme/widgets", TRUNK)})
+    report = await _run()
+    assert report.error.startswith(
+        f"this document's decisions are linked to a repository ({REPO_TAG})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_another_writers_flagged_row_is_cleared_but_not_tagged(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        _same_fields(c),
+        agent="claude-code",
+        files=[HEADER],
+        tags=["decision", SOURCE_CHANGED],
+    )
+    _link_repo(monkeypatch, world)
+    await _run(repo="acme/widgets")
+    (upd,) = world.updates
+    assert upd.tags == ["decision"]
+
+
+@pytest.mark.asyncio
+async def test_a_run_naming_another_repo_checks_the_branchs_own_trunk(monkeypatch) -> None:
+    """A document in a branch namespace whose rows went to that repository's trunk: a run
+    naming another repository sees them there."""
+    from server.code.app import repo_scope
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), namespace=TRUNK, files=[HEADER])
+    _link_repo(monkeypatch, world, code_namespaces=frozenset({"ns"}))
+    monkeypatch.setattr(repo_scope, "trunk_namespace_of", lambda org, ns: TRUNK)
+    report = await _run(repo="acme/gadgets")
+    assert report.error == (
+        f"this document's decisions are in o/{TRUNK}; run as the run that wrote "
+        "them (with no --repo, or its --repo and --into), or delete them there first"
+    )
+    assert world.prompts == [] and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_frozen_row_linked_to_another_repository_keeps_only_its_link(
+    monkeypatch,
+) -> None:
+    """A pinned row another writer linked to another repository is flagged, never linked
+    to a second one."""
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        _same_fields(c) | {"reasoning": "We spill like ORDER BY does."},
+        agent="claude-code",
+        files=[HEADER],
+        pinned=True,
+        tags=["decision", "repo:9999999999"],
+    )
+    _link_repo(monkeypatch, world)
+    await _run(repo="acme/widgets")
+    (upd,) = world.updates
+    assert set(upd.tags) == {"decision", "repo:9999999999", SOURCE_CHANGED}
+
+
+@pytest.mark.asyncio
+async def test_into_source_refuses_a_document_in_another_repositorys_namespace(
+    monkeypatch,
+) -> None:
+    from server.code.app import repo_scope
+
+    world = _World(monkeypatch, [_candidate()])
+    _link_repo(monkeypatch, world, code_namespaces=frozenset({"ns"}))
+    # "ns" is a code namespace of another repository, whose trunk is code-gadgets.
+    monkeypatch.setattr(repo_scope, "trunk_namespace_of", lambda org, ns: "code-gadgets")
+    report = await _run(repo="acme/widgets", into="source")
+    assert report.error == (
+        "the document is in another repository's code namespace; use --into repo"
+    )
+    assert world.prompts == []
+    # Into the named repository's trunk, it runs.
+    assert (await _run(repo="acme/widgets", into="repo")).error == ""
+
+
+@pytest.mark.asyncio
+async def test_a_caller_who_cannot_read_the_documents_namespace_learns_nothing_of_it(
+    monkeypatch,
+) -> None:
+    """Refused before anything the namespace is (a code namespace, another repository's)
+    shapes the answer."""
+    from server.code.app import repo_scope
+
+    world = _World(monkeypatch, [_candidate()])
+    _link_repo(
+        monkeypatch, world, refused=frozenset({("ns", "viewer")}), code_namespaces=frozenset({"ns"})
+    )
+    monkeypatch.setattr(repo_scope, "trunk_namespace_of", lambda org, ns: "code-gadgets")
+    for into in (None, "source", "repo"):
+        report = await _run(repo="acme/widgets", into=into)
+        assert report.error == "not allowed to read o/ns"
+
+
+@pytest.mark.asyncio
+async def test_into_source_on_a_branch_of_the_same_repository_stays_tagged_there(
+    monkeypatch,
+) -> None:
+    """Through the real registry: a document in a release branch's namespace of the named
+    repository keeps its rows there, tagged, with its names resolved in the trunk."""
+    from server.code.app import symbol as code_symbol
+    from server.code.domain.index.remote import repo_tag
+    from server.code.domain.index.repos import set_registry_repos
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    remote = "https://github.com/acme/widgets.git"
+    entries = [
+        repo_config(
+            namespace=ns, repo="acme/widgets", git_remote=remote, git_branch=b, source="registry"
+        )
+        for ns, b in ((TRUNK, "main"), ("ns", "release-26.1"))
+    ]
+    world = _World(monkeypatch, [_candidate()])
+    looked_up: list[str] = []
+    symbol = code_symbol.handle_code_symbol
+
+    async def code_symbol_handler(inp):
+        looked_up.append(inp.namespace)
+        return await symbol(inp)
+
+    monkeypatch.setattr(code_symbol, "handle_code_symbol", code_symbol_handler)
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    set_registry_repos(entries)
+    try:
+        report = await _run(repo="acme/widgets", into="source")
+    finally:
+        set_registry_repos([])
+    assert report.error == ""
+    (inp,) = world.recorded
+    assert inp.namespace == "ns" and repo_tag(remote) in inp.tags
+    assert looked_up == [TRUNK]

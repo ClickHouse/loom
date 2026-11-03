@@ -349,11 +349,11 @@ The erasure saga does not cover these copies.
   a delete, a write of another width, a write the delta cannot pick up (a version below
   the twin's highest, or a row under a key the twin holds on a table without a version
   column), and any change to a row's columns that keeps its key and version, the rebuilt
-  vectors included, such as a lightweight `UPDATE` (the quarantine `memory.reject` writes)
-  or an erasure tombstone, whether or not its patch part is still there. Any other insert
-  is copied in and the swap goes ahead: the window, not the tool, keeps writers out. The
-  gate also fails on any source mutation still running or created since the copy started
-  (with `--reuse`, since the twin was created), less a minute for replica clocks.
+  vectors included, such as a lightweight `UPDATE` or an erasure tombstone, whether or
+  not its patch part is still there. Any other insert is copied in and the swap goes
+  ahead: the window, not the tool, keeps writers out. The gate also fails on any source
+  mutation still running or created since the copy started (with `--reuse`, since the
+  twin was created), less a minute for replica clocks.
 - **After the swap (exit 7).** The tool runs the consistency check again, the rollback
   copy as the source and the new table as the twin, with the same read settings and
   replica check as the last gate reads, and counts both tables' mutations since the

@@ -1,7 +1,7 @@
 {
   "name": "loom",
   "displayName": "Loom",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "Shared long-term memory and code intelligence for Claude Code, self-hosted on ClickHouse. MCP tools to save and recall decisions, preferences and corrections across sessions and teammates; lifecycle hooks that capture each session with no model call; a code index that answers where-is, who-calls and blast-radius questions with line-accurate units instead of whole-file reads.",
   "author": {
     "name": "Loom"

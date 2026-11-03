@@ -132,6 +132,13 @@ def test_host_accepts_a_url_or_a_bare_hostname() -> None:
     assert sources.host_of("x.example.com") == "x.example.com" and sources.host_of("  ") == ""
 
 
+def test_host_drops_userinfo_from_a_url() -> None:
+    """A credential typed into the host never becomes part of the stored host."""
+    assert sources.host_of("https://user:pw@x.example.com:8443/") == "x.example.com"
+    assert sources.host_of("tok@x.example.com") == "x.example.com"
+    assert sources.host_of("x.example.com#@y.example.com") == "x.example.com"
+
+
 @pytest.mark.asyncio
 async def test_an_upstream_quota_refusal_is_unavailable_but_leaves_the_breaker_closed(
     monkeypatch,

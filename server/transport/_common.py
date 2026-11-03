@@ -3,6 +3,8 @@ budget violations, op audits."""
 
 from __future__ import annotations
 
+import re
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from server.auth.context import current_auth
@@ -72,6 +74,19 @@ def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
     if auth.read_user_id:
         out["user_id"] = auth.read_user_id
     return out
+
+
+# The request id is the second word of the query tag, so a caller's id is used only
+# when it is one short token.
+_CALLER_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+def request_id_from(header: str | None) -> str:
+    """The caller's `X-Request-Id` when it is 1-64 letters, digits, `.`, `_` or `-`;
+    otherwise a fresh uuid, which the response echoes in its place."""
+    if header and _CALLER_REQUEST_ID.fullmatch(header):
+        return header
+    return str(uuid.uuid4())
 
 
 def bind_request(op_name: str, request_id: str) -> None:

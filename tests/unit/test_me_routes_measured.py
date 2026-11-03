@@ -8,6 +8,7 @@ and one `me.<route>` ledger row carrying the verified caller.
 
 from __future__ import annotations
 
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -80,3 +81,14 @@ def test_a_refused_me_route_is_a_failed_row_and_other_paths_pass_through(
     r2 = client.get("/v1/other")
     assert r2.status_code == 200 and "Server-Timing" not in r2.headers
     assert not [e for e in captured if e.operation == "me.other"]
+
+
+def test_a_request_id_that_is_not_a_token_is_replaced_on_the_response_and_the_row(
+    app_and_events: tuple[FastAPI, list],
+) -> None:
+    app, captured = app_and_events
+    r = TestClient(app).get("/v1/me/ping", headers={"X-Request-Id": "two words"})
+    made = r.headers["X-Request-Id"]
+    assert made != "two words" and str(uuid.UUID(made)) == made
+    (ev,) = [e for e in captured if e.operation.startswith("me.")]
+    assert ev.request_id == made

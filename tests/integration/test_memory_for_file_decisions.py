@@ -1,5 +1,5 @@
 """memory.for_file against a live server: a decision row written through memory.set is
-rendered in the pre-edit block with its head, its confirmation state and its source."""
+rendered in the pre-edit block with its head, its pin state and its source."""
 
 from __future__ import annotations
 
@@ -36,13 +36,12 @@ def _poll(
     return out
 
 
-def test_decision_rows_name_their_source_and_whether_they_are_confirmed(
+def test_decision_rows_name_their_source_and_whether_they_are_pinned(
     control_plane_url: str, mint_test_token: Any
 ) -> None:
     token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer"])
     own, team = "dev", "team-rules"
     base = {"org": ORG, "agent": "claude-code", "memory_type": "decision", "files": ["src/a.cpp"]}
-    # pinned the way a maintainer confirms a decision: memory.pin
     _post(
         control_plane_url,
         "memory.pin",
@@ -72,13 +71,10 @@ def test_decision_rows_name_their_source_and_whether_they_are_confirmed(
     assert ") (pinned): " in lines[1]
     assert "bounded" in lines[1]
     assert lines[1].endswith(f" — source: {SOURCE} [id: design/spill]")
-    assert (
-        lines[2].startswith("- design/draft [decision] (unconfirmed): ")
-        and "source:" not in lines[2]
-    )
+    assert lines[2].startswith("- design/draft [decision]: ") and "source:" not in lines[2]
     assert [h["source_resource_id"] for h in out["hits"]] == [SOURCE, ""]
 
-    # an attestation through memory.verify confirms the unpinned decision
+    # an attestation through memory.verify is read into the hit and adds no mark
     _post(
         control_plane_url,
         "memory.verify",
@@ -118,7 +114,7 @@ def test_a_recorded_decision_reads_as_its_statement_before_an_edit(
     out = _poll(control_plane_url, token, request, lambda out: out["total"] == 1)
     assert out["total"] == 1, out
     assert out["rendered"].splitlines()[1] == (
-        f"- {key} [decision] (unconfirmed): Spill the final distinct? "
+        f"- {key} [decision]: Spill the final distinct? "
         f"Decided spill it because memory is bounded. — source: {SOURCE}"
     )
 
