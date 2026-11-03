@@ -1210,8 +1210,12 @@ _THRESHOLDS = {
     ),
     "index_backlog": (
         1,
-        (na.INDEX_GRACE_SECONDS, na.EMBED_HOLDS),
-        (600, ("model call held", "MODEL_CALL_UNATTRIBUTED: the row names no org to bill")),
+        (na.INDEX_GRACE_SECONDS, na.EMBED_HOLDS, tuple(sorted(na.NON_SEARCHABLE_TYPES))),
+        (
+            600,
+            ("model call held", "MODEL_CALL_UNATTRIBUTED: the row names no org to bill"),
+            ("episodic", "profile"),
+        ),
     ),
     "telemetry_unavailable": (
         1,
@@ -1555,6 +1559,14 @@ async def test_a_held_model_call_is_a_backlog_and_an_empty_row_is_neither() -> N
     assert [s["memory_key"] for s in backlog.samples] == ["held/row"]
     assert backlog.severity == "warning"  # older than the grace
     assert [s["memory_key"] for s in _finding(audit, "unembedded_rows").samples] == ["failed/row"]
+
+
+def test_the_backlog_grace_is_validates_default() -> None:
+    from server.identity.api.models_namespace_catalog import NamespaceValidateInput
+
+    assert (
+        na.INDEX_GRACE_SECONDS == NamespaceValidateInput.model_fields["embed_grace_seconds"].default
+    )
 
 
 def test_the_held_markers_are_the_embedding_workers() -> None:
