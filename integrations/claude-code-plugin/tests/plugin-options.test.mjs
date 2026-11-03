@@ -70,13 +70,13 @@ test("applyPluginOptions writes token + url once, 0600, merging other keys", () 
   assert.equal(r2.reason, "config has a token");
   assert.equal(r2.configUrl, "https://loom.test");
   assert.equal(r2.configHasToken, true);
-  // a config with other keys but no token is merged, its own url kept
+  // a config with other keys but no token is merged; the url follows the token it is for
   fs.writeFileSync(configPath, JSON.stringify({ namespace: "keep", url: "https://mine" }));
   const r3 = applyPluginOptions(env, { configPath, tokenPath });
   assert.equal(r3.write, true);
   assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")), {
     namespace: "keep",
-    url: "https://mine",
+    url: "https://loom.test",
     token: "opt.tok",
   });
   // a token file present → not written
@@ -110,26 +110,16 @@ test("mcpServerUrl follows the MCP entry: the option, then LOOM_BASE_URL, then l
 });
 
 test("the hook saves the install URL for the status script, removes it when the option is gone", () => {
-  // The state path is fixed at import (keyed by the plugin root), so the
-  // round trip runs in the real tmp and always restores the prior state.
-  const before = installServerUrl();
-  const baseUrl = process.env.LOOM_BASE_URL;
-  delete process.env.LOOM_BASE_URL;
-  try {
-    saveInstallServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://b/" });
-    assert.equal(installServerUrl(), "https://b");
-    assert.equal(statusServerUrl(), "https://b");
-    process.env.LOOM_BASE_URL = "https://env/";
-    assert.equal(statusServerUrl(), "https://env");
-    delete process.env.LOOM_BASE_URL;
-    saveInstallServerUrl({});
-    assert.equal(installServerUrl(), "");
-    assert.equal(statusServerUrl(), resolveServerUrl()); // the hooks' server, whatever this machine's is
-  } finally {
-    saveInstallServerUrl(before ? { CLAUDE_PLUGIN_OPTION_SERVER_URL: before } : {});
-    if (baseUrl === undefined) delete process.env.LOOM_BASE_URL;
-    else process.env.LOOM_BASE_URL = baseUrl;
-  }
+  const state = { tmp: tmp() };
+  assert.equal(installServerUrl(state), "");
+  saveInstallServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://b/" }, state);
+  assert.equal(installServerUrl(state), "https://b");
+  // the MCP entry's order: the saved option first, then LOOM_BASE_URL
+  assert.equal(statusServerUrl({ env: { LOOM_BASE_URL: "https://env/" }, ...state }), "https://b");
+  saveInstallServerUrl({}, state);
+  assert.equal(installServerUrl(state), "");
+  assert.equal(statusServerUrl({ env: { LOOM_BASE_URL: "https://env/" }, ...state }), "https://env");
+  assert.equal(statusServerUrl({ env: {}, ...state }), resolveServerUrl()); // the hooks' server, whatever this machine's is
 });
 
 test("resolvers: the option ranks after the env var and before the files", async () => {

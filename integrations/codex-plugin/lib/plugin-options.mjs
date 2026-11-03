@@ -38,26 +38,28 @@ export function mcpServerUrl(env = process.env) {
 
 /** One state file per installed plugin: the Codex copy of these scripts
  *  keeps its own, and never writes it (Codex passes no option). */
-const INSTALL_URL_STATE = tmpStatePath("install", fileURLToPath(new URL("..", import.meta.url)));
+const PLUGIN_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const installStatePath = (tmp) => tmpStatePath("install", PLUGIN_ROOT, tmp ? { tmp } : {});
 
 /** The SessionStart hook saves the install option's URL for the status
  *  script, which the agent runs from a shell that carries no option; an
  *  install without the option removes a stale one. */
-export function saveInstallServerUrl(env = process.env) {
+export function saveInstallServerUrl(env = process.env, { tmp } = {}) {
   const url = normalizeUrl(env.CLAUDE_PLUGIN_OPTION_SERVER_URL);
-  if (url) writeJsonFile(INSTALL_URL_STATE, { url });
-  else removeFile(INSTALL_URL_STATE);
+  if (url) writeJsonFile(installStatePath(tmp), { url });
+  else removeFile(installStatePath(tmp));
 }
 
 /** The saved install URL, "" when no session saved one. */
-export function installServerUrl() {
-  return String(readJsonFile(INSTALL_URL_STATE, {}).url || "");
+export function installServerUrl({ tmp } = {}) {
+  return String(readJsonFile(installStatePath(tmp), {}).url || "");
 }
 
-/** The server the status script checks: what the hooks use, with the saved
- *  install URL standing in for the option the agent's shell lacks. */
-export function statusServerUrl() {
-  return normalizeUrl(process.env.LOOM_BASE_URL || installServerUrl() || resolveServerUrl());
+/** The server the status script checks: the one the MCP entry calls, with
+ *  the saved install URL standing in for the option the agent's shell
+ *  lacks; the hooks' server when neither names one. */
+export function statusServerUrl({ env = process.env, tmp } = {}) {
+  return normalizeUrl(installServerUrl({ tmp }) || env.LOOM_BASE_URL || resolveServerUrl());
 }
 
 /** What a run would do, without doing it: {write, url, reason}. Pure. */
@@ -103,8 +105,10 @@ export function applyPluginOptions(env = process.env, paths = {}) {
   plan.configHasToken = Boolean(String(existing.token || "").trim());
   if (!plan.write) return plan;
   try {
+    // The token goes in beside the server it is for, over a url another
+    // install left: the notice and the status check read them as a pair.
     const patch = { token: String(env.CLAUDE_PLUGIN_OPTION_TOKEN).trim() };
-    if (plan.url && !existing.url) patch.url = plan.url;
+    if (plan.url) patch.url = plan.url;
     writeConfigMerged(configPath, patch);
     return { ...plan, path: configPath };
   } catch (e) {

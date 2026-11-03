@@ -268,9 +268,6 @@ export function resolveCodeRepo(env = process.env) {
   return String(env.LOOM_CODE_REPO || env.CLAUDE_PLUGIN_OPTION_CODE_REPO || loomConfig().code_repo || "").trim();
 }
 
-/** Base URL of the Loom control plane: env, then the plugin's install-time
- *  option, then ~/.loom/config.json, then the plugin's shipped
- *  default, then localhost. */
 /** A base URL as the hooks compare and send it: trimmed, no trailing slash. */
 export function normalizeUrl(url) {
   return String(url || "")
@@ -278,6 +275,9 @@ export function normalizeUrl(url) {
     .replace(/\/+$/, "");
 }
 
+/** Base URL of the Loom control plane: env, then the plugin's install-time
+ *  option, then ~/.loom/config.json, then the plugin's shipped
+ *  default, then localhost. */
 export function resolveServerUrl() {
   return normalizeUrl(
     process.env.LOOM_BASE_URL ||

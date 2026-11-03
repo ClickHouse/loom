@@ -27,16 +27,18 @@ async function server() {
   return { srv, url: `http://127.0.0.1:${srv.address().port}` };
 }
 
-function run(url, { args = [], env = {} } = {}) {
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-notice-")));
-  fs.mkdirSync(path.join(home, ".loom"), { recursive: true });
-  fs.writeFileSync(path.join(home, ".loom", "config.json"), JSON.stringify({ token: "cfg.tok", url: SAVED_FOR }), {
-    mode: 0o600,
-  });
+function home(config) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-notice-")));
+  fs.mkdirSync(path.join(dir, ".loom"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".loom", "config.json"), JSON.stringify(config), { mode: 0o600 });
+  return dir;
+}
+
+function run(dir, env, args = []) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [HOOK, ...args], {
-      cwd: home,
-      env: { PATH: process.env.PATH, HOME: home, TMPDIR: home, LOOM_BASE_URL: url, LOOM_CODE_MAP: "false", ...env },
+      cwd: dir,
+      env: { PATH: process.env.PATH, HOME: dir, TMPDIR: dir, LOOM_CODE_MAP: "false", ...env },
     });
     let stdout = "";
     child.stdout.on("data", (c) => (stdout += c));
@@ -45,22 +47,46 @@ function run(url, { args = [], env = {} } = {}) {
   });
 }
 
+const NOTICE = "holds a token saved for";
+
 test("the primer names the mismatch in Claude Code, and not for Codex or an agent", async () => {
   const { srv, url } = await server();
+  const dirs = [];
+  const session = (env, args) => {
+    const dir = home({ token: "cfg.tok", url: SAVED_FOR });
+    dirs.push(dir);
+    return run(dir, { LOOM_BASE_URL: url, ...env }, args);
+  };
   try {
-    const claude = await run(url);
-    assert.match(
-      claude,
-      new RegExp(`holds a token saved for ${SAVED_FOR}, which the loom MCP tools send to ${url}\\.`),
-    );
+    const claude = await session({});
+    assert.ok(claude.includes(`${NOTICE} ${SAVED_FOR}, which the loom MCP tools send to ${url}.`), claude);
     assert.equal(claude.includes("cfg.tok"), false);
-    const codex = await run(url, { args: ["SessionStart", "codex"] });
+    const codex = await session({}, ["SessionStart", "codex"]);
     assert.ok(codex.length > 0, "the Codex primer still renders");
-    assert.equal(codex.includes("holds a token saved for"), false);
-    const agent = await run(url, { env: { LOOM_CLIENT_ID: "ci", LOOM_WORKLOAD_TOKEN: "proof" } });
+    assert.equal(codex.includes(NOTICE), false);
+    const agent = await session({ LOOM_CLIENT_ID: "ci", LOOM_WORKLOAD_TOKEN: "proof" });
     assert.ok(agent.length > 0, "the agent primer still renders");
-    assert.equal(agent.includes("holds a token saved for"), false);
+    assert.equal(agent.includes("could not be exchanged"), false, "the exchange succeeded");
+    assert.equal(agent.includes(NOTICE), false);
   } finally {
     srv.close();
+    for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an install token written over a config that named another server is saved beside its own", async () => {
+  const { srv, url } = await server();
+  const dir = home({ url: SAVED_FOR });
+  const env = { CLAUDE_PLUGIN_OPTION_SERVER_URL: url, CLAUDE_PLUGIN_OPTION_TOKEN: "opt.tok" };
+  try {
+    const first = await run(dir, env);
+    assert.equal(first.includes(NOTICE), false, "the session that writes the token says nothing");
+    const written = JSON.parse(fs.readFileSync(path.join(dir, ".loom", "config.json"), "utf8"));
+    assert.deepEqual(written, { url, token: "opt.tok" });
+    const second = await run(dir, env);
+    assert.equal(second.includes(NOTICE), false, "the saved token is the one the MCP entry sends");
+  } finally {
+    srv.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
