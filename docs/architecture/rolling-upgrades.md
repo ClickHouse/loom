@@ -285,7 +285,7 @@ schema. These rules keep that safe. The operator procedure is in
     this rule.
 
 27. **An erasure saga's audit actor** (`loom.erasure_requests.actor`, migration
-    `080_erasure_request_actor.sql`): N-1 inserts ledger rows without the column, so a
+    `081_erasure_request_actor.sql`): N-1 inserts ledger rows without the column, so a
     saga it checkpoints reads `''` afterwards, and a later resume by N names the resuming
     process (`erasure-recovery-worker` or the CLI command) on its failed and completed
     rows instead of the principal that asked. N-1 also still writes the body's
