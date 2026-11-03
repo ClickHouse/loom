@@ -8,7 +8,8 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
-from server.memory.store.dedup import CanonicalRef, DuplicateCluster, KeyedRow
+from server.memory.store.dedup import CanonicalRef, DuplicateCluster
+from server.memory.store.rows import MemoryRow
 
 
 @pytest.mark.asyncio
@@ -63,220 +64,165 @@ async def test_memory_dedup_list_enriches_with_canonical(
     assert [d.memory_key for d in c.duplicates] == ["key_A", "key_B"]
 
 
-def _row(mid: str, key: str) -> dict[str, Any]:
-    return {
+CANON = "11111111-1111-1111-1111-111111111111"
+DUP = "22222222-2222-2222-2222-222222222222"
+
+
+def _row(mid: str, key: str, **over: Any) -> MemoryRow:
+    base: dict[str, Any] = {
         "memory_id": mid,
-        "memory_key": key,
+        "org": "clickhouse",
+        "namespace": "finance",
         "agent": "a",
         "user_id": "u",
         "session_id": "s",
-        "status": "duplicate",
-        "duplicate_of": "canon-uuid",
+        "memory_key": key,
+        "memory_type": "semantic",
+        "value": "v",
+        "confidence": 0.8,
+        "version": 1,
+        "pinned": False,
         "created_at": datetime(2026, 5, 18),
+        "expires_at": None,
+    }
+    return MemoryRow(**(base | over))
+
+
+def _pair(**dup_over: Any) -> dict[str, MemoryRow]:
+    """A canonical row and its duplicate; both share key `k` under two agents."""
+    return {
+        CANON: _row(CANON, "k", agent="writer-1"),
+        DUP: _row(
+            DUP,
+            "k",
+            **({"agent": "writer-2", "status": "duplicate", "duplicate_of": CANON} | dup_over),
+        ),
     }
 
 
-@pytest.mark.asyncio
-async def test_resolve_keep_canonical_tombstones_duplicate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _fake_store(
+    monkeypatch: pytest.MonkeyPatch, rows: dict[str, MemoryRow]
+) -> tuple[list[str], list[str]]:
     from server.memory import store as memory_repo
-    from server.memory.api.models_graph import MemoryDedupResolveInput
-    from server.memory.app.dedup import handle_memory_dedup_resolve
-
-    fake_rows = {
-        "canon_key": _row("canon-uuid", "canon_key"),
-        "dup_key": _row("dup-uuid", "dup_key"),
-    }
-
-    async def fake_find(org, ns, key, *, ch=None):
-        return KeyedRow.from_row(fake_rows.get(key))
 
     tombstoned: list[str] = []
+    cleared: list[str] = []
 
-    async def fake_tombstone(org, mid, *, ch=None):
+    async def fake_get_by_id(memory_id: str, **_k: Any) -> MemoryRow | None:
+        return rows.get(memory_id)
+
+    async def fake_tombstone(org: str, mid: str, *, ch: Any = None) -> list[Any]:
         tombstoned.append(mid)
         return []
 
-    clear_calls: list[str] = []
-
-    async def fake_clear(org, mid, *, ch=None):
-        clear_calls.append(mid)
-
-    monkeypatch.setattr(memory_repo, "find_row_by_key_namespace", fake_find)
-    monkeypatch.setattr(memory_repo, "tombstone_by_id", fake_tombstone)
-
-    async def fake_get_by_id(*_a, **_k):  # the lock guard reads the head
-        return None
+    async def fake_clear(org: str, mid: str, *, ch: Any = None) -> None:
+        cleared.append(mid)
 
     monkeypatch.setattr(memory_repo, "get_by_id", fake_get_by_id)
+    monkeypatch.setattr(memory_repo, "tombstone_by_id", fake_tombstone)
     monkeypatch.setattr(memory_repo, "clear_duplicate_tag", fake_clear)
+    return tombstoned, cleared
 
-    out = await handle_memory_dedup_resolve(
-        MemoryDedupResolveInput(
-            org="clickhouse",
-            namespace="finance",
-            canonical_key="canon_key",
-            duplicate_key="dup_key",
-            decision="keep_canonical",
-            confirm_canonical_key="canon_key",
-        )
-    )
+
+def _resolve_input(decision: str, **over: Any) -> Any:
+    from server.memory.api.models_graph import MemoryDedupResolveInput
+
+    base: dict[str, Any] = {
+        "org": "clickhouse",
+        "namespace": "finance",
+        "canonical_id": CANON,
+        "duplicate_id": DUP,
+        "decision": decision,
+        "confirm_canonical_key": "k",
+    }
+    return MemoryDedupResolveInput(**(base | over))
+
+
+@pytest.mark.asyncio
+async def test_resolve_keep_canonical_tombstones_the_duplicate_of_a_shared_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Canonical and duplicate share key `k` under two agents: the
+    duplicate id is the one tombstoned, never the canonical."""
+    from server.memory.app.dedup import handle_memory_dedup_resolve
+
+    tombstoned, cleared = _fake_store(monkeypatch, _pair())
+    out = await handle_memory_dedup_resolve(_resolve_input("keep_canonical"))
     assert out.duplicate_tombstoned is True
     assert out.canonical_tombstoned is False
-    assert tombstoned == ["dup-uuid"]
-    assert clear_calls == []
+    assert tombstoned == [DUP]
+    assert cleared == []
 
 
 @pytest.mark.asyncio
 async def test_resolve_keep_duplicate_swaps_via_tombstone_and_clear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.memory import store as memory_repo
-    from server.memory.api.models_graph import MemoryDedupResolveInput
     from server.memory.app.dedup import handle_memory_dedup_resolve
 
-    fake_rows = {
-        "canon_key": _row("canon-uuid", "canon_key"),
-        "dup_key": _row("dup-uuid", "dup_key"),
-    }
-
-    async def fake_find(org, ns, key, *, ch=None):
-        return KeyedRow.from_row(fake_rows.get(key))
-
-    tombstoned: list[str] = []
-
-    async def fake_tombstone(org, mid, *, ch=None):
-        tombstoned.append(mid)
-        return []
-
-    cleared: list[str] = []
-
-    async def fake_clear(org, mid, *, ch=None):
-        cleared.append(mid)
-
-    monkeypatch.setattr(memory_repo, "find_row_by_key_namespace", fake_find)
-    monkeypatch.setattr(memory_repo, "tombstone_by_id", fake_tombstone)
-
-    async def fake_get_by_id(*_a, **_k):  # the lock guard reads the head
-        return None
-
-    monkeypatch.setattr(memory_repo, "get_by_id", fake_get_by_id)
-    monkeypatch.setattr(memory_repo, "clear_duplicate_tag", fake_clear)
-
-    out = await handle_memory_dedup_resolve(
-        MemoryDedupResolveInput(
-            org="clickhouse",
-            namespace="finance",
-            canonical_key="canon_key",
-            duplicate_key="dup_key",
-            decision="keep_duplicate",
-            confirm_canonical_key="canon_key",
-        )
-    )
+    tombstoned, cleared = _fake_store(monkeypatch, _pair())
+    out = await handle_memory_dedup_resolve(_resolve_input("keep_duplicate"))
     assert out.canonical_tombstoned is True
-    assert tombstoned == ["canon-uuid"]
-    assert cleared == ["dup-uuid"]
+    assert tombstoned == [CANON]
+    assert cleared == [DUP]
 
 
 @pytest.mark.asyncio
 async def test_resolve_keep_both_clears_duplicate_tag_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.memory import store as memory_repo
-    from server.memory.api.models_graph import MemoryDedupResolveInput
     from server.memory.app.dedup import handle_memory_dedup_resolve
 
-    fake_rows = {
-        "canon_key": _row("canon-uuid", "canon_key"),
-        "dup_key": _row("dup-uuid", "dup_key"),
-    }
-
-    async def fake_find(org, ns, key, *, ch=None):
-        return KeyedRow.from_row(fake_rows.get(key))
-
-    tombstoned: list[str] = []
-
-    async def fake_tombstone(*a, **kw):
-        tombstoned.append("called")
-        return []
-
-    cleared: list[str] = []
-
-    async def fake_clear(org, mid, *, ch=None):
-        cleared.append(mid)
-
-    monkeypatch.setattr(memory_repo, "find_row_by_key_namespace", fake_find)
-    monkeypatch.setattr(memory_repo, "tombstone_by_id", fake_tombstone)
-
-    async def fake_get_by_id(*_a, **_k):  # the lock guard reads the head
-        return None
-
-    monkeypatch.setattr(memory_repo, "get_by_id", fake_get_by_id)
-    monkeypatch.setattr(memory_repo, "clear_duplicate_tag", fake_clear)
-
-    out = await handle_memory_dedup_resolve(
-        MemoryDedupResolveInput(
-            org="clickhouse",
-            namespace="finance",
-            canonical_key="canon_key",
-            duplicate_key="dup_key",
-            decision="keep_both",
-            confirm_canonical_key="canon_key",
-        )
-    )
+    tombstoned, cleared = _fake_store(monkeypatch, _pair())
+    out = await handle_memory_dedup_resolve(_resolve_input("keep_both"))
     assert out.canonical_tombstoned is False
     assert out.duplicate_tombstoned is False
+    assert (out.canonical_key, out.duplicate_key) == ("k", "k")
     assert tombstoned == []
-    assert cleared == ["dup-uuid"]
+    assert cleared == [DUP]
 
 
 @pytest.mark.asyncio
-async def test_resolve_confirm_mismatch_raises_400() -> None:
-    from server.memory.api.models_graph import MemoryDedupResolveInput
+async def test_resolve_confirm_mismatch_raises_400(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.memory.app.dedup import handle_memory_dedup_resolve
 
+    tombstoned, _ = _fake_store(monkeypatch, _pair())
     with pytest.raises(HTTPException) as exc:
         await handle_memory_dedup_resolve(
-            MemoryDedupResolveInput(
-                org="clickhouse",
-                namespace="finance",
-                canonical_key="A",
-                duplicate_key="B",
-                decision="keep_canonical",
-                confirm_canonical_key="WRONG",
-            )
+            _resolve_input("keep_canonical", confirm_canonical_key="WRONG")
         )
     assert exc.value.status_code == 400
     assert exc.value.detail["code"] == "CONFIRM_CANONICAL_KEY_MISMATCH"
+    assert tombstoned == []
 
 
 @pytest.mark.asyncio
-async def test_resolve_missing_pair_raises_404(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    "rows",
+    [
+        pytest.param({}, id="missing"),
+        pytest.param({"not-a-uuid": _pair()[DUP]}, id="not-a-uuid"),
+        pytest.param(
+            _pair(duplicate_of="33333333-3333-3333-3333-333333333333"), id="other-canonical"
+        ),
+        pytest.param(_pair(status="active"), id="not-a-duplicate"),
+        pytest.param(_pair(namespace="other"), id="other-namespace"),
+        pytest.param({DUP: _pair()[DUP]}, id="canonical-gone"),
+    ],
+)
+async def test_resolve_a_row_that_is_not_the_pair_raises_404(
+    monkeypatch: pytest.MonkeyPatch, rows: dict[str, MemoryRow]
 ) -> None:
-    from server.memory import store as memory_repo
-    from server.memory.api.models_graph import MemoryDedupResolveInput
+    """A live row that is not this pair's duplicate is never tombstoned."""
     from server.memory.app.dedup import handle_memory_dedup_resolve
 
-    async def fake_find(*a, **kw):
-        return None
-
-    monkeypatch.setattr(memory_repo, "find_row_by_key_namespace", fake_find)
-
+    tombstoned, cleared = _fake_store(monkeypatch, rows)
+    dup_id = "not-a-uuid" if "not-a-uuid" in rows else DUP
     with pytest.raises(HTTPException) as exc:
-        await handle_memory_dedup_resolve(
-            MemoryDedupResolveInput(
-                org="clickhouse",
-                namespace="finance",
-                canonical_key="A",
-                duplicate_key="B",
-                decision="keep_canonical",
-                confirm_canonical_key="A",
-            )
-        )
+        await handle_memory_dedup_resolve(_resolve_input("keep_canonical", duplicate_id=dup_id))
     assert exc.value.status_code == 404
     assert exc.value.detail["code"] == "DEDUP_PAIR_NOT_FOUND"
+    assert (tombstoned, cleared) == ([], [])
 
 
 @pytest.mark.asyncio

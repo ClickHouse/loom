@@ -526,15 +526,15 @@ Resolve one duplicate pair.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `canonical_key` | `str` | required | The key the duplicate points at; both keys must have a live row (else 404). |
-| `duplicate_key` | `str` | required | The key whose row is marked `duplicate`. |
+| `canonical_id` | `str` | required | The cluster's `canonical_id` from memory.dedup_list; must be a live row here (else 404). |
+| `duplicate_id` | `str` | required | A `duplicates[].memory_id` of that cluster, marked duplicate of `canonical_id` (else 404). |
 | `decision` | `Literal['keep_canonical', 'keep_duplicate', 'keep_both']` | required | Which side stays live; see the class docstring for each value. |
-| `confirm_canonical_key` | `str` | required | Must equal `canonical_key`, else 400 CONFIRM_CANONICAL_KEY_MISMATCH. |
+| `confirm_canonical_key` | `str` | required | Must equal the canonical row's key, else 400 CONFIRM_CANONICAL_KEY_MISMATCH. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `canonical_key` | `str` | The canonical key, echoed. |
-| `duplicate_key` | `str` | The duplicate key, echoed. |
+| `canonical_key` | `str` | The canonical row's key. |
+| `duplicate_key` | `str` | The duplicate row's key. |
 | `decision` | `str` | The decision applied, echoed. |
 | `canonical_tombstoned` | `bool` | True when `keep_duplicate` tombstoned the canonical row. |
 | `duplicate_tombstoned` | `bool` | True when `keep_canonical` tombstoned the duplicate row. |

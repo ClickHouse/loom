@@ -4298,8 +4298,8 @@ export interface MemoryDedupListOutput {
 export interface MemoryDedupResolveInput {
   org: string;
   namespace: string;
-  canonical_key: string;
-  duplicate_key: string;
+  canonical_id: string;
+  duplicate_id: string;
   decision: "keep_canonical" | "keep_duplicate" | "keep_both";
   confirm_canonical_key: string;
 }

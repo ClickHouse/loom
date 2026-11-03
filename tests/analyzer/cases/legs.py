@@ -378,7 +378,6 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
         agent=AGENT,
         ch=ch,
     )
-    await M.find_row_by_key_namespace(ORG, NS, "k1", ch=ch)
     await M.find_history_target(ORG, "00000000-0000-0000-0000-000000000001", ch=ch)
     await M.get_canonical_row(ORG, "00000000-0000-0000-0000-000000000001", ch=ch)
     await M.consolidated_dependents_of(ORG, NS, "k1", ch=ch)

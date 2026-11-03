@@ -1649,7 +1649,6 @@ d3b283105ff7	SELECT scope_path AS path, summary, pagerank, cosineDistance(embedd
 d3b6fdc3997e	SELECT if(s.user_id != ?, s.user_id, p.user_id) AS who, s.digest AS digest, if(h.user_id != ?, h.version, p.version) AS profile_version FROM ( SELECT user_id, leftPad(lower(hex(groupBitXor(sipHash64(m
 d3e20e869a25	SELECT count() OVER () AS total, a.memory_key AS memory_key, toString(a.memory_id) AS memory_id, a.superseded_by AS superseded_by FROM (SELECT memory_key, memory_id, superseded_by FROM loom.memory FIN
 d3eb5e38ab39	ALTER TABLE loom.entity_degree DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
-d44b639f1146	SELECT memory_id, memory_key, agent, user_id, session_id, status, duplicate_of, created_at FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = {key:String} AND
 d455eae6762a	SELECT count() AS n FROM loom.procedure_runs WHERE org = {org:String} AND namespace = {ns:String}
 d469073eeef7	SELECT subject, relation, object, sum(co_occur) AS co_occur, max(last_seen) AS last_seen, -- The strongest tier behind the aggregated triple. -- Not `AS provenance`: with the provenance filter in WHER
 d4a86d775cfd	SELECT path, chunk_id, argMax(tombstoned_at IS NULL, version) AS is_live FROM loom.code_chunks WHERE org = {org:String} AND namespace = {ns:String} AND embedding_model = {model:String} AND path IN {pa

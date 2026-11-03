@@ -131,9 +131,11 @@ class MemoryDedupListOutput(BaseModel):
 class MemoryDedupResolveInput(BaseModel):
     """Resolve one duplicate pair.
 
-    `canonical_key` + `duplicate_key` identify the two memory_keys.
-    `confirm_canonical_key` must equal `canonical_key` — mid-weight
-    defense against UI-dropdown accidents (mirrors memory.clear).
+    `canonical_id` + `duplicate_id` are the two memory ids of one
+    `memory.dedup_list` cluster entry: the duplicate row must be live in
+    this namespace, marked `duplicate` and point at the canonical id.
+    `confirm_canonical_key` must equal the canonical row's key —
+    mid-weight defense against UI-dropdown accidents (mirrors memory.clear).
 
     Decisions:
       - keep_canonical: tombstone the duplicate; canonical wins.
@@ -145,20 +147,20 @@ class MemoryDedupResolveInput(BaseModel):
 
     org: str
     namespace: str
-    # The key the duplicate points at; both keys must have a live row (else 404).
-    canonical_key: str
-    # The key whose row is marked `duplicate`.
-    duplicate_key: str
+    # The cluster's `canonical_id` from memory.dedup_list; must be a live row here (else 404).
+    canonical_id: str
+    # A `duplicates[].memory_id` of that cluster, marked duplicate of `canonical_id` (else 404).
+    duplicate_id: str
     # Which side stays live; see the class docstring for each value.
     decision: Literal["keep_canonical", "keep_duplicate", "keep_both"]
-    # Must equal `canonical_key`, else 400 CONFIRM_CANONICAL_KEY_MISMATCH.
+    # Must equal the canonical row's key, else 400 CONFIRM_CANONICAL_KEY_MISMATCH.
     confirm_canonical_key: str = Field(..., min_length=1, max_length=256)
 
 
 class MemoryDedupResolveOutput(BaseModel):
-    # The canonical key, echoed.
+    # The canonical row's key.
     canonical_key: str
-    # The duplicate key, echoed.
+    # The duplicate row's key.
     duplicate_key: str
     # The decision applied, echoed.
     decision: str
