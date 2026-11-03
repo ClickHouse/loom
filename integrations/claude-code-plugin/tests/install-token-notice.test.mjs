@@ -83,8 +83,14 @@ test("an install token written over a config that named another server is saved 
     assert.equal(first.includes(NOTICE), false, "the session that writes the token says nothing");
     const written = JSON.parse(fs.readFileSync(path.join(dir, ".loom", "config.json"), "utf8"));
     assert.deepEqual(written, { url, token: "opt.tok" });
+    // the hook saved the install URL for the status script, in this session's tmp
+    const stateFile = () => fs.readdirSync(dir).find((f) => /^loom-install-[0-9a-f]{12}\.json$/.test(f));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, stateFile()), "utf8")), { url });
     const second = await run(dir, env);
     assert.equal(second.includes(NOTICE), false, "the saved token is the one the MCP entry sends");
+    // a session without the option removes the saved URL
+    await run(dir, { LOOM_BASE_URL: url });
+    assert.equal(stateFile(), undefined);
   } finally {
     srv.close();
     fs.rmSync(dir, { recursive: true, force: true });

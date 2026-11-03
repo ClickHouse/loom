@@ -39,7 +39,7 @@ export function mcpServerUrl(env = process.env) {
 /** One state file per installed plugin: the Codex copy of these scripts
  *  keeps its own, and never writes it (Codex passes no option). */
 const PLUGIN_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const installStatePath = (tmp) => tmpStatePath("install", PLUGIN_ROOT, tmp ? { tmp } : {});
+const installStatePath = (tmp) => tmpStatePath("install", PLUGIN_ROOT, { tmp });
 
 /** The SessionStart hook saves the install option's URL for the status
  *  script, which the agent runs from a shell that carries no option; an
@@ -55,11 +55,11 @@ export function installServerUrl({ tmp } = {}) {
   return String(readJsonFile(installStatePath(tmp), {}).url || "");
 }
 
-/** The server the status script checks: the one the MCP entry calls, with
- *  the saved install URL standing in for the option the agent's shell
- *  lacks; the hooks' server when neither names one. */
-export function statusServerUrl({ env = process.env, tmp } = {}) {
-  return normalizeUrl(installServerUrl({ tmp }) || env.LOOM_BASE_URL || resolveServerUrl());
+/** The server the status script checks: the one Claude Code's MCP entry
+ *  calls, with the saved install URL standing in for the option the agent's
+ *  shell lacks; the hooks' server when neither names one. */
+export function statusServerUrl({ tmp } = {}) {
+  return normalizeUrl(installServerUrl({ tmp }) || process.env.LOOM_BASE_URL || resolveServerUrl());
 }
 
 /** What a run would do, without doing it: {write, url, reason}. Pure. */

@@ -111,15 +111,24 @@ test("mcpServerUrl follows the MCP entry: the option, then LOOM_BASE_URL, then l
 
 test("the hook saves the install URL for the status script, removes it when the option is gone", () => {
   const state = { tmp: tmp() };
-  assert.equal(installServerUrl(state), "");
-  saveInstallServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://b/" }, state);
-  assert.equal(installServerUrl(state), "https://b");
-  // the MCP entry's order: the saved option first, then LOOM_BASE_URL
-  assert.equal(statusServerUrl({ env: { LOOM_BASE_URL: "https://env/" }, ...state }), "https://b");
-  saveInstallServerUrl({}, state);
-  assert.equal(installServerUrl(state), "");
-  assert.equal(statusServerUrl({ env: { LOOM_BASE_URL: "https://env/" }, ...state }), "https://env");
-  assert.equal(statusServerUrl({ env: {}, ...state }), resolveServerUrl()); // the hooks' server, whatever this machine's is
+  const baseUrl = process.env.LOOM_BASE_URL;
+  try {
+    assert.equal(installServerUrl(state), "");
+    saveInstallServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://b/" }, state);
+    assert.equal(installServerUrl(state), "https://b");
+    // the MCP entry's order: the saved option first, then LOOM_BASE_URL
+    process.env.LOOM_BASE_URL = "https://env/";
+    assert.equal(statusServerUrl(state), "https://b");
+    saveInstallServerUrl({}, state);
+    assert.equal(installServerUrl(state), "");
+    assert.equal(statusServerUrl(state), "https://env");
+    delete process.env.LOOM_BASE_URL;
+    assert.equal(statusServerUrl(state), resolveServerUrl()); // the hooks' server, whatever this machine's is
+  } finally {
+    if (baseUrl === undefined) delete process.env.LOOM_BASE_URL;
+    else process.env.LOOM_BASE_URL = baseUrl;
+    fs.rmSync(state.tmp, { recursive: true, force: true });
+  }
 });
 
 test("resolvers: the option ranks after the env var and before the files", async () => {
