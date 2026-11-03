@@ -1,11 +1,10 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, type ReactElement } from "react";
 import { flushView, installVitals, startView } from "./lib/vitals";
 import { ReloadBar } from "./components/ReloadBar";
-import { invalidateShared, sharedMine, sharedHealth } from "./lib/sharedReads";
+import { sharedMine, sharedHealth } from "./lib/sharedReads";
 import { SkeletonCard } from "./components/Skeleton";
 import { Loading, LoadingSkeleton } from "./components/ui";
 import {
-  whoami,
   getSavedNamespace,
   defaultNamespace,
   isProxyMode,
@@ -16,13 +15,10 @@ import {
   clearToken,
   onSignInRejected,
   onTokenStored,
-  ownsToken,
   setPageOwner,
   signedOut,
   storedToken,
-  type ApiError,
   type MyNamespaceEntry,
-  type WhoAmI,
 } from "./api";
 import {
   canReadNamespace,
@@ -35,7 +31,7 @@ import { claimsFromToken, provisionalNamespace, rememberKinds, takeLinkToken } f
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
 import { MemoryScopeMissing } from "./components/MemoryScopeMissing";
-import { useStore, pathnameView, linkedNamespace, addressPageNamespace, type GateReason } from "./lib/state";
+import { useStore, pathnameView, linkedNamespace, addressPageNamespace } from "./lib/state";
 import { arriveAt, readPlace, restorePlace } from "./lib/place";
 import { useKeyboard } from "./lib/hooks";
 import { NetworkProgress } from "./components/NetworkProgress";
@@ -45,42 +41,10 @@ import { MobileNav } from "./layout/MobileNav";
 import { ToastViewport, toast, toastError } from "./components/Toast";
 import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
-import { ProblemsBanner } from "./components/ProblemsBanner";
 import { shortcutOff } from "./lib/shortcuts";
 
 import { reloadPage } from "./lib/navigation";
-
-const SESSION_ENDED = "loom_session_ended_v1";
-
-/** Note why this tab's session ended (`reason` given), or read the note and forget it: the
- *  gate's reason, or null. */
-function sessionEndedNote(reason?: GateReason): GateReason {
-  try {
-    const was = sessionStorage.getItem(SESSION_ENDED) as GateReason;
-    if (reason) sessionStorage.setItem(SESSION_ENDED, reason);
-    else sessionStorage.removeItem(SESSION_ENDED);
-    return was;
-  } catch {
-    return null; // no session storage: a reload shows the first-visit gate
-  }
-}
-
-/** The gate's reason for a lost token: only a sign-in session's resumes by itself. */
-const lostReason = (token: string | null): GateReason => (claimsFromToken(token)?.session ? "expired" : "ended");
-
-/** The session ended (the server refused the token, or another tab dropped it). While the
- *  app boots there is no page to keep, and boot, which knows whether the token came by a
- *  sign-in link, shows the gate and says why once whoami answers. Mid-session a card says
- *  so over the page, which stays as it is. */
-function endSession(lost = storedToken()): void {
-  // `lost` is read on the call, before the token is cleared.
-  clearToken();
-  // A single-user install has no sign-in: its next call goes without the stale token.
-  if (isAuthDisabled()) return;
-  sessionEndedNote(lostReason(lost));
-  const s = useStore.getState();
-  if (s.whoami) s.setSessionExpired(true);
-}
+import { endSession, lostReason, sessionEndedNote, whoamiWhenReady } from "./lib/session";
 
 onSignInRejected(endSession);
 // A call carries only the token of the person whose page this is.
@@ -88,82 +52,11 @@ useStore.subscribe((s) => setPageOwner(s.whoami));
 // A sign-in, a dropped token or a sign-out in another tab reaches this one from the first
 // moment (a proxy's header and an auth-off install keep no token; before boot has an
 // identity, boot's own checks decide).
+// Its handler ships in the session card's chunk; one that cannot load reloads, and the
+// fresh page decides on the stored token.
 onTokenStored((token, before) => {
-  if (!isProxyMode() && !isAuthDisabled()) void tokenChangedElsewhere(token, before);
+  if (!isProxyMode() && !isAuthDisabled()) void sessionCard.then((m) => m.tokenChangedElsewhere(token, before));
 });
-
-/** whoami, asked again while the replica answers 503 (its signing keys still loading, the
- *  token may be fine): up to five more times, a second apart (the server's own Retry-After
- *  is 5 s), before boot gives up. */
-async function whoamiWhenReady(): Promise<WhoAmI> {
-  const asked = storedToken();
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await whoami();
-    } catch (e) {
-      // Only a 503 (an ApiError's status; any other error has none) is asked again.
-      if (storedToken() === asked && (attempt >= 6 || (e as ApiError).status !== 503)) throw e;
-    }
-    if (storedToken() === asked) await new Promise((r) => setTimeout(r, 1000));
-    // A token stored meanwhile (checked after the failure and after the wait) is not the one
-    // being asked about: no retry carries it, and the caller, which checks the stored token
-    // next, decides on the new one.
-    if (storedToken() !== asked) return { authenticated: false };
-  }
-}
-let recheck: ReturnType<typeof setTimeout> | undefined;
-
-/** Another tab of this origin stored a token (a sign-in there) or dropped it. Dropped by a
- *  sign-out: this tab reloads to a plain sign-in. Dropped by a refusal: this tab's session
- *  ended too. Stored: once the server confirms it is the same person, this page carries on
- *  with their identity and roles read again; anyone else gets a fresh page, so nothing the
- *  last person read stays on screen. `lost`: the token stored before, which a session that
- *  ends here takes its gate's reason from (the stored one is already gone or replaced). */
-async function tokenChangedElsewhere(token: string | null, lost: string | null): Promise<void> {
-  clearTimeout(recheck); // this change decides
-  const s = useStore.getState;
-  const before = s().whoami;
-  if (!before) return;
-  if (token === null) {
-    if (signedOut()) reloadPage();
-    else if (!s().sessionExpired) endSession(lost);
-    return;
-  }
-  // A token naming someone else is a fresh page at once: until a reload, every call here
-  // would carry it under the last person's page.
-  if (!before.subject || !ownsToken(token)) {
-    reloadPage();
-    return;
-  }
-  let now: WhoAmI;
-  try {
-    now = await whoamiWhenReady();
-  } catch {
-    // Unconfirmed: a healthy page stays as it is; an ended one keeps its card and asks
-    // again shortly, while that token is still the stored one.
-    if (s().sessionExpired)
-      recheck = setTimeout(() => storedToken() === token && void tokenChangedElsewhere(token, lost), 30_000);
-    return;
-  }
-  // Another change landed while whoami answered: that one decides.
-  if (storedToken() !== token) return;
-  // A token the server refuses is nobody's: this session ended, and the page stays. One it
-  // accepts is the person its claims named, already checked above.
-  if (!now.authenticated) {
-    if (!s().sessionExpired) endSession(lost);
-    return;
-  }
-  // The card going away is the sign that the session is back.
-  useStore.setState({ whoami: now, sessionExpired: false });
-  sessionEndedNote();
-  try {
-    invalidateShared();
-    // The org boot read them for (`effectiveOrg`).
-    s().setMyNamespaces(await sharedMine(now.org || "dev"));
-  } catch {
-    /* the roles read at boot stay; a reload reads them again */
-  }
-}
 
 // One view per chunk, so a person opening Memories does not pay for the code index
 // explorer, the graph and every admin page. React.lazy loads a view the first time it is
@@ -208,8 +101,19 @@ const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default:
 // first asked for then would be gone and its stale-chunk reload would lose the page.
 // Should that fetch fail, no card shows (each view's error still says the session ended),
 // rather than an error page in place of the page.
-const sessionCard = import("./components/SessionExpiredBar").catch(() => ({ default: () => null }));
+const sessionCard = import("./components/SessionExpiredBar").catch(() => ({
+  default: () => null,
+  tokenChangedElsewhere: reloadPage,
+}));
 const SessionExpiredBar = lazy<() => ReactElement | null>(() => sessionCard);
+// The health problems banner shows on a degraded deployment only: its own chunk, and none
+// (it is best-effort) when that chunk cannot load.
+const ProblemsBanner = lazy<() => ReactElement | null>(() =>
+  import("./components/ProblemsBanner").then(
+    (m) => ({ default: m.ProblemsBanner }),
+    () => ({ default: () => null }),
+  ),
+);
 
 const NamespaceNoAccess = lazy(() =>
   import("./components/NamespaceNoAccess").then((m) => ({ default: m.NamespaceNoAccess })),
@@ -648,7 +552,9 @@ export default function App() {
           {/* `relative`: a visually hidden (absolute) label inside a scrolled row is placed
               against main, so it can never stretch the page past the viewport. */}
           <main id="main" tabIndex={-1} className="relative flex-1 overflow-y-auto" ref={mainRef}>
-            <ProblemsBanner />
+            <Suspense fallback={null}>
+              <ProblemsBanner />
+            </Suspense>
             <PendingRequestBanner />
             {/* Keyed by view so each navigation replays the fade-in, and the no-access
                 page is a page of its own: leaving it mounts the view afresh, never under

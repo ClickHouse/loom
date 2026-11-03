@@ -2,6 +2,10 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { reloadPage } from "../lib/navigation";
 
+// The cross-tab handler rides in this chunk: App fetches it as it loads, and the shell's
+// own chunk stays within its budget.
+export { tokenChangedElsewhere } from "../lib/tokenElsewhere";
+
 /**
  * "Your session ended": the server refused the stored token mid-session. The page stays
  * as it is, so nothing typed into it is lost; signing in happens in a new tab, whose token
