@@ -43,7 +43,7 @@ import { navigationHref, useStore } from "../lib/state";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
 import { DiffView } from "./DiffView";
-import { toast } from "./Toast";
+import { keepOpenOnToasts, toast } from "./Toast";
 import { IconButton } from "./IconButton";
 import { SkeletonText } from "./Skeleton";
 import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip } from "./ui";
@@ -250,11 +250,7 @@ export function MemoryInspector({
   // the drawer; an active edit or the Copy-to dialog keep the drawer open;
   // otherwise it closes.
   const onPointerDownOutside = (e: Event) => {
-    const target = e.target;
-    if (target instanceof Element && target.closest("[data-toast-viewport]")) {
-      e.preventDefault();
-      return;
-    }
+    if (keepOpenOnToasts(e)) return;
     if (expanded) {
       e.preventDefault();
       setExpanded(false);

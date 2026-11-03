@@ -1,11 +1,10 @@
-import { Suspense, lazy, useEffect, useMemo, useRef } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, type ReactElement } from "react";
 import { flushView, installVitals, startView } from "./lib/vitals";
 import { ReloadBar } from "./components/ReloadBar";
 import { sharedMine, sharedHealth } from "./lib/sharedReads";
 import { SkeletonCard } from "./components/Skeleton";
 import { Loading, LoadingSkeleton } from "./components/ui";
 import {
-  whoami,
   getSavedNamespace,
   defaultNamespace,
   isProxyMode,
@@ -14,6 +13,10 @@ import {
   setToken,
   hasToken,
   clearToken,
+  onSignInRejected,
+  onTokenStored,
+  setPageOwner,
+  signedOut,
   storedToken,
   type MyNamespaceEntry,
 } from "./api";
@@ -38,8 +41,23 @@ import { MobileNav } from "./layout/MobileNav";
 import { ToastViewport, toast, toastError } from "./components/Toast";
 import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
-import { ProblemsBanner } from "./components/ProblemsBanner";
 import { shortcutOff } from "./lib/shortcuts";
+
+import { reloadPage } from "./lib/navigation";
+import { endSession, lostReason, sessionEndedNote, whoamiWhenReady } from "./lib/session";
+
+onSignInRejected(endSession);
+// A call carries only the token of the person whose page this is.
+useStore.subscribe((s) => setPageOwner(s.whoami));
+// A sign-in, a dropped token or a sign-out in another tab reaches this one from the first
+// moment (a proxy's header and an auth-off install keep no token; before boot has an
+// identity, boot's own checks decide).
+// Its handler ships in the session card's chunk; one that cannot load reloads, and the
+// fresh page decides on the stored token.
+onTokenStored((token, before) => {
+  if (!isProxyMode() && !isAuthDisabled())
+    void sessionCard.then((m) => (m?.tokenChangedElsewhere ?? reloadPage)(token, before));
+});
 
 // One view per chunk, so a person opening Memories does not pay for the code index
 // explorer, the graph and every admin page. React.lazy loads a view the first time it is
@@ -79,6 +97,28 @@ const ProfileSectionDialog = lazy(() =>
 );
 const HelpDialog = lazy(() => import("./components/HelpDialog").then((m) => ({ default: m.HelpDialog })));
 const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.TokenGate })));
+// The expired-session card's chunk is fetched as the app loads, from the build that served
+// it: it shows on a long-lived tab, the one most likely to predate a deploy, and a chunk
+// first asked for then would be gone and its stale-chunk reload would lose the page.
+// Should that fetch fail, no card shows (each view's error still says the session ended),
+// rather than an error page in place of the page.
+const sessionCard = import("./components/SessionExpiredBar").catch(() => ({
+  default: () => null,
+  tokenChangedElsewhere: reloadPage,
+}));
+// A stale chunk the reload handler (lib/staleChunk.ts) takes resolves to nothing: no card.
+const SessionExpiredBar = lazy<() => ReactElement | null>(() =>
+  sessionCard.then((m) => ({ default: m?.default ?? (() => null) })),
+);
+// The health problems banner shows on a degraded deployment only: its own chunk, and none
+// (it is best-effort) when that chunk cannot load.
+const ProblemsBanner = lazy<() => ReactElement | null>(() =>
+  import("./components/ProblemsBanner").then(
+    (m) => ({ default: m?.ProblemsBanner ?? (() => null) }),
+    () => ({ default: () => null }),
+  ),
+);
+
 const NamespaceNoAccess = lazy(() =>
   import("./components/NamespaceNoAccess").then((m) => ({ default: m.NamespaceNoAccess })),
 );
@@ -145,6 +185,7 @@ export default function App() {
   const inspect = useStore((s) => s.inspect);
   const setAuthed = useStore((s) => s.setAuthed);
   const gateReason = useStore((s) => s.gateReason);
+  const sessionExpired = useStore((s) => s.sessionExpired);
   const setWhoami = useStore((s) => s.setWhoami);
   // Boot settles the identity (a provisional namespace, then the answer): not a switch, so
   // the deep link's memory or thread stays open.
@@ -249,11 +290,15 @@ export default function App() {
   // Auth bootstrap on mount
   useEffect(() => {
     (async () => {
+      // A sign-in link's token, taken first thing; the catch below reads it too.
+      let link: ReturnType<typeof takeLinkToken> = null;
+      // The token boot asks whoami about; the catch reads it too.
+      let sent: string | null = null;
       try {
         // A login link (federation redirect) carries the token in the #token= fragment: taken
         // and scrubbed before anything can fail. The return to the page its sign-in started on
         // is a chunk of its own, and boot goes on without it.
-        const link = takeLinkToken();
+        link = takeLinkToken();
         if (link) {
           if (link.token) setToken(link.token);
           try {
@@ -304,18 +349,32 @@ export default function App() {
           ? sharedMine(early.org).catch(() => null)
           : null;
 
-        const w = await whoami();
-        if (!w.authenticated) {
+        sent = storedToken();
+        const w = await whoamiWhenReady();
+        // Another tab stored someone's token while whoami answered for this one: that
+        // token decides, on a fresh boot.
+        if (storedToken() && storedToken() !== sent) {
+          reloadPage();
+          return;
+        }
+        // A refused read (here or in another tab) dropped the token while whoami answered.
+        const dropped = !!sent && !storedToken();
+        if (!w.authenticated || dropped) {
           // A stored token the server no longer accepts is dead — drop it so the next
           // load doesn't retry it, and tell the gate why it is showing instead of a
-          // silent first-visit card.
-          if (hasToken()) {
+          // silent first-visit card. A sign-out (here or in another tab) is a plain
+          // sign-in. A refused sign-in link says so, and starts no sign-in by itself: it
+          // may be the way in while the identity provider is down.
+          const out = signedOut();
+          const note = sessionEndedNote();
+          if (((note || dropped) && !out) || hasToken()) {
             clearToken();
-            useStore.getState().setGateReason("expired");
+            useStore.getState().setGateReason(link?.token ? "refused" : note || lostReason(sent));
           }
           setAuthed(false);
           return;
         }
+        sessionEndedNote();
 
         setAuthed(true);
         setWhoami(w);
@@ -435,6 +494,15 @@ export default function App() {
           /* notification check is best-effort */
         }
       } catch (e) {
+        // Still unavailable after whoami's retries: the toast says so, and the token stays
+        // for the next load. A sign-in link refused on the way says so and leaves no note,
+        // so the next load does not start a sign-in by itself (the link may be the way in).
+        // A token refused on the way (the early read) says so on the gate, as the try would.
+        // Only a token this boot itself lost: an earlier load's note alone (a Reload while
+        // the server is away) starts no sign-in by itself.
+        const note = sessionEndedNote();
+        if (!storedToken() && (link?.token || (note && !signedOut() && sent)))
+          useStore.getState().setGateReason(link?.token ? "refused" : note);
         toastError("Auth bootstrap failed", e);
         setAuthed(false);
       }
@@ -488,7 +556,9 @@ export default function App() {
           {/* `relative`: a visually hidden (absolute) label inside a scrolled row is placed
               against main, so it can never stretch the page past the viewport. */}
           <main id="main" tabIndex={-1} className="relative flex-1 overflow-y-auto" ref={mainRef}>
-            <ProblemsBanner />
+            <Suspense fallback={null}>
+              <ProblemsBanner />
+            </Suspense>
             <PendingRequestBanner />
             {/* Keyed by view so each navigation replays the fade-in, and the no-access
                 page is a page of its own: leaving it mounts the view afresh, never under
@@ -539,7 +609,15 @@ export default function App() {
         </Suspense>
       )}
       <NetworkProgress />
-      <ToastViewport />
+      <ToastViewport
+        pinned={
+          sessionExpired ? (
+            <Suspense fallback={null}>
+              <SessionExpiredBar />
+            </Suspense>
+          ) : null
+        }
+      />
       <ConfirmViewport />
     </div>
   );

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../test/axe";
 import { ErrorBoundary, buildDiagnostics } from "./ErrorBoundary";
+import { setPageOwner, setToken } from "../api";
 
 // A render error shows a message, Reload and Copy diagnostics instead of a blank page.
 
@@ -68,6 +69,31 @@ describe("ErrorBoundary", () => {
     expect(text).toContain("build: abc1234");
     expect(text).toContain("stack:");
     expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+
+  it("reads health with no token when the stored one names someone other than the page's person", async () => {
+    const part = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
+    setPageOwner({ authenticated: true, subject: "alice", org: "o" });
+    setToken(`${part({ alg: "HS256" })}.${part({ sub: "bob", org: "o" })}.sig`);
+    try {
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText: vi.fn(async () => undefined) },
+        configurable: true,
+      });
+      render(
+        <ErrorBoundary>
+          <Boom when={true} />
+        </ErrorBoundary>,
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Copy diagnostics" }));
+      const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/v1/health"));
+      // The read was made, and made without the token.
+      expect(call).toBeDefined();
+      expect(new Headers(call?.[1]?.headers).get("Authorization")).toBeNull();
+    } finally {
+      setPageOwner(null);
+      localStorage.clear();
+    }
   });
 
   it("says `unknown` for the build when /v1/health is unreachable", async () => {

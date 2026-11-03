@@ -50,8 +50,7 @@ export function Header() {
   const readOnly = !canWrite(role);
 
   const onLogout = () => {
-    signOut();
-    toast("Signed out", "info");
+    toast(signOut() ? "Signed out" : "Another account is signed in here", "info");
     setTimeout(() => location.reload(), 300);
   };
 

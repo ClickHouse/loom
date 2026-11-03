@@ -4,7 +4,7 @@
 
 import { noteCallEnd, noteCallStart } from "./lib/vitalsCounter";
 import { claimsFromToken } from "./lib/boot";
-import { apiErrorFromResponse } from "./lib/errors";
+import { ApiError, apiErrorFromResponse } from "./lib/errors";
 export { ApiError } from "./lib/errors";
 // The two code-plane shapes the shell reads; the plane itself lives in api/code.ts and rides with the Repositories view.
 import type { CodeIndexStatus, CodeRepoSummary } from "./api/code";
@@ -71,22 +71,74 @@ export function setToken(jwt: string): void {
   // Strip all whitespace before persisting — a pasted JWT can carry
   // internal newlines/spaces that make the Authorization header invalid.
   const cleaned = jwt.replace(/\s+/g, "");
+  localStorage.removeItem(KEY_SIGNED_OUT);
   localStorage.setItem(KEY_TOKEN, cleaned);
+}
+
+// Set by a sign-out in this browser and cleared by the next sign-in: until then, a tab that
+// loses the token or reloads goes to a plain sign-in, not "your session ended", whose SSO
+// gate would sign the person back in.
+const KEY_SIGNED_OUT = "loom_signed_out_v1";
+
+/** Whether the person signed out in this browser (in any tab) and has not signed in since. */
+export function signedOut(): boolean {
+  return localStorage.getItem(KEY_SIGNED_OUT) !== null;
 }
 
 export function clearToken(): void {
   localStorage.removeItem(KEY_TOKEN);
 }
 
+/** Call `fn` with each token another tab of this origin stores (a sign-in there), or null
+ *  when one drops it or signs out, and the token stored before; the returned function
+ *  stops listening. */
+export function onTokenStored(fn: (token: string | null, before: string | null) => void): () => void {
+  const listener = (e: StorageEvent) => {
+    // A browser fires it only on a change. A sign-out elsewhere counts even when this tab's
+    // token was already gone (its own removal, when there was one, follows as a token
+    // event), and so does a clear of the whole storage (no key), which drops the token.
+    if (e.key === KEY_TOKEN || e.key === null || (e.key === KEY_SIGNED_OUT && !!e.newValue && !token()))
+      fn(token(), e.oldValue);
+  };
+  window.addEventListener("storage", listener);
+  return () => window.removeEventListener("storage", listener);
+}
+
+// The person this page belongs to: boot's whoami answer (App keeps it in step).
+let pageOwner: WhoAmI | null = null;
+export function setPageOwner(owner: WhoAmI | null): void {
+  pageOwner = owner;
+}
+
+/** Whether `t` (none, or one an auth-off install ignores, counts) is the page's person's. */
+export function ownsToken(t: string | null): boolean {
+  if (!t || !pageOwner?.subject || isAuthDisabled()) return true;
+  const c = claimsFromToken(t);
+  // Claims it cannot read name no one: the server's answer to that token decides.
+  return !c || (c.subject === pageOwner.subject && (c.org ?? "") === (pageOwner.org ?? ""));
+}
+
+// The app's answer to a stored token the server refuses (expired or revoked): the session
+// ends (a card over the page, or the gate while booting). Registered by App, so this
+// module stays free of the store.
+let signInRejected: (() => void) | null = null;
+export function onSignInRejected(fn: () => void): void {
+  signInRejected = fn;
+}
+
 /** Sign out: forget the stored token here at once, and end its session on the server
  *  when it belongs to one (the dashboard's SSO token, or a `loom login` token pasted in).
  *  The revocation is sent without waiting for it: `keepalive` lets it finish across the
  *  page reload that follows, and it gives up after a few seconds. A token with no
- *  sign-in session (a minted one, maybe a CI job's too) is only forgotten here. */
-export function signOut(): void {
+ *  sign-in session (a minted one, maybe a CI job's too) is only forgotten here. Returns
+ *  false when another person's token is the stored one (another tab signed them in a
+ *  moment ago): it is not this page's to end, and the reload that follows opens their page. */
+export function signOut(): boolean {
   const t = token();
+  if (!ownsToken(t)) return false;
+  localStorage.setItem(KEY_SIGNED_OUT, "1");
   clearToken();
-  if (!t || !claimsFromToken(t)?.session) return;
+  if (!t || !claimsFromToken(t)?.session) return true;
   fetch("/oauth/revoke", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -96,6 +148,7 @@ export function signOut(): void {
   }).catch(() => {
     // Offline, too slow or the route is absent: the token is gone from this browser anyway.
   });
+  return true;
 }
 
 // Presence check that seeds auth state at boot: if a token is already stored, the SPA can
@@ -129,7 +182,11 @@ export interface WhoAmI {
 
 export async function whoami(): Promise<WhoAmI> {
   const r = await fetch("/v1/whoami", { headers: authHeader(), signal: boundedSignal() });
-  if (!r.ok) return { authenticated: false };
+  // A refused token answers 200 with authenticated=false. Anything else not ok (a replica
+  // whose keys are still loading answers 503) says nothing about the token: it is kept.
+  // Behind a proxy a refusal is the proxy's own 401 or 403: signed out, as before.
+  if (PROXY_MODE && (r.status === 401 || r.status === 403)) return { authenticated: false };
+  if (!r.ok) throw await apiErrorFromResponse(r);
   return r.json();
 }
 
@@ -251,23 +308,57 @@ async function request(method: "GET" | "POST", path: string, body?: unknown, sig
   _bump(+1);
   noteCallStart(); // the view's call count and span
   try {
-    const r = await fetch(
-      path,
-      method === "POST"
-        ? {
-            method,
-            headers: { "Content-Type": "application/json", ...authHeader() },
-            body: JSON.stringify(asDashboardCall(path, body)),
-            signal: boundedSignal(signal),
-          }
-        : { method, headers: authHeader(), signal: boundedSignal(signal) },
-    );
-    if (!r.ok) throw await apiErrorFromResponse(r);
-    return r;
+    return await send(method, path, body, signal, false);
   } finally {
     _bump(-1);
     noteCallEnd();
   }
+}
+
+async function send(
+  method: "GET" | "POST",
+  path: string,
+  body: unknown,
+  signal: AbortSignal | undefined,
+  retried: boolean,
+): Promise<Response> {
+  const sent = token();
+  // Another tab may have stored another person's token a moment ago, before this one heard
+  // of it (and reloads): this page's call never carries it.
+  if (!ownsToken(sent)) {
+    // Its words are the ended session's (sessionEnded): no message of its own is shown.
+    const err = new ApiError({ status: 401 });
+    err.sessionEnded = true;
+    throw err;
+  }
+  const r = await fetch(
+    path,
+    method === "POST"
+      ? {
+          method,
+          headers: { "Content-Type": "application/json", ...authHeader() },
+          body: JSON.stringify(asDashboardCall(path, body)),
+          signal: boundedSignal(signal),
+        }
+      : { method, headers: authHeader(), signal: boundedSignal(signal) },
+  );
+  if (r.status === 401 && sent) {
+    // The first refusal of the stored token ends the session, before any await, so
+    // concurrent ones end it once.
+    const ending = sent === token();
+    if (ending) signInRejected?.();
+    // A single-user install has no sign-in: the stale token is gone (this refusal or a
+    // concurrent one dropped it), so the call goes again without it.
+    if (isAuthDisabled() && !retried) return send(method, path, body, signal, true);
+    // A call raced by another tab's sign-in is not sent again under a token this tab has
+    // not checked: Retry sends it, and the error says so instead of "sign in again".
+    if (!ending && token() && ownsToken(token())) throw new ApiError({ status: 401, code: "SIGNED_IN_ELSEWHERE" });
+    const err = await apiErrorFromResponse(r);
+    err.sessionEnded = true;
+    throw err;
+  }
+  if (!r.ok) throw await apiErrorFromResponse(r);
+  return r;
 }
 
 export async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {

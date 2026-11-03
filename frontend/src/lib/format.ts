@@ -162,6 +162,7 @@ export function previewValue(v: unknown, max = 320): string {
  *  sentence ending in ":" introduces it; one ending in "." precedes it. */
 const ERROR_CODE_PREFIXES: Record<string, string> = {
   AUTH_INVALID: "Sign-in rejected:",
+  SIGNED_IN_ELSEWHERE: "Signed in elsewhere — retry.",
   AUTH_INSUFFICIENT: "You don't have permission for this on this namespace.",
   IDENTITY_INCOMPLETE: "This token is scoped — the request has to name the namespace:",
   FORBIDDEN: "You don't have permission for this.",
@@ -235,7 +236,21 @@ export function humanizeError(err: unknown): string {
   return m[2] ? `${friendly} ${m[2]}` : friendly;
 }
 
+/** The server's words (server/auth/bearer.py) for a call sent after the session ended in
+ *  another tab took the token; a refusal of a token the call carried is `sessionEnded`. */
+const SESSION_GONE = /missing bearer token/;
+
 function humanizeApiError(err: ApiError): string {
+  // A page that read while its session was away says so plainly (the dashboard's card
+  // offers the sign-in), not as a rejected credential. Behind a proxy, or with auth off,
+  // there is no session here to sign in to: the server's words stand.
+  if (
+    err.status === 401 &&
+    !window.__LOOM_PROXY_AUTH &&
+    !window.__LOOM_AUTH_DISABLED &&
+    (err.sessionEnded || SESSION_GONE.test(err.serverMessage))
+  )
+    return "Your session ended — sign in again.";
   const friendly = ERROR_CODE_PREFIXES[err.code];
   if (friendly) return joinSentence(friendly, err.serverMessage);
   if (err.code && !err.serverMessage) return joinSentence(sentenceForStatus(err.status), err.code);

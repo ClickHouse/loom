@@ -284,15 +284,19 @@ export function pathnameView(): View | null {
   return urlParam("memory") ? "memories" : null;
 }
 
-/** Why the sign-in gate is showing: a stored token the server no longer accepts is
- *  "expired"; a first visit carries null. */
-export type GateReason = "expired" | null;
+/** Why the sign-in gate is showing: a sign-in session's token the server no longer
+ *  accepts is "expired" (SSO resumes by itself), any other stored token "ended"; a token a
+ *  sign-in link brought that it refused is "refused"; a first visit carries null. */
+export type GateReason = "expired" | "ended" | "refused" | null;
 
 interface AppState {
   authed: boolean;
   whoami: WhoAmI | null;
   identity: Identity | null;
   gateReason: GateReason;
+  /** The server refused the stored token mid-session: a card among the toasts says so and
+   *  offers the sign-in, and the page stays as it is, so nothing typed into it is lost. */
+  sessionExpired: boolean;
   /** The caller's namespaces with roles (`namespace.list_mine`), set once at
    *  boot. null = not fetched / the fetch failed, which the role helpers
    * treat as "unknown", not "no access". */
@@ -335,6 +339,7 @@ interface AppState {
   // actions
   setAuthed: (v: boolean) => void;
   setGateReason: (r: GateReason) => void;
+  setSessionExpired: (v: boolean) => void;
   setMyNamespaces: (rows: MyNamespaceEntry[] | null) => void;
   setWhoami: (w: WhoAmI | null) => void;
   setIdentity: (i: Identity | null) => void;
@@ -399,6 +404,7 @@ export const useStore = create<AppState>((set, get) => ({
   whoami: null,
   identity: null,
   gateReason: null,
+  sessionExpired: false,
   myNamespaces: null,
   deniedNamespace: null,
   linkOpened: null,
@@ -417,6 +423,7 @@ export const useStore = create<AppState>((set, get) => ({
   sidebarCollapsed: typeof localStorage !== "undefined" && localStorage.getItem("loom_sidebar_collapsed") === "1",
   setAuthed: (authed) => set({ authed }),
   setGateReason: (gateReason) => set({ gateReason }),
+  setSessionExpired: (sessionExpired) => set({ sessionExpired }),
   setMyNamespaces: (myNamespaces) => set({ myNamespaces }),
   setWhoami: (whoami) => set({ whoami }),
   // A memory belongs to its namespace: a switch, from any picker, closes the open one. The
