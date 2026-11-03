@@ -162,6 +162,9 @@ def test_an_ingest_refuses_a_namespace_holding_other_documents_and_tags_each_ups
         ingest(post([{"source_uri": "theirs.md"}]), "o", "n", docs, keep=True)
     assert not any(path == "/v1/knowledge.upsert" for path, _ in sent)
     ingest(post([{"source_uri": "a.md"}]), "o", "n", docs, keep=True)
+    # a kept namespace registers as memory, so the idle-namespace gc leaves it
+    registered = [body for path, body in sent if path == "/v1/namespace.register"]
+    assert registered and registered[0]["kind"] == "memory"
     upserts = [body for path, body in sent if path == "/v1/knowledge.upsert"]
     assert [u["tags"] for u in upserts] == [["t", fixture_tag(docs)]]
 

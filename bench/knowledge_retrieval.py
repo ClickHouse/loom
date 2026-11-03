@@ -20,17 +20,18 @@ name, which is kept, and search it per arm:
         --param search_mode=hybrid --out /tmp/kr.json
 
 A named namespace is ingested into only when it is unregistered or a bench
-namespace, and stays until it is erased:
-`loom namespaces-gc --org bench --include-registered --erase --namespace kr-eval`.
+namespace holding no other documents, and stays until it is erased with the
+`loom namespaces-gc` command the ingest prints.
 
 `--param KEY=VALUE` (JSON value, or a plain string) sets any `knowledge.search`
 field but the ones the harness sets (`FIXED_FIELDS`), so two arms differ by one
 flag; any other key is refused, and a search over a namespace that does not hold
 exactly the fixture's documents fails the run. Reports recall@1/5/10 (a query
-counts when any relevant passage is in the top k), all-gold recall@10 (every
-relevant passage found, for the multi-document questions), MRR and nDCG@10,
-overall and per query kind, plus the mean cosine similarity of the top hit on
-answerable and on unanswerable queries (every hit carries one, in every mode).
+counts when any relevant passage is in the top k, so a query listing two
+accepted passages counts either), MRR, and all-gold recall@10 and nDCG@10 (both
+reward finding every listed passage), overall and per query kind, plus the mean
+cosine similarity of the top hit on answerable and on unanswerable queries
+(every hit carries one, in every mode).
 The `freshness` and `multi` kinds hold three and four queries, so their per-kind
 figures are coarse; a superseded policy ranked above the current one shows in a
 freshness query's R@1, MRR and nDCG@10, not its R@5. Ingesting embeds 21
@@ -58,6 +59,7 @@ from bench.bench_namespaces import (
     BENCH_OWNER_EMAIL,
     SyncPost,
     erase_on_exit_sync,
+    gc_command,
     register_bench_namespace_sync,
     remember_bench_namespace,
 )
@@ -162,8 +164,8 @@ def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: boo
     if not may_ingest_into(info):
         raise SystemExit(f"{org}/{namespace} belongs to {info.get('owner_email')}: name another")
     fixture = {d["source_uri"] for d in docs}
-    foreign = [r["source_uri"] for r in listed_documents(post, org, namespace)]
-    foreign = [uri for uri in foreign if uri not in fixture]
+    listed = listed_documents(post, org, namespace)
+    foreign = [r["source_uri"] for r in listed if r["source_uri"] not in fixture]
     if foreign:
         raise SystemExit(f"{org}/{namespace} holds {len(foreign)} other documents: name another")
     register_bench_namespace_sync(
@@ -175,6 +177,8 @@ def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: boo
         body = {"org": org, "namespace": namespace, **d, "tags": [*d["tags"], tag]}
         post("/v1/knowledge.upsert", body)
     print(f"ingested {len(docs)} documents into {org}/{namespace}", file=sys.stderr)
+    if keep:
+        print(f"kept; erase it with: {gc_command(org, [namespace])}", file=sys.stderr)
 
 
 def listed_documents(post: SyncPost, org: str, namespace: str) -> list[dict]:
