@@ -423,11 +423,7 @@ export function MemoryInspector({
           throw new Error(result.reason || "memory was not unpinned");
         }
       } else {
-        await pinMemory(identity, memoryKey, detail.value, {
-          memoryType: detail.memory_type || "semantic",
-          // Preserve char_limit — write-through would drop the cap otherwise.
-          charLimit: detail.char_limit ?? undefined,
-        });
+        await pinMemory(identity, memoryKey, detail);
       }
       toast(wasPinned ? "Unpinned" : "Pinned", "ok");
       onChanged();
