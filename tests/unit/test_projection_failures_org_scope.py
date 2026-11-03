@@ -101,17 +101,31 @@ async def test_resolve_changes_only_the_scope(org_admin_with_hidden: _CH) -> Non
 
 
 @pytest.mark.asyncio
-async def test_an_unreadable_classification_reads_nothing(
-    monkeypatch: pytest.MonkeyPatch, org_admin_with_hidden: _CH
+@pytest.mark.parametrize("op", ["list", "retry", "resolve"])
+async def test_an_unreadable_classification_reads_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, org_admin_with_hidden: _CH, op: str
 ) -> None:
     import server.auth.context as ctx
-    from server.insights.api.models_ops import ProjectionFailureListInput
-    from server.insights.app.ops import handle_projection_failures_list
+    from server.insights.api import models_ops as m
+    from server.insights.app import ops
 
     async def everything_hidden(org: str) -> list[str]:  # the classification read failed
         return ["*"]
 
     monkeypatch.setattr(ctx, "restricted_namespaces_hidden_from", everything_hidden)
-    out = await handle_projection_failures_list(ProjectionFailureListInput(org="dev"))
-    assert out.rows == []
+    if op == "list":
+        out = await ops.handle_projection_failures_list(m.ProjectionFailureListInput(org="dev"))
+        assert out.rows == []
+    elif op == "retry":
+        retried = await ops.handle_projection_failures_retry(
+            m.ProjectionFailureRetryInput(org="dev")
+        )
+        assert retried.results == []
+    else:
+        resolved = await ops.handle_projection_failures_resolve(
+            m.ProjectionFailureResolveInput(
+                org="dev", failure_ids=["7d1b0c52-0000-4000-8000-000000000001"]
+            )
+        )
+        assert resolved.resolved == 0
     assert org_admin_with_hidden.statements == []
