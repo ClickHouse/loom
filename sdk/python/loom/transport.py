@@ -177,11 +177,12 @@ class _Call:
     sent: int = 0
 
 
+# The request ids the server keeps as sent; it replaces any other with its own.
+_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
 # Read by `_post_once` (a contextvar so a per-call override is safe under
 # concurrent calls and the `_post_once` signature tests stub stays
 # four-positional).
-# The request ids the server keeps as sent; it replaces any other with its own.
-_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _CALL: contextvars.ContextVar[_Call | None] = contextvars.ContextVar("loom_call", default=None)
 
 # The server never saw these: safe to retry under `retry_connection_errors`.
