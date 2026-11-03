@@ -3867,13 +3867,19 @@ def url_host(url: str) -> str:
 
 
 def _is_http_url(url: str) -> bool:
-    """An http(s) URL with a host that the extractor client's httpx can parse:
-    a bad port or host is refused at load, not on the first call."""
+    """An http(s) base URL with a host that the extractor client's httpx can
+    parse, and no query or fragment (the client appends `/v1/...`): a bad one is
+    refused at load, not on the first call."""
     try:
         parsed = httpx.URL(url)
         urlsplit(url).port  # noqa: B018 — over 65535 raises, which httpx lets by
-        return parsed.scheme in ("http", "https") and bool(parsed.host)  # `host` decodes IDNA
-    except (httpx.InvalidURL, UnicodeError, ValueError):
+        return (
+            parsed.scheme in ("http", "https")
+            and bool(parsed.host)  # `host` decodes IDNA
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except (httpx.InvalidURL, ValueError):
         return False
 
 

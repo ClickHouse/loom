@@ -10,14 +10,18 @@ format this one does not parse, or a utility an operator prefers) serves the
 same wire contract: [extractor contract](../docs/reference/extractor-contract.md).
 The design is in [document extraction](../docs/architecture/document-extraction.md).
 
-Install it where the user it runs as cannot write, since a file of that user's on
-`sys.path` would change what every later extraction imports
-([what an extraction can do](../docs/architecture/document-extraction.md#the-service-boundary)):
+Run it as a user of its own, and install it where that user cannot write, since
+a file of that user's on `sys.path` would change what every later extraction
+imports ([what an extraction can do](../docs/architecture/document-extraction.md#the-service-boundary)).
+The token goes in a file only root reads and reaches the service through its
+environment, never a command line, which any local user can read:
 
 ```bash
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin loom-extractor
 sudo python3 -m venv /opt/loom-extractor && sudo /opt/loom-extractor/bin/pip install ./extractor
-sudo -u nobody env LOOM_EXTRACTOR_TOKEN="$(openssl rand -hex 24)" LOOM_EXTRACTOR_HOST=0.0.0.0 \
-  /opt/loom-extractor/bin/loom-extractor
+sudo sh -c 'umask 077 && openssl rand -hex 24 > /etc/loom-extractor.token'
+sudo sh -c 'LOOM_EXTRACTOR_TOKEN=$(cat /etc/loom-extractor.token) LOOM_EXTRACTOR_HOST=0.0.0.0 \
+  exec setpriv --reuid=loom-extractor --regid=loom-extractor --init-groups /opt/loom-extractor/bin/loom-extractor'
 ```
 
 | Variable                            | Default     | Meaning                                                         |
@@ -31,8 +35,8 @@ sudo -u nobody env LOOM_EXTRACTOR_TOKEN="$(openssl rand -hex 24)" LOOM_EXTRACTOR
 | `LOOM_EXTRACTOR_MAX_BYTES`          | `67108864`  | the largest original accepted                                   |
 | `LOOM_EXTRACTOR_MAX_ARTIFACT_BYTES` | `67108864`  | the largest artifact an extraction may write                    |
 
-Point the server at it with `LOOM_DOCUMENT_EXTRACTOR_URL` and the same token in
-`LOOM_DOCUMENT_EXTRACTOR_TOKEN`.
+Point the server at it with `LOOM_DOCUMENT_EXTRACTOR_URL` and the token file's
+contents in `LOOM_DOCUMENT_EXTRACTOR_TOKEN`.
 
 Run one extraction at a time per service and scale with replicas. A child is
 readable by other processes of the same user for the moment between its start

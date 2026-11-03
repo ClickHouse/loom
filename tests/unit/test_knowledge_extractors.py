@@ -388,6 +388,8 @@ def test_an_unknown_declared_format_or_a_legacy_name_is_refused() -> None:
         {"document_extractor_url": "ftp://extractor"},
         {"document_extractor_url": "http://extractor:87a0"},
         {"document_extractor_url": "http://extractor:99999"},
+        {"document_extractor_url": "http://extractor:8790?k=v"},
+        {"document_extractor_url": "http://extractor:8790#x"},
         {"document_extractors_json": '{"pdf": "http://xn--a-.com"}'},
         {"document_extractors_json": '{"pdf": "file:///x"}'},
         {"document_extractors_json": '{"pdf": "http://"}'},
@@ -620,4 +622,30 @@ async def test_a_listing_logs_no_credential_of_a_service_it_cannot_read(
     logged = " ".join(r.getMessage() for r in caplog.records)
     assert "http://gone:8790" in logged
     assert "pass" not in logged and "key=k" not in logged
-    assert extractors._origin("http://u@[fd00::1]:8790/x") == "http://[fd00::1]:8790"
+
+
+def test_a_logged_origin_keeps_an_ipv6_hosts_brackets_and_drops_user_info() -> None:
+    assert extractors._origin("http://u:p@[fd00::1]:8790/x") == "http://[fd00::1]:8790"
+
+
+async def test_a_compressed_response_is_not_inflated_and_is_no_artifact(
+    hosts: _Hosts, settings_override: Any
+) -> None:
+    import gzip
+
+    bomb = gzip.compress(b" " * 10_000_000)
+    assert len(bomb) < 1 << 20  # under the bound as sent, ten times over it inflated
+    seen: list[str] = []
+
+    def run(request: Request) -> Response:
+        seen.append(request.headers.get("accept-encoding", ""))
+        return Response(bomb, headers={"Content-Encoding": "gzip"})
+
+    hosts.apps["stub"] = _stub(run)
+    settings_override(
+        document_extractors_json='{"pdf": "http://stub"}',
+        document_extractor_max_artifact_bytes=1 << 20,
+    )
+    with pytest.raises(extractors.ExtractionFailed) as e:
+        await extractors.extract(b"%PDF-1.7", name="a.pdf")
+    assert e.value.code == "invalid_artifact" and seen == ["identity"]

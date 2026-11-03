@@ -100,7 +100,9 @@ def _client(url: str) -> httpx.AsyncClient:
     token = _token(url)
     return httpx.AsyncClient(
         timeout=settings.document_extractor_timeout_s,
-        headers={"Authorization": f"Bearer {token}"} if token else {},
+        # Uncompressed: the size bounds count the bytes the server holds.
+        headers={"Accept-Encoding": "identity"}
+        | ({"Authorization": f"Bearer {token}"} if token else {}),
         transport=transport,
     )
 
@@ -111,7 +113,8 @@ class _TooLarge(Exception):
 
 async def _read(response: httpx.Response, cap: int) -> bytes:
     out = bytearray()
-    async for chunk in response.aiter_bytes():
+    # As sent: a compressed body is not inflated past the bound, and is no JSON.
+    async for chunk in response.aiter_raw():
         out += chunk
         if len(out) > cap:
             raise _TooLarge(f"the extractor's response is over {cap} bytes")

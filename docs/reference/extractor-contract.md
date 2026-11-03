@@ -65,7 +65,8 @@ The original's bytes are the body (`Content-Type: application/octet-stream`). Th
 A service refuses an option it does not take (`invalid_option`). It checks the content against `format` and refuses a
 file that is another format (`format_mismatch`) rather than reading it as the one asked for.
 
-`200` carries the artifact JSON. A source the service cannot extract is a `422` with an error body:
+`200` carries the artifact JSON, uncompressed: the server sends `Accept-Encoding: identity` and reads a compressed body
+as sent. A source the service cannot extract is a `422` with an error body:
 
 ```json
 { "error": { "code": "format_mismatch", "message": "the file is pdf, not markdown" } }

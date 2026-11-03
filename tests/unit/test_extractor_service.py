@@ -258,6 +258,15 @@ async def test_a_child_that_crashes_refuses_the_source_as_corrupt(
     assert r.json()["error"]["message"] == "the parser failed on this file: RuntimeError"
 
 
+async def test_a_parser_whose_dependency_is_missing_is_a_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken install, not a bad source: every source of that format would fail."""
+    _child(tmp_path, monkeypatch, "import sqlglot_missing_from_this_install")
+    r = await _extract()
+    assert (r.status_code, r.json()["error"]["code"]) == (500, "extractor_error")
+
+
 async def test_a_child_that_fails_before_its_parser_runs_is_a_500(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
