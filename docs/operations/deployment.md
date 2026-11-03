@@ -737,6 +737,22 @@ Each is off until configured; `.env.example` has a commented block for each.
 | Telemetry                | `LOOM_OTEL_EXPORTER`: `ch` (the `otel_*` tables), `otlp` (a collector); empty picks `otlp` when an endpoint is set | [Telemetry](../features/observability/telemetry.md)                                                         |
 | Erasure in other systems | `LOOM_LANGFUSE_URL`, `LOOM_CLICKSTACK_DATABASE` and their credentials                                              | [Retention and erasure](../features/memory/retention-and-erasure.md)                                        |
 
+### Memory and documents only
+
+A deployment that serves memory, documents and conversations, and no code index, sets
+`LOOM_CODE_INTEL_ENABLED=false`. Nothing else changes:
+
+- Boot still applies every migration. An empty table costs nothing to serve, and erasure
+  covers every table whatever is in use.
+- Every `code.*` operation answers a precondition error. The default MCP tool list
+  already leaves the code tools out (`LOOM_MCP_CODE_TOOLS` is off).
+- With no repository and no tracker source configured, the code and tracker workers find
+  nothing to do: each pass reads a few rows and ends. The git mirror warm-up does not
+  run, and the repository-job sandbox is probed only when `LOOM_CODE_INGEST_ENABLED` is
+  on.
+- `memory.*`, `knowledge.*`, `conversation.*`, `context.pack` and `loom_search` serve as
+  on any deployment; `loom_search` has no code or tracker results to add.
+
 ## Identity modes
 
 **OSS supports both single-user and multi-user deployments.** The stock Docker installer
