@@ -2,7 +2,7 @@
 
 The transport identifies itself (`User-Agent`, `X-Loom-SDK`,
 `X-Loom-Runtime`, `X-Loom-Retry-Count`), sends an `X-Request-Id` the server
-echoes, never exposes the credential through `repr()`, parses `Retry-After`
+echoes when it is a short token, never exposes the credential through `repr()`, parses `Retry-After`
 as seconds or an HTTP-date, and hands back the response metadata
 (`CallResult`) when a caller asks for it.
 """
