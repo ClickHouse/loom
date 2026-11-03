@@ -394,10 +394,15 @@ jobs:
             file: Dockerfile
             cache: buildkit
             pin: image.digest
+            # The repository's title and description, metadata-action's defaults.
+            labels: ""
           - image: ghcr.io/clickhouse/loom-extractor
             file: extractor/Dockerfile
             cache: extractor
             pin: extractor.image.digest
+            labels: |
+              org.opencontainers.image.title=loom-extractor
+              org.opencontainers.image.description=Loom's document extractor service, which parses originals apart from the server
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -420,6 +425,8 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ matrix.image }}
+          # The extractor's own title and description; the defaults are the repository's.
+          labels: ${{ matrix.labels }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}

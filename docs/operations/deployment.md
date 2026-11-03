@@ -990,7 +990,8 @@ The matching GitHub Release carries `loom-stack.tar.gz`, its SHA-256 file, and
 `install.sh`. The bundle is the supported source-free laptop deployment: it contains
 Compose plus the ClickHouse configuration/dictionary the stack needs, while the UI and
 server stay in the image. The repository serves `install.sh`; rerunning it preserves
-`.env` (apart from advancing the pinned `LOOM_VERSION`) and volumes.
+`.env` (apart from advancing the pinned `LOOM_VERSION` and giving an `.env` without an
+extractor token one) and volumes.
 
 ## N identical replicas
 

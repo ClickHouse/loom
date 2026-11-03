@@ -78,7 +78,8 @@ Each release runs the ClickHouse release that was latest when it was built, so r
 the same Loom version keeps its ClickHouse; installing a newer Loom version moves it,
 unless `.env` pins `LOOM_CLICKHOUSE_IMAGE` (delete that line to follow the releases again).
 Rerunning the installer updates the managed Compose/configuration files and reconciles
-the containers. It preserves `~/.loom/.env` and the named Docker volumes. To stop without
+the containers. It preserves `~/.loom/.env`, adding an extractor token to one without, and
+the named Docker volumes. To stop without
 deleting data:
 
 ```bash
@@ -143,7 +144,7 @@ loom up
 
 1. Creates the two files git does not track: `.env` from `.env.example`, and
    `deploy/clickhouse-config/named_collections.xml` from its template. It never
-   overwrites either.
+   overwrites either; it gives an existing `.env` without an extractor token one.
 2. Runs the dev compose stack with `--build`.
 3. Polls `http://localhost:7777/v1/health` until the server is ready, printing the
    pending-migration count. It gives up after `--timeout` (300 s) with the last health

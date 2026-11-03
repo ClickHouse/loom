@@ -332,8 +332,9 @@ extractor:
   tolerations: []
 
 # Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
-# release's web pods, and TCP 443 and the ClickHouse port anywhere except
-# `egressExcept` (providers, the IdP and git remotes have no fixed range).
+# release's web pods, the extractor's pods (with extractor.enabled), and TCP 443
+# and the ClickHouse port anywhere except `egressExcept` (providers, the IdP and
+# git remotes have no fixed range).
 networkPolicy:
   enabled: false
   # NetworkPolicy peers allowed to reach the pods (the ALB's subnets, the
