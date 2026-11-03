@@ -244,6 +244,12 @@ class _World:
             defs = world.symbols.get(inp.name, [])
             return SimpleNamespace(definitions=[SimpleNamespace(path=p, symbol=s) for p, s in defs])
 
+        from server.code.app.index import repo_registry
+
+        async def no_refresh(**kw):
+            return []
+
+        mp.setattr(repo_registry, "refresh_db_repos", no_refresh)
         mp.setattr(llm_client, "get_llm_client", lambda: _LLM())
         mp.setattr(document_reads, "handle_knowledge_get", knowledge_get)
         mp.setattr(document_reads, "document_chunks", chunks)
@@ -3913,7 +3919,7 @@ def _link_repo(
 
     seen: dict[str, list[str]] = {"symbol": [], "writer": [], "list": []}
 
-    async def trunk(org, repo):
+    def trunk(org, repo):
         # acme/bare: a repository with no remote to tag rows with
         known = {
             "acme/widgets": (TRUNK, REPO_TAG),
@@ -4109,10 +4115,11 @@ async def test_repo_trunk_matches_owner_name_or_a_remote_url(monkeypatch) -> Non
     monkeypatch.setattr(repos, "configured_repos", lambda: [branch, trunk])
     monkeypatch.setattr(repo_scope, "configured_repos", lambda: [branch, trunk])
     want = ("code-widgets", repo_tag("https://github.com/acme/widgets.git"))
-    assert await repo_scope.repo_trunk("o", "acme/widgets") == want
-    assert await repo_scope.repo_trunk("o", "git@github.com:Acme/Widgets.git") == want
-    assert await repo_scope.repo_trunk("other-org", "acme/widgets") == ("", "")
-    assert await repo_scope.repo_trunk("o", "widgets") == ("", "")
+    assert repo_scope.repo_trunk("o", "acme/widgets") == want
+    assert repo_scope.repo_trunk("o", "git@github.com:Acme/Widgets.git") == want
+    assert repo_scope.repo_trunk("other-org", "acme/widgets") == ("", "")
+    assert repo_scope.repo_trunk("o", "widgets") == ("", "")
+    assert repo_scope.repo_names("o") == {want[1]: "Acme/Widgets"}
 
 
 @pytest.mark.parametrize(
@@ -4202,9 +4209,13 @@ async def test_a_run_without_repo_refuses_over_rows_linked_to_a_repository(monke
     world = _World(monkeypatch, [c])
     world.record(_key(c), _same_fields(c), files=[HEADER], tags=["decision", REPO_TAG])
     _link_repo(monkeypatch, world)
+    from server.code.app import repo_scope
+
+    monkeypatch.setattr(repo_scope, "repo_names", lambda org: {REPO_TAG: "acme/widgets"})
     report = await _run()
+    # The repository by its name, which --repo takes.
     assert report.error.startswith(
-        f"this document's decisions are linked to a repository ({REPO_TAG})"
+        "this document's decisions are linked to a repository (acme/widgets)"
     )
     assert world.prompts == [] and world.recorded == []
 
@@ -4292,6 +4303,7 @@ async def test_a_run_with_another_repo_refuses_over_rows_linked_to_the_first(mon
     world.record(_key(c), _same_fields(c), files=[HEADER], tags=["decision", REPO_TAG])
     _link_repo(monkeypatch, world)
     report = await _run(repo="acme/gadgets", into="source")
+    # The tag names no configured repository here, so the run prints the tag itself.
     assert report.error == (
         f"this document's decisions are linked to a repository ({REPO_TAG}); run with its "
         "--repo, or delete them first"
@@ -4346,3 +4358,44 @@ async def test_a_flagged_row_whose_reasoning_left_gains_the_repo_tag(monkeypatch
     assert report.linked == ["decision:gone"] and report.flagged == []
     cli.print_report(report)
     assert "- tagged decision:gone with the repository\n" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_run_without_repo_reads_the_registry_for_a_branchs_trunk(monkeypatch) -> None:
+    """A repository added from the dashboard is known only once the snapshot is read: the
+    run reads it before looking up the trunk of the document's branch namespace."""
+    from server.code.app.index import repo_registry
+    from server.code.domain.index.repos import set_registry_repos
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    entries = [
+        repo_config(
+            namespace=ns,
+            repo="acme/widgets",
+            git_remote="https://github.com/acme/widgets.git",
+            git_branch=branch,
+            source="registry",
+        )
+        for ns, branch in ((TRUNK, "main"), ("ns", "release-26.1"))
+    ]
+
+    async def refresh(**kw):
+        set_registry_repos(entries)
+        return entries
+
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), namespace=TRUNK, files=[HEADER])
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", refresh)
+    set_registry_repos([])
+    try:
+        report = await _run()
+    finally:
+        set_registry_repos([])
+    assert report.error == (
+        f"this document's decisions are in o/{TRUNK}; run with --repo and --into repo, or "
+        "delete them there first"
+    )
+    assert world.prompts == []

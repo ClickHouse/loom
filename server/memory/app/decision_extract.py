@@ -319,15 +319,19 @@ async def _target(
     with the repository (`into="source"`, the default unless the document is in a code
     namespace). The caller must read the document and the repository and write where the
     rows go (read, for a dry run); with no auth context (the CLI) the operator may."""
+    from server.code.app.index.repo_registry import refresh_db_repos
     from server.code.app.repo_scope import repo_trunk
     from server.code.domain.index.repos import repo_for_namespace
 
+    # A repository added from the dashboard is known once the snapshot is read; a run
+    # without --repo needs it too, for the trunk of a branch namespace (`_read_own`).
+    await refresh_db_repos()
     if not repo:
         if into:
             return "--into needs --repo"
         target = Target(namespace, namespace, namespace)
     else:
-        trunk, tag = await repo_trunk(org, repo)
+        trunk, tag = repo_trunk(org, repo)
         # One answer for a repository that is not there and one the caller may not read.
         if not trunk or not await _may(org, trunk, Role.VIEWER):
             return f"no repository {repo!r} you may read is configured in {org}"
@@ -336,11 +340,11 @@ async def _target(
         target = Target(namespace, trunk, trunk if into == "repo" else namespace, tag)
         if not tag and target.rows_namespace != trunk:
             return f"repository {repo!r} has no remote to tag its rows with; use --into repo"
-    for ns, role in [
-        (target.doc_namespace, Role.VIEWER),
-        (target.code_namespace, Role.VIEWER),
-        (target.rows_namespace, Role.VIEWER if dry_run else Role.WRITER),
-    ]:
+    # The code namespace is the document's with no --repo, and was checked above with one.
+    checks = {target.doc_namespace: Role.VIEWER}
+    write = Role.VIEWER if dry_run else Role.WRITER
+    checks[target.rows_namespace] = max(write, checks.get(target.rows_namespace, write))
+    for ns, role in checks.items():
         if not await _may(org, ns, role):
             return f"not allowed to {'write' if role == Role.WRITER else 'read'} {org}/{ns}"
     return target
@@ -471,14 +475,16 @@ async def _read_own(
     for a run without `--repo`), which the run would drop or add to. Reconcile and retire
     read one namespace, so going on would leave the document's decisions in two places, or
     linked to the wrong repository."""
-    from server.code.app.repo_scope import trunk_namespace_of
+    from server.code.app.repo_scope import repo_names, trunk_namespace_of
 
     rows = await _extractor_rows(org, t, source_uri)
     tagged = sorted({x for r in rows for x in r.tags if x.startswith("repo:")} - {t.repo_tag})
     if tagged:
+        names = repo_names(org)
+        linked_to = ", ".join(names.get(x, x) for x in tagged)
         return [], (
-            f"this document's decisions are linked to a repository ({', '.join(tagged)}); "
-            "run with its --repo, or delete them first"
+            f"this document's decisions are linked to a repository ({linked_to}); run with "
+            "its --repo, or delete them first"
         )
     if not linked:
         other = trunk_namespace_of(org, t.doc_namespace)
@@ -488,7 +494,7 @@ async def _read_own(
         other = t.doc_namespace
     if other and other != t.rows_namespace:
         # _target checked both namespaces of a run with --repo; a branch's trunk is new here.
-        if not await _may(org, other, Role.VIEWER):
+        if not linked and not await _may(org, other, Role.VIEWER):
             # Whether rows are there is not the caller's to learn.
             return [], f"not allowed to read {org}/{other}"
         if await _extractor_rows(org, replace(t, rows_namespace=other), source_uri):

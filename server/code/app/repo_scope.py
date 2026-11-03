@@ -42,25 +42,34 @@ async def readable_repo_namespace(org: str, code_namespace: str) -> str:
         return ""
 
 
-async def repo_trunk(org: str, repo: str) -> tuple[str, str]:
+def repo_trunk(org: str, repo: str) -> tuple[str, str]:
     """(trunk code namespace, `repo:<id>` tag) of the repository `repo` names (owner/name
     or a remote URL), matched as code.repos matches its candidates; ("", "") when no
-    repository configured in `org` is that one. No access check: the caller gates."""
-    from server.code.app.index.repo_registry import refresh_db_repos
+    repository configured in `org` is that one. It reads the configured snapshot: the
+    caller refreshes it (`refresh_db_repos`) and gates."""
     from server.code.app.repos import repo_slug
     from server.code.domain.index.remote import repo_tag
 
     slug = repo_slug(repo)
-    if not slug:
-        return "", ""
-    # A repository added from the dashboard is in the snapshot once it is refreshed.
-    await refresh_db_repos()
-    entries = [c for c in configured_repos() if c.org == org and repo_slug(c.repo) == slug]
+    entries = [c for c in configured_repos() if slug and c.org == org and repo_slug(c.repo) == slug]
     if not entries:
         return "", ""
-    # Any branch's entry may be the one that names the remote.
-    tag = next((t for c in entries if (t := repo_tag(c.git_remote or c.repo))), "")
+    # The entries the trunk is chosen from (`docs_namespaces` keys on the spelling of
+    # `repo`); any of them may be the one that names the remote.
+    same = [c for c in entries if c.repo == entries[0].repo]
+    tag = next((t for c in same if (t := repo_tag(c.git_remote or c.repo))), "")
     return trunk_namespace_of(org, entries[0].namespace), tag
+
+
+def repo_names(org: str) -> dict[str, str]:
+    """`repo:<id>` tag -> owner/name of each repository configured in `org`."""
+    from server.code.domain.index.remote import repo_tag
+
+    names: dict[str, str] = {}
+    for c in configured_repos():
+        if c.org == org and (tag := repo_tag(c.git_remote or c.repo)):
+            names.setdefault(tag, c.repo)
+    return names
 
 
 async def repo_namespace_in_scope(org: str) -> str:
