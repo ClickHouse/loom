@@ -14,10 +14,9 @@ here is already the owner the token may see.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from server.auth.context import OrgScopeFilter
+from server.auth.context import OrgScopeFilter
 
 _ROWS_SQL = """
 SELECT namespace, memory_type, count() AS n
@@ -64,8 +63,6 @@ ORDER BY m.namespace
 
 def namespace_scope(namespaces: list[str]) -> OrgScopeFilter:
     """The predicate bounding the report to `namespaces`."""
-    from server.auth.context import OrgScopeFilter
-
     return OrgScopeFilter(
         accessible=True,
         where=" AND namespace IN {nss:Array(String)}",
