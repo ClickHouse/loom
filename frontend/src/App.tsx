@@ -158,7 +158,8 @@ async function tokenChangedElsewhere(token: string | null, lost: string | null):
   sessionEndedNote();
   try {
     invalidateShared();
-    s().setMyNamespaces(await sharedMine(now.org ?? ""));
+    // The org boot read them for (`effectiveOrg`).
+    s().setMyNamespaces(await sharedMine(now.org || "dev"));
   } catch {
     /* the roles read at boot stay; a reload reads them again */
   }
