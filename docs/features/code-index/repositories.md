@@ -82,8 +82,8 @@ Rules:
 - `LOOM_CODE_INTEL_ENABLED=false` refuses every `code.repo.*` op with
   `PRECONDITION_FAILED`, as it does every `code.*` op. The setting is read at startup.
   To retire an index: set it to `true` and restart, run `code.repo.remove`, then set it
-  to `false` and restart again. In between every `code.*` op serves and the mirror
-  warm-up clones each indexed repository this host lacks.
+  to `false` and restart again. In between, every `code.*` op serves, and the
+  mirror warm-up clones each indexed repository this host lacks.
 
 Add a public repository and a release branch in one call:
 
