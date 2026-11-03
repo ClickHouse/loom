@@ -16,7 +16,8 @@ export interface NamespaceAuditSummary {
   excerpt_bytes: number;
   version_rows: number;
   version_bytes: number;
-  // Searchable-type embedding rows with no vector and a recorded embed error.
+  // Searchable-type embedding rows with no vector and an embed error of their own (a held
+  // or unbilled model call is the deployment's: index_backlog).
   unembedded_rows: number;
   // Ledger counts over `window_seconds`.
   gets: number;
@@ -26,6 +27,12 @@ export interface NamespaceAuditSummary {
   get_search_ratio: number;
   // Dashboard and assistant calls in the window, left out of the counts above.
   inspector_calls: number;
+  // Exact-key reads of procedures, counted in `gets` and left out of the ratio.
+  // Absent from a server one release older, like the two below.
+  typed_gets?: number;
+  // Live rows created in the window, and the ledger's calls for the namespace in it.
+  written_in_window?: number;
+  ledger_calls?: number;
 }
 
 /** Mirrors `NamespaceAuditFinding`. `samples` carry keys and counts only —

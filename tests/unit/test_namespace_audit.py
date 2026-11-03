@@ -1510,3 +1510,17 @@ def test_the_held_markers_are_the_embedding_workers() -> None:
     from server.memory.workers.embedding import HELD
 
     assert na.EMBED_HOLDS == (HELD, NO_CUSTOMER)
+
+
+@pytest.mark.asyncio
+async def test_a_window_within_the_ledger_lag_skips_the_telemetry_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    live = {**_live(10, 1), "written_in_window": 4}
+    out, _ = await _run(
+        monkeypatch,
+        {M_LIVE: live, M_LEDGER: {"ledger_calls": 0}},
+        window_seconds=na.TELEMETRY_LAG_SECONDS,
+    )
+    assert "telemetry_unavailable: window within the ledger lag" in out.skipped
+    assert "telemetry_unavailable" not in {f.code for f in out.findings}

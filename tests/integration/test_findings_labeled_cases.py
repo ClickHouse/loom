@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 import pytest
 
+from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
 from tests.integration._eventually import eventually
 from tests.integration._resources import unique_org
 
@@ -57,18 +58,19 @@ class _Ns:
             self.count(
                 "SELECT count() FROM (SELECT agent, user_id, session_id, memory_key "
                 "FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} "
-                "AND tombstoned_at IS NULL AND memory_type NOT IN ('episodic', 'profile') "
+                "AND tombstoned_at IS NULL AND memory_type NOT IN {ns_types:Array(String)} "
                 "AND sensitivity != 'high' AND length(value) > 0) AS a "
                 "LEFT ANTI JOIN (SELECT agent, user_id, session_id, memory_key "
                 "FROM loom.memory_embeddings FINAL WHERE org = {org:String} "
                 "AND namespace = {ns:String} AND tombstoned_at IS NULL AND embedding_dim > 0) AS b "
-                "USING (agent, user_id, session_id, memory_key)"
+                "USING (agent, user_id, session_id, memory_key)",
+                ns_types=sorted(NON_SEARCHABLE_TYPES),
             )
             == 0
         )
 
-    def count(self, sql: str) -> int:
-        rows = self.ch.query(sql, parameters={"org": ORG, "ns": self.name}).result_rows
+    def count(self, sql: str, **params: Any) -> int:
+        rows = self.ch.query(sql, parameters={"org": ORG, "ns": self.name, **params}).result_rows
         return int(rows[0][0])
 
 

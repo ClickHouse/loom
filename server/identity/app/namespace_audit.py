@@ -28,7 +28,6 @@ critical".
 
 from __future__ import annotations
 
-import functools
 import logging
 import re
 from collections.abc import Awaitable, Callable, Iterable, Sequence
@@ -42,6 +41,7 @@ from server.identity.api.models_namespace_catalog import (
     NamespaceAuditOutput,
     NamespaceAuditSummary,
 )
+from server.identity.app.namespace_summary import state_change_ops
 from server.identity.app.report_rules import RuleContract, RuleLog, attach_evidence
 from server.memory.domain.excerpt import EXCERPT_LIMIT
 from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
@@ -464,24 +464,6 @@ def keys_named(key: str, value: str, keys: set[str]) -> int:
     return len({tok for tok in _TOKEN_SPLIT_RE.split(value) if tok and tok != key and tok in keys})
 
 
-@functools.cache
-def _data_writes() -> tuple[str, ...]:
-    """The ops that change stored state (a memory write, a setting, a grant): not
-    read_only, and called by a writer or audited. An inspector's call to anything else (a
-    read, the dashboard's page-view vitals) only looks at the namespace."""
-    # Imported here: the registry imports the op modules, which import this one.
-    from server.operations.base import Role
-    from server.operations.registry import ALL_OPERATIONS
-
-    return tuple(
-        sorted(
-            op.name
-            for op in ALL_OPERATIONS
-            if not op.read_only and (op.audit or op.required_role == Role.WRITER)
-        )
-    )
-
-
 class _Audit:
     """One report in progress: the CH client, the bound parameters, the
     summary being filled, the findings and the rules that ran or were skipped."""
@@ -513,7 +495,7 @@ class _Audit:
             "grace": int(INDEX_GRACE_SECONDS),
             "lag": int(TELEMETRY_LAG_SECONDS),
             "holds": list(EMBED_HOLDS),
-            "data_writes": list(_data_writes()),
+            "data_writes": list(state_change_ops()),
         }
         self.summary = NamespaceAuditSummary()
         self.searchable_rows = 0
@@ -666,6 +648,10 @@ class _Audit:
 
     async def telemetry_unavailable(self) -> None:
         s = self.summary
+        # A window no longer than the ledger lag holds no row old enough to judge.
+        if int(self.inp.window_seconds) <= TELEMETRY_LAG_SECONDS:
+            self.rules.skip("telemetry_unavailable", "window within the ledger lag")
+            return
         # Judged only on both summary reads: a failed one is not a missing ledger.
         if not (self.rules.has_run("summary_live") and self.rules.has_run("summary_ledger")):
             self.rules.skip("telemetry_unavailable", "summary read failed")
