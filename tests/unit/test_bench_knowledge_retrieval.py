@@ -142,6 +142,7 @@ def test_the_top_similarity_is_reported_per_answerability_and_kinds_average_apar
         "unanswerable": 0.25,
         "no_hits": {"answerable": 0, "unanswerable": 1},
     }
+    assert report["lexical_fired"] == 2  # the two queries with a hit, out of three
     assert report["metrics"]["all"]["n"] == 1 and report["metrics"]["context"]["mrr"] == 1.0
     rows = [
         {"kind": "context", "metrics": {"mrr": 1.0}},

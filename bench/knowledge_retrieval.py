@@ -235,7 +235,8 @@ def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> 
 
 def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params: dict) -> dict:
     rows, top_answerable, top_unanswerable = [], [], []
-    any_hits = lexical_fired = False
+    any_hits = False
+    lexical_fired = 0  # queries with a hit the lexical leg scored
     no_hits = {"answerable": 0, "unanswerable": 0}
     for q in queries:
         body = {
@@ -250,7 +251,7 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
         if out.get("ignored_args"):
             raise SystemExit(f"knowledge.search ignored {out['ignored_args']}: the arm did not run")
         hits = out["results"]
-        lexical_fired = lexical_fired or any(h.get("lexical_score", 0) > 0 for h in hits)
+        lexical_fired += any(h.get("lexical_score", 0) > 0 for h in hits)
         if not hits:
             no_hits["answerable" if q["gold"] else "unanswerable"] += 1
         elif q["gold"]:
@@ -277,6 +278,8 @@ def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params
             "unanswerable": round(sum(top_unanswerable) / max(1, len(top_unanswerable)), 3),
             "no_hits": no_hits,
         },
+        # A query whose lexical statistics failed to load runs the vector leg alone.
+        "lexical_fired": lexical_fired,
         "misses@5": [r["id"] for r in rows if not r["metrics"]["recall@5"]],
         "queries": rows,
     }

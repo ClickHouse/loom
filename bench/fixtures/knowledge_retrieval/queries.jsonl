@@ -38,7 +38,7 @@
 {"id": "meridian-price", "query": "How much does the Team plan of Meridian cost?", "gold": [["handbook/meridian.md", "$12 per user per month"]], "kind": "context"}
 {"id": "meridian-limit", "query": "What happens when a Meridian client sends too many requests?", "gold": [["handbook/meridian.md", "20 API calls per second per token"]], "kind": "context"}
 {"id": "all-sla", "query": "Which products have a 99.9% availability target?", "gold": [["handbook/lantern.md", "99.9%"], ["handbook/meridian.md", "99.9%"]], "kind": "multi"}
-{"id": "all-247", "query": "Which of our services can a customer reach for help at 3 a.m. on a Sunday?", "gold": [["handbook/lantern.md", "around the clock"]], "kind": "multi"}
+{"id": "all-weekend", "query": "Which of our services leave a customer without help on a Sunday?", "gold": [["handbook/harbor.md", "weekdays 08:00-18:00 UTC"], ["handbook/quill.md", "weekdays 07:00-19:00"], ["handbook/meridian.md", "weekdays 09:00-17:00"]], "kind": "multi"}
 {"id": "all-saml", "query": "Which products support SAML 2.0 single sign-on?", "gold": [["handbook/harbor.md", "SAML 2.0 and OIDC"], ["handbook/lantern.md", "SAML 2.0 only"], ["handbook/meridian.md", "SAML 2.0 and SCIM"]], "kind": "multi"}
 {"id": "all-aes256", "query": "Which services encrypt data with AES-256?", "gold": [["handbook/harbor.md", "AES-256 with keys rotated"], ["handbook/lantern.md", "AES-256 with customer-managed"], ["handbook/meridian.md", "AES-256 at rest"]], "kind": "multi"}
 {"id": "all-us-east", "query": "Which services can be hosted in us-east?", "gold": [["handbook/lantern.md", "us-east"], ["handbook/meridian.md", "us-east"]], "kind": "multi"}
