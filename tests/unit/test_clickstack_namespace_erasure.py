@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from server.erasure.app.backends import ClickStackBackend
+from tests.unit.clickhouse_local import CLICKHOUSE, run
 
 
 @pytest.mark.asyncio
@@ -225,11 +226,10 @@ async def test_clickstack_precount_that_fails_otherwise_fails_the_step(monkeypat
         assert ch.commands == []
 
 
-async def test_clickstack_never_erases_a_row_tagged_with_another_org(monkeypatch):
-    """Namespace and subject names are unique per org only: a row carrying
-    another org's `loom.org` is never matched; a row with no org tag (a
-    non-Loom emitter) still is. Evaluated in Python over the predicate the
-    backend builds."""
+async def test_clickstack_user_erasure_never_matches_another_org(monkeypatch):
+    """A subject name is unique per org only: a row carrying another org's
+    `loom.org` is never matched; a row with no org tag (a non-Loom emitter)
+    still is."""
     from server.erasure.app.backends import ClickStackBackend
 
     backend = ClickStackBackend(database="default", timeout_s=5.0)
@@ -240,11 +240,66 @@ async def test_clickstack_never_erases_a_row_tagged_with_another_org(monkeypatch
         return 0
 
     monkeypatch.setattr(backend, "_delete_where", fake_delete)
-    await backend.delete_namespace("acme", "default")
     await backend.delete_user_id("acme", "bob")
     for fq, where, params in calls:
         col = dict(ClickStackBackend.DEFAULT_TABLES)[fq.split(".", 1)[1]]
         assert f"AND {col}['loom.org'] IN ({{org:String}}, '')" in where, where
         assert params["org"] == "acme"
-    ns_where = calls[0][1]
-    assert ns_where.startswith("(") and ") AND " in ns_where  # the OR is grouped
+
+
+_ROWS = {
+    # Loom's own metric point: `loom.namespace`, no `loom.org`, and Loom's
+    # deployment constant in the resource.
+    "loom_untagged": ({"service.namespace": "loom"}, {"loom.namespace": "default"}),
+    "loom_other_org": (
+        {"service.namespace": "loom"},
+        {"loom.namespace": "default", "loom.org": "globex"},
+    ),
+    "loom_own_org": (
+        {"service.namespace": "loom"},
+        {"loom.namespace": "default", "loom.org": "acme"},
+    ),
+    # Loom rows of any org with no tenant attribute (a worker span, a log line).
+    "loom_deployment": ({"service.namespace": "loom"}, {}),
+    "foreign_emitter": ({"service.namespace": "default"}, {"service.namespace": "default"}),
+    "foreign_other_org": (
+        {"service.namespace": "default"},
+        {"service.namespace": "default", "loom.org": "globex"},
+    ),
+}
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.parametrize("many", [False, True])
+@pytest.mark.parametrize(
+    ("table", "attr_col"),
+    [("otel_metrics_sum", "Attributes"), ("otel_traces", "SpanAttributes")],
+)
+@pytest.mark.parametrize("namespace", ["default", "loom"])
+def test_namespace_erasure_matches_only_this_orgs_rows(table, attr_col, many, namespace):
+    """A namespace name is unique per org only. A row keyed by Loom's
+    `loom.namespace` is this org's only when it also carries this org's
+    `loom.org`; Loom's metric points carry no org, so they are never matched
+    by name alone. Evaluated on clickhouse-local over the predicate the
+    backend builds."""
+    backend = ClickStackBackend(database="default", timeout_s=5.0)
+    where = backend._namespace_where(table, attr_col, many=many)
+    rows = ", ".join(
+        f"('{tag}', map({_map(res)}), map({_map(attrs)}))" for tag, (res, attrs) in _ROWS.items()
+    )
+    setup = [
+        f"CREATE TABLE loom.{table} (tag String, ResourceAttributes Map(String, String),"
+        f" {attr_col} Map(String, String)) ENGINE = Memory",
+        f"INSERT INTO loom.{table} VALUES {rows}",
+    ]
+    got = run(
+        setup,
+        f"SELECT tag FROM loom.{table} WHERE {where} ORDER BY tag",
+        {"u": [namespace] if many else namespace, "org": "acme"},
+    )
+    expected = ["foreign_emitter", "loom_own_org"] if namespace == "default" else []
+    assert [r["tag"] for r in got] == expected
+
+
+def _map(d: dict[str, str]) -> str:
+    return ", ".join(f"'{k}', '{v}'" for k, v in d.items())

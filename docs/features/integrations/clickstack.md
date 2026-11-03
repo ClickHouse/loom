@@ -82,9 +82,13 @@ so the backend (`ClickStackBackend` in `server/erasure/app/backends.py`) runs li
 - **A namespace scope** matches `loom.namespace` or `service.namespace`. Loom's exporter
   sets `service.namespace` to the constant `loom` and carries the tenant in
   `loom.namespace`; `service.namespace` covers other emitters writing into the same
-  ClickStack.
-- **Org guard.** A row tagged with _another_ org's `loom.org` is never erased. A row with
-  no `loom.org` tag (another emitter) is, since it may hold the subject.
+  ClickStack, and its value `loom` is never matched.
+- **Org guard.** A row tagged with _another_ org's `loom.org` is never erased. A row
+  matched by `loom.namespace` must carry the erasing org's `loom.org`: Loom's metric
+  points carry the namespace and no org, so they are not erased by namespace (they hold
+  counters, no content or subject) and leave with the table's TTL. A row with no
+  `loom.org` tag matched by a user key or by `service.namespace` (another emitter) is
+  erased, since it may hold the subject.
 
 A lightweight delete writes only the row-existence mask, so rows leave every read at
 once and the bytes go at the next merge; `ALTER TABLE … DELETE` would rewrite every
