@@ -9,7 +9,8 @@ loom.namespaces with non-zero `retention_days` / `warm_days`.
 Each managed table gets ONE `ALTER TABLE … MODIFY TTL`. With overrides
 present, the TTL uses `multiIf` to dispatch on (org, namespace) — first
 match wins, else the global default. No override and no global env var
-means no ALTER (table keeps its schema default).
+means no TTL: a table that still carries one from an earlier pass gets
+`ALTER TABLE … REMOVE TTL` (none of the managed tables has a schema TTL).
 
 Per-namespace retention applies uniformly across every managed table;
 per-table-per-namespace granularity is deliberately not exposed.
@@ -272,6 +273,25 @@ async def _formatted(ch: Any, sql: str) -> str:
     return str((row or {}).get("f") or "").strip()
 
 
+async def current_ttl(ch: Any, table: str) -> str:
+    """The TTL clause `table` carries now (after `TTL `, before `SETTINGS`),
+    or '' when it has none. Raises when system.tables cannot be read."""
+    db, name = split_table(table)
+    row = await ch.query_one(
+        "SELECT engine_full FROM system.tables "
+        "WHERE database = {db:String} AND name = {name:String}",
+        {"db": db, "name": name},
+    )
+    engine_full = str((row or {}).get("engine_full") or "")
+    if " TTL " not in engine_full:
+        return ""
+    current = engine_full.split(" TTL ", 1)[1]
+    for stop in (" SETTINGS ", "\nSETTINGS "):
+        if stop in current:
+            current = current.split(stop, 1)[0]
+    return current.strip()
+
+
 async def current_ttl_matches(ch: Any, table: str, alter_sql: str) -> bool | None:
     """True when `table` already carries exactly the TTL that `alter_sql`
     would set, False when it differs or has none, None when the check
@@ -282,21 +302,11 @@ async def current_ttl_matches(ch: Any, table: str, alter_sql: str) -> bool | Non
     boot piles up TTL mutations per table and draws code 517 ("previous
     mutations not finished") once a rewrite outlives the next restart."""
     try:
-        db, name = split_table(table)
-        row = await ch.query_one(
-            "SELECT engine_full FROM system.tables "
-            "WHERE database = {db:String} AND name = {name:String}",
-            {"db": db, "name": name},
-        )
-        engine_full = str((row or {}).get("engine_full") or "")
-        if " TTL " not in engine_full:
+        current = await current_ttl(ch, table)
+        if not current:
             return False
-        current = engine_full.split(" TTL ", 1)[1]
-        for stop in (" SETTINGS ", "\nSETTINGS "):
-            if stop in current:
-                current = current.split(stop, 1)[0]
         want = await _formatted(ch, alter_sql)
-        have = await _formatted(ch, f"ALTER TABLE {table} MODIFY TTL {current.strip()}")
+        have = await _formatted(ch, f"ALTER TABLE {table} MODIFY TTL {current}")
         return bool(want) and want == have
     except Exception as e:  # noqa: BLE001 — the comparison never blocks the ALTER
         log.warning("retention/tiering: TTL comparison failed for %s (%s); applying", table, e)
@@ -316,6 +326,19 @@ def alter_statement(alter_sql: str) -> str:
     merge, or when an operator runs `ALTER TABLE … MATERIALIZE TTL` — not
     in a rewrite of every part per namespace registration."""
     return alter_sql + MATERIALIZE_OFF
+
+
+async def _stale_ttl_removal(ch: Any, table: str) -> str | None:
+    """`ALTER TABLE … REMOVE TTL` for a managed table that should carry no
+    TTL but still has one from an earlier pass, else None. A failed lookup
+    defers to the next pass: REMOVE TTL on a table without one is an error,
+    and leaving a TTL a pass longer is what the old pass already promised."""
+    try:
+        current = await current_ttl(ch, table)
+    except Exception as e:  # noqa: BLE001 — an unreadable table is retried next pass
+        log.warning("retention/tiering: TTL lookup failed for %s (%s); not removed", table, e)
+        return None
+    return f"ALTER TABLE {table} REMOVE TTL" if current else None
 
 
 async def unfinished_mutations(ch: Any, table: str) -> int | None:
@@ -355,7 +378,8 @@ async def apply(
     Only the process holding the supervisor lease alters
     tables (`leader`), and a table whose TTL already equals the composed clause is skipped —
     a MODIFY TTL rewrites the table on ClickHouse Cloud, so an unchanged
-    override must cost nothing."""
+    override must cost nothing. A table with no composed clause that still
+    carries a TTL gets REMOVE TTL, so a cleared window stops deleting rows."""
     if not leader:
         log.info(
             "retention/tiering: not the supervisor leader in pid %s; ALTERs skipped",
@@ -370,17 +394,27 @@ async def apply(
     if namespace_overrides is None:
         namespace_overrides = await _fetch_namespace_overrides(ch)
 
-    plan = compute_alters(settings_obj, namespace_overrides=namespace_overrides)
-    if not plan:
-        log.info("retention/tiering: no overrides set; schema defaults apply")
-        return 0
+    planned = {
+        target.table: (alter_sql, params)
+        for target, alter_sql, params in compute_alters(
+            settings_obj, namespace_overrides=namespace_overrides
+        )
+    }
 
     issued = 0
-    for target, alter_sql, params in plan:
-        same = await current_ttl_matches(ch, target.table, alter_sql)
-        if same:
-            log.info("retention/tiering: %s TTL unchanged; no ALTER", target.table)
-            continue
+    for target in TARGETS:
+        if target.table in planned:
+            alter_sql, params = planned[target.table]
+            if await current_ttl_matches(ch, target.table, alter_sql):
+                log.info("retention/tiering: %s TTL unchanged; no ALTER", target.table)
+                continue
+            statement = alter_statement(alter_sql)
+        else:
+            removal = await _stale_ttl_removal(ch, target.table)
+            if removal is None:
+                continue
+            statement = removal
+            params = None
         pending = await unfinished_mutations(ch, target.table)
         if pending:
             log.info(
@@ -390,16 +424,19 @@ async def apply(
                 pending,
             )
             continue
-        log.info(
-            "retention/tiering: %s -> global_retention=%d, global_warm=%d, "
-            "per-namespace overrides=%d",
-            target.table,
-            params["retention_global"],
-            params["tiering_global"],
-            params["overrides"],
-        )
+        if params is None:
+            log.info("retention/tiering: %s has no window set; removing its TTL", target.table)
+        else:
+            log.info(
+                "retention/tiering: %s -> global_retention=%d, global_warm=%d, "
+                "per-namespace overrides=%d",
+                target.table,
+                params["retention_global"],
+                params["tiering_global"],
+                params["overrides"],
+            )
         try:
-            await ch.execute(alter_statement(alter_sql))
+            await ch.execute(statement)
             issued += 1
         except Exception:  # one table's ALTER never stops the others or boot
             log.exception(
@@ -416,6 +453,7 @@ __all__ = [
     "alter_statement",
     "apply",
     "compute_alters",
+    "current_ttl",
     "current_ttl_matches",
     "unfinished_mutations",
 ]

@@ -231,21 +231,6 @@ def test_compute_alters_per_namespace_applies_to_all_tables() -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_zero_state_no_ch_calls() -> None:
-    """No globals, no per-namespace rows → indefinite retention; zero
-    ALTERs issued."""
-    ch = StubCH()
-    n = await retention_overrides.apply(
-        _FakeSettings(),
-        ch=ch,
-        namespace_overrides=[],
-        leader=True,
-    )
-    assert n == 0
-    assert ch.execute_calls == []
-
-
-@pytest.mark.asyncio
 async def test_apply_uses_provided_overrides_without_ch_query() -> None:
     """Passing namespace_overrides explicitly bypasses the CH read
     (test harness path; the boot hook fetches them itself)."""
@@ -353,7 +338,41 @@ async def test_unchanged_ttl_issues_no_alter_and_changed_ttl_does() -> None:
     n = await retention_overrides.apply(settings_obj, ch=ch, namespace_overrides=[], leader=True)
     assert n == 1
     assert all("loom.memory " in c for c in ch.execute_calls), ch.execute_calls  # audit_log skipped
-    assert ch.lookups == 2
+    assert ch.lookups == len(retention_overrides.TARGETS)  # each table read once
+
+
+@pytest.mark.asyncio
+async def test_apply_zero_state_issues_no_alter_on_tables_without_ttl() -> None:
+    """No globals, no per-namespace rows and no TTL on any table: indefinite
+    retention, zero ALTERs issued."""
+    ch = _DiffCH({})
+    n = await retention_overrides.apply(_FakeSettings(), ch=ch, namespace_overrides=[], leader=True)
+    assert n == 0
+    assert ch.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_last_override_removes_the_ttl_it_left() -> None:
+    """A namespace that sets retention_days back to 0 (and no global window)
+    leaves no desired TTL; the TTL an earlier pass set must go, or its rows
+    keep being deleted."""
+    left = "multiIf(org = 'o' AND namespace = 'ns1', created_at + toIntervalDay(30), now()) DELETE"
+    ch = _DiffCH({"memory": left, "audit_log": left})
+    n = await retention_overrides.apply(_FakeSettings(), ch=ch, namespace_overrides=[], leader=True)
+    assert n == 2
+    assert sorted(ch.execute_calls) == [
+        "ALTER TABLE loom.audit_log REMOVE TTL",
+        "ALTER TABLE loom.memory REMOVE TTL",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_table_ttl_is_not_removed_when_its_lookup_fails() -> None:
+    """REMOVE TTL on a table without one is an error, so an unreadable
+    system.tables row defers the removal to the next pass."""
+    ch = _DiffCH({}, fail_lookup=True)
+    n = await retention_overrides.apply(_FakeSettings(), ch=ch, namespace_overrides=[], leader=True)
+    assert n == 0 and ch.execute_calls == []
 
 
 @pytest.mark.asyncio

@@ -356,7 +356,9 @@ with `LOOM_TIERING_<TABLE>_WARM_DAYS` plus `LOOM_TIERING_WARM_VOLUME_NAME`. Per-
 `retention_days` or `warm_days` overrides become a `multiIf` in the same TTL expression
 (`server/storage/retention_overrides.py`). The worker leader applies them at boot and
 `retention_reconcile` keeps them in step, skipping unchanged tables because each
-`MODIFY TTL` is a mutation. Every window defaults to 0 (off).
+`MODIFY TTL` is a mutation. When the last window on a table is cleared, the same pass
+issues `ALTER TABLE … REMOVE TTL`; none of these tables has a schema TTL. Every window
+defaults to 0 (off).
 
 ### Merges and skip indexes
 

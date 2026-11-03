@@ -78,7 +78,8 @@ All off by default (0 = keep forever).
 | The deployment               | `LOOM_RETENTION_<TABLE>_DAYS`, `LOOM_TIERING_<TABLE>_WARM_DAYS`                                            | A table TTL (and warm-tier move) on `audit_log`, `agent_events`, `memory`, `memory_embeddings`, `conversations`, `chunks`, `documents`.                  |
 
 The `retention_reconcile` worker applies the last two rows as one idempotent
-`ALTER TABLE … MODIFY TTL` per table, per `(org, namespace)` when overrides exist. On
+`ALTER TABLE … MODIFY TTL` per table, per `(org, namespace)` when overrides exist, and
+removes a table's TTL once no namespace and no deployment window is left on it. On
 `loom.memory` the TTL keys on `coalesce(expires_at, created_at)`, so a writer's expiry
 wins.
 
