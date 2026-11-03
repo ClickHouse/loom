@@ -1,5 +1,5 @@
 """knowledge.add, knowledge.upsert and knowledge.bulk_add write the same
-loom.chunks row: every column, the chunk's content hash included (upsert's
+loom.chunks row: every column, the chunk's context and content hash included (upsert's
 duplicate count and the dedup report match on it), and naive-UTC times.
 CH-free."""
 
@@ -92,7 +92,11 @@ async def test_every_writer_sets_every_chunk_column(written: list[dict[str, Any]
         assert r["embedding_dim"] == 3 and len(r["embedding"]) == 3
         assert isinstance(r["ingested_at"], datetime) and r["ingested_at"].tzinfo is None
         assert r["created_at"] == r["ingested_at"]
+        # the context is what the vector embeds before the text, and is stored with it
+        assert r["context"].startswith("T\nDeploy")
+        assert r["embedding"][0] == float(len(r["context"] + "\n\n" + r["content"]))
     assert [r["chunk_idx"] for r in written] == list(range(len(written)))
+    assert [r["context"] for r in written[:2]] == ["T\nDeploy", "T\nDeploy > Rollback"]
 
 
 async def test_the_three_writers_write_the_same_rows(written: list[dict[str, Any]]) -> None:

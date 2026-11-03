@@ -82,8 +82,8 @@ def plane_org_for(op_name: str) -> str:
     body names none. code.* defaults to the code plane (its handler's
     `resolve_code_identity`), tracker.* to the tracker org (which falls back to
     the code org: the two planes mirror one repository). Every
-    other op returns "" and keeps the transport's own rule: no org in the
-    body means the flat-role path, never a guess."""
+    other op returns "", and an absent org is the verified token's own single
+    org (`server.transport.gates.resolve_org`)."""
     if op_name.startswith("code."):
         return str(settings.code_org)
     if op_name.startswith("tracker."):

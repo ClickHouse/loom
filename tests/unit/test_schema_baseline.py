@@ -129,6 +129,7 @@ def test_the_journal_files() -> None:
         "076_machine_platform_admin.sql",
         "077_machine_access_token_ttl.sql",
         "078_document_blob_location.sql",
+        "079_chunk_context.sql",
     ]
 
 

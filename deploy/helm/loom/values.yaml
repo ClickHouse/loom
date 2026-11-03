@@ -58,6 +58,10 @@ secrets:
   # LOOM_JWT_SECRET_PREVIOUS in that Secret instead.
   jwtSecretPrevious: ""
   clickhousePassword: ""
+  # The bearer token between the Loom pods and the extractor's
+  # (LOOM_DOCUMENT_EXTRACTOR_TOKEN), 16 characters or more; needed with
+  # extractor.enabled. With existingSecret, put that key in that Secret instead.
+  extractorToken: ""
   # Extra keys, e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY, LOOM_CH_READER_PASSWORD.
   extra: {}
 
@@ -300,9 +304,37 @@ analyticsExport:
     requests: { cpu: 100m, memory: 512Mi, ephemeral-storage: 2Gi }
     limits: { cpu: "1", memory: 2Gi, ephemeral-storage: 3Gi }
 
+# The document extractor service (extractor/; docs/architecture/document-extraction.md):
+# the parsers, in pods of their own that hold no Loom or ClickHouse credential
+# and no service-account token. Only the release's Loom pods reach it, and its
+# NetworkPolicy, rendered whatever networkPolicy.enabled says, lets it reach
+# nothing. The Loom pods get its URL; the token is secrets.extractorToken.
+extractor:
+  enabled: false
+  image:
+    repository: ghcr.io/clickhouse/loom-extractor
+    # Defaults to the chart's appVersion. Pin a version or digest in production.
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  # Each pod runs one extraction at a time (LOOM_EXTRACTOR_CONCURRENCY): scale
+  # with pods.
+  replicaCount: 2
+  # LOOM_EXTRACTOR_* settings (extractor/README.md), values as strings, e.g.
+  # LOOM_EXTRACTOR_MEMORY_MB: "1024". The token and the address are the chart's.
+  env: {}
+  # One extraction's address space is LOOM_EXTRACTOR_MEMORY_MB (1 GiB) on top of
+  # the service's own; the limit bounds the pod as a whole.
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1536Mi }
+  nodeSelector: {}
+  tolerations: []
+
 # Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
-# release's web pods, and TCP 443 and the ClickHouse port anywhere except
-# `egressExcept` (providers, the IdP and git remotes have no fixed range).
+# release's web pods, the extractor's pods (with extractor.enabled), and TCP 443
+# and the ClickHouse port anywhere except `egressExcept` (providers, the IdP and
+# git remotes have no fixed range).
 networkPolicy:
   enabled: false
   # NetworkPolicy peers allowed to reach the pods (the ALB's subnets, the

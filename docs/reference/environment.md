@@ -73,11 +73,13 @@ image as `LOOM_BUILD_COMMIT`, reported as `build_commit`). The remaining
 | `LOOM_COLOUR`, `LOOM_COLOUR_PORT`               | `dev/docker-compose.colour.yml`                            | required                              | Which colour (`blue` or `green`) and host port (`7781` or `7782`) a blue/green project runs.                                                  |
 | `LOOM_CLICKHOUSE_IMAGE`                         | `compose.yaml`, `dev/ci_start_clickhouse.sh`               | `clickhouse/clickhouse-server:latest` | The ClickHouse image the stack runs. A release bundle's compose file defaults it to the release the bundle was built and schema-checked with. |
 | `LOOM_IMAGE_REPOSITORY`, `LOOM_VERSION`         | `compose.yaml`, `install.sh`                               | `ghcr.io/clickhouse/loom`, `latest`   | The image and tag the standalone stack runs; the installer pins the tag in `.env`.                                                            |
+| `LOOM_EXTRACTOR_IMAGE_REPOSITORY`               | `compose.yaml`, `install.sh`                               | `ghcr.io/clickhouse/loom-extractor`   | The document extractor service's image, run at `LOOM_VERSION`.                                                                                |
 | `LOOM_PORT`                                     | `compose.yaml`, `install.sh`                               | `7777`                                | The host port the standalone stack publishes.                                                                                                 |
 
 Other `${LOOM_*}` references in the compose files are settings fields given a
-compose-level default and the uvicorn variables above. The installer keeps the image,
-tag, port and `LOOM_CLICKHOUSE_IMAGE` in `.env` when given; the
+compose-level default and the uvicorn variables above. The installer keeps the two image
+repositories (`LOOM_IMAGE_REPOSITORY`, `LOOM_EXTRACTOR_IMAGE_REPOSITORY`), the tag, the
+port, the bind host and `LOOM_CLICKHOUSE_IMAGE` in `.env` when given; the
 [quickstart](../getting-started/quickstart.md) describes what the stock `.env` sets.
 
 ## `loom` CLI

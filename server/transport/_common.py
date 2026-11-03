@@ -47,10 +47,10 @@ def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
     An org or namespace the body left out (absent to the gates: missing, blank
     or "-") is the one the gate admitted the call against, so a call served on
     a default is the tenant's row; one refused before that names the token's
-    own org, unless the token is org-wide (`*`). Whatever stays absent is "-"."""
+    own org, unless the token is org-wide (`*`). Whatever stays absent is "-";
+    a padded name is stripped."""
     from server.core import request_work
-    from server.core.naming import SENTINEL
-    from server.transport.gates import present
+    from server.core.naming import SENTINEL, present
 
     out = request_identity(args)
     bag = request_work.current()
@@ -58,8 +58,7 @@ def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
     auth = current_auth()
     token_org = present(auth.org) if auth is not None else None
     for k, fill in zip(("org", "namespace"), admitted or (SENTINEL, SENTINEL), strict=True):
-        if present(out[k]) is None:
-            out[k] = fill
+        out[k] = present(out[k]) or fill
     if present(out["org"]) is None and token_org not in (None, "*"):
         out["org"] = token_org
     if auth is None:

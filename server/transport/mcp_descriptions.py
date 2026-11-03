@@ -596,9 +596,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "an admin wants to review dedup queue."
     ),
     "memory.dedup_resolve": (
-        "Resolve a flagged dedup pair (merge, keep both, or tombstone "
-        "one). Call when the user reviews dedup queue entries and "
-        "decides on each."
+        "Resolve one pair from memory.dedup_list: pass its `canonical_id` "
+        "and a `duplicates[].memory_id` as `duplicate_id`; keep_canonical, "
+        "keep_duplicate or keep_both. Call when the user reviews dedup "
+        "queue entries and decides on each."
     ),
     "memory.dedup_collapse": (
         "Collapse every duplicate pair of the namespace onto its canonical "

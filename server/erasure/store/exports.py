@@ -99,7 +99,7 @@ async def export_knowledge(
     column = "user_id" if scope_type == "user_id" else "namespace"
     rows = await ch.query_all(
         f"""
-        SELECT org, namespace, source_uri, chunk_idx, content, tags, doc_metadata,
+        SELECT org, namespace, source_uri, chunk_idx, content, context, tags, doc_metadata,
                chunk_metadata, ingested_at, doc_superseded_at, embedding_model,
                embedding_dim
         FROM loom.chunks

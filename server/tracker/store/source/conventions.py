@@ -8,6 +8,7 @@ import re
 
 from server.settings import settings
 from server.tracker.store.source import contract_reports
+from server.tracker.store.source.qa_intel import redact_table_function
 
 
 def checks_config(org: str, namespace: str) -> tuple[str, str]:
@@ -39,6 +40,12 @@ def checks_config(org: str, namespace: str) -> tuple[str, str]:
     if not repo and len(cfg.repos) == 1:
         repo = cfg.repos[0]
     return frm.strip(), repo.strip()
+
+
+def checks_source_label(org: str, namespace: str) -> str:
+    """The checks FROM clause as callers read it and the rollup ledger stores
+    it: no credential in it (`redact_table_function`)."""
+    return redact_table_function(checks_config(org, namespace)[0])
 
 
 # Which paths are source code is the tracker's convention

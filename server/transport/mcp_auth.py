@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import Request, Response
 
 from server.code.domain.scope import set_code_scope
+from server.core.naming import present
 from server.transport.mcp_config import (
     _LOOM_SEARCH_TOOL_NAME,
     _TRANSPORT_ERROR_ID,
@@ -305,8 +306,9 @@ async def _screen_tool_call(
     args = params.get("arguments") if isinstance(params, dict) else None
     if not isinstance(params, dict) or not isinstance(args, dict):
         return None
-    req_org = args.get("org")
-    req_ns = args.get("namespace")
+    # A blank or "-" org or namespace names none, as the gates read it.
+    req_org = present(args.get("org"))
+    req_ns = present(args.get("namespace"))
     # loom_search addresses the caller's home and reads its own memory
     # namespaces (`server.auth.fanout`), so strip any namespace arg rather
     # than reject the call, and let the handler run with defaults.
@@ -317,7 +319,7 @@ async def _screen_tool_call(
     from server.auth.authz import may_act_in_org
 
     # The one cross-org rule (a platform admin may act in any org).
-    if req_org and not may_act_in_org(auth, str(req_org)):
+    if req_org and not may_act_in_org(auth, req_org):
         # result-with-isError, not a JSON-RPC error frame (clients
         # drop conversation state on those) — so the agent reads
         # the message and can recover. Ledgered in the token's org, never
@@ -332,15 +334,13 @@ async def _screen_tool_call(
                 "structuredContent": {"error": msg, "code": "ORG_MISMATCH"},
             },
         )
-    target_org = str(req_org or auth.org)
+    target_org = req_org or auth.org
     if not req_ns:
         return None
     from server.core.errors import LoomServerError
 
     try:
-        return await _screen_namespace(
-            req, tool_name, args, auth, target_org, str(req_ns), consumer
-        )
+        return await _screen_namespace(req, tool_name, args, auth, target_org, req_ns, consumer)
     except LoomServerError as e:
         # A read the check could not make past its cache (a 503): counted
         # against the server, then raised.

@@ -16,7 +16,7 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 173 tables + 18 materialized views.
+-- Counts: 173 tables + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
@@ -351,6 +351,8 @@ CREATE TABLE IF NOT EXISTS loom.chunks
     `source_uri` String,
     `chunk_idx` UInt32,
     `content` String,
+    `context` String DEFAULT '',
+    `context_lc` String MATERIALIZED lowerUTF8(context),
     `content_lc` String MATERIALIZED lowerUTF8(content),
     `tags` Array(LowCardinality(String)),
     `doc_metadata` String DEFAULT '{}',
@@ -371,12 +373,13 @@ CREATE TABLE IF NOT EXISTS loom.chunks
     `session_id` String DEFAULT '-',
     `source_class` LowCardinality(String) DEFAULT '',
     INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1,
-    INDEX content_text content_lc TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 100000000
+    INDEX content_text content_lc TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 100000000,
+    INDEX context_text context_lc TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 100000000
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, embedding_model, source_uri, chunk_idx)
-SETTINGS index_granularity = 8192, exclude_materialize_skip_indexes_on_merge = 'content_text', non_replicated_deduplication_window = 1000;
+SETTINGS index_granularity = 8192, exclude_materialize_skip_indexes_on_merge = 'content_text,context_text', non_replicated_deduplication_window = 1000;
 
 -- loom.code_answers
 CREATE TABLE IF NOT EXISTS loom.code_answers
@@ -3913,7 +3916,7 @@ TTL minute + toIntervalDay(400)
 SETTINGS allow_dimensions_outside_sorting_key = 1, ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- ======================================================================
--- Materialized views (18)
+-- Materialized views (19)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_refresh
@@ -3960,6 +3963,31 @@ GROUP BY
     agent,
     day,
     operation;
+
+-- loom.chunk_context_term_freq_mv
+CREATE MATERIALIZED VIEW IF NOT EXISTS loom.chunk_context_term_freq_mv TO loom.chunk_term_freq
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `term` String,
+    `df_state` AggregateFunction(uniqExact, Tuple(
+        String,
+        UInt32)),
+    `df_added_at` DateTime
+)
+AS SELECT
+    org,
+    namespace,
+    term,
+    uniqExactState((source_uri, chunk_idx)) AS df_state,
+    now() AS df_added_at
+FROM loom.chunks
+ARRAY JOIN arrayDistinct(arrayFilter(t -> (length(t) >= 3), arrayMap(t -> lowerUTF8(t), splitByNonAlpha(context)))) AS term
+WHERE (content != '') AND (context != '') AND (doc_superseded_at IS NULL)
+GROUP BY
+    org,
+    namespace,
+    term;
 
 -- loom.chunk_term_freq_mv
 CREATE MATERIALIZED VIEW IF NOT EXISTS loom.chunk_term_freq_mv TO loom.chunk_term_freq

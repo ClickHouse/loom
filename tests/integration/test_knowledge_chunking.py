@@ -155,3 +155,46 @@ async def test_upsert_supersedes_all_old_chunks(control_plane_url, ch_client) ->
         parameters={"org": ORG, "ns": ns, "su": src},
     ).result_rows
     assert int(live[0][0]) == result["chunks_created"]
+
+
+@pytest.mark.asyncio
+async def test_a_section_named_only_by_its_title_is_found_by_the_lexical_leg(
+    control_plane_url, ch_client
+) -> None:
+    """The context (title, breadcrumb) is stored on each chunk and the lexical leg
+    scores it: a query naming the document's subject finds a section whose text never
+    names it."""
+    from loom import Agent
+
+    ns = f"ck-ctx-{uuid.uuid4().hex[:6]}"
+    doc = "## Refunds\n\nRefunds are available within 14 days of the purchase.\n"
+    async with Agent(org=ORG, namespace=ns, agent="w", base_url=control_plane_url) as a:
+        await a.knowledge.add(content=doc, source_uri="doc://zorbel", title="Zorbel handbook")
+        await a.knowledge.add(
+            content="## Refunds\n\nRefunds are never offered.\n",
+            source_uri="doc://other",
+            title="Other handbook",
+        )
+        hits = await a.knowledge.search(
+            query="zorbel refunds", search_mode="lexical", namespace_scope="this", top_k=5
+        )
+
+    rows = ch_client.query(
+        "SELECT context FROM loom.chunks WHERE org = {org:String} AND namespace = {ns:String}"
+        " AND source_uri = 'doc://zorbel'",
+        parameters={"org": ORG, "ns": ns},
+    ).result_rows
+    assert rows == [("Zorbel handbook\nRefunds",)]
+    # document frequency counts a chunk once per term, whether the term is in its
+    # context ("zorbel"), or in its context and its text ("refunds", in both chunks)
+    df = dict(
+        ch_client.query(
+            "SELECT term, uniqExactMerge(df_state) FROM loom.chunk_term_freq"
+            " WHERE org = {org:String} AND namespace = {ns:String}"
+            " AND term IN ('zorbel', 'refunds') GROUP BY term",
+            parameters={"org": ORG, "ns": ns},
+        ).result_rows
+    )
+    assert df == {"zorbel": 1, "refunds": 2}
+    assert hits and hits[0].source_uri == "doc://zorbel"
+    assert hits[0].content == "Refunds are available within 14 days of the purchase."

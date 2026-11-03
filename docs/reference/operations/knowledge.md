@@ -20,8 +20,8 @@ WHAT: Ingest a document into the knowledge base for later retrieval via loom_sea
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `source_uri` | `str` | required | The document's stable identifier in the namespace; `get`, `upsert` and `delete` name it. |
 | `content` | `str` | required | The document's extracted text; it is split into chunks, and each chunk is embedded. |
-| `title` | `str` | `''` | Document title, stored on the document and prepended to each chunk before embedding. |
-| `description` | `str` | `''` | Prepended (with title) to each chunk before embedding so chunk vectors carry doc-level context. |
+| `title` | `str` | `''` | Document title, stored on the document and in each chunk's context, which heads the chunk's embedded text and is scored by the lexical leg. |
+| `description` | `str` | `''` | Stored (with the title) in each chunk's context, so both search legs carry doc-level context. |
 | `tags` | `list[str]` | *(computed)* | Labels stored on the document and on every chunk; search and list filter on them. |
 | `metadata` | `dict[str, Any]` | *(computed)* | Free-form JSON stored with the document and on every chunk; `knowledge.get` returns it. |
 | `original_bytes_b64` | `str \| None` | `None` | Original file bytes (base64), preserved alongside extracted text so users can download exactly what they uploaded. |
@@ -299,7 +299,7 @@ Edit doc-level metadata (title, description, tags).
 | `title` | `str \| None` | `None` | None means "leave unchanged" (sparse update); empty string is an explicit clear. |
 | `description` | `str \| None` | `None` | New description; None leaves it unchanged, empty string clears it. |
 | `tags` | `list[str] \| None` | `None` | New tag list, replacing the old one; None leaves it unchanged, `[]` clears it. |
-| `reindex` | `bool` | `False` | When True, re-embed every chunk with the new title + description prepended, routed through the upsert flow for identical supersession semantics (same content, fresh embeddings). |
+| `reindex` | `bool` | `False` | When True, rewrite every chunk with the new title + description in its context (re-embedded, re-scored by the lexical leg), routed through the upsert flow for identical supersession semantics (same content, fresh chunks). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -321,8 +321,8 @@ Same fields as knowledge.add.
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `source_uri` | `str` | required | The document's stable identifier in the namespace; `get`, `upsert` and `delete` name it. |
 | `content` | `str` | required | The document's extracted text; it is split into chunks, and each chunk is embedded. |
-| `title` | `str` | `''` | Document title, stored on the document and prepended to each chunk before embedding. |
-| `description` | `str` | `''` | Prepended (with title) to each chunk before embedding so chunk vectors carry doc-level context. |
+| `title` | `str` | `''` | Document title, stored on the document and in each chunk's context, which heads the chunk's embedded text and is scored by the lexical leg. |
+| `description` | `str` | `''` | Stored (with the title) in each chunk's context, so both search legs carry doc-level context. |
 | `tags` | `list[str]` | *(computed)* | Labels stored on the document and on every chunk; search and list filter on them. |
 | `metadata` | `dict[str, Any]` | *(computed)* | Free-form JSON stored with the document and on every chunk; `knowledge.get` returns it. |
 | `original_bytes_b64` | `str \| None` | `None` | Original file bytes (base64), preserved alongside extracted text so users can download exactly what they uploaded. |

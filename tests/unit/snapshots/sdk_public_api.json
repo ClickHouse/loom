@@ -2605,8 +2605,8 @@
           "limit"
         ],
         "dedup_resolve": [
-          "canonical_key",
-          "duplicate_key",
+          "canonical_id",
+          "duplicate_id",
           "decision",
           "confirm_canonical_key"
         ],
