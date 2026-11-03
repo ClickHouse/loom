@@ -20,11 +20,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from typing import Any
 
 from server.auth import fail_closed
 from server.auth.authz import row_in_scope
+from server.core.datetimes import naive_utc_now
 from server.identity.api.models_namespace_catalog import NamespaceListCategoriesInput
 from server.identity.api.models_namespace_guide import NamespaceGuideGetInput
 from server.identity.app.namespace_catalog import handle_namespace_list_categories
@@ -291,7 +291,7 @@ async def handle_memory_inspect(input: MemoryInspectInput) -> MemoryInspectOutpu
         namespace=input.namespace,
         subject=input.subject,
         id=input.id,
-        computed_at=datetime.now(UTC).replace(tzinfo=None),
+        computed_at=naive_utc_now(),
         own=own,
         others=others,
         activity=activity,

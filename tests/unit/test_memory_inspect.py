@@ -105,14 +105,14 @@ def _ch(
 
 
 @pytest.fixture(autouse=True)
-def cited(monkeypatch: pytest.MonkeyPatch) -> list[list[tuple[str, ...]]]:
+def cited(monkeypatch: pytest.MonkeyPatch) -> list[tuple[list[tuple[str, ...]], Any]]:
     """The reports' citation read: the hash memory.get serves for version 7 of each row,
-    named by its whole identity. Each call's refs are kept."""
-    calls: list[list[tuple[str, ...]]] = []
+    named by its whole identity. Each call's refs and scope are kept."""
+    calls: list[tuple[list[tuple[str, ...]], Any]] = []
 
     async def revisions_for(org: str, ns: str, samples: Any, *, scope: Any) -> Any:
         refs = [tuple(s[c] for c in mi.IDENTITY) for s in samples]
-        calls.append(refs)
+        calls.append((refs, scope))
         return {ref: {"version": 7, "content_sha256": "a" * 64} for ref in refs}
 
     monkeypatch.setattr(mi, "revisions_for", revisions_for)
@@ -178,7 +178,10 @@ async def test_a_view_counts_lists_and_cites(ch: RecordingCH, cited: list[Any]) 
     # The hash is the one memory.get serves, from the reports' citation read, which names
     # the row by its whole identity (the sort key), not by id.
     assert row.content_sha256 == "a" * 64 and row.sensitivity == ""
-    assert cited[0] == [("bot", "u1", "-", "deploy/window")]
+    # The citation read takes the request's scope (the whole namespace with no auth bound).
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+
+    assert cited[0] == ([("bot", "u1", "-", "deploy/window")], WHOLE_NAMESPACE)
     # The excerpt is the decoded preview of the listed version, read for that row only.
     assert row.excerpt == "Deploys on Tuesdays."
     previews = ch.statements("value_preview")
