@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -122,6 +123,8 @@ class _World:
         self.prompts: list[tuple[str, str]] = []
         # Replies served before `reply`, one per call: a candidate list, or an error raised.
         self.replies: list[Any] = []
+        # The live document's text, which the retire step reads.
+        self.content = DOC
         self._patch(monkeypatch)
         from server.settings import Settings, settings
 
@@ -157,7 +160,7 @@ class _World:
                 return SimpleNamespace(text=json.dumps({"decisions": reply}), stop_reason="")
 
         async def knowledge_get(inp):
-            return SimpleNamespace(found=inp.source_uri in world.docs, content=DOC)
+            return SimpleNamespace(found=inp.source_uri in world.docs, content=world.content)
 
         async def chunks(org, ns, uri):
             return [CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT"))]
@@ -475,6 +478,22 @@ async def test_a_pinned_row_with_the_same_text_is_left_alone_whatever_its_files(
 
 
 @pytest.mark.asyncio
+async def test_a_pinned_row_whose_document_changed_only_in_case_is_left_alone(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    # Recorded when the document wrote the reasoning and the reason in upper case.
+    fields = {
+        **_same_fields(c),
+        "reasoning": c["reasoning"].upper(),
+        "alternatives": "a plain set on disk — rejected: COSTS RANDOM READS",
+    }
+    world.record(_key(c), fields, pinned=True)
+    report = await _run()
+    assert report.records[0].action == "unchanged"
+    assert report.flagged == [] and world.recorded == [] and world.updates == []
+
+
+@pytest.mark.asyncio
 async def test_a_row_from_another_document_is_not_revised(monkeypatch) -> None:
     c = _candidate()
     world = _World(monkeypatch, [c])
@@ -601,6 +620,299 @@ async def test_the_section_cap_and_a_repeated_key_drop_candidates(monkeypatch) -
         "the section already has --max-per-section 1",
     ]
     assert len(world.recorded) == 1
+
+
+# A sentence a converted slide splits with box labels on lines of their own.
+SPLIT = "Each shard keeps one replica per region\n{labels}so a read never leaves its region."
+REPLICA_SPAN = "Each shard keeps one replica per region so a read never leaves its region."
+
+
+@pytest.mark.parametrize("labels", ["Shard A\n", "Shard A\nShard B\n", "\nA\n\nB b\n  C c c\n\n"])
+def test_a_span_is_read_across_up_to_three_label_lines(labels) -> None:
+    text = SPLIT.format(labels=labels)
+    found = dx.find_span(REPLICA_SPAN, ["Another chunk.", f"Intro. {text} Next."])
+    assert found == text and found in f"Intro. {text} Next."
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        SPLIT.format(labels="A\nB\nC\nD\n"),
+        SPLIT.format(labels="Shard A of four\n"),
+        "Each shard keeps one replica per region Shard A so a read never leaves its region.",
+        "Each shard keeps one replica per region\nShard A so a read never leaves its region.",
+        "Each shard keeps one replica per region Shard A\nso a read never leaves its region.",
+    ],
+)
+def test_four_label_lines_a_long_one_or_one_inside_a_line_is_not_read_across(text) -> None:
+    assert dx.find_span(REPLICA_SPAN, [text]) == ""
+
+
+def test_a_span_is_matched_in_any_letter_case_and_found_as_written() -> None:
+    text = "intro. each shard keeps one REPLICA per region so a read never leaves its region."
+    assert dx.find_span(REPLICA_SPAN, [text]) == text[len("intro. ") :]
+
+
+def test_a_span_split_across_two_chunks_is_not_found() -> None:
+    first, second = SPLIT.format(labels="Shard A\n").split("Shard A\n")
+    assert dx.find_span(REPLICA_SPAN, [first + "Shard A\n", second]) == ""
+
+
+def test_a_longer_span_costs_linear_time_against_one_text() -> None:
+    # Twice the span's words against one text: a matcher that read a gap more than one way
+    # would take exponential time in the words on the final mismatch (about 200 times
+    # here); linear time is about twice. Each the best of five runs.
+    text = "a\nX\n" * 30
+
+    def best(words: int) -> float:
+        span = " ".join(["a"] * words + ["b"])
+        runs = []
+        for _ in range(5):
+            started = time.perf_counter()
+            assert dx.find_span(span, [text]) == ""
+            runs.append(time.perf_counter() - started)
+        return min(runs)
+
+    assert best(20) < 20 * best(10)
+
+
+@pytest.mark.parametrize(
+    ("text", "span"),
+    [
+        # Each line a word of the span or a label: the final word never matches.
+        ("a\nX\n" * 100_000, " ".join(["a"] * 10 + ["b"])),
+        # Every match reads across a `not` line and is rejected, one start at a time.
+        ("a\nnot\n" * 100_000, "a a a"),
+    ],
+    ids=["labels", "rejected"],
+)
+def test_lines_that_all_look_like_labels_cost_linear_time(text, span) -> None:
+    # 200,000 lines against a tenth of them pins linear cost in the text's length: a
+    # matcher that rescanned the text per start would take quadratic time. Linear time is
+    # ten times the small input's, each the best of three runs. The atomic groups are
+    # pinned by the span-length test above.
+    def best(t: str) -> float:
+        runs = []
+        for _ in range(3):
+            started = time.perf_counter()
+            assert dx.find_span(span, [t]) == ""
+            runs.append(time.perf_counter() - started)
+        return min(runs)
+
+    # Quadratic time would be about 100 times; the margin is for a loaded machine.
+    assert best(text) < 60 * best(text[: len(text) // 10])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A label that starts like the next word: `so` is not the start of `Something`.
+        SPLIT.format(labels="Something\n"),
+        "Each shard keeps one replica per region so\nAPI\na read never leaves its region.",
+        "Each shard keeps one replica per region so\nIndex\na read never leaves its region.",
+    ],
+)
+def test_a_label_starting_like_the_next_word_is_read_across(text) -> None:
+    assert dx.find_span(REPLICA_SPAN, [text]) == text
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Not\n",
+        "Don't\n",
+        "Never twice\n",
+        # One word list each: a ban word, then a contrast word.
+        "Only\n",
+        "Always\n",
+        "Instead\n",
+        "Rather\n",
+        # Hedges in neither list.
+        "Rarely\n",
+        "Unless\n",
+        "Costs.)\n",
+        "**Done.**\n",
+        # A script without case has no title-like line.
+        "代理\n",
+        "- Shard A\n",
+        "+ Shard A\n",
+        "* Shard A\n",
+        "• Shard A\n",
+        "▪Shard A\n",
+        "***\n",
+        "1. first\n",
+        "1) first\n",
+        "3)\n",
+        "`Proxy`\n",
+        "~Proxy\n",
+        "| A |\n",
+        "## Heading\n",
+        "> Quoted\n",
+        ": Definition\n",
+        "= Total\n",
+        "===\n",
+        "___\n",
+        "---\n",
+        "-\n",
+        "--\n",
+        "<Proxy>\n",
+        "Shards differ.\n",
+        "Why shard?\n",
+        "One copy;\n",
+        "Shards differ。\n",
+    ],
+)
+def test_a_line_that_is_structure_a_sentence_end_or_a_negation_is_no_label(label) -> None:
+    assert dx.find_span(REPLICA_SPAN, [SPLIT.format(labels=label)]) == ""
+
+
+@pytest.mark.parametrize(
+    ("span", "text"),
+    [
+        # Narrow-wrapped prose: the lower-case line continues the sentence.
+        (
+            "We keep the index because it serves reads.",
+            "We keep the\nold\nindex because it serves reads.",
+        ),
+        (REPLICA_SPAN, SPLIT.format(labels="shard a\n")),
+    ],
+)
+def test_a_line_starting_lower_case_is_no_label(span, text) -> None:
+    assert dx.find_span(span, [text]) == ""
+
+
+@pytest.mark.parametrize("end", [".", ".)", '."', ".*"])
+def test_no_label_is_read_after_a_sentence_end(end) -> None:
+    # A plain heading between two paragraphs is no label inside a sentence, whatever
+    # closes the sentence after its mark.
+    text = f"We cache plans per tenant{end}\n\nCosts\n\nEach plan expires after an hour."
+    span = f"We cache plans per tenant{end} Each plan expires after an hour."
+    assert dx.find_span(span, [text]) == ""
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "2.5 GB\n",
+        "1.2.3\n",
+        "3 replicas\n",
+        "+3 nodes\n",
+        "-5 °C\n",
+        "**Proxy**\n",
+        "*Proxy*\n",
+        "_Proxy_\n",
+    ],
+)
+def test_a_number_or_emphasis_that_is_no_list_marker_is_a_label(label) -> None:
+    text = SPLIT.format(labels=label)
+    assert dx.find_span(REPLICA_SPAN, [text]) == text
+
+
+def test_a_rejected_label_reading_of_the_last_gap_blocks_its_partial_end() -> None:
+    # The documented limit: "plan" ending inside "plans" is tried after the label reading
+    # across "plans" and "not", which is rejected.
+    assert dx.find_span("cache plan", ["cache\nplans\nnot\nplan"]) == ""
+
+
+def test_a_line_of_a_script_without_case_is_not_read_across() -> None:
+    text = "分片按租户\n代理\n划分以保持本地。"
+    assert dx.find_span("分片按租户 划分以保持本地。", [text]) == ""
+    assert dx.find_span("分片按租户 代理 划分以保持本地。", [text]) == text
+
+
+@pytest.mark.parametrize("word", ["Not", "Rarely"])
+def test_a_negation_or_hedge_line_is_not_skipped(word) -> None:
+    assert dx.find_span("Retries are safe", [f"Retries are\n{word}\nsafe"]) == ""
+
+
+def test_a_wrapped_paragraph_end_is_not_read_across() -> None:
+    text = "We cache plans per tenant because\nPlanning costs.\n\nEach plan expires after an hour."
+    span = "We cache plans per tenant because each plan expires after an hour."
+    assert dx.find_span(span, [text]) == ""
+
+
+@pytest.mark.parametrize(
+    ("span", "text"),
+    [
+        (REPLICA_SPAN, SPLIT.format(labels="So\n")),
+        (
+            "We route each read to the nearest replica.",
+            "We route each read to\nThe proxy\nthe nearest replica.",
+        ),
+    ],
+)
+def test_a_label_line_whose_first_word_reads_as_the_next_word_ends_the_match(span, text) -> None:
+    # The word after the whitespace is tried first, so a stored span finds itself; the
+    # cost is this one shape, which is not found.
+    assert dx.find_span(span, [text]) == ""
+
+
+def test_the_fewest_label_lines_that_reach_the_next_word_are_read() -> None:
+    # A later "so a read" is not swallowed with the `not` line between as labels.
+    text = "region\nL\nso a read\nnot\nso a read"
+    assert dx.find_span("region so a read", [text]) == "region\nL\nso a read"
+
+
+@pytest.mark.parametrize("labels", ["Shard A\nShard B\n", "Shard\nShard A\n", "So\n"])
+def test_a_found_span_with_labels_finds_itself(labels) -> None:
+    text = SPLIT.format(labels=labels)
+    assert dx.find_span(text, [text]) == text
+
+
+@pytest.mark.asyncio
+async def test_a_span_with_labels_and_another_case_is_stored_as_the_documents(monkeypatch) -> None:
+    text = SPLIT.format(labels="Shard A\nShard B\n")
+    world = _World(
+        monkeypatch,
+        [
+            _candidate(
+                quote=REPLICA_SPAN,
+                reasoning=REPLICA_SPAN.lower(),
+                outcome="one replica per region",
+                alternatives=[],
+            )
+        ],
+    )
+    _chunks(monkeypatch, (text, ("Spilling", "Final DISTINCT")))
+    world.content = f"# Spilling\n\n## Final DISTINCT\n\n{text}\n"
+    await _run()
+    (inp,) = world.recorded
+    # The document's words and case, its labels left out.
+    assert inp.reasoning == REPLICA_SPAN
+    # The retire step reads the stored span across the labels again: on the unchanged
+    # document the row stays.
+    world.reply = []
+    world.record("decision:replica", {"reasoning": inp.reasoning})
+    world.record("decision:gone", {"reasoning": "Each shard keeps two replicas per region."})
+    report = await _run()
+    assert report.retired == ["decision:gone"]
+    # Once the document says otherwise, it retires.
+    world.deletes.clear()
+    changed = SPLIT.format(labels="Shard A\n").replace("one replica", "two replicas")
+    _chunks(monkeypatch, (changed, ("Spilling", "Final DISTINCT")))
+    world.content = f"# Spilling\n\n## Final DISTINCT\n\n{changed}\n"
+    report = await _run()
+    assert "decision:replica" in report.retired
+
+
+@pytest.mark.asyncio
+async def test_label_words_inside_a_reasoning_are_no_reason(monkeypatch) -> None:
+    text = "We spill into sorted runs\nRun file\nlike ORDER BY."
+    world = _World(
+        monkeypatch,
+        [
+            _candidate(
+                quote=text,
+                reasoning="We spill into sorted runs like ORDER BY.",
+                outcome="spill into sorted runs like ORDER BY",
+                alternatives=[],
+            )
+        ],
+    )
+    _chunks(monkeypatch, (text, ("Spilling", "Final DISTINCT")))
+    report = await _run()
+    assert world.recorded == []
+    assert [d.reason for d in report.dropped] == [dx.RESTATED]
 
 
 # ------------------------------------------------------------------ retire
@@ -962,6 +1274,28 @@ async def test_a_rerun_that_words_the_scenario_anew_leaves_one_live_row(monkeypa
     assert report.replaced == [f"{_key(first)} -> {_key(second)}"]
     assert [d.memory_key for d in world.deletes] == [_key(first)]
     assert report.retired == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ban", [False, True])
+async def test_a_case_only_change_under_a_reworded_scenario_leaves_one_live_row(
+    monkeypatch, ban
+) -> None:
+    first = _ban() if ban else _candidate()
+    world = _World(monkeypatch, [])
+    fields = {**_same_fields(first), "reasoning": first["reasoning"].upper()}
+    if ban:
+        # A reason-less ban's outcome is its reasoning, upper case too.
+        _chunks(monkeypatch, (_BAN, ("Spilling", "Final DISTINCT")))
+        fields["outcome"] = _BAN.upper()
+    # Recorded when the document wrote the sentence in upper case.
+    world.record(_key(first), fields)
+    second = {**first, "scenario": "spilling the final DISTINCT"}
+    world.reply = [second]
+    report = await _run()
+    assert [r.action for r in report.records] == ["written"]
+    assert report.replaced == [f"{_key(first)} -> {_key(second)}"]
+    assert [d.memory_key for d in world.deletes] == [_key(first)]
 
 
 @pytest.mark.asyncio
@@ -1404,13 +1738,15 @@ async def test_the_extractors_rows_are_read_once_per_run(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["spill into sorted runs", "Spill into sorted runs"])
 async def test_one_decision_worded_twice_across_overlapping_windows_is_written_once(
-    monkeypatch,
+    monkeypatch, outcome
 ) -> None:
     from server.knowledge.app import document_reads
 
     first = _candidate()
-    second = _candidate(scenario="spilling the final DISTINCT")
+    # The second window's outcome may differ in case only: still one decision.
+    second = _candidate(scenario="spilling the final DISTINCT", outcome=outcome)
     world = _World(monkeypatch, [])
     replies = [[first], [second]]
 
@@ -2241,16 +2577,17 @@ def test_a_span_differing_only_in_whitespace_is_the_documents() -> None:
     assert dx.find_span("sorted runs like", [text]) == "sorted\nruns like"
     assert dx.find_span("sorted runslike", [text]) == ""
     stored = dx.document_spans(cand, [text])
+    # Stored on one line, the document's words and case.
     assert (
         stored.quote
-        == "We spill into sorted\nruns like ORDER BY.  A plain set on disk costs random reads."
+        == "We spill into sorted runs like ORDER BY. A plain set on disk costs random reads."
     )
     assert stored.reasoning == "A plain set on disk costs random reads."
     assert stored.alternatives == [("a plain set on disk", "costs random reads")]
 
 
 @pytest.mark.asyncio
-async def test_a_span_with_other_line_breaks_is_recorded_as_the_document_writes_it(
+async def test_a_span_with_other_line_breaks_is_recorded_on_one_line(
     monkeypatch,
 ) -> None:
     from server.knowledge.app import document_reads
@@ -2264,7 +2601,7 @@ async def test_a_span_with_other_line_breaks_is_recorded_as_the_document_writes_
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     (inp,) = world.recorded
-    assert inp.reasoning == "A plain set\non disk costs random reads."
+    assert inp.reasoning == "A plain set on disk costs random reads."
     assert inp.source_resource_id == f"knowledge:ns/doc.md#{SECTION}"
     assert report.dropped == []
 
@@ -2869,7 +3206,19 @@ async def test_a_stitched_second_read_the_fallback_fake_answered_loses_nothing(
 
 
 @pytest.mark.asyncio
-async def test_a_second_read_repeating_a_kept_decision_writes_it_once(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "repeat",
+    [
+        {"scenario": "spilling the final DISTINCT"},
+        # Its reasoning copied in another case, its outcome reworded: still the kept one.
+        {
+            "scenario": "spilling the final DISTINCT",
+            "outcome": "spill to sorted runs",
+            "reasoning": "we spill into sorted runs like ORDER BY.",
+        },
+    ],
+)
+async def test_a_second_read_repeating_a_kept_decision_writes_it_once(monkeypatch, repeat) -> None:
     stitched = _candidate(
         scenario="the merge", outcome="merge each run once", reasoning=_STITCHED_REASONING
     )
@@ -2878,7 +3227,7 @@ async def test_a_second_read_repeating_a_kept_decision_writes_it_once(monkeypatc
     world.replies = [
         [_candidate(), stitched],
         # The kept decision again under a reworded scenario, then the repair.
-        [_candidate(scenario="spilling the final DISTINCT"), repaired],
+        [_candidate(**repeat), repaired],
     ]
     report = await _run()
     assert [inp.scenario for inp in world.recorded] == [
@@ -2889,6 +3238,24 @@ async def test_a_second_read_repeating_a_kept_decision_writes_it_once(monkeypatc
         "reasoning is not in the document text",
         de._REPEATED,
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["merge each run once", "Merge each run once"])
+async def test_a_repair_in_another_case_on_a_kept_reasoning_is_still_the_repair(
+    monkeypatch, outcome
+) -> None:
+    # The repair rests on the kept decision's reasoning; its outcome, the failed one's up
+    # to case, says it is the repair and not a repeat.
+    stitched = _candidate(
+        scenario="the merge", outcome="merge each run once", reasoning=_STITCHED_REASONING
+    )
+    repaired = {**stitched, "outcome": outcome, "reasoning": _candidate()["reasoning"]}
+    world = _World(monkeypatch, [])
+    world.replies = [[_candidate(), stitched], [repaired]]
+    report = await _run()
+    assert [inp.scenario for inp in world.recorded] == [_candidate()["scenario"], "the merge"]
+    assert de._REPEATED not in [d.reason for d in report.dropped]
 
 
 _ONE = "We spill into sorted runs like ORDER BY. A plain set on disk costs random reads."
@@ -3148,6 +3515,35 @@ async def test_a_ban_whose_outcome_is_shorter_than_its_sentence_is_kept_with_no_
 
 
 @pytest.mark.asyncio
+async def test_a_ban_copied_in_another_case_is_still_its_whole_quote(monkeypatch) -> None:
+    world = _World(monkeypatch, [_ban(outcome="no server retry setting", reasoning=_BAN.lower())])
+    _chunks(monkeypatch, (f"{_BAN} The proxy adds jitter to each attempt.", ("Retries",)))
+    await _run()
+    (inp,) = world.recorded
+    assert inp.outcome == inp.reasoning == _BAN
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "over",
+    [
+        # The reasoning is the whole quote.
+        {"outcome": "no server retry setting"},
+        # The reasoning is a fragment of the ban: the quote is stored instead, judged on
+        # the model's spans, so the label inside the document's quote changes nothing.
+        {"reasoning": "no server retry setting."},
+    ],
+)
+async def test_a_reasonless_ban_split_by_a_label_is_stored_without_it(monkeypatch, over) -> None:
+    text = "Client-side retries\nProxy\nonly; no server retry setting."
+    world = _World(monkeypatch, [_ban(**over)])
+    _chunks(monkeypatch, (text, ("Retries",)))
+    await _run()
+    (inp,) = world.recorded
+    assert inp.outcome == inp.reasoning == _BAN
+
+
+@pytest.mark.asyncio
 async def test_a_ban_too_long_for_an_outcome_is_judged_as_any_candidate(monkeypatch) -> None:
     long_ban = "Every client must retry " + "with its own jitter and backoff, " * 32 + "only once."
     assert len(long_ban) > dx.OUTCOME_MAX_CHARS
@@ -3334,6 +3730,13 @@ async def test_a_recap_candidate_with_a_missing_reasoning_is_not_read_again(monk
             "Spilled runs merge from disk.",
             False,
         ),
+        # The reason found in another case is still the sentence that rejects it.
+        (
+            "We shard by time. Sharding by tenant splits every join.",
+            "shard by tenant",
+            "sharding by tenant splits every join.",
+            False,
+        ),
         # A list item is a sentence of its own.
         (
             "Plans:\n- sort the runs in memory\n- never spill twice",
@@ -3378,6 +3781,80 @@ async def test_an_option_named_outside_the_quote_stays_rejected(
     report = await _run()
     (inp,) = world.recorded
     assert inp.alternatives == [f"a plain set on disk — rejected: {reason}"]
+    assert report.dropped == []
+
+
+@pytest.mark.asyncio
+async def test_an_option_a_list_item_states_is_inverted_on_the_documents_lines(monkeypatch) -> None:
+    # The stored quote is on one line; the list items that end its sentences are read
+    # from the document's own text.
+    quote = "Plans:\n- sort the runs in memory\n- never spill twice"
+    cand = _candidate(
+        scenario="how runs are kept",
+        outcome="keep runs in memory",
+        reasoning="never spill twice",
+        quote=quote,
+        alternatives=[{"option": "sort the runs in memory", "reason": "never spill twice"}],
+        mentions=[],
+    )
+    world = _World(monkeypatch, [cand])
+    _chunks(monkeypatch, (quote, ("Runs",)))
+    report = await _run()
+    (inp,) = world.recorded
+    assert inp.alternatives == []
+    assert [d.reason for d in report.dropped] == [
+        "rejected option 'sort the runs in memory' left out: the quote states it as part of "
+        "the choice"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_blank_lines_around_a_label_end_no_sentence(monkeypatch) -> None:
+    # Left in place of the label, the blank lines would end "We avoid" and leave
+    # "sharding by tenant." a sentence of its own that states the option as chosen.
+    text = (
+        "We shard by time. We avoid\n\nShards\n\nsharding by tenant. "
+        "Joins would split across shards."
+    )
+    cand = _candidate(
+        scenario="how tables are sharded",
+        outcome="shard by time",
+        reasoning="Joins would split across shards.",
+        quote="We shard by time. We avoid sharding by tenant.",
+        alternatives=[{"option": "shard by tenant", "reason": "Joins would split across shards."}],
+        mentions=[],
+    )
+    world = _World(monkeypatch, [cand])
+    _chunks(monkeypatch, (text, ("Sharding",)))
+    report = await _run()
+    (inp,) = world.recorded
+    assert inp.alternatives == ["shard by tenant — rejected: Joins would split across shards."]
+    assert report.dropped == []
+
+
+@pytest.mark.asyncio
+async def test_a_label_naming_a_rejected_option_does_not_invert_it(monkeypatch) -> None:
+    # The label "Shard by tenant" sits inside the chosen design's sentence; it states
+    # nothing, so the option stays rejected.
+    text = (
+        "We shard by time\nShard by tenant\nso joins stay local. "
+        "Sharding by tenant splits every join."
+    )
+    cand = _candidate(
+        scenario="how tables are sharded",
+        outcome="shard by time",
+        reasoning="We shard by time so joins stay local.",
+        quote="We shard by time so joins stay local. Sharding by tenant splits every join.",
+        alternatives=[
+            {"option": "shard by tenant", "reason": "Sharding by tenant splits every join."}
+        ],
+        mentions=[],
+    )
+    world = _World(monkeypatch, [cand])
+    _chunks(monkeypatch, (text, ("Sharding",)))
+    report = await _run()
+    (inp,) = world.recorded
+    assert inp.alternatives == ["shard by tenant — rejected: Sharding by tenant splits every join."]
     assert report.dropped == []
 
 

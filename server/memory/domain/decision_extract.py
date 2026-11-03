@@ -3,10 +3,11 @@ reply, the verbatim and restatement checks, and sorting the code names a candida
 mentions.
 
 A candidate is kept only when its quote, its reasoning and every rejected option's reason
-each sit inside one chunk the model read, whitespace aside, its reasoning says more than
-its outcome (a ban the text gives no reason for is kept as one with none), and its quote
-is not in a recap section: what reaches an agent before an edit is the document's own
-reason. A rejected option the text states as part of the choice is left out.
+each sit inside one chunk the model read (whitespace, letter case and a few label lines
+aside, see `find_span`), its reasoning says more than its outcome (a ban the text gives no
+reason for is kept as one with none), and its quote is not in a recap section: what
+reaches an agent before an edit is the document's own reason. A rejected option the text
+states as part of the choice is left out.
 """
 
 from __future__ import annotations
@@ -249,17 +250,137 @@ def parse_candidates(reply: str) -> list[Candidate] | None:
 MIN_SPAN_CHARS = 12
 
 
-def find_span(span: str, texts: Sequence[str]) -> str:
-    """The first text's own span that reads as `span` with each run of whitespace taken
-    as one space, or '': a model copying a span drops line breaks and doubled spaces."""
+# The label lines a span reads across between two of its words.
+# not a setting: part of what a label line is, which the verbatim check's docs state
+LABEL_LINES_MAX = 3
+# Words of a ban or an invariant (`states_a_ban`), and words that say a sentence
+# rejects or contrasts what it names (`inverted_options`).
+_BAN_WORDS = r"only|no|never|must|not|always|at\s+most|at\s+least"
+_NEGATION_WORDS = (
+    r"not|no|never|cannot|can['’]t|instead|rather|without|fail\w*|reject\w*|than"
+    r"|avoid\w*|slow|over|against|versus|vs|unlike|replac\w*|favou?r\w*|prefer\w*"
+    r"|outperform\w*|beats?|compar\w*|drop\w*"
+)
+# Whitespace other than a line break.
+_H = r"[^\S\n]"
+# What ends a sentence: a full stop, a question or exclamation mark, a semicolon, ASCII
+# or full-width.
+_SENTENCE_PUNCT = "[.!?;。！？；]"
+# The end of a sentence, closing brackets, quotes and emphasis after the mark aside.
+_SENTENCE_TAIL = rf"{_SENTENCE_PUNCT}[)\]\"'”’*_]*$"
+_SENTENCE_END_WORD = re.compile(_SENTENCE_TAIL)
+# A label line: one to three words on a line of their own, as a slide or diagram
+# converted to text puts box labels between a sentence's two halves.
+_LABEL_LINE = rf"{_H}*\S+(?:{_H}+\S+){{0,2}}{_H}*\n"
+_BLANK_LINES = rf"(?:{_H}*\n)*"
+# Between two words of a span: a line break, one to three label lines, blank lines
+# around them, then the next word on its own line. As few label lines as reach the next
+# word: a later line reading as it is not taken for a label. The lines read across are
+# a group, which `_only_labels` checks.
+_LABEL_GAP = rf"{_H}*\n({_BLANK_LINES}(?:{_LABEL_LINE}{_BLANK_LINES}){{1,{LABEL_LINES_MAX}}}?){_H}*"
+# Words that change what a sentence says and are in neither list above.
+_HEDGE_WORDS = (
+    r"rarely|seldom|hardly|barely|scarcely|nor|neither|none|nothing|nobody|nowhere"
+    r"|unless|except|but|although|though|however|yet"
+)
+# A title-like line that is still no label: structure (a list item, a bullet, fence,
+# table row, heading, a line starting with `=` (an AsciiDoc heading), HTML tag, quote,
+# definition), a sentence end, or a negation or hedge. A line with no letter or digit
+# (an underline, a rule, a bare fence) is never a label (`_is_label`).
+_NOT_A_LABEL = re.compile(
+    rf"^(?:[-*+]\s|[•◦▪‣·‧]|[`~|#>:=<]|\d+[.)](?:\s|$))|{_SENTENCE_TAIL}"
+    rf"|\b(?:{_BAN_WORDS}|{_NEGATION_WORDS}|{_HEDGE_WORDS})\b|n['’]t\b",
+    re.I,
+)
+
+
+def _is_label(line: str) -> bool:
+    """A label is title-like: its first letter or digit, after any markup (`**Proxy**`,
+    `+3 nodes`), is an upper-case letter or a digit, which a line of wrapped prose
+    continuing its sentence ("We keep the / old / index") and a line of a script without
+    case never are; and it is no structure, sentence end or negation (`_NOT_A_LABEL`)."""
+    first = next((ch for ch in line if ch.isalnum()), "")
+    return (first.isupper() or first.isdigit()) and not _NOT_A_LABEL.search(line)
+
+
+def _only_labels(lines: str | None) -> bool:
+    """The lines a match read across between two words are all labels (or none were)."""
+    return not lines or all(_is_label(x.strip()) for x in lines.splitlines() if x.strip())
+
+
+def _span_match(span: str, texts: Sequence[str]) -> re.Match[str] | None:
+    """The first text's match of `span`, as `find_span` reads it, or None."""
     words = span.split()
     if not words:
-        return ""
-    pattern = re.compile(r"\s+".join(map(re.escape, words)))
+        return None
+    # Atomic gaps, the next word right after the whitespace tried first: linear time.
+    parts = [re.escape(words[0])]
+    for i in range(1, len(words)):
+        prev, w, last = words[i - 1], re.escape(words[i]), i == len(words) - 1
+        end = r"(?!\w)" if last else r"(?=\s)"
+        # A label sits inside a sentence: no label gap after a sentence's end, which
+        # would join two sentences across a heading between them.
+        label = "" if _SENTENCE_END_WORD.search(prev) else rf"|{_LABEL_GAP}{w}{end}"
+        # The last word may still end inside a document word (a CJK span has no spaces).
+        partial = rf"|\s+{w}" if last else ""
+        parts.append(rf"(?>\s+{w}{end}{label}{partial})")
+    pattern = re.compile("".join(parts), re.IGNORECASE)
     for text in texts:
-        if m := pattern.search(text):
-            return m.group(0)
-    return ""
+        # Labels are checked after the match; a rejected match retries from the next start.
+        start = 0
+        while m := pattern.search(text, start):
+            if all(map(_only_labels, m.groups())):
+                return m
+            start = m.start() + 1
+    return None
+
+
+def find_span(span: str, texts: Sequence[str]) -> str:
+    """The first text's own span that reads as `span`, or '': each run of whitespace
+    taken as one space, letter case ignored, and up to three label lines read across
+    between two words, as a model copies a span from a converted slide. What is returned
+    is the text's, labels included, so it is always a substring of the text. A label
+    starts with an upper-case letter or a digit, so a line of a script without case is
+    never read across. Not found: a label line whose first word reads as the next word
+    ("The proxy" over "the nearest replica"), and a last word that would end inside a
+    document word where a rejected label reading of its gap comes first ("cache plan"
+    over "cache / plans / not / plan"): the label reading is tried before the partial
+    end. A label is recognised by its shape and the word lists of `_NOT_A_LABEL`, so a
+    short line of another kind that the sentence needs can still be read across; the
+    stored span is the document's words, so a reader can check it against the source."""
+    m = _span_match(span, texts)
+    return m.group(0) if m else ""
+
+
+def _without_labels(span: str, texts: Sequence[str]) -> list[str] | None:
+    """The pieces of the text's match of `span` between the label lines it read across
+    (and the blank lines around them), or None when it is not found."""
+    m = _span_match(span, texts)
+    if not m:
+        return None
+    pieces, at = [], m.start()
+    for n in range(1, len(m.groups()) + 1):
+        if m.start(n) >= 0:
+            pieces.append(m.string[at : m.start(n)])
+            at = m.end(n)
+    pieces.append(m.string[at : m.end()])
+    return pieces
+
+
+def stored_span(span: str, texts: Sequence[str]) -> str:
+    """The text's span that reads as `span` (`find_span`) as it is stored: the
+    document's own words and case on one line, its label lines left out, or ''."""
+    pieces = _without_labels(span, texts)
+    return collapse_ws(" ".join(pieces)) if pieces else ""
+
+
+def unlabelled_span(span: str, texts: Sequence[str]) -> str:
+    """The text's span that reads as `span` with its label lines left out and its other
+    line breaks kept, or '': where a list item or a blank line ends a sentence, and no
+    label names an option. The blank lines around a label go with it: the label sits
+    inside one sentence."""
+    pieces = _without_labels(span, texts)
+    return "".join(pieces) if pieces else ""
 
 
 def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
@@ -271,7 +392,7 @@ def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
         return bool(find_span(span, texts))
 
     def short(span: str) -> bool:
-        # Measured as the document's span reads, whitespace runs one space.
+        # Measured on the span as the model gave it, whitespace runs one space.
         return len(collapse_ws(span)) < MIN_SPAN_CHARS
 
     if short(cand.quote):
@@ -318,13 +439,14 @@ def stitched_note(failed: Sequence[tuple[str, str]]) -> str:
 
 
 def document_spans(cand: Candidate, texts: list[str]) -> Candidate:
-    """`cand` with each span replaced by the text's own, line breaks and all, for a
-    candidate that passed the verbatim check: what is stored is the document's."""
+    """`cand` with each span replaced by the text's own as it is stored (`stored_span`),
+    for a candidate that passed the verbatim check: what is stored is the document's
+    words, never a label between them."""
     return replace(
         cand,
-        quote=find_span(cand.quote, texts),
-        reasoning=find_span(cand.reasoning, texts),
-        alternatives=[(option, find_span(reason, texts)) for option, reason in cand.alternatives],
+        quote=stored_span(cand.quote, texts),
+        reasoning=stored_span(cand.reasoning, texts),
+        alternatives=[(option, stored_span(reason, texts)) for option, reason in cand.alternatives],
     )
 
 
@@ -356,7 +478,7 @@ def restates_outcome(cand: Candidate) -> bool:
 
 
 # A ban or an invariant: a constraint the text states may give no reason for it.
-_BAN_MARKER = re.compile(r"\b(?:only|no|never|must|not|always|at\s+most|at\s+least)\b", re.I)
+_BAN_MARKER = re.compile(rf"\b(?:{_BAN_WORDS})\b", re.I)
 
 
 def states_a_ban(cand: Candidate) -> bool:
@@ -413,13 +535,7 @@ _SENTENCE_END = re.compile(
     r"|\n\s*\n\s*|\n(?=[ \t]*(?:[-*+]|\d+[.)])\s)",
     re.I,
 )
-# Words that say a sentence rejects or contrasts what it names.
-_NEGATION = re.compile(
-    r"\b(?:not|no|never|cannot|can['’]t|instead|rather|without|fail\w*|reject\w*|than"
-    r"|avoid\w*|slow|over|against|versus|vs|unlike|replac\w*|favou?r\w*|prefer\w*"
-    r"|outperform\w*|beats?|compar\w*|drop\w*)\b",
-    re.I,
-)
+_NEGATION = re.compile(rf"\b(?:{_NEGATION_WORDS})\b", re.I)
 
 
 def _sentences(text: str) -> list[tuple[int, int]]:
@@ -441,7 +557,7 @@ def _states_as_chosen(option: str, reason: str, text: str) -> bool:
     if not words:
         return False
     # A reason passed the verbatim check, so it has words.
-    pattern = re.compile(r"\s+".join(map(re.escape, reason.split())))
+    pattern = re.compile(r"\s+".join(map(re.escape, reason.split())), re.IGNORECASE)
     reasons = [(m.start(), m.end()) for m in pattern.finditer(text)]
     for start, end in _sentences(text):
         if any(a < end and start < b for a, b in reasons):

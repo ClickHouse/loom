@@ -23,11 +23,11 @@ identity, so a re-run revises the extractor's own rows instead of writing beside
   same at or above the conflict threshold: skipped as already recorded.
 
 After the writes, the extractor deletes its unconfirmed rows citing this document whose
-reasoning (a span of the document, whitespace aside) is no longer in its text, or whose
-outcome and reasoning this run recorded under another key. A row it keeps (confirmed, or
-with a recorded outcome) whose reasoning left is tagged `source-changed` instead. A
-refused write is reported and the run goes on. Runs in-process, with no auth context:
-operator only.
+reasoning (a span of the document) is no longer in its text, read as in the verbatim
+check, or whose outcome and reasoning this run recorded under another key. A row it keeps
+(confirmed, or with a recorded outcome) whose reasoning left is tagged `source-changed`
+instead. A refused write is reported and the run goes on. Runs in-process, with no auth
+context: operator only.
 """
 
 from __future__ import annotations
@@ -348,9 +348,9 @@ async def extract_document(
         )
         return report
     written: set[str] = set()
-    # (outcome, reasoning) -> key of each decision this document now holds, for the retire
-    # step: the same outcome on the same verbatim reasoning is the same decision, however
-    # the model worded its scenario and category.
+    # The key of each decision this document now holds, keyed by _held_key(outcome,
+    # reasoning), for the retire step: the same outcome on the same verbatim reasoning is
+    # the same decision, however the model worded its scenario and category.
     held: dict[tuple[str, str], str] = {}
     for cand, section, texts in kept:
         try:
@@ -374,7 +374,7 @@ async def extract_document(
         if rec.action == "flagged":
             report.flagged.append(rec.memory_key)
         if rec.holds:
-            held.setdefault((rec.held_outcome, collapse_ws(cand.reasoning)), rec.memory_key)
+            held.setdefault(_held_key(rec.held_outcome, cand.reasoning), rec.memory_key)
     await _retire(report, own, live_texts, written, held)
     return report
 
@@ -471,7 +471,7 @@ class _Kept:
     kept: list[tuple[dx.Candidate, str, list[str]]] = field(default_factory=list)
     per_section: dict[str, int] = field(default_factory=dict)
     keys: set[str] = field(default_factory=set)
-    pairs: set[tuple[str, str]] = field(default_factory=set)  # (outcome, reasoning)
+    pairs: set[tuple[str, str]] = field(default_factory=set)  # _held_key(outcome, reasoning)
 
 
 _EMPTY_REPLY = "the model's reply held no decision; the window was read once more"
@@ -549,12 +549,15 @@ def _repairs(
     """The second read's candidates that repair a failed one: a candidate with a failed
     outcome, or one whose reasoning none of the window's kept candidates has. A kept
     decision given again, its scenario reworded, would be written twice."""
-    outcomes = {collapse_ws(outcome) for outcome, _span, _section in failed}
+    # Case aside, as the held keys and pairs read an outcome.
+    outcomes = {collapse_ws(outcome).casefold() for outcome, _span, _section in failed}
     reasonings = {collapse_ws(c.reasoning) for c, _section, _texts in kept}
     texts = [c.text for c in w.chunks]
     out: list[dx.Candidate] = []
     for cand in again:
-        if collapse_ws(cand.outcome) in outcomes or collapse_ws(cand.reasoning) not in reasonings:
+        # Stored as a kept candidate's reasoning is: the model's copy may differ in case.
+        reasoning = dx.stored_span(cand.reasoning, texts)
+        if collapse_ws(cand.outcome).casefold() in outcomes or reasoning not in reasonings:
             out.append(cand)
         else:
             section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
@@ -598,10 +601,10 @@ def _check_window(
         if reason:
             report.dropped.append(Dropped(section, reason, cand.quote))
             continue
-        cand = _drop_inverted(cand, section, report)
+        cand = _drop_inverted(cand, section, texts, report)
         state.per_section[section] = state.per_section.get(section, 0) + 1
         state.keys.add(key)
-        state.pairs.add((cand.outcome, collapse_ws(cand.reasoning)))
+        state.pairs.add(_held_key(cand.outcome, cand.reasoning))
         state.kept.append((cand, section, texts))
     return failed
 
@@ -617,7 +620,7 @@ def _duplicate_or_unfit(
         return "no letters or digits a-z, 0-9 to build a key from", ""
     if key in state.keys:
         return "same key as an earlier candidate", key
-    if (cand.outcome, collapse_ws(cand.reasoning)) in state.pairs:
+    if _held_key(cand.outcome, cand.reasoning) in state.pairs:
         # Overlapping chunks feed one span to two windows, worded apart.
         return "same decision as an earlier candidate", key
     if not _fits(org, namespace, source_uri, cand, section):
@@ -628,10 +631,15 @@ def _duplicate_or_unfit(
     return "", key
 
 
-def _drop_inverted(cand: dx.Candidate, section: str, report: ExtractReport) -> dx.Candidate:
+def _drop_inverted(
+    cand: dx.Candidate, section: str, texts: list[str], report: ExtractReport
+) -> dx.Candidate:
     """`cand` without the rejected options the text states as part of the choice, each
-    reported; the decision itself stays."""
-    inverted = dx.inverted_options(cand)
+    reported; the decision itself stays. The quote is read on the document's own lines
+    without the labels (`unlabelled_span`): the stored quote is on one line, without the
+    list items and blank lines that end a sentence, and a label naming an option states
+    nothing. The stored reasons have the same words, which is all their match reads."""
+    inverted = dx.inverted_options(replace(cand, quote=dx.unlabelled_span(cand.quote, texts)))
     for option in inverted:
         reason = f"rejected option {option!r} left out: the quote states it as part of the choice"
         report.dropped.append(Dropped(section, reason, cand.quote))
@@ -689,9 +697,9 @@ def _same_reasons(stored: list[str], candidate: list[str]) -> bool:
     alternative cut at ALTERNATIVE_CHARS keeps only the start of its reason, and where the
     cut falls moves with the option's wording, so it matches as a prefix. One cut before
     its reason (inside the option or the marker) holds none, and matches whichever
-    candidate reason is left."""
+    candidate reason is left. Letter case aside, as the verbatim check reads a span."""
     # `candidate` is the input's list, already kept as decision.record keeps it, uncut.
-    remaining = [a.rpartition(dx.REJECTED)[2] for a in candidate]
+    remaining = [a.rpartition(dx.REJECTED)[2].casefold() for a in candidate]
     if len(remaining) != len(stored):
         return False
     # Reasoned before reasonless, uncut before cut, the longest cut reason first.
@@ -704,7 +712,7 @@ def _same_reasons(stored: list[str], candidate: list[str]) -> bool:
         ),
     )
     for alt in order:
-        reason = alt.rpartition(dx.REJECTED)[2]
+        reason = alt.rpartition(dx.REJECTED)[2].casefold()
         cut = len(alt) >= svc.ALTERNATIVE_CHARS
         if dx.REJECTED not in alt:
             match = remaining[0] if cut and remaining else None
@@ -722,9 +730,11 @@ def _same_decision(record: dict[str, Any], inp: DecisionRecordInput) -> bool:
     """The document still says what the record says: the verbatim fields, the reasoning
     and the rejected options' reasons, as decision.record stores them, are the same. The
     model words the category, scenario, outcome and options anew on each run; a change
-    there alone is no change in the document. Nor is a change in whitespace: a re-wrapped
-    line leaves every row as it is, the stored span still found by the retire step."""
-    if collapse_ws(str(record.get("reasoning") or "")) != collapse_ws(inp.reasoning):
+    there alone is no change in the document. Nor is a change in whitespace or letter
+    case alone: a re-wrapped line leaves every row as it is, the stored span still found
+    by the retire step, which reads case as the verbatim check does."""
+    stored = collapse_ws(str(record.get("reasoning") or "")).casefold()
+    if stored != collapse_ws(inp.reasoning).casefold():
         return False
     return _same_reasons(alternatives(record), inp.alternatives)
 
@@ -1093,6 +1103,13 @@ async def _retire(
             report.refused.append(f"{row.memory_key}: {_refusal(e)}")
 
 
+def _held_key(outcome: str, reasoning: str) -> tuple[str, str]:
+    """A decision as the retire step compares it with this run's: its outcome and
+    reasoning, whitespace and case aside, so a case-only change in the document under a
+    reworded scenario still names its heir."""
+    return collapse_ws(outcome).casefold(), collapse_ws(reasoning).casefold()
+
+
 async def _retire_one(
     report: ExtractReport,
     row: MemoryRow,
@@ -1106,13 +1123,15 @@ async def _retire_one(
     reasoning = str(record.get("reasoning") or "")
     if not reasoning:
         return
-    restated = held.get((str(record.get("outcome") or "").strip(), collapse_ws(reasoning)))
+    outcome = str(record.get("outcome") or "")
+    restated = held.get(_held_key(outcome, reasoning))
     # A row with a recorded outcome is kept: deleting it would lose the outcome.
     if not _confirmed(row) and restated is not None and not _has_outcome(record):
         if await _delete_row(report, row):
             report.replaced.append(f"{key} -> {restated}")
         return
-    # Whitespace aside, as the verbatim check reads it: a re-wrapped line is the same text.
+    # As the verbatim check reads it: a re-wrapped line, a change of case or a label line
+    # read across is the same text.
     if not dx.find_span(reasoning, live_texts):
         # A row with a recorded outcome is tagged, never deleted, like a pinned one.
         keep = _confirmed(row) or _has_outcome(record)
