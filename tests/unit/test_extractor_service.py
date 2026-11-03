@@ -441,7 +441,7 @@ async def test_a_child_can_open_no_socket(tmp_path: Path, monkeypatch: pytest.Mo
         import ctypes, errno, platform
         libc = ctypes.CDLL(None, use_errno=True)
         probes = {"io_uring": 425}  # io_uring_setup: an io_uring can open a socket
-        # ptrace(PTRACE_TRACEME): a child that could trace could take over a sibling
+        # ptrace(PTRACE_PEEKTEXT, 0): unfiltered, ESRCH; the filter refuses every request
         probes["ptrace"] = 101 if platform.machine() == "x86_64" else 117
         if platform.machine() == "x86_64":
             probes["x32"] = 0x40000000 | 39  # the x32 ABI's getpid, numbered past the filter's checks
