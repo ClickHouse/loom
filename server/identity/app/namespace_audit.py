@@ -86,8 +86,8 @@ HASH_KEY_WARNING_SHARE = 0.25
 # telemetry_unavailable: a write younger than this may not have reached the ledger yet (it
 # is flushed in batches), so only older writes are judged.
 TELEMETRY_LAG_SECONDS = 60
-# index_backlog: a searchable row with no vector and no recorded embed error younger than
-# this is the embedding worker's normal lag (namespace.validate's default grace).
+# index_backlog: a searchable row with no vector that the worker has not given up on, younger
+# than this, is the embedding worker's normal lag (namespace.validate's default grace).
 INDEX_GRACE_SECONDS = 600
 # version_churn: version rows ≥ ROWS × live rows, or version bytes ≥ BYTES × live bytes.
 VERSION_CHURN_ROWS_RATIO = 3.0
@@ -118,7 +118,10 @@ _AGENT_CALL = "consumer NOT IN {inspectors:Array(String)}"
 _LEDGER = f"{_LEDGER_ALL} AND {_AGENT_CALL}"
 # A hot key: a named key read HOT_KEY_READS times or more in the window. One fragment for
 # the exact-key samples and the hot-key list the coordination check joins.
-_HOT_KEY = "memory_key != '' AND reads >= {hot:UInt32}"
+_HOT_KEY = "read_key != '' AND reads >= {hot:UInt32}"
+# The key a ledger read names: the column over HTTP, the argument over MCP (whose rows
+# leave the column empty). A `memory.bulk_get` names no single key.
+_READ_KEY = "if(memory_key != '', memory_key, args['memory_key'])"
 # The reports on a namespace: their own ledger rows say nothing about whether the window's
 # calls were recorded.
 _REPORT_OPS = (
@@ -128,9 +131,9 @@ _REPORT_OPS = (
 # The live keys of a type that is structured by design: read back whole by key on purpose.
 _TYPED_KEYS = f"SELECT memory_key {_LIVE} AND memory_type IN {{structured:Array(String)}}"
 _HOT_KEYS = (
-    f"SELECT memory_key, count() AS reads {_LEDGER} "
+    f"SELECT {_READ_KEY} AS read_key, count() AS reads {_LEDGER} "
     f"AND operation IN {_LEDGER_GETS} "
-    f"GROUP BY memory_key HAVING {_HOT_KEY}"
+    f"GROUP BY read_key HAVING {_HOT_KEY}"
 )
 # JSON value shapes. JSONType returns '' / 'Null' for non-JSON text.
 _IS_JSON_STRING_OF_JSON = (
@@ -192,7 +195,7 @@ _TEXT: dict[str, tuple[str, str]] = {
         "failing, or the calls are held. Either way the rows "
         "are not found by meaning yet, through no fault of the writer.",
         "Check that the embedding worker runs and that the org's model calls are allowed: "
-        "a held row is retried on the worker's next pass. A row whose call named no org to "
+        "a held row is retried once its hold lapses. A row whose call named no org to "
         "bill is given up on; once the deployment attributes its calls, a new revision of "
         "the row (`memory.update_by_id`) queues it again. `memory.get` still reads them by "
         "key meanwhile.",
@@ -316,7 +319,8 @@ _CONTRACT: dict[str, RuleContract] = {
         uncertainty=(
             "Only the structured-by-design types are recognised; other workflows that read by "
             "key on purpose still count in exact_key_store. A read is matched by key, so a "
-            "read of another writer's row under a procedure's key counts as one."
+            "read of another writer's row under a procedure's key counts as one, and a "
+            "`memory.bulk_get` (which names no single key) is not matched."
         ),
     ),
     "index_backlog": RuleContract(
@@ -639,7 +643,7 @@ class _Audit:
                                 OR operation IN {{state_changes:Array(String)}})) AS ledger_calls,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}
-                           AND memory_key IN ({_TYPED_KEYS})) AS typed_gets,
+                           AND {_READ_KEY} IN ({_TYPED_KEYS})) AS typed_gets,
                    countIf(operation IN {_LEDGER_SEARCHES} AND {_AGENT_CALL}) AS searches,
                    -- a write from the dashboard is a person using the namespace
                    countIf(operation IN {_LEDGER_SETS}) AS sets,
@@ -715,8 +719,8 @@ class _Audit:
                   FROM (SELECT agent, user_id, session_id, memory_key, memory_id, updated_at
                         {_LIVE} AND {_SEARCHABLE} AND sensitivity != 'high'
                           AND value_len > 0) AS a
-                  -- reached: a vector, or an error of the row's own (a held or unbilled
-                  -- model call is the deployment's, and still waiting)
+                  -- reached: a vector, or an error of its own the worker gave up on (a held,
+                  -- unbilled or still-retrying model call is the deployment's, and waiting)
                   LEFT ANTI JOIN (SELECT agent, user_id, session_id, memory_key
                                   FROM loom.memory_embeddings FINAL
                                   WHERE {_SCOPE} AND tombstoned_at IS NULL
@@ -747,11 +751,12 @@ class _Audit:
         # Reads of structured-by-design rows are a workflow (intentional_exact_key_reads).
         rows = await self.rows(
             f"""
-            SELECT memory_key, reads, window_gets, sum(reads) OVER () AS hot_reads
-            FROM (SELECT memory_key, count() AS reads, sum(count()) OVER () AS window_gets
+            SELECT read_key AS memory_key, reads, window_gets, sum(reads) OVER () AS hot_reads
+            FROM (SELECT {_READ_KEY} AS read_key, count() AS reads,
+                         sum(count()) OVER () AS window_gets
                   {_LEDGER} AND operation IN {_LEDGER_GETS}
-                    AND memory_key NOT IN ({_TYPED_KEYS})
-                  GROUP BY memory_key)
+                    AND {_READ_KEY} NOT IN ({_TYPED_KEYS})
+                  GROUP BY read_key)
             WHERE {_HOT_KEY}
             ORDER BY reads DESC, memory_key LIMIT {{lim_past:UInt32}}
             """
@@ -905,7 +910,7 @@ class _Audit:
             reads, hot_join, read_arm = "0", "", "0"
         else:
             reads = "l.reads"
-            hot_join = f"LEFT JOIN ({_HOT_KEYS}) AS l ON m.memory_key = l.memory_key"
+            hot_join = f"LEFT JOIN ({_HOT_KEYS}) AS l ON m.memory_key = l.read_key"
             read_arm = """(length(m.value) < {coord_chars:UInt32}
                     AND length(splitByWhitespace(m.value)) < {coord_words:UInt32}
                     AND l.reads >= {hot:UInt32}

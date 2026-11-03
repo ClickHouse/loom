@@ -398,7 +398,7 @@ async def test_coordination_as_memory_joins_the_hot_keys(monkeypatch: pytest.Mon
     assert f.samples[0] == {"memory_key": "sre/v1/leases/worker", "value_chars": 59, "reads": 116}
     assert "working_memory" in f.remedy and "never embedded" in f.remedy
     sql = next(s for s in ch.sqls if M_COORD in s)
-    assert "LEFT JOIN" in sql and "HAVING memory_key != '' AND reads >= {hot:UInt32}" in sql
+    assert "LEFT JOIN" in sql and "HAVING read_key != '' AND reads >= {hot:UInt32}" in sql
     assert ch.params[0]["coord_segs"] == list(na.COORDINATION_SEGMENTS)
     # A short value is a lease only when it is also FEW WORDS — a
     # 158-char lesson in prose read 32× by key is a memory, not a pointer.
@@ -1406,12 +1406,21 @@ def _memory_row(
     )
 
 
-def _ledger_row(operation: str, *, key: str = "", consumer: str = "", kind: str = "request") -> str:
-    # A request id of its own: the table drops a repeat of an identical insert.
+def _ledger_row(
+    operation: str,
+    *,
+    key: str = "",
+    consumer: str = "",
+    kind: str = "request",
+    arg_key: str = "",
+) -> str:
+    # A request id of its own: the table drops a repeat of an identical insert. `arg_key`
+    # is how an MCP call records its key: in `args`, with the column left empty.
+    args = f"map('memory_key', '{arg_key}')" if arg_key else "map()"
     return (
         "INSERT INTO loom.agent_events (org, namespace, agent, operation, memory_key, consumer, "
-        f"kind, request_id, ts) VALUES ('o', 'ns', 'bot', '{operation}', '{key}', '{consumer}', "
-        f"'{kind}', '{uuid.uuid4()}', now())"
+        f"kind, args, request_id, ts) VALUES ('o', 'ns', 'bot', '{operation}', '{key}', "
+        f"'{consumer}', '{kind}', {args}, '{uuid.uuid4()}', now())"
     )
 
 
@@ -1617,3 +1626,23 @@ async def test_a_copied_row_is_not_an_unrecorded_write() -> None:
     )
     await na.run_checks(audit, ["telemetry_unavailable"])
     assert _finding(audit, "telemetry_unavailable").severity == "info"
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_procedure_read_over_mcp_is_left_out_of_the_object_store_gauge() -> None:
+    rows = [
+        _memory_row("runbook/restart", minutes_ago=10, memory_type="procedural", value="drain"),
+        _memory_row("team/fact", minutes_ago=10),
+        # Read over MCP: the key in args, the column empty.
+        *(_ledger_row("memory.get", arg_key="runbook/restart") for _ in range(25)),
+        *(_ledger_row("memory.get", arg_key="team/fact") for _ in range(21)),
+    ]
+    audit = na.new_audit(_inp(window_seconds=3600), ch=_LocalCH(["memory", "agent_events"], rows))
+    await audit.summary_ledger()
+    await audit.exact_key_store()
+    s = audit.summary
+    assert (s.gets, s.typed_gets) == (46, 25)
+    # The hot key the gauge samples is the plain fact, named from args.
+    exact = _finding(audit, "exact_key_store")
+    assert exact.count == 21 and exact.samples == [{"memory_key": "team/fact", "reads": 21}]
