@@ -24,7 +24,8 @@ Without `--namespace` both phases run into a fresh namespace erased at the end.
 A named namespace must start with `beir-` (and not `beir-run-`, a run's own), as
 `knowledge_retrieval.py` does with its prefix. An ingest adds only the passages
 the namespace does not hold yet, so a failed one is resumed by running it again.
-A search over a namespace that does not hold exactly this corpus fails the run.
+A search over a namespace that does not hold exactly this corpus, embedded with
+the server's current model, fails the run, and so does one that finds nothing.
 `--param KEY=VALUE` sets any `knowledge.search` field but the depth, scope,
 filters and `collapse_sections`; an arm that names no reranker runs with
 `rerank="none"`, whatever the deployment default. A run records the server's
@@ -75,6 +76,7 @@ from bench.knowledge_retrieval import (
 )
 from bench.quality import run_metadata
 from server.knowledge.api.models_knowledge import KnowledgeSearchInput
+from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
 
 RELEASE = "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{name}.zip"
 # The small datasets and the MD5 the BEIR release publishes for each archive.
@@ -90,8 +92,10 @@ KEPT = ("corpus.jsonl", "queries.jsonl", "qrels/test.tsv")
 DATA_DIR = Path(__file__).parent / "datasets" / "beir"  # git-ignored
 PREFIX = "beir-"
 URI_PREFIX = "beir:"
-DEPTH = 100  # hits a search asks for: knowledge.search's wire bound
-BATCH = 200  # documents per knowledge.bulk_add; the op takes at most 500
+DEPTH = MAX_SEARCH_TOP_K  # hits a search asks for: the wire bound
+# Documents per knowledge.bulk_add (the op takes 500): each is embedded by its own call,
+# so a batch must finish inside the client timeout on a slow embedder.
+BATCH = 50
 
 
 def fetch(name: str, data_dir: Path) -> Path:
@@ -142,29 +146,37 @@ def load(root: Path) -> tuple[list[dict], dict[str, str], dict[str, dict[str, in
     return docs, queries, {q: qrels[q] for q in queries}
 
 
-def corpus_tag(docs: list[dict]) -> str:
-    """A tag naming this exact corpus, so a search refuses a namespace holding another."""
-    return f"beir:{digest(docs)}"
+def corpus_tag(docs: list[dict], embedding_model: str) -> str:
+    """A tag naming this exact corpus and the model its chunks were embedded with: a
+    search only reads chunks of the server's current model, so a namespace ingested
+    under another would score as empty (or lexical only) without failing."""
+    return f"beir:{digest([docs, embedding_model])}"
 
 
-def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
+def ingest(
+    post: SyncPost, org: str, namespace: str, docs: list[dict], tag: str, keep: bool
+) -> None:
     """Add the passages the namespace does not hold yet. `knowledge.bulk_add` never
     supersedes a document's chunks, so a passage sent twice would have its chunks
     indexed twice: one already there with its chunks is skipped (one an interrupted
     write left without chunks is sent again), and the caller sends each batch once. A
-    namespace holding anything but this corpus is refused before anything is written."""
+    namespace holding anything but this corpus under this model (`tag`) is refused
+    before anything is written. A batch of 50 embeds in well under the client timeout;
+    after one times out anyway, run the ingest again only once the server has finished
+    writing it."""
+    rows = listed_documents(post, org, namespace)
+    want = {d["source_uri"] for d in docs}
+    foreign = sum(r["source_uri"] not in want or tag not in (r.get("tags") or []) for r in rows)
+    if foreign:
+        raise SystemExit(
+            f"{org}/{namespace} holds {foreign} documents of another corpus or embedding model"
+        )
     if keep:  # printed first, so a failed ingest leaves the command behind
         print(f"kept; erase it with: {gc_command(org, [namespace])}", file=sys.stderr)
     register_bench_namespace_sync(
         post, org=org, namespace=namespace, description="BEIR corpus", keep=keep
     )
     remember_bench_namespace(org, namespace)
-    tag = corpus_tag(docs)
-    rows = listed_documents(post, org, namespace)
-    want = {d["source_uri"] for d in docs}
-    foreign = sum(r["source_uri"] not in want or tag not in (r.get("tags") or []) for r in rows)
-    if foreign:
-        raise SystemExit(f"{org}/{namespace} holds {foreign} documents of another corpus")
     held = {r["source_uri"] for r in rows if r.get("chunk_count")}
     todo = [d for d in docs if d["source_uri"] not in held]
     for i in range(0, len(todo), BATCH):
@@ -233,11 +245,13 @@ def search(
         ranked = ranked_docs(hits, qid)
         metrics = {**score(ranked, qrels[qid]), "depth": float(len(ranked))}
         rows.append({"id": qid, "cluster": qid, "metrics": metrics})
+    if not any(r["metrics"]["depth"] for r in rows):
+        raise SystemExit(f"no query found anything in {org}/{namespace}: was it ingested?")
     mode = params.get("search_mode", KnowledgeSearchInput.model_fields["search_mode"].default)
     if mode != "semantic" and not lexical_fired:
         raise SystemExit("the lexical leg never fired: the arm ran as semantic")
     check_reranked(rerank, reranked)
-    keys = rows[0]["metrics"] if rows else {}
+    keys = rows[0]["metrics"]
     means = {k: round(sum(r["metrics"][k] for r in rows) / len(rows), 4) for k in keys}
     return {
         "params": params,
@@ -299,15 +313,16 @@ def main() -> int:
         instrument = run_metadata(health.json())
         require_real_embedder(instrument)
         instrument["dataset"] = args.data.name
-        instrument["corpus"] = corpus_tag(docs)
+        tag = corpus_tag(docs, instrument["embedding_model"])
+        instrument["corpus"] = tag
         instrument["queries"] = digest(queries)
         instrument["qrels"] = digest(qrels)
         with erase_on_exit_sync(post, org=args.org, keep=keep):
             if args.phase in ("ingest", "both"):
-                ingest(post, args.org, namespace, docs, keep)
+                ingest(post, args.org, namespace, docs, tag, keep)
             if args.phase == "ingest":
                 return 0
-            instrument["chunks"] = check_corpus(post, args.org, namespace, docs, corpus_tag(docs))
+            instrument["chunks"] = check_corpus(post, args.org, namespace, docs, tag)
             report = search(post, args.org, namespace, queries, qrels, params)
     report = {"instrument": instrument, **report}
     if args.out:
