@@ -286,7 +286,7 @@ async def search_sections(
             wider = await knowledge_with_repo_docs(
                 know_input.model_copy(update={"top_k": k}), repo_namespace=repo_namespace
             )
-            # The served hits are now the wider search's, so is the reranker that ordered them.
+            # The served hits are the wider search's; so is the reranker that ordered them.
             know["reranked_by"] = wider.reranked_by
             results: list[dict[str, Any]] = wider.model_dump()["results"]
             return results
