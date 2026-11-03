@@ -295,7 +295,7 @@ def _refusal(e: BaseException) -> str:
 class Target:
     """Where a run reads and writes: the namespace holding the document, the one whose code
     index resolves its names, the one its rows go to, and the repository's `repo:<id>` tag
-    (empty with no repository)."""
+    (empty with no repository, or one with no remote)."""
 
     doc_namespace: str
     code_namespace: str
@@ -480,9 +480,9 @@ async def _read_own(
     """The extractor's rows on this document where the run writes, with their records
     (`_own_records`); and why the run must not go on, or '': its rows for the document are
     in the other namespace a run may write them to, or carry another repository's tag (any,
-    for a run without `--repo`), which the run would drop or add to. Reconcile and retire
-    read one namespace, so going on would leave the document's decisions in two places, or
-    linked to the wrong repository."""
+    for a run without `--repo` or a repository with no remote), which the run would drop or
+    add to. Reconcile and retire read one namespace, so going on would leave the document's
+    decisions in two places, or linked to the wrong repository."""
     from server.code.app.repo_scope import trunk_namespace_of
 
     rows = await _extractor_rows(org, t.rows_namespace, t.doc_namespace, source_uri)
@@ -503,7 +503,7 @@ async def _read_own(
         if other not in checked and not await _may(org, other, Role.VIEWER):
             # Neither the trunk's name nor whether rows are there is the caller's to learn.
             return [], "this document's namespace belongs to a repository you may not read"
-        if await _extractor_rows(org, other, t.doc_namespace, source_uri):
+        if await _extractor_rows(org, other, t.doc_namespace, source_uri, first=True):
             return [], (
                 f"this document's decisions are in {org}/{other}; run with the --repo and "
                 "--into that wrote them, or delete them there first"
@@ -1239,13 +1239,13 @@ async def _audit(op_name: str, inp: Any) -> None:
 
 
 async def _extractor_rows(
-    org: str, namespace: str, doc_namespace: str, source_uri: str
+    org: str, namespace: str, doc_namespace: str, source_uri: str, *, first: bool = False
 ) -> list[MemoryRow]:
     """The extractor's live decision rows in `namespace` citing this document (in
-    `doc_namespace`), whole: listed a page at a time (the listing carries no source), each
-    page read back in one bulk read. The cost grows with every decision the extractor holds
-    in the namespace, not with this document's: no store read filters on
-    `source_resource_id`."""
+    `doc_namespace`), or only the first one found with `first`, whole: listed a page at a
+    time (the listing carries no source), each page read back in one bulk read. The cost
+    grows with every decision the extractor holds in the namespace, not with this
+    document's: no store read filters on `source_resource_id`."""
     ident = Identity(
         org=org, namespace=namespace, agent=EXTRACTOR_AGENT, user_id="-", session_id="-"
     )
@@ -1268,6 +1268,8 @@ async def _extractor_rows(
         for row in rows:
             if await cites_document(org, row.source_resource_id, doc_namespace, source_uri):
                 out.append(row)
+                if first:
+                    return out
         if len(page) < _PAGE:
             return out
 
@@ -1338,7 +1340,7 @@ async def _retire_one(
         on = SOURCE_CHANGED_TAG in row.tags
         tags = _tags_for(row, source_changed=on, repo_tag=repo_tag)
         if set(tags) != set(row.tags):
-            await _tag_kept(report, row, tags, report.linked)
+            await _tag_kept(report, row, tags)
 
 
 async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool, repo_tag: str) -> None:
@@ -1351,20 +1353,20 @@ async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool, repo
         return
     tags = _tags_for(row, source_changed=True, repo_tag=repo_tag)
     if set(tags) != set(row.tags):
-        # Tagged source-changed already: only the repository's tag is new.
-        flagged = SOURCE_CHANGED_TAG not in row.tags
-        await _tag_kept(report, row, tags, report.flagged if flagged else report.linked)
+        await _tag_kept(report, row, tags)
 
 
-async def _tag_kept(
-    report: ExtractReport, row: MemoryRow, tags: list[str], reported: list[str]
-) -> None:
-    """Write the tags of a row the retire step keeps; its key goes to `reported` once
-    written, a race to `races`."""
+async def _tag_kept(report: ExtractReport, row: MemoryRow, tags: list[str]) -> None:
+    """Write the tags of a row the retire step keeps; its key goes to `flagged` when it
+    gains `source-changed` and to `linked` when it gains a repository's tag, once written,
+    a race to `races`."""
     if not report.dry_run and (moved := await _set_tags(row, tags)):
         report.races.append(f"{row.memory_key}: {moved} since the run read it")
         return
-    reported.append(row.memory_key)
+    if SOURCE_CHANGED_TAG in tags and SOURCE_CHANGED_TAG not in row.tags:
+        report.flagged.append(row.memory_key)
+    if any(t.startswith("repo:") and t not in row.tags for t in tags):
+        report.linked.append(row.memory_key)
 
 
 async def _delete_row(report: ExtractReport, row: MemoryRow) -> bool:

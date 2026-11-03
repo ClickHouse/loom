@@ -4263,7 +4263,7 @@ async def test_a_kept_row_whose_reasoning_left_is_flagged_and_tagged(monkeypatch
     report = await _run(repo="acme/widgets")
     (upd,) = world.updates
     assert set(upd.tags) == {"decision", SOURCE_CHANGED, REPO_TAG}
-    assert report.flagged == ["decision:gone"] and report.linked == []
+    assert report.flagged == ["decision:gone"] and report.linked == ["decision:gone"]
 
 
 @pytest.mark.asyncio

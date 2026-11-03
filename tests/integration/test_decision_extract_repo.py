@@ -151,24 +151,29 @@ async def _for_file(namespace: str, tags: list[str], extra: list[str], auth: Any
     return [h for h in out.hits if h.memory_type == "decision"]
 
 
+def _assert_written(hit: Any, person: str) -> None:
+    """The row as the extractor wrote it, wherever it went."""
+    assert hit.memory_key.startswith("decision:") and hit.memory_type == "decision"
+    assert hit.agent == "loom-decisions" and hit.status == "active"
+    assert hit.confidence == 0.5 and not hit.pinned
+    assert hit.matched_files == [PATH]
+    assert "PageReader reads one page of rows at a time" in hit.value
+    assert "A whole-table read would hold every row of a large table in memory." in hit.value
+    assert "source-kind:design_doc" in hit.tags
+    # The document cited in its own namespace.
+    assert (
+        hit.source_resource_id
+        == f"knowledge:{person}/design/storage.md#Widgets storage > Page reads"
+    )
+
+
 async def test_into_source_serves_the_decision_in_the_documents_namespace(env) -> None:
     trunk, person, tag = env
     await _extract(person, "source")
     hook_tags = ["project:widgets", tag]
     (hit,) = await _for_file(person, hook_tags, [trunk], _auth(person))
     assert hit.namespace == person and tag in hit.tags
-    assert hit.matched_files == [PATH]
-    # The row as the extractor wrote it.
-    assert hit.memory_key.startswith("decision:") and hit.memory_type == "decision"
-    assert hit.agent == "loom-decisions" and hit.status == "active"
-    assert hit.confidence == 0.5 and not hit.pinned
-    assert "PageReader reads one page of rows at a time" in hit.value
-    assert "A whole-table read would hold every row of a large table in memory." in hit.value
-    assert "source-kind:design_doc" in hit.tags
-    assert (
-        hit.source_resource_id
-        == f"knowledge:{person}/design/storage.md#Widgets storage > Page reads"
-    )
+    _assert_written(hit, person)
     # A session in another repository (another tag) is not served it.
     assert await _for_file(person, ["project:other", "repo:0000000000"], [], _auth(person)) == []
 
@@ -180,8 +185,7 @@ async def test_into_repo_serves_the_decision_to_repository_readers_only(env) -> 
     hook_tags = ["project:widgets", tag]
     (hit,) = await _for_file(reader, hook_tags, [trunk], _auth(reader, trunk))
     assert hit.namespace == trunk and tag not in hit.tags
-    assert hit.matched_files == [PATH]
-    assert hit.source_resource_id.startswith(f"knowledge:{person}/design/storage.md#")
+    _assert_written(hit, person)
     # Nothing was written beside the document.
     assert await _for_file(person, hook_tags, [], _auth(person)) == []
     # A caller who cannot read the trunk is not served it.
