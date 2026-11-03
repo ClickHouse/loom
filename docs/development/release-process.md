@@ -102,14 +102,15 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    manifests, no tests in the Claude Code zip, the executable bits git records, and
    that the bundle names the ClickHouse release the `clickhouse` job checked, and
    smoke-tests the wheel in a clean venv with `scripts/gates/sdk_wheel_smoke.py`;
-5. `docker` publishes `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor` (the
-   document extractor service), one matrix entry each, for linux/amd64 and linux/arm64, each
-   with provenance and an SBOM, each pushed by digest and scanned; `docker-tag` then tags both
-   only once both have passed, so a version never names one image without the other. A package GitHub creates on its
-   first push is private, and an install pulls without signing in: the first release run
-   that pushes `loom-extractor` creates it and its `docker-smoke` jobs fail to pull it. Set
-   the package's visibility to public in its settings, then re-run the failed jobs
-   ("Re-run failed jobs"), which the workflow allows;
+5. `docker` publishes `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`
+   (the document extractor service), one matrix entry each, for linux/amd64 and
+   linux/arm64, each with provenance and an SBOM, each pushed by digest and scanned;
+   `docker-tag` tags neither until both have passed (a failure there can leave one tagged,
+   and re-running it tags both). A package GitHub creates on its first push is private, and
+   an install pulls without signing in: the first release run that pushes `loom-extractor`
+   creates it and its `docker-smoke` jobs fail to pull it. Set the package's visibility to
+   public in its settings, then re-run the failed jobs ("Re-run failed jobs"), which the
+   workflow allows;
 6. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64;
 7. `github-release` creates the GitHub Release only after both images exist, with notes
@@ -130,10 +131,11 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=<the newer release the error names>`
    (if that release dumps the tag's `schemas/schema.sql`),
    or `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
-   Otherwise move `:latest` back to the previous release by hand.
+   Otherwise move `:latest` back to the previous release by hand, on both
+   `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`.
 
-The server image is published before the GitHub Release, so an installer shown on the
-release page never points at a missing image.
+The server and extractor images are published before the GitHub Release, so an installer
+shown on the release page never points at a missing image.
 
 **On manual dispatch** (`workflow_dispatch` on a tag ref), the same jobs run (`build`
 also runs the TypeScript SDK's `npm run check`: lint, types, version, README examples,

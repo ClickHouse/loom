@@ -11,13 +11,13 @@ name: release
 #
 # Jobs: version (derive and gate the version) -> clickhouse (the ClickHouse
 # release the installer bundle names, migrated and schema-checked) -> build ->
-# verify (inspect the exact files) -> docker (build and scan both images) -> docker-tag ->
-# docker-smoke -> github-release
-# -> pypi, npm, mcp-registry (dispatch only). A re-run after a partial
-# publish is safe: the bundle keeps the ClickHouse release it was first
-# published with, the release is updated in place, PyPI skips files it
-# already has, npm and the MCP Registry skip a version they already have, and
-# the image tags are overwritten with the same build.
+# verify (inspect the exact files) -> docker (build and scan both images) ->
+# docker-tag -> docker-smoke -> github-release -> pypi, npm, mcp-registry
+# (dispatch only). A re-run after a partial publish is safe: the bundle keeps
+# the ClickHouse release it was first published with, the release is updated in
+# place, PyPI skips files it already has, npm and the MCP Registry skip a
+# version they already have, and the image tags are overwritten with the same
+# build.
 #
 # The PyPI, npm and MCP Registry jobs are dispatch-only, so a tag's GitHub
 # Release can be checked before the SDKs and the server listing reach the
@@ -394,11 +394,15 @@ jobs:
           - image: ghcr.io/clickhouse/loom
             file: Dockerfile
             cache: buildkit
+            artifact: server
+            pin: image.digest
             # The repository's title and description, metadata-action's defaults.
             labels: ""
           - image: ghcr.io/clickhouse/loom-extractor
             file: extractor/Dockerfile
             cache: extractor
+            artifact: extractor
+            pin: extractor.image.digest
             labels: |
               org.opencontainers.image.title=loom-extractor
               org.opencontainers.image.description=Loom's document extractor service, which parses originals apart from the server
@@ -463,19 +467,22 @@ jobs:
           severity: CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      # Tagged by docker-tag once both images have scanned, so no version names
-      # one image without the other.
-      - name: Record the scanned digest and tags
+      # Tagged by docker-tag, which waits for both images to scan.
+      - name: Record the scanned image, digest and tags
         env:
+          IMAGE: ${{ matrix.image }}
+          PIN: ${{ matrix.pin }}
           DIGEST: ${{ steps.build.outputs.digest }}
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           mkdir -p scanned
+          printf '%s\n' "$IMAGE" > scanned/image
+          printf '%s\n' "$PIN" > scanned/pin
           printf '%s\n' "$DIGEST" > scanned/digest
           printf '%s\n' "$TAGS" > scanned/tags
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: scanned-${{ matrix.cache }}
+          name: scanned-${{ matrix.artifact }}
           path: scanned/
 
   docker-tag:
@@ -497,14 +504,16 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: scanned-*
+      # Neither image is tagged until both have scanned. A failure here can leave
+      # one tagged and not the other; re-running this job tags both again.
       - name: Tag the scanned images
         run: |
-          for entry in "server ghcr.io/clickhouse/loom scanned-buildkit image.digest" \
-            "extractor ghcr.io/clickhouse/loom-extractor scanned-extractor extractor.image.digest"; do
-            read -r _ image dir pin <<<"$entry"
-            digest=$(cat "$dir/digest")
+          set -- scanned-*/
+          [ "$#" = 2 ] || { echo "::error::expected the server's and the extractor's scans, got: $*"; exit 1; }
+          for dir in scanned-*/; do
+            image=$(cat "${dir}image") pin=$(cat "${dir}pin") digest=$(cat "${dir}digest")
             args=()
-            while read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <"$dir/tags"
+            while read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <"${dir}tags"
             docker buildx imagetools create "${args[@]}" "$image@$digest"
             echo "Pin $image with \`$pin: $digest\`" >> "$GITHUB_STEP_SUMMARY"
           done
