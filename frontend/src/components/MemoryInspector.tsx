@@ -26,6 +26,7 @@ import {
   getMemory,
   setMemory,
   pinMemory,
+  rowIdentity,
   unpinMemory,
   deleteMemory,
   verifyMemory,
@@ -418,16 +419,13 @@ export function MemoryInspector({
     setDetail({ ...detail, pinned: !wasPinned });
     try {
       if (wasPinned) {
-        const result = await unpinMemory(identity, memoryKey);
+        // The row pinMemory writes to.
+        const result = await unpinMemory(rowIdentity(identity, detail), memoryKey);
         if (!result.unpinned && result.reason !== "not_pinned") {
           throw new Error(result.reason || "memory was not unpinned");
         }
       } else {
-        await pinMemory(identity, memoryKey, detail.value, {
-          memoryType: detail.memory_type || "semantic",
-          // Preserve char_limit — write-through would drop the cap otherwise.
-          charLimit: detail.char_limit ?? undefined,
-        });
+        await pinMemory(identity, memoryKey, detail);
       }
       toast(wasPinned ? "Unpinned" : "Pinned", "ok");
       onChanged();

@@ -408,16 +408,12 @@ function MemoryList() {
       }
       const rowId = identityForRow(entry.agent);
       try {
-        // pinMemory needs the value; the list view doesn't carry it, so
-        // refetch the row before pinning.
-        const got = await getMemory(rowId, k);
+        // pinMemory writes the whole row back; the list view doesn't carry it, so
+        // refetch the row before pinning, by its own user and session.
+        const readId = { ...rowId, user_id: entry.user_id || "-", session_id: entry.session_id || "-" };
+        const got = await getMemory(readId, k);
         if (got && got.found) {
-          // Echo char_limit if present — pinning without it silently drops
-          // the cap. Read-then-write must always echo the cap.
-          await pinMemory(rowId, k, got.value, {
-            memoryType: got.memory_type || "semantic",
-            charLimit: got.char_limit ?? undefined,
-          });
+          await pinMemory(rowId, k, got);
           ok++;
         } else {
           fail++;

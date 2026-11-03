@@ -303,6 +303,8 @@ async def test_bulk_get_answers_what_memory_get_answers_for_the_same_row() -> No
         "verified_sha256": "v" * 64,
         "sensitivity": "high",
         "source_class": "derived",
+        "source_trace": "conversation:t1",
+        "source_resource_id": "doc-1",
         "lock_mode": "no_delete",
         "lock_reason": "audit",
         "lock_until": "2099-01-01 00:00:00",
@@ -337,4 +339,6 @@ async def test_bulk_get_answers_what_memory_get_answers_for_the_same_row() -> No
     plain, whole = answers
     assert plain["sensitivity"] == "high" and plain["valid_to"] is not None
     assert plain["duplicate_of"] == "k-canon" and plain["lock_mode"] == "no_delete"
+    # A read-then-write (the dashboard's pin) sends these back to keep them.
+    assert plain["source_trace"] == "conversation:t1" and plain["source_resource_id"] == "doc-1"
     assert plain == whole

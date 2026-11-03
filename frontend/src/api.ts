@@ -402,6 +402,18 @@ export interface MemoryDetail {
   user_id?: string;
   session_id?: string;
   source_trace?: string;
+  /** How the content entered memory: asserted | extracted | observed | derived |
+   *  imported | external. */
+  source_class?: string;
+  /** The resource the fact was lifted from; "" when none. */
+  source_resource_id?: string;
+  /** '' | low | medium | high. */
+  sensitivity?: string;
+  /** SHA-256 of the live value; a write sends it as if_match_sha256. */
+  content_sha256?: string;
+  /** When the fact became true, and the closing bound of its validity; null when unset. */
+  valid_at?: string | null;
+  valid_to?: string | null;
   recall_count?: number;
   last_recalled_at?: string | null;
   recall_by_agent?: Array<{ agent: string; count: number; last_at: string | null }>;
@@ -534,33 +546,56 @@ export async function setMemory(
   return post<{ version: number; pinned: boolean }>("/v1/memory.set", body);
 }
 
+/** The source classes a write may declare (`server.memory.domain.provenance`); the
+ *  server derives the others from `source_trace`. */
+const DECLARABLE_SOURCE_CLASSES = new Set(["derived", "external", "imported"]);
+
+/** The identity of a row read with `getMemory`, for a write back to that row:
+ *  memory.get may answer with another agent's or session's row, and a write under
+ *  the caller's identity would land on a second row beside it. */
+export function rowIdentity(id: Identity, row: MemoryDetail): Identity & { user_id: string; session_id: string } {
+  return {
+    ...id,
+    agent: row.agent || id.agent,
+    user_id: row.user_id || "-",
+    session_id: row.session_id || "-",
+  };
+}
+
+/** Pin a row read with `getMemory`, at `rowIdentity`. memory.pin writes a whole new
+ *  version as memory.set does, so the row's fields go back with it; leaving
+ *  ttl_seconds out keeps the row's expiry. */
 export async function pinMemory(
   id: Identity,
   key: string,
-  value: unknown,
-  opts: {
-    tags?: string[];
-    memoryType?: MemoryListEntry["memory_type"];
-    /** Preserve the row's char_limit through the pin write — same
-     *  write-through semantic as setMemory. */
-    charLimit?: number | null;
-  } = {},
+  row: MemoryDetail,
 ): Promise<{ version: number; pinned: boolean }> {
   const body: Record<string, unknown> = {
-    ...id,
+    ...rowIdentity(id, row),
     memory_key: key,
-    value,
-    tags: opts.tags || [],
-    ...(opts.memoryType ? { memory_type: opts.memoryType } : {}),
+    value: row.value,
+    memory_type: row.memory_type,
+    tags: row.tags,
+    entities: row.entities,
   };
-  if (opts.charLimit != null) {
-    body.char_limit = opts.charLimit;
+  if (row.confidence != null) body.confidence = row.confidence;
+  if (row.sensitivity) body.sensitivity = row.sensitivity;
+  if (row.source_trace) body.source_trace = row.source_trace;
+  if (row.source_resource_id) body.source_resource_id = row.source_resource_id;
+  if (row.source_class && DECLARABLE_SOURCE_CLASSES.has(row.source_class)) {
+    body.source_class = row.source_class;
   }
+  if (row.valid_at) body.valid_at = row.valid_at;
+  if (row.valid_to) body.valid_to = row.valid_to;
+  if (row.char_limit != null) body.char_limit = row.char_limit;
+  // A change to the value since the read answers 409 instead of being reverted.
+  if (row.content_sha256) body.if_match_sha256 = row.content_sha256;
   return post<{ version: number; pinned: boolean }>("/v1/memory.pin", body);
 }
 
+/** `id` may name the row's user and session (`rowIdentity`); they default to '-'. */
 export async function unpinMemory(
-  id: Identity,
+  id: Identity & { user_id?: string; session_id?: string },
   key: string,
 ): Promise<{ unpinned: boolean; reason: string; memory_id: string; version: number | null }> {
   return post("/v1/memory.unpin", { ...id, memory_key: key });

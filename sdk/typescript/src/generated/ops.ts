@@ -4025,6 +4025,8 @@ export interface MemoryGetOutput {
   pinned?: boolean;
   actor?: string;
   source_class?: string;
+  source_trace?: string;
+  source_resource_id?: string;
   agent?: string;
   user_id?: string;
   session_id?: string;

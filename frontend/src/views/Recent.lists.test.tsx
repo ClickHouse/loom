@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MemoryListEntry, MemoryListResponse, MyNamespaceEntry, WhoAmI } from "../api";
+import type { MemoryDetail, MemoryListEntry, MemoryListResponse, MyNamespaceEntry, WhoAmI } from "../api";
 import { ApiError } from "../lib/errors";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
@@ -38,13 +38,15 @@ vi.mock("../api", async (importOriginal) => {
   return {
     ...actual,
     listMemories: vi.fn(),
+    getMemory: vi.fn(),
+    pinMemory: vi.fn(async () => ({ version: 2, pinned: true })),
     bulkGetMemories: vi.fn(async () => ({ results: {}, missing: [] })),
     conflictKeys: vi.fn(async (): Promise<string[]> => ["c/conflicted"]),
     listMine: vi.fn(async () => []),
     isAuthDisabled: () => false,
   };
 });
-import { listMemories } from "../api";
+import { getMemory, listMemories, pinMemory } from "../api";
 
 const owner: WhoAmI = {
   authenticated: true,
@@ -440,5 +442,44 @@ describe("Memories list chrome", () => {
     (document.activeElement as HTMLElement | null)?.blur();
     await user.keyboard("{Escape}");
     expect(toolbar()).not.toHaveTextContent("selected");
+  });
+
+  // memory.pin writes a whole new version: the bulk Pin hands over the row it read.
+  it("pins a selected row with the row memory.get read, tags and provenance included", async () => {
+    const detail: MemoryDetail = {
+      found: true,
+      value: "value of d/plain",
+      memory_type: "semantic",
+      confidence: 0.8,
+      version: 1,
+      pinned: false,
+      created_at: "2026-09-18T09:00:00Z",
+      tags: ["infra"],
+      source_trace: "conversation:t1",
+      agent: "claude-desktop",
+    };
+    vi.mocked(getMemory).mockResolvedValue(detail);
+    vi.mocked(listMemories).mockResolvedValue({
+      entries: [entry("d/plain", { user_id: "alice", session_id: "s1" })],
+      total: 1,
+      today: 0,
+      truncated: false,
+    });
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("checkbox", { name: "Select d/plain" }));
+    await user.click(within(toolbar()).getByRole("button", { name: "Pin" }));
+    await waitFor(() => expect(pinMemory).toHaveBeenCalledTimes(1));
+    // Read by the listed row's own user and session, so the fallback cannot answer another's.
+    expect(vi.mocked(getMemory).mock.calls[0]).toEqual([
+      { org: "dev", namespace: "team", agent: "claude-desktop", user_id: "alice", session_id: "s1" },
+      "d/plain",
+    ]);
+    expect(vi.mocked(pinMemory).mock.calls[0]).toEqual([
+      { org: "dev", namespace: "team", agent: "claude-desktop" },
+      "d/plain",
+      detail,
+    ]);
   });
 });

@@ -168,6 +168,11 @@ class MemoryGetOutput(ProjectedRow):
     # How the content entered memory: asserted | extracted | observed | derived |
     # imported | external; '' when not found.
     source_class: str = ""
+    # The writer's provenance pointer, e.g. "conversation:<thread_id>"; '' when none.
+    # A read-then-write sends it back to keep it on the new version.
+    source_trace: str = ""
+    # The resource the fact was lifted from (memory.provenance cites it); '' when none.
+    source_resource_id: str = ""
     # Writer agent of the resolved row. Surfaced so a cross-agent read
     # (agent="*") can tell callers which agent owns the row — the dashboard's search
     # re-fetch needs it to render + re-open a hit found outside the preload.

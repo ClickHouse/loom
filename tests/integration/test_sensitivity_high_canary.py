@@ -257,6 +257,8 @@ def test_payment_and_identity_numbers_are_labelled_on_write(
         "pinned": False,
         "actor": "process:canary",
         "source_class": "asserted",
+        "source_trace": "",
+        "source_resource_id": "",
         "agent": "canary",
         "user_id": "-",
         "session_id": "-",

@@ -10938,6 +10938,8 @@ class MemoryGetOutput(TypedDict, total=False):
     pinned: NotRequired[bool]
     actor: NotRequired[str]
     source_class: NotRequired[str]
+    source_trace: NotRequired[str]
+    source_resource_id: NotRequired[str]
     agent: NotRequired[str]
     user_id: NotRequired[str]
     session_id: NotRequired[str]
