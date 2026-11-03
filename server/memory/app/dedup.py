@@ -335,9 +335,10 @@ async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryD
 
     async def _live_row(memory_id: str) -> MemoryRow | None:
         try:
-            uuid.UUID(memory_id)
+            # The dashed form: ClickHouse refuses the braced and urn: forms Python reads.
+            memory_id = str(uuid.UUID(memory_id))
         except ValueError:
-            return None  # ClickHouse would refuse to parse it: no such row
+            return None  # not a UUID: no such row
         row = await memory_repo.get_by_id(
             memory_id, org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
         )

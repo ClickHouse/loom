@@ -225,6 +225,26 @@ async def test_resolve_a_row_that_is_not_the_pair_raises_404(
     assert (tombstoned, cleared) == ([], [])
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spelling", ["{%s}", "urn:uuid:%s", "%s"])
+async def test_resolve_reads_the_dashed_form_of_any_uuid_spelling(
+    monkeypatch: pytest.MonkeyPatch, spelling: str
+) -> None:
+    """ClickHouse parses only the dashed form, so the braced and urn: spellings
+    Python accepts are read as the row they name."""
+    from server.memory.app.dedup import handle_memory_dedup_resolve
+
+    tombstoned, _ = _fake_store(monkeypatch, _pair())
+    await handle_memory_dedup_resolve(
+        _resolve_input(
+            "keep_canonical",
+            canonical_id=spelling % CANON.upper(),
+            duplicate_id=spelling % DUP,
+        )
+    )
+    assert tombstoned == [DUP]
+
+
 @pytest.mark.parametrize(
     "extra",
     [
