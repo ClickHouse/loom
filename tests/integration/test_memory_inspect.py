@@ -136,7 +136,7 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
         # inspections above name the agent too, and are not its calls.
         for _ in range(40):
             calls = {
-                x["name"]: x["rows"]
+                x["operation"]: x["calls"]
                 for x in (await post("memory.inspect", {"subject": "agent", "id": "bot"}))[
                     "activity"
                 ]["calls"]

@@ -186,7 +186,7 @@ are refused. It writes nothing: no recall credit, no usage event.
 - Each view counts its rows by type, status and source class, lists its top tags and the
   registered categories its rows are filed under, and its newest rows (`sample_limit`,
   default 10) with `memory_id`, `version`, `content_sha256`, `actor`, the number of
-  version rows (the entity tagger's re-emits included, which `memory.history` leaves
+  versions the history holds (the entity tagger's re-emits included, which `memory.history` leaves
   out) and a 200-character excerpt (none for a high-sensitivity row). `complete`
   is false when the listing holds fewer rows than the view, or the view's counts could
   not be read.

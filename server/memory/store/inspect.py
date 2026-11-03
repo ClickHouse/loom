@@ -132,7 +132,7 @@ async def view_newest(
     if pairs:
         rows = await client.query_all(
             """
-            SELECT toString(memory_id) AS id, version, value_preview
+            SELECT toString(memory_id) AS id, version, value_preview, value_len > 2048 AS cut
             FROM loom.memory
             WHERE org = {org:String} AND namespace = {ns:String}
               AND (memory_id, version) IN {pairs:Array(Tuple(UUID, UInt64))}
@@ -140,23 +140,28 @@ async def view_newest(
             """,
             params={"org": org, "ns": namespace, "pairs": pairs},
         )
-        previews = {(r["id"], int(r["version"])): str(r["value_preview"]) for r in rows}
+        previews = {
+            (r["id"], int(r["version"])): excerpt(str(r["value_preview"]), bool(r["cut"]))
+            for r in rows
+        }
     return [
         {
             **{k: v for k, v in r.items() if k != "high"},
-            "excerpt": excerpt(previews.get((r["id"], int(r["version"])), "")),
+            "excerpt": previews.get((r["id"], int(r["version"])), ""),
         }
         for r in located
     ]
 
 
-def excerpt(preview: str) -> str:
+def excerpt(preview: str, cut: bool) -> str:
     """The first 200 characters of a value's preview, a JSON string decoded. A preview
-    cut inside a long string is closed and decoded, dropping a cut escape."""
+    `cut` inside a long string is closed and decoded, dropping a cut escape and half of
+    a surrogate pair; an uncut one is decoded whole or kept as it is."""
     if preview.startswith('"'):
-        for cut in range(7):
+        for drop in range(7 if cut else 1):
+            closed = preview if drop == 0 else preview[: len(preview) - drop + 1] + '"'
             try:
-                text = json.loads(preview if cut == 0 else preview[: len(preview) - cut + 1] + '"')
+                text = json.loads(closed)
             except ValueError:
                 continue
             if isinstance(text, str):

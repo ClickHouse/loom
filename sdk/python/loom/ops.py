@@ -12219,11 +12219,16 @@ class InspectActivity(TypedDict, total=False):
     "The calls the ledger files under the subject in the window, whoever made them (a"
 
     window_seconds: Required[int]
-    calls: NotRequired[list["InspectCount"]]
-    succeeded: NotRequired[list["InspectCount"]]
+    calls: NotRequired[list["InspectCall"]]
     first_at: NotRequired[Optional[str]]
     last_at: NotRequired[Optional[str]]
     gap: NotRequired[str]
+
+
+class InspectCall(TypedDict, total=False):
+    operation: Required[str]
+    calls: Required[int]
+    succeeded: Required[int]
 
 
 class InspectSettings(TypedDict, total=False):

@@ -24,6 +24,7 @@ from typing import Any
 from server.auth.authz import row_in_scope
 from server.memory.api.models_inspect import (
     InspectActivity,
+    InspectCall,
     InspectCount,
     InspectRow,
     InspectSettings,
@@ -74,7 +75,10 @@ def _counts(rows: list[dict[str, Any]], key: str) -> list[InspectCount]:
     totals: dict[str, int] = {}
     for r in rows:
         totals[str(r[key])] = totals.get(str(r[key]), 0) + int(r["rows"])
-    return [InspectCount(name=k, rows=v) for k, v in sorted(totals.items(), key=lambda kv: -kv[1])]
+    return [
+        InspectCount(name=k, rows=v)
+        for k, v in sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
 
 
 class _Inspect:
@@ -158,9 +162,11 @@ class _Inspect:
             ),
             Rows(),
         )
-        out.calls = [InspectCount(name=str(r["operation"]), rows=int(r["calls"])) for r in rows]
-        out.succeeded = [
-            InspectCount(name=str(r["operation"]), rows=int(r["succeeded"])) for r in rows
+        out.calls = [
+            InspectCall(
+                operation=str(r["operation"]), calls=int(r["calls"]), succeeded=int(r["succeeded"])
+            )
+            for r in rows
         ]
         if rows:
             out.first_at = min(r["first_at"] for r in rows)

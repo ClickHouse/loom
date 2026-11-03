@@ -1081,13 +1081,13 @@ Inspect one user, agent or session of a namespace, read-only.
 | --- | --- | --- |
 | `org` | `str` | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | The namespace the op reads or writes. |
-| `subject` | `Literal['user', 'agent', 'session']` |  |
-| `id` | `str` |  |
-| `computed_at` | `datetime` |  |
+| `subject` | `Literal['user', 'agent', 'session']` | The identity column inspected, as the request named it. |
+| `id` | `str` | The user_id, agent name or session_id inspected. |
+| `computed_at` | `datetime` | When the report was read (UTC). |
 | `own` | `InspectView` | Rows whose identity names the subject. |
 | `others` | `InspectView` | Every other live row of the namespace: what the subject reads as a member but did not write or is not filed under. |
-| `activity` | `InspectActivity` |  |
-| `settings` | `InspectSettings` |  |
+| `activity` | `InspectActivity` | The calls the ledger files under the subject in the window. |
+| `settings` | `InspectSettings` | The guide, categories and extraction policy that create the subject's memories. |
 | `skipped` | `list[str]` | Sections that could not be read, as "section: reason". |
 
 ## `memory.keys`

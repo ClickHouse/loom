@@ -73,9 +73,13 @@ def _ch(tags: Any = None, counts: Any = _counts) -> RecordingCH:
         RecordingCH()
         .on("GROUP BY memory_type, status, source_class", counts)
         .on("arrayJoin(tags)", tags or [{"tag": "deploy", "rows": 2}])
+        .on("AS item_count", [{"category_id": "c1", "item_count": 1}])
         .on("FROM loom.memory_categories FINAL", [{"category_id": "c1", "rows": 1}])
         .on("ORDER BY updated_at DESC", _newest)
-        .on("value_preview", [{"id": MID, "version": 7, "value_preview": '"Deploys on Tuesdays."'}])
+        .on(
+            "value_preview",
+            [{"id": MID, "version": 7, "value_preview": '"Deploys on Tuesdays."', "cut": False}],
+        )
         .on("FROM loom.memory_versions", [{"id": MID, "versions": 3}])
         .on(
             "FROM loom.agent_events",
@@ -90,7 +94,10 @@ def _ch(tags: Any = None, counts: Any = _counts) -> RecordingCH:
             ],
         )
         .on("FROM loom.namespace_guides", [])
-        .on("loom.namespace_categories", [{"category_id": "c1", "name": "decisions"}])
+        .on(
+            "FROM loom.categories FINAL",
+            [{"category_id": "c1", "name": "decisions", "description": ""}],
+        )
     )
 
 
@@ -98,7 +105,7 @@ def _ch(tags: Any = None, counts: Any = _counts) -> RecordingCH:
 def ch(monkeypatch: pytest.MonkeyPatch) -> RecordingCH:
     fake = _ch()
     fake.strict = False
-    return fake.install(monkeypatch)
+    return fake.install(monkeypatch, "server.identity.app.namespace_catalog")
 
 
 def _inp(**kw: Any) -> MemoryInspectInput:
@@ -145,6 +152,8 @@ async def test_a_view_counts_lists_and_cites(ch: RecordingCH) -> None:
     assert [(c.name, c.rows) for c in own.by_type] == [("semantic", 2), ("episodic", 1)]
     assert [(c.name, c.rows) for c in own.by_status] == [("active", 2), ("superseded", 1)]
     assert [(c.name, c.rows) for c in own.top_tags] == [("deploy", 2)]
+    assert [(c.name, c.rows) for c in own.categories] == [("decisions", 1)]
+    assert out.settings.categories_registered == 1 and out.skipped == []
     assert (own.first_updated_at, own.last_updated_at) == (T0, T1)
     row = own.newest[0]
     assert (row.memory_id, row.version, row.versions, row.actor) == (MID, 7, 3, "process:bot")
@@ -172,8 +181,9 @@ async def test_activity_leaves_out_inspectors_and_names_the_retention_gap(
 
     monkeypatch.setattr(settings, "retention_agent_events_days", 3)
     out = await mi.handle_memory_inspect(_inp(window_seconds=7 * 86400))
-    assert [(c.name, c.rows) for c in out.activity.calls] == [("memory.search", 4)]
-    assert [(c.name, c.rows) for c in out.activity.succeeded] == [("memory.search", 3)]
+    assert [(c.operation, c.calls, c.succeeded) for c in out.activity.calls] == [
+        ("memory.search", 4, 3)
+    ]
     assert "keeps 3 days" in out.activity.gap
     s = ch.statements("FROM loom.agent_events")[0]
     assert s.params["skip"] == ["loom-ui", "loom-assistant"]
@@ -243,7 +253,15 @@ async def test_a_view_whose_counts_failed_is_not_complete(monkeypatch: pytest.Mo
     ],
 )
 def test_the_excerpt_decodes_a_cut_preview(preview: str, text: str) -> None:
-    assert excerpt(preview) == text
+    assert excerpt(preview, cut=True) == text
+
+
+@pytest.mark.parametrize(
+    ("preview", "text"),
+    [('"Prefers email."', "Prefers email."), ('"Yes" ok.', '"Yes" ok.'), ("plain", "plain")],
+)
+def test_an_uncut_preview_is_decoded_whole_or_kept(preview: str, text: str) -> None:
+    assert excerpt(preview, cut=False) == text
 
 
 def _boom(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:

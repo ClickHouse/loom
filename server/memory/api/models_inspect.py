@@ -89,8 +89,16 @@ class InspectView(BaseModel):
     last_updated_at: datetime | None = None
     # The newest rows, at most `sample_limit`.
     newest: list[InspectRow] = Field(default_factory=list)
-    # True when `newest` lists every row of the view.
+    # True when `newest` lists every row of the view and the view's counts were read.
     complete: bool = True
+
+
+class InspectCall(BaseModel):
+    operation: str
+    # Calls of the operation filed under the subject in the window.
+    calls: int
+    # The ones that succeeded.
+    succeeded: int
 
 
 class InspectActivity(BaseModel):
@@ -98,10 +106,11 @@ class InspectActivity(BaseModel):
     call is filed under the identity its arguments name): what was attempted and what
     succeeded, never whether a result reached a model or changed an answer."""
 
+    # The window the counts cover, in seconds.
     window_seconds: int
-    # Per operation: calls, and the ones that succeeded.
-    calls: list[InspectCount] = Field(default_factory=list)
-    succeeded: list[InspectCount] = Field(default_factory=list)
+    # One entry per operation, most called first, at most 200.
+    calls: list[InspectCall] = Field(default_factory=list)
+    # The first and the last call counted.
     first_at: datetime | None = None
     last_at: datetime | None = None
     # Why the counts may cover less than the window (ledger retention), or "".
@@ -132,15 +141,20 @@ class InspectSettings(BaseModel):
 class MemoryInspectOutput(BaseModel):
     org: str
     namespace: str
+    # The identity column inspected, as the request named it.
     subject: InspectSubject
+    # The user_id, agent name or session_id inspected.
     id: str
+    # When the report was read (UTC).
     computed_at: datetime
     # Rows whose identity names the subject.
     own: InspectView
     # Every other live row of the namespace: what the subject reads as a member but did
     # not write or is not filed under. Neither view counts promoted rows (loom.shared).
     others: InspectView
+    # The calls the ledger files under the subject in the window.
     activity: InspectActivity
+    # The guide, categories and extraction policy that create the subject's memories.
     settings: InspectSettings
     # Sections that could not be read, as "section: reason". A skipped section is not
     # an empty one.

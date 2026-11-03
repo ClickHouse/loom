@@ -4926,11 +4926,16 @@ export interface InspectRow {
 
 export interface InspectActivity {
   window_seconds: number;
-  calls?: InspectCount[];
-  succeeded?: InspectCount[];
+  calls?: InspectCall[];
   first_at?: string | null;
   last_at?: string | null;
   gap?: string;
+}
+
+export interface InspectCall {
+  operation: string;
+  calls: number;
+  succeeded: number;
 }
 
 export interface InspectSettings {
