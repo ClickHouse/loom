@@ -54,22 +54,16 @@ import { reloadPage } from "./lib/navigation";
 // starts the sign-in by itself, though the token is already gone.
 const SESSION_ENDED = "loom_session_ended_v1";
 
-function noteSessionEnded(): void {
+/** Note that this tab's session ended (`take` false), or read the note and forget it
+ *  (`take` true): whether it was set. */
+function sessionEndedNote(take: boolean): boolean {
   try {
-    sessionStorage.setItem(SESSION_ENDED, "1");
+    const was = sessionStorage.getItem(SESSION_ENDED) === "1";
+    if (take) sessionStorage.removeItem(SESSION_ENDED);
+    else sessionStorage.setItem(SESSION_ENDED, "1");
+    return was;
   } catch {
-    /* no session storage: a reload shows the first-visit gate */
-  }
-}
-
-/** Whether this tab's session ended on a refused token; reading it forgets it. */
-function takeSessionEnded(): boolean {
-  try {
-    const ended = sessionStorage.getItem(SESSION_ENDED) === "1";
-    sessionStorage.removeItem(SESSION_ENDED);
-    return ended;
-  } catch {
-    return false;
+    return false; // no session storage: a reload shows the first-visit gate
   }
 }
 
@@ -81,7 +75,7 @@ function endSession(): void {
   clearToken();
   // A single-user install has no sign-in: its next call goes without the stale token.
   if (isAuthDisabled()) return;
-  noteSessionEnded();
+  sessionEndedNote(false);
   const s = useStore.getState();
   if (s.whoami) s.setSessionExpired(true);
 }
@@ -126,7 +120,10 @@ async function tokenChangedElsewhere(token: string | null): Promise<void> {
   try {
     now = await whoamiWhenReady();
   } catch {
-    // Unconfirmed: a healthy page stays as it is, an ended one keeps its card.
+    // Unconfirmed: a healthy page stays as it is; an ended one keeps its card and asks
+    // again shortly, while that token is still the stored one.
+    if (useStore.getState().sessionExpired)
+      setTimeout(() => storedToken() === token && void tokenChangedElsewhere(token), 30_000);
     return;
   }
   // Another change landed while whoami answered: that one decides.
@@ -143,7 +140,7 @@ async function tokenChangedElsewhere(token: string | null): Promise<void> {
   const wasExpired = useStore.getState().sessionExpired;
   useStore.getState().setWhoami(now);
   useStore.getState().setSessionExpired(false);
-  takeSessionEnded();
+  sessionEndedNote(true);
   if (wasExpired) toast("Signed in again.", "ok");
   try {
     invalidateShared();
@@ -443,15 +440,15 @@ export default function App() {
           // sign-in. A refused sign-in link says so, and starts no sign-in by itself: it
           // may be the way in while the identity provider is down.
           const out = signedOut();
-          const ended = takeSessionEnded() && !out;
+          const ended = sessionEndedNote(true) && !out;
           if (ended || hasToken() || (dropped && !out)) {
             clearToken();
-            useStore.getState().setGateReason(link?.token && link.token === sent ? "refused" : "expired");
+            useStore.getState().setGateReason(link?.token?.replace(/\s+/g, "") === sent ? "refused" : "expired");
           }
           setAuthed(false);
           return;
         }
-        takeSessionEnded();
+        sessionEndedNote(true);
 
         setAuthed(true);
         setWhoami(w);
@@ -574,7 +571,7 @@ export default function App() {
         // Still unavailable after whoami's retries: the toast says so, and the token stays
         // for the next load. A sign-in link refused on the way leaves no note, so the next
         // load does not start a sign-in by itself (the link may be the way in).
-        if (link?.token) takeSessionEnded();
+        if (link?.token) sessionEndedNote(true);
         toastError("Auth bootstrap failed", e);
         setAuthed(false);
       }

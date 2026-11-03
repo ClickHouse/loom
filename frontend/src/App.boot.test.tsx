@@ -534,6 +534,9 @@ describe("login link", () => {
 describe("a refused token", { timeout: 30_000 }, () => {
   let refuse = false;
   let refuseListMine = false;
+  // whoami alone refuses (any token but `fresh`); counted.
+  let refuseWhoamiOnly = false;
+  let refusedWhoami = 0;
   let whoamiAnswers: number[] = [];
   let whoamiCalls = 0;
   let listMineRefused: () => void = () => undefined;
@@ -548,6 +551,8 @@ describe("a refused token", { timeout: 30_000 }, () => {
     resetNamespaceRoleCache();
     refuse = false;
     refuseListMine = false;
+    refuseWhoamiOnly = false;
+    refusedWhoami = 0;
     whoamiAnswers = [];
     whoamiCalls = 0;
     useStore.setState({
@@ -581,7 +586,11 @@ describe("a refused token", { timeout: 30_000 }, () => {
           }
           const status = whoamiAnswers.shift() ?? 200;
           if (status !== 200) return new Response("{}", { status });
-          if (!bearer || (refuse && bearer === alice)) {
+          if (refuseWhoamiOnly && bearer !== fresh) {
+            refusedWhoami++;
+            return json({ authenticated: false });
+          }
+          if (!bearer || (refuse && bearer !== fresh)) {
             await new Promise((r) => setTimeout(r, 30)); // after the early read's 401
             return json({ authenticated: false });
           }
@@ -697,9 +706,11 @@ describe("a refused token", { timeout: 30_000 }, () => {
     render(<App />);
     await until(() => useStore.getState().whoami !== null);
     const stale = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 1 });
-    refuse = true; // whoami refuses alice's tokens from here
+    refusedWhoami = 0;
+    refuseWhoamiOnly = true; // the server refuses the stored token; no other call is made to say so
     await act(async () => storeElsewhere(stale));
     await until(() => useStore.getState().sessionExpired);
+    expect(refusedWhoami).toBe(1);
     expect(reloadPage).not.toHaveBeenCalled();
   });
 

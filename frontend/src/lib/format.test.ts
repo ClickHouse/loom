@@ -66,23 +66,14 @@ describe("humanizeError", () => {
       expect(
         humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "Invalid email or password." })),
       ).toBe("Sign-in rejected: Invalid email or password.");
-      // A session's token that ran out, or a read sent after another tab ended the session.
+      // A refusal keeps its words unless it ended the session (the flag), and a call sent
+      // after another tab took the token reads as the ended session.
       expect(
-        humanizeError(
-          new ApiError({ status: 401, code: "AUTH_INVALID", message: "token expired: Signature has expired" }),
-        ),
-      ).toBe("Your session ended — sign in again.");
+        humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "token jti 'j1' is revoked" })),
+      ).toBe("Sign-in rejected: token jti 'j1' is revoked");
       expect(humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "missing bearer token" }))).toBe(
         "Your session ended — sign in again.",
       );
-      expect(
-        humanizeError(
-          new ApiError({ status: 401, code: "AUTH_INVALID", message: "the sign-in session of this token has ended" }),
-        ),
-      ).toBe("Your session ended — sign in again.");
-      expect(
-        humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "token jti 'j1' is revoked" })),
-      ).toBe("Your session ended — sign in again.");
       // Any refusal that ended the session reads the same, whatever its words.
       const ended = new ApiError({
         status: 401,

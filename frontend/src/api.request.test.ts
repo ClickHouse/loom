@@ -113,8 +113,10 @@ describe("a refused sign-in token", () => {
     onSignInRejected(ended);
     setToken("tok-a");
     stubFetch(401, "{}");
-    await Promise.all([1, 2, 3].map(() => rejection(post("/v1/memory.list", { org: "o" }))));
+    const errors = await Promise.all([1, 2, 3].map(() => rejection(post("/v1/memory.list", { org: "o" }))));
     expect(ended).toHaveBeenCalledTimes(1);
+    // Each reads as the ended session, not only the first.
+    expect(errors.every((e) => e.sessionEnded)).toBe(true);
   });
 
   it("leaves a 403 and a token stored while the request was in flight alone", async () => {

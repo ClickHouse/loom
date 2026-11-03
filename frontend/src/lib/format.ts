@@ -235,9 +235,9 @@ export function humanizeError(err: unknown): string {
   return m[2] ? `${friendly} ${m[2]}` : friendly;
 }
 
-/** The server's words (server/auth/jwt.py, bearer.py) for a session's token that ran out or
- *  was revoked, or that a request lost when the session ended in another tab. */
-const SESSION_GONE = /\btoken expired\b|\bis revoked\b|\bsession of this token has ended\b|\bmissing bearer token\b/i;
+/** The server's words (server/auth/bearer.py) for a call sent after the session ended in
+ *  another tab took the token; a refusal of a token the call carried is `sessionEnded`. */
+const SESSION_GONE = /\bmissing bearer token\b/i;
 
 function humanizeApiError(err: ApiError): string {
   // A page that read while its session was away says so plainly (the dashboard's card

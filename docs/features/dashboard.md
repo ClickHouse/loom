@@ -47,7 +47,8 @@ enters in the dashboard to claim the namespace. The token sits in the browser's 
 a stored token the server refuses (expired or revoked) ends the session on the next call, from
 any page, and so does another tab dropping the token (a sign-out in another tab reloads this
 one to the sign-in screen instead). Mid-session a card among the toasts says so, over any open
-dialog, and the page stays as it is: **Sign in in a new tab** signs in there,
+dialog (a keyboard user closes the dialog to reach it; a pointer reaches it at once), and the
+page stays as it is: **Sign in in a new tab** signs in there,
 and this tab takes the new token and carries on once the server confirms it is the same person
 (anyone else gets a fresh page). **Reload** signs in in this tab instead. While the page loads,
 a refused token shows the sign-in screen saying the session ended, and with SSO on that

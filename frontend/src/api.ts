@@ -298,11 +298,15 @@ async function request(method: "GET" | "POST", path: string, body?: unknown, sig
     );
     // A 401 on the token this request carried ends the session for every view at once.
     // A newer token stored while the request was in flight is left alone.
-    if (r.status === 401 && sent && sent === token()) {
-      signInRejected?.(); // before any await, so concurrent 401s end it once
-      const err = await apiErrorFromResponse(r);
-      err.sessionEnded = true;
-      throw err;
+    if (r.status === 401 && sent) {
+      // Ended once, before any await, by the first refusal; one that raced it reads the same.
+      const ending = sent === token();
+      if (ending) signInRejected?.();
+      if (ending || token() === null) {
+        const err = await apiErrorFromResponse(r);
+        err.sessionEnded = true;
+        throw err;
+      }
     }
     if (!r.ok) throw await apiErrorFromResponse(r);
     return r;

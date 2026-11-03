@@ -15,10 +15,7 @@ export function SessionExpiredBar() {
     <div role="alert" className="toast pointer-events-auto flex items-start" data-testid="session-expired-bar">
       <Icon name="lock" size="sm" aria-hidden="true" className="shrink-0 mt-0.5" />
       <span className="flex flex-col flex-1 min-w-0 gap-2">
-        <span className="toast-title">Your session ended.</span>
-        <span className="text-xs text-text-muted">
-          Sign in again in a new tab and this page carries on as it is, or reload it.
-        </span>
+        <span className="toast-title">Your session ended. This page stays as it is.</span>
         <span className="flex flex-wrap gap-2">
           <Button
             type="primary"
