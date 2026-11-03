@@ -10,7 +10,8 @@ identity, so a re-run revises the extractor's own rows instead of writing beside
 
 - the key's active record has the same verbatim fields (reasoning, rejected options'
   reasons; the rest is the model's wording) and its row carries the same files, source,
-  constraint and repository tags: nothing is written;
+  constraint and repository tags: nothing is written (a confirmed row may still gain the
+  repository's tag by a tags-only write);
 - it differs and its row is the extractor's, unconfirmed and from this document:
   recorded again (Revise), unless its outcome is recorded: then it is tagged
   `source-changed`;
@@ -977,7 +978,7 @@ async def _reconcile(
                 # Another writer's unconfirmed row gains no repository tag.
                 # (Our own unconfirmed row reached here with its tags the same already.)
                 link = t.row_tag if _confirmed(row) else ""
-                await _keep_tags(rec, row, dry_run, link)
+                await _reconcile_tags(rec, row, dry_run, link)
             return rec
         if row is not None and _confirmed(row) and this_doc:
             # The human who confirmed it decides; a pinned writer row refuses decision.record.
@@ -1010,7 +1011,7 @@ async def _reconcile(
             rec.action = "outcome_known" if same else await _flag(rec, row, dry_run, t.row_tag)
             if same:
                 # Only its row fields are stale: the document says what it says again.
-                await _keep_tags(rec, row, dry_run, t.row_tag)
+                await _reconcile_tags(rec, row, dry_run, t.row_tag)
             return rec
         rec.action = "revised"
     rec.holds = True
@@ -1169,7 +1170,7 @@ def _tag_note(row: MemoryRow, tags: list[str], dry_run: bool) -> str:
     return "; ".join(notes)
 
 
-async def _keep_tags(rec: RecordReport, row: MemoryRow, dry_run: bool, repo_tag: str) -> None:
+async def _reconcile_tags(rec: RecordReport, row: MemoryRow, dry_run: bool, repo_tag: str) -> None:
     """On a row the document still states: drop its `source-changed` tag and add the
     repository's tag. A row the run does not record again gets the tag this way, so the
     pre-edit block serves it too."""
@@ -1344,7 +1345,7 @@ async def _retire_one(
         await _retire_row(report, row, keep=keep, repo_tag=repo_tag)
     elif repo_tag:
         # Its reasoning is still there though the model did not emit it: it stays, linked.
-        await _tag_kept(report, row, SOURCE_CHANGED_TAG in row.tags, repo_tag)
+        await _retire_tags(report, row, SOURCE_CHANGED_TAG in row.tags, repo_tag)
 
 
 async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool, repo_tag: str) -> None:
@@ -1355,10 +1356,10 @@ async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool, repo
         if await _delete_row(report, row):
             report.retired.append(row.memory_key)
         return
-    await _tag_kept(report, row, True, repo_tag)
+    await _retire_tags(report, row, True, repo_tag)
 
 
-async def _tag_kept(
+async def _retire_tags(
     report: ExtractReport, row: MemoryRow, source_changed: bool, repo_tag: str
 ) -> None:
     """Set the tags of a row the retire step keeps (`_tags_for`), if they change. Once

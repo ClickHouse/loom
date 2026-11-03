@@ -604,10 +604,11 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   with no API key set, or no provider configured at all. `LOOM_LLM_PROVIDER=fake` set explicitly runs on it on purpose.
   Otherwise a window the fake model answers (a fallback model, `LOOM_LLM_FALLBACK_MODEL`, with no key) is dropped as
   unread. A run whose every window's model call failed or came back unreadable, or answered nothing and failed when read
-  again, reads nothing and retires nothing. The command exits 1 when it could not read the document (no document, no
-  chunks, no usable model, the extractor's own rows unreadable before any model call, no window read), 2 when a write,
-  or a read it needed, was refused or failed (a dry run's reads count too, and so does a window the model could not
-  answer readably while others were read), else 0; a race does not change the exit code.
+  again, reads nothing and retires nothing. The command exits 1 when it could not run on the document (no document, no
+  chunks, no usable model, a refusal under **Repository** above, the extractor's own rows unreadable before any model
+  call, no window read), 2 when a write, or a read it needed, was refused or failed (a dry run's reads count too, and
+  so does a window the model could not answer readably while others were read), else 0; a race does not change the
+  exit code.
 
 The reasoning is the verbatim span the retire step reads: the record has no field for the quote. To confirm an
 extracted decision, a maintainer reads its identity with `memory.get` and calls `memory.pin` under it, or attests its

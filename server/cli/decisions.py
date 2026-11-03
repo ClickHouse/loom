@@ -65,7 +65,7 @@ def register_decisions_cli(sub: Any) -> None:
         "through decision.record as agent loom-decisions. A re-run revises or retires the "
         "extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row "
         "source-changed. Dry run by default (still calls the model); --apply writes. Exits 1 "
-        "when it could not read the document (no document, no chunks, no usable model, an "
+        "when it could not run on the document (no document, no chunks, no usable model, an "
         "unknown --repo or a namespace it may not use, --into without --repo or source on "
         "another repository's namespace, a --repo with no remote to tag rows with, the "
         "dashboard's repositories unread, its own rows unreadable, left in another namespace "
@@ -131,7 +131,7 @@ def _cmd_extract(args: argparse.Namespace) -> int:
 
 
 def exit_code(report: ExtractReport) -> int:
-    """1 when the run could not read the document (no document, no chunks, no usable model, an
+    """1 when the run could not go ahead (no document, no chunks, no usable model, an
     unknown --repo or a namespace it may not use, --into without --repo or source on another
     repository's namespace, a --repo with no remote to tag rows with, the dashboard's
     repositories unread, the extractor's rows unreadable, left in another namespace or linked
