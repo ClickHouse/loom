@@ -148,7 +148,6 @@ async def _flush_and_rearm() -> None:
     from server.core.ch import query_tag
 
     try:
-        # A detached timer task: no request or pass tag reaches it.
         with query_tag("drops.flush"):
             await flush_drops()
     except Exception as e:  # noqa: BLE001 — the timer re-arms whatever the flush did
