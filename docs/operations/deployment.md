@@ -746,9 +746,10 @@ and what it leaves:
 
 - Boot still applies every migration. An empty table costs nothing to serve, and erasure
   covers every table whatever is in use.
-- Every `code.*` operation but `code.repo.remove` answers a precondition error, so an
-  index registered earlier can still be retired
-  ([retiring with the switch off](../features/code-index/repositories.md)).
+- Every `code.*` operation but `code.repo.remove` answers a precondition error, so a
+  self-service index added earlier can still be retired
+  ([retiring with the switch off](../features/code-index/repositories.md#self-service-repositories));
+  an operator-configured one is removed from `LOOM_CODE_REPOS_JSON`.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but the coding-agent plugins list them, so agents are offered
   tools that refuse. Set the Claude Code plugin's `toolset` option
@@ -764,11 +765,11 @@ and what it leaves:
   line that points the agent at the `loom_code_*` tools; set `LOOM_CODE_MAP=false` in
   the plugin's environment to leave it out.
 - The switch also stops the coverage workers (`code_coverage_notify`, which delivers
-  coverage watches, and `code_coverage_import`). Every other code and tracker worker
-  has its own `LOOM_*_ENABLED` setting, which this switch does not change; with no repository and no tracker source
-  configured, they find nothing to do: each pass reads a few rows and ends. The git mirror
-  warm-up does not run, and boot probes the repository-job sandbox only when
-  `LOOM_CODE_INGEST_ENABLED` or `LOOM_CODE_SANDBOX_REQUIRED` is on.
+  coverage watches, and `code_coverage_import`). Every other code and tracker worker has
+  its own `LOOM_*_ENABLED` setting, which this switch does not change; with no repository
+  and no tracker source configured, they find nothing to do: each pass reads a few rows
+  and ends. The git mirror warm-up does not run, and boot probes the repository-job
+  sandbox only when `LOOM_CODE_INGEST_ENABLED` or `LOOM_CODE_SANDBOX_REQUIRED` is on.
 - `memory.*`, `knowledge.*`, `conversation.*`, `context.pack` and `search.query`
   (`loom_search` over MCP) serve as on any deployment; `search.query` has no code or
   tracker results to add.
