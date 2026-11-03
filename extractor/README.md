@@ -18,10 +18,10 @@ environment, never a command line, which any local user can read:
 
 ```bash
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin loom-extractor
-sudo python3 -m venv /opt/loom-extractor && sudo /opt/loom-extractor/bin/pip install ./extractor
+sudo python3 -m venv /usr/local/lib/loom-extractor && sudo /usr/local/lib/loom-extractor/bin/pip install ./extractor
 sudo sh -c 'umask 077 && openssl rand -hex 24 > /etc/loom-extractor.token'
 sudo sh -c 'export LOOM_EXTRACTOR_TOKEN="$(cat /etc/loom-extractor.token)" LOOM_EXTRACTOR_HOST=0.0.0.0 &&
-  exec setpriv --reuid=loom-extractor --regid=loom-extractor --init-groups /opt/loom-extractor/bin/loom-extractor'
+  exec setpriv --reuid=loom-extractor --regid=loom-extractor --init-groups /usr/local/lib/loom-extractor/bin/loom-extractor'
 ```
 
 | Variable                            | Default     | Meaning                                                         |

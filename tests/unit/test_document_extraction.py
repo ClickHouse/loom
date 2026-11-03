@@ -1403,3 +1403,9 @@ def test_a_toml_integer_outside_signed_64_bits_makes_the_file_invalid_toml() -> 
         a = extract(b"a = " + wide + b"\n", "c.toml")
         assert a.coverage.lost == ("toml_types",) and not a.coverage.complete, wide[:20]
         assert a.blocks[0].type == "paragraph"
+    reasons = {
+        b"[t]\nx = [[1, 99999999999999999999]]\n": "t.x[0][1] is an integer outside signed 64 bits",
+        b"a = " + b"1" * 4301 + b"\n": "an integer of over 4,300 digits",
+    }
+    for source, reason in reasons.items():
+        assert extract(source, "c.toml").coverage.failed[0].reason == f"invalid TOML: {reason}"

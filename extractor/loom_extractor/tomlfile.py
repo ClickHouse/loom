@@ -390,29 +390,42 @@ class _Scanner:
         return last + 1
 
 
-def _wide_integer(doc: dict[str, Any]) -> bool:
-    """Whether the document holds an integer outside signed 64 bits, which TOML
-    makes an error and `tomllib` reads anyway. Walked without recursion."""
-    stack: list[Any] = [doc]
+def _wide_integer(doc: dict[str, Any]) -> str:
+    """The key path of an integer outside signed 64 bits, which TOML makes an
+    error and `tomllib` reads anyway, or ''. Walked without recursion."""
+    stack: list[tuple[str, Any]] = [("", doc)]
     while stack:
-        v = stack.pop()
+        path, v = stack.pop()
         if isinstance(v, dict):
-            stack.extend(v.values())
+            stack.extend(
+                (".".join(filter(None, (path, _path_text([_Step(k)])))), x) for k, x in v.items()
+            )
         elif isinstance(v, list):
-            stack.extend(v)
+            stack.extend((f"{path}[{i}]", x) for i, x in enumerate(v))
         elif isinstance(v, int) and not isinstance(v, bool) and not -(2**63) <= v < 2**63:
-            return True
-    return False
+            return path
+    return ""
+
+
+def _decoded(text: str) -> dict[str, Any]:
+    """`tomllib.loads`, refusing what TOML refuses and `tomllib` does not, each
+    reason naming where it is when it can."""
+    try:
+        doc = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        raise
+    except ValueError as e:  # `int()` refusing a decimal of over 4,300 digits
+        raise ValueError("an integer of over 4,300 digits") from e
+    path = _wide_integer(doc)
+    if path:
+        raise ValueError(f"{path} is an integer outside signed 64 bits")
+    return doc
 
 
 def extract_toml(text: str) -> Artifact:
     try:
-        doc = tomllib.loads(text)
-        if _wide_integer(doc):
-            raise ValueError("an integer outside signed 64 bits")
-    # RecursionError: tomllib recurses per nesting level. ValueError: TOMLDecodeError
-    # is one, and so is `int()` refusing a decimal of over 4,300 digits.
-    except (ValueError, RecursionError) as e:
+        doc = _decoded(text)
+    except (ValueError, RecursionError) as e:  # tomllib recurses per nesting level
         fallback, _ = paragraph_blocks(text)
         return Artifact(
             format="toml",

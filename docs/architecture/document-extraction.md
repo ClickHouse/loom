@@ -186,8 +186,8 @@ path> = <value text>` with its comments, written so it reads on its own; its lin
 comments above a table or key go into its text and its line span; a run of comments no table or key follows is a
 paragraph of its own, and a comment inside a multi-line array stays in that key's text. An invalid file, one with an
 integer outside signed 64 bits among them, is kept as paragraph blocks with `coverage.lost = ["toml_types"]` and the
-decoder's message. A key's `attrs.value` is the JSON value, except that a date or time is its ISO text and an infinite
-or NaN float its text (`inf`, `nan`), whatever its `value_type`.
+reason, which names the line or the key path where it can. A key's `attrs.value` is the JSON value, except that a date
+or time is its ISO text and an infinite or NaN float its text (`inf`, `nan`), whatever its `value_type`.
 
 **Contract bounds.** Before it answers, the reference extractor fits every block to the contract's bounds: a key over
 1,024 characters is left out and the first 10,000 kept, and the section path keeps its first 64 entries, each cut to 500
