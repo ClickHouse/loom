@@ -315,7 +315,7 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         event_type="erasure.exported",
         org=input.org,
         namespace=audit_namespace(input.scope_type, input.scope_value),
-        actor=writer_actor(input.requester),
+        actor=writer_actor(input.requester) or "-",
         subject={
             "scope_type": input.scope_type,
             "scope_value": input.scope_value,

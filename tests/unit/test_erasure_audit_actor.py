@@ -78,6 +78,24 @@ async def test_a_failed_saga_names_the_token(
     assert audits[1]["subject"]["requester"] == "dpo@y"
 
 
+async def test_a_fresh_saga_with_no_actor_at_all_names_no_one_on_every_row(recorded: Any) -> None:
+    """Auth off, no pipeline actor, an empty `requester`: every row names `-`, never
+    the recovery worker that has not run."""
+    _, audits, rows = recorded
+    set_current_auth(None)
+    inp, row, erasure_id, now = await saga.begin_erasure(
+        ErasureRequestInput(org="o", scope_type="namespace", scope_value="A", requester="")
+    )
+    await saga.run_saga(
+        input=inp, row=row, erasure_id=erasure_id, requested_at=now, previously_completed=set()
+    )
+    assert [(a["event_type"], a["actor"]) for a in audits] == [
+        ("erasure.started", "-"),
+        ("erasure.completed", "-"),
+    ]
+    assert {r["actor"] for r in rows} == {"-"}
+
+
 def _ledger_row(**over: Any) -> dict[str, Any]:
     row: dict[str, Any] = {
         "id": "e1",

@@ -168,7 +168,9 @@ async def begin_erasure(
     row = request_row_template(
         erasure_id=erasure_id,
         input=input,
-        actor=writer_actor(input.requester),
+        # Never '': that marks a row an older build wrote, which a resume names
+        # after the resuming process.
+        actor=writer_actor(input.requester) or "-",
         requested_at=now,
         attempts=1,
     )
