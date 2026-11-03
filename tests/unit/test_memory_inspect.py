@@ -250,15 +250,33 @@ async def test_the_extraction_policy_is_read_only_for_an_org_admin(
     assert "org admin" in out.settings.extraction_policy_unavailable
     assert "no user, agent or session setting" in out.settings.extraction_instructions
 
-    async def unreadable(*a: Any, **k: Any) -> bool:
-        raise RuntimeError("grant read failed")
 
-    # The access check failing withholds the policy and skips the section, not the call.
-    monkeypatch.setattr(mi, "row_in_scope", unreadable)
+@pytest.mark.asyncio
+async def test_an_unreadable_grant_withholds_the_policy_and_says_so(
+    ch: RecordingCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.auth import authz, fail_closed
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+
+    async def unreadable_grants(*a: Any, **k: Any) -> None:
+        # What check_authorized does when the grant read fails: note it, then refuse.
+        fail_closed.note_unreadable()
+        e = PermissionError("grants unreadable")
+        e.unverified = True  # type: ignore[attr-defined]
+        raise e
+
+    monkeypatch.setattr(authz, "check_authorized", unreadable_grants)
+    set_current_auth(
+        AuthInfo(
+            subject="a", org="o", namespaces=("ns",), roles=(Role.VIEWER,), is_service_account=False
+        )
+    )
     out = await mi.handle_memory_inspect(_inp())
     assert out.settings.extraction_policy is None
-    assert "could not be read" in out.settings.extraction_policy_unavailable
-    assert "settings.extraction_policy: RuntimeError" in out.skipped
+    assert out.settings.extraction_policy_unavailable == "the caller's access could not be read"
+    assert "settings.extraction_policy: the caller's access was unreadable" in out.skipped
 
 
 @pytest.mark.asyncio

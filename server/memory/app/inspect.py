@@ -21,6 +21,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from server.auth import fail_closed
 from server.auth.authz import row_in_scope
 from server.identity.api.models_namespace_catalog import NamespaceListCategoriesInput
 from server.identity.api.models_namespace_guide import NamespaceGuideGetInput
@@ -204,14 +205,12 @@ class _Inspect:
         if cats is not None:
             out.categories_registered = len(cats.categories)
             self.category_names = {c.category_id: c.name for c in cats.categories}
-        # A failed grant read is skipped and withholds the policy: the gate fails closed,
-        # and a refusal it could not verify marks the request the server's.
-        admin = await self.guarded(
-            "settings.extraction_policy",
-            lambda: row_in_scope(i.org, i.namespace, Role.ORG_ADMIN),
-            None,
-        )
-        if admin is None:
+        # A grant read that fails refuses (fails closed) and is noted, not raised: the
+        # policy is withheld and the section is reported skipped, not as a non-admin's.
+        fail_closed.reset()
+        admin = await row_in_scope(i.org, i.namespace, Role.ORG_ADMIN)
+        if not admin and fail_closed.unreadable():
+            self.skipped.append("settings.extraction_policy: the caller's access was unreadable")
             out.extraction_policy_unavailable = "the caller's access could not be read"
         elif admin:
             out.extraction_policy = await self.guarded(
