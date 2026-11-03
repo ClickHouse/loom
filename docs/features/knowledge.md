@@ -188,17 +188,18 @@ hybrid mode) and, on a fan-out, the `namespace` it came from.
 **Reranking.** `rerank` names a reranker (`builtin:openai[:<model>]`, `builtin:cohere[:<model>]`
 or an endpoint in `LOOM_RERANK_ENDPOINTS_JSON`; a URL is refused), or the deployment
 sets `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT`, which the op and `loom_search`'s knowledge
-section take; `memory.ask` and `context.pack` read knowledge without a rerank call. The
-legs then fetch at least `LOOM_KNOWLEDGE_SEARCH_RERANK_TOP` hits (30), and the reranker
-reads each one's context (title, description, breadcrumb; at most half the excerpt) and
-text, `LOOM_KNOWLEDGE_SEARCH_RERANK_EXCERPT_CHARS` characters (800), and orders them
-before sections collapse and the page is cut. `reranked_by` on the response names the
-reranker that produced the order; it is empty when no reranker ran, it failed
-(fail-open), it took longer than `LOOM_KNOWLEDGE_SEARCH_RERANK_TIMEOUT_S` (8 s) or it kept
-the fused order. A model call the gateway holds or refuses fails
-the search instead. An LLM-free read (`LOOM_READS_LLM_FREE`) reranks
-only as its request names, never with `builtin:openai`. A rerank is one more model call
-per search: `builtin:openai` adds about two seconds, so it is off unless asked for.
+section take; `memory.ask`, `context.pack` and `loom_search`'s repository-docs leg read
+knowledge without a rerank call. The legs then fetch at least
+`LOOM_KNOWLEDGE_SEARCH_RERANK_TOP` hits (30), and the reranker reads each one's context
+(title, description, breadcrumb; at most half the excerpt) and text,
+`LOOM_KNOWLEDGE_SEARCH_RERANK_EXCERPT_CHARS` characters (800), and orders them before
+sections collapse and the page is cut. `reranked_by` on the response names the reranker
+that produced the order; it is empty when no reranker ran, it failed (fail-open), it took
+longer than `LOOM_KNOWLEDGE_SEARCH_RERANK_TIMEOUT_S` (8 s) or it kept the fused order. A
+model call the gateway holds or refuses fails the search instead. An LLM-free read
+(`LOOM_READS_LLM_FREE`) reranks only as its request names, never with `builtin:openai`.
+A rerank is one more model call per search: `builtin:openai` adds about two seconds, so
+it is off unless asked for.
 
 **Fan-out and private-first.** Under `all_mine` the namespaces are the caller's
 memory-kind namespaces (`LOOM_MEMORY_SEARCH_FANOUT_KINDS`; code and tracker indexes are
