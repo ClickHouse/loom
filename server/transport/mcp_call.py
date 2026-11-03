@@ -226,7 +226,7 @@ async def _call_tool(
 
     client_idem_key = _pop_idempotency_key(op, arguments)
 
-    arguments.update(gates.with_resolved_org(op, arguments, auth))
+    gates.fill_resolved_org(op, arguments, auth)
     validated = _validated_input(req_id, op, arguments, request_id)
     if isinstance(validated, dict):
         return validated  # misspelled-argument refusal, or VALIDATION_FAILED
@@ -507,7 +507,7 @@ async def _bind_caller_identity(
     # Fill in identity-tuple defaults the caller omitted (LLMs call with just
     # the action args). Existing args win — explicit namespace is honored.
     # code.* ops are EXEMPT: the gate authorizes them against the code plane's
-    # org and namespace (`with_resolved_org` and `with_target` fill an absent
+    # org and namespace (`fill_resolved_org` and `with_target` fill an absent
     # one, the handler a missing org), whereas the caller's MEMORY namespace
     # here would point every chat-surface code.search at personal-<user>: an
     # empty index, so the tool would always abstain.

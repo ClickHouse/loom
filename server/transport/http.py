@@ -737,9 +737,8 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
 
         set_current_auth(auth)
         bind_claimed_class(auth)
-        call.raw_body = raw_body = gates.with_resolved_org(
-            op, await _read_body(op, request, request_id, auth), auth
-        )
+        call.raw_body = raw_body = await _read_body(op, request, request_id, auth)
+        gates.fill_resolved_org(op, raw_body, auth)
 
         payload = _validate_payload(op, request_id, raw_body, auth)
         payload, raw_body = _resolve_personal(op, call, payload, raw_body, auth)

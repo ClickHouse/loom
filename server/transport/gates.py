@@ -11,7 +11,7 @@ here, once:
   the request's, else the op's plane default (code.* / tracker.*), else the
   verified token's own org. A namespace is never authorized without an org:
   that is a refusal (IDENTITY_INCOMPLETE), not a flat-role pass.
-- `with_resolved_org` / `with_target`: a blank or "-" org is set to the
+- `fill_resolved_org` / `with_target`: a blank or "-" org is set to the
   org the call acts in before validation, and an absent code namespace to the
   authorized one after authorization, so the handler reads and writes where
   the call was authorized.
@@ -129,15 +129,16 @@ def resolve_org(op: Operation, org: Any, auth: AuthInfo | None) -> str | None:
     return present(org) or present(plane_org_for(op.name)) or _token_org(auth)
 
 
-def with_resolved_org(op: Operation, args: Any, auth: AuthInfo | None) -> Any:
-    """A request's raw arguments with an `org` sent blank or "-" set to the org
-    the call acts in, before the input model validates it: the handler, and a
-    validator that reads the org (an inbox's webhook secret names it), see the
-    tenant the gate authorizes, never the literal "-" every token reaches."""
-    if not isinstance(args, dict) or "org" not in args or present(args["org"]) is not None:
-        return args
-    org = resolve_org(op, None, auth)
-    return {**args, "org": org} if org else args
+def fill_resolved_org(op: Operation, args: Any, auth: AuthInfo | None) -> None:
+    """Set, in place, a request's `org` sent as a blank or "-" string to the
+    org the call acts in, before the input model validates it: the handler,
+    and a validator that reads the org (an inbox's webhook secret names it),
+    see the tenant the gate authorizes, never the literal "-" every token
+    reaches. A missing, null or non-string org is left for validation."""
+    if not isinstance(args, dict) or not isinstance(args.get("org"), str):
+        return
+    if present(args["org"]) is None and (org := resolve_org(op, None, auth)):
+        args["org"] = org
 
 
 def with_target(input_obj: Any, target: Target) -> Any:
