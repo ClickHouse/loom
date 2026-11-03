@@ -6,10 +6,11 @@ returns is chunked, embedded or published before it passes here.
 Checked: the size before decoding, the schema version, the format asked for,
 each block's type, a unique id and a parent that is an earlier block, at most
 MAX_KEYS keys of MAX_KEY_CHARS and MAX_SECTION_DEPTH section entries of
-MAX_SECTION_CHARS per block, locator
-spans that are ranges, coverage counts within their total, a `complete` flag
-that matches the counts, strings that are valid Unicode, and nesting depth in
-`attrs` and `options`. A field the contract does not name is dropped, so an
+MAX_SECTION_CHARS per block, locator spans that are ranges, coverage counts
+within their total, a `complete` flag that matches the counts, strings that are
+valid Unicode, numbers that are JSON (no `NaN` or `Infinity`), integers within
+64 bits and other numbers within a double, and nesting depth in `attrs` and
+`options`. A field the contract does not name is dropped, so an
 extractor may add one without a version bump.
 
 Pure and I/O-free.
@@ -203,6 +204,17 @@ def _no_constant(name: str) -> Any:
     raise ValueError(f"{name} is not a JSON number")
 
 
+def _int64(text: str) -> int:
+    """An integer within 64 bits, as a column that stores one holds it; a longer
+    run of digits is not converted at all."""
+    if len(text.lstrip("-")) > 19:
+        raise ValueError(f"{text[:40]} is out of range")
+    value = int(text)
+    if not -(2**63) <= value < 2**63:
+        raise ValueError(f"{text[:40]} is out of range")
+    return value
+
+
 def _finite(text: str) -> float:
     """A JSON number Python cannot hold (`1e999`) would serialize as `Infinity`."""
     value = float(text)
@@ -217,7 +229,7 @@ def parse_artifact(data: bytes, *, fmt: str, max_bytes: int) -> Artifact:
     if len(data) > max_bytes:
         raise _fail("artifact", f"is {len(data)} bytes, over the {max_bytes} allowed")
     try:
-        d = json.loads(data, parse_constant=_no_constant, parse_float=_finite)
+        d = json.loads(data, parse_constant=_no_constant, parse_float=_finite, parse_int=_int64)
     except (ValueError, RecursionError) as e:
         raise _fail("artifact", "is not JSON") from e
     d = _record(d, "artifact")

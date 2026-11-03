@@ -183,6 +183,9 @@ def _jsonable(v: Any) -> Any:
         return v.isoformat()
     if isinstance(v, float) and not math.isfinite(v):
         return str(v)
+    # The contract's integers are 64-bit; TOML's are too, though `tomllib` reads wider.
+    if isinstance(v, int) and not isinstance(v, bool) and not -(2**63) <= v < 2**63:
+        return str(v)
     if isinstance(v, list):
         return [_jsonable(x) for x in v]
     if isinstance(v, dict):

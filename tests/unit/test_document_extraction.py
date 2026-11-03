@@ -1389,3 +1389,8 @@ def test_a_codec_that_raises_a_plain_unicode_error_is_an_encoding_error() -> Non
         with pytest.raises(ExtractionError) as e:
             decode(data, codec)
         assert e.value.code == "encoding", codec
+
+
+def test_a_toml_integer_past_64_bits_is_kept_as_its_digits() -> None:
+    a = extract(b"a = 99999999999999999999\nb = -9223372036854775808\n", "c.toml")
+    assert [b.attrs["value"] for b in a.blocks] == ["99999999999999999999", -(2**63)]
