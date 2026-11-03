@@ -987,10 +987,10 @@ async def _served_chunks(existing: Any, *, tombstone: int) -> frozenset[tuple[in
         existing.memory_key,
         besides=(existing.agent, existing.user_id, existing.session_id),
     ):
-        memory_type = str(r["memory_type"])
-        if is_embedded(memory_type, str(r["sensitivity"] or "")):
-            value = memory_repo.parse_memory_value(str(r["value"]))
-            served |= _set_chunks.set_chunk_identities(value, memory_type, existing.memory_key)
+        value = memory_repo.parse_memory_value(str(r["value"]))
+        served |= _set_chunks.set_chunk_identities(
+            value, str(r["memory_type"]), existing.memory_key
+        )
     return frozenset(served | await _own_newer_chunks(existing, tombstone=tombstone))
 
 

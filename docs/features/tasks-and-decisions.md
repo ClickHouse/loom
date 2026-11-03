@@ -268,8 +268,8 @@ statement reads `Decided <outcome>.` and `context.pack` gives no `because`. Ever
 it, whole within the record's limits (scenario 2,000 characters, outcome 1,000, reasoning 4,000, realized outcome
 2,000, up to ten alternatives of 300 each). A longer alternative is cut at a space and ends in `…`, so no half name
 reads as a file. A statement can run to about 12,000 characters. `memory.for_file` shows it whole, or names it when it
-would pass the block's ceiling, and search embeds its excerpt, the first 1,200 stored characters, so it opens with the
-scenario; a longer statement is also stored as chunks, which search reads too.
+would pass the block's ceiling, and search embeds its excerpt, the first 1,200 stored characters less its ` (#<key>)`
+suffix, so it opens with the scenario; a longer statement is also stored as chunks, which search reads too.
 
 - **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the stored
   category, scenario, outcome, reasoning, alternatives and realized outcome (not `decision_maker` or `run_id`, which

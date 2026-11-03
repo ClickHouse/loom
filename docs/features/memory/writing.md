@@ -58,8 +58,9 @@ The write succeeds whatever the shape. `advisories` names a shape recall cannot 
 
 **Documents go to knowledge.** A value past a couple of kilobytes is usually a document.
 Long values are split into verbatim chunks (`chunks_written`): any value whose stored JSON
-runs past the 1,200-character excerpt it is embedded by, which a non-ASCII text reaches at
-about 200 characters, since each such character is stored as a six-character escape. A
+runs past the 1,200-character excerpt it is embedded by, less its ` (#<key>)` suffix, which
+a non-ASCII text reaches at about 200 characters, since each such character is stored as a
+six-character escape. A
 knowledge document is chunked on its headings and searched with its section. Store the
 document in [knowledge](../knowledge.md) and one short claim in memory.
 
