@@ -9,25 +9,33 @@ the namespace already holds, then written through `decision.record` under one fi
 identity, so a re-run revises the extractor's own rows instead of writing beside them:
 
 - the key's active record has the same verbatim fields (reasoning, rejected options'
-  reasons; the rest is the model's wording) and its row carries the same files, source
-  and constraint tag: nothing is written;
-- it differs and its row is the extractor's, unconfirmed and from this document:
-  recorded again (Revise), unless its outcome is recorded: then it is tagged
+  reasons; the rest is the model's wording) and its row carries the same files, source,
+  constraint and repository tags: nothing is written (a pinned or attested row may still
+  gain the repository's tag by a tags-only write);
+- it differs and its row is the extractor's, not pinned or attested, and from this
+  document: recorded again (Revise), unless its outcome is recorded: then it is tagged
   `source-changed`;
-- it differs and its row is confirmed (pinned, or attested in its current form) and
-  from this document: nothing is written, the body is printed for the human who
-  confirmed it, and the row is tagged `source-changed`, a tag a later run drops once the
-  document says the same again;
+- it differs and its row is frozen (pinned, or attested in its current form) and from
+  this document: nothing is written, the new body is printed in the run's report, and
+  the row is tagged `source-changed`, a tag a later run drops once the document says the
+  same again;
 - it differs and its row is another writer's or another document's: nothing is written;
-- no record under the key, but a confirmed decision row (pinned or attested) reads the
-  same at or above the conflict threshold: skipped as already recorded.
+- no record under the key, but a pinned or attested decision row reads the same at or
+  above the conflict threshold: skipped as already recorded.
 
-After the writes, the extractor deletes its unconfirmed rows citing this document whose
-reasoning (a span of the document) is no longer in its text, read as in the verbatim
-check, or whose outcome and reasoning this run recorded under another key. A row it keeps
-(confirmed, or with a recorded outcome) whose reasoning left is tagged `source-changed`
-instead. A refused write is reported and the run goes on. Runs in-process, with no auth
-context: operator only.
+After the writes, the extractor deletes its rows citing this document, unless pinned or
+attested, whose reasoning (a span of the document) is no longer in its text, read as in
+the verbatim check, or whose outcome and reasoning this run recorded under another key. A
+row it keeps (pinned, attested, or with a recorded outcome) whose reasoning left is
+tagged `source-changed` instead. A refused write is reported and the run goes on.
+
+A document outside a repository's code namespace names the repository: its code names
+resolve in the repository's trunk, and the rows go there or stay beside the document,
+tagged with the repository (`_target`). Every memory row the reconcile and retire steps
+read is in the namespace the rows go to (`_read_own`). Runs in-process: with no auth
+context (the CLI) the operator may do everything; with one bound, `_target` checks the
+document's, the repository's and the target namespace, and `_read_own` the trunk of the
+document's branch namespace.
 """
 
 from __future__ import annotations
@@ -40,6 +48,7 @@ import httpx
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from server.auth.authz import row_in_scope
 from server.core.errors import LoomServerError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_decision import DecisionRecordInput
@@ -61,6 +70,7 @@ from server.memory.store import (
     memory_rows_by_identity_keys,
 )
 from server.observability.genai import llm_stage
+from server.operations.base import Role
 from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
@@ -70,7 +80,7 @@ log = logging.getLogger(__name__)
 EXTRACTOR_AGENT = "loom-decisions"
 DESIGN_DOC_TAG = "source-kind:design_doc"
 CONSTRAINT_TAG = "constraint"
-# A model's reading of a document, until a human pins it.
+# A model's reading of a document, ranked below a row someone wrote directly.
 EXTRACTED_CONFIDENCE = 0.5
 _PAGE = 500
 
@@ -136,8 +146,10 @@ class Retried:
 class ExtractReport:
     source_uri: str
     dry_run: bool
-    # Why the run read nothing and retired nothing: no document, no chunks for the current
-    # embedding model, no usable model, the extractor's rows unreadable, or no window read.
+    # Why the run read nothing and retired nothing: a refusal of its target (`_target`), no
+    # document, no chunks for the current embedding model, no usable model, the extractor's
+    # rows unreadable, elsewhere or linked to another repository (`_read_own`), or no window
+    # read.
     error: str = ""
     windows: int = 0
     records: list[RecordReport] = field(default_factory=list)
@@ -151,9 +163,12 @@ class ExtractReport:
     # "<old key> -> <key>" for each extractor row deleted (or to delete) because this run
     # recorded its reasoning under another key: the model worded the scenario anew.
     replaced: list[str] = field(default_factory=list)
-    # Keys tagged (or to tag) `source-changed`: confirmed rows (pinned or attested), and
+    # Keys tagged (or to tag) `source-changed`: frozen rows (pinned or attested), and
     # rows with a recorded outcome, whose document now says otherwise.
     flagged: list[str] = field(default_factory=list)
+    # Keys of rows the retire step keeps that gained (or would gain) the repository's tag;
+    # a row reconcile tags says so in its record's note.
+    linked: list[str] = field(default_factory=list)
     # The retire step's "<key>: refused: <code>" for a read or write the server refused,
     # "<key>: failed: <error>" for one a provider error stopped. A candidate's is its
     # `dropped` line, marked `refused`.
@@ -163,10 +178,9 @@ class ExtractReport:
     races: list[str] = field(default_factory=list)
 
 
-def _confirmed(row: MemoryRow) -> bool:
-    """A person or a service account stood behind the row: pinned, or attested in its
-    current form, read as memory.get reads it; the rule memory.for_file marks
-    `(unconfirmed)` by."""
+def _frozen(row: MemoryRow) -> bool:
+    """The row is frozen against re-extraction: pinned, or attested in its current form,
+    read as memory.get reads it."""
     current = row_content_sha256(row)
     state = verification_state(row.verified_by, row.verified_sha256, current)
     return confirmed(row.pinned, state)
@@ -281,23 +295,107 @@ def _refusal(e: BaseException) -> str:
     return f"failed: {type(e).__name__}"
 
 
+@dataclass(frozen=True)
+class Target:
+    """Where a run reads and writes: the namespace holding the document, the one whose code
+    index resolves its names, the one its rows go to, and the repository's `repo:<id>` tag
+    (empty with no repository, or one with no remote)."""
+
+    doc_namespace: str
+    code_namespace: str
+    rows_namespace: str
+    repo_tag: str = ""
+
+    @property
+    def row_tag(self) -> str:
+        """The tag the rows carry: the repository's, unless they are in its own namespace."""
+        return "" if self.rows_namespace == self.code_namespace else self.repo_tag
+
+
+Into = Literal["repo", "source"]
+
+
+async def _target(
+    org: str, namespace: str, repo: str, into: Into | None, dry_run: bool
+) -> Target | str:
+    """The run's target, or why it may not run. With no `repo`, the document's namespace
+    is all three. With one, its names resolve in the repository's trunk code
+    namespace, and the rows go there (`into="repo"`) or stay beside the document tagged
+    with the repository (`into="source"`, the default unless the document is in a code
+    namespace). The caller must read the document and the repository and write where the
+    rows go (read, for a dry run); with no auth context (the CLI) the operator may."""
+    from server.code.app.index.repo_registry import refresh_db_repos, registry_read
+    from server.code.app.repo_scope import repo_trunk, trunk_namespace_of
+    from server.code.domain.index.repos import repo_for_namespace
+
+    # A repository added from the dashboard is known once the snapshot is read; a run
+    # without --repo needs it too, for the trunk of a branch namespace (`_read_own`).
+    await refresh_db_repos()
+    if not registry_read():
+        # Without it a repository's trunk would read as none, and a check be skipped.
+        return "could not read the repositories added from the dashboard; try again"
+    # First, so nothing about the document's namespace reaches a caller who cannot read it.
+    if not await _may(org, namespace, Role.VIEWER):
+        return f"not allowed to read {org}/{namespace}"
+    if into not in (None, "repo", "source"):
+        return f"--into is repo or source, not {into!r}"
+    if not repo:
+        if into:
+            return "--into needs --repo"
+        target = Target(namespace, namespace, namespace)
+    else:
+        trunk, tag = repo_trunk(org, repo)
+        # One answer for a repository that is not there and one the caller may not read.
+        if not trunk or not await _may(org, trunk, Role.VIEWER):
+            return f"no repository {repo!r} you may read is configured in {org}"
+        if into is None:
+            into = "repo" if repo_for_namespace(org, namespace) else "source"
+        home = trunk_namespace_of(org, namespace)
+        if into == "source" and home and home != trunk:
+            # Its rows would link to this repository's code and be read in another's.
+            return "the document is in another repository's code namespace; use --into repo"
+        target = Target(namespace, trunk, trunk if into == "repo" else namespace, tag)
+        if not tag and target.rows_namespace != trunk:
+            return f"repository {repo!r} has no remote to tag its rows with; use --into repo"
+    # The document's namespace and the trunk were read-checked above; a dry run writes nothing.
+    if not dry_run and not await _may(org, target.rows_namespace, Role.WRITER):
+        return f"not allowed to write {org}/{target.rows_namespace}"
+    return target
+
+
+async def _may(org: str, namespace: str, role: Role) -> bool:
+    try:
+        # The refusal is the whole answer: an unverifiable grant counts as the server's.
+        return await row_in_scope(org, namespace, role)
+    except Exception as e:  # noqa: BLE001 — a gate that cannot check refuses
+        log.warning("decisions extract: access check on %s failed (closed): %s", namespace, e)
+        return False
+
+
 async def extract_document(
     org: str,
     namespace: str,
     source_uri: str,
     *,
     dry_run: bool,
+    repo: str = "",
+    into: Into | None = None,
     max_per_section: int = 3,
     window_chars: int = 6000,
 ) -> ExtractReport:
-    """Mine `source_uri` into decision records in `namespace`; `dry_run` writes nothing
-    and reports what a run would write."""
+    """Mine `source_uri`, a document in `namespace`, into decision records; `repo` names
+    the repository its code names resolve in and `into` where the rows go (`_target`).
+    `dry_run` writes nothing and reports what a run would write."""
     from server.knowledge.api.models_knowledge import KnowledgeGetInput
     from server.knowledge.app.document_reads import document_chunks, handle_knowledge_get
 
     report = ExtractReport(source_uri, dry_run)
     if error := _no_model_error():
         report.error = error
+        return report
+    t = await _target(org, namespace, repo, into, dry_run)
+    if isinstance(t, str):
+        report.error = t
         return report
     doc = await handle_knowledge_get(
         KnowledgeGetInput(org=org, namespace=namespace, source_uri=source_uri)
@@ -315,31 +413,19 @@ async def extract_document(
         return report
     live_texts = [doc.content or "", *(c.text for c in chunks)]
     report.image_only = dx.image_only_sections(doc.content or "")
-    # A section judged image-only is not sent. An empty-path chunk of an image-only
-    # preamble is skipped only when its own text is image-only too.
-    skipped = set(report.image_only)
-
-    def sent(c: CorpusChunk) -> bool:
-        if dx.no_words(c.text):
-            return False
-        if dx.breadcrumb(c.section_path) not in skipped:
-            return True
-        return not c.section_path and not dx.image_only(c.text)
-
-    wins = windows([c for c in chunks if sent(c)], window_chars=window_chars)
+    wins = _windows(chunks, set(report.image_only), window_chars)
     report.windows = len(wins)
     # One scan of the extractor's rows on this document and their records, for the prompt
     # and the retire step; rows this run writes are skipped by the retire step.
     try:
-        own = await _own_records(org, namespace, await _extractor_rows(org, namespace, source_uri))
+        own, report.error = await _read_own(org, t, source_uri)
     except _REPORTED_ERRORS as e:
         # Before any model call: a run that cannot see its own rows reads nothing.
         report.error = f"could not read the extractor's rows: {_refusal(e)}"
+    if report.error:
         return report
     known = _known_decisions(own)
-    kept, answered = await _candidates(
-        org, namespace, source_uri, wins, max_per_section, report, known
-    )
+    kept, answered = await _candidates(org, t, source_uri, wins, max_per_section, report, known)
     if wins and not answered:
         # A run that read nothing must not retire anything.
         report.error = (
@@ -354,7 +440,7 @@ async def extract_document(
     held: dict[tuple[str, str], str] = {}
     for cand, section, texts in kept:
         try:
-            rec = await _reconcile(org, namespace, source_uri, cand, section, texts, dry_run)
+            rec = await _reconcile(org, t, source_uri, cand, section, texts, dry_run)
         except _REPORTED_ERRORS as e:
             # A blacklisted or newly pinned decision, a busy key, a store that timed out:
             # the other candidates and the retire step still run, and a re-run does not
@@ -375,8 +461,80 @@ async def extract_document(
             report.flagged.append(rec.memory_key)
         if rec.holds:
             held.setdefault(_held_key(rec.held_outcome, cand.reasoning), rec.memory_key)
-    await _retire(report, own, live_texts, written, held)
+    await _retire(report, own, live_texts, written, held, t.row_tag)
     return report
+
+
+def _windows(chunks: list[CorpusChunk], skipped: set[str], window_chars: int) -> list[Window]:
+    """The windows sent to the model. A section judged image-only (`skipped`) is not sent.
+    An empty-path chunk of an image-only preamble is skipped only when its own text is
+    image-only too."""
+
+    def sent(c: CorpusChunk) -> bool:
+        if dx.no_words(c.text):
+            return False
+        if dx.breadcrumb(c.section_path) not in skipped:
+            return True
+        return not c.section_path and not dx.image_only(c.text)
+
+    return windows([c for c in chunks if sent(c)], window_chars=window_chars)
+
+
+async def _read_own(
+    org: str, t: Target, source_uri: str
+) -> tuple[list[tuple[MemoryRow, dict[str, Any]]], str]:
+    """The extractor's rows on this document where the run writes, with their records
+    (`_own_records`); and why the run must not go on, or '': its rows for the document are
+    in the other namespace a run may write them to, or carry another repository's tag (any,
+    for a run without `--repo` or a repository with no remote), which the run would drop or
+    add to. Reconcile and retire read one namespace, so going on would leave the document's
+    decisions in two places, or linked to the wrong repository."""
+    from server.code.app.repo_scope import trunk_namespace_of
+
+    rows = await _extractor_rows(org, t.rows_namespace, t.doc_namespace, source_uri)
+    tagged = sorted({x for r in rows for x in r.tags if x.startswith("repo:")} - {t.repo_tag})
+    if tagged:
+        names = await _readable_names(org, set(tagged))
+        linked_to = ", ".join(names.get(x, x) for x in tagged)
+        return [], (
+            f"this document's decisions are linked to a repository ({linked_to}); run with "
+            "its --repo and --into source, or delete them first"
+        )
+    # Where an earlier run may have written them: beside the document, the named
+    # repository's trunk, or the trunk of the branch namespace the document is in.
+    places = [t.doc_namespace, t.code_namespace, trunk_namespace_of(org, t.doc_namespace)]
+    # _target checked the first two; a branch's trunk is new here.
+    checked = {t.doc_namespace, t.code_namespace}
+    for other in dict.fromkeys(ns for ns in places if ns and ns != t.rows_namespace):
+        if other not in checked and not await _may(org, other, Role.VIEWER):
+            # Neither the trunk's name nor whether rows are there is the caller's to learn.
+            return [], "this document's namespace belongs to a repository you may not read"
+        if await _extractor_rows(org, other, t.doc_namespace, source_uri, first=True):
+            return [], (
+                f"this document's decisions are in {org}/{other}; run as the run that wrote "
+                "them (with no --repo, or its --repo and --into), or delete them there first"
+            )
+    return await _own_records(org, t.rows_namespace, rows), ""
+
+
+async def _readable_names(org: str, tags: set[str]) -> dict[str, str]:
+    """`repo:<id>` tag -> owner/name of each of `tags`' repositories the caller may read;
+    another stays a tag, as `_target` answers for a repository the caller may not read."""
+    from server.code.app.repo_scope import repo_names
+
+    out: dict[str, str] = {}
+    for tag, (name, trunk) in repo_names(org).items():
+        if tag not in tags:
+            continue
+        try:
+            # Only the message's wording rides on it, not the refusal.
+            readable = await row_in_scope(org, trunk, Role.VIEWER, hides_answer=False)
+        except Exception as e:  # noqa: BLE001 — a name that cannot be checked stays a tag
+            log.warning("decisions extract: access check on %s failed (closed): %s", trunk, e)
+            readable = False
+        if readable:
+            out[tag] = name
+    return out
 
 
 async def _own_records(
@@ -480,7 +638,7 @@ _STITCHED = "a reason is not one span of the text; the window was read once more
 
 async def _candidates(
     org: str,
-    namespace: str,
+    t: Target,
     source_uri: str,
     wins: list[Window],
     max_per_section: int,
@@ -515,7 +673,7 @@ async def _candidates(
             continue
         answered += 1
         before = len(state.kept)
-        failed = _check_window(org, namespace, source_uri, w, cands, state, report)
+        failed = _check_window(org, t, source_uri, w, cands, state, report)
         if failed and not retried:
             # Named by the first failed decision's section, not the window's first.
             section = failed[0][2]
@@ -532,7 +690,7 @@ async def _candidates(
                 answered_already=True,
             )
             repaired = _repairs(w, again or [], failed, state.kept[before:], report)
-            _check_window(org, namespace, source_uri, w, repaired, state, report)
+            _check_window(org, t, source_uri, w, repaired, state, report)
     return state.kept, answered
 
 
@@ -567,7 +725,7 @@ def _repairs(
 
 def _check_window(
     org: str,
-    namespace: str,
+    t: Target,
     source_uri: str,
     w: Window,
     cands: list[dx.Candidate],
@@ -597,7 +755,7 @@ def _check_window(
             failed.append((cand.outcome, span, section))
         key = ""
         if not reason:
-            reason, key = _duplicate_or_unfit(org, namespace, source_uri, cand, section, state)
+            reason, key = _duplicate_or_unfit(org, t, source_uri, cand, section, state)
         if reason:
             report.dropped.append(Dropped(section, reason, cand.quote))
             continue
@@ -610,7 +768,7 @@ def _check_window(
 
 
 def _duplicate_or_unfit(
-    org: str, namespace: str, source_uri: str, cand: dx.Candidate, section: str, state: _Kept
+    org: str, t: Target, source_uri: str, cand: dx.Candidate, section: str, state: _Kept
 ) -> tuple[str, str]:
     """(why a candidate that passed the text checks is still dropped, or ''; its key)."""
     try:
@@ -623,7 +781,7 @@ def _duplicate_or_unfit(
     if _held_key(cand.outcome, cand.reasoning) in state.pairs:
         # Overlapping chunks feed one span to two windows, worded apart.
         return "same decision as an earlier candidate", key
-    if not _fits(org, namespace, source_uri, cand, section):
+    if not _fits(org, t, source_uri, cand, section):
         # Checked before it takes a slot, a key or a code lookup.
         return "does not fit decision.record", key
     if state.per_section.get(section, 0) >= state.max_per_section:
@@ -650,14 +808,16 @@ def _drop_inverted(
 
 
 def _record_input(
-    org: str, namespace: str, source_uri: str, cand: dx.Candidate, section: str, files: list[str]
+    org: str, t: Target, source_uri: str, cand: dx.Candidate, section: str, files: list[str]
 ) -> DecisionRecordInput:
     """The decision.record input for a candidate; raises ValidationError when it does not
     fit the op's field limits (`_fits` checks first)."""
     tags = [DESIGN_DOC_TAG, *([CONSTRAINT_TAG] if cand.is_constraint else [])]
+    if t.row_tag:
+        tags.append(t.row_tag)
     return DecisionRecordInput(
         org=org,
-        namespace=namespace,
+        namespace=t.rows_namespace,
         agent=EXTRACTOR_AGENT,
         category=cand.category,
         scenario=cand.scenario,
@@ -669,16 +829,16 @@ def _record_input(
         tags=tags,
         files=files,
         source_class="derived",
-        source_resource_id=source_resource_id(namespace, source_uri, section),
+        source_resource_id=source_resource_id(t.doc_namespace, source_uri, section),
     )
 
 
-def _fits(org: str, namespace: str, source_uri: str, cand: dx.Candidate, section: str) -> bool:
+def _fits(org: str, t: Target, source_uri: str, cand: dx.Candidate, section: str) -> bool:
     """The candidate fits decision.record's field limits. Checked with no files: the files
     a run adds pass through normalize_files, capped at the FileRefs limits, so they never
     make a fitting candidate unfit."""
     try:
-        _record_input(org, namespace, source_uri, cand, section, [])
+        _record_input(org, t, source_uri, cand, section, [])
     except ValidationError:
         return False
     return True
@@ -740,34 +900,43 @@ def _same_decision(record: dict[str, Any], inp: DecisionRecordInput) -> bool:
 
 
 def _same_row(row: MemoryRow, inp: DecisionRecordInput) -> bool:
-    """The row carries the files, source and constraint tag the candidate would write."""
+    """The row carries the files, source and tags the candidate would write."""
     return (
         sorted(row.files) == sorted(inp.files or [])
         and row.source_resource_id == inp.source_resource_id
-        and (CONSTRAINT_TAG in row.tags) == (CONSTRAINT_TAG in inp.tags)
+        and _own_tags(row.tags) == _own_tags(inp.tags)
     )
+
+
+def _own_tags(tags: list[str]) -> set[str]:
+    """The tags a run sets from the document and the repository, not the ones the record
+    derives: a row extracted before it was linked to a repository gains its tag."""
+    return {t for t in tags if t == CONSTRAINT_TAG or t.startswith("repo:")}
 
 
 async def _reconcile(
     org: str,
-    namespace: str,
+    t: Target,
     source_uri: str,
     cand: dx.Candidate,
     section: str,
     texts: list[str],
     dry_run: bool,
 ) -> RecordReport:
-    """Decide what the candidate does to the namespace, and do it unless `dry_run`."""
-    files, signals, unresolved, complete = await resolve_mentions(org, namespace, cand, texts)
+    """Decide what the candidate does to the target namespace, and do it unless `dry_run`."""
+    namespace = t.rows_namespace
+    files, signals, unresolved, complete = await resolve_mentions(
+        org, t.code_namespace, cand, texts
+    )
     # A path the document writes out (`src/Storages/MergeTreeData.cpp`) is a file too; the
     # explicit list turns off decision.record's own detection, so it is merged in here.
     files = normalize_files([*files, *detect_value_files(f"{cand.quote}\n{cand.reasoning}")])
-    inp = _record_input(org, namespace, source_uri, cand, section, files)
+    inp = _record_input(org, t, source_uri, cand, section, files)
     key = svc.decision_key(inp.category, inp.scenario)
     rec = RecordReport(key, "written", record_body(inp), signals, unresolved)
     writer = await live_writer_record(org, namespace, key)
     if writer is None:
-        peer = await _confirmed_restatement(org, namespace, key, inp)
+        peer = await _frozen_restatement(org, namespace, key, inp)
         if peer is not None:
             rec.action = "already_recorded"
             rec.note = f"already recorded by {peer.agent} under {peer.memory_key}"
@@ -792,23 +961,27 @@ async def _reconcile(
             inp = inp.model_copy(update={"files": list(row.files)})
             rec.body["files"] = list(row.files)
         this_doc = row is not None and await cites_document(
-            org, row.source_resource_id, namespace, source_uri
+            org, row.source_resource_id, t.doc_namespace, source_uri
         )
         ours = this_doc and _is_extractor(writer.agent, writer.user_id, writer.session_id)
         record = svc.parse_record_json(writer.record_json)
         same = _same_decision(record, inp)
-        # Our own row is revised for its files, source or constraint tag too: a document
-        # extracted before its code was indexed gains its files on a later run.
-        stale_row = row is not None and ours and not _confirmed(row) and not _same_row(row, inp)
+        # Our own row is revised for its files, source, constraint or repository tag too: a
+        # document extracted before its code was indexed gains its files on a later run.
+        stale_row = row is not None and ours and not _frozen(row) and not _same_row(row, inp)
         if same and not stale_row:
             rec.action = "unchanged"
             rec.holds = ours
             rec.held_outcome = str(record.get("outcome") or "").strip()
             if row is not None and this_doc:
-                await _clear_if_tagged(rec, row, dry_run)
+                # Another writer's row that is not frozen gains no repository tag.
+                # (Our own such row reached here with its tags the same already.)
+                link = t.row_tag if _frozen(row) else ""
+                await _reconcile_tags(rec, row, dry_run, link)
             return rec
-        if row is not None and _confirmed(row) and this_doc:
-            # The human who confirmed it decides; a pinned writer row refuses decision.record.
+        if row is not None and _frozen(row) and this_doc:
+            # A pinned or attested row is frozen: whoever froze it decides; a pinned writer
+            # row refuses decision.record.
             rec.body.update(agent=row.agent, user_id=row.user_id, session_id=row.session_id)
             rec.note = (
                 "pinned; the document now says otherwise; to accept this body, unpin the row "
@@ -817,7 +990,7 @@ async def _reconcile(
                 else "attested; the document now says otherwise; to accept this body, send it "
                 "and attest the new decision again with memory.verify"
             )
-            rec.action = await _flag(rec, row, dry_run)
+            rec.action = await _flag(rec, row, dry_run, t.row_tag)
             return rec
         if not ours:
             rec.body.update(
@@ -835,10 +1008,10 @@ async def _reconcile(
             # decision.record rebuilds the record from the body, so a re-record would drop
             # the outcome.
             rec.note = "its outcome is recorded; re-recording would lose it"
-            rec.action = "outcome_known" if same else await _flag(rec, row, dry_run)
+            rec.action = "outcome_known" if same else await _flag(rec, row, dry_run, t.row_tag)
             if same:
                 # Only its row fields are stale: the document says what it says again.
-                await _clear_if_tagged(rec, row, dry_run)
+                await _reconcile_tags(rec, row, dry_run, t.row_tag)
             return rec
         rec.action = "revised"
     rec.holds = True
@@ -853,12 +1026,12 @@ async def _reconcile(
     return rec
 
 
-async def _confirmed_restatement(
+async def _frozen_restatement(
     org: str, namespace: str, key: str, inp: DecisionRecordInput
 ) -> MemoryRow | None:
-    """A confirmed decision row (pinned or attested) under another key that reads as this
+    """A frozen decision row (pinned or attested) under another key that reads as this
     decision: of the decision hits at or above the namespace's conflict threshold, the
-    most similar one with a confirmed row."""
+    most similar one with a frozen row."""
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.conflicts import resolve_conflict_floor
     from server.memory.app.search import handle_memory_search
@@ -899,10 +1072,10 @@ async def _confirmed_restatement(
     close.sort(key=lambda h: h.similarity, reverse=True)
     # _rows_of_key reads every row of a key: read each key once, at its most similar hit
     for hit in one_per_key(close, namespace, top_k):
-        # Every identity's row of the key, read exactly: a confirmed one may sit beside a
-        # newer unconfirmed one.
+        # Every identity's row of the key, read exactly: a frozen one may sit beside a
+        # newer one that is not.
         for row in await _rows_of_key(org, namespace, hit.memory_key):
-            if row.memory_type == "decision" and _confirmed(row):
+            if row.memory_type == "decision" and _frozen(row):
                 return row
     return None
 
@@ -977,38 +1150,65 @@ async def symbol_definitions(org: str, namespace: str, name: str) -> list[tuple[
     return [(u.path, u.symbol) for u in out.definitions]
 
 
-async def _clear_if_tagged(rec: RecordReport, row: MemoryRow, dry_run: bool) -> None:
-    """Drop a row's `source-changed` tag once the document says what the row says again."""
-    if SOURCE_CHANGED_TAG not in row.tags:
+def _tags_for(row: MemoryRow, *, source_changed: bool, repo_tag: str) -> list[str]:
+    """The row's tags with `source-changed` set or dropped and `repo_tag` added, unless the
+    row is linked to another repository already (another writer's row may be)."""
+    tags = [t for t in row.tags if t != SOURCE_CHANGED_TAG]
+    if repo_tag and not any(t.startswith("repo:") for t in tags):
+        tags.append(repo_tag)
+    return [*tags, SOURCE_CHANGED_TAG] if source_changed else tags
+
+
+def _tag_note(row: MemoryRow, tags: list[str], dry_run: bool) -> str:
+    """What a tag write on a kept row does, for its report line."""
+    notes = []
+    if SOURCE_CHANGED_TAG in row.tags and SOURCE_CHANGED_TAG not in tags:
+        notes.append("would clear source-changed" if dry_run else "source-changed cleared")
+    for tag in tags:
+        if tag.startswith("repo:") and tag not in row.tags:
+            notes.append(f"would tag {tag}" if dry_run else f"tagged {tag}")
+    return "; ".join(notes)
+
+
+async def _reconcile_tags(rec: RecordReport, row: MemoryRow, dry_run: bool, repo_tag: str) -> None:
+    """On a row the document still states: drop its `source-changed` tag and add the
+    repository's tag. A row the run does not record again gets the tag this way, so the
+    pre-edit block serves it too."""
+    tags = _tags_for(row, source_changed=False, repo_tag=repo_tag)
+    if set(tags) == set(row.tags):
         return
-    note = "would clear source-changed" if dry_run else "source-changed cleared"
-    if not dry_run and (moved := await _set_source_changed(row, False)):
+    if not dry_run and (moved := await _set_tags(row, tags)):
         rec.race = moved  # reported once, in `races`
         return
+    note = _tag_note(row, tags, dry_run)
     rec.note = f"{rec.note}; {note}" if rec.note else note
 
 
-async def _flag(rec: RecordReport, row: MemoryRow, dry_run: bool) -> Action:
-    """Tag a row the document now contradicts `source-changed`; the action it reports."""
-    if SOURCE_CHANGED_TAG in row.tags:
+async def _flag(rec: RecordReport, row: MemoryRow, dry_run: bool, repo_tag: str) -> Action:
+    """Tag a row the document now contradicts `source-changed`, and add the repository's
+    tag; the action it reports."""
+    tags = _tags_for(row, source_changed=True, repo_tag=repo_tag)
+    if set(tags) == set(row.tags):
         return "already_flagged"
-    if not dry_run and (moved := await _set_source_changed(row, True)):
+    if not dry_run and (moved := await _set_tags(row, tags)):
         rec.race = moved
         return "row_changed"
-    return "flagged"
+    if note := _tag_note(row, tags, dry_run):
+        rec.note = f"{rec.note}; {note}" if rec.note else note
+    # The tag was there already when only the repository's tag was missing.
+    return "already_flagged" if SOURCE_CHANGED_TAG in row.tags else "flagged"
 
 
-async def _set_source_changed(row: MemoryRow, on: bool) -> str:
-    """Add or drop the `source-changed` tag of a row, tags only, so the pin and the value
-    stay: '' when written, "deleted" or "rewritten" when the row was deleted or rewritten
-    since the run read it (a race). The write is a new version by the extractor: the row's
-    actor and age move to it. By its memory_id: memory.update reads a `-` user or session
-    as any, so a key two identities hold would be ambiguous there."""
+async def _set_tags(row: MemoryRow, tags: list[str]) -> str:
+    """Write a row's tags, tags only, so the pin and the value stay: '' when written,
+    "deleted" or "rewritten" when the row was deleted or rewritten since the run read it (a
+    race). The write is a new version by the extractor: the row's actor and age move to
+    it. By its memory_id: memory.update reads a `-` user or session as any, so a key two
+    identities hold would be ambiguous there."""
     from server.memory.api.models_crud import MemoryUpdateByIdInput
     from server.memory.app.update import handle_memory_update_by_id
     from server.memory.app.write import served_sha256
 
-    tags = [t for t in row.tags if t != SOURCE_CHANGED_TAG]
     # Conditional on the value read, so a value changed since is not tagged from the old one;
     # the hash covers the value only, so a tags-only edit since the read is overwritten.
     try:
@@ -1016,7 +1216,7 @@ async def _set_source_changed(row: MemoryRow, on: bool) -> str:
             MemoryUpdateByIdInput(
                 org=row.org,
                 memory_id=row.memory_id,
-                tags=[*tags, SOURCE_CHANGED_TAG] if on else tags,
+                tags=tags,
                 char_limit=row.char_limit,  # None would drop the row's cap
                 if_match_sha256=served_sha256(row),
             )
@@ -1046,8 +1246,11 @@ async def _audit(op_name: str, inp: Any) -> None:
     )
 
 
-async def _extractor_rows(org: str, namespace: str, source_uri: str) -> list[MemoryRow]:
-    """The extractor's live decision rows citing this document, whole: listed a page at a
+async def _extractor_rows(
+    org: str, namespace: str, doc_namespace: str, source_uri: str, *, first: bool = False
+) -> list[MemoryRow]:
+    """The extractor's live decision rows in `namespace` citing this document (in
+    `doc_namespace`), or only the first one found with `first`, whole: listed a page at a
     time (the listing carries no source), each page read back in one bulk read. The cost
     grows with every decision the extractor holds in the namespace, not with this
     document's: no store read filters on `source_resource_id`."""
@@ -1071,8 +1274,10 @@ async def _extractor_rows(org: str, namespace: str, source_uri: str) -> list[Mem
             ident, [r.memory_key for r in page], scope=WHOLE_NAMESPACE, strong=True
         )
         for row in rows:
-            if await cites_document(org, row.source_resource_id, namespace, source_uri):
+            if await cites_document(org, row.source_resource_id, doc_namespace, source_uri):
                 out.append(row)
+                if first:
+                    return out
         if len(page) < _PAGE:
             return out
 
@@ -1083,22 +1288,23 @@ async def _retire(
     live_texts: list[str],
     written: set[str],
     held: dict[tuple[str, str], str],
+    repo_tag: str,
 ) -> None:
     """Contract the extractor's own rows on this document whose reasoning left its text:
-    delete an unconfirmed one; tag a confirmed one (pinned or attested), or one with a
-    recorded outcome, `source-changed`. An unconfirmed one whose outcome and reasoning
+    delete one that is not frozen; tag a frozen one (pinned or attested), or one with a
+    recorded outcome, `source-changed`. An unfrozen one whose outcome and reasoning
     this run holds under another key (`held`) is deleted too: the model worded the
     scenario anew, and the decision is not served twice. Another decision resting on the
     same reasoning has another outcome and stays. A row whose reasoning is still there
     stays, even when this run's model did not emit it again. The step never drops a
     `source-changed` tag: it sees the reasoning alone, and the tag may stand for another
     field the document still contradicts; reconcile drops it when the verbatim fields
-    match again."""
+    match again. A row it keeps gains `repo_tag`, as a row reconcile keeps does."""
     for row, record in own:
         if row.memory_key in written:
             continue
         try:
-            await _retire_one(report, row, record, live_texts, held)
+            await _retire_one(report, row, record, live_texts, held, repo_tag)
         except _REPORTED_ERRORS as e:
             report.refused.append(f"{row.memory_key}: {_refusal(e)}")
 
@@ -1116,6 +1322,7 @@ async def _retire_one(
     record: dict[str, Any],
     live_texts: list[str],
     held: dict[tuple[str, str], str],
+    repo_tag: str,
 ) -> None:
     """The retire step for one of the extractor's rows and its own record; its writes
     raise to the caller, which reports them."""
@@ -1126,7 +1333,7 @@ async def _retire_one(
     outcome = str(record.get("outcome") or "")
     restated = held.get(_held_key(outcome, reasoning))
     # A row with a recorded outcome is kept: deleting it would lose the outcome.
-    if not _confirmed(row) and restated is not None and not _has_outcome(record):
+    if not _frozen(row) and restated is not None and not _has_outcome(record):
         if await _delete_row(report, row):
             report.replaced.append(f"{key} -> {restated}")
         return
@@ -1134,22 +1341,40 @@ async def _retire_one(
     # read across is the same text.
     if not dx.find_span(reasoning, live_texts):
         # A row with a recorded outcome is tagged, never deleted, like a pinned one.
-        keep = _confirmed(row) or _has_outcome(record)
-        await _retire_row(report, row, keep=keep)
+        keep = _frozen(row) or _has_outcome(record)
+        await _retire_row(report, row, keep=keep, repo_tag=repo_tag)
+    elif repo_tag:
+        # Its reasoning is still there though the model did not emit it: it stays, linked.
+        await _retire_tags(report, row, SOURCE_CHANGED_TAG in row.tags, repo_tag)
 
 
-async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool) -> None:
-    """Delete the extractor's row by its writer, or tag it `source-changed` when it is to
-    be kept. Reported only once written: a refused write is reported as refused instead."""
-    if keep:
-        if SOURCE_CHANGED_TAG in row.tags:
-            return
-        if not report.dry_run and (moved := await _set_source_changed(row, True)):
-            report.races.append(f"{row.memory_key}: {moved} since the run read it")
-            return
+async def _retire_row(report: ExtractReport, row: MemoryRow, *, keep: bool, repo_tag: str) -> None:
+    """Delete the extractor's row by its writer, or tag it `source-changed` (and
+    `repo_tag`) when it is to be kept. Reported only once written: a refused write is
+    reported as refused instead."""
+    if not keep:
+        if await _delete_row(report, row):
+            report.retired.append(row.memory_key)
+        return
+    await _retire_tags(report, row, True, repo_tag)
+
+
+async def _retire_tags(
+    report: ExtractReport, row: MemoryRow, source_changed: bool, repo_tag: str
+) -> None:
+    """Set the tags of a row the retire step keeps (`_tags_for`), if they change. Once
+    written, its key is reported in `flagged` when it gained `source-changed` and in
+    `linked` when it gained a repository's tag; a write that lost a race, in `races`."""
+    tags = _tags_for(row, source_changed=source_changed, repo_tag=repo_tag)
+    if set(tags) == set(row.tags):
+        return
+    if not report.dry_run and (moved := await _set_tags(row, tags)):
+        report.races.append(f"{row.memory_key}: {moved} since the run read it")
+        return
+    if SOURCE_CHANGED_TAG in tags and SOURCE_CHANGED_TAG not in row.tags:
         report.flagged.append(row.memory_key)
-    elif await _delete_row(report, row):
-        report.retired.append(row.memory_key)
+    if any(t.startswith("repo:") and t not in row.tags for t in tags):
+        report.linked.append(row.memory_key)
 
 
 async def _delete_row(report: ExtractReport, row: MemoryRow) -> bool:

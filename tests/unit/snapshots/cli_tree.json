@@ -3440,6 +3440,8 @@
             "org",
             "namespace",
             "source_uri",
+            "repo",
+            "into",
             "max_per_section",
             "window_chars",
             "dry_run",
@@ -3520,6 +3522,39 @@
           },
           {
            "option_strings": [
+            "--repo"
+           ],
+           "dest": "repo",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The repository (owner/name or a remote URL) whose trunk code index resolves the document's code names; --into says where the rows go",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--into"
+           ],
+           "dest": "into",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": [
+            "repo",
+            "source"
+           ],
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "With --repo, where the rows go: the repository's trunk code namespace (repo; the default for a document in a code namespace), or the document's namespace, tagged with the repository (source; the default otherwise), served before an edit to a session whose own namespace is the document's. A repository reader who cannot read the document's namespace sees a repo row's quote but is refused its source link.",
+           "metavar": null
+          },
+          {
+           "option_strings": [
             "--max-per-section"
            ],
            "dest": "max_per_section",
@@ -3587,7 +3622,7 @@
        "choices_help": [
         {
          "dest": "extract",
-         "help": "Mine one knowledge document into decision records: one model call per window of its sections (a heading over only an image and its caption is not sent), two when the first reply holds no decision or a reason that is not one span of the text, candidates kept only when their quote, reasoning and rejected options' reasons are the document's own words, the reasoning says more than the outcome (a ban may give no reason) and the quote is not in a recap, summary or background section, written through decision.record as agent loom-decisions. A re-run revises or retires the extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row source-changed. Dry run by default (still calls the model); --apply writes. Exits 1 when it could not read the document (no document, no chunks, no usable model, its own rows unreadable, no window read), 2 when a write, or a read it needed (a window included), was refused or failed (a row changed since the run read it is reported, not counted).",
+         "help": "Mine one knowledge document into decision records: one model call per window of its sections (a heading over only an image and its caption is not sent), two when the first reply holds no decision or a reason that is not one span of the text, candidates kept only when their quote, reasoning and rejected options' reasons are the document's own words, the reasoning says more than the outcome (a ban may give no reason) and the quote is not in a recap, summary or background section, written through decision.record as agent loom-decisions. A re-run revises or retires the extractor's own rows and tags a pinned or attested row source-changed instead: pinning or attesting freezes a row against re-extraction. Dry run by default (still calls the model); --apply writes. Exits 1 when it could not run on the document (no document, no chunks, no usable model, an unknown --repo or a namespace it may not use, --into without --repo or source on another repository's namespace, a --repo with no remote to tag rows with, the dashboard's repositories unread, its own rows unreadable, left in another namespace or linked to another repository, no window read), 2 when a write, or a read it needed (a window included), was refused or failed (a row changed since the run read it is reported, not counted).",
          "metavar": "extract"
         }
        ]

@@ -30,6 +30,8 @@ from server.settings import settings
 logger = logging.getLogger("loom.code_index.repo_registry")
 
 _LOADED_AT: float = -1e12
+# A read of loom.code_repos has succeeded since the process started (or the last reset).
+_EVER_LOADED = False
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,120}$")
 _NS_MAX = 63
 
@@ -131,7 +133,7 @@ async def refresh_db_repos(*, force: bool = False, ch: Any | None = None) -> lis
     """Re-read loom.code_repos when the snapshot is older than
     ``code_repos_refresh_seconds`` (or ``force``) into the domain's registry
     snapshot. Never raises: a directory that cannot be read keeps the last snapshot."""
-    global _LOADED_AT
+    global _LOADED_AT, _EVER_LOADED
     if not settings.code_self_service_enabled:
         return []
     now = time.monotonic()
@@ -143,11 +145,18 @@ async def refresh_db_repos(*, force: bool = False, ch: Any | None = None) -> lis
         rows = await CodeRepo(ch).active_code_repos()
         set_registry_repos([row_to_config(r) for r in rows if r.get("namespace") and r.get("repo")])
         _LOADED_AT = now
+        _EVER_LOADED = True
     except Exception as e:  # noqa: BLE001 — keep the last snapshot
         logger.warning(
             "code_repos: refresh failed, keeping %d entries: %s", len(registry_repos()), e
         )
     return registry_repos()
+
+
+def registry_read() -> bool:
+    """The snapshot holds what loom.code_repos held at some read, or there is no registry
+    (self-service off): False while every read since the process started failed."""
+    return not settings.code_self_service_enabled or _EVER_LOADED
 
 
 async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
@@ -168,9 +177,10 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
 
 
 def reset_for_tests() -> None:
-    global _LOADED_AT
+    global _LOADED_AT, _EVER_LOADED
     set_registry_repos([])
     _LOADED_AT = -1e12
+    _EVER_LOADED = False
 
 
 async def active_count(org: str, ch: Any | None = None) -> int:

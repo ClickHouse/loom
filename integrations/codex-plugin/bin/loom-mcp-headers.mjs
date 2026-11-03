@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// The MCP entry's headers helper. It authenticates from the same places the
-// hooks do: LOOM_API_KEY; for an agent (LOOM_CLIENT_ID with a workload token)
-// its exchanged token and nothing else; otherwise the install option,
-// ~/.loom/config.json, then ~/.loom/token.
+// The MCP entry's headers helper. It authenticates from the places the hooks
+// do, less the install option, which is not in its environment: LOOM_API_KEY;
+// for an agent (LOOM_CLIENT_ID with a workload token) its exchanged token and
+// nothing else; otherwise ~/.loom/config.json, then ~/.loom/token.
 //
 // It also names the checkout's code namespace. Claude Code runs the helper
 // in the project directory; the checkout's resolved repository (the cache

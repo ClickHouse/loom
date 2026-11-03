@@ -1218,12 +1218,12 @@ _THRESHOLDS = {
         ),
     ),
     "telemetry_unavailable": (
-        1,
+        2,
         (na.TELEMETRY_LAG_SECONDS, na._REPORT_OPS),
         (
             60,
             "('namespace.audit', 'namespace.validate', 'namespace.summary', "
-            "'namespace.inventory', 'mentor.brief')",
+            "'namespace.inventory', 'namespace.tune', 'memory.inspect', 'mentor.brief')",
         ),
     ),
 }
@@ -1433,6 +1433,10 @@ async def test_an_audit_run_twice_still_sees_writes_the_ledger_never_recorded() 
         _memory_row("team/fact", minutes_ago=10),
         _ledger_row("namespace.audit"),
         _ledger_row("namespace.summary"),
+        # namespace.tune runs the audit inside it and memory.inspect reads one subject:
+        # reports too, which say nothing about the window's other calls.
+        _ledger_row("namespace.tune"),
+        _ledger_row("memory.inspect"),
         _ledger_row("memory.search", consumer="loom-ui"),
         # A page view in the dashboard is a write-flagged op that changes no data.
         _ledger_row("ui.vitals", consumer="loom-ui"),

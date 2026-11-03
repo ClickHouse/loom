@@ -23,7 +23,8 @@ A non-2xx response from `POST /v1/<op>` has one body shape:
   `current_sha256` on a precondition failure, `retry_after_s` on the retryable
   refusals, `table` and `migration` on `SCHEMA_PENDING`. The table under
   [Common errors](#common-errors-and-what-to-do) names them.
-- The `X-Request-Id` response header (echoed from your request, or a fresh UUID)
+- The `X-Request-Id` response header (echoed from your request when it is 1 to 64
+  letters, digits, `.`, `_` or `-`, else a fresh UUID)
   identifies the call on the server's ledger and in its logs. Quote it in a bug
   report; the SDK errors carry it as `request_id` / `requestId`.
 - An error that carries a retry hint also sets the standard `Retry-After`

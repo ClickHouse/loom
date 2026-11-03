@@ -403,7 +403,7 @@ These writes send no event:
 - `memory.touch`, `memory.pin` and `memory.unpin`, `memory.lock` and `memory.unlock`,
   `memory.verify` and `memory.apply`
 - `memory.reject`, and the quarantine `memory.outcome` makes after repeated negative
-  outcomes. Both set the row's status to `rejected` in place, which takes it out of search:
+  outcomes. Both write the row again with status `rejected`, which takes it out of search:
   a receiver that mirrors what Loom serves reads the key again after one.
 - `memory.resolve_orphan_duplicates`, which re-activates rows
 - `memory.dedup_collapse`, which changes only the search mirror

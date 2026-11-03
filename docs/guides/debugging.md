@@ -20,12 +20,12 @@ flowchart TD
 
 Every HTTP response carries:
 
-| Header                            | Meaning                                                                                        |
-| --------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `X-Request-Id`                    | The request's id. Send your own and Loom echoes it, so your log and Loom's rows share one key. |
-| `X-Trace-Id`                      | The OpenTelemetry trace id of the request's span tree.                                         |
-| `Server-Timing`                   | `app` (handler time) and `ch` (ClickHouse time, statement count, bytes read) on success.       |
-| `X-Loom-Hint`, `X-Loom-Hint-Code` | The mentor's hint for this call, when it has one; the SDKs log it.                             |
+| Header                            | Meaning                                                                                                                                                                                  |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `X-Request-Id`                    | The request's id. Send your own (1 to 64 letters, digits, `.`, `_` or `-`) and Loom echoes it, so your log and Loom's rows share one key; any other value is replaced by a generated id. |
+| `X-Trace-Id`                      | The OpenTelemetry trace id of the request's span tree.                                                                                                                                   |
+| `Server-Timing`                   | `app` (handler time) and `ch` (ClickHouse time, statement count, bytes read) on success.                                                                                                 |
+| `X-Loom-Hint`, `X-Loom-Hint-Code` | The mentor's hint for this call, when it has one; the SDKs log it.                                                                                                                       |
 
 ```bash
 curl -si "$LOOM_BASE_URL/v1/memory.search" -H "Authorization: Bearer $LOOM_API_KEY" \

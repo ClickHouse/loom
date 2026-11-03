@@ -248,16 +248,25 @@ def test_a_decision_without_a_source_has_no_suffix() -> None:
     assert line.endswith("Decided X because Y. [id: design/bare]") and "source:" not in line
 
 
-def test_an_unpinned_decision_is_unconfirmed_in_either_namespace() -> None:
+def test_an_unpinned_decision_has_no_status_note_in_either_namespace() -> None:
     team, own = _lines(
         [_decision("design/a", pinned=False), _decision("design/b", pinned=0, namespace="me")]
     )[1:3]
-    assert team.startswith("- Decision (by alice, 3 days ago) (unconfirmed): ")
-    assert own == f"- design/b [decision] (unconfirmed): Decided X because Y. — source: {_SOURCE}"
+    assert team.startswith("- Decision (by alice, 3 days ago): ")
+    assert own == f"- design/b [decision]: Decided X because Y. — source: {_SOURCE}"
+
+
+def test_an_extracted_decision_is_served_as_it_is() -> None:
+    # What `loom decisions extract` writes: unpinned, unattested, by its own agent.
+    row = _decision("design/x", pinned=False, agent="loom-decisions", actor="process:cli:decisions")
+    assert _lines([row])[1] == (
+        f"- Decision (by cli:decisions, 3 days ago): Decided X because Y. — source: {_SOURCE} "
+        "[id: design/x]"
+    )
 
 
 def test_a_row_that_is_not_a_decision_gets_no_decision_marks() -> None:
-    # No head, source or (unconfirmed); its value is printed as text like every row's.
+    # No head or source; its value is printed as text like every row's.
     rule = _decision("rules/r", "Keep 64.", memory_type="semantic", tags=["constraint"])
     note = _row("note", json.dumps("Mine."), source_resource_id=_SOURCE, namespace="me")
     assert _lines([rule, note])[1:3] == [
@@ -484,7 +493,7 @@ async def test_the_source_is_read_into_the_hit_and_the_block(
 def test_a_row_tagged_decision_is_a_decision() -> None:
     tagged = _decision("design/t", "v", memory_type="semantic", pinned=False)
     assert _lines([tagged])[1] == (
-        f"- Decision (by alice, 3 days ago) (unconfirmed): v — source: {_SOURCE} [id: design/t]"
+        f"- Decision (by alice, 3 days ago): v — source: {_SOURCE} [id: design/t]"
     )
 
 
@@ -544,24 +553,24 @@ def test_a_typed_decision_without_the_tag_is_marked_in_its_own_namespace() -> No
     assert _lines([own])[1] == "- design/own [decision] (pinned): v"
 
 
-def test_a_verified_decision_is_confirmed_and_a_stale_one_is_not() -> None:
+def test_an_attestation_adds_no_note_whether_current_or_stale() -> None:
     verified = _decision("design/v", pinned=False, verification="human")
     stale = _decision("design/s", pinned=False, verification="stale")
     first, second = _lines([verified, stale])[1:3]
     assert first.startswith("- Decision (by alice, 3 days ago): Decided X because Y.")
-    assert second.startswith("- Decision (by alice, 3 days ago) (unconfirmed): ")
+    assert second.startswith("- Decision (by alice, 3 days ago): Decided X because Y.")
 
 
-def test_an_unconfirmed_decision_whose_code_changed_notes_both() -> None:
+def test_an_unpinned_decision_whose_code_changed_notes_only_the_code() -> None:
     line = _lines([_decision("design/c", pinned=False, code_state="changed")])[1]
     assert line.startswith(
-        "- Decision (by alice, 3 days ago) (unconfirmed) (its code changed since it was "
+        "- Decision (by alice, 3 days ago) (its code changed since it was "
         "written: check before relying on it): Decided X because Y."
     )
 
 
 @pytest.mark.asyncio
-async def test_the_attestation_is_read_and_a_stale_one_leaves_a_decision_unconfirmed(
+async def test_the_attestation_is_read_into_the_hit_and_marks_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.core.hashing import sha256_value_json
@@ -594,7 +603,8 @@ async def test_the_attestation_is_read_and_a_stale_one_leaves_a_decision_unconfi
     )
     assert [h.verification for h in out.hits] == ["human", "stale"]
     first, second = out.rendered.splitlines()[1:3]
-    assert "(unconfirmed)" not in first and "(unconfirmed)" in second
+    assert first.startswith("- design/v [decision]: ")
+    assert second.startswith("- design/s [decision]: ")
 
 
 @pytest.mark.parametrize(
@@ -602,7 +612,7 @@ async def test_the_attestation_is_read_and_a_stale_one_leaves_a_decision_unconfi
     [('"short"', "human"), ('"' + "x" * 599 + '"', "stale")],
 )
 @pytest.mark.asyncio
-async def test_without_a_stored_hash_only_an_uncut_value_confirms(
+async def test_without_a_stored_hash_only_an_uncut_value_reads_attested(
     monkeypatch: pytest.MonkeyPatch, value: str, expected: str
 ) -> None:
     from server.core.hashing import sha256_value_json
@@ -624,7 +634,6 @@ async def test_without_a_stored_hash_only_an_uncut_value_confirms(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
     )
     assert out.hits[0].verification == expected
-    assert ("(unconfirmed)" in out.rendered) is (expected == "stale")
 
 
 def test_a_stored_value_is_printed_as_text() -> None:
@@ -688,14 +697,12 @@ def test_a_cut_object_value_prints_as_stored() -> None:
     assert raw[:40] in _lines([hit])[1]
 
 
-def test_a_decision_whose_source_changed_says_so_confirmed_or_not() -> None:
+def test_a_decision_whose_source_changed_says_so_pinned_or_not() -> None:
     tags = ["decision", "source-changed"]
     pinned = _lines([_decision("design/p", tags=tags)])[1]
-    assert pinned.startswith(
-        "- Decision (by alice, 3 days ago) (pinned) (source changed since confirmation): "
-    )
+    assert pinned.startswith("- Decision (by alice, 3 days ago) (pinned) (source changed): ")
     own = _lines([_decision("design/u", tags=tags, pinned=False, namespace="me")])[1]
-    assert own.startswith("- design/u [decision] (unconfirmed) (source changed): ")
+    assert own.startswith("- design/u [decision] (source changed): ")
     # A fact carrying the tag is no decision: nothing is added.
     fact = _row("fact", json.dumps("A plain fact."), tags=["source-changed"], namespace="me")
     assert "(source changed" not in _lines([fact])[1]
@@ -712,13 +719,13 @@ async def test_the_served_block_marks_a_decision_whose_source_changed(
     out = await mff.handle_memory_for_file(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", token_budget=300)
     )
-    assert "(unconfirmed) (source changed): Decided spill." in out.rendered
+    assert "- extracted [decision] (source changed): Decided spill." in out.rendered
 
 
-def test_an_attested_decision_whose_source_changed_reads_since_confirmation() -> None:
+def test_an_attested_decision_whose_source_changed_reads_source_changed() -> None:
     # `verification` as the handler derives it for an attestation binding the current value.
     hit = _decision(
         "design/a", pinned=False, tags=["decision", "source-changed"], verification="human"
     )
     line = _lines([hit])[1]
-    assert "(source changed since confirmation)" in line and "(unconfirmed)" not in line
+    assert line.startswith("- Decision (by alice, 3 days ago) (source changed): ")

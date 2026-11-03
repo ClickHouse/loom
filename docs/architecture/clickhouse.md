@@ -504,11 +504,10 @@ flush never fails a request; a crash loses the queue.
 - **Fixed-length placeholders.** Rows awaiting an embedding store zero vectors with
   `embedding_dim = 0` (`server/core/vectors/placeholders.py`). Every vector leg filters
   `embedding_dim > 0`.
-- **No in-place updates on vector tables.** Write, fold and tombstone paths write new
-  versions; reinforcement lives in `memory_reinforcement`. One exception: `memory.reject`
-  (and negative-outcome escalation) quarantines a row with a lightweight `UPDATE` on
-  `memory` and `memory_embeddings` (`_quarantine_by_identity`); the patch-parts probe then
-  keeps codes-first reads off for that table until the patch merges.
+- **No in-place updates on vector tables.** Write, fold, reject and tombstone paths write
+  new versions; reinforcement lives in `memory_reinforcement`. A lightweight `UPDATE` on
+  `memory_embeddings` would leave a patch part, and the patch-parts probe keeps
+  codes-first reads off for the whole table until it merges.
 - **One model per row.** `embedding_model` is in the sort key, so a search compares only
   its own model's vectors. `loom reembed` regenerates vectors after a model change
   (`--in-database` uses `aiEmbed` on 26.7+).
@@ -629,8 +628,8 @@ carried). It is visible to the next `FINAL` read, keeps prior versions in
 `memory_versions` and leaves `memory.restore` a window. Physical removal is for erasure
 with `purge=true` and runner state.
 
-- **Status flips and counter folds** on `loom.memory` (the usage fold's `evidence_count` /
-  `recall_count`, quarantine) use batched lightweight `UPDATE`: one statement per chunk of
+- **Counter folds** on `loom.memory` (the usage fold's `evidence_count` /
+  `recall_count`) use batched lightweight `UPDATE`: one statement per chunk of
   targets, with per-row values as parallel arrays through `transform()`
   (`server/memory/workers/usage_fold.py`). On ClickHouse Cloud each statement is a patch part and
   a Keeper entry, so cost is per statement. A pass is skipped while the table has too many
@@ -724,7 +723,10 @@ query hashes are unaffected.
 | Anything else       | `untagged:<module>.<function>` of the caller          |
 
 Request statements also send
-`query_id = "<request_id>:<n>"`. `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST=true` appends a
+`query_id = "<request_id>:<n>:<nonce>"`. `n` counts the request's statements and the
+nonce is drawn once per request, so two requests that carry the same caller id never
+send the same `query_id`. A carried insert prefixes it with `loom-carry/<process>/`.
+`LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST=true` appends a
 statement-shape hash and the first 200 characters. A new background loop calls
 `server.core.ch.set_query_tag(...)`; work scheduled from a request keeps the request's tag.
 
@@ -922,7 +924,7 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 - No expression is aliased with the name of a column its `WHERE` filters on.
 - Vector statements order by a bare ascending distance with one sort key and no `JOIN`,
   window or `LIMIT BY`; every vector leg filters `embedding_dim > 0`.
-- Vector tables are written as new versions, except the `memory.reject` quarantine flip.
+- Vector tables are written as new versions.
 - Every statement carries a `log_comment`, a class deadline and a pool slot.
 - `memory_versions` receives every `memory` row, and the column lists match.
 - No table that holds memory content has a schema TTL.

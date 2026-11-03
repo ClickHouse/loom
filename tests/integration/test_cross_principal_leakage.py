@@ -217,6 +217,7 @@ _CORE = {
     "namespace.snapshot",
     "namespace.get",
     "namespace.summary",
+    "namespace.tune",
     "memory.record.query",
     "blacklist.list",
     "blacklist.remove",

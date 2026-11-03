@@ -69,7 +69,8 @@ if TYPE_CHECKING:
 
 
 def require_code_intel() -> None:
-    """Kill switch (rollback level 1): every code.* handler calls this first."""
+    """Kill switch (rollback level 1): every code.* handler but `code.repo.remove`
+    calls this first."""
     if not settings.code_intel_enabled:
         raise PreconditionFailedError(
             "code intelligence is disabled on this deployment (LOOM_CODE_INTEL_ENABLED=false)"
