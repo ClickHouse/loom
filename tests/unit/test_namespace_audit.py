@@ -1549,6 +1549,12 @@ async def test_a_held_model_call_is_a_backlog_and_an_empty_row_is_neither() -> N
         _memory_row("failed/row", minutes_ago=30),
         stub("failed/row", "ValueError: input too long"),
         _memory_row("empty/row", minutes_ago=30, value=""),
+        # Never embedded, by design: an episodic row and a high-sensitivity one.
+        _memory_row("episode/1", minutes_ago=30, memory_type="episodic"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+        "memory_type, value, version, created_at, updated_at, sensitivity) VALUES ('o', 'ns', "
+        "'bot', '-', '-', 'secret/1', 'semantic', 'v', 1, now() - INTERVAL 30 MINUTE, "
+        "now() - INTERVAL 30 MINUTE, 'high')",
     ]
     ch = _LocalCH(["memory", "memory_embeddings"], rows)
     audit = na.new_audit(_inp(), ch=ch)
