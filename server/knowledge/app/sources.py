@@ -7,9 +7,10 @@ readers list and inspect, the namespace's admins add, check, rotate, remove and
 ask for a sync. The credential is sealed at rest under its own purpose, held in
 memory only for a probe, and never returned or audited.
 
-Nothing here fetches documents: the sync worker does, outside the request path.
-`sync_now` records what the worker should do next in the source's sync state;
-`remove(delete_documents=true)` records it on the inactive registry row it writes.
+Nothing here fetches documents: the sync worker does, outside the request path
+(`server.knowledge.app.source_sync`). `sync_now` records what the worker should do
+next in the source's sync state; `remove(delete_documents=true)` records it on the
+inactive registry row it writes.
 
 Every write of a namespace's sources, registry rows and sync state alike (add,
 rotate, remove, sync_now and code.repo.remove's retirement), runs under
@@ -84,7 +85,7 @@ def _seal(credential: str) -> str:
         ) from None
 
 
-async def _is_trunk_namespace(org: str, namespace: str) -> bool:
+async def is_trunk_namespace(org: str, namespace: str) -> bool:
     """Whether `namespace` is a repository's trunk code namespace, the one its
     documents live in."""
     from server.code.app.index import repo_registry
@@ -98,7 +99,7 @@ async def _is_trunk_namespace(org: str, namespace: str) -> bool:
 
 async def _require_trunk_namespace(org: str, namespace: str) -> None:
     """Refuse to register a source on a namespace that is no repository's trunk."""
-    if not await _is_trunk_namespace(org, namespace):
+    if not await is_trunk_namespace(org, namespace):
         raise ValidationError(
             f"{namespace!r} is not a repository's trunk code namespace; sources are "
             "registered on the namespace the repository's documents live in",
@@ -118,7 +119,7 @@ async def _source_in_repository(org: str, namespace: str, name: str) -> Knowledg
     a repository's trunk code namespace (a repository retired outside
     `code.repo.remove`, or a branch that now outranks it)."""
     src = await _source_or_404(org, namespace, name)
-    if not await _is_trunk_namespace(org, namespace):
+    if not await is_trunk_namespace(org, namespace):
         raise ValidationError(
             f"the repository of {namespace!r} is gone or no longer has its trunk there, so "
             f"source {src.name!r} is not used; knowledge.source.remove retires it",
@@ -173,6 +174,7 @@ async def handle_knowledge_source_list(
             )
             for s in found
         ],
+        enabled=bool(settings.knowledge_source_sync_enabled),
     )
 
 
@@ -406,9 +408,11 @@ async def handle_knowledge_source_remove(
             if input.delete_documents:
                 pending = await store.count_documents(src.org, src.namespace, src.name)
         # The delete request rides on the inactive registry row, which no sync-state
-        # write touches; with no documents there is nothing to ask for.
+        # write touches. It is recorded even with no documents counted now: a sync
+        # turn running meanwhile may still write one, and the worker clears the
+        # request once none is left.
         retired = dataclasses.replace(
-            src, active=False, credential_enc="", pending_delete=pending > 0
+            src, active=False, credential_enc="", pending_delete=input.delete_documents
         )
         await store.insert_source(retired)
     return KnowledgeSourceRemoveOutput(name=src.name, documents_pending=pending)
@@ -428,15 +432,37 @@ async def handle_knowledge_source_sync_now(
                 f"source {src.name!r} was removed and added again; call "
                 "knowledge.source.sync_now again for the current source"
             )
-        await _update_state(fresh, {"requested_at": _now_iso(), "full": bool(input.full)})
-    return KnowledgeSourceSyncNowOutput(name=src.name)
+        state = await _read_state(fresh)
+        await _update_state(fresh, state, {"requested_at": _now_iso(), "full": bool(input.full)})
+    return KnowledgeSourceSyncNowOutput(
+        name=src.name, enabled=bool(settings.knowledge_source_sync_enabled)
+    )
 
 
-async def _update_state(src: KnowledgeSource, changes: dict[str, Any]) -> None:
-    """Merge `changes` into the source's sync state, keeping its stamp."""
+async def request_full_sync(src: KnowledgeSource) -> None:
+    """Record a full sync request for `src`, as `sync_now(full=true)` does, unless
+    one is already waiting: `loom knowledge sync --full` run again while a turn
+    has not finished the request goes on with it rather than starting over."""
+    async with sources_lease(src.org, src.namespace):
+        state = await _read_state(src)
+        detail = domain.json_object(state.get("detail", ""))
+        if detail.get("full") and detail.get("requested_at"):
+            return
+        await _update_state(src, state, {"requested_at": _now_iso(), "full": True})
+
+
+async def _read_state(src: KnowledgeSource) -> dict[str, str]:
+    """The source's stored sync state, {} when it has none."""
     with sequential_reads():
         states = await store.read_states(src.org, src.namespace, [src.name])
-    state = states.get(src.name) or {}
+    return states.get(src.name) or {}
+
+
+async def _update_state(
+    src: KnowledgeSource, state: dict[str, str], changes: dict[str, Any]
+) -> None:
+    """Merge `changes` into the sync state `state` read under the lease, keeping its
+    stamp."""
     detail = domain.json_object(state.get("detail", ""))
     detail.update(changes)
     await store.write_state(
@@ -479,6 +505,8 @@ def source_rotate_audit_subject(input: KnowledgeSourceRotateInput, response: Any
 
 __all__ = [
     "deactivate_namespace_sources",
+    "is_trunk_namespace",
+    "request_full_sync",
     "sources_lease",
     "handle_knowledge_source_add",
     "handle_knowledge_source_check",

@@ -307,7 +307,7 @@ Probe a registered document source with its stored credential now (folder checks
 
 ## `knowledge.source.inspect`
 
-One registered document source: its config, its last sync and the documents it wrote (the 200 most recently ingested).
+One registered document source: its config, its sync state and the documents it wrote (the 200 most recently ingested).
 
 `POST /v1/knowledge.source.inspect` · MCP `loom_knowledge_source_inspect` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -324,12 +324,12 @@ One registered document source: its config, its last sync and the documents it w
 | `config` | `dict[str, Any]` | The ids and filters the source reads; never a credential. |
 | `created_by` | `str` | Token subject of the maintainer who added it; '' with auth off. |
 | `created_at` | `str` | When it was added, ISO UTC. |
-| `sync` | `KnowledgeSourceSync` | The source's sync state: the last sync request. |
+| `sync` | `KnowledgeSourceSync` | The source's sync state: a waiting request and the last pass. |
 | `documents` | `list[KnowledgeSourceDocument]` | The source's live documents, most recently ingested first, at most 200. |
 
 ## `knowledge.source.list`
 
-The document sources registered on a repository's code namespace, with each one's last sync request.
+The document sources registered on a repository's code namespace, with each one's sync state.
 
 `POST /v1/knowledge.source.list` · MCP `loom_knowledge_source_list` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -341,6 +341,7 @@ The document sources registered on a repository's code namespace, with each one'
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `sources` | `list[KnowledgeSourceEntry]` | The namespace's active sources, by name. |
+| `enabled` | `bool` | Whether this deployment runs the sync worker (LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED); false: sources are stored and probed, but nothing pulls from them. |
 
 ## `knowledge.source.remove`
 
@@ -382,7 +383,7 @@ Replace a registered document source's credential.
 
 ## `knowledge.source.sync_now`
 
-Record a request to sync one document source in its sync state, for the sync worker (not in this build) to start its next pass with.
+Record a request to sync one document source in its sync state: the sync worker starts its next pass with it.
 
 `POST /v1/knowledge.source.sync_now` · MCP `loom_knowledge_source_sync_now` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 
@@ -396,6 +397,7 @@ Record a request to sync one document source in its sync state, for the sync wor
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `name` | `str` | The source the request was recorded for. |
+| `enabled` | `bool` | Whether this deployment runs the sync worker; false: the request waits until it does. |
 
 ## `knowledge.synthesize`
 

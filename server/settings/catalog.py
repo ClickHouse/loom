@@ -2041,6 +2041,28 @@ class KnowledgeSettings(BaseModel):
     # Seconds a document source's probe (add, check, rotate) may take in all; past it
     # add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false.
     knowledge_source_probe_timeout_s: Annotated[float, LIVE] = Field(default=20.0, gt=0, le=25.0)
+    # The knowledge_source_sync worker: pulls each registered document source's changed
+    # files into its repository's documents. Off by default: it needs each source's
+    # credential and spends embedding calls on every changed document.
+    knowledge_source_sync_enabled: bool = False
+    # Seconds between sync passes while there are sources.
+    knowledge_source_sync_interval_seconds: int = Field(default=900, ge=60)
+    # Seconds between passes that found no source to sync; one idle sleep plus one
+    # pass stays under three intervals, so the worker never reads as stalled.
+    knowledge_source_sync_idle_interval_seconds: int = Field(default=1800, ge=60)
+    # Seconds one sync pass may run before it is cancelled; it stops starting sources
+    # at three quarters of it.
+    knowledge_source_sync_max_pass_seconds: int = Field(default=600, ge=60)
+    # Documents one pass fetches, writes or retires across all sources; the rest wait
+    # for the next pass.
+    knowledge_source_sync_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Seconds after which a source's next pass lists every file, not only those
+    # changed since the last one: what finds a file trashed or moved out of a folder.
+    knowledge_source_sync_full_interval_seconds: Annotated[int, LIVE] = Field(default=86400, ge=900)
+    # Bytes of one file a sync downloads or exports; a larger file is not ingested.
+    knowledge_source_sync_max_file_bytes: Annotated[int, LIVE] = Field(
+        default=64 * 1024 * 1024, ge=1024 * 1024
+    )
 
     def document_extractor_routes(self) -> dict[str, str]:
         """The operator's per-format extractor URLs, format or media type → URL;

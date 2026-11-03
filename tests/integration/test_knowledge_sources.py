@@ -117,7 +117,8 @@ def test_sync_now_and_remove_write_state_and_registry_rows(
         {"org": org, "namespace": ns, "name": name, "full": True},
     )
     assert asked.status_code == 200, asked.text
-    assert asked.json() == {"name": name}
+    # The server under test runs no workers: the request waits.
+    assert asked.json() == {"name": name, "enabled": False}
     [state] = _query(
         ch_client,
         "SELECT state_value, detail FROM loom.code_index_state FINAL "
@@ -129,8 +130,21 @@ def test_sync_now_and_remove_write_state_and_registry_rows(
     detail = json.loads(state["detail"])
     assert state["state_value"] == "" and detail["full"] is True and detail["requested_at"]
     listed = _post(control_plane_url, "knowledge.source.list", {"org": org, "namespace": ns})
+    assert listed.json()["enabled"] is False
     [entry] = [e for e in listed.json()["sources"] if e["name"] == name]
-    assert entry["sync"]["requested_at"] == detail["requested_at"]
+    # No pass has run: every field but the request is its empty value.
+    assert entry["sync"] == {
+        "requested_at": detail["requested_at"],
+        "last_synced_at": "",
+        "status": "",
+        "documents_seen": 0,
+        "changed": 0,
+        "removed": 0,
+        "unconverted": 0,
+        "unconverted_reasons": {},
+        "skipped": 0,
+        "error": "",
+    }
 
     wrong = {"org": org, "namespace": ns, "name": name, "confirm": "x"}
     refused = _post(control_plane_url, "knowledge.source.remove", wrong)

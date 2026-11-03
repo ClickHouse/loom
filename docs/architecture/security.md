@@ -1083,6 +1083,22 @@ A structured profile is served only from a row written as `worker:structured-pro
 actor kind no token maps to, so a caller cannot forge one
 ([memory invariants](memory-architecture.md#invariants)).
 
+A document a registered document source's sync wrote carries the actor
+`worker:knowledge-source-sync` and the class `imported`. No token maps to that actor
+kind, so no request can write a document that reads as synced from a source: a
+source's documents are those tagged `source:<name>` with that actor, and only the
+sync worker writes, rewrites or retires them. The worker opens a source's credential
+only for its own turn; a credential that does not open stops the turn with
+`credential_invalid` and nothing is fetched without it. It retires a document only when
+a complete full listing no longer has the file and a lookup of that file reports it
+gone, trashed or out of every folder of the source, when the document sits at an
+address that is no longer its file's, or when a namespace admin asked
+(`knowledge.source.remove` with `delete_documents`); never on a fetch error, and never
+touches a live document another writer or source holds
+([document sources](../features/knowledge.md#syncing-a-source)). Any holder of a writer
+grant on the namespace may still `knowledge.delete` a synced document, as any other;
+while its file is in the folder, the next full listing writes it again.
+
 ## Audit log
 
 `emit` in `server/observability/audit.py` writes `loom.audit_log` rows. `row_hash` is

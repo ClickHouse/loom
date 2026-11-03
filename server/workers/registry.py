@@ -386,6 +386,15 @@ _WORKERS: tuple[_Worker, ...] = (
         "code_pr_history_interval_seconds",
     ),
     _Worker(
+        "knowledge_source_sync",
+        "server.knowledge.workers.source_sync",
+        "knowledge_source_sync_enabled",
+        "knowledge_source_sync_interval_seconds",
+        idle_interval="knowledge_source_sync_idle_interval_seconds",
+        # the pass stops starting sources at three quarters of it
+        max_pass_setting="knowledge_source_sync_max_pass_seconds",
+    ),
+    _Worker(
         "code_embed_recovery",
         "server.code.workers.embed_recovery",
         "code_embed_recovery_enabled",
