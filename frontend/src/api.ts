@@ -114,7 +114,8 @@ export function setPageOwner(owner: WhoAmI | null): void {
 export function ownsToken(t: string | null): boolean {
   if (!t || !pageOwner?.subject || isAuthDisabled()) return true;
   const c = claimsFromToken(t);
-  return c?.subject === pageOwner.subject && (c?.org ?? "") === (pageOwner.org ?? "");
+  // Claims it cannot read name no one: the server's answer to that token decides.
+  return !c || (c.subject === pageOwner.subject && (c.org ?? "") === (pageOwner.org ?? ""));
 }
 
 // The app's answer to a stored token the server refuses (expired or revoked): the session

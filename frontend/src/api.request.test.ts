@@ -180,6 +180,19 @@ describe("a refused sign-in token", () => {
     }
   });
 
+  it("sends a call under a token whose claims it cannot read: the server decides on it", async () => {
+    setPageOwner({ authenticated: true, subject: "alice", org: "o" });
+    try {
+      setToken("not-a-jwt");
+      const fetchMock = vi.fn(async () => new Response("{}"));
+      vi.stubGlobal("fetch", fetchMock);
+      await post("/v1/memory.list", { org: "o" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      setPageOwner(null);
+    }
+  });
+
   it("does nothing for a request sent without a stored token", async () => {
     const ended = vi.fn();
     onSignInRejected(ended);
