@@ -113,12 +113,15 @@ schema. These rules keep that safe. The operator procedure is in
     idempotency key and the coverage watch's ready-event delivery hold a lease from this
     build on (`insert_created_task`, `insert_ready_event`). One whose lease ran out
     before its insert can still race the next, so both insert under one dedup token (the
-    key, or the event's task id) and storage drops the later row. An erased row's token
-    can outlive it and drop a new row too: with nothing stored, the row goes in again
-    under a fresh token. The build before takes no lease, and its client writes a random
-    dedup token over every insert's, so the key's token drops neither build's row for
-    the other. A create of each build racing on one key can store two tasks, and two
-    deliveries two ready events, as two replicas of the previous build already can.
+    poster and its key, or the event's task id) and storage drops the later row. An
+    erased row's token can outlive it and drop a new row too: with nothing stored, the
+    row goes in again under a fresh token. The build before shares neither the lease nor
+    the token (it names both without the poster, or takes no lease and writes a random
+    token), so the key's token drops neither build's row for the other. A create of each
+    build racing on one key can store two tasks, and two deliveries two ready events, as
+    two replicas of the previous build already can. A build that looks a key up without
+    the poster answers another poster's task to a create with the same key until it
+    stops serving.
     Each task is whole (its event and its lease row) and claimable: a create of N cut
     off after its task row is finished by its retry, which under the key's lease writes
     the created event the first one left out, and by the lease sweep, which writes its

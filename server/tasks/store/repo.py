@@ -329,18 +329,21 @@ async def fetch_task(org: str, task_id: str, *, ch: _CHClient | None = None) -> 
 
 
 async def fetch_task_by_idempotency_key(
-    org: str, inbox: str, key: str, *, ch: _CHClient | None = None
+    org: str, inbox: str, subject: str, key: str, *, ch: _CHClient | None = None
 ) -> TaskRow | None:
+    """The task `subject` posted into `inbox` under `key`: a key is the poster's own, so
+    another poster's same key never answers with this one's task."""
     ch = ch or _default_client()
     return cast(
         "TaskRow | None",
         await ch.query_one(
             f"SELECT {TASK_COLS} FROM loom.tasks FINAL "
             "WHERE org = {org:String} AND inbox = {inbox:String} "
+            "AND from_subject = {subj:String} "
             "AND idempotency_key = {key:String} AND is_deleted = 0 "
             "ORDER BY created_at, task_id "
             "LIMIT 1 SETTINGS select_sequential_consistency = 1",
-            params={"org": org, "inbox": inbox, "key": key},
+            params={"org": org, "inbox": inbox, "subj": subject, "key": key},
         ),
     )
 
@@ -362,12 +365,13 @@ async def insert_created_task(row: TaskRow, *, ch: _CHClient | None = None) -> T
     """Insert a task with an idempotency key; answer this row, or the one stored first.
     Why the dedup token and its retry: docs/architecture/rolling-upgrades.md, rule 10."""
     org, inbox, key = row["org"], row["inbox"], row["idempotency_key"]
-    token = f"task.create:{org}:{inbox}:{key}"
+    subject = row["from_subject"]
+    token = f"task.create:{org}:{inbox}:{subject}:{key}"
     await insert_task_version(row, dedup_token=token, ch=ch)
     if await fetch_task(org, str(row["task_id"]), ch=ch) is not None:
         return row
     # The token dropped this row.
-    stored = await fetch_task_by_idempotency_key(org, inbox, key, ch=ch)
+    stored = await fetch_task_by_idempotency_key(org, inbox, subject, key, ch=ch)
     if stored is not None:
         return stored
     await insert_task_version(row, dedup_token=f"{token}:{uuid.uuid4().hex}", ch=ch)

@@ -148,7 +148,7 @@ Count tasks by status for one inbox or every inbox of a namespace.
 | `deadline` | `datetime \| None` | `None` | When the poster needs it done (naive = UTC); stored and shown, nothing enforces it. |
 | `origin` | `str` | `''` | Free text naming where the task came from; stored and returned, never interpreted. |
 | `parent_task_id` | `str \| None` | `None` | The task this one follows from (a task id); None for a top-level task. |
-| `idempotency_key` | `str` | `''` | A retry with the same key into the same inbox returns the first task with `created=false`; "" never deduplicates. |
+| `idempotency_key` | `str` | `''` | A retry by the same poster with the same key into the same inbox returns the first task with `created=false`; another poster's same key stores its own task; "" never deduplicates. |
 | `from_subject` | `str` | `''` | Dev mode only (no token): who is posting. |
 
 | Output field | Type | Meaning |
