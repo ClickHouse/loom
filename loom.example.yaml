@@ -791,7 +791,8 @@ settings:
 
   # --- switch, test gate and code.ask ---
 
-  # Master kill switch, checked at the top of every code.* handler. [restart]
+  # Master kill switch, checked at the top of every code.* handler but the retirement
+  # (code.repo.remove), which only deletes. [restart]
   # code_intel_enabled: true
 
   # code.test_gate run recipes (LOOM_CODE_TEST_GATE_RUN_TEMPLATES): JSON list of

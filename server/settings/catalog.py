@@ -717,7 +717,8 @@ class CodeSettings(BaseModel):
     """The code plane: ingest, indexes, search, ask, review."""
 
     # --- switch, test gate and code.ask ---
-    # Master kill switch, checked at the top of every code.* handler.
+    # Master kill switch, checked at the top of every code.* handler but the
+    # retirement (code.repo.remove), which only deletes.
     code_intel_enabled: bool = True
 
     # code.test_gate run recipes (LOOM_CODE_TEST_GATE_RUN_TEMPLATES): JSON list of
