@@ -55,7 +55,7 @@ def no_dump() -> None:
 
 # The audit arch and the syscalls that make a socket (io_uring can too) on each
 # architecture the image is built for; seccomp filters see raw syscall numbers.
-NO_SOCKETS = {
+_NO_SOCKETS = {
     "x86_64": (0xC000003E, (41, 53, 425)),  # socket, socketpair, io_uring_setup
     "aarch64": (0xC00000B7, (198, 199, 425)),
 }
@@ -66,15 +66,21 @@ def _bpf(code: int, k: int, jt: int = 0, jf: int = 0) -> bytes:
     return struct.pack("=HBBI", code, jt, jf, k)
 
 
+def socket_filter(machine: str) -> tuple[int, tuple[int, ...]]:
+    """(audit arch, the syscalls that make a socket) on `machine`; an OSError for
+    an architecture with no filter, which the service refuses to start on."""
+    if machine not in _NO_SOCKETS:
+        raise OSError(f"no socket filter for {machine}: the extractor runs on x86_64 or aarch64")
+    return _NO_SOCKETS[machine]
+
+
 def no_sockets() -> None:
     """A seccomp filter on this process and all it starts: making a socket fails
     with EPERM, so an extraction a hostile source has taken over reaches no
     address, the Loom server on its network included. Needs no-new-privileges
     (set first) and no privilege. Another architecture refuses to extract."""
     machine = platform.machine()
-    if machine not in NO_SOCKETS:
-        raise OSError(f"no socket filter for {machine}: the extractor runs on x86_64 or aarch64")
-    arch, calls = NO_SOCKETS[machine]
+    arch, calls = socket_filter(machine)
     ld_w_abs, jeq, jge, ret = 0x20, 0x15, 0x35, 0x06
     # Each check jumps to deny when it matches, else on to the next one.
     checks = [(jge, _X32_BIT)] if machine == "x86_64" else []

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import uvicorn
 
-from loom_extractor.child import NO_SOCKETS, no_dump, no_new_privileges
+from loom_extractor.child import no_dump, no_new_privileges, socket_filter
 from loom_extractor.service import Config, create_app
 
 # CAP_SYS_ADMIN and CAP_SYS_RESOURCE: either lifts the limit on new processes.
@@ -40,9 +40,10 @@ def refuse_root() -> None:
 def refuse_unfiltered_machine() -> None:
     """Every child sets a socket filter for its architecture and refuses to run
     without one; a service that could start none should not start at all."""
-    machine = platform.machine()
-    if machine not in NO_SOCKETS:
-        raise SystemExit(f"no socket filter for {machine}: the extractor runs on x86_64 or aarch64")
+    try:
+        socket_filter(platform.machine())
+    except OSError as e:
+        raise SystemExit(str(e)) from e
 
 
 def main() -> None:
