@@ -124,7 +124,7 @@ def resolve_org(op: Operation, org: Any, auth: AuthInfo | None) -> str | None:
     return present(org) or present(plane_org_for(op.name)) or _token_org(auth)
 
 
-def with_resolved_org(op: Operation, args: Any, auth: AuthInfo | None) -> Any:
+def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None) -> dict[str, Any]:
     """The arguments to validate, with `org` and `namespace` as the gate reads
     them: an org sent as a blank or "-" string is the org the call acts in, and
     a padded org or namespace is stripped. The handler, and a validator that
@@ -133,8 +133,6 @@ def with_resolved_org(op: Operation, args: Any, auth: AuthInfo | None) -> Any:
     an erasure of the org would miss. A copy: validation, and its own refusal
     row, read it; every later refusal's ledger row reads the raw arguments as
     sent. A missing, null or non-string value is left for validation."""
-    if not isinstance(args, dict):
-        return args
     update: dict[str, str] = {}
     if isinstance(args.get("org"), str):
         org = resolve_org(op, args["org"], auth)
