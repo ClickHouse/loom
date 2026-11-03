@@ -25,12 +25,14 @@ namespace, and stays until it is erased:
 
 `--param KEY=VALUE` (JSON value, or a plain string) sets any `knowledge.search`
 field but the ones the harness sets (`FIXED_FIELDS`), so two arms differ by one
-flag; a field the server ignores fails the run. Reports recall@1/5/10 (a query
+flag; any other key is refused, and a search over a namespace that does not hold
+exactly the fixture's documents fails the run. Reports recall@1/5/10 (a query
 counts when any relevant passage is in the top k), all-gold recall@10 (every
 relevant passage found, for the multi-document questions), MRR and nDCG@10,
 overall and per query kind, plus the mean top-hit cosine similarity on
 unanswerable queries. The `freshness` and `multi` kinds hold three and four
-queries, so their per-kind figures are coarse. Ingesting embeds 21 documents
+queries, so their per-kind figures are coarse; a superseded policy ranked above the
+current one shows in a freshness query's R@1 and MRR only. Ingesting embeds 21 documents
 (97 chunks at the default chunk size): a few cents with a hosted embedder, free
 with a local one.
 """
@@ -57,6 +59,7 @@ from bench.bench_namespaces import (
     register_bench_namespace_sync,
     remember_bench_namespace,
 )
+from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 
 FIXTURE = Path(__file__).parent / "fixtures" / "knowledge_retrieval"
 KS = (1, 5, 10)
@@ -65,7 +68,8 @@ TOP_K = max(KS)
 
 def load_fixture(root: Path) -> tuple[list[dict], list[dict]]:
     docs = json.loads((root / "corpus.json").read_text())
-    queries = [json.loads(line) for line in (root / "queries.jsonl").read_text().splitlines()]
+    lines = (root / "queries.jsonl").read_text().splitlines()
+    queries = [json.loads(line) for line in lines if line and not line.startswith("//")]
     return docs, queries
 
 
@@ -108,30 +112,21 @@ def mean_by_kind(rows: list[dict]) -> dict[str, dict[str, float]]:
     return out
 
 
-# Fields that define the measurement (the depth the metrics are computed at, and what
-# is searched), and the identity keys, which the server takes from the caller without
-# naming them in `ignored_args`.
-FIXED_FIELDS = (
-    "top_k",
-    "org",
-    "namespace",
-    "namespaces",
-    "namespace_scope",
-    "query",
-    "agent",
-    "user_id",
-    "session_id",
-    "run_id",
-)
+# Fields that define the measurement: the depth the metrics are computed at, and what
+# is searched. Anything else that is not a search field is refused too.
+FIXED_FIELDS = ("top_k", "org", "namespace", "namespaces", "namespace_scope", "query")
+SEARCH_FIELDS = frozenset(KnowledgeSearchInput.model_fields) - set(FIXED_FIELDS)
 
 
 def parse_params(pairs: list[str]) -> dict:
-    """`KEY=VALUE` pairs as search fields; a field in FIXED_FIELDS is refused."""
+    """`KEY=VALUE` pairs as search fields; a key outside SEARCH_FIELDS is refused."""
     out = {}
     for pair in pairs:
         key, _, raw = pair.partition("=")
         if key in FIXED_FIELDS:
             raise SystemExit(f"--param {key} is refused: the harness sets it")
+        if key not in SEARCH_FIELDS:
+            raise SystemExit(f"--param {key} is refused: not a knowledge.search field")
         try:
             out[key] = json.loads(raw)
         except json.JSONDecodeError:
@@ -164,6 +159,28 @@ def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: boo
     for d in docs:
         post("/v1/knowledge.upsert", {"org": org, "namespace": namespace, **d})
     print(f"ingested {len(docs)} documents into {org}/{namespace}", file=sys.stderr)
+
+
+def check_corpus(post: SyncPost, org: str, namespace: str, docs: list[dict]) -> None:
+    """Refuse a namespace whose documents are not exactly the fixture's: an older or
+    partial ingest skews every number without failing a query."""
+    have: set[str] = set()
+    cursor = None
+    while True:
+        page = post(
+            "/v1/knowledge.list",
+            {"org": org, "namespace": namespace, "limit": 500, "cursor": cursor},
+        )
+        have.update(row["source_uri"] for row in page["rows"])
+        cursor = page.get("next_cursor")
+        if not cursor:
+            break
+    want = {d["source_uri"] for d in docs}
+    if have != want:
+        raise SystemExit(
+            f"{org}/{namespace} is not this fixture: {len(want - have)} documents missing, "
+            f"{len(have - want)} extra; ingest into a fresh namespace"
+        )
 
 
 def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params: dict) -> dict:
@@ -236,6 +253,7 @@ def main() -> int:
                 ingest(post, args.org, namespace, docs, keep)
             if args.phase == "ingest":
                 return 0
+            check_corpus(post, args.org, namespace, docs)
             report = search(post, args.org, namespace, queries, params)
     if args.out:
         args.out.write_text(json.dumps(report, indent=1) + "\n")

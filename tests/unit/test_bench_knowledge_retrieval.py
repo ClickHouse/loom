@@ -10,8 +10,10 @@ import pytest
 from bench.bench_namespaces import BENCH_OWNER_EMAIL
 from bench.knowledge_retrieval import (
     FIXTURE,
+    check_corpus,
     load_fixture,
     may_ingest_into,
+    mean_by_kind,
     parse_params,
     run_namespace,
     score_query,
@@ -73,7 +75,16 @@ def test_params_take_json_values_or_plain_strings() -> None:
 
 @pytest.mark.parametrize(
     "field",
-    ["top_k", "org", "query", "namespace", "namespaces", "namespace_scope", "session_id", "agent"],
+    [
+        "top_k",
+        "org",
+        "query",
+        "namespace",
+        "namespaces",
+        "namespace_scope",
+        "session_id",
+        "explain",
+    ],
 )
 def test_the_fields_that_define_the_measurement_are_refused(field: str) -> None:
     with pytest.raises(SystemExit, match=field):
@@ -92,6 +103,35 @@ def test_a_named_namespace_is_ingested_into_only_when_unregistered_or_bench() ->
     assert may_ingest_into({"found": False})
     assert may_ingest_into({"found": True, "owner_email": BENCH_OWNER_EMAIL})
     assert not may_ingest_into({"found": True, "owner_email": "someone@example.com"})
+
+
+def test_a_namespace_holding_other_documents_than_the_fixture_is_refused() -> None:
+    docs = [{"source_uri": "a.md"}, {"source_uri": "b.md"}]
+    pages = {None: {"rows": [{"source_uri": "a.md"}], "next_cursor": "c"}, "c": {"rows": []}}
+    with pytest.raises(SystemExit, match="1 documents missing, 0 extra"):
+        check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs)
+    pages["c"] = {"rows": [{"source_uri": "b.md"}]}
+    check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs)
+
+
+def test_unanswerable_queries_report_the_top_similarity_and_kinds_average_apart() -> None:
+    queries = [
+        {"id": "a", "query": "x", "gold": [["a.md", "y"]], "kind": "context"},
+        {"id": "b", "query": "z", "gold": [], "kind": "unanswerable"},
+    ]
+    hit = {"source_uri": "a.md", "content": "y", "similarity": 0.25}
+    report = search(lambda path, body: {"results": [hit]}, "o", "n", queries, {})
+    assert report["unanswerable_top_similarity"] == 0.25
+    assert report["metrics"]["all"]["n"] == 1 and report["metrics"]["context"]["mrr"] == 1.0
+    rows = [
+        {"kind": "context", "metrics": {"mrr": 1.0}},
+        {"kind": "paraphrase", "metrics": {"mrr": 0.0}},
+    ]
+    assert mean_by_kind(rows) == {
+        "all": {"mrr": 0.5, "n": 2},
+        "context": {"mrr": 1.0, "n": 1},
+        "paraphrase": {"mrr": 0.0, "n": 1},
+    }
 
 
 def test_a_search_that_finds_nothing_or_ignores_a_param_fails() -> None:
