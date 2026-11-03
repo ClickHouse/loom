@@ -31,7 +31,6 @@ import {
 import { claimsFromToken, provisionalNamespace, rememberKinds, takeLinkToken } from "./lib/boot";
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
-import { MemoryScopeMissing } from "./components/MemoryScopeMissing";
 import { useStore, pathnameView, linkedNamespace, addressPageNamespace } from "./lib/state";
 import { arriveAt, readPlace, restorePlace } from "./lib/place";
 import { useKeyboard } from "./lib/hooks";
@@ -122,6 +121,11 @@ const ProblemsBanner = lazy<() => ReactElement | null>(() =>
 
 const NamespaceNoAccess = lazy(() =>
   import("./components/NamespaceNoAccess").then((m) => ({ default: m.NamespaceNoAccess })),
+);
+// A memory view's page on a code or tracker namespace, or none: a page of its own, as
+// the views are.
+const MemoryScopeMissing = lazy(() =>
+  import("./components/MemoryScopeMissing").then((m) => ({ default: m.MemoryScopeMissing })),
 );
 
 export default function App() {
