@@ -278,7 +278,9 @@ async def test_the_extraction_policy_is_read_only_for_an_org_admin(
     out = await mi.handle_memory_inspect(_inp())
     assert out.settings.extraction_policy is None
     assert "org admin" in out.settings.extraction_policy_unavailable
-    assert "no user, agent or session setting" in out.settings.extraction_instructions
+    assert out.settings.extraction_instructions.startswith(
+        "Per request only: memory.set_from_messages takes `extraction_instructions`;"
+    )
 
 
 @pytest.mark.asyncio

@@ -153,8 +153,8 @@ class InspectSettings(BaseModel):
     # Where per-request extraction instructions come from: no stored per-user, per-agent or
     # per-session setting exists, so they are whatever each writer sends.
     extraction_instructions: str = (
-        "Per request only: memory.set_from_messages and memory.bulk_set take "
-        "`extraction_instructions`; no user, agent or session setting stores them."
+        "Per request only: memory.set_from_messages takes `extraction_instructions`; no "
+        "user, agent or session setting stores them."
     )
 
 
