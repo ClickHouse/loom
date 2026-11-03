@@ -329,3 +329,24 @@ async def test_a_window_spanning_two_documents_keeps_its_citation(
     assert out.windows == 1
     assert out.citations == ["doc://a#0,doc://b#0"] and out.unsupported_citations == []
     assert out.answer == "Both say short [doc://a#0,doc://b#0]."
+
+
+@pytest.mark.asyncio
+async def test_unread_citations_are_removed_before_the_answer_is_cut(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removed citations take no room in `max_answer_chars`, and the cut never leaves half a
+    citation behind."""
+    import server.knowledge.app.synthesize as kh
+    from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
+
+    rows = [SimpleNamespace(chunk_idx=0, content="short", chunk_metadata="{}")]
+    junk = " ".join(f"[doc://a#{i}]" for i in range(1, 40))  # 39 unread, about 470 chars
+    _patch_corpus(monkeypatch, rows, [f"Refunds take two weeks {junk} [doc://a#0]."])
+    out = await kh.handle_knowledge_synthesize(
+        KnowledgeSynthesizeInput(
+            org="o", namespace="n", source_uris=["doc://a"], task="t", max_answer_chars=200
+        )
+    )
+    assert out.answer == "Refunds take two weeks [doc://a#0]."
+    assert out.citations == ["doc://a#0"] and len(out.unsupported_citations) == 39

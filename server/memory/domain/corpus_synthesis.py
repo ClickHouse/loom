@@ -125,8 +125,7 @@ def reduce_prompt(task: str, notes: Sequence[str], *, final: bool) -> str:
 # by `,` or `;` (a window spanning documents is cited as a comma list, `Window.cite`). A
 # source holds no blank, comma, semicolon or bracket; a bracket with anything else in it
 # is prose (`[PR #42]`, `[see doc#1]`) and is left as written. Of nested brackets, the
-# innermost is the one read. An index is at most nine
-# digits 0-9: a longer run is prose, not a number to parse.
+# innermost is the one read. An index is at most nine digits 0-9: a longer run is prose.
 _ITEM = r"[^\s,;\[\]]+#[0-9]{1,9}(?:-[0-9]{1,9})?"
 _CITATION = re.compile(rf"\[\s*({_ITEM}(?:\s*[,;]\s*{_ITEM})*)\s*\]")
 _PART = re.compile(r"(.+)#([0-9]{1,9})(?:-([0-9]{1,9}))?")

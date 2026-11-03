@@ -130,8 +130,8 @@ Search finds a passage; three other reads cover the rest of the work with a long
   since following it would read something the answer did not come from. A bracket
   holding anything else, or naming a source with a blank, comma or semicolon, is prose
   and stays as written (of nested brackets, the innermost is read). An answer that is
-  empty once those citations are removed
-  abstains with `abstain_reason="empty_answer"`. It needs a real LLM provider.
+  empty once those citations are removed abstains with `abstain_reason="empty_answer"`.
+  It needs a real LLM provider.
 
 `memory.ask` also reads knowledge: it runs one hybrid knowledge search over the same
 namespace and appends the passages as a citable block (per request `knowledge=false`

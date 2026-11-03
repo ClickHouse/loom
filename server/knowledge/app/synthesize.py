@@ -100,10 +100,11 @@ async def handle_knowledge_synthesize(
         if rounds > 8:  # pathological: give the best we have
             answer = "\n\n".join(notes)
             break
-    if len(answer) > input.max_answer_chars:
-        answer = answer[: input.max_answer_chars].rstrip() + "…"
+    # Grounded before the cut: removed citations take no room, and none is cut in half.
     read = {(c.source_uri, c.idx) for w in wins for c in w.chunks}
     answer, cited, unsupported = cs.ground_citations(answer, read)
+    if len(answer) > input.max_answer_chars:
+        answer = answer[: input.max_answer_chars].rstrip() + "…"
     return KnowledgeSynthesizeOutput(
         answer=answer,
         windows=len(wins),
