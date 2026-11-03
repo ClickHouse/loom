@@ -612,7 +612,7 @@ async def test_the_attestation_is_read_into_the_hit_and_marks_nothing(
     [('"short"', "human"), ('"' + "x" * 599 + '"', "stale")],
 )
 @pytest.mark.asyncio
-async def test_without_a_stored_hash_only_an_uncut_value_confirms(
+async def test_without_a_stored_hash_only_an_uncut_value_reads_attested(
     monkeypatch: pytest.MonkeyPatch, value: str, expected: str
 ) -> None:
     from server.core.hashing import sha256_value_json

@@ -287,8 +287,8 @@ Each line:
   can set it on a row they write there, so `(pinned)` on a team row says someone froze it,
   not that a maintainer did.
 - A decision nobody pinned, such as one `loom decisions extract` wrote, carries no pin
-  mark: it is served as it is. `(outcome: failed)` marks one whose recorded outcome
-  failed.
+  mark: it is served as it is.
+- `(outcome: failed)` marks any decision whose recorded outcome failed, pinned or not.
 - A decision tagged `source-changed` (its source document no longer says it; see
   [extracting decisions](../features/tasks-and-decisions.md#extract-decisions-from-a-document))
   reads `(source changed)`, pinned or not.
