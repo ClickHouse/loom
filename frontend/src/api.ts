@@ -593,8 +593,9 @@ export async function pinMemory(
   return post<{ version: number; pinned: boolean }>("/v1/memory.pin", body);
 }
 
+/** `id` may name the row's user and session (`rowIdentity`); they default to '-'. */
 export async function unpinMemory(
-  id: Identity,
+  id: Identity & { user_id?: string; session_id?: string },
   key: string,
 ): Promise<{ unpinned: boolean; reason: string; memory_id: string; version: number | null }> {
   return post("/v1/memory.unpin", { ...id, memory_key: key });

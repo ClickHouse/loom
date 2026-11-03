@@ -32,6 +32,13 @@ describe("unpinMemory", () => {
       agent: "loom-ui",
       memory_key: "k1",
     });
+
+    await unpinMemory({ org: "dev", namespace: "local", agent: "bot", user_id: "alice", session_id: "s1" }, "k1");
+    expect(JSON.parse(String(fetchMock.mock.calls[1]![1]?.body))).toMatchObject({
+      agent: "bot",
+      user_id: "alice",
+      session_id: "s1",
+    });
   });
 });
 
