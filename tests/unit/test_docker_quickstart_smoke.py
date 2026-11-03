@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -175,3 +177,65 @@ def test_both_smoke_workflows_build_or_pull_the_extractor_beside_the_server() ->
     assert built == ["loom:docker-smoke", "loom-extractor:docker-smoke"]
     run = next(s["run"] for s in steps if "docker_quickstart_smoke.py" in s.get("run", ""))
     assert "--extractor-image loom-extractor:docker-smoke" in run
+
+
+def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> None:
+    """The release's tag step, run against two scans' artifacts and a stub docker."""
+    root = Path(__file__).resolve().parents[2]
+    workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
+    steps = workflow["jobs"]["docker-tag"]["steps"]
+    script = next(s["run"] for s in steps if s.get("name") == "Tag the scanned images")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "docker").write_text('#!/bin/sh\necho "$@" >> "$CALLS"\n')
+    (bin_dir / "docker").chmod(0o755)
+    for name, image, pin, digest, tags in (
+        (
+            "server",
+            "ghcr.io/clickhouse/loom",
+            "image.digest",
+            "sha256:aa",
+            "loom:1.2.3\nloom:1.2\n\n",
+        ),
+        (
+            "extractor",
+            "ghcr.io/clickhouse/loom-extractor",
+            "extractor.image.digest",
+            "sha256:bb",
+            "x:1.2.3\n",
+        ),
+    ):
+        d = tmp_path / f"scanned-{name}"
+        d.mkdir()
+        for file, value in (("image", image), ("pin", pin), ("digest", digest), ("tags", tags)):
+            (d / file).write_text(value if file == "tags" else value + "\n")
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "CALLS": str(tmp_path / "calls"),
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+    }
+
+    def run() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", "-e", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True
+        )
+
+    assert run().returncode == 0
+    calls = sorted((tmp_path / "calls").read_text().splitlines())
+    assert calls == [
+        "buildx imagetools create -t loom:1.2.3 -t loom:1.2 ghcr.io/clickhouse/loom@sha256:aa",
+        "buildx imagetools create -t x:1.2.3 ghcr.io/clickhouse/loom-extractor@sha256:bb",
+    ]
+    summary = (tmp_path / "summary").read_text()
+    assert (
+        "`image.digest: sha256:aa`" in summary and "`extractor.image.digest: sha256:bb`" in summary
+    )
+    shutil.rmtree(tmp_path / "scanned-extractor")
+    (tmp_path / "calls").unlink()
+    failed = run()
+    assert (
+        failed.returncode != 0
+        and "expected the server's and the extractor's scans" in failed.stdout
+    )
+    assert not (tmp_path / "calls").exists()  # nothing tagged

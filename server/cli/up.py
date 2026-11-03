@@ -750,10 +750,9 @@ def _cmd_down(args: argparse.Namespace) -> int:
 _UP_HELP = (
     "Boot the local stack (Loom, its document extractor and ClickHouse) and print "
     "how to connect: creates .env and the ClickHouse config from their templates, "
-    "runs docker compose up "
-    "--build, waits for /v1/health, then prints the dashboard URL and the first "
-    "memory.set (curl + Python SDK) and `claude mcp add` snippets — minting a "
-    "writer token first when auth is on. Re-run any time."
+    "runs docker compose up --build, waits for /v1/health, then prints the "
+    "dashboard URL and the first memory.set (curl + Python SDK) and `claude mcp "
+    "add` snippets — minting a writer token first when auth is on. Re-run any time."
 )
 
 
