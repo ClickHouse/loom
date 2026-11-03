@@ -7,13 +7,18 @@ import math
 
 import pytest
 
+from bench.bench_namespaces import BENCH_OWNER_EMAIL
 from bench.knowledge_retrieval import (
     FIXTURE,
     load_fixture,
+    may_ingest_into,
     parse_params,
     run_namespace,
     score_query,
+    search,
 )
+from server.knowledge.domain.chunking import chunk_document
+from server.settings import settings
 
 GOLD = [["a.md", "answer one"], ["b.md", "answer two"]]
 
@@ -66,20 +71,40 @@ def test_params_take_json_values_or_plain_strings() -> None:
     }
 
 
-@pytest.mark.parametrize("field", ["top_k", "query", "namespace", "namespaces", "namespace_scope"])
+@pytest.mark.parametrize(
+    "field", ["top_k", "org", "query", "namespace", "namespaces", "namespace_scope"]
+)
 def test_the_fields_that_define_the_measurement_are_refused(field: str) -> None:
     with pytest.raises(SystemExit, match=field):
         parse_params([f"{field}=x"])
 
 
 def test_only_a_namespace_the_harness_made_up_is_erased() -> None:
-    assert run_namespace("docs", "both", False) == ("docs", True)
-    assert run_namespace("docs", "search", False) == ("docs", True)
-    fresh, keep = run_namespace(None, "both", False)
+    assert run_namespace("docs", False) == ("docs", True)
+    fresh, keep = run_namespace(None, False)
     assert fresh.startswith("knowledge-retrieval-") and keep is False
-    assert run_namespace(None, "both", False)[0] != fresh
-    assert run_namespace(None, "ingest", False)[1] is True
-    assert run_namespace(None, "both", True)[1] is True
+    assert run_namespace(None, False)[0] != fresh
+    assert run_namespace(None, True)[1] is True
+
+
+def test_a_named_namespace_is_ingested_into_only_when_unregistered_or_bench() -> None:
+    assert may_ingest_into({"found": False})
+    assert may_ingest_into({"found": True, "owner_email": BENCH_OWNER_EMAIL})
+    assert not may_ingest_into({"found": True, "owner_email": "someone@example.com"})
+
+
+def test_a_search_that_finds_nothing_or_ignores_a_param_fails() -> None:
+    queries = [{"id": "q", "query": "x", "gold": [["a.md", "y"]], "kind": "context"}]
+    with pytest.raises(SystemExit, match="was it ingested"):
+        search(lambda path, body: {"results": []}, "o", "n", queries, {})
+    with pytest.raises(SystemExit, match="ignored"):
+        search(
+            lambda path, body: {"results": [], "ignored_args": ["serch_mode"]},
+            "o",
+            "n",
+            queries,
+            {},
+        )
 
 
 def test_every_gold_passage_is_in_its_document() -> None:
@@ -90,3 +115,12 @@ def test_every_gold_passage_is_in_its_document() -> None:
         for uri, text in q["gold"]:
             assert content[uri].count(text) == 1, q["id"]
     assert len({q["id"] for q in queries}) == len(queries)
+
+
+def test_every_gold_passage_lies_inside_one_chunk_at_the_default_size() -> None:
+    docs, queries = load_fixture(FIXTURE)
+    size, stride = settings.knowledge_chunk_size, settings.knowledge_chunk_stride
+    chunks = {d["source_uri"]: chunk_document(d["content"], size=size, stride=stride) for d in docs}
+    for q in queries:
+        for uri, text in q["gold"]:
+            assert any(text in c.text for c in chunks[uri]), q["id"]

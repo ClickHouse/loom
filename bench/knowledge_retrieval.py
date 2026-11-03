@@ -10,8 +10,8 @@ one chunk. Queries the corpus cannot answer carry no gold and measure how
 similar the top hit still looks.
 
 Two phases, run together by default into a fresh namespace that is erased when
-the run ends. A namespace named with `--namespace` is never erased. To compare
-arms on one ingest, ingest once into a named namespace and search it per arm:
+the run ends. To compare arms on one ingest, ingest once into a namespace you
+name, which is kept, and search it per arm:
 
     PYTHONPATH=$PWD .venv/bin/python bench/knowledge_retrieval.py \\
         --base-url http://localhost:7790 --namespace kr-eval --phase ingest
@@ -19,18 +19,20 @@ arms on one ingest, ingest once into a named namespace and search it per arm:
         --base-url http://localhost:7790 --namespace kr-eval --phase search \\
         --param search_mode=hybrid --out /tmp/kr.json
 
-A kept namespace stays until it is erased:
+A named namespace is ingested into only when it is unregistered or a bench
+namespace, and stays until it is erased:
 `loom namespaces-gc --org bench --include-registered --erase --namespace kr-eval`.
 
 `--param KEY=VALUE` (JSON value, or a plain string) sets any `knowledge.search`
-field but the ones the harness sets (`FIXED_FIELDS`), so two arms differ by
-one flag. Reports recall@1/5/10 (a
-query counts when any relevant passage is in the top k), all-gold recall@10
-(every relevant passage found, for the multi-document questions), MRR and
-nDCG@10, overall and per query kind, plus the mean top-hit cosine similarity on
+field but the ones the harness sets (`FIXED_FIELDS`), so two arms differ by one
+flag; a field the server ignores fails the run. Reports recall@1/5/10 (a query
+counts when any relevant passage is in the top k), all-gold recall@10 (every
+relevant passage found, for the multi-document questions), MRR and nDCG@10,
+overall and per query kind, plus the mean top-hit cosine similarity on
 unanswerable queries. The `freshness` and `multi` kinds hold three and four
 queries, so their per-kind figures are coarse. Ingesting embeds 21 documents
-(about 100 chunks): a few cents with a hosted embedder, free with a local one.
+(97 chunks at the default chunk size): a few cents with a hosted embedder, free
+with a local one.
 """
 
 from __future__ import annotations
@@ -42,7 +44,6 @@ import os
 import secrets
 import sys
 from collections import defaultdict
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,8 @@ import httpx
 
 from bench._http import post_json
 from bench.bench_namespaces import (
+    BENCH_OWNER_EMAIL,
+    SyncPost,
     erase_on_exit_sync,
     register_bench_namespace_sync,
     remember_bench_namespace,
@@ -58,8 +61,6 @@ from bench.bench_namespaces import (
 FIXTURE = Path(__file__).parent / "fixtures" / "knowledge_retrieval"
 KS = (1, 5, 10)
 TOP_K = max(KS)
-
-Post = Callable[[str, dict], Any]
 
 
 def load_fixture(root: Path) -> tuple[list[dict], list[dict]]:
@@ -126,26 +127,34 @@ def parse_params(pairs: list[str]) -> dict:
     return out
 
 
-def run_namespace(named: str | None, phase: str, keep_flag: bool) -> tuple[str, bool]:
+def run_namespace(named: str | None, keep_flag: bool) -> tuple[str, bool]:
     """(the namespace a run uses, whether it outlives the run). Only a namespace the
     harness made up is erased: one the caller named may hold more than the fixture."""
     if named:
         return named, True
-    return f"knowledge-retrieval-{secrets.token_hex(4)}", keep_flag or phase == "ingest"
+    return f"knowledge-retrieval-{secrets.token_hex(4)}", keep_flag
 
 
-def ingest(post: Post, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
+def may_ingest_into(info: dict) -> bool:
+    """Whether `namespace.get`'s answer leaves the namespace to the harness: never
+    registered, or registered as a bench namespace (registering rewrites its owner)."""
+    return not info.get("found") or info.get("owner_email") == BENCH_OWNER_EMAIL
+
+
+def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
+    info = post("/v1/namespace.get", {"org": org, "namespace": namespace})
+    if not may_ingest_into(info):
+        raise SystemExit(f"{org}/{namespace} belongs to {info.get('owner_email')}: name another")
     register_bench_namespace_sync(
         post, org=org, namespace=namespace, description="knowledge retrieval fixture", keep=keep
     )
-    if not keep:
-        remember_bench_namespace(org, namespace)
+    remember_bench_namespace(org, namespace)
     for d in docs:
         post("/v1/knowledge.upsert", {"org": org, "namespace": namespace, **d})
     print(f"ingested {len(docs)} documents into {org}/{namespace}", file=sys.stderr)
 
 
-def search(post: Post, org: str, namespace: str, queries: list[dict], params: dict) -> dict:
+def search(post: SyncPost, org: str, namespace: str, queries: list[dict], params: dict) -> dict:
     rows, unanswerable = [], []
     any_hits = False
     for q in queries:
@@ -157,7 +166,10 @@ def search(post: Post, org: str, namespace: str, queries: list[dict], params: di
             "query": q["query"],
             "top_k": TOP_K,
         }
-        hits = post("/v1/knowledge.search", body)["results"]
+        out = post("/v1/knowledge.search", body)
+        if out.get("ignored_args"):
+            raise SystemExit(f"knowledge.search ignored {out['ignored_args']}: the arm did not run")
+        hits = out["results"]
         if not q["gold"]:
             unanswerable.append(hits[0]["similarity"] if hits else 0.0)
             continue
@@ -190,22 +202,22 @@ def main() -> int:
     ap.add_argument(
         "--keep-namespaces",
         action="store_true",
-        help="keep the fresh namespace a run ingests into (implied by --phase ingest)",
+        help="keep the fresh namespace a run ingests into",
     )
     ap.add_argument("--out", type=Path, help="write the full report (per query) as JSON")
     args = ap.parse_args()
-    if args.phase == "search" and not args.namespace:
-        ap.error("--phase search needs the --namespace an earlier --phase ingest filled")
+    if args.phase != "both" and not args.namespace:
+        ap.error(f"--phase {args.phase} needs a --namespace (one ingest, many searches)")
 
     params = parse_params(args.param)
-    namespace, keep = run_namespace(args.namespace, args.phase, args.keep_namespaces)
+    namespace, keep = run_namespace(args.namespace, args.keep_namespaces)
     docs, queries = load_fixture(args.fixture)
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
     base = args.base_url.rstrip("/")
-    with httpx.Client(timeout=120, headers=headers) as client:
+    with httpx.Client(headers=headers) as client:
 
-        def post(path: str, body: dict) -> Any:
-            return post_json(client, f"{base}{path}", body, attempts=3)
+        def post(path: str, body: dict[str, Any]) -> Any:
+            return post_json(client, f"{base}{path}", body, attempts=3, timeout_s=120.0)
 
         with erase_on_exit_sync(post, org=args.org, keep=keep):
             if args.phase in ("ingest", "both"):
