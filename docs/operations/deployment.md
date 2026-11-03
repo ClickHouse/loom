@@ -749,7 +749,8 @@ and what it leaves:
 - Every `code.*` operation but `code.repo.remove` answers a precondition error, so a
   self-service index added earlier can still be retired
   ([retiring with the switch off](../features/code-index/repositories.md#self-service-repositories));
-  an operator-configured one is removed from `LOOM_CODE_REPOS_JSON`.
+  an operator-configured one is removed from `LOOM_CODE_REPO` or `LOOM_CODE_REPOS_JSON`,
+  and `erasure.request` on its namespace purges its rows.
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but the coding-agent plugins list them, so agents are offered
   tools that refuse. Set the Claude Code plugin's `toolset` option
