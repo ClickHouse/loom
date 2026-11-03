@@ -442,18 +442,20 @@ async def test_reject_writes_version_rows_and_updates_no_embeddings_part(
     assert out.rejected is True
     assert ch.executed == []
     assert [t for t, _ in ch.inserts] == ["loom.memory", "loom.memory_embeddings"]
-    # Every session's row of the key, each at its read version + 1, and each vector
-    # row at its memory row's version.
+    # Every session's row of the key at one version drawn before the read, and each
+    # vector row at it: above the read + 1 copy a metadata write left (version 2).
     mems = ch.inserts[0][1]
-    assert [(m["session_id"], m["status"], m["version"]) for m in mems] == [
-        ("s1", "rejected", 2),
-        ("s2", "rejected", 2),
+    assert [(m["session_id"], m["status"]) for m in mems] == [
+        ("s1", "rejected"),
+        ("s2", "rejected"),
     ]
     assert {m["rejection_reason"] for m in mems} == {"r"}
+    (drawn,) = {m["version"] for m in mems}
+    assert drawn > 2
     embs = ch.inserts[1][1]
     assert sorted((e["session_id"], e["status"], e["version"]) for e in embs) == [
-        ("s1", "rejected", 2),
-        ("s2", "rejected", 2),
+        ("s1", "rejected", drawn),
+        ("s2", "rejected", drawn),
     ]
 
 
@@ -482,7 +484,8 @@ async def test_reject_raises_when_the_vector_rows_are_not_written(
 
 
 class _RejectCH(_CH):
-    """Answers the reject's id read with one row per session of the key."""
+    """Answers the reject's id read with one row per session of the key, and each
+    vector row one version above its memory row."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -494,7 +497,9 @@ class _RejectCH(_CH):
         if "FROM loom.memory FINAL" in sql:
             assert (params or {})["key"] == "home"
             return [{"memory_id": "m1"}, {"memory_id": "m2"}]
-        return await super().query_all(sql, params)
+        rows = await super().query_all(sql, params)
+        # Each vector row was copied at read + 1 since its memory row (version 1).
+        return [{**r, "version": 2} for r in rows]
 
     async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
         self.executed.append(sql)

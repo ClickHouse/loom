@@ -62,7 +62,7 @@ class _QuarantineCH(_StubCH):
                     "embedding": [0.1, 0.2],
                     "embedding_dim": 2,
                     "status": "active",
-                    "version": 1,
+                    "version": 2,  # copied at read + 1 since its memory row
                 }
                 for o, n, a, u, s, k in zip(
                     p["o"], p["n"], p["a"], p["u"], p["s"], p["k"], strict=True
@@ -121,10 +121,11 @@ async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
     assert out.quarantined is True
     written = {t: rows for t, rows in ch.inserts if t in ("loom.memory", "loom.memory_embeddings")}
     (mem,) = written["loom.memory"]
-    assert mem["status"] == "rejected" and mem["version"] == 2
+    assert mem["status"] == "rejected" and mem["version"] > 2
     assert mem["rejection_reason"] == "auto-quarantine: 3 negative outcomes"
     (emb,) = written["loom.memory_embeddings"]
-    assert emb["status"] == "rejected" and emb["memory_key"] == "k" and emb["version"] == 2
+    assert emb["status"] == "rejected" and emb["memory_key"] == "k"
+    assert emb["version"] == mem["version"]
     assert ch.executes == []  # no in-place UPDATE
 
 

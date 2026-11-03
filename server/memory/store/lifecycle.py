@@ -230,10 +230,13 @@ async def reject_by_identity(
     `rejected`, by version re-emit on loom.memory and its vector rows. Never a
     lightweight UPDATE: on loom.memory_embeddings it leaves a patch part, and
     the fact leg's codes-first read stays off while one exists
-    (`server.core.vectors.patch_parts`). Each row lands at its read version + 1,
-    so a write drawn after that read stays the head. A failed vector write
-    raises: recall reads the vector row. Returns the rows written."""
+    (`server.core.vectors.patch_parts`). The rows land at one version drawn
+    before the read: a write drawn after it stays the head, and it sits above
+    any vector row an earlier metadata copy left at read + 1 (`reemit_version`).
+    A failed vector write raises: recall reads the vector row. Returns the rows
+    written."""
     ch = ch or _default_client()
+    version = next_version()
     rows = await ch.query_all(
         """
         SELECT toString(memory_id) AS memory_id
@@ -248,11 +251,7 @@ async def reject_by_identity(
     return await write_versions_by_ids(
         org,
         [str(r["memory_id"]) for r in rows],
-        lambda row: {
-            "status": "rejected",
-            "rejection_reason": reason,
-            "version": int(row.version) + 1,
-        },
+        lambda row: {"status": "rejected", "rejection_reason": reason, "version": version},
         ch=ch,
         strong=True,
         strict=True,
