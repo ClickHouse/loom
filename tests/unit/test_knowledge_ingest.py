@@ -54,6 +54,7 @@ class World:
     chunks: list[dict[str, Any]] = field(default_factory=list)
     superseded: list[tuple[str, int]] = field(default_factory=list)
     retired: list[int] = field(default_factory=list)  # one chunk version each
+    dead: set[int] = field(default_factory=set)  # every chunk version retired, however
     cancels: list[str] = field(default_factory=list)  # ingestion ids with a cancel
     fail_document: Exception | None = None
     late_documents: list[dict[str, Any]] = field(default_factory=list)  # timed out, land later
@@ -63,6 +64,16 @@ class World:
     stored_vectors: dict[str, list[float]] = field(default_factory=dict)
     embedded: list[str] = field(default_factory=list)
     fail_embed: Exception | None = None
+
+    def retire_source(self, uri: str, before_version: int | None = None) -> None:
+        """Every chunk version of the source (older than `before_version`) is
+        retired, as a publish, a text write or a delete retires them."""
+        self.dead |= {
+            c["doc_version"]
+            for c in self.chunks
+            if c["source_uri"] == uri
+            and (before_version is None or c["doc_version"] < before_version)
+        }
 
     def job(self, ingestion_id: str) -> dict[str, Any] | None:
         rows = [r for r in self.jobs if r["ingestion_id"] == ingestion_id]
@@ -153,12 +164,14 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
     ) -> None:
         if only_version is not None:
             w.retired.append(only_version)
+            w.dead.add(only_version)
             w.log.append("retire")
             return
         if w.fail_retire_older is not None:
             e, w.fail_retire_older = w.fail_retire_older, None
             raise e
         w.superseded.append((uri, before_version or 0))
+        w.retire_source(uri, before_version)
         w.log.append("supersede")
 
     async def refuse_width(*a: Any, **k: Any) -> None:
@@ -207,7 +220,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
     monkeypatch.setattr(chunks_repo, "count_active_for_doc", count_active_for_doc)
 
     async def count_version(org: str, ns: str, uri: str, version: int, **_: Any) -> int:
-        if version in w.retired:
+        if version in w.dead:
             return 0
         return sum(1 for c in w.chunks if c["source_uri"] == uri and c["doc_version"] == version)
 
@@ -1038,9 +1051,9 @@ def test_a_job_that_published_ends_ready_after_a_later_cancel(world: World) -> N
 def test_a_rerun_of_a_published_job_keeps_its_chunks_and_publishes_nothing_more(
     world: World, after: str
 ) -> None:
-    """An edit writes a new document version and a delete a tombstone, both
-    naming the job that published: the rerun knows its own publish, retires
-    none of its chunks and brings nothing back."""
+    """An edit writes a new document version and a delete a tombstone (and
+    retires the chunks), both naming the job that published: the rerun knows
+    its own publish, retires none of its chunks and brings nothing back."""
     job_id = _ingest(world, _upload(world))
     assert _run(world, job_id) == "ready"
     job = world.job(job_id)
@@ -1049,6 +1062,7 @@ def test_a_rerun_of_a_published_job_keeps_its_chunks_and_publishes_nothing_more(
     edit = {"version": doc["version"] + 1}
     if after == "a delete":
         edit["superseded_at"] = _now()
+        world.retire_source("repo://retention.sql")
     world.documents.append({**doc, **edit})
     world.jobs.append({**job, "state": "processing", "version": job["version"] + 1})
     world.fail_embed = BackendUnavailableError("provider down")  # a rerun that works fails
@@ -1061,8 +1075,9 @@ def test_a_rerun_of_a_published_job_keeps_its_chunks_and_publishes_nothing_more(
 def test_a_rerun_of_a_published_job_after_a_text_write_publishes_nothing_more(
     world: World, merged: bool
 ) -> None:
-    """A text write names no job. While the job's own version row is still
-    there the rerun finds it and ends published with its own chunk count; once
+    """A text write names no job, and retires the job's chunks. While the job's
+    own version row is still there the rerun finds it and ends published (with
+    no chunk of its own live: the text write replaced them); once
     a merge has folded it into the text write's, the rerun cannot tell, and a
     later write landed after its chunks, so it fails `revision_conflict`. In
     neither case does it publish the older file again."""
@@ -1070,11 +1085,11 @@ def test_a_rerun_of_a_published_job_after_a_text_write_publishes_nothing_more(
     assert _run(world, job_id) == "ready"
     job = world.job(job_id)
     assert job is not None
-    own_chunks = int(job["chunks"])
     doc = world.documents[-1]
     world.documents.append(
         {**doc, "version": doc["version"] + 1, "revision": 2, "ingestion_id": ""}
     )
+    world.retire_source("repo://retention.sql")  # the text write retires the earlier chunks
     if merged:
         world.documents.remove(doc)
     world.jobs.append(
@@ -1092,7 +1107,7 @@ def test_a_rerun_of_a_published_job_after_a_text_write_publishes_nothing_more(
         assert world.job(job_id)["error_code"] == "revision_conflict"  # type: ignore[index]
     else:
         assert _run(world, job_id) == "ready"
-        assert (world.job(job_id)["revision"], world.job(job_id)["chunks"]) == (1, own_chunks)  # type: ignore[index]
+        assert (world.job(job_id)["revision"], world.job(job_id)["chunks"]) == (1, 0)  # type: ignore[index]
     assert len(world.chunks) == chunks and world.embedded == []
     assert [d["revision"] for d in world.documents][-1] == 2
 
@@ -1165,7 +1180,7 @@ def test_a_row_that_landed_after_its_chunks_were_retired_is_published_again(worl
     assert _run(world, job_id) == "pending"
     stale = world.job(job_id)["doc_version"]  # type: ignore[index]
     world.fail_document = None
-    world.retired.append(stale)  # retired before the row landed
+    world.dead.add(stale)  # retired before the row landed
     world.documents.extend(world.late_documents)
     assert _run(world, job_id) == "ready"
     job = world.job(job_id)
@@ -1176,3 +1191,23 @@ def test_a_row_that_landed_after_its_chunks_were_retired_is_published_again(worl
         2,
         job["doc_version"],
     )
+
+
+def test_a_document_deleted_after_a_late_insert_stays_deleted(world: World) -> None:
+    """The insert timed out and landed, the writer deleted the document, then
+    the job runs again: its own row stands (as a tombstone), so it ends
+    published and brings nothing back."""
+    _run(world, _ingest(world, _upload(world)))
+    world.fail_document = BackendTimeoutError("timed out")
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "pending"
+    world.fail_document = None
+    world.documents.extend(world.late_documents)  # the insert lands
+    doc = world.documents[-1]
+    world.documents.append({**doc, "version": doc["version"] + 1, "superseded_at": _now()})
+    world.retire_source("repo://retention.sql")  # the delete retires every chunk
+    documents, chunks = len(world.documents), len(world.chunks)
+    assert _run(world, job_id) == "ready"
+    assert world.job(job_id)["revision"] == 2  # type: ignore[index]
+    assert (len(world.documents), len(world.chunks)) == (documents, chunks)
+    assert world.documents[-1]["superseded_at"] is not None
