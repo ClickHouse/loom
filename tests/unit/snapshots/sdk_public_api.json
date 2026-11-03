@@ -1320,6 +1320,10 @@
               "body",
               "options"
             ],
+            "tune": [
+              "body",
+              "options"
+            ],
             "validate": [
               "body",
               "options"

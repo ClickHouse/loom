@@ -117,3 +117,22 @@ test("an agent's scope is never the org and namespace a person saved", async () 
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("the status check names no source for an exchange that supplied nothing", async () => {
+  const { srv, url } = await awayTokenEndpoint();
+  let home = "";
+  try {
+    const out = await run("bin/loom-client-status.mjs", url);
+    home = out.home;
+    const result = JSON.parse(out.stdout);
+    assert.equal(result.checks.find((c) => c.name === "token").grade, "FAIL");
+    assert.equal(
+      result.checks.some((c) => c.name === "source"),
+      false,
+    );
+    assert.equal(out.stdout.includes(PERSONAL), false);
+  } finally {
+    srv.close();
+    if (home) fs.rmSync(home, { recursive: true, force: true });
+  }
+});

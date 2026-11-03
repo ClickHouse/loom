@@ -285,6 +285,7 @@ OpName = Literal[
     "namespace.snapshot",
     "namespace.summary",
     "namespace.taxonomy",
+    "namespace.tune",
     "namespace.validate",
     "observe.crystallize",
     "observe.record",
@@ -627,6 +628,7 @@ OP_NAMES: tuple[str, ...] = (
     "namespace.snapshot",
     "namespace.summary",
     "namespace.taxonomy",
+    "namespace.tune",
     "namespace.validate",
     "observe.crystallize",
     "observe.record",
@@ -3672,6 +3674,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "stable",
         120,
+        False,
+        True,
+    ),
+    "namespace.tune": OpSpec(
+        "namespace.tune",
+        "NamespaceTuneInput",
+        "NamespaceTuneBody",
+        "NamespaceTuneOutput",
+        True,
+        "viewer",
+        "experimental",
+        5000,
         False,
         True,
     ),
@@ -15601,6 +15615,80 @@ class TaxonomyCommunity(TypedDict, total=False):
     label: Required[str]
     size: Required[int]
     top_entities: NotRequired[list[str]]
+
+
+class NamespaceTuneInput(TypedDict, total=False):
+    "Draft changes to a namespace's extraction rules, categories and guide from what"
+
+    org: Required[str]
+    namespace: Required[str]
+    window_seconds: NotRequired[int]
+    sample_limit: NotRequired[int]
+    min_rows: NotRequired[int]
+    max_category_proposals: NotRequired[int]
+
+
+class NamespaceTuneBody(TypedDict, total=False):
+    "Draft changes to a namespace's extraction rules, categories and guide from what"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    window_seconds: NotRequired[int]
+    sample_limit: NotRequired[int]
+    min_rows: NotRequired[int]
+    max_category_proposals: NotRequired[int]
+
+
+class NamespaceTuneOutput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    computed_at: Required[str]  # date-time as ISO-8601 text
+    proposals: NotRequired[list["TuneProposal"]]
+    guide_revision: NotRequired[Optional[int]]
+    categories_registered: NotRequired[Optional[int]]
+    extraction_policy: NotRequired[Optional[str]]
+    extraction_policy_unavailable: NotRequired[str]
+    skipped: NotRequired[list[str]]
+    model_used: NotRequired[bool]
+
+
+class TuneProposal(TypedDict, total=False):
+    id: Required[str]
+    target: Required[
+        Literal["extraction_instructions.request", "namespace.category", "namespace.guide"]
+    ]
+    scope: Required[str]
+    title: Required[str]
+    rationale: Required[str]
+    current: Required[str]
+    current_revision: NotRequired[Optional[int]]
+    proposed: Required[str]
+    evidence: Required["TuneEvidence"]
+    affected_agents: NotRequired[list[str]]
+    affected_agents_total: NotRequired[Optional[int]]
+    effect: NotRequired[Literal["future"]]
+    historical: Required[str]
+    apply: Required["TuneApply"]
+    limits: NotRequired[str]
+
+
+class TuneEvidence(TypedDict, total=False):
+    "The rows a proposal rests on and the rows it must keep working for."
+
+    finding_codes: NotRequired[list[str]]
+    supporting_count: NotRequired[int]
+    supporting: NotRequired[list["FindingEvidence"]]
+    counter_count: NotRequired[Optional[int]]
+
+
+class TuneApply(TypedDict, total=False):
+    "The ordinary write that would apply a proposal, for a person to approve."
+
+    op: Required[str]
+    args: Required[dict[str, Any]]
+    args_complete: NotRequired[bool]
+    required_role: Required[str]
+    guard: Required[str]
 
 
 class NamespaceValidateInput(TypedDict, total=False):

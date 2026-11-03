@@ -568,6 +568,7 @@ jobs:
           tests/integration/test_sensitivity_high_canary.py
           tests/integration/test_run_begin_claims.py
           tests/integration/test_mcp_session_run_scope.py
+          tests/integration/test_projection_failures_restricted.py
       # The statement corpus: every builder's shapes through
       # EXPLAIN QUERY TREE on the migrated service, and shapes.txt in step
       # with the builders. ~10 s; a rejection here is a statement that would

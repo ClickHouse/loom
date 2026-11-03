@@ -295,7 +295,8 @@ described in [ClickStack](../features/integrations/clickstack.md).
   `loom.org`, `loom.namespace`, `loom.agent`, `loom.operation`, `loom.request_id` and
   `enduser.id`. With Langfuse configured the span tree also goes to Langfuse
   ([Langfuse](../features/integrations/langfuse.md)). Every HTTP response carries
-  `X-Request-Id` (echoed when the client sends one) and `X-Trace-Id`.
+  `X-Request-Id` (the client's, when it sends one of 1 to 64 letters, digits, `.`, `_` or `-`)
+  and `X-Trace-Id`.
 - **Every ClickHouse query is attributed** in its `log_comment` setting:
 
 | `log_comment`                  | Issued by                                                         |

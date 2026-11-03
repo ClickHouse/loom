@@ -109,18 +109,18 @@ HTTP answers with a status and a `detail` body, MCP with a result that carries `
 0 disables the cap. Each request then passes these phases in order (`_make_endpoint`). A
 refusal ends the request.
 
-| Phase                | Code                                   | Refusal                                                                                                                                  |
-| -------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Begin                | `_begin_request`                       | None. Sets `X-Request-Id` (the caller's or a fresh UUID), `X-Schema-Version` and the query tag `"<op> <request_id>"`.                    |
-| Verify token         | `_extract_auth`                        | 401 `AUTH_INVALID` (missing when auth is on, foreign scheme, failing token); 503 `AUTH_UNAVAILABLE` until the revocation list is loaded. |
-| Read body            | `_read_body`                           | 400 `VALIDATION_FAILED` on invalid JSON; 422 `UNKNOWN_ARGUMENT` when a write op's unknown key is close to one of its fields.             |
-| Validate             | `_validate_payload`                    | 422 `VALIDATION_FAILED` naming the fields.                                                                                               |
-| Authorize            | `_authorize` → `gates.authorize`       | 400 `IDENTITY_INCOMPLETE` (no namespace or org), 403 `AUTH_INSUFFICIENT`.                                                                |
-| Bind context, policy | `_bind_context_and_policy`             | Sets the auth context and the ledger run (`X-Loom-Run-Id`); 403 `POLICY_FORBIDDEN` when a history policy denies in `enforce` mode.       |
-| Rate limit           | `_rate_limit` → `gates.rate_limit`     | 429 `RATE_LIMITED` with `Retry-After`; `X-RateLimit-*` headers on every limited call.                                                    |
-| Idempotency          | `_idempotency_gate`                    | Replays a stored answer (`X-Idempotent-Replay: true`), or 409 `IDEMPOTENT_CONFLICT` when the key is reused with a different body.        |
-| Handler              | `_run_handler`                         | The handler's `HTTPException`, a `LoomServerError`'s code and status, or 500 `INTERNAL_ERROR`.                                           |
-| After success        | `_finish_success`, `post_handler_rows` | None. Ledger row, metrics, the body with `ignored_args`, then budget-violation, audit and idempotency rows.                              |
+| Phase                | Code                                   | Refusal                                                                                                                                                                      |
+| -------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Begin                | `_begin_request`                       | None. Sets `X-Request-Id` (the caller's when it is 1 to 64 letters, digits, `.`, `_` or `-`, else a fresh UUID), `X-Schema-Version` and the query tag `"<op> <request_id>"`. |
+| Verify token         | `_extract_auth`                        | 401 `AUTH_INVALID` (missing when auth is on, foreign scheme, failing token); 503 `AUTH_UNAVAILABLE` until the revocation list is loaded.                                     |
+| Read body            | `_read_body`                           | 400 `VALIDATION_FAILED` on invalid JSON; 422 `UNKNOWN_ARGUMENT` when a write op's unknown key is close to one of its fields.                                                 |
+| Validate             | `_validate_payload`                    | 422 `VALIDATION_FAILED` naming the fields.                                                                                                                                   |
+| Authorize            | `_authorize` → `gates.authorize`       | 400 `IDENTITY_INCOMPLETE` (no namespace or org), 403 `AUTH_INSUFFICIENT`.                                                                                                    |
+| Bind context, policy | `_bind_context_and_policy`             | Sets the auth context and the ledger run (`X-Loom-Run-Id`); 403 `POLICY_FORBIDDEN` when a history policy denies in `enforce` mode.                                           |
+| Rate limit           | `_rate_limit` → `gates.rate_limit`     | 429 `RATE_LIMITED` with `Retry-After`; `X-RateLimit-*` headers on every limited call.                                                                                        |
+| Idempotency          | `_idempotency_gate`                    | Replays a stored answer (`X-Idempotent-Replay: true`), or 409 `IDEMPOTENT_CONFLICT` when the key is reused with a different body.                                            |
+| Handler              | `_run_handler`                         | The handler's `HTTPException`, a `LoomServerError`'s code and status, or 500 `INTERNAL_ERROR`.                                                                               |
+| After success        | `_finish_success`, `post_handler_rows` | None. Ledger row, metrics, the body with `ignored_args`, then budget-violation, audit and idempotency rows.                                                                  |
 
 Why this order:
 
