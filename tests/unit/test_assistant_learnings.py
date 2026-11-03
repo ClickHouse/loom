@@ -1507,7 +1507,9 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
 
     async def knowledge(input: Any, **_kw: Any) -> Any:
         asked.append(input.top_k)
-        return _knowledge_hits(ranked, input.top_k)
+        # each pass names its own reranker, so the section shows which pass it serves
+        reranker = f"builtin:pass{len(asked)}"
+        return _knowledge_hits(ranked, input.top_k).model_copy(update={"reranked_by": reranker})
 
     async def leg_down(*_a: Any, **_kw: Any) -> Any:
         raise RuntimeError("not under test")
@@ -1541,6 +1543,8 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
     uris = [h["source_uri"] for h in payload["knowledge"]["results"]]
     assert uris == ["support-rule", "refunds.md"]
     assert asked == asked_for
+    # the served hits are the last pass's, and so is the reranker the section names
+    assert payload["knowledge"]["reranked_by"] == f"builtin:pass{len(asked)}"
 
 
 @pytest.mark.asyncio

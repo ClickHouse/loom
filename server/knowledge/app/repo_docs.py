@@ -70,7 +70,7 @@ async def search_repo_docs(
 
 def merge_hits(base: list[_SearchHit], extra: list[_SearchHit], top_k: int) -> list[_SearchHit]:
     """One knowledge list: both legs' hits, one per (namespace, document,
-    chunk), in the handler's own order (score, then similarity)."""
+    chunk), by fused score, then similarity."""
     seen: set[tuple[str, str, int]] = set()
     out: list[_SearchHit] = []
     for h in sorted(
