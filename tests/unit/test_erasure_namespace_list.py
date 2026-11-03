@@ -184,7 +184,6 @@ async def test_gc_candidates_fence_off_registered_namespaces() -> None:
         prefixes=("lme-", "mb-"),
         idle_hours=24,
         include_registered=False,
-        exclude_prefixes=("locomo-seq2-conv-",),
     )
     assert "namespace NOT IN (SELECT namespace FROM loom.namespaces FINAL" in ch.sql
     assert "INTERVAL {idle:UInt32} HOUR" in ch.sql and ch.params["idle"] == 24

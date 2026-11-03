@@ -1,6 +1,6 @@
 """`loom namespaces-gc`'s candidate scan, run on clickhouse-local against the real
-`loom.memory` and `loom.namespaces`: a prefix is a literal string, so `_` and `%` in it
-match only themselves, on the include and the exclude side alike."""
+`loom.memory` and `loom.namespaces`: a prefix is a literal string, so `_`, `%` and a
+backslash in it match only themselves, on the include and the exclude side alike."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary no
 
 
 def _row(namespace: str) -> str:
+    namespace = namespace.replace("\\", "\\\\")  # a SQL string literal reads `\` as an escape
     return (
         "INSERT INTO loom.memory (org, namespace, agent, memory_key, memory_type, value,"
         f" created_at) VALUES ('o', '{namespace}', 'a', 'k', 'semantic', 'v',"
@@ -37,10 +38,12 @@ async def _names(ch: LocalCH, prefixes: tuple[str, ...], exclude: tuple[str, ...
 
 
 @pytest.mark.asyncio
-async def test_underscore_and_percent_in_a_prefix_match_only_themselves() -> None:
-    ch = _local_ch("lme_r1", "lmeXr1", "lme%r2", "lmeYYr2", "other")
+async def test_underscore_percent_and_backslash_in_a_prefix_match_only_themselves() -> None:
+    ch = _local_ch("lme_r1", "lmeXr1", "lme%r2", "lmeYYr2", "lme\\r3", "lmer3", "other")
     assert await _names(ch, ("lme_r",)) == {"lme_r1"}
     assert await _names(ch, ("lme%r",)) == {"lme%r2"}
+    assert await _names(ch, ("lme\\r",)) == {"lme\\r3"}
+    assert await _names(ch, ("lme_r", "oth")) == {"lme_r1", "other"}
 
 
 @pytest.mark.asyncio
