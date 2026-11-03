@@ -108,7 +108,8 @@ async def knowledge_with_repo_docs(
     top_k = int(know_input.top_k)
     if base.reranked_by:
         # A reranked answer keeps its order, and its fused scores no longer rank it against
-        # the repository's: the repository's best hits take up to half the page, after it.
+        # the repository's: the repository's best hits take the rest of the page, and half
+        # of a full one, after it.
         listed = {(h.namespace, h.source_uri, h.chunk_idx) for h in base.results}
         more = merge_hits(
             [], [h for h in extra if (h.namespace, h.source_uri, h.chunk_idx) not in listed], top_k

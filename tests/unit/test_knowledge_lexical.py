@@ -67,6 +67,7 @@ async def test_lexical_search_sql_shape_and_cold_corpus_short_circuit() -> None:
                 "chunk_idx": 2,
                 "content": "Deploy then rollback",
                 "tags": [],
+                "context": "Ops",
                 "chunk_metadata": '{"section_path": ["Ops"]}',
                 "distance": 0.4,
                 "lexical": 3.2,
@@ -96,6 +97,7 @@ async def test_lexical_search_sql_shape_and_cold_corpus_short_circuit() -> None:
     assert params["toks"] == ["deploy", "rollback"] and params["idfs"] == [1.5, 2.5]
     assert params["avgdl"] == 120.0
     assert hits[0].lexical_score == 3.2 and hits[0].score == 3.2 and hits[0].section == "Ops"
+    assert hits[0].context == "Ops"  # the stored context rides the hit, for a reranker
     assert hits[0].distance == 0.4  # the lexical leg carries the cosine too
     # cold namespace / no tokens: no query issued
     assert await lexical_search(_q(avgdl=0.0), ch=StubCH()) == []

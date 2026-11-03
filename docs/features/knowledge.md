@@ -187,7 +187,8 @@ hybrid mode) and, on a fan-out, the `namespace` it came from.
 
 **Reranking.** `rerank` names a reranker (`builtin:openai[:<model>]`, `builtin:cohere[:<model>]`
 or an endpoint in `LOOM_RERANK_ENDPOINTS_JSON`; a URL is refused), or the deployment
-sets `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT`, which every caller of the search takes. The
+sets `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT`, which every caller of the search takes
+but `loom_search`'s repository-docs leg. The
 legs then fetch at least `LOOM_KNOWLEDGE_SEARCH_RERANK_TOP` hits (30), and the reranker
 reads each one's context (title, description, breadcrumb; at most half the excerpt) and
 text, `LOOM_KNOWLEDGE_SEARCH_RERANK_EXCERPT_CHARS` characters (800), and orders them
