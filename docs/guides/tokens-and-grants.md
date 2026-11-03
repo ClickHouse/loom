@@ -295,7 +295,7 @@ what was asked for, cut to what the caller's token allows and to the caller's li
 - the caller's org only (an org-wide `*` token names one);
 - `viewer`, `writer` or `admin` only; `org_admin` and `platform_admin` are never delegated;
 - on each named namespace, at most the person's live grant; a namespace without one is
-  refused (403 naming it). A per-namespace child of a sign-in token (or of a
+  refused (403 naming it). A per-namespace child of a sign-in token (or of a flat
   `loom mint-token` token) takes that grant, as the gate admits the token there on its
   grant alone. A flat child, a child of a delegated or per-namespace token, and a child on
   a restricted namespace also stay inside the caller's token role there;
