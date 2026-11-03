@@ -115,7 +115,7 @@ built from it is right.
   document corpus (`bench/fixtures/knowledge_retrieval/`): recall@1/5/10, MRR,
   nDCG@10 and all-gold recall per query kind (shared section layouts, error
   codes, paraphrases, old and current policy versions, multi-document
-  questions), and the top-hit score on unanswerable queries; `--param KEY=VALUE`
+  questions), and the top-hit similarity on unanswerable queries; `--param KEY=VALUE`
   sets any search field.
 - **`narrativeqa.py`** — NarrativeQA through the knowledge plane:
   long-document QA with F1 / ROUGE-L, build time and tokens per question.

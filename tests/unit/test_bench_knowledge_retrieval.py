@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from bench.knowledge_retrieval import FIXTURE, load_fixture, parse_params, score_query
 
 GOLD = [["a.md", "answer one"], ["b.md", "answer two"]]
@@ -31,6 +33,13 @@ def test_all_gold_needs_every_passage_and_counts_each_once() -> None:
     assert m["all_gold@10"] == 1.0
 
 
+def test_one_hit_holding_two_gold_passages_credits_both() -> None:
+    gold = [["a.md", "first"], ["a.md", "second"]]
+    m = score_query([_hit("a.md", "first then second")], gold)
+    assert m["all_gold@10"] == 1.0
+    assert m["ndcg@10"] == 1.0
+
+
 def test_a_miss_scores_zero() -> None:
     m = score_query([_hit("c.md", "nothing")], GOLD)
     assert m == {
@@ -44,11 +53,16 @@ def test_a_miss_scores_zero() -> None:
 
 
 def test_params_take_json_values_or_plain_strings() -> None:
-    assert parse_params(["top_k=5", "search_mode=semantic", "narrow_spans=true"]) == {
-        "top_k": 5,
+    assert parse_params(["lexical_weight=0.5", "search_mode=semantic", "narrow_spans=true"]) == {
+        "lexical_weight": 0.5,
         "search_mode": "semantic",
         "narrow_spans": True,
     }
+
+
+def test_top_k_is_refused_since_the_metrics_are_at_depth_ten() -> None:
+    with pytest.raises(SystemExit, match="top_k"):
+        parse_params(["top_k=5"])
 
 
 def test_every_gold_passage_is_in_its_document() -> None:

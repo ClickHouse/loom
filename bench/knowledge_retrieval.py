@@ -4,14 +4,14 @@ The fixture (`bench/fixtures/knowledge_retrieval/`) is synthetic: handbooks of
 four fictional products that share one heading layout, runbooks keyed by error
 code, an old and a current version of one policy, design notes and meeting
 notes. Each query names its relevant passages as (source_uri, answer text)
-pairs, so the labels survive a change of chunk size or chunker: a hit is
-relevant when it comes from that document and its content holds that text.
-Queries the corpus cannot answer carry no gold and measure how confident the
-top hit still looks.
+pairs: a hit is relevant when it comes from that document and its content holds
+that text, so the labels survive a chunker change that keeps each answer inside
+one chunk. Queries the corpus cannot answer carry no gold and measure how
+similar the top hit still looks.
 
-Two phases, run together by default; a run that ingests erases its namespace at
-the end unless `--keep-namespace` (implied by `--phase ingest`) keeps it for
-later search arms:
+Two phases, run together by default into a fresh namespace that is erased when
+the run ends. To compare arms on one ingest, ingest once into a named namespace
+(`--phase ingest` keeps it) and search it per arm:
 
     PYTHONPATH=$PWD .venv/bin/python bench/knowledge_retrieval.py \\
         --base-url http://localhost:7790 --namespace kr-eval --phase ingest
@@ -19,13 +19,17 @@ later search arms:
         --base-url http://localhost:7790 --namespace kr-eval --phase search \\
         --param search_mode=hybrid --out /tmp/kr.json
 
+A kept namespace stays until it is erased:
+`loom namespaces-gc --org bench --include-registered --erase --namespace kr-eval`.
+
 `--param KEY=VALUE` (JSON value, or a plain string) sets any `knowledge.search`
-field, so two arms differ by one flag. Reports recall@1/5/10 (a query counts
-when any relevant passage is in the top k), all-gold recall@10 (every relevant
-passage found, for the multi-document questions), MRR and nDCG@10, overall and
-per query kind, plus the mean top-hit score on unanswerable queries.
-Ingesting embeds 21 documents (about 130 chunks): a few cents with a hosted
-embedder, free with a local one.
+field but `top_k`, so two arms differ by one flag. Reports recall@1/5/10 (a
+query counts when any relevant passage is in the top k), all-gold recall@10
+(every relevant passage found, for the multi-document questions), MRR and
+nDCG@10, overall and per query kind, plus the mean top-hit cosine similarity on
+unanswerable queries. The `freshness` and `multi` kinds hold three and four
+queries, so their per-kind figures are coarse. Ingesting embeds 21 documents
+(about 100 chunks): a few cents with a hosted embedder, free with a local one.
 """
 
 from __future__ import annotations
@@ -34,9 +38,12 @@ import argparse
 import json
 import math
 import os
+import secrets
 import sys
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -49,6 +56,9 @@ from bench.bench_namespaces import (
 
 FIXTURE = Path(__file__).parent / "fixtures" / "knowledge_retrieval"
 KS = (1, 5, 10)
+TOP_K = max(KS)
+
+Post = Callable[[str, dict], Any]
 
 
 def load_fixture(root: Path) -> tuple[list[dict], list[dict]]:
@@ -57,28 +67,28 @@ def load_fixture(root: Path) -> tuple[list[dict], list[dict]]:
     return docs, queries
 
 
-def relevant(hit: dict, gold: list[list[str]]) -> int | None:
-    """The index of the gold passage `hit` holds, or None."""
-    for i, (uri, text) in enumerate(gold):
-        if hit.get("source_uri") == uri and text in (hit.get("content") or ""):
-            return i
-    return None
+def relevant(hit: dict, gold: list[list[str]]) -> list[int]:
+    """The indexes of the gold passages `hit` holds."""
+    content = hit.get("content") or ""
+    return [
+        i for i, (uri, text) in enumerate(gold) if hit.get("source_uri") == uri and text in content
+    ]
 
 
 def score_query(hits: list[dict], gold: list[list[str]]) -> dict[str, float]:
     """Binary-relevance metrics for one query. A gold passage counts once, at its best rank."""
     found: dict[int, int] = {}
     for rank, hit in enumerate(hits, start=1):
-        g = relevant(hit, gold)
-        if g is not None and g not in found:
-            found[g] = rank
+        for g in relevant(hit, gold):
+            found.setdefault(g, rank)
     first = min(found.values(), default=None)
     out = {f"recall@{k}": float(first is not None and first <= k) for k in KS}
     out["all_gold@10"] = float(len([r for r in found.values() if r <= 10]) == len(gold))
     out["mrr"] = 1.0 / first if first else 0.0
     dcg = sum(1.0 / math.log2(r + 1) for r in found.values() if r <= 10)
     ideal = sum(1.0 / math.log2(r + 1) for r in range(1, min(len(gold), 10) + 1))
-    out["ndcg@10"] = dcg / ideal if ideal else 0.0
+    # Capped: one chunk holding two gold passages credits both at its rank.
+    out["ndcg@10"] = min(1.0, dcg / ideal) if ideal else 0.0
     return out
 
 
@@ -96,9 +106,12 @@ def mean_by_kind(rows: list[dict]) -> dict[str, dict[str, float]]:
 
 
 def parse_params(pairs: list[str]) -> dict:
+    """`KEY=VALUE` pairs as search fields; `top_k` is refused, since the metrics are @10."""
     out = {}
     for pair in pairs:
         key, _, raw = pair.partition("=")
+        if key == "top_k":
+            raise SystemExit("--param top_k is refused: the metrics are computed at depth 10")
         try:
             out[key] = json.loads(raw)
         except json.JSONDecodeError:
@@ -106,45 +119,40 @@ def parse_params(pairs: list[str]) -> dict:
     return out
 
 
-def ingest(
-    client: httpx.Client, base: str, org: str, namespace: str, docs: list[dict], keep: bool
-) -> None:
-    def post(path: str, body: dict) -> dict:
-        return post_json(client, f"{base}{path}", body, attempts=3)
-
+def ingest(post: Post, org: str, namespace: str, docs: list[dict], keep: bool) -> None:
     register_bench_namespace_sync(
         post, org=org, namespace=namespace, description="knowledge retrieval fixture", keep=keep
     )
     remember_bench_namespace(org, namespace)
     for d in docs:
-        body = {"org": org, "namespace": namespace, **d}
-        post_json(client, f"{base}/v1/knowledge.upsert", body, attempts=3)
+        post("/v1/knowledge.upsert", {"org": org, "namespace": namespace, **d})
     print(f"ingested {len(docs)} documents into {org}/{namespace}", file=sys.stderr)
 
 
-def search(
-    client: httpx.Client, base: str, org: str, namespace: str, queries: list[dict], params: dict
-) -> dict:
+def search(post: Post, org: str, namespace: str, queries: list[dict], params: dict) -> dict:
     rows, unanswerable = [], []
+    any_hits = False
     for q in queries:
         body = {
             "org": org,
             "namespace": namespace,
             "namespace_scope": "this",
             "query": q["query"],
-            "top_k": 10,
             **params,
+            "top_k": TOP_K,
         }
-        hits = post_json(client, f"{base}/v1/knowledge.search", body, attempts=3)["results"]
+        hits = post("/v1/knowledge.search", body)["results"]
         if not q["gold"]:
-            unanswerable.append(hits[0]["score"] if hits else 0.0)
+            unanswerable.append(hits[0]["similarity"] if hits else 0.0)
             continue
-        m = score_query(hits, q["gold"])
-        rows.append({"id": q["id"], "kind": q["kind"], "metrics": m})
+        any_hits = any_hits or bool(hits)
+        rows.append({"id": q["id"], "kind": q["kind"], "metrics": score_query(hits, q["gold"])})
+    if not any_hits:
+        raise SystemExit(f"no query found anything in {org}/{namespace}: was it ingested?")
     return {
         "params": params,
         "metrics": mean_by_kind(rows),
-        "unanswerable_top_score": round(sum(unanswerable) / max(1, len(unanswerable)), 3),
+        "unanswerable_top_similarity": round(sum(unanswerable) / max(1, len(unanswerable)), 3),
         "misses@5": [r["id"] for r in rows if not r["metrics"]["recall@5"]],
         "queries": rows,
     }
@@ -155,34 +163,40 @@ def main() -> int:
     ap.add_argument("--base-url", default=os.environ.get("LOOM_BASE_URL", "http://localhost:7777"))
     ap.add_argument("--token", default=os.environ.get("LOOM_API_KEY", ""))
     ap.add_argument("--org", default="bench")
-    ap.add_argument("--namespace", default="knowledge-retrieval")
+    ap.add_argument(
+        "--namespace",
+        help="the namespace to ingest into or search (default: a fresh one per run)",
+    )
     ap.add_argument("--fixture", type=Path, default=FIXTURE)
     ap.add_argument("--phase", choices=("ingest", "search", "both"), default="both")
     ap.add_argument("--param", action="append", default=[], help="knowledge.search KEY=VALUE")
     ap.add_argument(
-        "--keep-namespace",
+        "--keep-namespaces",
         action="store_true",
         help="keep the ingested namespace for later --phase search runs (implied by --phase ingest)",
     )
     ap.add_argument("--out", type=Path, help="write the full report (per query) as JSON")
     args = ap.parse_args()
+    if args.phase == "search" and not args.namespace:
+        ap.error("--phase search needs the --namespace an earlier --phase ingest filled")
 
+    params = parse_params(args.param)
+    namespace = args.namespace or f"knowledge-retrieval-{secrets.token_hex(4)}"
     docs, queries = load_fixture(args.fixture)
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
     base = args.base_url.rstrip("/")
-    keep = args.keep_namespace or args.phase == "ingest"
+    keep = args.keep_namespaces or args.phase == "ingest"
     with httpx.Client(timeout=120, headers=headers) as client:
 
-        def post(path: str, body: dict) -> dict:
+        def post(path: str, body: dict) -> Any:
             return post_json(client, f"{base}{path}", body, attempts=3)
 
         with erase_on_exit_sync(post, org=args.org, keep=keep):
             if args.phase in ("ingest", "both"):
-                ingest(client, base, args.org, args.namespace, docs, keep)
+                ingest(post, args.org, namespace, docs, keep)
             if args.phase == "ingest":
                 return 0
-            params = parse_params(args.param)
-            report = search(client, base, args.org, args.namespace, queries, params)
+            report = search(post, args.org, namespace, queries, params)
     if args.out:
         args.out.write_text(json.dumps(report, indent=1) + "\n")
     summary = {k: v for k, v in report.items() if k != "queries"}
