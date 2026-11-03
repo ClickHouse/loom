@@ -388,15 +388,21 @@ _CONTRACT: dict[str, RuleContract] = {
     ),
     "version_churn": RuleContract(
         "usage_heuristic",
-        # 2: a version that repeats the one before it (a status change) is not counted.
+        # 2: a version that keeps the value and its reinforcement count is not counted.
         2,
         exceptions=(
-            "A version that copies the one before it of the same row (agent, user, session, "
-            "key; a status change: conflict marking, supersession) is not counted. A writer "
-            "restating the same value counts, as does a value that flips back and forth and "
-            "a version with no recorded hash."
+            "A version of the same row (agent, user, session, key) that keeps the value and "
+            "the reinforcement count of the one before it is not counted: a status change "
+            "(conflict marking, supersession), a tags or confidence edit, a pin or lock, and "
+            "the server's own copies of a write. A new value counts, as do a restatement of "
+            "the same value, a value that flips back and forth and a version with no "
+            "recorded hash."
         ),
-        uncertainty="A fact that really changes often leaves a long history that is not waste.",
+        uncertainty=(
+            "A fact that really changes often leaves a long history that is not waste, and a "
+            "row whose tags are edited over and over stores a copy each time that is not "
+            "counted."
+        ),
     ),
 }
 
@@ -928,9 +934,9 @@ class _Audit:
             SELECT sum(versions) OVER () AS total, sum(bytes) OVER () AS total_bytes,
                    memory_key, versions, bytes
             FROM (SELECT memory_key, count() AS versions, sum(chars) AS bytes
-                  -- a version that copies the one before it of the same row (a status
-                  -- change: conflict marking, supersession) rewrites nothing; a writer's
-                  -- restatement bumps reinforcement_count and is a rewrite
+                  -- a version that keeps the value and its reinforcement count of the one
+                  -- before it (a status change, a tags edit, a pin, the server's own
+                  -- copies of a write) rewrites nothing; a restatement bumps the count
                   FROM (SELECT memory_key, value_len AS chars,
                                -- a version with no recorded hash (the column's '0'
                                -- default) is not known to repeat, so it counts

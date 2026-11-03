@@ -13,7 +13,6 @@ Run: LOOM_BASE_URL=... LOOM_CH_HOST=... pytest -s tests/integration/test_finding
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from collections.abc import Awaitable, Callable
@@ -161,8 +160,14 @@ async def unavailable_telemetry(ns: _Ns) -> None:
         return await ledgered() >= 4
 
     await eventually(every_write_ledgered, description="the writes reach the ledger")
-    # The audit judges only writes older than its ledger lag (60 s): wait past it.
-    await asyncio.sleep(61)
+    # The audit judges only rows older than its ledger lag (60 s): the rows are written
+    # again as created two minutes ago, at a newer version, rather than waited on.
+    ns.ch.command(
+        "INSERT INTO loom.memory SELECT * REPLACE (created_at - INTERVAL 2 MINUTE AS "
+        "created_at, version + 1 AS version) FROM loom.memory FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String}",
+        parameters={"org": ORG, "ns": ns.name},
+    )
     # The ledger lost the window: the writes are there, their calls are not.
     ns.ch.command(
         "DELETE FROM loom.agent_events WHERE org = {org:String} AND namespace = {ns:String}",

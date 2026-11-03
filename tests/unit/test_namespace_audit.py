@@ -1148,9 +1148,15 @@ async def test_hot_key_completeness_compares_counts_of_one_statement(
 _THRESHOLDS = {
     "exact_key_store": (
         2,
-        (na.EXACT_KEY_STORE_RATIO, na.EXACT_KEY_STORE_MIN_GETS, na.HOT_KEY_READS),
-        (20.0, 200, 20),
+        (
+            na.EXACT_KEY_STORE_RATIO,
+            na.EXACT_KEY_STORE_MIN_GETS,
+            na.HOT_KEY_READS,
+            tuple(sorted(na.STRUCTURED_TYPES)),
+        ),
+        (20.0, 200, 20, ("procedural",)),
     ),
+    "intentional_exact_key_reads": (1, (tuple(sorted(na.STRUCTURED_TYPES)),), (("procedural",),)),
     "hand_rolled_index_rows": (
         1,
         (na.INDEX_ROW_MIN_KEYS, na.INDEX_ROW_VALUE_CLIP, na._TOKEN_SPLIT_RE.pattern),
@@ -1192,8 +1198,9 @@ _THRESHOLDS = {
             na.COORDINATION_VALUE_CHARS,
             na.COORDINATION_MAX_WORDS,
             na.COORDINATION_SEGMENTS,
+            tuple(sorted(na.STRUCTURED_TYPES)),
         ),
-        (20, 160, 8, ("lease", "leases", "lock", "locks", "freeze", "freezes")),
+        (20, 160, 8, ("lease", "leases", "lock", "locks", "freeze", "freezes"), ("procedural",)),
     ),
     "episodic_blobs": (1, (na.EPISODIC_BLOB_CHARS,), (50_000,)),
     "version_churn": (
@@ -1201,7 +1208,11 @@ _THRESHOLDS = {
         (na.VERSION_CHURN_ROWS_RATIO, na.VERSION_CHURN_BYTES_RATIO),
         (3.0, 2.0),
     ),
-    "index_backlog": (1, (na.INDEX_GRACE_SECONDS,), (600,)),
+    "index_backlog": (
+        1,
+        (na.INDEX_GRACE_SECONDS, na.EMBED_HOLDS),
+        (600, ("model call held", "MODEL_CALL_UNATTRIBUTED: the row names no org to bill")),
+    ),
     "telemetry_unavailable": (1, (na.TELEMETRY_LAG_SECONDS,), (60,)),
 }
 
@@ -1434,7 +1445,7 @@ async def test_a_workers_revision_of_an_old_row_is_not_an_unrecorded_write() -> 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.asyncio
-async def test_version_churn_counts_each_writers_distinct_contents() -> None:
+async def test_version_churn_counts_rewrites_and_drops_status_changes() -> None:
     def version(user: str, key: str, version: int, sha: str, reinforced: int = 1) -> str:
         return (
             "INSERT INTO loom.memory_versions (org, namespace, agent, user_id, session_id, "
@@ -1444,7 +1455,7 @@ async def test_version_churn_counts_each_writers_distinct_contents() -> None:
         )
 
     rows = [
-        # u1 wrote once, then two status changes copied the same value.
+        # u1 wrote once, then a conflict marking and a tags edit copied the value.
         version("u1", "pref/tz", 1, "a"),
         version("u1", "pref/tz", 2, "a"),
         version("u1", "pref/tz", 3, "a"),
@@ -1454,7 +1465,7 @@ async def test_version_churn_counts_each_writers_distinct_contents() -> None:
         *(version("u1", "job/state", v, "ab"[v % 2]) for v in range(1, 5)),
         # Versions with no recorded hash (the column's default) are not known to repeat.
         *(version("u1", "old/key", v, "") for v in range(1, 4)),
-        # A writer restating the same value rewrites the row each time.
+        # A writer restating the value bumps its reinforcement count each time.
         *(version("u1", "same/value", v, "c", reinforced=v) for v in range(1, 4)),
     ]
     audit = na.new_audit(_inp(), ch=_LocalCH(["memory_versions"], rows))

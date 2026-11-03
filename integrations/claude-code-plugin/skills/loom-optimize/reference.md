@@ -12,7 +12,7 @@ it follows is `docs/guides/investigation-agent-memory.md`.
 | `coordination_as_memory` | the block goes to working memory; the old key moves with `keep_redirect: true` so the writer's next `memory.get` still answers | `working_memory.set {block_key}` then `memory.move` |
 | `hand_rolled_index_rows` | leave the rows readable, add `tags: [kind:index, deprecated]`, and tell the writer to stop writing them — the key is the index | `memory.update_by_id` (tags only) |
 | `exact_key_store` | a writer change: exact-key reads of one key belong in working memory; recall goes through `memory.search`. No data change | none — list the keys |
-| `version_churn` | a writer change: the same key rewritten again and again, with new or the same content (a status change that copies the row is not counted); no data change | none — list the keys |
+| `version_churn` | a writer change: the same key rewritten again and again, with new or restated content (a copy that keeps the value, such as a conflict marking, a tags edit or a pin, is not counted); no data change | none — list the keys |
 | `unembedded_rows` | covered by `oversized_values` / `episodic_blobs` when the same rows appear there; otherwise list them for the owner | none |
 | `telemetry_unavailable`, `index_backlog`, `intentional_exact_key_reads` | nothing for the writer: the deployment's state (kind `system_state`) or a workflow. While `telemetry_unavailable` warns, the ledger checks are in `skipped`, not clean: rerun once the ledger covers the window; a stalled `index_backlog` goes to the deployment's owner | none — no section in the plan |
 
