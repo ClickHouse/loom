@@ -322,7 +322,6 @@ def main() -> int:
         help=f"the namespace to ingest into or search, never erased; starts with {PREFIX!r} "
         "(default: a fresh one per run, erased at its end)",
     )
-    ap.add_argument("--fixture", type=Path, default=FIXTURE)
     ap.add_argument("--phase", choices=("ingest", "search", "both"), default="both")
     ap.add_argument("--param", action="append", default=[], help="knowledge.search KEY=VALUE")
     ap.add_argument("--out", type=Path, help="write the full report (per query) as JSON")
@@ -332,7 +331,7 @@ def main() -> int:
 
     params = parse_params(args.param)
     namespace, keep = run_namespace(args.namespace)
-    docs, queries = load_fixture(args.fixture)
+    docs, queries = load_fixture(FIXTURE)
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
     base = args.base_url.rstrip("/")
     with httpx.Client(headers=headers) as client:
@@ -340,7 +339,10 @@ def main() -> int:
         def post(path: str, body: dict[str, Any]) -> Any:
             return post_json(client, f"{base}{path}", body, attempts=3, timeout_s=120.0)
 
-        instrument = run_metadata(client.get(f"{base}/v1/health", timeout=30).json())
+        health = client.get(f"{base}/v1/health", timeout=30)
+        if health.status_code != 200:
+            raise SystemExit(f"{base}/v1/health answered {health.status_code}: no run")
+        instrument = run_metadata(health.json())
         require_real_embedder(instrument)
         # Two reports pair only when they scored one corpus, one query set and one chunking.
         instrument["fixture"] = fixture_tag(docs)
