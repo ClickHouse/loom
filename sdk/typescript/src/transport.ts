@@ -99,6 +99,8 @@ export interface TransportOptions {
 export interface CallOptions {
   timeoutMs?: number;
   idempotencyKey?: string;
+  /** Sent as `X-Request-Id` when it is 1 to 64 letters, digits, `.`, `_` or `-` (the form the
+   *  server keeps); otherwise a random id is sent, so the logs and the server name one id. */
   requestId?: string;
   signal?: AbortSignal;
   /** Per-call retry override; `{ maxAttempts: 1 }` disables retries for this call. */
@@ -250,7 +252,7 @@ export class Transport {
   private async send<T>(method: "GET" | "POST", op: string, body: unknown, opts: CallOptions): Promise<CallResult<T>> {
     const headers: Record<string, string> = { ...this.headers };
     if (this.#apiKey) headers.Authorization = `Bearer ${this.#apiKey}`;
-    const requestId = opts.requestId ?? randomId();
+    const requestId = opts.requestId && REQUEST_ID.test(opts.requestId) ? opts.requestId : randomId();
     headers["X-Request-Id"] = requestId;
     const isGet = method === "GET";
     if (isGet) delete headers["Content-Type"];
@@ -699,6 +701,9 @@ function describe(e: unknown): string {
 function isAbort(e: unknown): boolean {
   return !!e && typeof e === "object" && (e as { name?: string }).name === "AbortError";
 }
+
+// The request ids the server keeps as sent; it replaces any other with its own.
+const REQUEST_ID = /^[A-Za-z0-9._-]{1,64}$/;
 
 export function randomId(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
