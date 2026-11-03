@@ -83,7 +83,7 @@ async def test_the_head_takes_the_rerankers_order_and_shows_each_chunks_context(
     monkeypatch.setattr(rerank_mod, "rerank", _reversed)
     hits = [_hit("a.md"), _hit("b.md"), _hit("c.md")]
     contexts = {("n", "a.md", 0): "Lantern handbook > Refunds"}
-    out, reranked = await ks._rerank("builtin:openai", "refunds", hits, contexts)
+    out, reranked = await ks._rerank("builtin:openai", "refunds", hits, contexts, 2)
     assert reranked is True
     # the head of two is reversed; the third stays after it
     assert [h.source_uri for h in out] == ["b.md", "a.md", "c.md"]
@@ -104,7 +104,7 @@ async def test_a_rerank_that_keeps_the_fused_order_says_none_ran(monkeypatch, co
 
     monkeypatch.setattr(rerank_mod, "rerank", _kept)
     hits = [_hit("a.md"), _hit("b.md")]
-    out, reranked = await ks._rerank("builtin:openai", "q", hits, {})
+    out, reranked = await ks._rerank("builtin:openai", "q", hits, {}, 30)
     assert reranked is False and out is hits
 
 
@@ -203,6 +203,10 @@ async def test_a_held_model_call_fails_the_search_instead_of_keeping_the_fused_o
     async def _held(**kw: Any) -> list[Any]:
         raise customer.HOLDS[0]("held")
 
+    from server.knowledge.app.search import ChunkHit
+
+    hits = [ChunkHit("n", f"{c}.md", 0, c, [], distance=0.1) for c in "ab"]
+    _stub_handler(monkeypatch, hits)
     monkeypatch.setattr(rerank_mod, "rerank", _held)
     with pytest.raises(customer.HOLDS):
-        await ks._rerank("builtin:openai", "q", [_hit("a.md"), _hit("b.md")], {})
+        await ks.handle_knowledge_search(_input(rerank="builtin:openai", namespaces=["n"]))

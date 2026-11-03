@@ -253,7 +253,7 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `results` | `list[_SearchHit]` | Hits best first: in the reranker's order when `reranked_by` is set, else by `score` (then similarity); empty when nothing matched. |
+| `results` | `list[_SearchHit]` | Hits best first: when `reranked_by` is set, the first `knowledge_search_rerank_top` in the reranker's order and any after them (merged repository docs included) by `score`, else all by `score` (then similarity); empty when nothing matched. |
 | `reranked_by` | `str` | The reranker that ordered `results`; empty when no reranker ran, it failed, or it kept the fused order. |
 | `embedding_model` | `str` | Embedding model the query was embedded with; only chunks of this model are searched. |
 | `namespaces_skipped` | `list[str]` | Namespaces of the caller an all_mine search did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |

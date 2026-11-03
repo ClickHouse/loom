@@ -75,7 +75,7 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
         contexts = {
             (ns, h.source_uri, h.chunk_idx): h.context for ns, hits in results_per_ns for h in hits
         }
-        all_hits, reranked = await _rerank(endpoint, input.query, all_hits, contexts)
+        all_hits, reranked = await _rerank(endpoint, input.query, all_hits, contexts, pool)
         reranked_by = endpoint if reranked else ""
     if input.collapse_sections:
         all_hits = _collapse_by_section(all_hits)
@@ -118,15 +118,15 @@ async def _rerank(
     query: str,
     hits: list[_SearchHit],
     contexts: dict[tuple[str, str, int], str],
+    top: int,
 ) -> tuple[list[_SearchHit], bool]:
-    """The fused head (`knowledge_search_rerank_top` hits) in the reranker's order, the
+    """The fused head (`top` hits, the pool the legs fetched) in the reranker's order, the
     rest after it, and whether the reranker produced the order. Each candidate shows the
     chunk's context (title, description, breadcrumb) before its text. A held or refused
     model call fails the search; on any other failure the rerank service hands back its
     input and the fused order is kept."""
     from server.memory.app.rerank import RerankCandidate, rerank
 
-    top = settings.knowledge_search_rerank_top
     chars = settings.knowledge_search_rerank_excerpt_chars
     head, tail = hits[:top], hits[top:]
     candidates = []
