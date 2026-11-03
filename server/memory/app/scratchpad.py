@@ -108,7 +108,14 @@ async def run_rows(
 
 
 async def _session_rows(
-    ch: Any, org: str, namespace: str, agent: str, user_id: str, session_id: str, *, limit: int
+    ch: Any,
+    org: str,
+    namespace: str,
+    *,
+    agent: str,
+    user_id: str,
+    session_id: str,
+    limit: int,
 ) -> list[dict[str, Any]]:
     """The session axis's blocks written without a run, on the identity axes the
     caller named."""
@@ -161,7 +168,9 @@ async def load(
     # '-' too, which is where the plugin's agent-scope note lives.
     if len(rows) < limit:
         seen = {str(r.get("block_key")) for r in rows}
-        session_rows = await _session_rows(ch, org, namespace, ag, uid, sid_axis, limit=limit)
+        session_rows = await _session_rows(
+            ch, org, namespace, agent=ag, user_id=uid, session_id=sid_axis, limit=limit
+        )
         rows.extend(r for r in session_rows if str(r.get("block_key")) not in seen)
         if session_rows and not scope:
             scope = "session"
