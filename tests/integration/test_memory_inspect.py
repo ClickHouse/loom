@@ -153,7 +153,8 @@ async def test_inspect_splits_own_from_others_and_changes_nothing(
         assert anonymous.status_code in (200, 401), anonymous.text[:300]
         if anonymous.status_code == 200:
             # Auth is off: a caller with no token may read the policy, and none is set.
-            assert anonymous.json()["settings"]["extraction_policy"] == ""
+            anonymous_settings = anonymous.json()["settings"]
+            assert anonymous_settings["extraction_policy"] == "", anonymous_settings
         assert user["skipped"] == []
 
         session = await post("memory.inspect", {"subject": "session", "id": "s1"})
