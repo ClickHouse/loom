@@ -172,7 +172,12 @@ class _Inspect:
         if rows:
             out.first_at = min(r["first_at"] for r in rows)
             out.last_at = max(r["last_at"] for r in rows)
-        keep = settings.retention_agent_events_days
+        own = await self.guarded(
+            "activity.retention", lambda: store.namespace_retention_days(i.org, i.namespace), None
+        )
+        # A namespace's own retention wins over the table's global one; with neither read,
+        # no gap is claimed.
+        keep = 0 if own is None else own or int(settings.retention_agent_events_days)
         if keep and keep * 86400 < i.window_seconds:
             out.gap = f"The ledger keeps {keep} days, so calls older than that are not counted."
         return out

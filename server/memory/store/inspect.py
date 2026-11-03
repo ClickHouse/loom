@@ -228,3 +228,14 @@ async def subject_calls(
             skip=list(skip_consumers),
         ),
     )
+
+
+async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
+    """The namespace's own `retention_days`, which sets its ledger's TTL (0 when it sets
+    none or is not registered)."""
+    row = await (ch or _default_client()).query_one(
+        "SELECT retention_days FROM loom.namespaces FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} LIMIT 1",
+        params={"org": org, "ns": namespace},
+    )
+    return int(row["retention_days"]) if row else 0

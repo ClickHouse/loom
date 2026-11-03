@@ -68,9 +68,11 @@ def _newest(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _ch(tags: Any = None, counts: Any = _counts) -> RecordingCH:
+def _ch(tags: Any = None, counts: Any = _counts, retention: Any = 0) -> RecordingCH:
+    retention_rows = retention if callable(retention) else [{"retention_days": retention}]
     return (
         RecordingCH()
+        .on("FROM loom.namespaces FINAL", retention_rows)
         .on("GROUP BY memory_type, status, source_class", counts)
         .on("arrayJoin(tags)", tags or [{"tag": "deploy", "rows": 2}])
         .on("AS item_count", [{"category_id": "c1", "item_count": 1}])
@@ -190,6 +192,36 @@ async def test_activity_leaves_out_inspectors_and_names_the_retention_gap(
 
     monkeypatch.setattr(settings, "retention_agent_events_days", 0)
     assert (await mi.handle_memory_inspect(_inp())).activity.gap == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("own", "deployment", "gap"),
+    [(3, 0, "keeps 3 days"), (30, 3, ""), (0, 3, "keeps 3 days")],
+)
+async def test_the_namespaces_own_retention_wins_for_the_gap(
+    monkeypatch: pytest.MonkeyPatch, own: int, deployment: int, gap: str
+) -> None:
+    from server.settings import settings
+
+    fake = _ch(retention=own)
+    fake.strict = False
+    fake.install(monkeypatch, "server.identity.app.namespace_catalog")
+    monkeypatch.setattr(settings, "retention_agent_events_days", deployment)
+    out = await mi.handle_memory_inspect(_inp(window_seconds=7 * 86400))
+    assert (gap in out.activity.gap) if gap else out.activity.gap == ""
+
+
+@pytest.mark.asyncio
+async def test_an_unread_retention_claims_no_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.settings import settings
+
+    fake = _ch(retention=_boom)
+    fake.strict = False
+    fake.install(monkeypatch, "server.identity.app.namespace_catalog")
+    monkeypatch.setattr(settings, "retention_agent_events_days", 3)
+    out = await mi.handle_memory_inspect(_inp(window_seconds=7 * 86400))
+    assert out.activity.gap == "" and "activity.retention: RuntimeError" in out.skipped
 
 
 @pytest.mark.asyncio

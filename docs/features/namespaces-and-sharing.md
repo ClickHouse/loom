@@ -178,7 +178,9 @@ are refused. It writes nothing: no recall credit, no usage event.
 - **`own`**: the live rows whose identity names the subject. For an agent that is what it
   wrote; the agent name records the writer and is not a read boundary. For a user, the
   rows filed under that `user_id`, whoever wrote them: what a token pinned to the user
-  (`read_scope: own_user`) reads.
+  (`read_scope: own_user`) reads. For a session, the rows written in that `session_id`
+  by any user; a token pinned to one user and the session (`read_scope: own_session`)
+  reads that user's part.
 - **`others`**: every other live row of the namespace. A member reads these as well, so
   `own` alone never stands for everything a user, agent or session can read. Neither
   view counts the promoted rows (`memory.promote`), which a search serves to every
@@ -196,7 +198,8 @@ are refused. It writes nothing: no recall credit, no usage event.
   `session_id` its arguments name, or the user and session a narrowed token is pinned
   to, so a call made by anyone that names the subject is counted, and a served
   `memory.inspect`, which names none, is not. A call shows that a tool ran, not that its
-  result reached a model. `gap` says when the ledger keeps fewer days than the window.
+  result reached a model. `gap` says when the ledger keeps fewer days than the window (the
+  namespace's own `retention_days`, else the deployment's).
 - **`settings`**: the guide's revision and summary, the number of registered categories,
   and the operator extraction policy only for an org admin
   (`extraction_policy_unavailable` says why it is missing). Extraction instructions are

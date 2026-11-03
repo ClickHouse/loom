@@ -124,7 +124,8 @@ class InspectActivity(BaseModel):
     first_at: datetime | None = None
     # The last call counted.
     last_at: datetime | None = None
-    # Why the counts may cover less than the window (ledger retention), or "".
+    # Why the counts may cover less than the window (the ledger's retention: the
+    # namespace's own `retention_days`, else the global one), or "".
     gap: str = ""
 
 
