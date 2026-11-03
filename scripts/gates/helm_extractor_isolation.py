@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Render the chart with the extractor on and check what its pods can be
 reached by and reach: no Service, policy or workload that selects Loom's pods
-selects them, their own policy admits only Loom's pods and allows no egress, and
-a new extractor token restarts both sides.
+selects them, their own policy admits only Loom's pods and allows no egress, a
+new extractor token restarts both sides, and the Loom pods get the extractor's URL
+unless env or extraEnv names their own.
 
     python scripts/gates/helm_extractor_isolation.py
 
@@ -98,13 +99,18 @@ def main() -> None:
             before, after = annotations(docs), annotations(rotated)
             changed = [name for name in before if before[name] != after[name]]
             assert sorted(changed) == sorted(before), f"a new token restarts only {changed}"
-    # An operator's own URL, through env or extraEnv, is left alone.
+    # The chart points the Loom pods at its extractor, unless an operator's own
+    # URL, through env or extraEnv, says otherwise.
+    url = "http://loom-extractor:8790"
+    assert url in yaml.safe_dump_all(
+        render("values-kind.yaml", "secrets.extractorToken=" + "t" * 24)
+    )
     for own in (
         "env.LOOM_DOCUMENT_EXTRACTOR_URL=http://mine:8790",
         "extraEnv[0].name=LOOM_DOCUMENT_EXTRACTOR_URL",
     ):
         docs = render("values-kind.yaml", "secrets.extractorToken=" + "t" * 24, own)
-        assert "loom-extractor:8790" not in yaml.safe_dump_all(docs), own
+        assert url not in yaml.safe_dump_all(docs), own
     print("extractor isolation: selectors, policy, token key, restarts and URL checked")
 
 
