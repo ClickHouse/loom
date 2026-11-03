@@ -225,7 +225,7 @@ _TEXT: dict[str, tuple[str, str]] = {
         "Searchable rows the embedding worker gave up on (no vector, a recorded error): "
         "invisible to memory.search however well the key is chosen.",
         "Shorten or split the value (`knowledge.upsert` for documents), then memory.set "
-        "the row again; `namespace.validate` lists the same rows under `unembedded`.",
+        "the row again; `namespace.validate` lists them among its `unembedded` rows.",
     ),
     "hash_keys": (
         "Live keys whose last segment is 24+ hex chars, or any segment a 40+ hex sha: "
@@ -277,14 +277,16 @@ _CONTRACT: dict[str, RuleContract] = {
             f"created in the last {TELEMETRY_LAG_SECONDS} seconds is not judged; its "
             "ledger row may not have landed yet. Reports on the namespace (the audit's own "
             "call among them) and the dashboard's or the assistant's reads and page views do "
-            "not close a gap; their calls that change stored state (a memory write, a "
-            "setting, a grant) do."
+            "not close a gap, nor do a worker's own ledger rows; an inspector's calls that "
+            "change stored state (a memory write, a setting, a grant) do."
         ),
         uncertainty=(
             "Rows written in-process, by an importer run without `--base-url` or a worker "
             "that creates keys, leave no ledger row and read as a gap in a quiet namespace, "
             "and so do rows a recent snapshot restored (`namespace.restore` is ledgered "
-            "under no namespace). Copied rows are not judged."
+            "under no namespace). Copied rows are not judged. A ledger that keeps less than "
+            "the window (a retention shorter than it) holds some calls and is not a gap, so "
+            "the ledger checks then count only the part it kept."
         ),
     ),
     "exact_key_store": RuleContract(
@@ -591,10 +593,8 @@ class _Audit:
             SELECT count() AS live_rows, sum(length(value)) AS live_bytes,
                    countIf({_SEARCHABLE}) AS searchable_rows,
                    countIf(memory_type = 'episodic') AS episodic_rows,
-                   -- created, not revised: a worker's revision (a sensitivity relabel) keeps
-                   -- created_at and may leave no ledger row of its own
-                   -- nor copied in: a copy's call is ledgered under no namespace, as its
-                   -- input names a source and a target
+                   -- created in the window: not revised (a worker's relabel keeps created_at)
+                   -- and not copied in (a copy's call is ledgered under no namespace)
                    countIf(created_at >= now() - INTERVAL {{win:UInt32}} SECOND
                            AND created_at < now() - INTERVAL {{lag:UInt32}} SECOND
                            AND cross_promoted_from_namespace = '')
@@ -623,9 +623,9 @@ class _Audit:
     async def summary_ledger(self) -> None:
         r = await self.one(
             f"""
-            -- an inspector's write (a person editing a memory or a profile in the dashboard)
-            -- is a recorded call too; its reads and page views are left out
-            SELECT countIf(operation NOT IN {_REPORT_OPS}
+            -- a request row: a worker's own row (an extractor's spend) says nothing about
+            -- the callers; an inspector's write counts, its reads and page views do not
+            SELECT countIf(operation NOT IN {_REPORT_OPS} AND kind != 'worker'
                            AND ({_AGENT_CALL}
                                 OR operation IN {{state_changes:Array(String)}})) AS ledger_calls,
                    countIf(operation IN {_LEDGER_GETS} AND {_AGENT_CALL}) AS gets,

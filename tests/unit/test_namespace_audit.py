@@ -1394,12 +1394,12 @@ def _memory_row(
     )
 
 
-def _ledger_row(operation: str, *, key: str = "", consumer: str = "") -> str:
+def _ledger_row(operation: str, *, key: str = "", consumer: str = "", kind: str = "request") -> str:
     # A request id of its own: the table drops a repeat of an identical insert.
     return (
         "INSERT INTO loom.agent_events (org, namespace, agent, operation, memory_key, consumer, "
-        f"request_id, ts) VALUES ('o', 'ns', 'bot', '{operation}', '{key}', '{consumer}', "
-        f"'{uuid.uuid4()}', now())"
+        f"kind, request_id, ts) VALUES ('o', 'ns', 'bot', '{operation}', '{key}', '{consumer}', "
+        f"'{kind}', '{uuid.uuid4()}', now())"
     )
 
 
@@ -1415,6 +1415,8 @@ async def test_an_audit_run_twice_still_sees_writes_the_ledger_never_recorded() 
         _ledger_row("memory.search", consumer="loom-ui"),
         # A page view in the dashboard is a write-flagged op that changes no data.
         _ledger_row("ui.vitals", consumer="loom-ui"),
+        # A worker's own row (an extractor's spend on the rows) says nothing about callers.
+        _ledger_row("worker.entity_extractor", kind="worker"),
     ]
     ch = _LocalCH(["memory", "agent_events"], rows)
     audit = na.new_audit(_inp(window_seconds=3600), ch=ch)

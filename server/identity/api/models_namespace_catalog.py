@@ -357,11 +357,8 @@ class NamespaceAuditSummary(BaseModel):
     # Exact-key reads of rows whose type is structured by design (procedures): counted in
     # `gets`, left out of the object-store gauge.
     typed_gets: int = 0
-    # Live rows created in the window (not in its last minute, which the ledger may not
-    # have caught up with, and not copied in from another namespace), and the ledger's
-    # calls for the namespace in it, apart from reports on it and an inspector's calls that
-    # change no stored state (reads, page views): rows created with no calls mean the
-    # counts above were not recorded.
+    # Rows created in the window (not copied in, not in its last minute) and the ledger's
+    # request rows for it bar reports and inspector reads: rows with no calls = unrecorded.
     written_in_window: int = 0
     ledger_calls: int = 0
 
