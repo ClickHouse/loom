@@ -96,15 +96,50 @@ async def test_a_fresh_saga_with_no_actor_at_all_names_no_one_on_every_row(recor
     assert {r["actor"] for r in rows} == {"-"}
 
 
-@pytest.mark.parametrize(("stored", "named"), [("human:admin@o", "human:admin@o"), ("", "-")])
-async def test_a_tokenless_resume_names_the_ledgers_actor_on_its_grant_revocations(
-    recorded: Any, monkeypatch: pytest.MonkeyPatch, stored: str, named: str
+CLI = "process:cli:erasure-re-verify"
+
+
+def _resume_args(stored: str) -> dict[str, Any]:
+    row = _ledger_row(scope_type="user_id", scope_value="u-42", actor=stored)
+    inp = saga.input_from_ledger_row(row)
+    return {
+        "input": inp,
+        "row": saga.request_row_template(
+            erasure_id="e1",
+            input=inp,
+            actor=row["actor"],
+            requested_at=row["requested_at"],
+            attempts=2,
+        ),
+        "erasure_id": "e1",
+        "requested_at": row["requested_at"],
+        "previously_completed": set(),
+    }
+
+
+@pytest.mark.parametrize(
+    ("stored", "outer", "revoked_by", "completed_by"),
+    [
+        ("human:admin@o", "", "human:admin@o", "human:admin@o"),  # the worker
+        ("", "", "-", saga.RECOVERY_WORKER_ACTOR),  # the worker, a row an older build wrote
+        ("human:admin@o", CLI, "human:admin@o", "human:admin@o"),  # the CLI
+        ("", CLI, CLI, CLI),  # the CLI, a row an older build wrote
+    ],
+)
+async def test_a_tokenless_resume_names_one_actor_on_its_grant_revocations_and_rows(
+    recorded: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    stored: str,
+    outer: str,
+    revoked_by: str,
+    completed_by: str,
 ) -> None:
-    """A step's own audit rows (the user's grants revoked) name the saga's actor
-    when the worker resumes it without a token; a row an older build wrote binds
-    nothing, so they name `-` as before."""
+    """A step's own audit rows (the user's grants revoked) name the ledger's actor
+    on a tokenless resume. A row an older build wrote binds nothing, so an outer
+    pipeline actor (the CLI's) still names them, and its `erasure.completed` row."""
     from server.identity.app import grants
 
+    _, audits, _ = recorded
     actors: list[str] = []
 
     async def _revoke(org: str, principal: str, *, actor: str) -> int:
@@ -117,22 +152,27 @@ async def test_a_tokenless_resume_names_the_ledgers_actor_on_its_grant_revocatio
     monkeypatch.setattr(grants, "revoke_subject", _revoke)
     monkeypatch.setattr(grants, "forget_granter", _none)
     set_current_auth(None)
-    row = _ledger_row(scope_type="user_id", scope_value="u-42", actor=stored)
-    inp = saga.input_from_ledger_row(row)
-    await saga.run_saga(
-        input=inp,
-        row=saga.request_row_template(
-            erasure_id="e1",
-            input=inp,
-            actor=row["actor"],
-            requested_at=row["requested_at"],
-            attempts=2,
-        ),
-        erasure_id="e1",
-        requested_at=row["requested_at"],
-        previously_completed=set(),
-    )
-    assert actors == [named]
+    with pipeline_actor(outer):
+        await saga.run_saga(**_resume_args(stored))
+    assert actors == [revoked_by]
+    assert [(a["event_type"], a["actor"]) for a in audits] == [("erasure.completed", completed_by)]
+
+
+async def test_a_cli_resume_that_fails_names_the_cli_on_a_row_with_no_actor(
+    recorded: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`erasure.failed` is written inside the steps' binding: it names the CLI too."""
+    _, audits, _ = recorded
+
+    async def _boom(*a: Any, **kw: Any) -> Any:
+        raise RuntimeError("step broke")
+
+    monkeypatch.setattr(saga, "_saga_user_id", _boom)
+    set_current_auth(None)
+    with pipeline_actor(CLI):
+        out = await saga.run_saga(**_resume_args(""))
+    assert out.status == "failed"
+    assert [(a["event_type"], a["actor"]) for a in audits] == [("erasure.failed", CLI)]
 
 
 def _ledger_row(**over: Any) -> dict[str, Any]:

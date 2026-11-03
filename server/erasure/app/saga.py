@@ -12,6 +12,7 @@ Plane restart mid-Saga doesn't leave a half-erased user.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -277,8 +278,10 @@ async def run_saga(
     # The saga id names every mutation this run submits,
     # so a resumed step finds its own pending mutation instead of adding one.
     # The steps' own audit rows (a grant revocation) name the ledger's actor, on a
-    # tokenless resume too; a row an older build wrote binds nothing.
-    with erasure_mutations.saga_scope(erasure_id), pipeline_actor(row["actor"]):
+    # tokenless resume too. A row an older build wrote binds nothing, so an outer
+    # pipeline actor (a CLI command's) still names them.
+    bind = pipeline_actor(row["actor"]) if row["actor"] else contextlib.nullcontext()
+    with erasure_mutations.saga_scope(erasure_id), bind:
         try:
             if input.scope_type == "user_id":
                 # A user's erasure purges when asked (a GDPR deletion): the rows
