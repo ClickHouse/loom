@@ -179,17 +179,7 @@ async def load(
     rows: list[dict[str, Any]] = []
     scope = ""
     if rid:
-        rows = await _rows(
-            ch,
-            org=org,
-            namespace=namespace,
-            agent=ag,
-            user_id=uid,
-            session_id=sid_axis,
-            run_id=rid,
-            run_scope=True,
-            limit=limit,
-        )
+        rows = await run_rows(ch, org, namespace, rid, limit=limit)
         if rows:
             scope = "run"
     # Widen to the blocks written without a run (run_id '-') for the same
