@@ -258,6 +258,7 @@ async def test_an_unreadable_grant_withholds_the_policy_and_says_so(
     from server.auth import authz, fail_closed
     from server.auth.context import set_current_auth
     from server.auth.jwt import AuthInfo
+    from server.core import request_work
     from server.operations.base import Role
 
     async def unreadable_grants(*a: Any, **k: Any) -> None:
@@ -273,9 +274,12 @@ async def test_an_unreadable_grant_withholds_the_policy_and_says_so(
             subject="a", org="o", namespaces=("ns",), roles=(Role.VIEWER,), is_service_account=False
         )
     )
+    request_work.begin()
     out = await mi.handle_memory_inspect(_inp())
     assert out.settings.extraction_policy is None
     assert out.settings.extraction_policy_unavailable == "the caller's access could not be read"
+    # The refusal it could not verify marks the request the server's.
+    assert fail_closed.answered_unverified()
     assert "settings.extraction_policy: the caller's access was unreadable" in out.skipped
 
 

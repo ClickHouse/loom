@@ -207,12 +207,7 @@ class _Inspect:
             self.category_names = {c.category_id: c.name for c in cats.categories}
         # A grant read that fails refuses (fails closed) and is noted, not raised: the
         # policy is withheld and the section is reported skipped, not as a non-admin's.
-        fail_closed.reset()
-        admin = await row_in_scope(i.org, i.namespace, Role.ORG_ADMIN)
-        if not admin and fail_closed.unreadable():
-            self.skipped.append("settings.extraction_policy: the caller's access was unreadable")
-            out.extraction_policy_unavailable = "the caller's access could not be read"
-        elif admin:
+        if await row_in_scope(i.org, i.namespace, Role.ORG_ADMIN):
             out.extraction_policy = await self.guarded(
                 "settings.extraction_policy",
                 lambda: extraction_policy.effective(i.org, i.namespace),
@@ -220,6 +215,9 @@ class _Inspect:
             )
             if out.extraction_policy is None:
                 out.extraction_policy_unavailable = "the policy could not be read"
+        elif fail_closed.unreadable():
+            self.skipped.append("settings.extraction_policy: the caller's access was unreadable")
+            out.extraction_policy_unavailable = "the caller's access could not be read"
         else:
             out.extraction_policy_unavailable = (
                 "only an org admin reads the operator extraction policy"
