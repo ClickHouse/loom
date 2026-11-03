@@ -188,13 +188,13 @@ def ingest(post: SyncPost, org: str, namespace: str, docs: list[dict], keep: boo
         post, org=org, namespace=namespace, description="knowledge retrieval fixture", keep=keep
     )
     remember_bench_namespace(org, namespace)
+    if keep:  # printed before the writes, so a failed ingest leaves the command behind
+        print(f"kept; erase it with: {gc_command(org, [namespace])}", file=sys.stderr)
     tag = fixture_tag(docs)
     for d in docs:
         body = {"org": org, "namespace": namespace, **d, "tags": [*d["tags"], tag]}
         post("/v1/knowledge.upsert", body)
     print(f"ingested {len(docs)} documents into {org}/{namespace}", file=sys.stderr)
-    if keep:
-        print(f"kept; erase it with: {gc_command(org, [namespace])}", file=sys.stderr)
 
 
 def listed_documents(post: SyncPost, org: str, namespace: str) -> list[dict]:

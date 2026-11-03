@@ -170,7 +170,8 @@ def test_an_ingest_refuses_a_namespace_holding_other_documents_and_tags_each_ups
 
     with pytest.raises(SystemExit, match="1 other documents"):
         ingest(post([{"source_uri": "theirs.md"}]), "o", "n", docs, keep=True)
-    assert not any(path == "/v1/knowledge.upsert" for path, _ in sent)
+    # nothing is written, not even the registration that would rewrite its owner
+    assert [path for path, _ in sent] == ["/v1/namespace.get", "/v1/knowledge.list"]
     ingest(post([{"source_uri": "a.md"}]), "o", "n", docs, keep=True)
     # a kept namespace registers as memory, so the idle-namespace gc leaves it
     registered = [body for path, body in sent if path == "/v1/namespace.register"]
