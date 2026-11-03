@@ -789,13 +789,15 @@ def _mentor_headers(
     try:
         from server.insights.app import mentor as _mentor
 
+        # The tenant the call was admitted in, as its ledger row names it.
+        tenant = ledger_identity(raw_body)
         hint = _mentor.call_hint(
             op.name,
             raw_body,
             result,
             session_key=_mentor.session_key_for("", raw_body),
-            org=str(raw_body.get("org") or ""),
-            namespace=str(raw_body.get("namespace") or ""),
+            org=tenant["org"],
+            namespace=tenant["namespace"],
             agent=str(raw_body.get("agent") or "-"),
         )
         set_hint_context(hint[0] if hint else "")

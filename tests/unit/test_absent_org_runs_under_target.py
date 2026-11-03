@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from server.auth.jwt import mint_token, verify_token
 from server.operations.registry import ALL_OPERATIONS
 from server.settings import settings
+from tests.unit.ch_fake import RecordingCH
 
 _SEEN: list[tuple[str, str, str]] = []
 
@@ -34,6 +35,7 @@ def seen(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
     monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
+    RecordingCH(strict=False).install(monkeypatch)
     _SEEN.clear()
     return _SEEN
 
@@ -92,6 +94,36 @@ def test_an_absent_namespace_takes_the_authorized_namespace() -> None:
     assert with_target(inp, unresolved) is inp
 
 
+def test_a_tracker_read_with_an_absent_org_takes_the_tracker_org(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "tracker_org", "trackers")
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.tracker.api.models import TrackerItemInput
+    from server.transport.gates import authz_target, with_target
+
+    op = OPERATIONS_BY_NAME["tracker.item"]
+    inp = TrackerItemInput.model_construct(org="-", namespace="-")
+    target = authz_target(op, org=inp.org, namespace=inp.namespace, auth=None)
+    out = with_target(inp, target)
+    # The org takes the tracker plane's; a tracker namespace has no plane default.
+    assert (out.org, out.namespace) == ("trackers", "-")
+
+
+def test_an_org_wide_token_naming_a_dash_org_with_a_namespace_is_incomplete() -> None:
+    """An org-`*` token has no single org for "-" to stand for: a namespaced
+    call is refused rather than run under the literal "-"."""
+    from server.core.errors import IdentityIncompleteError
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport.gates import authz_target
+
+    auth = verify_token(
+        mint_token(subject="ops", org="*", namespaces=["*"], roles=["admin"], ttl_seconds=300)
+    )
+    with pytest.raises(IdentityIncompleteError):
+        authz_target(OPERATIONS_BY_NAME["memory.get"], org="-", namespace="ns1", auth=auth)
+
+
 @pytest.mark.parametrize("org", ["-", "  "])
 def test_an_mcp_call_with_an_absent_org_runs_under_the_tokens_org(
     monkeypatch: pytest.MonkeyPatch, org: str
@@ -112,6 +144,7 @@ def test_an_mcp_call_with_an_absent_org_runs_under_the_tokens_org(
     )
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
+    RecordingCH(strict=False).install(monkeypatch)
     auth = verify_token(
         mint_token(
             subject="probe", org="globex", namespaces=["ns1"], roles=["viewer"], ttl_seconds=300
@@ -153,3 +186,28 @@ def test_me_with_an_absent_org_names_the_callers_own_collection(
     )
     assert orgs == ["globex"]
     assert payload.namespace == raw["namespace"] == "personal-of-globex"
+
+
+def test_the_mentor_hint_is_keyed_on_the_admitted_org(
+    seen: list[tuple[str, str, str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.insights.app import mentor
+    from server.memory.api.models_crud import MemoryGetOutput
+    from server.transport import http as http_mod
+
+    async def _answer(inp: Any) -> MemoryGetOutput:
+        return MemoryGetOutput(found=False)
+
+    ops = [
+        dataclasses.replace(op, handler=_answer) if op.name == "memory.get" else op
+        for op in ALL_OPERATIONS
+    ]
+    monkeypatch.setattr(http_mod, "ALL_OPERATIONS", ops)
+    keyed: list[tuple[str, str]] = []
+
+    def _hint(*_a: Any, org: str, namespace: str, **_k: Any) -> None:
+        keyed.append((org, namespace))
+
+    monkeypatch.setattr(mentor, "call_hint", _hint)
+    _post("memory.get", {"org": "-", "namespace": "ns1", "agent": "a", "memory_key": "k"})
+    assert keyed == [("globex", "ns1")]
