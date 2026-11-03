@@ -7190,6 +7190,61 @@ export interface NamespaceTaxonomyOutput {
   communities_computed_at?: string;
 }
 
+export interface NamespaceTuneInput {
+  org: string;
+  namespace: string;
+  window_seconds?: number;
+  sample_limit?: number;
+  min_rows?: number;
+  max_category_proposals?: number;
+}
+
+export interface TuneProposal {
+  id: string;
+  target: "extraction_instructions.request" | "namespace.category" | "namespace.guide";
+  scope: string;
+  title: string;
+  rationale: string;
+  current: string;
+  current_revision?: number | null;
+  proposed: string;
+  evidence: TuneEvidence;
+  affected_agents?: string[];
+  affected_agents_total?: number | null;
+  effect?: "future";
+  historical: string;
+  apply: TuneApply;
+  limits?: string;
+}
+
+export interface TuneEvidence {
+  finding_codes?: string[];
+  supporting_count?: number;
+  supporting?: FindingEvidence[];
+  counter_count?: number | null;
+}
+
+export interface TuneApply {
+  op: string;
+  args: Record<string, unknown>;
+  args_complete?: boolean;
+  required_role: string;
+  guard: string;
+}
+
+export interface NamespaceTuneOutput {
+  org: string;
+  namespace: string;
+  computed_at: string; // date-time
+  proposals?: TuneProposal[];
+  guide_revision?: number | null;
+  categories_registered?: number | null;
+  extraction_policy?: string | null;
+  extraction_policy_unavailable?: string;
+  skipped?: string[];
+  model_used?: boolean;
+}
+
 export interface NamespaceValidateInput {
   org: string;
   namespace: string;
@@ -9403,6 +9458,7 @@ export type OpName =
   | "namespace.snapshot"
   | "namespace.summary"
   | "namespace.taxonomy"
+  | "namespace.tune"
   | "namespace.validate"
   | "observe.crystallize"
   | "observe.record"
@@ -9745,6 +9801,7 @@ export interface OpMap {
   "namespace.snapshot": { input: NamespaceSnapshotInput; output: NamespaceSnapshotOutput };
   "namespace.summary": { input: NamespaceSummaryInput; output: NamespaceSummaryOutput };
   "namespace.taxonomy": { input: NamespaceTaxonomyInput; output: NamespaceTaxonomyOutput };
+  "namespace.tune": { input: NamespaceTuneInput; output: NamespaceTuneOutput };
   "namespace.validate": { input: NamespaceValidateInput; output: NamespaceValidateOutput };
   "observe.crystallize": { input: ObserveCrystallizeInput; output: ObserveCrystallizeOutput };
   "observe.record": { input: ObserveRecordInput; output: ObserveRecordOutput };
@@ -10087,6 +10144,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "namespace.snapshot", group: "namespace", method: "snapshot", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
   { name: "namespace.summary", group: "namespace", method: "summary", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 300, audit: false, readOnly: true },
   { name: "namespace.taxonomy", group: "namespace", method: "taxonomy", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
+  { name: "namespace.tune", group: "namespace", method: "tune", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 5000, audit: false, readOnly: true },
   { name: "namespace.validate", group: "namespace", method: "validate", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "observe.crystallize", group: "observe", method: "crystallize", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 2000, audit: false, readOnly: false },
   { name: "observe.record", group: "observe", method: "record", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: false },
@@ -10186,4 +10244,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 339;
+export const GENERATED_OP_COUNT = 340;
