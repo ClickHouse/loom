@@ -299,7 +299,9 @@ async def test_a_reranked_page_admits_repository_hits_by_score_and_keeps_its_ord
             hits = [_hit("doc://strong", 0.9), _hit("doc://weak1", 0.05), _hit("doc://weak2", 0.04)]
             return KnowledgeSearchOutput(results=hits, embedding_model="fake")
         # reranked: fused scores 0.2-0.5, in the reranker's order
-        hits = [_hit(f"n://{c}", s, "me") for c, s in zip("xyzw", (0.2, 0.5, 0.3, 0.4))]
+        hits = [
+            _hit(f"n://{c}", s, "me") for c, s in zip("xyzw", (0.2, 0.5, 0.3, 0.4), strict=True)
+        ]
         return KnowledgeSearchOutput(results=hits, embedding_model="fake", reranked_by="builtin:x")
 
     monkeypatch.setattr(

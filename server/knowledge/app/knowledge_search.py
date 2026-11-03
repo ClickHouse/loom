@@ -175,8 +175,8 @@ def _namespaces_search(
     tokens = knowledge_bm25.tokenize(input.query) if input.search_mode != "semantic" else []
 
     # Collapsing sections folds sibling chunks after the statement: ask for more,
-    # so the page still fills. `pool` is a reranker's head when one applies (0 otherwise): the legs
-    # fetch at least that many, not that many times three.
+    # so the page still fills. `pool` is a reranker's head when one applies (0 when
+    # none does): the legs fetch at least that many, not that many times three.
     top_k = max(input.top_k * 3 if input.collapse_sections else input.top_k, pool)
 
     async def _ranked(namespaces: list[str]) -> list[ChunkHit]:
