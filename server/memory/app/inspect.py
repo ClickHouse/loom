@@ -47,9 +47,6 @@ log = logging.getLogger(__name__)
 Rows = list[dict[str, Any]]
 
 TOP_TAGS = 20
-# Reads about a user, agent or session name it in their arguments, so the ledger files
-# them under that identity; they are someone looking at the subject, not its calls.
-ABOUT_SUBJECT_OPS = ("memory.inspect", "mentor.brief")
 
 # subject: (own, others) definitions. Neither view counts the namespace's promoted rows
 # (`memory.promote`, `loom.shared`), which a search serves to every agent as well.
@@ -163,7 +160,6 @@ class _Inspect:
                 i.id,
                 window_seconds=i.window_seconds,
                 skip_consumers=INSPECTOR_CONSUMERS,
-                skip_ops=ABOUT_SUBJECT_OPS,
             ),
             Rows(),
         )

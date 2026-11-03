@@ -202,12 +202,10 @@ async def subject_calls(
     *,
     window_seconds: int,
     skip_consumers: Sequence[str],
-    skip_ops: Sequence[str],
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """(operation, calls, succeeded, first, last) for the subject's own calls in the
-    window, leaving out the consumers that inspect a namespace on a person's behalf and
-    the reads about the subject, which the ledger files under the identity they name."""
+    window, leaving out the consumers that inspect a namespace on a person's behalf."""
     col = SUBJECT_COLUMN[subject]
     return await (ch or _default_client()).query_all(
         f"""
@@ -218,7 +216,6 @@ async def subject_calls(
           AND ts >= now() - INTERVAL {{win:UInt32}} SECOND
           AND {col} = {{id:String}} AND kind != 'worker'
           AND consumer NOT IN {{skip:Array(String)}}
-          AND operation NOT IN {{skip_ops:Array(String)}}
         GROUP BY operation ORDER BY calls DESC, operation
         LIMIT 200
         """,
@@ -228,6 +225,5 @@ async def subject_calls(
             subject_id,
             win=int(window_seconds),
             skip=list(skip_consumers),
-            skip_ops=list(skip_ops),
         ),
     )

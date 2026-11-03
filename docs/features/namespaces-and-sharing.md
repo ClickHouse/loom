@@ -192,10 +192,11 @@ are refused. It writes nothing: no recall credit, no usage event.
   not be read.
 - **`activity`**: the calls the ledger files under the subject per operation in
   `window_seconds` (default 7 days), attempted and succeeded, without the dashboard's
-  and the assistant's, and without the reads about the subject (`memory.inspect`,
-  `mentor.brief`), which name it in their arguments. A call shows that a tool ran, not
-  that its result reached a model, and a call made by anyone that names the subject is
-  filed under it. `gap` says when the ledger keeps fewer days than the window.
+  and the assistant's. The ledger files a call under the `agent`, `user_id` and
+  `session_id` its arguments name, so a call made by anyone that names the subject is
+  counted, and `memory.inspect` itself, which names none, never is. A call shows that a
+  tool ran, not that its result reached a model. `gap` says when the ledger keeps fewer
+  days than the window.
 - **`settings`**: the guide's revision and summary, the number of registered categories,
   and the operator extraction policy only for an org admin
   (`extraction_policy_unavailable` says why it is missing). Extraction instructions are

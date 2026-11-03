@@ -132,8 +132,9 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
         assert nobody["own"]["live_rows"] == 0 and nobody["own"]["newest"] == []
         assert nobody["others"]["live_rows"] == 3
 
-        # The ledger is flushed in batches: wait for the agent's writes to land. The
-        # inspections above name the agent too, and are not its calls.
+        # The ledger is flushed in batches: wait for every call that names the agent, its
+        # two writes and the read above. An inspection names no agent and is not counted.
+        expected = {"memory.set": 2, "memory.get": 1}
         for _ in range(40):
             calls = {
                 x["operation"]: x["calls"]
@@ -141,10 +142,10 @@ async def test_inspect_splits_own_from_others_and_writes_nothing(
                     "activity"
                 ]["calls"]
             }
-            if calls.get("memory.set"):
+            if calls == expected:
                 break
             await asyncio.sleep(0.5)
-        assert calls.get("memory.set") == 2 and "memory.inspect" not in calls, calls
+        assert calls == expected, calls
 
         r = await c.post("/v1/memory.inspect", json={**base, "subject": "user", "id": "-"})
         assert r.status_code == 422, r.text[:300]

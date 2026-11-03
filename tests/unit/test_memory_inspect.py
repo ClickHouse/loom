@@ -187,7 +187,6 @@ async def test_activity_leaves_out_inspectors_and_names_the_retention_gap(
     assert "keeps 3 days" in out.activity.gap
     s = ch.statements("FROM loom.agent_events")[0]
     assert s.params["skip"] == ["loom-ui", "loom-assistant"]
-    assert s.params["skip_ops"] == ["memory.inspect", "mentor.brief"]
 
     monkeypatch.setattr(settings, "retention_agent_events_days", 0)
     assert (await mi.handle_memory_inspect(_inp())).activity.gap == ""
