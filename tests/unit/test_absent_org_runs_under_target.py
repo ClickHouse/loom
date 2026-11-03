@@ -93,6 +93,9 @@ def test_an_absent_namespace_takes_the_authorized_namespace(
     assert with_target(named, target) is named
     unresolved = Target(org=None, namespace=None, named_namespace=None, register_namespace=None)
     assert with_target(inp, unresolved) is inp
+    # Fanned out over a list, a "-" namespace does not lead it either.
+    fanned = CodeSearchInput(org="globex", namespace="-", namespaces=["a"], query="q")
+    assert fanned.namespaces == ["a"]
 
 
 def test_a_required_namespace_sent_as_dash_is_left_as_sent() -> None:

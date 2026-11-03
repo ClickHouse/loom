@@ -1008,9 +1008,23 @@ def test_a_dash_org_is_the_tokens_own_org(control_plane_url, seed, tokens) -> No
         {"org": "-", "namespace": seed.ns_a, "agent": "a", "memory_key": key, "value": nonce},
     )
     assert r.status_code == 200, r.text
+    memory_id = r.json()["memory_id"]
+    r = _post(
+        control_plane_url,
+        tokens["a_writer"],
+        "memory.get_by_id",
+        {"org": seed.org, "memory_id": memory_id},
+    )
+    assert r.status_code == 200, r.text
+    row = r.json()
+    assert row["found"] is True, r.text[:200]
+    assert (row["namespace"], row["agent"], row["memory_key"], row["value"]) == (
+        seed.ns_a,
+        "a",
+        key,
+        nonce,
+    )
     own = {"namespace": seed.ns_a, "agent": "a", "memory_key": key}
-    r = _post(control_plane_url, tokens["a_writer"], "memory.get", {"org": seed.org, **own})
-    assert r.status_code == 200 and nonce in r.text, r.text[:200]
     for body in ({"org": "-", **own}, {"org": "-", **own, "namespace": "-"}):
         r = _post(control_plane_url, tokens["other_org"], "memory.get", body)
         assert r.status_code in _OK_STATUSES, r.text[:200]
