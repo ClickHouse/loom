@@ -646,8 +646,8 @@ class NamespaceRestoreInput(BaseModel):
     """
 
     org: str
-    # Where the payload is written; created (with the caller as admin) when absent, and
-    # reactivated when soft-deleted.
+    # Where the payload is written, never a collection (`col-…`, `@me`); created (with the
+    # caller as admin) when absent, and reactivated when soft-deleted.
     target_namespace: str
     # A `namespace.snapshot` output, unchanged.
     payload: NamespaceSnapshotOutput

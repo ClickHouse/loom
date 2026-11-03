@@ -148,6 +148,19 @@ async def test_a_restore_into_a_collection_name_is_refused(wire, target: str) ->
 
 
 @pytest.mark.asyncio
+async def test_register_refuses_a_collection_name(wire) -> None:
+    install, _grants = wire
+    ch = install(None, "mallory@x", Role.VIEWER)
+    with pytest.raises(ValidationError):
+        await h.handle_namespace_register(
+            NamespaceRegisterInput(
+                org=ORG, namespace=personal_name(ORG, "user:alice"), owner_email="mallory@x"
+            )
+        )
+    assert ch.inserts == []
+
+
+@pytest.mark.asyncio
 async def test_a_viewer_cannot_restore_into_a_soft_deleted_namespace(wire) -> None:
     install, _grants = wire
     ch = install(_deleted_row(), "mallory@x", Role.VIEWER)

@@ -439,7 +439,7 @@ Restore a snapshot payload into a target namespace.
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
-| `target_namespace` | `str` | required | Where the payload is written; created (with the caller as admin) when absent, and reactivated when soft-deleted. |
+| `target_namespace` | `str` | required | Where the payload is written, never a collection (`col-…`, `@me`); created (with the caller as admin) when absent, and reactivated when soft-deleted. |
 | `payload` | `NamespaceSnapshotOutput` | required | A `namespace.snapshot` output, unchanged. |
 | `rebind_agent` | `str \| None` | `None` | Rebind every memory row's `agent` to this when set; default preserves source. |
 

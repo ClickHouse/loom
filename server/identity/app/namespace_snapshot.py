@@ -157,8 +157,9 @@ async def handle_namespace_restore(
     input: NamespaceRestoreInput,
 ) -> NamespaceRestoreOutput:
     """Apply a snapshot's payload to a target namespace. The target is
-    auto-created if missing and the caller becomes its admin. One
-    provenance audit row records the source snapshot_id + namespace."""
+    auto-created if missing and the caller becomes its admin; a collection
+    is refused. One provenance audit row records the source snapshot_id +
+    namespace."""
     import time as _time
 
     from server.observability import audit as _audit
