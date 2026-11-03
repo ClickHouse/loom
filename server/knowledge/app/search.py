@@ -262,8 +262,7 @@ async def lexical_search(
     # A chunk with no text is left out of the corpus statistics and the df views, so it
     # is no lexical candidate either, whatever its context.
     where.append("content != ''")
-    # The row is split once; tf and dl both read the one array. Direct read is off, as on
-    # the other hasAnyTokens legs: it is recorded to lose rows under ORDER BY ... LIMIT.
+    # The row is split once; tf and dl both read the one array.
     bm25_expr = bm25.bm25_sum_sql(
         bm25.tf_array_sql("countEqual(words, tok)", "{toks:Array(String)}"),
         "{idfs:Array(Float32)}",
@@ -291,6 +290,8 @@ async def lexical_search(
         LIMIT {{top_k:UInt32}}
         SETTINGS query_plan_direct_read_from_text_index = 0
     """
+    # The SETTINGS turn direct read off, as on the other hasAnyTokens legs: answering
+    # them from the text index alone is recorded to lose rows under ORDER BY ... LIMIT.
     rows = await ch.query_all(sql, params=params)
     return [
         ChunkHit(
