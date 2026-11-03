@@ -101,14 +101,14 @@ async def test_resolve_changes_only_the_scope(org_admin_with_hidden: _CH) -> Non
 
 
 @pytest.mark.asyncio
-async def test_a_caller_with_no_namespace_in_scope_reads_nothing(
+async def test_an_unreadable_classification_reads_nothing(
     monkeypatch: pytest.MonkeyPatch, org_admin_with_hidden: _CH
 ) -> None:
     import server.auth.context as ctx
     from server.insights.api.models_ops import ProjectionFailureListInput
     from server.insights.app.ops import handle_projection_failures_list
 
-    async def everything_hidden(org: str) -> list[str]:
+    async def everything_hidden(org: str) -> list[str]:  # the classification read failed
         return ["*"]
 
     monkeypatch.setattr(ctx, "restricted_namespaces_hidden_from", everything_hidden)

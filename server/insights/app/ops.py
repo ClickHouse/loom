@@ -597,16 +597,18 @@ async def handle_projection_failures_list(
     # The op skips the transport's namespace gate, so the caller's org scope decides
     # which namespaces it reads: a restricted one it cannot read stays out, admins too.
     scope = await resolve_org_scope(input.org)
-    if not scope.accessible:
-        return ProjectionFailureListOutput(rows=[], total=0)
-    rows = await list_projection_failures(
-        org=input.org,
-        namespace=input.namespace,
-        projection=input.projection,
-        status=input.status,
-        limit=input.limit,
-        scope_where=scope.where,
-        scope_params=scope.params,
+    rows = (
+        await list_projection_failures(
+            org=input.org,
+            namespace=input.namespace,
+            projection=input.projection,
+            status=input.status,
+            limit=input.limit,
+            scope_where=scope.where,
+            scope_params=scope.params,
+        )
+        if scope.accessible
+        else []
     )
     out = [_projection_failure_row(row) for row in rows]
     return ProjectionFailureListOutput(rows=out, total=len(out))
