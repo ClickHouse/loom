@@ -102,6 +102,79 @@ def test_the_worker_replays_under_suppression() -> None:
     )
 
 
+_SESSION = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "s"}
+
+
+def _obs(key: str, value: Any, *, sensitivity: str = "", version: int = 10) -> SimpleNamespace:
+    return SimpleNamespace(
+        **_SESSION,
+        memory_key=key,
+        value=value,
+        sensitivity=sensitivity,
+        tags=[],
+        valid_at=None,
+        version=version,
+    )
+
+
+def _heads(monkeypatch: pytest.MonkeyPatch, heads: list[Any]) -> None:
+    """The re-read before the DONE insert answers `heads`, keyed by identity."""
+    import server.memory.store as memory_repo
+
+    async def _read(keys: list[Any], **_k: Any) -> dict[Any, Any]:
+        live = {ox._identity(h): h for h in heads}
+        return {k: live[k] for k in keys if k in live}
+
+    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", _read)
+
+
+async def test_done_is_built_from_the_head_as_it_is_after_the_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # During the replay one observation is deleted, one rewritten and one redacted in
+    # place. The DONE rows must not bring the deleted or the old text back, nor outrank
+    # a write made after the re-read.
+    import server.memory.store as memory_repo
+
+    kept = _obs("kept", {"narrative": "ran the tests"})
+    deleted = _obs("deleted", {"narrative": "pasted the customer list"})
+    rewritten = _obs("rewritten", {"narrative": "old"})
+    redacted = _obs("redacted", {"narrative": "my phone is 555"})
+    observations = [kept, deleted, rewritten, redacted]
+    scrubbed = _obs("redacted", {"narrative": "[redacted]"})
+    _heads(monkeypatch, [kept, _obs("rewritten", {"narrative": "new"}, version=20), scrubbed])
+    built: list[tuple[Any, dict[str, Any]]] = []
+    done: list[Any] = []
+
+    async def _replay(*_a: Any, **_k: Any) -> int:
+        return 0
+
+    async def _extras(*_a: Any, **_k: Any) -> Any:
+        return SimpleNamespace(events_written=0, procedure_written=0, hint_written=0, failures=[])
+
+    async def _context(*_a: Any, **_k: Any) -> list[Any]:
+        return []
+
+    async def _insert(rows: list[Any], **_k: Any) -> None:
+        done.extend(rows)
+
+    def _build(o: Any, **k: Any) -> Any:
+        built.append((o, k))
+        return o
+
+    monkeypatch.setattr(ox, "_extract_replay", _replay)
+    monkeypatch.setattr(ox, "_distill_extras", _extras)
+    monkeypatch.setattr(ox, "_load_session_context", _context)
+    monkeypatch.setattr(ox, "get_client_for_context", lambda: None)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: None)
+    monkeypatch.setattr(memory_repo, "build_memory_version_row", _build)
+    monkeypatch.setattr(memory_repo, "insert_memory_versions", _insert)
+    await ox._distill_session(_SESSION, observations)
+    assert done == [kept, scrubbed]
+    assert [k["version"] for _, k in built] == [11, 11]
+    assert all("crystallize:done" in k["tags"] for _, k in built)
+
+
 async def test_a_high_observation_is_never_sent_to_the_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -109,19 +182,10 @@ async def test_a_high_observation_is_never_sent_to_the_model(
     # and summarises only the others, and still marks every one DONE.
     import server.memory.store as memory_repo
 
-    plain = SimpleNamespace(
-        value={"narrative": "ran the tests"}, sensitivity="", tags=[], valid_at=None
-    )
-    high = SimpleNamespace(
-        value={"narrative": "token sk-123"}, sensitivity="high", tags=[], valid_at=None
-    )
+    plain = _obs("plain", {"narrative": "ran the tests"})
+    high = _obs("high", {"narrative": "token sk-123"}, sensitivity="high")
     # capture writes an observation unlabelled; the sweep labels it later
-    unlabelled = SimpleNamespace(
-        value={"narrative": "export GITHUB_TOKEN=ghp_" + "a" * 36},
-        sensitivity="",
-        tags=[],
-        valid_at=None,
-    )
+    unlabelled = _obs("unlabelled", {"narrative": "export GITHUB_TOKEN=ghp_" + "a" * 36})
     seen: dict[str, Any] = {}
 
     def _replay(obs: list[Any], **_k: Any) -> list[Any]:
@@ -145,20 +209,11 @@ async def test_a_high_observation_is_never_sent_to_the_model(
     monkeypatch.setattr("server.core.ch.get_client", lambda: None)
     monkeypatch.setattr(memory_repo, "build_memory_version_row", lambda o, **_k: o)
     monkeypatch.setattr(memory_repo, "insert_memory_versions", _insert)
-    session = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "s"}
     # a token on its own line, and a quoted password: JSON-escaped, neither reads as one
-    own_line = SimpleNamespace(
-        value={"narrative": "[command_run] tool=Bash\noutput:\nghp_" + "b" * 36},
-        sensitivity="",
-        tags=[],
-        valid_at=None,
-    )
-    quoted = SimpleNamespace(
-        value={"narrative": 'config: password: "hunter2secret"'},
-        sensitivity="",
-        tags=[],
-        valid_at=None,
-    )
-    await ox._distill_session(session, [plain, high, unlabelled, own_line, quoted])
+    own_line = _obs("own_line", {"narrative": "[command_run] tool=Bash\noutput:\nghp_" + "b" * 36})
+    quoted = _obs("quoted", {"narrative": 'config: password: "hunter2secret"'})
+    observations = [plain, high, unlabelled, own_line, quoted]
+    _heads(monkeypatch, observations)
+    await ox._distill_session(_SESSION, observations)
     assert seen["replayed"] == [plain] and seen["summarised"] == [plain]
     assert seen["done"] == [plain, high, unlabelled, own_line, quoted]

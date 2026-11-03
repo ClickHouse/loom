@@ -284,6 +284,12 @@ async def test_worker_promotes_ready_observation_via_existing_extraction(monkeyp
     stored = memory_repo.build_memory_version_row(ready_row)
     ch.query_all_returns.append([{**stored, "value_text": stored["value"]}])
 
+    # The re-read right before the DONE insert: the head is unchanged.
+    async def _heads(keys, **_k):
+        return {k: ready_row for k in keys}
+
+    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", _heads)
+
     calls: dict[str, Any] = {}
 
     class _FakeWritten:
@@ -326,6 +332,7 @@ async def test_worker_promotes_ready_observation_via_existing_extraction(monkeyp
     assert CRYSTALLIZE_READY_TAG not in done["tags"]
     assert OBSERVATION_TAG in done["tags"]
     assert "error" in done["tags"]
+    assert done["version"] == 124  # the head's + 1: a write after the re-read stays above it
 
 
 @pytest.mark.asyncio

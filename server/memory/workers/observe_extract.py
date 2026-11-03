@@ -25,7 +25,6 @@ from server.memory.domain.observation_tags import (
 )
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.domain.trust import subject_of
-from server.memory.store.rows import next_version
 from server.settings import settings
 from server.workers.status import record_pass
 
@@ -174,12 +173,10 @@ async def _load_session_observations(
     ch: Any,
 ) -> list[Any]:
     """Full-projection rows for one session's READY observations, oldest
-    first (chronological replay order). Full projection so the DONE rewrite
-    can mirror every persisted column."""
+    first (chronological replay order). The DONE rewrite re-reads each head
+    before it writes; the version read here is what it compares against."""
     import server.memory.store as memory_repo
 
-    # One statement: the listing reads the full projection, so the rows it
-    # returns are the rows the DONE rewrite re-emits (no per-key re-read).
     rows = await ch.query_all(
         f"""{memory_repo._MEMORY_FINAL_PROJECTION}
         WHERE org = {{org:String}}
@@ -256,18 +253,31 @@ async def _distill_session(
     extras = await _distill_extras(session, readable, context=context)
 
     # Mark sources DONE. RMT: mirror every column, only tags + version change.
+    # The replay took seconds to minutes, so each DONE row is built from the head as
+    # it is now, not from the copy read before: a row deleted or erased since is gone
+    # from the re-read and stays gone, a redaction (an in-place scrub) is carried, and
+    # a row rewritten since keeps its new version un-DONE for the next pass. The head's
+    # version + 1 keeps any write made after this re-read above the DONE row.
     from server.core.ch import get_client
 
+    ch = get_client()
+    heads = await memory_repo.memory_rows_by_identity_keys(
+        [_identity(o) for o in observations], ch=ch, sequential=True
+    )
     version_rows = []
     for existing in observations:
-        new_tags = [t for t in (existing.tags or []) if t != CRYSTALLIZE_READY_TAG]
+        head = heads.get(_identity(existing))
+        if head is None or int(head.version) != int(existing.version):
+            continue
+        new_tags = [t for t in (head.tags or []) if t != CRYSTALLIZE_READY_TAG]
         if CRYSTALLIZE_DONE_TAG not in new_tags:
             new_tags.append(CRYSTALLIZE_DONE_TAG)
         version_rows.append(
-            memory_repo.build_memory_version_row(existing, version=next_version(), tags=new_tags)
+            memory_repo.build_memory_version_row(head, version=int(head.version) + 1, tags=new_tags)
         )
     # One committed insert for the session's observations.
-    await memory_repo.insert_memory_versions(version_rows, ch=get_client())
+    if version_rows:
+        await memory_repo.insert_memory_versions(version_rows, ch=ch)
 
     return DistilledSession(
         org=str(session["org"]),
@@ -278,6 +288,17 @@ async def _distill_session(
         events=int(extras.events_written),
         notes=int(extras.procedure_written) + int(extras.hint_written),
         extra_failures=tuple(extras.failures),
+    )
+
+
+def _identity(o: Any) -> tuple[str, str, str, str, str, str]:
+    return (
+        str(o.org),
+        str(o.namespace),
+        str(o.agent),
+        str(o.user_id),
+        str(o.session_id),
+        str(o.memory_key),
     )
 
 
