@@ -147,7 +147,11 @@ def test_bootstrap_creates_env_and_named_collections_once(root: Path) -> None:
 
 @pytest.mark.parametrize(
     "before",
-    ["LOOM_AUTH_REQUIRED=true\n", "LOOM_AUTH_REQUIRED=true\nLOOM_DOCUMENT_EXTRACTOR_TOKEN=\n"],
+    [
+        "LOOM_AUTH_REQUIRED=true\n",
+        "LOOM_AUTH_REQUIRED=true\nLOOM_DOCUMENT_EXTRACTOR_TOKEN=\n",
+        'LOOM_AUTH_REQUIRED=true\nLOOM_DOCUMENT_EXTRACTOR_TOKEN=""\n',
+    ],
 )
 def test_bootstrap_gives_an_older_env_an_extractor_token_once(root: Path, before: str) -> None:
     """An .env from before the extractor service: `make dev` would start it with none."""

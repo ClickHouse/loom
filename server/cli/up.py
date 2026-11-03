@@ -125,7 +125,8 @@ def bootstrap(root: Path, env_file: str) -> list[str]:
         # with no token, which it refuses.
         text = env_path.read_text(encoding="utf-8")
         line = f"{_EXTRACTOR_TOKEN}={secrets.token_hex(24)}"
-        blank = re.compile(rf"^{_EXTRACTOR_TOKEN}=[ \t]*$", re.MULTILINE)
+        # An empty value, bare or quoted, is the line to fill.
+        blank = re.compile(rf"^{_EXTRACTOR_TOKEN}=[ \t]*(?:\"\"|'')?[ \t]*$", re.MULTILINE)
         text = (
             blank.sub(line, text, count=1)
             if blank.search(text)

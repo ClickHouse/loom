@@ -982,9 +982,9 @@ anything else while extractions run one at a time, as the compose stack runs the
 The service gets one variable, the token; the server reads `LOOM_DOCUMENT_EXTRACTOR_URL`
 (`http://extractor:8790`) and `LOOM_DOCUMENT_EXTRACTOR_TOKEN` from `.env`, which the
 installer writes, a new token per install, and adds to an install from before the
-service. `LOOM_EXTRACTOR_IMAGE_REPOSITORY` names another image, as
-`LOOM_IMAGE_REPOSITORY` does the server's. The development stack (`make dev`) builds it
-from the checkout. The stacks that bring their own ClickHouse
+service (a URL already there is kept). `LOOM_EXTRACTOR_IMAGE_REPOSITORY` names another
+image, as `LOOM_IMAGE_REPOSITORY` does the server's. The development stack (`make dev`)
+builds it from the checkout. The stacks that bring their own ClickHouse
 (`dev/docker-compose.cloud.yml`, `dev/docker-compose.replicas.yml`, the blue/green
 colours) run none: point `LOOM_DOCUMENT_EXTRACTOR_URL` and
 `LOOM_DOCUMENT_EXTRACTOR_TOKEN` at an extractor you run, or the server reports every
@@ -995,7 +995,7 @@ The matching GitHub Release carries `loom-stack.tar.gz`, its SHA-256 file, and
 Compose plus the ClickHouse configuration/dictionary the stack needs, while the UI and
 server stay in the image. The repository serves `install.sh`; rerunning it preserves
 `.env` (apart from advancing the pinned `LOOM_VERSION` and giving an `.env` without an
-extractor token one) and volumes.
+extractor token one, and the extractor URL unless it names its own) and volumes.
 
 ## N identical replicas
 
