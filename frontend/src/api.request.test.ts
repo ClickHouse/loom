@@ -104,6 +104,7 @@ describe("a refused sign-in token", () => {
   afterEach(() => {
     localStorage.clear();
     onSignInRejected(() => undefined);
+    setPageOwner(null);
   });
 
   it("ends the session on a 401 for the stored token, and still rejects the call", async () => {
@@ -150,6 +151,7 @@ describe("a refused sign-in token", () => {
   it("never sends a refused call again under a token another tab stored meanwhile", async () => {
     const ended = vi.fn(() => clearToken());
     onSignInRejected(ended);
+    setPageOwner({ subject: "alice", org: "o" });
     setToken(ALICE_1);
     const fetchMock = vi.fn(async () => {
       setToken(jwtFor("bob")); // someone else signed in while this call was out
@@ -158,7 +160,8 @@ describe("a refused sign-in token", () => {
     vi.stubGlobal("fetch", fetchMock);
     const err = await rejection(post("/v1/memory.delete", { org: "o" }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(err.code).toBe("SIGNED_IN_ELSEWHERE");
+    // Someone else's token: not "you signed in again"; the tab reloads for them.
+    expect(err.sessionEnded).toBe(true);
     expect(ended).not.toHaveBeenCalled();
   });
 
@@ -213,7 +216,9 @@ describe("with auth off", () => {
     vi.resetModules();
     const api = await import("./api"); // reads the flag as it loads
     api.onSignInRejected(() => api.clearToken());
-    api.setToken("stale");
+    // As App does: auth-off boot's stand-in identity is the page's person.
+    api.setPageOwner({ subject: "local", org: "dev" });
+    api.setToken(jwtFor("alice"));
     const sentWith: string[] = [];
     vi.stubGlobal(
       "fetch",

@@ -108,6 +108,13 @@ export function setPageOwner(owner: { subject: string; org: string } | null): vo
   pageOwner = owner;
 }
 
+/** Whether `t` (none, or one an auth-off install ignores, counts) is the page's person's. */
+export function ownsToken(t: string | null): boolean {
+  if (!t || !pageOwner || isAuthDisabled()) return true;
+  const c = claimsFromToken(t);
+  return c?.subject === pageOwner.subject && (c?.org ?? "") === pageOwner.org;
+}
+
 // The app's answer to a stored token the server refuses (expired or revoked): the session
 // ends (a card over the page, or the gate while booting). Registered by App, so this
 // module stays free of the store.
@@ -311,13 +318,10 @@ async function send(
   const sent = token();
   // Another tab may have stored another person's token a moment ago, before this one heard
   // of it (and reloads): this page's call never carries it.
-  if (sent && pageOwner) {
-    const c = claimsFromToken(sent);
-    if (c?.subject !== pageOwner.subject || (c?.org ?? "") !== pageOwner.org) {
-      const err = new ApiError({ status: 401, code: "AUTH_INVALID", message: "signed in as someone else elsewhere" });
-      err.sessionEnded = true;
-      throw err;
-    }
+  if (!ownsToken(sent)) {
+    const err = new ApiError({ status: 401, code: "AUTH_INVALID", message: "signed in as someone else elsewhere" });
+    err.sessionEnded = true;
+    throw err;
   }
   const r = await fetch(
     path,
@@ -341,7 +345,8 @@ async function send(
     const err = await apiErrorFromResponse(r);
     // A call raced by another tab's sign-in is not sent again under a token this tab has
     // not checked: Retry sends it, and the error says so instead of "sign in again".
-    if (!ending && token()) throw new ApiError({ status: 401, code: "SIGNED_IN_ELSEWHERE", requestId: err.requestId });
+    if (!ending && token() && ownsToken(token()))
+      throw new ApiError({ status: 401, code: "SIGNED_IN_ELSEWHERE", requestId: err.requestId });
     err.sessionEnded = true;
     throw err;
   }
