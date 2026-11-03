@@ -250,6 +250,10 @@ def test_grounding_removes_the_tags_of_unread_chunks_from_the_answer() -> None:
         [],
         ["doc://z#0", "doc://q#7"],
     )
+    # past the pass cap, a citation formed by the last removal is left as written
+    deep = "[q#9" * 9 + "]" * 9
+    grounded, kept, removed = cs.ground_citations(deep, read)
+    assert grounded == "[q#9]" and kept == [] and removed == ["q#9"]
     # of nested brackets the innermost is read
     assert cs.ground_citations("[[doc://a#1]]", read) == ("[[doc://a#1]]", ["doc://a#1"], [])
     # an index past nine digits is prose, not a number to parse

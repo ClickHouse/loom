@@ -279,7 +279,7 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | `chunks_read` | `int` | How many chunks the read windows covered. |
 | `documents` | `int` | How many of the named documents had chunks to read. |
 | `reduce_rounds` | `int` | How many fold rounds merged the notes into the answer; 1 when they fit one call. |
-| `citations` | `list[str]` | Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning documents) citations in the answer, in reading order; each names chunks the passes read. |
+| `citations` | `list[str]` | Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning documents) citations in the answer, in the order found; each names chunks the passes read. |
 | `unsupported_citations` | `list[str]` | Citations in the answer that name no chunk the passes read; removed from `answer`. |
 | `truncated` | `bool` | True when the documents needed more than `max_windows` windows and only the first were read. |
 | `abstain` | `bool` | True when there is no answer to give; `abstain_reason` says why. |

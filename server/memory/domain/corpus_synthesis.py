@@ -133,8 +133,8 @@ _CITATION = rf"\[\s*({_ITEM}(?:\s*[,;]\s*{_ITEM})*)\s*\]"
 # A removed citation goes with the blanks before it; the lookbehind starts the blanks at
 # the start of their run, so a long run is scanned once.
 _SPACED_CITATION = re.compile(r"(?<![ \t])[ \t]*" + _CITATION)
-# Citations nested deeper than this are not looked for: a model writes none, and each
-# level is one more pass over the answer.
+# A citation formed only after this many removals is left as written and unchecked: a
+# model writes none, and each one is one more pass over the answer.
 _MAX_PASSES = 8
 
 
@@ -151,7 +151,7 @@ def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
 
 def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list[str], list[str]]:
     """(the answer without the citations that name no chunk it read, the citations it
-    keeps, the ones it removed), in one pass. A model can cite a part it was never shown;
+    keeps, the ones it removed, each in the order found). A model can cite a part it was never shown;
     a caller that follows it would read something the answer did not come from."""
     kept: list[str] = []
     removed: list[str] = []
