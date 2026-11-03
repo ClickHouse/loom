@@ -684,7 +684,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
   it("leaves a healthy page alone when another tab's token cannot be confirmed", async () => {
     render(<App />);
     await until(() => useStore.getState().whoami !== null);
-    whoamiAnswers = [503, 503, 503, 503];
+    whoamiAnswers = [503, 503, 503, 503, 503, 503];
     await act(async () => storeElsewhere(fresh));
     await until(() => whoamiAnswers.length === 0, 10_000);
     await settle(2);
@@ -717,10 +717,10 @@ describe("a refused token", { timeout: 30_000 }, () => {
   it("reloads at once for another person's token, without waiting on whoami", async () => {
     render(<App />);
     await until(() => useStore.getState().whoami !== null);
-    whoamiAnswers = [503, 503, 503, 503];
+    whoamiAnswers = [503, 503, 503, 503, 503, 503];
     await act(async () => storeElsewhere(bob));
     await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
-    expect(whoamiAnswers).toHaveLength(4);
+    expect(whoamiAnswers).toHaveLength(6);
   });
 
   it("a reload after a sign-out elsewhere is still a plain sign-in, with the mark kept", async () => {
@@ -742,7 +742,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
     expect(screen.getByTestId("session-expired-bar")).toBeInTheDocument();
   });
 
-  it("a reload after the session ended starts SSO by itself, once", async () => {
+  it("a reload after the session ended starts SSO by itself", async () => {
     window.__LOOM_SSO = true;
     await expireMidSession();
     cleanup();
@@ -756,7 +756,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
   it("an ended tab that cannot confirm another tab's token asks again later, and then carries on", async () => {
     await expireMidSession();
     refuse = false;
-    whoamiAnswers = [503, 503, 503, 503];
+    whoamiAnswers = [503, 503, 503, 503, 503, 503];
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       await act(async () => storeElsewhere(fresh));

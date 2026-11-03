@@ -162,7 +162,7 @@ export function previewValue(v: unknown, max = 320): string {
  *  sentence ending in ":" introduces it; one ending in "." precedes it. */
 const ERROR_CODE_PREFIXES: Record<string, string> = {
   AUTH_INVALID: "Sign-in rejected:",
-  SIGNED_IN_ELSEWHERE: "You signed in again in another tab — retry.",
+  SIGNED_IN_ELSEWHERE: "Signed in again in another tab — retry.",
   AUTH_INSUFFICIENT: "You don't have permission for this on this namespace.",
   IDENTITY_INCOMPLETE: "This token is scoped — the request has to name the namespace:",
   FORBIDDEN: "You don't have permission for this.",

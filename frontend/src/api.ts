@@ -319,7 +319,8 @@ async function send(
   // Another tab may have stored another person's token a moment ago, before this one heard
   // of it (and reloads): this page's call never carries it.
   if (!ownsToken(sent)) {
-    const err = new ApiError({ status: 401, code: "AUTH_INVALID", message: "signed in as someone else elsewhere" });
+    // Its words are the ended session's (sessionEnded): no message of its own is shown.
+    const err = new ApiError({ status: 401, code: "AUTH_INVALID" });
     err.sessionEnded = true;
     throw err;
   }

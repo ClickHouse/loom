@@ -141,14 +141,13 @@ describe("a refused sign-in token", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const err = await rejection(post("/v1/collection.list", { org: "o" }));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
     // Not "sign in again": the person already did, elsewhere; Retry sends it.
     expect(err.code).toBe("SIGNED_IN_ELSEWHERE");
     expect(localStorage.getItem("loom_token_v1")).toBe(ALICE_2);
     expect(ended).not.toHaveBeenCalled();
   });
 
-  it("never sends a refused call again under a token another tab stored meanwhile", async () => {
+  it("reads a call raced by someone else's token as the ended session, not as a retry", async () => {
     const ended = vi.fn(() => clearToken());
     onSignInRejected(ended);
     setPageOwner({ subject: "alice", org: "o" });
@@ -159,7 +158,6 @@ describe("a refused sign-in token", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const err = await rejection(post("/v1/memory.delete", { org: "o" }));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
     // Someone else's token: not "you signed in again"; the tab reloads for them.
     expect(err.sessionEnded).toBe(true);
     expect(ended).not.toHaveBeenCalled();

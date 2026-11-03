@@ -92,13 +92,16 @@ onTokenStored((token) => {
 });
 
 /** whoami, asked again while the replica answers 503 (its signing keys still loading, the
- *  token may be fine): up to three more times, a second apart, before boot gives up. */
+ *  token may be fine): up to five more times, a second apart (the server's own Retry-After
+ *  is 5 s), before boot gives up. */
 async function whoamiWhenReady(): Promise<WhoAmI> {
+  const asked = storedToken();
   for (let attempt = 1; ; attempt++) {
     try {
       return await whoami();
     } catch (e) {
-      if (attempt >= 4 || !(e instanceof ApiError) || e.status !== 503) throw e;
+      // A token stored meanwhile is not the one being asked about: no retry carries it.
+      if (storedToken() !== asked || attempt >= 6 || !(e instanceof ApiError) || e.status !== 503) throw e;
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
@@ -199,7 +202,9 @@ const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default:
 // The expired-session card's chunk is fetched as the app loads, from the build that served
 // it: it shows on a long-lived tab, the one most likely to predate a deploy, and a chunk
 // first asked for then would be gone and its stale-chunk reload would lose the page.
-const sessionCard = import("./components/SessionExpiredBar");
+// Should that fetch fail, no card shows (each view's error still says the session ended),
+// rather than an error page in place of the page.
+const sessionCard = import("./components/SessionExpiredBar").catch(() => ({ SessionExpiredBar: () => null }));
 const SessionExpiredBar = lazy(() => sessionCard.then((m) => ({ default: m.SessionExpiredBar })));
 
 const NamespaceNoAccess = lazy(() =>

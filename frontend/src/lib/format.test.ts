@@ -84,7 +84,7 @@ describe("humanizeError", () => {
       expect(humanizeError(ended)).toBe("Your session ended — sign in again.");
       // A call raced by the person's own sign-in in another tab: nothing to do but retry.
       expect(humanizeError(new ApiError({ status: 401, code: "SIGNED_IN_ELSEWHERE" }))).toBe(
-        "You signed in again in another tab — retry.",
+        "Signed in again in another tab — retry.",
       );
       // With auth off, or behind a proxy, there is no session to sign in to.
       for (const flag of ["__LOOM_AUTH_DISABLED", "__LOOM_PROXY_AUTH"] as const) {
