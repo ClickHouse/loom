@@ -43,7 +43,6 @@ def _wire(monkeypatch: pytest.MonkeyPatch) -> None:
         return _matches()
 
     monkeypatch.setattr("server.memory.app.procedure.handle_procedure_match", _match)
-    monkeypatch.setattr("server.core.ch.get_client", lambda: object())
 
 
 def _pack(**kw: Any) -> ContextPackOutput:
@@ -115,7 +114,6 @@ def test_withholding_the_only_match_leaves_no_section_but_a_record(
         return NS(matches=[_matches().matches[0]])
 
     monkeypatch.setattr("server.memory.app.procedure.handle_procedure_match", _one)
-    monkeypatch.setattr("server.core.ch.get_client", lambda: object())
     out = _pack(procedure_explore_rate=1.0)
     assert "procedures" not in out.sections
     assert out.procedure_keys == [] and out.procedure_keys_withheld == ["procedure_top"]
