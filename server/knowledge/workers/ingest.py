@@ -1,6 +1,6 @@
 """Runs ingestion jobs (`server/knowledge/app/ingest_run.py`).
 
-A pass runs one due job, pending ones first and namespaces in turn
+A pass runs one due job, one source's jobs in order and namespaces in turn
 (`ingestions.due`), under the job's own lease:
 extraction and embedding are the expensive parts, and one source at a time
 keeps a large file from starving the embedder's other callers, and gives the

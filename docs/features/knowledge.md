@@ -490,9 +490,10 @@ document row carries its `revision`, `format`, `parser` and `coverage`, which
 `knowledge.get` returns; each chunk's `chunk_metadata` carries its `locator` (line span,
 char span, TOML key path) and block ids, and its `keys` the exact names it defines or
 reads. Text writes (`knowledge.add`, `upsert`) number revisions too. Ingests of one
-source publish one at a time, so `expected_revision` guards an ingest against another;
-a text write takes no such claim, so one that races a write of the same source can
-reuse its revision number, and the later version wins.
+source run one at a time, in the order they were asked, so `expected_revision` guards
+an ingest against another; a text write takes no such claim, so one that races a write
+of the same source can reuse its revision number, and the later version wins (an
+ingest a text write overtook fails `revision_conflict`).
 
 `knowledge.ingest_status` follows a job: `pending`, `processing` (with its `stage`:
 `parse`, `embed`, `publish`), then `ready`, `partial`, `failed` or `cancelled`, with the
@@ -513,7 +514,7 @@ last change, an upload's for 7 days after it expires. A failed job names why in 
 | `incomplete_extraction` | coverage is incomplete and `allow_partial` was off                                                                                      |
 | `no_text`               | the file holds no text to index                                                                                                         |
 | `too_large`             | the original is over the extractor's `max_bytes`, or it cut more chunks than `LOOM_KNOWLEDGE_INGEST_MAX_CHUNKS`                         |
-| `revision_conflict`     | the live revision is not `expected_revision`                                                                                            |
+| `revision_conflict`     | the live revision is not `expected_revision`, or a text write of the source landed after this ingest began to publish                   |
 | `original_gone`         | the upload's bytes are no longer stored                                                                                                 |
 | `retries_exhausted`     | the extractor, a provider or a store failed `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS` times (`retrying` before)                              |
 | `invalid_artifact`      | the extractor answered with an artifact that breaks the contract                                                                        |
@@ -524,7 +525,7 @@ A transient failure (an extractor that cannot be reached, times out, or answers 
 `408`, `429` or another status that is neither a result nor a refusal; a provider or a
 store outage) puts the job back with a doubling delay; a source the extractor refuses, or
 an artifact that breaks the contract, fails at once with its code. A pass runs one due
-job, namespaces in turn, and is cancelled after `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS`
+job, one source's jobs in order and namespaces in turn, and is cancelled after `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS`
 (15 minutes); a job cut off there, or by a process that stopped, runs again from its start
 and counts the attempt. A job that fails, or is cancelled, publishes nothing, so the
 earlier revision keeps serving. `knowledge.ingest_cancel` stops a pending job at once and

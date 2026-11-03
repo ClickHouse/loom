@@ -232,7 +232,8 @@ metadata edit and a delete), so a rerun of a job that published finishes without
 chunks it published. A cancel is a row of its own (`loom.knowledge_ingest_cancels`), never a version of the job's,
 which only the worker holding the job's lease writes; the worker reads it before the publish and when it takes the
 job, and a job whose own publish is found ends published whatever cancel came after. A pass runs one job under `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS`, taking
-namespaces in turn (the one whose last job started longest ago first), and a run cut
+one source's jobs one at a time in the order they were asked (only the oldest open job of a source is offered, a stale
+one before any later one), and namespaces in turn (the one served longest ago first), and a run cut
 off at that deadline or by a stopped process counts toward the job's attempts.
 
 ## Dependencies

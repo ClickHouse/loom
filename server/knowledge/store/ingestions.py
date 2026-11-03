@@ -245,28 +245,36 @@ async def get_ingestion(
 async def due(
     limit: int, *, stale_after_s: float, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
-    """The worker's queue across tenants: pending jobs whose next attempt is
-    due, then processing jobs no worker has updated for `stale_after_s` (their
-    worker is likely gone; the lease decides). A job a live worker is running is
-    left out, so running jobs never fill a pass.
+    """The worker's queue across tenants.
 
-    Fair across namespaces: each contributes its oldest due job, and the
-    namespace whose last job started longest ago (or never, within a day) comes
-    first, so one namespace's backlog takes turns with every other's instead of
-    running ahead of them."""
+    One source's jobs run one at a time, oldest first: only the oldest open job
+    of each source is a candidate, so a later ingest of the source waits until
+    the earlier one ends, and a job a crashed pass left `processing` (no worker
+    has updated it for `stale_after_s`; the lease decides) runs again before any
+    later one of its source. A candidate is due when it is pending and its next
+    attempt is due, or processing and stale; a job a live worker is running is
+    not, so running jobs never fill a pass.
+
+    Fair across namespaces: each offers one due candidate, a stale processing
+    job first, and the namespace served longest ago (its latest job change
+    other than a queued job, within a day; or never) comes first, so one
+    namespace's backlog takes turns with every other's."""
     ch = ch or _default_client()
     rows = await ch.query_all(
-        f"SELECT c.* FROM ({_SELECT} WHERE (state = 'pending' AND next_attempt_at <= now64(3))"
-        " OR (state = 'processing'"
-        " AND updated_at <= now64(3) - toIntervalMillisecond({stale:UInt64}))"
-        " ORDER BY state = 'processing', next_attempt_at LIMIT 1 BY org, namespace) AS c"
-        " LEFT JOIN (SELECT org, namespace, max(updated_at) AS last_started"
+        "SELECT c.* FROM (SELECT h.* FROM ("
+        f"{_SELECT} WHERE state IN ('pending', 'processing')"
+        " ORDER BY created_at, ingestion_id LIMIT 1 BY org, namespace, source_uri) AS h"
+        " WHERE (h.state = 'pending' AND h.next_attempt_at <= now64(3))"
+        " OR (h.state = 'processing'"
+        " AND h.updated_at <= now64(3) - toIntervalMillisecond({stale:UInt64}))"
+        " ORDER BY h.state = 'processing' DESC, h.next_attempt_at"
+        " LIMIT 1 BY h.org, h.namespace) AS c"
+        " LEFT JOIN (SELECT org, namespace, max(updated_at) AS last_served"
         f" FROM {INGESTIONS} FINAL WHERE state != 'pending'"
         " AND updated_at > now64(3) - INTERVAL 1 DAY GROUP BY org, namespace) AS s"
         " ON c.org = s.org AND c.namespace = s.namespace"
         # ifNull: with join_use_nulls a namespace never served reads NULL, which sorts last.
-        " ORDER BY c.state = 'processing', ifNull(s.last_started, toDateTime64(0, 3)),"
-        " c.next_attempt_at"
+        " ORDER BY ifNull(s.last_served, toDateTime64(0, 3)), c.next_attempt_at"
         " LIMIT {lim:UInt32}",
         params={"stale": int(stale_after_s * 1000), "lim": int(limit)},
     )

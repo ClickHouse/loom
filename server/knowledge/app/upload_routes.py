@@ -53,6 +53,8 @@ async def _read_body(request: Request, limit: int) -> bytes:
             raise _refuse(413, "PAYLOAD_TOO_LARGE", f"the file is over {limit} bytes")
     if declared is not None and len(body) != declared:
         raise _refuse(400, "VALIDATION_FAILED", "the body ended before its Content-Length")
+    # One copy: the ClickHouse client writes only `bytes` into a String column.
+    # The org's in-flight slot bounds how many uploads hold one at a time.
     return bytes(body)
 
 
@@ -65,7 +67,8 @@ def _bucket_org(auth: Any, org: str) -> str:
 
 def _admit(auth: Any, org: str, namespace: str) -> None:
     """`knowledge.add`'s rate-limit buckets, as the transports draw them for an
-    op; a limiter that fails admits the upload, as it admits an op."""
+    op, as interactive traffic (an upload is not classified); a limiter that
+    fails admits the upload, as it admits an op."""
     from server.core.ratelimit import get_limiter
 
     try:

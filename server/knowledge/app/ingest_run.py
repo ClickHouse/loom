@@ -89,6 +89,7 @@ class Parsed:
     artifact: Artifact
     artifact_sha256: str
     chunks: list[StructuralChunk]
+    original_size: int  # the stored original's bytes, for the document row
 
 
 def _author(job: dict[str, Any]) -> dict[str, str]:
@@ -147,16 +148,21 @@ async def _retire_unpublished(job: dict[str, Any]) -> None:
 
 
 async def _end(job: dict[str, Any], state: str, code: str, message: str) -> str:
-    """End a job that publishes nothing: failed or cancelled."""
+    """End a job that publishes nothing: failed or cancelled. One whose
+    document row landed before the failure (the retire after it failed) ends
+    published instead."""
+    if (doc := await _own_publish(job)) is not None:
+        return await _finish_published(await _current(job), doc)
     await _retire_unpublished(job)
     await _save(job, state=state, error_code=code, error_message=message[:2000])
     return state
 
 
 async def _finish_published(job: dict[str, Any], doc: Any) -> str:
-    """End a job whose earlier run published and stopped before its last save:
-    retire the earlier versions' chunks it may not have reached, and record
-    the revision. Nothing is published again."""
+    """End a job whose document row landed but whose run did not finish (it
+    stopped before its last save, or failed after the row): retire the earlier
+    versions' chunks it may not have reached, and record the revision. Nothing
+    is published again."""
     from server.knowledge.store import chunks as chunks_repo
 
     org, ns, uri = job["org"], job["namespace"], job["source_uri"]
@@ -229,7 +235,7 @@ async def _parse(job: dict[str, Any]) -> Parsed:
     sha = await blobs.put(
         job["org"], job["namespace"], artifact.to_json(), uploader=str(job["user_id"])
     )
-    return Parsed(artifact, sha, chunks)
+    return Parsed(artifact, sha, chunks, len(data))
 
 
 async def _vectors(job: dict[str, Any], inputs: list[str]) -> tuple[list[list[float]], int]:
@@ -266,7 +272,6 @@ async def _publish(
     from server.core import leases
     from server.embedding import get_embedder
     from server.knowledge.app.writes import next_revision
-    from server.knowledge.store import blobs
     from server.knowledge.store import chunks as chunks_repo
     from server.knowledge.store import documents as documents_repo
 
@@ -299,7 +304,6 @@ async def _publish(
     # Recorded before the insert, so a run that stops after it is retired.
     job = await _save(job, doc_version=version)
     await chunks_repo.insert_chunks(rows)
-    stored = await blobs.locate(org, ns, job["sha256"])
     async with leases.holding(
         f"knowledge-source:{org}:{ns}:{uri}", ttl_s=_SOURCE_CLAIM_S, wait_s=10
     ) as held:
@@ -318,6 +322,11 @@ async def _publish(
         if expected >= 0 and (at != expected or (expected == 0 and live)):
             now_at = f"revision {at}" if live else "no live document"
             raise JobFailed("revision_conflict", f"the source has {now_at}, not {expected}")
+        # A write of the source that took its version after this one (a text
+        # write, which takes no claim) would outrank this row in FINAL: this
+        # publish would report a revision no reader sees.
+        if prior is not None and prior.version >= version:
+            raise JobFailed("revision_conflict", "a later write of this source landed first")
         if not lease.held:
             raise LeaseLost(f"knowledge-ingest:{job['ingestion_id']}")
         revision = next_revision(prior)
@@ -335,7 +344,7 @@ async def _publish(
                 version=version,
                 ingested_at=now,
                 blob_path=job["sha256"],
-                blob_size=stored.size if stored else 0,
+                blob_size=parsed.original_size,
                 blob_content_type=job["content_type"],
                 original_filename=job["filename"],
                 revision=revision,
@@ -356,6 +365,8 @@ async def _retry_or_fail(job: dict[str, Any], e: Exception) -> str:
     attempts = int(job["attempts"])
     if attempts >= settings.knowledge_ingest_max_attempts:
         return await _end(job, "failed", "retries_exhausted", str(e))
+    if (doc := await _own_publish(job)) is not None:  # failed after its document row
+        return await _finish_published(await _current(job), doc)
     # A pending job holds no live chunks: search would serve them while it waits.
     await _retire_unpublished(job)
     delay = _RETRY_BASE_S * 2 ** (attempts - 1)

@@ -926,19 +926,35 @@ def test_a_pending_job_cancelled_after_a_publish_that_stopped_serves_none_of_its
     assert _run(world, job_id) == "cancelled" and world.job(job_id)["state"] == "cancelled"  # type: ignore[index]
 
 
-def test_a_rerun_after_its_document_was_written_retires_the_older_chunks(world: World) -> None:
+@pytest.mark.parametrize("attempts", [1, 5])
+def test_a_failure_after_the_document_row_ends_the_job_published(
+    world: World, settings_override: Any, attempts: int
+) -> None:
     """The document row landed and the retire of the earlier revision's chunks
-    failed: the rerun finds its own revision live, retires them, and publishes
-    nothing more."""
+    failed: on any attempt, last or not, the job ends published (the retire run
+    again), not failed or back to pending."""
+    settings_override(knowledge_ingest_max_attempts=attempts)
     _run(world, _ingest(world, _upload(world)))
     world.fail_retire_older = BackendUnavailableError("store down")
     job_id = _ingest(world, _upload(world))
-    assert _run(world, job_id) == "pending"
-    assert [d["revision"] for d in world.documents] == [1, 2] and len(world.superseded) == 1
-    chunks = len(world.chunks)
     assert _run(world, job_id) == "ready"
-    assert len(world.chunks) == chunks and len(world.documents) == 2
+    job = world.job(job_id)
+    assert job is not None and (job["revision"], job["error_code"]) == (2, "")
+    assert [d["revision"] for d in world.documents] == [1, 2]
     assert world.superseded[-1] == ("repo://retention.sql", world.documents[-1]["version"])
+
+
+def test_an_ingest_a_later_text_write_overtook_fails_and_retires_its_chunks(world: World) -> None:
+    """A text write takes no claim: one that took its version after this
+    publish's would outrank its row, so the ingest fails `revision_conflict`
+    rather than report a revision no reader sees."""
+    _run(world, _ingest(world, _upload(world)))
+    world.documents[-1]["version"] = 2**62  # a write stamped later than any job's version
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "failed"
+    job = world.job(job_id)
+    assert job is not None and job["error_code"] == "revision_conflict"
+    assert world.retired == [job["doc_version"]] and len(world.documents) == 1
 
 
 def test_a_reindex_of_an_ingested_document_is_refused_and_writes_nothing(world: World) -> None:
