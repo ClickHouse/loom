@@ -44,7 +44,7 @@ them in too, and the web pods' NetworkPolicy would open their egress. */}}
 {{- end }}
 
 {{- define "loom.extractorSelectorLabels" -}}
-app.kubernetes.io/name: {{ include "loom.name" . }}-extractor
+app.kubernetes.io/name: {{ include "loom.name" . | trunc 53 | trimSuffix "-" }}-extractor
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 

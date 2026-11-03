@@ -52,8 +52,9 @@ server on the same host at `http://127.0.0.1:8790`. Unlike the compose stack and
 the chart, this leaves the service's own process a route out; an extraction can
 make no socket either way (with one at a time, the default: see below).
 
-Point the server at it with `LOOM_DOCUMENT_EXTRACTOR_URL` and the token file's
-contents in `LOOM_DOCUMENT_EXTRACTOR_TOKEN`.
+Point the server at it with `LOOM_DOCUMENT_EXTRACTOR_URL` and the token
+(`/etc/loom-extractor.token`, or the value in `/etc/loom-extractor.env`) in
+`LOOM_DOCUMENT_EXTRACTOR_TOKEN`.
 
 Run one extraction at a time per service and scale with replicas. A child is
 readable by other processes of the same user for the moment between its start
