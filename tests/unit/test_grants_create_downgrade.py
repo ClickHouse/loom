@@ -267,6 +267,39 @@ async def test_revoke_by_email_reaches_a_row_under_an_unverified_accounts_handle
 
 
 @pytest.mark.asyncio
+async def test_revoke_by_handle_leaves_its_unverified_emails_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `mallory`'s unverified email may name someone else's grant: revoking her
+    # handle, which holds none here, revokes nothing.
+    from server.identity.api.models_grants import GrantsRevokeInput
+
+    inserted: list[dict[str, Any]] = []
+
+    async def _canonical(org: str, subject: str, **_: Any) -> str:
+        return subject
+
+    async def _spellings(org: str, subject: str, **_: Any) -> list[str]:
+        return [subject, "bob@corp.example"]
+
+    async def _find_any(org: str, ns: str, sub: str, **_: Any) -> GrantState | None:
+        return GrantState.from_row(_row("writer")) if sub == "bob@corp.example" else None
+
+    async def _insert(row: dict[str, Any], **_: Any) -> None:
+        inserted.append(row)
+
+    monkeypatch.setattr("server.auth.aliases.canonical_subject", _canonical)
+    monkeypatch.setattr("server.auth.aliases.spellings", _spellings)
+    monkeypatch.setattr(grants_repo, "find_any_grant", _find_any)
+    monkeypatch.setattr(grants_repo, "insert_row", _insert)
+    out = await grants_mod.handle_grants_revoke(
+        GrantsRevokeInput(org="o", namespace="ns", subject="mallory")
+    )
+    assert out.revoked is False
+    assert inserted == []
+
+
+@pytest.mark.asyncio
 async def test_the_last_admin_is_not_lowered(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.core.errors import PreconditionFailedError
 

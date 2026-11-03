@@ -679,10 +679,10 @@ loom call /v1/admin/revoke_subject --data \
   '{"org":"acme","subject":"lee@acme.io","reason":"left","issued_before":"2026-01-31T12:00:00Z"}'
 ```
 
-Loom revokes the subject and every spelling the org's directory ties to it, the
-same pairing grants are read under: an email reaches the login handle of the
-account it signs in to (an SSO account's subject is its namespace, `u-…`), and a
-handle reaches its email. For each, every token whose subject it is, every token
+Loom revokes the subject and every spelling the org's directory pairs with it,
+its email verified or not (grants are read under verified pairs only): an email
+reaches the login handle of each account naming it (an SSO account's subject is
+its namespace, `u-…`), and a handle reaches its email. For each, every token whose subject it is, every token
 it made or that descends from one of its tokens, and every refresh of its sign-in
 sessions are refused at once by the process that took the request, and by every
 other process at its next revocation refresh. Every mint reads revocations from

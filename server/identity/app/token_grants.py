@@ -17,6 +17,7 @@ rules and creator-grant inheritance (``server/auth/context.py``).
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime
 from typing import Any
@@ -24,6 +25,8 @@ from typing import Any
 from server.core.datetimes import naive_utc_now_seconds
 from server.identity.store import grants as grants_repo
 from server.operations.base import grant_rank
+
+log = logging.getLogger(__name__)
 
 RESTRICTED_GRANT_CAP = "writer"
 
@@ -156,7 +159,11 @@ async def cascade_revoke_to_created_tokens(
         ch = get_client()
     from server.auth.aliases import spellings
 
-    creators = await spellings(org, subject, ch=ch)
+    try:
+        creators = await spellings(org, subject, ch=ch)
+    except Exception as e:  # noqa: BLE001 — the tokens made under the exact subject still go
+        log.warning("token grant cascade: spellings of %r unread: %s", subject, e)
+        creators = [subject]
     sa_rows = await ch.query_all(
         """
         SELECT DISTINCT sa_subject FROM loom.service_accounts FINAL

@@ -23,7 +23,8 @@ to cap a claim, never to admit one, and a revocation (`spellings`) reaches it.
 Reads are cached per (org, subject) for `grant_cache_ttl_seconds`, the bound
 other processes see a grant change within: the auth context, the login
 widening and the restricted gate each ask once per request. A change to a
-row's spellings calls `invalidate`, which clears this process's entries only.
+row's spellings calls `invalidate`, and a link or an unlink of an email
+`invalidate_org`; each clears this process's entries only.
 `canonical_subject`, which picks the subject a grant is written under, reads
 the directory itself.
 """

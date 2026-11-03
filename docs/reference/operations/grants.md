@@ -49,7 +49,7 @@ Grant another subject (user or service-account) viewer / writer / admin role on 
 | --- | --- | --- |
 | `org` | `str` | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | The namespace the op reads or writes. |
-| `subject` | `str` | The subject as the request spelled it (the row is stored under its login handle). |
+| `subject` | `str` | The subject as the request spelled it (the row is stored under the login handle of the account whose verified email it is, else as spelled). |
 | `role` | `Literal['viewer', 'writer', 'admin']` | The role now active for the subject. |
 | `granted_at` | `datetime` | When the grant row was written (UTC). |
 

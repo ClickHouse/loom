@@ -50,7 +50,8 @@ class GrantsCreateInput(BaseModel):
 class GrantsCreateOutput(BaseModel):
     org: str
     namespace: str
-    # The subject as the request spelled it (the row is stored under its login handle).
+    # The subject as the request spelled it (the row is stored under the login handle
+    # of the account whose verified email it is, else as spelled).
     subject: str
     # The role now active for the subject.
     role: GrantRoleStr
@@ -84,7 +85,7 @@ class _GrantEntry(ProjectedRow):
     granted_at: datetime
     granted_by: str
     # The person's other spellings whose rows folded onto
-    # this one (a login handle's contact email, or the reverse).
+    # this one (a login handle's verified email, or the reverse).
     also: list[str] = Field(default_factory=list)
 
 
