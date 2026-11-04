@@ -227,3 +227,27 @@ async def test_inbox_list_everywhere_admits_an_agent_label_only_without_a_token(
     assert (await inboxes.handle_inbox_list(listing)).inboxes == []
     _as(monkeypatch, "")  # no token: the label is all there is to check
     assert [i.inbox for i in (await inboxes.handle_inbox_list(listing)).inboxes] == ["private-bot"]
+
+
+@pytest.mark.asyncio
+async def test_inbox_list_everywhere_leaves_out_an_inbox_the_caller_may_only_read(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The listing names the inboxes a post or reassign can reach: read on the owner
+    namespace alone does not admit one, write or a poster entry does."""
+    await _register(fake)
+    fake.inboxes[(ORG, "private-bot")]["posters"] = []
+    can_write = False
+
+    async def _reader(org: str, namespace: str, *, write: bool, hides_answer=True) -> bool:
+        return namespace == "private" and (not write or can_write)
+
+    patch_handlers(monkeypatch, "_in_scope", _reader)
+    _as(monkeypatch, "sa:viewer")
+    listing = wire.InboxListInput(**_caller("public", "viewer"), mine_everywhere=True)
+    assert (await inboxes.handle_inbox_list(listing)).inboxes == []
+    fake.inboxes[(ORG, "private-bot")]["posters"] = ["sa:viewer"]
+    assert [i.inbox for i in (await inboxes.handle_inbox_list(listing)).inboxes] == ["private-bot"]
+    fake.inboxes[(ORG, "private-bot")]["posters"] = []
+    can_write = True
+    assert [i.inbox for i in (await inboxes.handle_inbox_list(listing)).inboxes] == ["private-bot"]

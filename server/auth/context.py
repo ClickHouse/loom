@@ -281,7 +281,8 @@ async def collection_clause(org: str, column: str = "namespace") -> tuple[str, d
 class OrgScopeFilter:
     """Resolved org-wide read scope for the current caller.
 
-    ``accessible=False`` → non-admin caller in zero namespaces; return empty.
+    ``accessible=False`` → the caller may read none of the org's namespaces
+    (none in scope, or classification unreadable); return empty.
     Otherwise append ``where`` + ``params`` (both empty = see everything).
     """
 
@@ -301,11 +302,33 @@ async def rollup_member_namespaces(org: str) -> list[str]:
     return ns_list
 
 
+async def every_namespace_scope(org: str, *, column: str = "namespace") -> OrgScopeFilter:
+    """WHERE fragment for a caller that reads every namespace of `org` (an org
+    admin, or a flat `*` claim): all of them EXCEPT the restricted namespaces
+    it holds no grant + claim for, the namespaces its claim names that the
+    gate refuses (a claim capped at a revoked grant), and the collections it
+    cannot read. Empty with auth disabled."""
+    hidden = await restricted_namespaces_hidden_from(org)
+    if hidden == ["*"]:
+        return OrgScopeFilter(accessible=False, where="", params={})
+    auth = current_auth()
+    if auth is not None:
+        named = named_claims(auth)
+        refused = set(named) - set(await readable_named_claims(auth, org))
+        hidden = sorted(set(hidden) | refused)
+    where, params = await collection_clause(org, column)
+    if hidden:
+        where += f" AND {column} NOT IN {{ns_hidden:Array(String)}}"
+        params["ns_hidden"] = hidden
+    return OrgScopeFilter(accessible=True, where=where, params=params)
+
+
 async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeFilter:
     """WHERE fragment scoping an org-wide read to the namespaces the caller
-    may see. Org/platform admins (and the auth-off path) get an empty filter;
-    everyone else is constrained to `resolve_my_namespaces`, and a caller with
-    no accessible namespaces yields ``accessible=False`` to short-circuit.
+    may see. Org/platform admins get `every_namespace_scope`'s exclusions,
+    the auth-off path an empty filter; everyone else is constrained to
+    `resolve_my_namespaces`, and a caller with no accessible namespaces
+    yields ``accessible=False`` to short-circuit.
 
     Single source of truth for the privacy filter shared by the org-wide
     rollup ops — a bug here leaks one tenant's data to another. The
@@ -321,16 +344,7 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
     if auth.has_role(Role.PLATFORM_ADMIN) or (
         auth.has_role(Role.ORG_ADMIN) and auth.org in ("*", org)
     ):
-        # An org admin sees everything EXCEPT the restricted namespaces it
-        # holds no grant + claim for, and the collections it cannot read.
-        hidden = await restricted_namespaces_hidden_from(org)
-        if hidden == ["*"]:
-            return OrgScopeFilter(accessible=False, where="", params={})
-        where, params = await collection_clause(org, column)
-        if hidden:
-            where += f" AND {column} NOT IN {{ns_hidden:Array(String)}}"
-            params["ns_hidden"] = hidden
-        return OrgScopeFilter(accessible=True, where=where, params=params)
+        return await every_namespace_scope(org, column=column)
     ns_list = await rollup_member_namespaces(org)
     if not ns_list:
         return OrgScopeFilter(accessible=False, where="", params={})
@@ -346,6 +360,7 @@ __all__ = [
     "current_auth",
     "current_auth_var",
     "delegated_reach",
+    "every_namespace_scope",
     "named_claims",
     "readable_named_claims",
     "resolve_my_namespaces",

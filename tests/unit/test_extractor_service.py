@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import textwrap
 from pathlib import Path
 
@@ -79,6 +80,18 @@ def test_the_service_refuses_root_and_the_capabilities_that_lift_its_process_lim
     monkeypatch.setattr(entry.os, "getuid", lambda: 0)
     with pytest.raises(SystemExit, match="root"):
         entry.refuse_root()
+
+
+def test_the_service_refuses_a_machine_its_socket_filter_does_not_cover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom_extractor import __main__ as entry
+
+    monkeypatch.setattr(entry.platform, "machine", lambda: "riscv64")
+    with pytest.raises(SystemExit, match="no socket filter for riscv64"):
+        entry.refuse_unfiltered_machine()
+    monkeypatch.setattr(entry.platform, "machine", lambda: "aarch64")
+    entry.refuse_unfiltered_machine()
 
 
 def test_the_permitted_set_is_read_from_the_status_and_its_absence_refused() -> None:
@@ -288,6 +301,22 @@ def test_the_service_and_the_test_environment_pin_one_sqlglot() -> None:
     assert sqlglot == server["project"]["optional-dependencies"]["extractor"]
 
 
+def test_the_image_locks_what_the_tests_ran() -> None:
+    """The image installs extractor/uv.lock; these tests run on the root lock. A
+    package both hold is at one version in each, so the image runs what passed."""
+    import tomllib
+
+    root = Path(__file__).resolve().parents[2]
+
+    def locked(path: Path) -> dict[str, str]:
+        return {p["name"]: p["version"] for p in tomllib.loads(path.read_text())["package"]}
+
+    image, tests = locked(root / "extractor" / "uv.lock"), locked(root / "uv.lock")
+    image.pop("loom-extractor")
+    assert set(image) <= set(tests)
+    assert {n: v for n, v in image.items() if tests[n] != v} == {}
+
+
 async def test_a_child_is_non_dumpable_in_root_with_no_request_on_its_command_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -389,6 +418,80 @@ async def test_a_child_can_start_no_process(
     )
     r = await _extract()
     assert r.json()["error"]["message"] == "BlockingIOError"
+
+
+# Calls the child's filter refuses beyond the socket families, by architecture:
+# io_uring_setup (an io_uring can open a socket), ptrace (PEEKTEXT on pid 0 is
+# ESRCH unfiltered), process_vm_readv/writev and pidfd_getfd (EINVAL, EFAULT or
+# EBADF unfiltered), and on x86_64 an x32-numbered call (ENOSYS unfiltered).
+_PROBES = {
+    "x86_64": {
+        "io_uring": 425,
+        "ptrace": 101,
+        "vm_readv": 310,
+        "vm_writev": 311,
+        "pidfd_getfd": 438,
+        "x32": 0x40000000 | 39,  # the x32 ABI's getpid, numbered past the filter's checks
+    },
+    "aarch64": {
+        "io_uring": 425,
+        "ptrace": 117,
+        "vm_readv": 270,
+        "vm_writev": 271,
+        "pidfd_getfd": 438,
+    },
+}
+
+
+async def test_a_child_can_open_no_socket(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The service's network may hold the Loom server (an unauthenticated one, on
+    a laptop): a taken-over extraction reaches no address on it or beyond."""
+    body = """
+        import ctypes, errno, platform, socket
+        refused = []
+        for family in (socket.AF_INET, socket.AF_INET6, socket.AF_UNIX):
+            try:
+                socket.socket(family)
+            except PermissionError:
+                refused.append(family.name)
+        try:
+            socket.socketpair()
+        except PermissionError:
+            refused.append("pair")
+        libc = ctypes.CDLL(None, use_errno=True)
+        probes = PROBES[platform.machine()]
+        for name, nr in probes.items():
+            if libc.syscall(nr, 1, None) == -1 and ctypes.get_errno() == errno.EPERM:
+                refused.append(name)
+        raise ExtractionError("corrupt", " ".join(refused))
+        """
+    _child(tmp_path, monkeypatch, body.replace("PROBES", repr(_PROBES)))
+    r = await _extract()
+    import ctypes
+    import errno
+
+    # A call the host refuses itself (a container's seccomp profile, a hardened
+    # kernel) would pass the probe without the filter, so it is not counted.
+    libc = ctypes.CDLL(None, use_errno=True)
+    probes = _PROBES[platform.machine()]
+    host = {
+        n
+        for n, nr in probes.items()
+        if libc.syscall(nr, 1, None) == -1 and ctypes.get_errno() == errno.EPERM
+    }
+    refused = r.json()["error"]["message"].split()
+    assert refused[:4] == ["AF_INET", "AF_INET6", "AF_UNIX", "pair"]
+    assert set(probes) - host <= set(refused), refused
+
+
+def test_a_machine_with_no_socket_filter_refuses_to_extract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom_extractor import child
+
+    monkeypatch.setattr(child.platform, "machine", lambda: "riscv64")
+    with pytest.raises(OSError, match="no socket filter for riscv64"):
+        child.no_sockets()
 
 
 _SCOPE = {

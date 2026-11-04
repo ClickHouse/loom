@@ -5,8 +5,9 @@ its own dependencies, never the Loom server. The server sends the original's byt
 to, reads the artifact back as untrusted input, and cuts structural chunks from its blocks, so a SQL statement, a TOML
 key and a Markdown section are all cited by a locator into the source. Loom ships a reference extractor
 (`extractor/loom_extractor/`) for Markdown, HTML, plain text, SQL and TOML; an operator can run another behind the same
-[wire contract](../reference/extractor-contract.md). No operation calls extraction yet: `knowledge.add` takes text the
-caller extracted.
+[wire contract](../reference/extractor-contract.md). `knowledge.ingest` extracts an uploaded original this way
+([ingestion](#ingestion)), and the document-source sync calls it for the PDFs and `.pptx` files a registered folder
+holds ([syncing a source](../features/knowledge.md#syncing-a-source)); `knowledge.add` takes text the caller extracted.
 
 ## The service boundary
 
@@ -56,15 +57,16 @@ dropped. The server addresses the artifact by the SHA-256 of its own serializati
 refuses to start without a token of at least 16 characters. Each extraction runs in a child process, and before the
 child reads the source:
 
-| The child                                | How                                                                                                                                                                                                                                       |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| has no environment                       | started with only `PYTHONPATH`, `PATH` and `LC_ALL`, so the token is not in it                                                                                                                                                            |
-| cannot read the service or another child | the service and every child are non-dumpable (`PR_SET_DUMPABLE`), so a process of the same user cannot read their environment, memory or open files through `/proc` or ptrace                                                             |
-| has bounded resources                    | address space (`LOOM_EXTRACTOR_MEMORY_MB`), CPU seconds, a file size of 0 (it can create empty files, not write to one), no core dump                                                                                                     |
-| starts no process                        | `RLIMIT_NPROC` 0, so nothing a parser starts outlives the extraction; a child still running at a timeout, a disconnect or a cancel is killed with its process group before its slot is freed                                              |
-| gains no privilege on exec               | `PR_SET_NO_NEW_PRIVS` in the service and in each child, so no setuid binary or file capability raises one                                                                                                                                 |
-| loads only the package                   | runs in `/` with `-P`, so no current or script directory is on `sys.path`; the package and its dependencies are installed read-only to the service's user, as a file of its own on `sys.path` could change what every later child imports |
-| shows no request                         | its command line holds only its limits; the file's name and options come on stdin                                                                                                                                                         |
+| The child                                | How                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| has no environment                       | started with only `PYTHONPATH`, `PATH` and `LC_ALL`, so the token is not in it                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| cannot read the service or another child | the service and every child are non-dumpable (`PR_SET_DUMPABLE`), so a process of the same user cannot read their environment, memory or open files through `/proc` or ptrace                                                                                                                                                                                                                                                                                                                                                                     |
+| has bounded resources                    | address space (`LOOM_EXTRACTOR_MEMORY_MB`), CPU seconds, a file size of 0 (it can create empty files, not write to one), no core dump                                                                                                                                                                                                                                                                                                                                                                                                             |
+| starts no process                        | `RLIMIT_NPROC` 0, so nothing a parser starts outlives the extraction; a child still running at a timeout, a disconnect or a cancel is killed with its process group before its slot is freed                                                                                                                                                                                                                                                                                                                                                      |
+| opens no socket                          | a seccomp filter set after no-new-privileges makes `socket`, `socketpair` and `io_uring_setup` fail with EPERM, and `ptrace`, `process_vm_readv`, `process_vm_writev` and `pidfd_getfd` too (x86_64 and aarch64; the service refuses to start on another architecture), so it reaches no address, the Loom server on its network included. A concurrent sibling stays writable through `/proc/<pid>/mem` until it is non-dumpable, so with `LOOM_EXTRACTOR_CONCURRENCY` above 1 a taken-over child could still patch one before it filters itself |
+| gains no privilege on exec               | `PR_SET_NO_NEW_PRIVS` in the service and in each child, so no setuid binary or file capability raises one                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| loads only the package                   | runs in `/` with `-P`, so no current or script directory is on `sys.path`; the package and its dependencies are installed read-only to the service's user, as a file of its own on `sys.path` could change what every later child imports                                                                                                                                                                                                                                                                                                         |
+| shows no request                         | its command line holds only its limits; the file's name and options come on stdin                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 The service kills a child at the wall-clock timeout, when its caller disconnects or when its output passes the artifact
 bound, and reads a source only once one of its `LOOM_EXTRACTOR_CONCURRENCY` slots is free, so that bound covers the
@@ -72,8 +74,9 @@ originals held in memory too. The slots are one by default: a child is readable 
 start until it makes itself non-dumpable, so a child a hostile source has taken over could open a concurrent child's
 source in that moment. Scale with service replicas, not slots. The kernel does not hold root, or a process with
 `CAP_SYS_RESOURCE` or `CAP_SYS_ADMIN`, to the process limit, so the service refuses to start as root or with either
-capability permitted. A child is not denied the network or reads of the file system in its process: the container it
-runs in is what denies those. The settings are in [`extractor/README.md`](../../extractor/README.md).
+capability permitted. A child is not denied reads of the file system in its process: the container it runs in is what
+denies those. The service refuses to start on an architecture its socket filter does not cover. The settings are in
+[`extractor/README.md`](../../extractor/README.md).
 
 ## The artifact
 
@@ -209,11 +212,52 @@ characters. A block it cut is marked (`attrs.keys_truncated`, `attrs.section_tru
 Each chunk carries the ids of the blocks it was cut from, their type (`mixed` when they differ), the merged locator of
 their span (a field such as `key_path` survives only when every block agrees) and the union of their keys.
 
+## Ingestion
+
+`knowledge.ingest` runs a job (`server/knowledge/app/ingest_run.py`, worker `knowledge_ingest`) over an original that
+`POST /v1/knowledge.upload` stored. The upload names the format from the file name and media type and never reads the
+bytes; the job reads the original and sends it to the extractor through the client above, checks the artifact, stores it
+as an original of its own (content-addressed), cuts structural chunks with each chunk's context (`chunk_context`: the
+title, description and section breadcrumb), embeds them, reusing the vector of an input this namespace already embedded
+under the same model, and publishes the next revision of the source: the chunks, then, under the source's claim, the
+revision check, the document row and the earlier version's chunks retired. The claim covers those few statements, not
+the chunk insert, so its time limits hold for a source of any size. A source the extractor refuses fails the job with
+its code; a format no configured extractor takes fails it with `format_unavailable`; an artifact that breaks the
+contract fails it with `invalid_artifact`; an extractor that cannot be reached, times out or answers a status that is
+neither a result nor a refusal puts the job back with a growing delay (at most an hour) until
+`LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS`. Nothing is published before every slow step has run, so a failed or cancelled job
+leaves the earlier revision serving. The job row records the chunk version a publish inserts before it writes the
+document row; when a run stops between the two, its retry, its failure or its next run retires those chunks. The
+document row names the job that wrote it (`ingestion_id`, kept by a metadata edit and a delete) and a rerun looks for
+any version row of the source that names it, so a text write since does not hide it, and a run that stopped mid-publish
+(still `processing` at the publish stage, which is saved with its chunk version), when a later write of the source (a
+text write, a metadata edit or a delete) has landed since and the job's row is not found (a merge may have folded it
+away), fails `revision_conflict` rather than perhaps publish its older file over that write; a job a retry put back to
+pending is not judged so. A document insert that failed transiently (its own timeout, or the source claim's deadline
+cutting it off) may still land, so the run stops there as a crash would and the job stays `processing` at its publish
+stage, its chunks live: the run leaves the job's lease to expire rather than release it, so no worker takes the job
+until the lease's TTL has run out on the server's clock, past the insert's own bound (a carried send's start window, a
+claimed statement's server-side limit and a commit margin), and by then the insert has landed or been stopped: the next
+run finishes it published when its row landed (whatever was written after it: a delete or a text write stands), fails it
+as overtaken as above, or retires the chunks; a rerun of a job that published finishes without publishing again or
+retiring the chunks it published. A cancel is a row of its own (`loom.knowledge_ingest_cancels`), never a version of the
+job's, which only the worker holding the job's lease writes; the worker reads it before the publish and when it takes
+the job, and a job whose own publish is found ends published whatever cancel came after. A pass runs one job under
+`LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS`, taking one source's jobs one at a time in the order they were asked (only the
+oldest open job of a source is offered, a stale one before any later one), and namespaces in turn (the one served
+longest ago first), and a run cut off at that deadline or by a stopped process counts toward the job's attempts.
+
 ## Dependencies
 
-The reference extractor's parsers need `sqlglot` for SQL and the standard library otherwise. They are installed with
-the service (`extractor/pyproject.toml`), and in a development environment by the `extractor` extra; the server's image
-carries none of them.
+The reference extractor's parsers need `sqlglot` for SQL and the standard library otherwise. They are installed with the
+service (`extractor/pyproject.toml`), and in a development environment by the `extractor` extra; the server's image
+carries none of them. Its image (`extractor/Dockerfile`, `ghcr.io/clickhouse/loom-extractor`) installs the package and
+its locked dependencies (`extractor/uv.lock`) into a venv root owns and runs the service as a user that owns nothing in
+it, so no file on a child's `sys.path` is writable to the child. The compose stack and the Helm chart run it apart from
+the server: Compose on an internal network shared with the server alone, the chart behind a NetworkPolicy that admits
+only Loom's pods and allows no egress, with no credential but its token; on either, an extraction makes no socket while
+it runs alone (`LOOM_EXTRACTOR_CONCURRENCY` 1, the default) ([deployment](../operations/deployment.md#container-images),
+[Kubernetes](../operations/kubernetes.md#document-extractor)).
 
 ## Invariants
 

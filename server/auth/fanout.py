@@ -108,3 +108,14 @@ async def resolve_fanout(org: str, cap: int | None = None, kinds: str | None = N
     )
     context.fanout_memo.set(fanout)
     return fanout
+
+
+def knowledge_search_reads_collections() -> bool:
+    """Whether an all_mine knowledge search (and loom_search's knowledge leg) spans the
+    caller's collections on this deployment: `knowledge_search_fanout_kinds` names
+    `collection`, or is "" (every kind). The fan-out keeps a namespace with no kind row,
+    but every collection has one (`collection.create` and the auto-registration write
+    `collection`), so the setting alone decides. Parsed here, as
+    `namespace_kinds.fanout_kinds` does, since this platform package imports no domain."""
+    kinds = {k.strip() for k in str(settings.knowledge_search_fanout_kinds).split(",") if k.strip()}
+    return not kinds or "collection" in kinds

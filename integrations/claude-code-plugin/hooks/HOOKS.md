@@ -108,9 +108,19 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   checkout the code scope line, the arbitration rules and, with a
   `LOOM_CODE_MAP_TOKEN_BUDGET` of 100 or more, the repo map; the task inbox line
   (`LOOM_TASK_INBOX_LINE=off`); the saved-briefs line (only with
-  `LOOM_SESSION_BRIEF_PRIMER=on`); the recording line, which states the
+  `LOOM_SESSION_BRIEF_PRIMER=on`); the collections line
+  (`LOOM_COLLECTIONS_LINE=off`); the recording line, which states the
   owner's Recording switch; and a once-a-day notice when ~/.claude.json also
   mounts the same server.
+- **loom-session-start, collections line.** One `collection.list` for the
+  session's org, cached a minute per (server, org, token, toolset); when the token
+  reads shared collections, a few lines list up to six (how a search covers
+  them is the server's own instructions' to say), those the caller holds most on first, one JSON line
+  each with the caller's role and description. When the caller writes one of
+  them and the toolset is not read-only, they also say how `knowledge.add`
+  writes one when asked. The names and descriptions are their creators'
+  words, so the list sits inside the recalled-data block. None on the assistant
+  toolset; silent with no collection, or when the server does not answer.
 - **loom-session-start, task inbox line.** One `task.counts` for the
   session's scope, cached a minute per (server, org, namespace); when inboxes
   the namespace owns hold tasks in triage or todo, one line names the counts
@@ -287,6 +297,7 @@ Switches read on/true/1/yes and off/false/0/no. Defaults in parentheses.
 | `LOOM_CONTEXT_TOKEN_BUDGET` (1200), `LOOM_CONTEXT_RUNS` (off), `LOOM_CONTEXT_RUNS_LIMIT` (8)                                                  | session-start                 | primer budget and the runs shortlist                                                     |
 | `LOOM_CODE_MAP` (on), `LOOM_CODE_MAP_TOKEN_BUDGET` (0 = no map)                                                                               | session-start                 | the repo map                                                                             |
 | `LOOM_TASK_INBOX_LINE` (on)                                                                                                                   | session-start                 | the task inbox line                                                                      |
+| `LOOM_COLLECTIONS_LINE` (on)                                                                                                                  | session-start                 | the collections line                                                                     |
 | `LOOM_SESSION_BRIEF` (on), `LOOM_SESSION_BRIEF_PRIMER` (off), `LOOM_SESSION_BRIEF_KEY`, `LOOM_SESSION_BRIEF_TIMEOUT_MS` (90000)               | session-brief, session-start  | briefs, the primer line, a fixed key, the flusher's bound                                |
 | `LOOM_PROMPT_RECALL` (first)                                                                                                                  | prompt-recall                 | first, on or off                                                                         |
 | `LOOM_PROMPT_RECALL_MIN_CONF` (0.5), `LOOM_PROMPT_RECALL_TOP_K` (3), `LOOM_PROMPT_RECALL_BUDGET` (600), `LOOM_PROMPT_RECALL_MAX_CHARS` (1200) | prompt-recall                 | the confidence bar, hits per plane, pack budget, injected cap                            |

@@ -108,6 +108,7 @@ async def _step_tombstone_documents_by_ns(org: str, namespace: _NS) -> int:
     the rows their erasure is stamped on still exist. One step owns both, so
     the census rows for loom.documents and loom.document_blobs re-open it."""
     await _step_erase_blobs_by_ns(org, namespace)
+    await memory_steps.delete_ingestions_by_namespace(org, namespace)
     return await memory_steps.tombstone_documents_by_namespace(org, namespace)
 
 
@@ -160,6 +161,7 @@ async def _step_tombstone_documents_by_user(org: str, user_id: str) -> int:
     """The user's originals first, as `_step_tombstone_documents_by_ns`, then
     the documents they wrote."""
     await memory_steps.erase_blobs_by_user(org, user_id)
+    await memory_steps.delete_ingestions_by_user(org, user_id)
     return await memory_steps.tombstone_documents_by_user(org, user_id)
 
 

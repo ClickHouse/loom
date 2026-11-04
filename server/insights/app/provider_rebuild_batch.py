@@ -15,6 +15,7 @@ from server.core.repo_base import _CHClient
 from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
 from server.insights.store.provider_staging import session_chunks
+from server.knowledge.domain.chunking import embedding_text
 from server.llm import customer
 from server.memory.app.model_attribution import attribution_for, memory_writers
 from server.memory.domain.embed_text import key_axis_text
@@ -27,7 +28,6 @@ from server.workers.holds import UNREAD_HOLD_S, hold_seconds
 # Stored text recipes mirror the original write paths. Tracker rows do not
 # contain their source text and therefore require explicit hydration by caller.
 TEXT_COLUMNS = {
-    "chunks": "content",
     "code_answers": "question",
     "code_summaries": "summary",
     "conversation_embeddings": "content_excerpt",
@@ -38,7 +38,7 @@ TEXT_COLUMNS = {
     "query_nodes": "query",
     "session_summaries": "summary_text",
 }
-SPECIAL_TEXT_TABLES = frozenset({"categories", "code_chunks", "qa_item_embeddings"})
+SPECIAL_TEXT_TABLES = frozenset({"categories", "chunks", "code_chunks", "qa_item_embeddings"})
 # Raw-passage tables: a row whose text reads as high is staged without a vector (see rebuild_batch).
 PASSAGE_TABLES = frozenset({"conversation_embeddings", "memory_chunks", "session_summaries"})
 _CALL_BATCH = 64
@@ -65,6 +65,11 @@ def _source_text(
             value = f"{row['name']}\n{row['description']}".strip()
         elif table == "code_chunks":
             value = row["context_text"] or row["content"]
+        elif table == "chunks":
+            # As the write path embedded it: the context, then the text. A chunk with
+            # neither stays unindexed; an older build's titled empty chunk fails until
+            # rechunked.
+            value = embedding_text(row["context"], row["content"])
         else:
             value = row[TEXT_COLUMNS[table]]
     except KeyError:

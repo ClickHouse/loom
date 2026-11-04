@@ -28,8 +28,8 @@ fail() {
 }
 
 # Settings this run is given that .env keeps, so a later `docker compose` in the
-# install directory, which reads only .env, uses the same port and image.
-KEPT_SETTINGS="LOOM_PORT LOOM_BIND_HOST LOOM_IMAGE_REPOSITORY LOOM_CLICKHOUSE_IMAGE"
+# install directory, which reads only .env, uses the same address and images.
+KEPT_SETTINGS="LOOM_PORT LOOM_BIND_HOST LOOM_IMAGE_REPOSITORY LOOM_EXTRACTOR_IMAGE_REPOSITORY LOOM_CLICKHOUSE_IMAGE"
 # given KEY: the value this run was given for KEY, empty when none.
 given() {
   eval "printf '%s' \"\${$1-}\""
@@ -268,17 +268,28 @@ saved_umask=$(umask)
 umask 077
 if [ ! -f "$INSTALL_DIR/.env" ]; then
   secret=$(LC_ALL=C od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+  extractor_token=$(LC_ALL=C od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
   project="loom-local-$(LC_ALL=C od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
   sed \
     -e "s/__COMPOSE_PROJECT_NAME__/$project/" \
     -e "s/__LOOM_VERSION__/$version/" \
     -e "s/__LOOM_JWT_SECRET__/$secret/" \
+    -e "s/__LOOM_DOCUMENT_EXTRACTOR_TOKEN__/$extractor_token/" \
     "$bundle/env.example" >"$INSTALL_DIR/.env"
   printf 'Created %s/.env\n' "$INSTALL_DIR"
 else
   printf 'Preserved existing %s/.env\n' "$INSTALL_DIR"
   had_env=1
   set_env LOOM_VERSION "$version"
+  # An install from before the extractor service: give it the token and the
+  # server its URL, as a new install's template does; a URL already there is
+  # the operator's and stays. Values are read as Compose reads them (quotes and
+  # comments stripped), so `TOKEN=""` is empty.
+  if [ -z "$(get_env LOOM_DOCUMENT_EXTRACTOR_TOKEN)" ]; then
+    [ -n "$(get_env LOOM_DOCUMENT_EXTRACTOR_URL)" ] \
+      || set_env LOOM_DOCUMENT_EXTRACTOR_URL http://extractor:8790
+    set_env LOOM_DOCUMENT_EXTRACTOR_TOKEN "$(LC_ALL=C od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+  fi
   # An install from before profiles always ran the bundled ClickHouse, and its
   # compose file pinned the connection settings, ignoring those lines in .env:
   # keep it that way. Other LOOM_CH_* settings it honoured stay as they are.

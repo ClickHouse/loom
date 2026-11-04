@@ -257,17 +257,17 @@ A duplicate is the same fact in other words. It is stored with `status='duplicat
 duplicate's slot, `memory.list` skips duplicates, and `memory.get` names the canonical in
 `canonical_key` (`follow=true` serves it). `include_duplicates=true` shows them.
 
-| Operation                          | Role   | Does                                                                                                     |
-| ---------------------------------- | ------ | -------------------------------------------------------------------------------------------------------- |
-| `memory.dedup_list`                | admin  | Clusters of one canonical and its duplicates.                                                            |
-| `memory.dedup_resolve`             | admin  | `keep_canonical`, `keep_duplicate` or `keep_both` for one pair; `confirm_canonical_key` repeats the key. |
-| `memory.dedup_collapse`            | writer | Every pair of a namespace (or key `prefix`) onto its canonical; no LLM; `dry_run` by default.            |
-| `memory.resolve_orphan_duplicates` | writer | Re-activate duplicates whose canonical is gone; `dry_run` to preview.                                    |
-| `memory.consolidate`               | writer | LLM-merge clusters of near-duplicates into one canonical each; `dry_run` to preview.                     |
+| Operation                          | Role   | Does                                                                                                                                                                                                      |
+| ---------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory.dedup_list`                | admin  | Clusters of one canonical and its duplicates.                                                                                                                                                             |
+| `memory.dedup_resolve`             | admin  | `keep_canonical`, `keep_duplicate` or `keep_both` for one pair, named by the `canonical_id` and `duplicate_id` that `memory.dedup_list` returns; `confirm_canonical_key` repeats the canonical row's key. |
+| `memory.dedup_collapse`            | writer | Every pair of a namespace (or key `prefix`) onto its canonical; no LLM; `dry_run` by default.                                                                                                             |
+| `memory.resolve_orphan_duplicates` | writer | Re-activate duplicates whose canonical is gone; `dry_run` to preview.                                                                                                                                     |
+| `memory.consolidate`               | writer | LLM-merge clusters of near-duplicates into one canonical each; `dry_run` to preview.                                                                                                                      |
 
-`keep_both` puts the pair on the same allowlist conflicts use. `memory.consolidate` makes
-one LLM call per cluster, skips rows younger than `min_age_seconds` (default one hour),
-and records lineage ([history and provenance](./history-and-provenance.md#lineage)).
+`keep_both` only clears the duplicate's tag, so a later write can flag the pair again.
+`memory.consolidate` makes one LLM call per cluster, skips rows younger than
+`min_age_seconds` (default one hour), and records lineage ([history and provenance](./history-and-provenance.md#lineage)).
 
 ## Refusal: the blacklist
 

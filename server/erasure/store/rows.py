@@ -27,6 +27,7 @@ class RequestRow(TypedDict):
     scope_type: str
     scope_value: str
     requester: str
+    actor: str
     urgency: str
     purge: bool
     attempts: int
@@ -119,6 +120,7 @@ class ChunkExportRow(TypedDict):
     source_uri: str
     chunk_idx: int
     content: str
+    context: str
     tags: list[str]
     doc_metadata: str
     chunk_metadata: str

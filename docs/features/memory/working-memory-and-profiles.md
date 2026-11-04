@@ -280,8 +280,11 @@ in [unified search](../unified-search.md).
 ## Limits
 
 - **Over-limit writes are refused, not truncated.** Watch `fill_ratio`.
-- **Working memory is not recall.** A block never appears in `memory.search`,
-  `memory.ask` or `loom_search`; only `context.pack` and the render/get ops return it.
+- **Working memory is not recall.** A block is never ranked or embedded. Besides
+  `context.pack` and the render/get ops, only a call that names a run or session carries
+  blocks: `memory.ask` puts the run's blocks in its synthesis prompt, and `memory.search`
+  returns the run's and the session's blocks in `scratchpad`. Both read inside the
+  request's read scope.
 - **A profile section is one row per label.** `profile.set` replaces it; prior versions
   stay readable through [`memory.history`](./history-and-provenance.md#versions-memoryhistory).
 - **Render spans every agent by default** unless `scope="this_agent"`.

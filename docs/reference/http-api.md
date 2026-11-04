@@ -183,9 +183,13 @@ MCP `tools/call` runs the same sequence. Consequences worth knowing:
 - A deployment that requires a token answers an anonymous request 401 whatever
   its body holds, and the anonymous check runs before the rate limiter, so an
   unauthenticated caller can never drain a tenant's bucket.
-- An empty `org` or `namespace` is treated as absent: a code or tracker op takes
-  its plane's default, any other op the token's own org, and a namespace with
-  no org to pair it with is `400 IDENTITY_INCOMPLETE`.
+- An empty, blank or `"-"` `org` or `namespace` is treated as absent: a code
+  or tracker op takes its plane's org (and a code op the code namespace,
+  except the `code.repo.*` writes, which must name their repository), any other
+  op the token's own org, and a namespace with no org to pair it with is
+  `400 IDENTITY_INCOMPLETE`. A padded `org` or `namespace` is stripped. Over
+  MCP, a connection's `X-Loom-Code-Scope` names the repository for any `code.*`
+  call that names none, the `code.repo.*` writes included.
 - An idempotent replay is looked up only after authorization and policy admit
   the call, so a stored answer never reaches another principal.
 - A rate limiter or traffic classifier that fails lets the request through and
@@ -197,23 +201,23 @@ each gate and the handler do.
 
 ## Headers
 
-| Direction | Header                                        | Meaning                                                                                                                                         |
-| --------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| request   | `Authorization: Bearer <jwt>`                 | The token.                                                                                                                                      |
-| request   | `Idempotency-Key: <string>`                   | Replay key for an idempotent op; see [Idempotency](#idempotency).                                                                               |
-| request   | `X-Request-Id`                                | Your request id; echoed back and stamped on every ledger row and ClickHouse query of the call. A fresh UUID when absent.                        |
-| request   | `X-Loom-On-Behalf-Of: <subject>`              | Act as another subject. Honoured only for a token whose subject is in `LOOM_TRUSTED_CALLERS`; the real caller is recorded as `impersonated_by`. |
-| request   | `X-Loom-Run-Id: <run_id>`                     | Label the call's ledger rows with a run without filtering the read. A body `run_id` on a read filters to that run's rows instead.               |
-| response  | `X-Request-Id`                                | Quote it in a bug report; the SDK errors carry it as `request_id` / `requestId`.                                                                |
-| response  | `X-Schema-Version`                            | The data-plane schema version.                                                                                                                  |
-| response  | `Server-Timing`                               | Handler time (`app`), plus ClickHouse time, statement count and bytes read (`ch`).                                                              |
-| response  | `X-RateLimit-Limit` / `-Remaining` / `-Reset` | Token-bucket state for the call's namespace and op class.                                                                                       |
-| response  | `Retry-After`                                 | Seconds to wait, on `429 RATE_LIMITED`, `503 OVERLOADED` and `503 AUTH_UNAVAILABLE`.                                                            |
-| response  | `X-Loom-Traffic-Class`                        | The traffic class the call ran as and where it came from, `<class>;source=<source>`.                                                            |
-| response  | `X-Idempotent-Replay: true`                   | The body is a stored replay, not a fresh execution.                                                                                             |
-| response  | `X-Loom-Ignored-Args`                         | Body keys the op did not apply: fields the op itself declined, then keys it does not read (see below).                                          |
-| response  | `X-Loom-Hint` / `X-Loom-Hint-Code`            | Advice about how the caller uses Loom, when one applies to this call. The body is unchanged; the SDKs log it once per distinct text.            |
-| response  | `X-Trace-Id`                                  | The OpenTelemetry trace id of the call, when tracing is on.                                                                                     |
+| Direction | Header                                        | Meaning                                                                                                                                                                                 |
+| --------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| request   | `Authorization: Bearer <jwt>`                 | The token.                                                                                                                                                                              |
+| request   | `Idempotency-Key: <string>`                   | Replay key for an idempotent op; see [Idempotency](#idempotency).                                                                                                                       |
+| request   | `X-Request-Id`                                | Your request id, 1 to 64 letters, digits, `.`, `_` or `-`; echoed back and stamped on every ledger row and ClickHouse query of the call. A fresh UUID when absent or of any other form. |
+| request   | `X-Loom-On-Behalf-Of: <subject>`              | Act as another subject. Honoured only for a token whose subject is in `LOOM_TRUSTED_CALLERS`; the real caller is recorded as `impersonated_by`.                                         |
+| request   | `X-Loom-Run-Id: <run_id>`                     | Label the call's ledger rows with a run without filtering the read. A body `run_id` on a read filters to that run's rows instead.                                                       |
+| response  | `X-Request-Id`                                | Quote it in a bug report; the SDK errors carry it as `request_id` / `requestId`.                                                                                                        |
+| response  | `X-Schema-Version`                            | The data-plane schema version.                                                                                                                                                          |
+| response  | `Server-Timing`                               | Handler time (`app`), plus ClickHouse time, statement count and bytes read (`ch`).                                                                                                      |
+| response  | `X-RateLimit-Limit` / `-Remaining` / `-Reset` | Token-bucket state for the call's namespace and op class.                                                                                                                               |
+| response  | `Retry-After`                                 | Seconds to wait, on `429 RATE_LIMITED`, `503 OVERLOADED` and `503 AUTH_UNAVAILABLE`.                                                                                                    |
+| response  | `X-Loom-Traffic-Class`                        | The traffic class the call ran as and where it came from, `<class>;source=<source>`.                                                                                                    |
+| response  | `X-Idempotent-Replay: true`                   | The body is a stored replay, not a fresh execution.                                                                                                                                     |
+| response  | `X-Loom-Ignored-Args`                         | Body keys the op did not apply: fields the op itself declined, then keys it does not read (see below).                                                                                  |
+| response  | `X-Loom-Hint` / `X-Loom-Hint-Code`            | Advice about how the caller uses Loom, when one applies to this call. The body is unchanged; the SDKs log it once per distinct text.                                                    |
+| response  | `X-Trace-Id`                                  | The OpenTelemetry trace id of the call, when tracing is on.                                                                                                                             |
 
 A browser client on another origin sees only the response headers the CORS
 policy exposes when `LOOM_CORS_ORIGINS` is set: `X-Request-Id`,

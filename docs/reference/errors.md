@@ -23,7 +23,8 @@ A non-2xx response from `POST /v1/<op>` has one body shape:
   `current_sha256` on a precondition failure, `retry_after_s` on the retryable
   refusals, `table` and `migration` on `SCHEMA_PENDING`. The table under
   [Common errors](#common-errors-and-what-to-do) names them.
-- The `X-Request-Id` response header (echoed from your request, or a fresh UUID)
+- The `X-Request-Id` response header (echoed from your request when it is 1 to 64
+  letters, digits, `.`, `_` or `-`, else a fresh UUID)
   identifies the call on the server's ledger and in its logs. Quote it in a bug
   report; the SDK errors carry it as `request_id` / `requestId`.
 - An error that carries a retry hint also sets the standard `Retry-After`
@@ -199,6 +200,10 @@ Raised in `server/memory/app/session_brief.py`.
 
 Raised in `server/code/app/repo_admin.py`.
 
+#### `BAD_CONFIG`
+
+Raised in `server/knowledge/app/sources.py`.
+
 #### `BAD_CONSTRAINT`
 
 Raised in `server/memory/app/records.py`.
@@ -227,13 +232,17 @@ Raised in `server/tracker/app/sources.py`.
 
 Raised in `server/code/app/repo_admin.py`.
 
+#### `BAD_KIND`
+
+Raised in `server/knowledge/app/sources.py`.
+
 #### `BAD_MAPPING`
 
 Raised in `server/tracker/app/sources.py`.
 
 #### `BAD_NAME`
 
-Raised in `server/tracker/app/sources.py`.
+Raised in `server/knowledge/app/sources.py`, `server/tracker/app/sources.py`.
 
 #### `BAD_NAMESPACE`
 
@@ -317,7 +326,7 @@ Raised in `server/knowledge/app/dedup.py`.
 
 #### `CONFIRM_REQUIRED`
 
-Raised in `server/code/app/repo_admin.py`, `server/tracker/app/sources.py`.
+Raised in `server/code/app/repo_admin.py`, `server/knowledge/app/sources.py`, `server/tracker/app/sources.py`.
 
 #### `CONFIRM_SUBJECT_MISMATCH`
 
@@ -342,6 +351,10 @@ Raised in `server/tracker/app/sources.py`.
 #### `CREDENTIAL_READONLY_MODE`
 
 Raised in `server/tracker/app/sources.py`.
+
+#### `CREDENTIAL_REFUSED`
+
+Raised in `server/knowledge/app/sources.py`.
 
 #### `CROSS_SITE_REQUEST`
 
@@ -469,7 +482,7 @@ Raised in `server/main.py`.
 
 #### `MISSING_IDENTITY_FIELD`
 
-Raised in `server/memory/app/records.py`.
+Raised in `server/memory/app/decision.py`, `server/memory/app/records.py`.
 
 #### `MISSING_REQUIRED_FIELD`
 
@@ -523,6 +536,10 @@ Raised in `server/identity/app/claim_release.py`.
 
 Raised in `server/tracker/app/sources.py`.
 
+#### `NOT_A_CODE_NAMESPACE`
+
+Raised in `server/knowledge/app/sources.py`.
+
 #### `NOT_A_REPO`
 
 Raised in `server/code/app/repo_admin.py`.
@@ -547,6 +564,10 @@ Raised in `server/identity/app/me_setup.py`.
 
 Raised in `server/knowledge/app/conversations.py`.
 
+#### `NO_ROOT_SECRET`
+
+Raised in `server/knowledge/app/sources.py`.
+
 #### `NO_SIGNING_KEY`
 
 HTTP 503, raised as `server.auth.keyring.NoSigningKey`. Kid `default` is retired (or the root secret signs neither HS256 nor RS256) and no keyring key is active here: nothing can be signed until an operator acts, so it carries no Retry-After.
@@ -561,7 +582,7 @@ Raised in `server/transport/mcp_auth.py`.
 
 #### `OVERLOADED`
 
-HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool or its streams, the document bucket's transfers or streams, an override's lock or a conversation delete or compaction stayed contended. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool or its streams, the document bucket's transfers or streams, an override's lock, a namespace's document-source lease, or a conversation delete or compaction… What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `OVERRIDE_NOT_STORED`
 
@@ -683,21 +704,41 @@ Raised in `server/auth/self_signup.py`.
 
 Raised in `server/auth/self_signup.py`.
 
+#### `SOURCE_DELETE_PENDING`
+
+Raised in `server/knowledge/app/sources.py`.
+
+#### `SOURCE_DOCUMENTS_KEPT`
+
+Raised in `server/knowledge/app/sources.py`.
+
 #### `SOURCE_EXISTS`
 
-Raised in `server/tracker/app/sources.py`.
+Raised in `server/knowledge/app/sources.py`, `server/tracker/app/sources.py`.
 
 #### `SOURCE_FROM_CONFIG`
 
 Raised in `server/tracker/app/sources.py`.
 
+#### `SOURCE_NOT_FOUND`
+
+Raised in `server/knowledge/app/sources.py`.
+
 #### `SOURCE_QUOTA`
 
-Raised in `server/tracker/app/sources.py`.
+Raised in `server/knowledge/app/sources.py`, `server/tracker/app/sources.py`.
+
+#### `SOURCE_REPLACED`
+
+HTTP 409, raised as `server.core.errors.SourceReplacedError`. 409 — the document source was removed and added again as another source during the call (a rotate's probe, a sync request); act on the current one.
+
+#### `SOURCE_TAGS_LOCKED`
+
+Raised in `server/knowledge/app/writes.py`.
 
 #### `SOURCE_UNREACHABLE`
 
-Raised in `server/tracker/app/sources.py`.
+Raised in `server/knowledge/app/sources.py`, `server/tracker/app/sources.py`.
 
 #### `SUBSTRING_NOT_FOUND`
 

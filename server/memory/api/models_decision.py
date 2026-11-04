@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from server.core.naming import SENTINEL
 from server.memory.api.models_common import FileRefs
+from server.memory.domain.decision_schema import Stage
 from server.memory.domain.provenance import DeclaredSourceClass
 from server.operations.base import MCP_HIDDEN
 
@@ -35,18 +36,26 @@ class DecisionRecordInput(BaseModel):
     # supersedes the earlier record (history keeps it).
     category: str = Field(min_length=1, max_length=120)
     # The situation that needed deciding; `decision.precedents` matches a query against
-    # the decision's statement, which includes the start of the scenario.
+    # the decision's statement, which opens with the scenario.
     scenario: str = Field(min_length=1, max_length=2000)
     # Why this outcome was chosen.
     reasoning: str = Field(min_length=1, max_length=4000)
     # What was decided.
     outcome: str = Field(min_length=1, max_length=1000)
     # What was considered and not chosen — the field every "why not X"
-    # question needs and most decision logs omit.
+    # question needs and most decision logs omit. The record keeps each one up to 300
+    # characters, a longer one cut at a space (or between two CJK characters) and ending
+    # in "…".
     alternatives: list[str] = Field(default_factory=list, max_length=10)
     # The decider's confidence, 0-1; 0 records none (the memory row and edges then
     # carry 1.0).
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    # "decided" (default), or "proposed" for an option put forward and not yet chosen or
+    # built (a proposal, a plan, an action item); unrelated to memory.set's `proposed`, a
+    # fact on trial. A proposed decision's statement reads "Proposed ..." instead of
+    # "Decided ...", and its row is tagged `decision:proposed`; recording it again as
+    # "decided", or recording its outcome with decision.outcome, drops both.
+    stage: Stage = "decided"
     # Who decided, a person or an agent; "" records the calling `agent`.
     decision_maker: str = Field(default="", max_length=200)
     # memory_keys (decisions, facts, procedures) that CAUSED or INFLUENCED this
@@ -56,7 +65,8 @@ class DecisionRecordInput(BaseModel):
     # Keys that shaped the decision without causing it; each becomes an `influenced`
     # edge.
     influenced_by: list[str] = Field(default_factory=list, max_length=20)
-    # Extra tags on the memory row, beside `decision` and `decision:category:<category>`.
+    # Extra tags on the memory row, beside `decision` and `decision:category:<category>`;
+    # a `decision:proposed` tag here is dropped (set it with `stage`).
     tags: list[str] = Field(default_factory=list, max_length=16)
     # Real-world time the decision took effect; None = now.
     valid_at: datetime | None = None
@@ -100,6 +110,9 @@ class DecisionRow(BaseModel):
     realized_outcome: str = ""
     success: bool | None = None
     made_at: str = ""
+    # "proposed" when the decision was recorded as put forward, not yet chosen or built, and
+    # no outcome is recorded.
+    stage: Stage = "decided"
     # Precedent search only: cosine similarity of the decision's statement to the query.
     similarity: float = 0.0
 

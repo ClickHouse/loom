@@ -1259,6 +1259,42 @@ class KnowledgeOps:
             "_ops.KnowledgeGetOutput", await self._agent.call("knowledge.get", body, **options)
         )
 
+    async def ingest(
+        self, body: _ops.KnowledgeIngestBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeIngestOutput:
+        """`knowledge.ingest`."""
+        return cast(
+            "_ops.KnowledgeIngestOutput",
+            await self._agent.call("knowledge.ingest", body, **options),
+        )
+
+    async def ingest_cancel(
+        self, body: _ops.KnowledgeIngestCancelBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeIngestCancelOutput:
+        """`knowledge.ingest_cancel`."""
+        return cast(
+            "_ops.KnowledgeIngestCancelOutput",
+            await self._agent.call("knowledge.ingest_cancel", body, **options),
+        )
+
+    async def ingest_status(
+        self, body: _ops.KnowledgeIngestStatusBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeIngestStatusOutput:
+        """`knowledge.ingest_status`."""
+        return cast(
+            "_ops.KnowledgeIngestStatusOutput",
+            await self._agent.call("knowledge.ingest_status", body, **options),
+        )
+
+    async def inspect(
+        self, body: _ops.KnowledgeInspectBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeInspectOutput:
+        """`knowledge.inspect`."""
+        return cast(
+            "_ops.KnowledgeInspectOutput",
+            await self._agent.call("knowledge.inspect", body, **options),
+        )
+
     async def list(
         self, body: _ops.KnowledgeListBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeListOutput:
@@ -1291,6 +1327,69 @@ class KnowledgeOps:
         return cast(
             "_ops.KnowledgeSearchOutput",
             await self._agent.call("knowledge.search", body, **options),
+        )
+
+    async def source_add(
+        self, body: _ops.KnowledgeSourceAddBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceAddOutput:
+        """`knowledge.source.add`."""
+        return cast(
+            "_ops.KnowledgeSourceAddOutput",
+            await self._agent.call("knowledge.source.add", body, **options),
+        )
+
+    async def source_check(
+        self, body: _ops.KnowledgeSourceCheckBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceCheckOutput:
+        """`knowledge.source.check`."""
+        return cast(
+            "_ops.KnowledgeSourceCheckOutput",
+            await self._agent.call("knowledge.source.check", body, **options),
+        )
+
+    async def source_inspect(
+        self, body: _ops.KnowledgeSourceInspectBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceInspectOutput:
+        """`knowledge.source.inspect`."""
+        return cast(
+            "_ops.KnowledgeSourceInspectOutput",
+            await self._agent.call("knowledge.source.inspect", body, **options),
+        )
+
+    async def source_list(
+        self, body: _ops.KnowledgeSourceListBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceListOutput:
+        """`knowledge.source.list`."""
+        return cast(
+            "_ops.KnowledgeSourceListOutput",
+            await self._agent.call("knowledge.source.list", body, **options),
+        )
+
+    async def source_remove(
+        self, body: _ops.KnowledgeSourceRemoveBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceRemoveOutput:
+        """`knowledge.source.remove`."""
+        return cast(
+            "_ops.KnowledgeSourceRemoveOutput",
+            await self._agent.call("knowledge.source.remove", body, **options),
+        )
+
+    async def source_rotate(
+        self, body: _ops.KnowledgeSourceRotateBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceRotateOutput:
+        """`knowledge.source.rotate`."""
+        return cast(
+            "_ops.KnowledgeSourceRotateOutput",
+            await self._agent.call("knowledge.source.rotate", body, **options),
+        )
+
+    async def source_sync_now(
+        self, body: _ops.KnowledgeSourceSyncNowBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceSyncNowOutput:
+        """`knowledge.source.sync_now`."""
+        return cast(
+            "_ops.KnowledgeSourceSyncNowOutput",
+            await self._agent.call("knowledge.source.sync_now", body, **options),
         )
 
     async def synthesize(
@@ -2306,6 +2405,14 @@ class NamespaceOps:
         return cast(
             "_ops.NamespaceTaxonomyOutput",
             await self._agent.call("namespace.taxonomy", body, **options),
+        )
+
+    async def tune(
+        self, body: _ops.NamespaceTuneBody | None = None, /, **options: Any
+    ) -> _ops.NamespaceTuneOutput:
+        """`namespace.tune`."""
+        return cast(
+            "_ops.NamespaceTuneOutput", await self._agent.call("namespace.tune", body, **options)
         )
 
     async def validate(

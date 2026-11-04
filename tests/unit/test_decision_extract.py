@@ -45,6 +45,7 @@ def _candidate(**over: Any) -> dict[str, Any]:
         "alternatives": [{"option": "a plain set on disk", "reason": "costs random reads"}],
         "quote": "We spill into sorted runs like ORDER BY. A plain set on disk costs random reads.",
         "is_constraint": False,
+        "stage": "decided",
         "mentions": ["ExternalDistinctTransform", "#4821", "max_bytes_before_external_group_by"],
     }
     base.update(over)
@@ -121,10 +122,12 @@ class _World:
         self.refuse_delete: Any = None
         self.deletes: list[Any] = []
         self.prompts: list[tuple[str, str]] = []
+        self.search_queries: list[str] = []
         # Replies served before `reply`, one per call: a candidate list, or an error raised.
         self.replies: list[Any] = []
         # The live document's text, which the retire step reads.
         self.content = DOC
+        self.title = ""
         self._patch(monkeypatch)
         from server.settings import Settings, settings
 
@@ -160,7 +163,9 @@ class _World:
                 return SimpleNamespace(text=json.dumps({"decisions": reply}), stop_reason="")
 
         async def knowledge_get(inp):
-            return SimpleNamespace(found=inp.source_uri in world.docs, content=world.content)
+            return SimpleNamespace(
+                found=inp.source_uri in world.docs, content=world.content, title=world.title
+            )
 
         async def chunks(org, ns, uri):
             return [CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT"))]
@@ -202,6 +207,7 @@ class _World:
             return rows[offset : offset + limit]
 
         async def mem_search(inp):
+            world.search_queries.append(inp.query)
             return SimpleNamespace(results=world.search_hits)
 
         async def floor(org, ns, memory_type):
@@ -371,7 +377,7 @@ def test_the_quote_names_its_section() -> None:
     )
     assert dx.quote_section(w, "Second slide") == "Deck > Two"
     assert dx.quote_section(w, "nowhere") == "Deck > One"
-    assert "[section: Deck > Two]" in dx.user_prompt(w)
+    assert "[section: Deck > Two]" in dx.user_prompt(w, "")
 
 
 # ------------------------------------------------------------------ mentions
@@ -395,6 +401,49 @@ def test_a_class_wins_over_its_constructor_and_homonyms_link_nothing() -> None:
     assert dx.definition_path([("a.h", "DB::Foo"), ("a.cpp", "DB::Foo::Foo")]) == "a.h"
     assert dx.definition_path([("a.cpp", "DB::f"), ("b.cpp", "DB::g::f")]) == ""
     assert dx.definition_path([]) == ""
+
+
+@pytest.mark.parametrize(
+    ("path", "governed"),
+    [
+        ("frontend/src/views/Recent.mentor.test.tsx", False),
+        ("tests/unit/test_decision_ops.py", False),
+        ("src/Interpreters/tests/gtest_hash_join.cpp", False),
+        ("internal/operator/reconcile_test.go", False),
+        ("docs/reference/configuration.md", False),
+        ("frontend/src/__tests__/api.ts", False),
+        ("frontend/src/__mocks__/api.ts", False),
+        ("frontend/src/graph.spec.ts", False),
+        ("src/join/tests.rs", False),
+        ("frontend/e2e/fixtures.ts", False),
+        ("src/Common/hash_unittest.cc", False),
+        ("internal/mocks/reconciler.go", False),
+        ("src/test/java/x/FooTest.java", False),
+        ("lib/src/testFixtures/java/Fake.java", False),
+        ("app/src/integrationTest/java/X.java", False),
+        ("cypress/support/commands.ts", False),
+        ("shop/orders/tests.py", False),
+        ("conftest.py", False),
+        ("internal/controller/mock_reconciler.go", False),
+        ("internal/controller/reconciler_mock.go", False),
+        ("internal/testdata/cluster.go", False),
+        # A spec directory is code: a target-spec module, a protocol spec.
+        ("compiler/rustc_target/src/spec/mod.rs", True),
+        ("specs/CommitProtocol.tla", True),
+        ("docs/guide.markdown", False),
+        (".cursor/rules/style.mdc", False),
+        # Code whose module name only mentions tests, and a CMake file the index reads as code.
+        ("CMakeLists.txt", True),
+        ("server/code/domain/index/test_gate.py", True),
+        ("src/main/java/x/LoadTest.java", True),
+        # An RSpec file is a test; a `*_test` module reads as one too.
+        ("spec/models/user_spec.rb", False),
+        ("src/Common/self_test.c", False),
+        ("src/Interpreters/HashJoin/HashJoin.h", True),
+    ],
+)
+def test_a_decision_governs_code_not_a_test_or_a_markdown_page(path: str, governed: bool) -> None:
+    assert dx.governs(path) is governed
 
 
 # ------------------------------------------------------------------ reconcile
@@ -567,7 +616,7 @@ async def test_another_writers_unpinned_record_is_not_revised(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_restatement_under_another_key_is_skipped(monkeypatch) -> None:
+async def test_a_frozen_restatement_under_another_key_is_skipped(monkeypatch) -> None:
     world = _World(monkeypatch, [_candidate()])
     world.add("design/spilling/final", agent="alice-agent", pinned=True)
     # A newer unpinned row of the key beside it does not hide the pinned one.
@@ -581,7 +630,7 @@ async def test_a_confirmed_restatement_under_another_key_is_skipped(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_decision_in_another_category_is_a_restatement(monkeypatch) -> None:
+async def test_a_frozen_decision_in_another_category_is_a_restatement(monkeypatch) -> None:
     """The statement leaves the category out, so the same decision filed under another
     category reads the same and is skipped."""
     from server.memory.app import search
@@ -1353,11 +1402,9 @@ async def test_an_unreadable_code_index_keeps_the_files_a_row_has(monkeypatch, c
 
 @pytest.mark.asyncio
 async def test_a_scenario_with_no_key_letters_is_dropped_and_the_run_goes_on(monkeypatch) -> None:
-    world = _World(monkeypatch, [_candidate(category="设计", scenario="如何溢出"), _candidate()])
+    world = _World(monkeypatch, [_candidate(category="设计", scenario="?! …"), _candidate()])
     report = await _run()
-    assert [d.reason for d in report.dropped] == [
-        "no letters or digits a-z, 0-9 to build a key from"
-    ]
+    assert [d.reason for d in report.dropped] == ["no letters or digits to build a key from"]
     assert [r.action for r in report.records] == ["written"] and len(world.recorded) == 1
 
 
@@ -1518,11 +1565,37 @@ async def test_a_long_reason_cut_at_the_cap_survives_a_reworded_option(monkeypat
 
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     stored = svc.clean_alternatives([f"a hash set — rejected: {long_reason}"])
-    assert len(stored[0]) == svc.ALTERNATIVE_CHARS  # cut inside the reason
+    assert svc.is_cut(stored[0]) and dx.REJECTED in stored[0]  # cut inside the reason
     world.record(_key(c), {**_same_fields(c), "alternatives": stored[0]}, files=[HEADER])
     world.reply = [
         {**c, "alternatives": [{"option": "a hash-based set on disk", "reason": long_reason}]}
     ]
+    report = await _run()
+    assert report.records[0].action == "unchanged" and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_alternatives_alike_once_cut_are_no_change(monkeypatch) -> None:
+    # Two options that share their first 300 characters are one alternative in the record,
+    # so the candidate is compared as one too and the second run writes nothing.
+    head = "a hash set " + "kept on disk " * 25
+    alts = [
+        {"option": head + "per run", "reason": "costs random reads"},
+        {"option": head + "per part", "reason": "costs random reads"},
+    ]
+    c = _candidate(alternatives=alts)
+    world = _World(monkeypatch, [c])
+    from server.knowledge.app import document_reads
+
+    body = BODY + " " + " ".join(f"{a['option']} costs random reads" for a in alts)
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    stored = svc.clean_alternatives([f"{a['option']}{dx.REJECTED}{a['reason']}" for a in alts])
+    assert len(stored) == 1 and svc.is_cut(stored[0])
+    world.record(_key(c), {**_same_fields(c), "alternatives": stored[0]}, files=[HEADER])
     report = await _run()
     assert report.records[0].action == "unchanged" and world.recorded == []
 
@@ -1863,7 +1936,7 @@ async def test_the_prompt_lists_at_most_the_configured_known_decisions(monkeypat
 
 def test_clean_alternatives_can_keep_them_uncut() -> None:
     long = "a hash set — rejected: " + "slow " * 80
-    assert len(svc.clean_alternatives([long])[0]) == svc.ALTERNATIVE_CHARS
+    assert svc.is_cut(svc.clean_alternatives([long])[0])
     assert svc.clean_alternatives([long, long.upper()], cut=False) == [" ".join(long.split())]
 
 
@@ -1969,14 +2042,28 @@ async def test_a_flag_on_a_value_changed_since_the_read_is_a_race(monkeypatch) -
     assert cli.exit_code(report) == 0
 
 
+def test_a_stored_alternative_cut_at_the_limit_without_a_mark_matches_as_cut() -> None:
+    from server.memory.app.decision_extract import _same_reasons
+
+    full = "a hash set — rejected: " + "costs random reads " * 20
+    stored = full[: svc.ALTERNATIVE_CHARS]
+    assert svc.is_cut(stored) and not stored.endswith(svc.CUT_MARK)
+    assert _same_reasons([stored], [full])
+
+
+def test_alternatives_alike_once_cut_are_one() -> None:
+    head = "a hash set — rejected: " + "costs random reads " * 20
+    assert svc.clean_alternatives([head + "one", head + "two"]) == [svc.cut_alternative(head)]
+
+
 def test_an_exact_reason_is_matched_before_a_cut_one_takes_it() -> None:
     from server.memory.app.decision_extract import _same_reasons
 
     exact = "a plain set — rejected: costs random reads"
     # Cut at the cap inside its reason, so its stored prefix is only "costs".
-    option = "o" * (svc.ALTERNATIVE_CHARS - len(" — rejected: costs"))
+    option = "o" * (svc.ALTERNATIVE_CHARS - len(svc.CUT_MARK + " — rejected: costs"))
     (cut,) = svc.clean_alternatives([f"{option} — rejected: costs random reads and memory"])
-    assert cut.endswith("rejected: costs")
+    assert cut.endswith("rejected: costs…")
     # Reordered, the exact one first: a greedy prefix match of the cut one would take it.
     candidate = [exact, f"{option} — rejected: costs random reads and memory"]
     assert _same_reasons([cut, exact], candidate)
@@ -2024,9 +2111,9 @@ def test_of_two_cut_reasons_sharing_a_prefix_the_longer_is_matched_first() -> No
     from server.memory.app.decision_extract import _same_reasons
 
     def cut_at(reason_kept: str, full: str) -> tuple[str, str]:
-        option = "o" * (svc.ALTERNATIVE_CHARS - len(" — rejected: " + reason_kept))
+        option = "o" * (svc.ALTERNATIVE_CHARS - len(svc.CUT_MARK + " — rejected: " + reason_kept))
         (stored,) = svc.clean_alternatives([f"{option} — rejected: {full}"])
-        assert stored.endswith(f"rejected: {reason_kept}")
+        assert stored.endswith(f"rejected: {reason_kept}…")
         return stored, f"{option} — rejected: {full}"
 
     short, short_full = cut_at("costs", "costs memory")
@@ -2138,15 +2225,15 @@ def test_an_error_goes_to_stderr(capsys) -> None:
     assert out.out == "" and out.err == "error: no live document\n"
 
 
-def test_an_attestation_binding_the_value_of_a_row_with_no_hash_column_confirms_it() -> None:
+def test_an_attestation_binding_the_value_of_a_row_with_no_hash_column_freezes_it() -> None:
     from server.core.hashing import sha256_value_json
-    from server.memory.app.decision_extract import _confirmed
+    from server.memory.app.decision_extract import _frozen
 
     value = "Decided spill."
     bound = sha256_value_json(json.dumps(value))
     row = _row("decision:k", value=value, content_sha256="", verified_by="human:alice")
-    assert _confirmed(_Row(**{**vars(row), "verified_sha256": bound}))
-    assert not _confirmed(_Row(**{**vars(row), "verified_sha256": "other"}))
+    assert _frozen(_Row(**{**vars(row), "verified_sha256": bound}))
+    assert not _frozen(_Row(**{**vars(row), "verified_sha256": "other"}))
 
 
 def test_a_list_field_the_model_filled_with_something_else_reads_empty() -> None:
@@ -2209,6 +2296,226 @@ async def test_a_failed_model_call_loses_its_window_only(monkeypatch) -> None:
     report = await _run(window_chars=len(BODY) + 1)
     assert [d.reason for d in report.dropped] == ["the model call failed: ReadTimeout"]
     assert len(world.recorded) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_held_model_call_stops_the_run_before_any_write(monkeypatch) -> None:
+    from server.core.errors import ModelCallRefused
+    from server.knowledge.app import document_reads
+    from server.llm import client as llm_client
+
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+    calls: list[int] = []
+
+    class _Held:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            calls.append(1)
+            if len(calls) > 1:
+                raise ModelCallRefused("over budget", hold_s=60.0)
+            return SimpleNamespace(text=json.dumps({"decisions": [_candidate()]}), stop_reason="")
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT")),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Other")),
+            CorpusChunk(uri, 2, BODY, ("Spilling", "Third")),
+        ]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Held())
+    report = await _run(window_chars=len(BODY) + 1)
+    # The first window's decision is not written and nothing is retired; no third call.
+    assert isinstance(report.held, ModelCallRefused) and len(calls) == 2
+    assert report.error == "model calls for o are held (MODEL_CALL_REFUSED); try again later"
+    assert world.recorded == [] and world.deletes == [] and world.audits == []
+    assert cli.exit_code(report) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hold", ["disabled", "refused"])
+async def test_a_hold_on_a_write_s_embedding_stops_the_run_as_a_hold(monkeypatch, hold) -> None:
+    from server.core.errors import ModelCallRefused
+    from server.llm.customer import ModelCallsDisabled
+    from server.memory.app import search
+
+    world = _World(monkeypatch, [_candidate()])
+    world.record("decision:gone", {"reasoning": "gone"})
+
+    async def held_search(inp):
+        # The restatement search embeds the candidate: the embedding call is held.
+        raise ModelCallsDisabled("off") if hold == "disabled" else ModelCallRefused("budget")
+
+    monkeypatch.setattr(search, "handle_memory_search", held_search)
+    report = await _run()
+    # A hold, not a refused write: nothing is counted refused and nothing is retired.
+    assert report.held is not None and report.error.startswith("model calls for o are held")
+    assert report.dropped == [] and report.refused == []
+    assert world.recorded == [] and world.deletes == [] and report.retired == []
+    assert cli.exit_code(report) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_read_deadline_that_passes_while_reading_writes_nothing(monkeypatch) -> None:
+    import asyncio
+    import time
+
+    from server.knowledge.app import document_reads
+    from server.llm import client as llm_client
+
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+
+    class _Slow:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            await asyncio.sleep(5)
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Slow())
+    started = time.monotonic()
+    report = await _run(read_deadline=time.monotonic() + 0.05)
+    assert time.monotonic() - started < 2
+    assert report.out_of_time and report.error.startswith("the run's time to read")
+    # Neither a write nor its audit row, and nothing retired.
+    assert world.recorded == [] and world.audits == [] and world.deletes == []
+    assert report.dropped == []
+
+
+def _two(monkeypatch) -> _World:
+    other = _candidate(scenario="how the merge reads its runs", outcome="merge runs by key")
+    world = _World(monkeypatch, [_candidate(), other])
+    world.record("decision:gone", {"reasoning": "gone"})
+    return world
+
+
+@pytest.mark.asyncio
+async def test_a_write_permission_lost_mid_run_stops_after_the_current_record(
+    monkeypatch,
+) -> None:
+    world = _two(monkeypatch)
+    answers = [True, False]
+    report = await _run(may_write=lambda: answers.pop(0) if answers else False)
+    # The first record landed with its audit row; the second was not started.
+    assert len(world.recorded) == 1
+    assert [e for e, _, _ in world.audits] == ["decision.record"]
+    assert report.write_stopped and report.error.startswith("stopped before every write")
+    assert world.deletes == [] and report.retired == [] and cli.exit_code(report) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_hold_on_a_later_write_keeps_what_was_written_and_retires_nothing(
+    monkeypatch,
+) -> None:
+    from server.llm.customer import ModelCallsDisabled
+    from server.memory.app import decision
+
+    world = _two(monkeypatch)
+    record = decision.handle_decision_record
+
+    async def held_second(inp):
+        if world.recorded:
+            raise ModelCallsDisabled("off")
+        await record(inp)
+
+    monkeypatch.setattr(decision, "handle_decision_record", held_second)
+    report = await _run()
+    assert len(world.recorded) == 1
+    assert [e for e, _, _ in world.audits] == ["decision.record"]
+    assert report.held is not None and world.deletes == [] and report.retired == []
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_run_finishes_its_current_write_and_shutdown_drains_it(
+    monkeypatch,
+) -> None:
+    import asyncio
+
+    from server.core.background import drain_task_sets
+    from server.memory.app import decision
+
+    world = _World(monkeypatch, [_candidate()])
+    record = decision.handle_decision_record
+    started = asyncio.Event()
+
+    async def slow(inp):
+        started.set()
+        await asyncio.sleep(0.05)
+        await record(inp)
+
+    monkeypatch.setattr(decision, "handle_decision_record", slow)
+    run = asyncio.create_task(_run())
+    await started.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert await drain_task_sets(timeout_s=2.0)
+    # The record and its audit row both landed: no row without its audit.
+    assert len(world.recorded) == 1
+    assert [e for e, _, _ in world.audits] == ["decision.record"]
+
+
+@pytest.mark.asyncio
+async def test_a_run_s_writes_are_its_own_and_finish_writes_waits_for_those_only(
+    monkeypatch,
+) -> None:
+    import asyncio
+
+    from server.core.background import TaskSet
+    from server.memory.app import decision
+
+    world = _World(monkeypatch, [_candidate()])
+    mine, other = TaskSet(), TaskSet()
+    release = asyncio.Event()
+    other.spawn(release.wait(), name="another-run")  # another run's unit, still running
+    record = decision.handle_decision_record
+    started = asyncio.Event()
+
+    async def slow(inp):
+        started.set()
+        await asyncio.sleep(0.05)
+        await record(inp)
+
+    monkeypatch.setattr(decision, "handle_decision_record", slow)
+    run = asyncio.create_task(_run(writes=mine))
+    await started.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    # The cancelled run's unit is held in its own set, still running.
+    assert [t for t in mine if not t.done()] and world.recorded == []
+    await asyncio.wait_for(de.finish_writes(mine), timeout=1.0)
+    assert len(world.recorded) == 1 and [e for e, _, _ in world.audits] == ["decision.record"]
+    # The other run's unit did not hold the wait, and is still pending.
+    assert not all(t.done() for t in other)
+    release.set()
+    await de.finish_writes(other)
+
+
+@pytest.mark.asyncio
+async def test_a_blacklisted_candidate_is_a_permanent_refusal(monkeypatch) -> None:
+    from fastapi import HTTPException
+
+    world = _World(monkeypatch, [_candidate()])
+    # As the blacklist guard refuses a write that matches a pattern.
+    world.refuse_record = HTTPException(422, detail={"code": "BLACKLISTED"})
+    report = await _run()
+    [dropped] = report.dropped
+    assert dropped.refused and dropped.permanent
+    assert dropped.reason.endswith("refused: BLACKLISTED")
+
+
+@pytest.mark.asyncio
+async def test_the_sync_worker_s_writes_are_audited_as_the_worker(monkeypatch) -> None:
+    from server.knowledge.domain.sources import SYNC_WORKER_ACTOR
+    from server.memory.domain.provenance import pipeline_actor
+
+    world = _World(monkeypatch, [_candidate()])
+    with pipeline_actor(SYNC_WORKER_ACTOR):
+        await _run()
+    assert [(e, a) for e, a, _ in world.audits] == [("decision.record", SYNC_WORKER_ACTOR)]
 
 
 @pytest.mark.asyncio
@@ -2445,10 +2752,10 @@ def test_a_refused_candidate_or_retire_write_exits_2(dropped, refused, code) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("top_k", "blocked"), [(6, True), (5, False)])
-async def test_a_confirmed_restatement_below_five_closer_hits_blocks_within_top_k(
+async def test_a_frozen_restatement_below_five_closer_hits_blocks_within_top_k(
     monkeypatch, top_k, blocked
 ) -> None:
-    """The confirmed key is the sixth closest: a top_k of 6 reaches it, 5 stops before it
+    """The frozen key is the sixth closest: a top_k of 6 reaches it, 5 stops before it
     though the fetch (5 keys times a per-key cap of 3) still serves it."""
     from server.memory.app import search
     from server.settings import settings
@@ -2458,8 +2765,8 @@ async def test_a_confirmed_restatement_below_five_closer_hits_blocks_within_top_
     for i in range(5):
         world.add(f"design/near{i}", agent="alice-agent")
         hits.append(SimpleNamespace(memory_key=f"design/near{i}", similarity=0.95 - i / 100))
-    world.add("design/confirmed", agent="alice-agent", pinned=True)
-    hits.append(SimpleNamespace(memory_key="design/confirmed", similarity=0.86))
+    world.add("design/frozen", agent="alice-agent", pinned=True)
+    hits.append(SimpleNamespace(memory_key="design/frozen", similarity=0.86))
     asked: list[int] = []
 
     async def mem_search(inp):
@@ -2473,15 +2780,15 @@ async def test_a_confirmed_restatement_below_five_closer_hits_blocks_within_top_
     assert asked == [per_key_fetch(top_k)] and per_key_fetch(top_k) >= len(hits)
     if blocked:
         assert world.recorded == []
-        assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+        assert report.records[0].note == "already recorded by alice-agent under design/frozen"
     else:
         assert len(world.recorded) == 1
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_restatement_below_keys_of_many_rows_still_blocks(monkeypatch) -> None:
+async def test_a_frozen_restatement_below_keys_of_many_rows_still_blocks(monkeypatch) -> None:
     # the search serves a row per writer and session: seven closer keys of three rows each
-    # fill 21 places, and the confirmed key still counts among the 20 closest keys
+    # fill 21 places, and the frozen key still counts among the 20 closest keys
     from server.memory.app import search
     from server.settings import settings
 
@@ -2491,8 +2798,8 @@ async def test_a_confirmed_restatement_below_keys_of_many_rows_still_blocks(monk
     for i in range(7):
         world.add(f"design/near{i}", agent="alice-agent")
         hits += [SimpleNamespace(memory_key=f"design/near{i}", similarity=0.95 - i / 100)] * 3
-    world.add("design/confirmed", agent="alice-agent", pinned=True)
-    hits.append(SimpleNamespace(memory_key="design/confirmed", similarity=0.86))
+    world.add("design/frozen", agent="alice-agent", pinned=True)
+    hits.append(SimpleNamespace(memory_key="design/frozen", similarity=0.86))
 
     async def mem_search(inp):
         return SimpleNamespace(results=hits[: inp.top_k])
@@ -2508,9 +2815,9 @@ async def test_a_confirmed_restatement_below_keys_of_many_rows_still_blocks(monk
     monkeypatch.setattr(de, "_rows_of_key", counted)
     report = await _run()
     assert world.recorded == []
-    assert report.records[0].note == "already recorded by alice-agent under design/confirmed"
+    assert report.records[0].note == "already recorded by alice-agent under design/frozen"
     # each key's rows are read once
-    assert read == [*(f"design/near{i}" for i in range(7)), "design/confirmed"]
+    assert read == [*(f"design/near{i}" for i in range(7)), "design/frozen"]
 
 
 @pytest.mark.asyncio
@@ -2549,6 +2856,8 @@ def test_every_printed_action_has_its_line() -> None:
         ("spill into sorted runs", "The decision is to spill into sorted runs.", True),
         ("sorted runs for the spill", "Sorted runs were chosen for the spill.", True),
         ("spill into sorted runs", "We are choosing sorted runs for spilling.", True),
+        ("spill into sorted runs", "We propose to spill into sorted runs.", True),
+        ("spill into sorted runs", "The proposal is sorted runs for spilling.", True),
         ("spill into sorted runs", "A plain set on disk costs random reads.", False),
         ("spill into sorted runs", "Sorted runs avoid random reads on disk.", False),
         # An outcome that carries its reason leaves the reasoning nothing to add: dropped,
@@ -2663,7 +2972,7 @@ async def test_a_captioned_diagram_is_not_sent_and_is_reported_image_only(monkey
     doc = DOC.replace("![diagram](img.png)\n", caption + "\n")
 
     async def knowledge_get(inp):
-        return SimpleNamespace(found=True, content=doc)
+        return SimpleNamespace(found=True, content=doc, title="")
 
     async def chunks(org, ns, uri):
         return [
@@ -2692,7 +3001,7 @@ async def test_the_fake_model_rests_each_decision_on_a_second_sentence() -> None
         ]
     )
     with customer.for_org("o"):
-        res = await FakeLLMClient().complete(dx.system_prompt(3), dx.user_prompt(w))
+        res = await FakeLLMClient().complete(dx.system_prompt(3), dx.user_prompt(w, ""))
     (cand,) = dx.parse_candidates(res.text) or []
     assert cand.outcome == "We spill into sorted runs like ORDER BY."
     assert cand.reasoning == "A plain set on disk costs random reads."
@@ -2710,7 +3019,7 @@ async def test_a_long_sections_last_chunk_with_an_image_and_a_short_tail_is_sent
     doc = DOC.replace(BODY, f"{BODY}\n\n{tail}")
 
     async def knowledge_get(inp):
-        return SimpleNamespace(found=True, content=doc)
+        return SimpleNamespace(found=True, content=doc, title="")
 
     async def chunks(org, ns, uri):
         return [
@@ -2832,7 +3141,7 @@ async def test_a_parent_sections_captioned_picture_is_not_sent(monkeypatch) -> N
     doc = f"# Spilling\n\n{caption}\n\n## Final DISTINCT\n\n{BODY}\n"
 
     async def knowledge_get(inp):
-        return SimpleNamespace(found=True, content=doc)
+        return SimpleNamespace(found=True, content=doc, title="")
 
     async def chunks(org, ns, uri):
         return [
@@ -2892,7 +3201,7 @@ async def test_a_badge_and_caption_preamble_is_not_sent_and_is_reported(
     doc = f"{badge}\n\n{DOC}"
 
     async def knowledge_get(inp):
-        return SimpleNamespace(found=True, content=doc)
+        return SimpleNamespace(found=True, content=doc, title="")
 
     async def chunks(org, ns, uri):
         return [
@@ -2922,7 +3231,7 @@ async def test_chunks_stored_with_no_section_path_are_judged_on_their_own_text(
     doc = f"{badge}\n\n{DOC}"
 
     async def knowledge_get(inp):
-        return SimpleNamespace(found=True, content=doc)
+        return SimpleNamespace(found=True, content=doc, title="")
 
     async def chunks(org, ns, uri):
         # Chunked when no heading was seen: every chunk has the preamble's empty path.
@@ -2985,7 +3294,7 @@ async def test_a_linked_badge_and_caption_preamble_is_not_sent(monkeypatch) -> N
     doc = f"{badge}\n\n{DOC}"
 
     async def knowledge_get(inp):
-        return SimpleNamespace(found=True, content=doc)
+        return SimpleNamespace(found=True, content=doc, title="")
 
     async def chunks(org, ns, uri):
         return [
@@ -3012,7 +3321,7 @@ async def test_a_headingless_document_of_a_captioned_picture_is_not_sent(
     picture = "![flow](flow.png)\n\nFigure 1: the spill path."
 
     async def knowledge_get(inp):
-        return SimpleNamespace(found=True, content=picture)
+        return SimpleNamespace(found=True, content=picture, title="")
 
     async def chunks(org, ns, uri):
         return [CorpusChunk(uri, 0, picture, ())]
@@ -3110,7 +3419,7 @@ async def test_a_captioned_picture_in_a_preamble_with_text_is_sent(monkeypatch) 
     doc = f"{picture}\n\n{BODY}\n\n{DOC}"
 
     async def knowledge_get(inp):
-        return SimpleNamespace(found=True, content=doc)
+        return SimpleNamespace(found=True, content=doc, title="")
 
     async def chunks(org, ns, uri):
         return [CorpusChunk(uri, 0, picture, ()), CorpusChunk(uri, 1, BODY, ())]
@@ -4355,7 +4664,7 @@ async def test_rows_in_the_repositorys_own_namespace_carry_no_tag(monkeypatch, r
 
 
 @pytest.mark.asyncio
-async def test_another_writers_unconfirmed_row_is_not_tagged(monkeypatch) -> None:
+async def test_another_writers_unfrozen_row_is_not_tagged(monkeypatch) -> None:
     c = _candidate()
     world = _World(monkeypatch, [c])
     world.record(_key(c), _same_fields(c), agent="claude-code", files=[HEADER])
@@ -4489,7 +4798,7 @@ async def test_a_run_naming_another_repo_checks_the_branchs_own_trunk(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_a_confirmed_row_linked_to_another_repository_keeps_only_its_link(
+async def test_a_frozen_row_linked_to_another_repository_keeps_only_its_link(
     monkeypatch,
 ) -> None:
     """A pinned row another writer linked to another repository is flagged, never linked
@@ -4585,3 +4894,308 @@ async def test_into_source_on_a_branch_of_the_same_repository_stays_tagged_there
     (inp,) = world.recorded
     assert inp.namespace == "ns" and repo_tag(remote) in inp.tags
     assert looked_up == [TRUNK]
+
+
+@pytest.mark.asyncio
+async def test_a_name_only_a_test_or_a_page_defines_links_nothing(monkeypatch) -> None:
+    c = _candidate(
+        mentions=[
+            "memory_ttl",
+            "ExternalDistinctTransform",
+            "FakeSpiller",
+            "fake_store",
+            "page_and_test",
+            "OnePageName",
+        ]
+    )
+    world = _World(monkeypatch, [c])
+    from server.knowledge.app import document_reads
+
+    body = BODY + " `memory_ttl` caps it. FakeSpiller, `fake_store` and `page_and_test` stand in."
+    body += " OnePageName is a heading."
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, body, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    # Two pages, no code: no file to pick, still a setting.
+    world.symbols["memory_ttl"] = [
+        ("docs/reference/configuration.md", "memory_ttl"),
+        ("docs/features/memory.md", "memory_ttl"),
+    ]
+    world.symbols["FakeSpiller"] = [("tests/unit/fakes.py", "FakeSpiller")]
+    world.symbols["fake_store"] = [("tests/unit/fakes.py", "fake_store")]
+    # One page, no code: no file.
+    world.symbols["OnePageName"] = [("docs/reference/configuration.md", "OnePageName")]
+    # A page and a test (a fixture named after the setting): the page makes it a setting.
+    world.symbols["page_and_test"] = [
+        ("docs/features/memory.md", "page_and_test"),
+        ("tests/unit/fakes.py", "page_and_test"),
+    ]
+    # A name in a test and in one code file stays ambiguous: dropping the test makes no link.
+    world.symbols["ExternalDistinctTransform"] = [
+        ("tests/unit/fake_transform.py", "ExternalDistinctTransform"),
+        (HEADER, "DB::ExternalDistinctTransform"),
+    ]
+    report = await _run(dry_run=True)
+    (rec,) = report.records
+    assert sorted(rec.signals) == [
+        "ExternalDistinctTransform: camelcase, no single definition",
+        "FakeSpiller: camelcase, only a test or a page defines it",
+        "OnePageName: camelcase, only a test or a page defines it",
+        "fake_store: qualified, only a test or a page defines it",
+        "memory_ttl: qualified, only a test or a page defines it; reported as a setting",
+        "page_and_test: qualified, only a test or a page defines it; reported as a setting",
+    ]
+    # A test's snake_case name is a helper, not a setting; the sorted list is the whole list.
+    assert sorted(rec.unresolved) == [
+        "ExternalDistinctTransform (several definitions)",
+        "FakeSpiller (only tests or pages)",
+        "OnePageName (only tests or pages)",
+        "memory_ttl (setting)",
+        "page_and_test (setting)",
+    ]
+    assert rec.body["files"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_test_class_beside_a_code_constructor_links_nothing(monkeypatch) -> None:
+    c = _candidate(mentions=["ExternalDistinctTransform"])
+    world = _World(monkeypatch, [c])
+    # The class only in a test, its constructor in code: the class-first pick would link the test.
+    world.symbols["ExternalDistinctTransform"] = [
+        ("tests/fake_transform.h", "DB::ExternalDistinctTransform"),
+        (
+            "src/Processors/ExternalDistinctTransform.cpp",
+            "DB::ExternalDistinctTransform::ExternalDistinctTransform",
+        ),
+    ]
+    report = await _run(dry_run=True)
+    (rec,) = report.records
+    assert rec.body["files"] == []
+    assert "ExternalDistinctTransform (several definitions)" in rec.unresolved
+
+
+@pytest.mark.parametrize(
+    ("stage", "read"),
+    [
+        ("decided", "decided"),
+        ("Decided", "decided"),
+        ("proposed", "proposed"),
+        ("planned", "proposed"),
+        (None, "proposed"),
+    ],
+)
+def test_only_a_plain_decided_reads_as_decided(stage: Any, read: str) -> None:
+    c = _candidate(stage=stage)
+    if stage is None:
+        del c["stage"]
+    (cand,) = dx.parse_candidates(json.dumps({"decisions": [c]})) or []
+    assert cand.stage == read
+
+
+def test_the_window_opens_with_the_documents_title() -> None:
+    w = Window([CorpusChunk("d", 0, "We use a bucket per spill.", ("Plan",))])
+    assert dx.user_prompt(w, "RFC:  spill\nthe join").startswith("[document: RFC: spill the join]")
+    assert dx.user_prompt(w, "").startswith("[section: Plan]")
+    assert dx.user_prompt(w, "t" * 500).startswith(f"[document: {'t' * dx.TITLE_CHARS}]\n")
+
+
+@pytest.mark.parametrize(
+    ("read_as", "kept", "tags"),
+    [("decided", "proposed", ["decision:proposed"]), ("proposed", "decided", [])],
+)
+@pytest.mark.asyncio
+async def test_the_same_words_keep_the_rows_stage(
+    monkeypatch, read_as: str, kept: str, tags: list[str]
+) -> None:
+    # The stage is the model's reading: a stage taken from one run would drift on re-runs.
+    c = _candidate(stage=read_as)
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), files=[HEADER], tags=["decision", *tags])
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "unchanged" and world.recorded == [] and rec.body["stage"] == kept
+    assert rec.note == f"the document reads as {read_as}; the row keeps its stage {kept}"
+
+
+@pytest.mark.asyncio
+async def test_every_read_of_a_window_names_the_document(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate()])
+    world.title = "RFC: final DISTINCT"
+    await _run()
+    assert world.prompts and all(
+        "[document: RFC: final DISTINCT]" in user for _, user in world.prompts
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pinned", [False, True])
+@pytest.mark.parametrize(("stage", "tags"), [("decided", ["decision:proposed"]), ("proposed", [])])
+async def test_the_stage_of_a_decision_with_a_recorded_outcome_is_not_compared(
+    monkeypatch, stage: str, tags: list[str], pinned: bool
+) -> None:
+    # Acted on: decided to every reader, whatever its tag or the document's wording says.
+    c = _candidate(stage=stage)
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c),
+        {**_same_fields(c), "realized_outcome": "built", "success": True},
+        files=[HEADER],
+        tags=["decision", *tags, "decision:outcome-known"],
+        pinned=pinned,
+    )
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "unchanged" and rec.holds and rec.note == ""
+    assert rec.body["stage"] == "decided"  # acted on
+    assert world.recorded == [] and world.updates == []
+
+
+@pytest.mark.asyncio
+async def test_a_files_change_keeps_a_proposed_rows_stage_against_a_decided_reading(
+    monkeypatch,
+) -> None:
+    from server.memory.domain.decision_schema import PROPOSED_TAG
+
+    c = _candidate(stage="decided")
+    world = _World(monkeypatch, [c])
+    # The row lacks the file this run resolves: revised, but the stage stays proposed.
+    world.record(_key(c), _same_fields(c), files=[], tags=["decision", PROPOSED_TAG])
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "revised" and world.recorded[-1].stage == "proposed"
+    assert rec.body["stage"] == "proposed" and rec.body["files"] == [HEADER]
+    assert rec.note == "the document reads as decided; the row keeps its stage proposed"
+
+
+@pytest.mark.parametrize("agent", [de.EXTRACTOR_AGENT, "claude"])
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("read_as", "kept", "tags"),
+    [("decided", "proposed", ["decision:proposed"]), ("proposed", "decided", [])],
+)
+async def test_a_frozen_row_keeps_its_stage_and_is_not_flagged(
+    monkeypatch, agent: str, read_as: str, kept: str, tags: list[str]
+) -> None:
+    c = _candidate(stage=read_as)
+    world = _World(monkeypatch, [c])
+    world.record(
+        _key(c), _same_fields(c), files=[HEADER], tags=["decision", *tags], pinned=True, agent=agent
+    )
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "unchanged" and report.flagged == []
+    assert world.recorded == [] and world.updates == []
+    assert rec.note == f"the document reads as {read_as}; the row keeps its stage {kept}"
+
+
+@pytest.mark.parametrize(
+    ("read_as", "kept", "tags"),
+    [("decided", "proposed", ["decision:proposed"]), ("proposed", "decided", [])],
+)
+@pytest.mark.asyncio
+async def test_another_writers_row_keeps_its_stage(
+    monkeypatch, read_as: str, kept: str, tags: list[str]
+) -> None:
+    c = _candidate(stage=read_as)
+    world = _World(monkeypatch, [c])
+    world.record(_key(c), _same_fields(c), files=[HEADER], tags=["decision", *tags], agent="claude")
+    report = await _run()
+    assert report.records[0].action == "unchanged"
+    assert world.recorded == [] and world.updates == []
+    assert (
+        report.records[0].note == f"the document reads as {read_as}; the row keeps its stage {kept}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_changed_text_is_recorded_at_the_stage_it_reads_as(monkeypatch) -> None:
+    from server.memory.domain.decision_schema import PROPOSED_TAG
+
+    c = _candidate(stage="decided")
+    world = _World(monkeypatch, [c])
+    old = {**_same_fields(c), "reasoning": "We spill like ORDER BY."}
+    world.record(_key(c), old, files=[HEADER], tags=["decision", PROPOSED_TAG])
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "revised" and world.recorded[-1].stage == "decided" and rec.note == ""
+
+
+@pytest.mark.asyncio
+async def test_a_reworded_key_keeps_the_stage_of_the_row_it_replaces(monkeypatch) -> None:
+    from server.memory.domain.decision_schema import PROPOSED_TAG
+
+    old = _candidate(stage="proposed")
+    world = _World(monkeypatch, [{**old, "scenario": "how DISTINCT spills", "stage": "decided"}])
+    world.record(_key(old), _same_fields(old), files=[HEADER], tags=["decision", PROPOSED_TAG])
+    report = await _run()
+    (rec,) = report.records
+    assert rec.action == "written" and world.recorded[-1].stage == "proposed"
+    assert (
+        rec.note == f"the document reads as decided; written at the stage proposed of {_key(old)}"
+    )
+    assert rec.body["stage"] == "proposed"
+    assert report.replaced == [f"{_key(old)} -> {rec.memory_key}"]
+
+
+@pytest.mark.asyncio
+async def test_another_outcome_on_the_same_reasoning_keeps_its_own_reading(monkeypatch) -> None:
+    old = _candidate(stage="decided")
+    new = {**old, "scenario": "how the probe side spills", "outcome": "partition the probe"}
+    world = _World(monkeypatch, [{**new, "stage": "proposed"}])
+    world.record(_key(old), _same_fields(old), files=[HEADER], tags=["decision"])
+    report = await _run()
+    rec = next(r for r in report.records if r.memory_key == _key(new))
+    assert rec.action == "written" and world.recorded[-1].stage == "proposed" and rec.note == ""
+
+
+@pytest.mark.asyncio
+async def test_a_reworded_key_of_an_acted_on_decision_reads_as_decided(monkeypatch) -> None:
+    from server.memory.domain.decision_schema import PROPOSED_TAG
+
+    old = _candidate()
+    world = _World(monkeypatch, [{**old, "scenario": "how DISTINCT spills", "stage": "proposed"}])
+    fields = {**_same_fields(old), "realized_outcome": "shipped", "success": True}
+    world.record(_key(old), fields, files=[HEADER], tags=["decision", PROPOSED_TAG])
+    report = await _run()
+    rec = next(r for r in report.records if r.memory_key != _key(old))
+    assert world.recorded[-1].stage == "decided" and rec.note == ""
+
+
+@pytest.mark.asyncio
+async def test_a_writer_record_with_no_row_behind_it_writes_nothing(monkeypatch) -> None:
+    c = _candidate()
+    world = _World(monkeypatch, [c])
+    # The record's writer has no row (deleted between the reads); another identity's row
+    # holds the key.
+    writer = WriterRecord(de.EXTRACTOR_AGENT, "-", "-", json.dumps(_same_fields(c)), None)  # type: ignore[arg-type]
+    world.records[_key(c)] = (writer, _same_fields(c))
+    world.add(_key(c), agent="claude")
+    report = await _run()
+    (rec,) = report.records  # the stage read survives a missing row
+    assert rec.action == "unchanged" and not rec.holds and world.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_proposed_candidate_looks_for_a_restatement_worded_as_proposed(monkeypatch) -> None:
+    world = _World(monkeypatch, [_candidate(stage="proposed")])
+    await _run(dry_run=True)
+    assert (
+        world.search_queries
+        and " Proposed spill into sorted runs because" in world.search_queries[0]
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_reworded_key_with_a_changed_reason_is_written_as_it_reads(monkeypatch) -> None:
+    from server.memory.domain.decision_schema import PROPOSED_TAG
+
+    old = _candidate()
+    alt = [{"option": "a plain set on disk", "reason": "We spill into sorted runs like ORDER BY."}]
+    new = {**old, "scenario": "how DISTINCT spills", "stage": "decided", "alternatives": alt}
+    world = _World(monkeypatch, [new])
+    world.record(_key(old), _same_fields(old), files=[HEADER], tags=["decision", PROPOSED_TAG])
+    report = await _run()
+    rec = next(r for r in report.records if r.memory_key != _key(old))
+    assert world.recorded[-1].stage == "decided" and rec.note == ""

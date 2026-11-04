@@ -8,21 +8,22 @@ vulnerability, and for the deployment hardening checklist, see
 
 ## Threat model
 
-| Threat                                               | Boundary                                                                                                                   | Enforced by                                                                                                          |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| An unauthenticated caller reads or writes data       | Bearer token on every op; 401 before the body is read                                                                      | `server/transport/http.py` (`_extract_auth`), `server/auth/jwt.py`                                                   |
-| A forged or tampered token                           | Signature, algorithm allow-list, `kid`, issuer, audience, time claims                                                      | `server/auth/jwt.py` (`verify_token`)                                                                                |
-| A revoked token keeps working                        | Per-process revocation snapshot, fail closed until loaded                                                                  | `server/auth/revocation.py`                                                                                          |
-| Tenant A reads tenant B's rows                       | Org + namespace check on every call; row-scoped ops check the row's namespace                                              | `server/auth/authz.py` (`check_authorized`, `row_in_scope`)                                                          |
-| A refusal confirms that an id or namespace exists    | `found=False` or a generic "cannot access", never a 403 naming the target                                                  | Row-scoped handlers; the restricted gate                                                                             |
-| One caller exhausts shared capacity                  | Token buckets per namespace, org and actor                                                                                 | `server/core/ratelimit.py`                                                                                           |
-| An agent is induced to echo or enumerate memory      | `read_scope` ceilings, exposure ledger, breadth budgets, prompt fencing                                                    | `server/identity/domain/read_scope.py`, `server/identity/app/policy_gate.py`, `server/memory/domain/prompt_fence.py` |
-| Stored text carries instructions into a later prompt | Recalled memory is fenced with a per-prompt nonce                                                                          | `server/memory/domain/prompt_fence.py`                                                                               |
-| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows, and chunks, digests and turns that read as high, are never embedded                    | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
-| Audit rows are edited or deleted                     | Per-row hashes plus a hash-chained checkpoint per window                                                                   | `server/observability/audit.py`, `audit_verifier` worker                                                             |
-| Erasure leaves residue                               | Checkpointed saga ending in a residue census                                                                               | `server/erasure/app/saga.py`, `server/erasure/store/census.py`                                                       |
-| A service signs beyond its end users                 | Each issuer signs for its listed orgs alone, no two for one org; a token names one user and agent, never a group or a role | `server/auth/jwt.py` (`_verify_end_user`), `server/settings/_auth.py` (`EndUserIssuer`)                              |
-| A collection is read without a grant                 | Only grants of the request's principals, inherited down the tree, open one                                                 | `server/auth/sharing.py`, `server/auth/authz.py` (`check_authorized`)                                                |
+| Threat                                               | Boundary                                                                                                                                                                                                                                                                            | Enforced by                                                                                                                       |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| An unauthenticated caller reads or writes data       | Bearer token on every op; 401 before the body is read                                                                                                                                                                                                                               | `server/transport/http.py` (`_extract_auth`), `server/auth/jwt.py`                                                                |
+| A forged or tampered token                           | Signature, algorithm allow-list, `kid`, issuer, audience, time claims                                                                                                                                                                                                               | `server/auth/jwt.py` (`verify_token`)                                                                                             |
+| A revoked token keeps working                        | Per-process revocation snapshot, fail closed until loaded                                                                                                                                                                                                                           | `server/auth/revocation.py`                                                                                                       |
+| Tenant A reads tenant B's rows                       | Org + namespace check on every call; row-scoped ops check the row's namespace                                                                                                                                                                                                       | `server/auth/authz.py` (`check_authorized`, `row_in_scope`)                                                                       |
+| A refusal confirms that an id or namespace exists    | `found=False` or a generic "cannot access", never a 403 naming the target                                                                                                                                                                                                           | Row-scoped handlers; the restricted gate                                                                                          |
+| One caller exhausts shared capacity                  | Token buckets per namespace, org and actor                                                                                                                                                                                                                                          | `server/core/ratelimit.py`                                                                                                        |
+| An agent is induced to echo or enumerate memory      | `read_scope` ceilings, exposure ledger, breadth budgets, prompt fencing                                                                                                                                                                                                             | `server/identity/domain/read_scope.py`, `server/identity/app/policy_gate.py`, `server/memory/domain/prompt_fence.py`              |
+| Stored text carries instructions into a later prompt | Recalled memory is fenced with a per-prompt nonce                                                                                                                                                                                                                                   | `server/memory/domain/prompt_fence.py`                                                                                            |
+| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows, and chunks, digests and turns that read as high, are never embedded                                                                                                                                                                             | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                                 |
+| Audit rows are edited or deleted                     | Per-row hashes plus a hash-chained checkpoint per window                                                                                                                                                                                                                            | `server/observability/audit.py`, `audit_verifier` worker                                                                          |
+| Erasure leaves residue                               | Checkpointed saga ending in a residue census                                                                                                                                                                                                                                        | `server/erasure/app/saga.py`, `server/erasure/store/census.py`                                                                    |
+| A service signs beyond its end users                 | Each issuer signs for its listed orgs alone, no two for one org; a token names one user and agent, never a group or a role                                                                                                                                                          | `server/auth/jwt.py` (`_verify_end_user`), `server/settings/catalog.py` (`EndUserIssuer`)                                         |
+| A collection is read without a grant                 | Only grants of the request's principals, inherited down the tree, open one                                                                                                                                                                                                          | `server/auth/sharing.py`, `server/auth/authz.py` (`check_authorized`)                                                             |
+| A hostile document takes over a parser               | Parsing runs in the extractor service, never the server: each extraction in a child with no token, no environment, no socket (seccomp) while extractions run one at a time (the default), no new process and bounded memory and CPU; the server checks what it returns as untrusted | `extractor/loom_extractor/child.py`, `server/knowledge/domain/extract/validate.py`, [document extraction](document-extraction.md) |
 
 Out of scope: an attacker who already operates the ClickHouse database, vulnerabilities
 in ClickHouse or the integrated backends, and third-party MCP clients.
@@ -79,7 +80,8 @@ content posted to classifiers and rerankers go only to the hosts
 allow-list, so a cloud's own endpoint, an IP address or a look-alike name is refused as a
 provider's API is. The settings refuse to load with no hosts, or with an API root, the
 token endpoint or a rerank endpoint elsewhere, or the Gemini embedder (`gateway_refusal`),
-and with a `builtin:cohere` code-search default (`_check_code_rerank_behind_the_gateway`).
+and with a `builtin:cohere` code-search or knowledge-search default
+(`_check_rerank_defaults_behind_the_gateway`).
 Model calls go through their own client, `server/clients/_http.py::get_model_client`,
 whose request hook (`_on_request`) refuses every other host on every hop, redirects
 included; GitHub and an issuer's discovery document use the other client, which has no
@@ -892,7 +894,7 @@ only those with a vector (`embedding_dim > 0`), so no search leg returns it.
   two chunks with no overlap are not joined. The check reads one call's chunks only (at
   most 256), so a key cut at the boundary between the last chunk of one call and the
   first chunk of the next reads as high in neither, and both chunks are
-  embedded. `loom okf import` sends each session's chunks whole in one call, so only a
+  embedded. `loom import-okf` sends each session's chunks whole in one call, so only a
   session of more than 256 chunks can still hit this gap. `memory.get` on a `chunk:` key
   leaves out a neighbour with no vector, as it leaves out one that reads as high, and
   audits a key read of either.
@@ -1081,6 +1083,27 @@ A structured profile is served only from a row written as `worker:structured-pro
 actor kind no token maps to, so a caller cannot forge one
 ([memory invariants](memory-architecture.md#invariants)).
 
+A document a registered document source's sync wrote carries the actor
+`worker:knowledge-source-sync` and the class `imported`. No token maps to that actor
+kind, so no request can write a document that reads as synced from a source: a source's
+documents are those tagged `source:<name>` with that actor, and only the sync worker
+writes, rewrites or retires them. The worker opens a source's credential only for its
+own turn; a credential that does not open stops the turn with `credential_invalid` and
+nothing is fetched without it. It retires a document only when a complete full listing
+no longer has the file and a lookup of that file reports it gone, trashed or out of
+every folder of the source (for a tracker project's documents: a list read whole, every
+project on every page, and a lookup reporting the document not found, trashed, archived
+or in none of the source's projects), when the document sits at an address that is no
+longer its file's, or when a namespace admin asked (`knowledge.source.remove` with
+`delete_documents`); never on a fetch error or a recording its meeting store stopped
+listing, and never touches a live document another
+writer or source holds ([document sources](../features/knowledge.md#syncing-a-source)).
+Any holder of a writer grant on the namespace may still `knowledge.delete` a synced
+document, as any other; while its item is still in the source, a later turn writes it
+again (a folder's next full listing, a project's next turn). A meeting store's token goes only to that
+store's own hosts, a transcript download's link included
+([recordings](../features/knowledge.md#a-recording-source)).
+
 ## Audit log
 
 `emit` in `server/observability/audit.py` writes `loom.audit_log` rows. `row_hash` is
@@ -1159,10 +1182,11 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   to start with the checked-in dev secret; only `LOOM_INSTANCE_LABEL=deploy:dev` is exempt
   (`require_real_signing_secret`). `loom doctor` and `/v1/health` flag it elsewhere
   (`dev_jwt_secret`).
-- **Stored tokens.** Private-repository tokens, tracker-source passwords and provider
-  keys are encrypted at rest with a key derived from `LOOM_JWT_SECRET` and a per-purpose
-  salt (`seal` and `unseal` in `server/core/secrets_at_rest.py`), as are the signing
-  keys in `loom.signing_keys`. Changing the secret makes them undecryptable; re-enter
+- **Stored tokens.** Private-repository tokens, tracker-source passwords, document-source
+  credentials (`loom.knowledge_sources.credential_enc`) and provider keys are encrypted
+  at rest with a key derived from `LOOM_JWT_SECRET` and a per-purpose salt (`seal` and
+  `unseal` in `server/core/secrets_at_rest.py`), as are the signing keys in
+  `loom.signing_keys`. Changing the secret makes them undecryptable; re-enter
   the credentials and re-mint tokens.
 - **Ledger arguments.** `loom.agent_events` stores free-text arguments as
   `sha256:<digest>/<length>`, not text (`server/observability/event_args.py`).

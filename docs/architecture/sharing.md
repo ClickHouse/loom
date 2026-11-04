@@ -21,20 +21,22 @@ flowchart LR
 - **Collections.** A collection is a namespace with `kind = 'collection'` and a row in
   `loom.collections` naming its parent. `collection.create` makes one (the creator holds
   `admin`), `collection.move` puts it under another collection or detaches it,
-  `collection.list` lists the ones the caller can read, and `collection.delete` takes one
-  out of the directory and the tree (its children become top-level) once a purging erasure
-  of it has taken what it holds off disk (`namespace.delete` refuses a collection). A
+  `collection.list` lists the ones the caller can read, each with the caller's role there
+  and its directory description (the dashboard's Library shows them), and
+  `collection.delete` takes one out of the directory and the tree (its children become
+  top-level) once a purging erasure of it has taken what it holds off disk
+  (`namespace.delete` refuses a collection). A
   deleted collection's name is never used again, and no grant reaches it any more. A
   document lives in one collection and follows its grants from the moment it is written.
 - **Only grants open a collection**, and only one in the tree: a `col-` name that was
   deleted, or never created, admits no one but a platform admin. A collection is known by
-  its name (`col-…`; the prefix is reserved), so `check_authorized` hands it to
-  `server/auth/sharing.py` before any other rule, with no read. A token's namespace claim,
-  an org admin role and the code-namespace rules reach no collection; a scoped or
-  delegated token reaches one no further than its own claim names it, and a delegated one
-  no further than its creator's role there. A token with an `ns_write` claim writes no
-  collection outside it (it holds `viewer` there at most), as on any namespace. A platform
-  admin passes, for operator erasure and export.
+  its name (`col-…`; the prefix is reserved: `namespace.register` and `namespace.restore`
+  refuse it), so `check_authorized` hands it to `server/auth/sharing.py` before any other
+  rule, with no read. A token's namespace claim, an org admin role and the code-namespace
+  rules reach no collection; a scoped or delegated token reaches one no further than its
+  own claim names it, and a delegated one no further than its creator's role there. A
+  token with an `ns_write` claim writes no collection outside it (it holds `viewer` there
+  at most), as on any namespace. A platform admin passes, for operator erasure and export.
 - **Principals.** A request holds its subject, every group whose members include it, the
   agent its end-user token signs in, and `everyone`. A grant names any of them: a login
   handle or email, an `sa:` service account, `user:<id>`, `group:<id>`, `agent:<id>` or

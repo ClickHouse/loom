@@ -14,6 +14,7 @@ auto-provisioning) layer them on top.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 NAMESPACE_MAX_LEN = 128
 
@@ -64,6 +65,12 @@ def session_spellings(session_id: str) -> list[str]:
 def same_session(a: str, b: str) -> bool:
     """Whether two stored session ids are one session ('-' and "" are both none)."""
     return b in session_spellings(a)
+
+
+def present(value: Any) -> str | None:
+    """An identity field as the gates read it: None when missing, blank or the
+    "-" sentinel, else the value stripped."""
+    return named(str(value or "").strip())
 
 
 def names_session(session_id: str) -> bool:

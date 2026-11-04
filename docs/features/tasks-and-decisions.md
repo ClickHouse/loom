@@ -143,15 +143,15 @@ async with Agent(org="acme", namespace="public", agent="public-bot", api_key=PUB
     out["task"]["status"]  # "triage", or "todo" when the poster is trusted
 ```
 
-Two creates with one `idempotency_key` store one task, even when they race: they run one at a time under a
-lease on the key, each answers with the task, and only the one that stored it says `created=true`. A retry of
-a create that was cut off after storing its task writes the `created` event it left out; its missing lease row
-is the lease sweep's to write, so the task is claimable after the sweep's 60 s grace and one more pass. When the
-first create's own event still lands (it was cancelled mid-insert), the two share one deduplication token and
-the readers (`task.history`, `task.updates`, `/v1/task/watch`, webhooks) keep only the first, so a task is
-created once in its history and in each cursor's delivery. A create that waits more than 10 s for another
-with its key answers 409 `PRECONDITION_FAILED`, and 503 when the lease store (Keeper) does not answer; retry
-either.
+Two creates by one poster with one `idempotency_key` store one task, even when they race: they run one at a
+time under a lease on the key, each answers with the task, and only the one that stored it says `created=true`.
+A key is its poster's own: another poster's create with the same key stores its own task. A retry of a create
+that was cut off after storing its task writes the `created` event it left out; its missing lease row is the
+lease sweep's to write, so the task is claimable after the sweep's 60 s grace and one more pass. When the first
+create's own event still lands (it was cancelled mid-insert), the two share one deduplication token and the
+readers (`task.history`, `task.updates`, `/v1/task/watch`, webhooks) keep only the first, so a task is created
+once in its history and in each cursor's delivery. A create that waits more than 10 s for another with its key
+answers 409 `PRECONDITION_FAILED`, and 503 when the lease store (Keeper) does not answer; retry either.
 
 `namespace` is the poster's own; the first argument names the inbox. `create` also takes `priority` (default 3),
 `deadline`, `not_before`, `origin` and `parent_task_id`. A task with `not_before` is `todo` but hidden from `pull`
@@ -264,24 +264,47 @@ The memory row's value is one statement,
 `decision.outcome` has recorded one. The category is not in it: it stays on the record and in the row's
 `decision:category:<category>` tag, which is what a filter by category reads. A reasoning that is the outcome word for
 word (case, whitespace and the closing punctuation aside) records a ban or an invariant stated with no reason: the
-statement reads `Decided <outcome>.`, the outcome keeping the reasoning's room as well, and `context.pack` gives no
-`because`. Search embeds and excerpts it and `memory.for_file` shows it, so it opens with the scenario. Each part is
-shortened to fit the embedded excerpt, the scenario most, because the pre-edit line shows the start of the statement
-and must reach the outcome. The excerpt is measured as the value is stored, JSON-encoded, where a non-ASCII character
-takes six or more, so a Cyrillic or CJK part keeps about a sixth as many characters as an ASCII one. The record keeps
-every field in full except the alternatives, each kept to its first 300 characters.
+statement reads `Decided <outcome>.` and `context.pack` gives no `because`. Every part is stored as the record keeps
+it, whole within the record's limits (scenario 2,000 characters, outcome 1,000, reasoning 4,000, realized outcome
+2,000, up to ten alternatives of 300 each). A longer alternative is cut at a space, or between two CJK characters, and
+ends in `…`, so no half name reads as a file. A statement can run to about 12,000 characters. `memory.for_file` shows
+it whole, or names it when it would pass the block's ceiling, and search embeds its excerpt, the first 1,200 stored
+characters less its ` (#<key>)` suffix, so it opens with the scenario; a longer statement is also stored as chunks,
+which search reads too.
+
+`stage` is `decided` (the default) or `proposed`: an option put forward and not yet chosen or built, such as a proposal,
+a plan or an action item. A proposed decision's statement reads `Proposed <outcome> because <reasoning>.` and its row
+carries the `decision:proposed` tag, so the pre-edit block and search present it as a proposal. A proposed ban keeps its
+`constraint` tag: the pre-edit block still shows it first, worded as a proposal, and reads `Proposed <outcome>.` when no
+reason is stated.
+
+The stage is kept on the row, not the record: `context.pack` lists a proposed decision as `→ proposed: <outcome>`, and
+`decision.precedents` and `decision.chain` answer its `stage`, read from the tag on the row that holds the record (a
+decision whose outcome is recorded reads as decided).
+
+`decision.outcome` drops the stage, since an outcome records that the decision was acted on: the statement then reads
+`Decided … Realized: …`. Recording the decision again with `stage: "decided"` drops it too. `decision.record` ignores a
+caller's own `decision:proposed` tag; `memory.update`, which replaces a row's tags, edits the tag like any other, and
+the readers follow it.
+
+A `loom decisions extract` run keeps the stage of a row whose words stay the same ([Extract decisions from a
+document](#extract-decisions-from-a-document), **Stage**), so a proposal later marked accepted keeps its rows proposed.
+Mark such a decision decided by sending the body a `--dry-run` reports for it (it carries the extractor's identity, so
+it replaces the row) with `stage: "decided"`, record its outcome with `decision.outcome`, or delete the document's
+extracted rows that are not pinned or attested and extract it again, which reads every row's stage afresh.
 
 - **Checks**: the blacklist reads every stored field in full; the sensitivity and the attribute labels read the stored
   category, scenario, outcome, reasoning, alternatives and realized outcome (not `decision_maker` or `run_id`, which
   the row never holds).
 - **Files**: `files` sets the row's files as on `memory.set`; unset, they are detected from the stored fields, never
-  from the shortened statement. `memory.for_file` serves the decision before an edit of a file it names, marked
-  `(unconfirmed)` until it is pinned or attested, and `(source changed since confirmation)` or `(source changed)`
-  once tagged `source-changed` ([how the block reads](../concepts/memory.md#tags-entities-and-files)).
+  from the realized outcome. `memory.for_file` serves the decision before an edit of a file it names, as it is,
+  `(pinned)` when pinned and `(source changed)` once tagged `source-changed`
+  ([how the block reads](../concepts/memory.md#tags-entities-and-files)).
 - **Source**: `source_resource_id` and `source_class` set those columns as on `memory.set`; `source_resource_id`
   cites the document the decision was taken from.
-- **Outcome**: `decision.outcome` keeps the row's files, source, declared class and the caller's tags. It sets the
-  `decision` tags again and works out the server's `sensitivity:` and `attribute:` labels again.
+- **Outcome**: `decision.outcome` keeps the row's files, source, declared class and the caller's tags. It drops the
+  `decision:proposed` tag, sets the `decision` tags again and works out the server's `sensitivity:` and `attribute:`
+  labels again.
 
 A decision is identified by its key, not its text. The write-time conflict check never merges a decision into another
 decision's row, files it as a duplicate of one, lets one replace it or lets a pinned one refuse it, however alike they
@@ -290,17 +313,20 @@ close pair it judges an update of the other; that is recorded as `memory.auto_su
 it.
 
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
-(`superseded_prior=true`); history keeps it. A decision recorded again word for word writes the same statement, which
-`memory.set` takes as a restatement: it reinforces the row, and a pinned decision accepts it. The restatement compares
-the statement's bytes, so a row stored under another statement form is revised rather than restated by the same fields,
-whether they come from `decision.record` or from `decision.outcome`, which rebuilds the statement too. A row whose value
-is locked refuses either with 423 `LOCKED` until the lock ends or is released; an attested row takes the write, and its
-attestation reads stale until `memory.verify` binds it again; a pinned row refuses `decision.record` until it is
-unpinned, and the pin is set again only through `memory.pin`, while `decision.outcome` keeps the pin. When the writer of
-a pinned decision decides it otherwise, the call is refused with 409 `PINNED_CONFLICT` and nothing is written; an admin
-unpins it with `memory.unpin` first. The pin guards only its writer's row: another identity's decision on the same
-scenario still supersedes the record. The new record holds only what the new decision states: fields it leaves out, and
-an earlier `realized_outcome` or `success`, are not carried over, whether it is written by `decision.record` or
+(`superseded_prior=true`); history keeps it. The key is derived as a record's identity key is (see [typed
+records](memory/writing.md#typed-records)): a scenario in any script records, and a category or scenario with no
+letter or digit (punctuation, symbols or marks alone) is refused with 400 `MISSING_IDENTITY_FIELD`. A decision
+recorded again word for word writes the same statement, which `memory.set` takes as a restatement: it reinforces the
+row, and a pinned decision accepts it. The restatement compares the statement's bytes, so a row stored under another
+statement form is revised rather than restated by the same fields, whether they come from `decision.record` or from
+`decision.outcome`, which rebuilds the statement too. A row whose value is locked refuses either with 423 `LOCKED`
+until the lock ends or is released; an attested row takes the write, and its attestation reads stale until
+`memory.verify` binds it again; a pinned row refuses `decision.record` until it is unpinned, and the pin is set again
+only through `memory.pin`, while `decision.outcome` keeps the pin. When the writer of a pinned decision decides it
+otherwise, the call is refused with 409 `PINNED_CONFLICT` and nothing is written; an admin unpins it with
+`memory.unpin` first. The pin guards only its writer's row: another identity's decision on the same scenario still
+supersedes the record. The new record holds only what the new decision states: fields it leaves out, and an earlier
+`realized_outcome` or `success`, are not carried over, whether it is written by `decision.record` or
 `memory.record.write`. A `decision.outcome` without `success` keeps the record's verdict.
 
 The record holds the text of its last writer, the agent, user and session that recorded it, so a delete of that
@@ -361,7 +387,10 @@ await agent.decision.outcome(rec["memory_key"], "no replay gaps in the quarter",
 `loom decisions extract` reads one [knowledge](knowledge.md) document and records the decisions it states. It runs
 in-process with no token, so it is an operator command, and it calls the configured LLM once per window of the
 document's sections, twice for a window read again (below), also in a dry run. Its model calls are not gated by the
-namespace's cost cap.
+namespace's cost cap. A model call held for the org (its model calls switched off, or refused or deferred by the
+inference gateway), for a model read or for an embedding a write needs, stops the run: nothing more is written,
+nothing is retired, and it exits 1. The document-source sync runs the same extraction on each document it writes,
+within a share of the namespace's cost cap ([mining decisions](knowledge.md#mining-decisions)).
 
 ```bash
 loom decisions extract --org O --namespace NS --source-uri URI            # dry run: prints what it would write
@@ -387,7 +416,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   - **Tags**: under `--into source` for a document outside the trunk, a row the run keeps as it is (pinned, attested
     or with a recorded outcome, and the same verbatim fields, or one the retire step keeps because its reasoning is
     still in the document), and a row it tags `source-changed`, gains the `repo:<id>` tag by a tags-only write;
-    another writer's unconfirmed row gains none, nor does a row that carries another repository's tag already.
+    another writer's row that is not pinned or attested gains none, nor does a row that carries another repository's
+    tag already.
   - **Access**: the run reads the document's namespace and the repository's, and writes where the rows go. With an
     auth context bound it checks each (viewer, viewer, and writer, or viewer for a dry run) and refuses before any
     model call; the CLI runs with none, as the operator.
@@ -423,7 +453,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   the text gives no reason for is left out, except a ban or an invariant stated without one: the model emits it with
   `is_constraint` true and its own sentence as the reasoning, which the restatement check keeps (below). It says
   nothing about images or captions: what is image-only is the filter's call below, and a section it sends, such as a
-  one-line caption over a diagram beside more text, may state a decision.
+  one-line caption over a diagram beside more text, may state a decision. When the document has a title, the window's
+  text opens with a `[document: <title>]` line (its first 200 characters), so a proposal's sentences read as a
+  proposal.
 - **Second read**: a window gets at most one extra model call, reported as `read again`. When the reply holds no
   decision and the window's text is more than a caption (80 characters once images and link markup are removed), the
   window is read once more with the same prompt and the second reply is the window's. When a candidate's quote is in the
@@ -482,23 +514,33 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   document's span again, across the same labels, when the retire step looks for it. Each is at least 12 characters
   long, counted on the model's span: a shorter span ("We", "the") is in every document, so a decision resting on it
   could never retire. At most `--max-per-section` (default 3) are kept per section. A candidate whose category or
-  scenario holds no letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or with
+  scenario holds no letter or digit in any script has no key and is dropped. Of two candidates with one key, or with
   one outcome and reasoning (whitespace and letter case aside; overlapping chunks give two windows the same text), the
   first is kept.
 - **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
   `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
   punctuation, as their English (Snowball) stems, so `stored` meets `store` and `running` meets `run`. Filler words
-  (`we`, `the`, `will`, `decided`, `chose`, `use`, `instead`, `because` and the like) are skipped in any form: "We
-  decided on spilling into sorted runs." restates the outcome `spill into sorted runs`; "Sorted runs avoid random reads
-  on disk." gives a reason. An outcome that carries its own reason leaves the reasoning nothing to add, so the candidate
-  is dropped, which is why the prompt asks for the outcome without its reason. One exception: a ban stated with no
-  reason ("Client-side retries only; no server retry setting."), a candidate the model marks `is_constraint` whose
-  reasoning holds `only`, `no`, `never`, `must`, `not`, `always`, `at most` or `at least` as a word, whose reasoning
-  restates its outcome or is its whole quote (an outcome shorter than the sentence), and whose reasoning fits an outcome
-  (1000 characters; a longer one is judged as any other candidate), is kept with its reasoning as its outcome (a
-  reasoning with fewer words than the outcome, such as "no server retry setting" of that ban, gives way to the quote
-  when the quote holds a ban word too), so it is recorded with the `constraint` tag and reads `Decided <outcome>.` with
-  no reason. The flag alone is not enough: models mark plain descriptions as constraints too.
+  (`we`, `the`, `will`, `decided`, `chose`, `proposed`, `use`, `instead`, `because` and the like) are skipped in any
+  form: "We decided on spilling into sorted runs." restates the outcome `spill into sorted runs`; "Sorted runs avoid
+  random reads on disk." gives a reason. An outcome that carries its own reason leaves the reasoning nothing to add, so
+  the candidate is dropped, which is why the prompt asks for the outcome without its reason. One exception: a ban stated
+  with no reason ("Client-side retries only; no server retry setting."), a candidate the model marks `is_constraint`
+  whose reasoning holds `only`, `no`, `never`, `must`, `not`, `always`, `at most` or `at least` as a word, whose
+  reasoning restates its outcome or is its whole quote (an outcome shorter than the sentence), and whose reasoning fits
+  an outcome (1000 characters; a longer one is judged as any other candidate), is kept with its reasoning as its outcome
+  (a reasoning with fewer words than the outcome, such as "no server retry setting" of that ban, gives way to the quote
+  when the quote holds a ban word too), so it is recorded with the `constraint` tag and reads `Decided <outcome>.`
+  (`Proposed <outcome>.` when proposed) with no reason. The flag alone is not enough: models mark plain descriptions as
+  constraints too.
+- **Stage**: the model marks each candidate `decided` or `proposed`; anything but a plain `decided` (a proposal, an RFC,
+  a feature request, a plan, future work, an action item, or no answer) is recorded with `stage: "proposed"`, because a
+  proposal served as a choice made misleads an agent more than a choice served as a proposal. The stage is the model's
+  reading and flips between runs on an unchanged document, so the same words keep the row's stage in either direction,
+  also under a key the model reworded when its outcome, reasoning and rejected options' reasons are those of one of the
+  extractor's rows on the document; a stage taken from each run would drift with every re-run. The run's note names the
+  stage the document reads as when it differs, except for a row whose outcome is recorded, which reads as decided
+  whatever the document says. A changed text is recorded at the stage it reads as. A pinned or attested row is never
+  re-recorded by a run, so its stage changes only by hand.
 - **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading at
   any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. The
   section stays in the window, since its text may give a later decision's reason.
@@ -528,38 +570,42 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   `process:cli:decisions`; the tag write, `memory.update_by_id`, declares none, as over HTTP.
 - **Files**: each backticked or qualified name and each bare class name the document text holds is looked up with
   `code.symbol` in the document's namespace, or in the repository's trunk with `--repo`; exactly one defining file (a
-  class preferred over its constructor) goes into `files`, several or none add nothing. A repository path the quote or
-  the reasoning writes out (`src/Storages/MergeTreeData.cpp`) is added as well, as `memory.set` detects one. When the
-  code index cannot be read for a name, a decision already recorded keeps the files its row has, and a new one is
-  written with the files that did resolve. Pull request numbers and setting names are printed as unresolved in a dry
-  run, for a human to add; a backticked snake_case name is looked up first and reported as a setting only when the
-  index does not define it. A name defined in several files is printed as unresolved too, for a human to pick the
-  file.
+  class preferred over its constructor) goes into `files`, several or none add nothing. A name only tests or Markdown
+  pages define links nothing: a decision governs code, and an edit of a test or a page would show it instead. The dry
+  run says `only a test or a page defines it` and lists the name as unresolved (`only tests or pages`) for a human to
+  add the code file, or as a setting when it is snake_case and a page documents it; a snake_case name only tests define
+  is a helper and is not listed. Which paths count as tests is `governs` in `server/memory/domain/decision_extract.py`:
+  common test, mock and end-to-end layouts; one it misses keeps its link. A repository path the quote or the reasoning
+  writes out (`src/Storages/MergeTreeData.cpp`) is added as well, as `memory.set` detects one. When the code index
+  cannot be read for a name, a decision already recorded keeps the files its row has, and a new one is written with the
+  files that did resolve. Pull request numbers and setting names are printed as unresolved in a dry run, for a human to
+  add; a backticked snake_case name is looked up first and reported as a setting when the index does not define it. A
+  name defined in several files is printed as unresolved, for a human to pick the file.
 - **Reconcile**: the document says otherwise only when a verbatim field differs: the reasoning, or the set of rejected
   options' reasons, each matched as a prefix where `decision.record` cut a long alternative at its 300-character cap.
   The category, scenario, outcome and option wording are the model's, and a change there alone is no change. Nor is a
   change in whitespace or letter case alone (a re-wrapped line, a capitalised first word): the row keeps its stored
   span, which the retire step still finds, and `decision.record` stores rejected options' reasons on one line already.
-  A row counts as confirmed when it is pinned or attested in its current form (`memory.verify`), the rule
-  `memory.for_file` marks `(unconfirmed)` by. By the row the key's active record belongs to:
-  - **The extractor's own, unconfirmed, from this document**: same verbatim fields and the same `files`,
+  A row is frozen against re-extraction when it is pinned or attested in its current form (`memory.verify`). By the
+  row the key's active record belongs to:
+  - **The extractor's own, not pinned or attested, from this document**: same verbatim fields and the same `files`,
     `source_resource_id`, `constraint` tag and `repo:` tag: no write. A verbatim field differs, or only those row
     fields do (a file that resolves once the code is indexed, a renamed heading, a first run with `--repo`): recorded
     again (the record is superseded, history keeps it).
-  - **Confirmed, citing this document** (whoever wrote it): a verbatim field differs: no write; the full
+  - **Pinned or attested, citing this document** (whoever wrote it): a verbatim field differs: no write; the full
     `decision.record` body is printed with the row's agent, user and session, and the row is tagged `source-changed`
     unless it already carries the tag. To accept the body, a maintainer unpins a pinned row with `memory.unpin`
     (`decision.record` on a pinned writer row answers 409 `PINNED_CONFLICT`) and sends it; an attested row takes the
     body, and its attestation then reads stale until `memory.verify` binds it again.
-  - **Another writer's unconfirmed row, or a row from another document**: neither revised nor tagged; its body is
-    printed.
+  - **Another writer's row that is not pinned or attested, or a row from another document**: neither revised nor
+    tagged; its body is printed.
   - **Its outcome recorded** (`decision.outcome`): never recorded again, since `decision.record` would rebuild it
-    without the outcome; a verbatim field that differs tags it `source-changed`, as a confirmed row is.
+    without the outcome; a verbatim field that differs tags it `source-changed`, as a pinned or attested row is.
   - **No record under the key**: of the `LOOM_MEMORY_DECISION_EXTRACT_RESTATEMENT_TOP_K` (default 20) decision keys
-    closest to the candidate (cosine only), a confirmed one under another key that reads the same at or above the
-    namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`. The query is the
-    candidate's statement, which leaves the category out, so a confirmed decision filed under another category counts.
-    Otherwise the decision is recorded. The fetch is capped at 500 rows, so a large value or
+    closest to the candidate (cosine only), a pinned or attested one under another key that reads the same at or above
+    the namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`. The query is the
+    candidate's statement, which leaves the category out, so a pinned or attested decision filed under another
+    category counts. Otherwise the decision is recorded. The fetch is capped at 500 rows, so a large value or
     `LOOM_MEMORY_SEARCH_PER_KEY_CAP=0` can read fewer keys.
 - **The tag write**: `memory.update_by_id` by the row's `memory_id`, tags only, conditional on the value read: a value
   changed since, by `decision.outcome` or a re-record, is left alone and reported as a race. It is a new version by
@@ -571,14 +617,14 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
 - **Races**: `decision.record` takes no precondition, so a `decision.outcome` that lands between the run's read and
   its re-record is replaced with the rest of the record; the tag write's precondition covers the value, not a
   tags-only change in the gap.
-- **Retire**: an unconfirmed `loom-decisions` row citing the document whose reasoning is no longer in the document's
-  text, read as in the verbatim check, is deleted with `memory.delete_version`, which also retires its record; a
-  confirmed one, or one whose outcome `decision.outcome` recorded, is tagged `source-changed` instead. The reasoning
-  read is the extractor's own record: a key whose active record another identity wrote is left alone. An unconfirmed
-  row whose outcome and reasoning (whitespace and letter case aside) this run recorded under another key (the model
-  worded the scenario differently) is deleted too, so the decision is not served twice, unless its realized outcome is
-  recorded; another decision resting on the same reasoning has another outcome and stays. Otherwise a row whose
-  reasoning is still there stays, whether or not the run emitted it again.
+- **Retire**: a `loom-decisions` row, not pinned or attested, citing the document whose reasoning is no longer in the
+  document's text, read as in the verbatim check, is deleted with `memory.delete_version`, which also retires its
+  record; a pinned or attested one, or one whose outcome `decision.outcome` recorded, is tagged `source-changed`
+  instead. The reasoning read is the extractor's own record: a key whose active record another identity wrote is left
+  alone. An unpinned, unattested row whose outcome and reasoning (whitespace and letter case aside) this run recorded
+  under another key (the model worded the scenario differently) is deleted too, so the decision is not served twice,
+  unless its realized outcome is recorded; another decision resting on the same reasoning has another outcome and stays.
+  Otherwise a row whose reasoning is still there stays, whether or not the run emitted it again.
 - **Citing the document**: a row cites it when its `source_resource_id` starts
   `knowledge:<document namespace>/<source_uri>#`, the namespace that holds the document (not where the row is), so a
   heading holding `#` (`C# bindings`) is no obstacle, unless a document `<source_uri>#<part>` it also starts with was
@@ -610,13 +656,15 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   so does a window the model could not answer readably while others were read), else 0; a race does not change the
   exit code.
 
-The reasoning is the verbatim span the retire step reads: the record has no field for the quote. To confirm an
-extracted decision, a maintainer reads its identity with `memory.get` and calls `memory.pin` under it, or attests its
-current value with `memory.verify`. Before an edit, `memory.for_file` marks an extracted row `(unconfirmed)` and
-`(source changed …)` as it does every decision row ([Decisions](#decisions)). Extracted into a repository's trunk code
-namespace, the rows also reach `loom_search` from a checkout of the repository, as every decision recorded there does
+The reasoning is the verbatim span the retire step reads: the record has no field for the quote. An extracted row is
+served as it is; nobody needs to review it. Pinning is optional: to freeze a row against re-extraction, read its
+identity with `memory.get` and call `memory.pin` under it, or attest its current value with `memory.verify`; a later run
+whose document no longer says it then tags the row `source-changed` instead of revising or deleting it. Before an edit,
+`memory.for_file` marks a pinned extracted row `(pinned)` and one tagged `source-changed` `(source changed)`, as it does
+every decision row ([Decisions](#decisions)). Extracted into a repository's trunk code namespace, the rows also reach
+`loom_search` from a checkout of the repository, as every decision recorded there does
 ([unified search](unified-search.md#reading-the-memory-section)); that surface marks no pin state, nor whether its
-source changed, so an extracted row reads there as any decision does until a maintainer confirms or deletes it.
+source changed, so an extracted row reads there as any decision does.
 
 ## History policies
 

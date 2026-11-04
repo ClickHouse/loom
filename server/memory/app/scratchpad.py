@@ -13,7 +13,9 @@ with `agent="*"`) does not know the writer's agent. Then the blocks written
 without a run (`run_id = '-'`) for the same session axis follow; the plugin
 writes its "where was I" note there and its per-turn conclusions at run
 scope, so a pack for the run sees both. Identity axes the caller left open
-(`agent="*"`, no `user_id`) are not filtered on.
+(`agent="*"`, no `user_id`) are not filtered on. Every read also carries the
+request's read scope, so a token bounded to one user never reads another
+user's run by naming its run id.
 
 Inert by construction when no block exists for the scope: indexed point
 reads on the `working_memory` primary key, no LLM call.
@@ -25,6 +27,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.naming import SENTINEL, named
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_and
 
 TRUNCATED_MARK = "\n(truncated)"
 
@@ -75,46 +79,10 @@ def render(blocks: list[dict[str, Any]], *, max_chars: int) -> ScratchpadBlocks:
     )
 
 
-def _where(agent: str, user_id: str, run_scope: bool) -> tuple[str, dict[str, Any]]:
-    clauses = ["org = {org:String}", "namespace = {ns:String}", "tombstoned_at IS NULL"]
-    params: dict[str, Any] = {}
-    if run_scope:
-        # The run id is unique to one execution: it IS the scope.
-        clauses.append("run_id = {run:String}")
-        return " AND ".join(clauses), params
-    clauses.append("session_id = {sid:String}")
-    if agent:
-        clauses.append("agent = {agent:String}")
-        params["agent"] = agent
-    if user_id:
-        clauses.append("user_id = {uid:String}")
-        params["uid"] = user_id
-    clauses.append("run_id = {norun:String}")
-    params["norun"] = SENTINEL
-    return " AND ".join(clauses), params
-
-
-async def _rows(
-    ch: Any,
-    *,
-    org: str,
-    namespace: str,
-    agent: str,
-    user_id: str,
-    session_id: str,
-    run_id: str,
-    run_scope: bool,
-    limit: int,
-) -> list[dict[str, Any]]:
-    where, extra = _where(agent, user_id, run_scope)
-    params: dict[str, Any] = {
-        "org": org,
-        "ns": namespace,
-        "sid": session_id,
-        "run": run_id,
-        "lim": int(limit),
-        **extra,
-    }
+async def _select(ch: Any, where: str, params: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    """Blocks matching `where`, newest first, inside the request's read scope."""
+    params = {**params, "lim": int(limit)}
+    where += scope_and(request_scope(), params)
     rows = await ch.query_all(
         f"""
         SELECT block_key, content, version, updated_at
@@ -126,6 +94,40 @@ async def _rows(
         params=params,
     )
     return [dict(r) for r in (rows or [])]
+
+
+_LIVE = "org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL"
+
+
+async def run_rows(
+    ch: Any, org: str, namespace: str, run_id: str, *, limit: int
+) -> list[dict[str, Any]]:
+    """The run's blocks. The run id is unique to one execution: it IS the scope."""
+    params = {"org": org, "ns": namespace, "run": run_id}
+    return await _select(ch, f"{_LIVE} AND run_id = {{run:String}}", params, limit)
+
+
+async def _session_rows(
+    ch: Any,
+    org: str,
+    namespace: str,
+    *,
+    agent: str,
+    user_id: str,
+    session_id: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """The session axis's blocks written without a run, on the identity axes the
+    caller named."""
+    clauses = [_LIVE, "session_id = {sid:String}", "run_id = {norun:String}"]
+    params: dict[str, Any] = {"org": org, "ns": namespace, "sid": session_id, "norun": SENTINEL}
+    if agent:
+        clauses.append("agent = {agent:String}")
+        params["agent"] = agent
+    if user_id:
+        clauses.append("user_id = {uid:String}")
+        params["uid"] = user_id
+    return await _select(ch, " AND ".join(clauses), params, limit)
 
 
 async def load(
@@ -157,17 +159,7 @@ async def load(
     rows: list[dict[str, Any]] = []
     scope = ""
     if rid:
-        rows = await _rows(
-            ch,
-            org=org,
-            namespace=namespace,
-            agent=ag,
-            user_id=uid,
-            session_id=sid_axis,
-            run_id=rid,
-            run_scope=True,
-            limit=limit,
-        )
+        rows = await run_rows(ch, org, namespace, rid, limit=limit)
         if rows:
             scope = "run"
     # Widen to the blocks written without a run (run_id '-') for the same
@@ -176,16 +168,8 @@ async def load(
     # '-' too, which is where the plugin's agent-scope note lives.
     if len(rows) < limit:
         seen = {str(r.get("block_key")) for r in rows}
-        session_rows = await _rows(
-            ch,
-            org=org,
-            namespace=namespace,
-            agent=ag,
-            user_id=uid,
-            session_id=sid_axis,
-            run_id=SENTINEL,
-            run_scope=False,
-            limit=limit,
+        session_rows = await _session_rows(
+            ch, org, namespace, agent=ag, user_id=uid, session_id=sid_axis, limit=limit
         )
         rows.extend(r for r in session_rows if str(r.get("block_key")) not in seen)
         if session_rows and not scope:

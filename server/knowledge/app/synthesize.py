@@ -22,7 +22,8 @@ async def handle_knowledge_synthesize(
     """Map-reduce over every active chunk of the named documents: windows by section and
     size, one LLM note per window with chunk citations, notes folded into the answer
     (hierarchically when they do not fit one call). Cost-cap gated like memory.ask;
-    abstains, never guesses, when the documents are empty or the namespace is capped."""
+    abstains, never guesses, when the documents are empty, the namespace is capped, or the
+    answer is empty as written or once citations of chunks it did not read are removed."""
     from server.memory.domain import corpus_synthesis as cs
     from server.observability.budget import namespace_over_cap
     from server.settings import settings as _s
@@ -99,16 +100,27 @@ async def handle_knowledge_synthesize(
         if rounds > 8:  # pathological: give the best we have
             answer = "\n\n".join(notes)
             break
+    # Grounded before the cut, so removed citations take no room; a kept citation the
+    # cut halves is no longer one, so `citations` is read again from what is returned.
+    read = {(c.source_uri, c.idx) for w in wins for c in w.chunks}
+    answer, cited, unsupported = cs.ground_citations(answer, read)
     if len(answer) > input.max_answer_chars:
         answer = answer[: input.max_answer_chars].rstrip() + "…"
+        cited = cs.ground_citations(answer, read)[1]
+    # Punctuation or list markers left by the removed citations are no answer either.
+    if not any(ch.isalnum() for ch in answer):
+        answer = ""
     return KnowledgeSynthesizeOutput(
         answer=answer,
         windows=len(wins),
         chunks_read=sum(len(w.chunks) for w in wins),
         documents=docs,
         reduce_rounds=rounds,
-        citations=cs.citations(answer),
+        citations=cited,
+        unsupported_citations=unsupported,
         truncated=truncated,
+        abstain=not answer,
+        abstain_reason="" if answer else "empty_answer",
         model=str(getattr(llm, "model", "") or synth_model or ""),
     )
 

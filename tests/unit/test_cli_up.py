@@ -35,7 +35,7 @@ OK_BODY: dict[str, Any] = {"status": "ok", "build_commit": "abc1234", "pending_m
 def root(tmp_path: Path) -> Path:
     (tmp_path / ".env.example").write_text(
         "# stock\nCOMPOSE_PROJECT_NAME=\nLOOM_AUTH_REQUIRED=false\nLOOM_IDENTITY_PROVIDER=\n"
-        "LOOM_JWT_SECRET=\nLOOM_LLM_PROVIDER=fake\n"
+        "LOOM_JWT_SECRET=\nLOOM_DOCUMENT_EXTRACTOR_TOKEN=\nLOOM_LLM_PROVIDER=fake\n"
     )
     cfg = tmp_path / "deploy" / "clickhouse-config"
     cfg.mkdir(parents=True)
@@ -130,6 +130,7 @@ def test_bootstrap_creates_env_and_named_collections_once(root: Path) -> None:
     created = up.bootstrap(root, ".env")
     env = up.read_env_file(root / ".env")
     assert len(env["LOOM_JWT_SECRET"]) >= 40
+    assert len(env["LOOM_DOCUMENT_EXTRACTOR_TOKEN"]) == 48  # the extractor refuses under 16
     assert env["COMPOSE_PROJECT_NAME"].startswith("loom-local-")
     assert (root / ".env").stat().st_mode & 0o777 == 0o600  # it will hold secrets
     assert (root / up.NAMED_COLLECTIONS).read_text() == "<clickhouse/>\n"
@@ -137,9 +138,31 @@ def test_bootstrap_creates_env_and_named_collections_once(root: Path) -> None:
         "created .env",
         f"created {up.NAMED_COLLECTIONS.as_posix()}",
     ]
-    (root / ".env").write_text("LOOM_AUTH_REQUIRED=true\n")
+    (root / ".env").write_text("LOOM_AUTH_REQUIRED=true\nLOOM_DOCUMENT_EXTRACTOR_TOKEN=kept\n")
     assert up.bootstrap(root, ".env") == []  # second run: nothing overwritten
-    assert (root / ".env").read_text() == "LOOM_AUTH_REQUIRED=true\n"
+    assert (
+        root / ".env"
+    ).read_text() == "LOOM_AUTH_REQUIRED=true\nLOOM_DOCUMENT_EXTRACTOR_TOKEN=kept\n"
+
+
+@pytest.mark.parametrize(
+    "before",
+    [
+        "LOOM_AUTH_REQUIRED=true\n",
+        "LOOM_AUTH_REQUIRED=true\nLOOM_DOCUMENT_EXTRACTOR_TOKEN=\n",
+        'LOOM_AUTH_REQUIRED=true\nLOOM_DOCUMENT_EXTRACTOR_TOKEN=""\n',
+    ],
+)
+def test_bootstrap_gives_an_older_env_an_extractor_token_once(root: Path, before: str) -> None:
+    """An .env from before the extractor service: `make dev` would start it with none."""
+    (root / ".env").write_text(before)
+    (root / ".env").chmod(0o600)
+    assert up.bootstrap(root, ".env")[0] == "added LOOM_DOCUMENT_EXTRACTOR_TOKEN to .env"
+    env = up.read_env_file(root / ".env")
+    assert env["LOOM_AUTH_REQUIRED"] == "true" and len(env["LOOM_DOCUMENT_EXTRACTOR_TOKEN"]) == 48
+    assert (root / ".env").read_text().count("LOOM_DOCUMENT_EXTRACTOR_TOKEN=") == 1
+    text = (root / ".env").read_text()
+    assert up.bootstrap(root, ".env") == [] and (root / ".env").read_text() == text
 
 
 def test_repo_root_prefers_explicit_then_cwd(
@@ -322,6 +345,24 @@ def test_up_rerun_on_running_stack_reconciles_without_rebuilding(root: Path, sta
     out = capsys.readouterr().out
     assert out.count("reconciling configuration") == 2
     assert out.count("http://localhost:7777/") >= 2
+
+
+def test_up_rerun_on_a_stack_from_before_the_extractor_starts_it(root: Path, stack) -> None:
+    """A stack started before the extractor service lacks its container: a rerun
+    recreates it with loom, never ClickHouse."""
+    compose = root / "dev" / "docker-compose.dev.yml"
+    compose.write_text(
+        COMPOSE_TEXT.replace("volumes:\n", "  extractor:\n    image: x\nvolumes:\n", 1)
+    )
+    fake = stack([(200, OK_BODY), (200, OK_BODY)])
+    assert up._cmd_up(_args(root)) == 0
+    (call,) = [c for c in fake.calls if c[:2] == ["docker", "compose"]]
+    assert call[-6:] == ["up", "-d", "--force-recreate", "--no-deps", "loom", "extractor"]
+
+
+def test_a_network_named_extractor_is_not_a_service() -> None:
+    text = "services:\n  loom:\n    image: x\nnetworks:\n  extractor:\n    internal: true\n"
+    assert up.compose_services(text) == {"loom": ""}
 
 
 def test_up_rebuild_runs_compose_even_when_healthy(root: Path, stack) -> None:

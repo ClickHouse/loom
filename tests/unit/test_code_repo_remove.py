@@ -159,6 +159,21 @@ def plane(monkeypatch):
         return "era-1"
 
     monkeypatch.setattr(erasure_mod, "run_erasure_detached", _detached)
+    import contextlib
+
+    from server.core import leases
+
+    ch.leases = []
+    ch.registry_active_under_lease = []
+
+    @contextlib.asynccontextmanager
+    async def _holding(name: str, **kw: Any):  # the document-source lease
+        ch.leases.append(name)
+        yield True
+        # Both retirements ran while it was held.
+        ch.registry_active_under_lease.append(ch.registry_active)
+
+    monkeypatch.setattr(leases, "holding", _holding)
     set_current_auth(
         AuthInfo(
             subject="alice@x",
@@ -300,3 +315,89 @@ async def test_refresh_code_views_starts_each_refresh_and_tolerates_a_refusal() 
     assert ch.executed == ["SYSTEM REFRESH VIEW loom.`code_term_df_refresh`"]
     refused = _RefreshCH(["code_term_df_refresh"], refuse=True)
     assert await retire.refresh_code_views(refused) == []
+
+
+@pytest.mark.asyncio
+async def test_remove_retires_the_namespaces_document_sources(plane, monkeypatch) -> None:
+    source = {
+        "org": ORG,
+        "namespace": "code-widgets",
+        "name": "design-decks",
+        "kind": "gdrive",
+        "config_json": '{"folder_ids": ["1AbCdEfGhIjKlMnOp"]}',
+        "credential_enc": "sealed",
+        "created_by": "alice@x",
+        "active": True,
+    }
+    plain = plane.query_all
+
+    async def _query_all(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        if "FROM loom.knowledge_sources" in sql:
+            assert params == {"org": ORG, "ns": "code-widgets"}
+            retired = any(t == "loom.knowledge_sources" for t, _ in plane.inserted)
+            return [] if retired else [source]
+        return await plain(sql, params)
+
+    monkeypatch.setattr(plane, "query_all", _query_all)
+    out = await admin.handle_code_repo_remove(
+        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+    )
+    assert out.sources_deactivated == ["design-decks"]
+    [row] = [r for table, rows in plane.inserted if table == "loom.knowledge_sources" for r in rows]
+    assert (row["name"], row["active"], row["credential_enc"]) == ("design-decks", False, "")
+    assert row["kind"] == "gdrive" and row["created_by"] == "alice@x"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_source_retirement_leaves_the_repository_to_retry(
+    plane, monkeypatch
+) -> None:
+    import server.knowledge.app.sources as knowledge_sources
+
+    async def _fail(org: str, namespace: str) -> list[str]:
+        raise RuntimeError("clickhouse went away")
+
+    monkeypatch.setattr(knowledge_sources, "deactivate_namespace_sources", _fail)
+    with pytest.raises(RuntimeError):
+        await admin.handle_code_repo_remove(
+            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        )
+    # Nothing of the repository was retired, so the same call can run again.
+    assert plane.registry_active and plane.executed == [] and plane.inserted == []
+    assert plane.sagas == []
+
+
+@pytest.mark.asyncio
+async def test_remove_retires_sources_and_registry_row_under_one_lease(plane) -> None:
+    await admin.handle_code_repo_remove(
+        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+    )
+    # One lease, the one every source write of the namespace takes, held across
+    # both: an add runs wholly before or wholly after the retirement.
+    assert plane.leases == [f"knowledge-source:{ORG}:code-widgets"]
+    assert plane.registry_active_under_lease == [False]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lease", ["busy", "down"])
+async def test_remove_refuses_without_the_lease_and_writes_nothing(
+    plane, monkeypatch, lease: str
+) -> None:
+    import contextlib
+
+    from server.core import leases
+    from server.core.errors import OverloadedError
+
+    @contextlib.asynccontextmanager
+    async def _holding(name: str, **kw: Any):
+        if lease == "down":
+            raise leases.LeaseUnavailable("the lease store did not answer")
+        yield False
+
+    monkeypatch.setattr(leases, "holding", _holding)
+    expected = OverloadedError if lease == "busy" else leases.LeaseUnavailable
+    with pytest.raises(expected):
+        await admin.handle_code_repo_remove(
+            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        )
+    assert plane.registry_active and plane.inserted == [] and plane.sagas == []

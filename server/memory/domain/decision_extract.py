@@ -19,8 +19,10 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from server.code.domain.anchor import mentions as code_mentions
+from server.code.domain.extract.lang_markdown import is_markdown_path
 from server.knowledge.domain.chunking import SEPARATOR, Section, detect_sections
 from server.memory.domain.corpus_synthesis import Window
+from server.memory.domain.decision_schema import Stage
 from server.memory.domain.decision_statement import collapse_ws
 from server.memory.domain.lemmatize import snowball_stem_tokens
 
@@ -49,7 +51,7 @@ SYSTEM = (
     "You extract design decisions from one part of a design document for a store that "
     "coding agents read before they edit the code the decision governs. Reply with one "
     'JSON object, {"decisions": [...]}, each item with the keys category, scenario, '
-    "outcome, reasoning, alternatives, quote, is_constraint and mentions.\n"
+    "outcome, reasoning, alternatives, quote, is_constraint, stage and mentions.\n"
     "- quote: the exact span of the text the decision rests on, copied character for "
     "character.\n"
     "- reasoning: the reason the text gives for the choice (the cost, constraint or "
@@ -64,8 +66,14 @@ SYSTEM = (
     "- scenario: the specific situation that was decided, specific enough that another "
     "document's decision does not share it.\n"
     "- outcome: what was chosen, without the reason (that is the reasoning), short "
-    'enough that "Decided <outcome> because <reasoning>." fits 220 characters.\n'
+    'enough that "<Decided|Proposed> <outcome> because <reasoning>." fits 220 characters.\n'
     "- is_constraint: true when the decision is a ban or an invariant code must keep.\n"
+    "- stage: proposed when the text puts it forward without saying it was chosen and "
+    "built (a proposal, an RFC, a feature request, a plan, future work, an action item, "
+    "an option under discussion); decided when the text says it was chosen or is how the "
+    "system works. A decision stated in a proposal, an RFC or a feature request (a "
+    "[document: ...] line, when present, names the document) is proposed unless the text "
+    "says it was built. When unsure, proposed.\n"
     "- mentions: the class, function and setting names and pull request numbers the "
     "text names, as written.\n"
     "Copy the document's words; never paraphrase a quote, a reasoning or a reason. Keep "
@@ -108,8 +116,14 @@ def breadcrumb(section_path: tuple[str, ...]) -> str:
     return SEPARATOR.join(section_path)
 
 
-def user_prompt(window: Window) -> str:
-    parts: list[str] = []
+# Not a setting: long enough to name any document; a runaway title adds little to each read.
+TITLE_CHARS = 200
+
+
+def user_prompt(window: Window, title: str) -> str:
+    """The window's text under its section headings, after a line naming the document:
+    a window of a proposal reads as a proposal even where its sentences say "we use"."""
+    parts = [f"[document: {collapse_ws(title)[:TITLE_CHARS]}]"] if title.strip() else []
     last: tuple[str, ...] | None = None
     for c in window.chunks:
         if c.section_path != last:
@@ -190,6 +204,8 @@ class Candidate:
     alternatives: list[tuple[str, str]] = field(default_factory=list)
     is_constraint: bool = False
     mentions: list[str] = field(default_factory=list)
+    # "proposed": put forward, not yet chosen or built.
+    stage: Stage = "proposed"
 
     def rejected(self) -> list[str]:
         """The alternatives as decision.record stores them."""
@@ -210,6 +226,12 @@ def _alternative(item: Any) -> tuple[str, str] | None:
         return None
     option, reason = _text(item.get("option")), _text(item.get("reason"))
     return (option, reason) if option and reason else None
+
+
+def _stage(value: Any) -> Stage:
+    """Only a plain "decided" reads as decided: a proposal served as made misleads more
+    than a choice served as a proposal."""
+    return "decided" if _text(value).lower() == "decided" else "proposed"
 
 
 def parse_candidates(reply: str) -> list[Candidate] | None:
@@ -238,6 +260,7 @@ def parse_candidates(reply: str) -> list[Candidate] | None:
             alternatives=alternatives,
             is_constraint=item.get("is_constraint") is True,
             mentions=mentions,
+            stage=_stage(item.get("stage")),
         )
         if cand.category and cand.scenario and cand.outcome and cand.reasoning:
             out.append(cand)
@@ -450,12 +473,12 @@ def document_spans(cand: Candidate, texts: list[str]) -> Candidate:
     )
 
 
-# Words that say a choice was made, or join a sentence, rather than give a reason.
+# Words that say a choice was made or put forward, or join a sentence, rather than give a reason.
 _FILLER_WORDS = (
     "a an the and or of to in on at for with as is are was were be been being has have had "
     "it its this that these those we our us they will would should must can so decide "
     "chose chosen choose use used using instead because since decision pick picked opt "
-    "opted select selected"
+    "opted select selected propose"
 )
 # Compared as Snowball stems, so `spilling` meets `spill`, `stored` meets `store`, and
 # every form of a filler word is one: `deciding`, `chooses`, `used`.
@@ -605,7 +628,8 @@ def sort_mentions(names: list[str], text: str, *, cap: int = 8) -> Mentions:
             unresolved.append((name, "pr"))
         elif "::" in name or "." in name or f"`{name}`" in text:
             # Backticked first: `handle_decision_record` is code, though shaped like a
-            # setting; one the index does not define is reported as a setting after all.
+            # setting; one the index does not define, or only tests and pages define with a page
+            # among them, is reported as a setting after all.
             if code_mentions(f"`{name}`"):
                 symbols.append((name, "qualified"))
         elif looks_like_setting(name):
@@ -624,6 +648,22 @@ def _constructor(qualified_name: str) -> bool:
     """`DB::Foo::Foo`: a constructor, named like its class."""
     parts = re.split(r"::|\.", qualified_name)
     return len(parts) >= 2 and parts[-1] == parts[-2]
+
+
+# Common test, mock and end-to-end layouts; one it misses keeps its link. Unlike
+# is_test_unit_path, a module named `test_*` or `*Test` is code.
+_TEST_FILE = re.compile(
+    r"(?:^|/)(?:tests?|__tests__|__mocks__|mocks|testdata|testFixtures|integrationTest|e2e"
+    r"|cypress)/"
+    r"|\.(?:test|spec)\.[A-Za-z]+$|_(?:unit)?test\.[A-Za-z]+$|_mock\.go$|_spec\.rb$"
+    r"|(?:^|/)(?:tests\.rs|tests\.py|conftest\.py|mock_\w+\.go)$"
+)
+
+
+def governs(path: str) -> bool:
+    """A decision can govern the file: code, not a test that names the thing (a mocked op's
+    key) or a Markdown heading that writes about it."""
+    return not _TEST_FILE.search(path) and not is_markdown_path(path)
 
 
 def definition_path(definitions: list[tuple[str, str]]) -> str:

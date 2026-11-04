@@ -3,7 +3,8 @@
 Pins the contract:
 
   - Default is indefinite. Both retention_*_days and tiering_*_warm_days
-    zero, no per-namespace rows → no ALTERs.
+    zero, no per-namespace rows → no TTL; a TTL left by an earlier pass
+    is removed.
   - Global retention only → simple INTERVAL N DAY DELETE.
   - Global tiering only → INTERVAL W DAY TO VOLUME 'warm'.
   - Per-namespace overrides → multiIf with one case per override,
@@ -16,12 +17,15 @@ Pins the contract:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from server.storage import retention_overrides
+from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, KeptCH, ddl, run
 
 
 @dataclass
@@ -231,25 +235,10 @@ def test_compute_alters_per_namespace_applies_to_all_tables() -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_zero_state_no_ch_calls() -> None:
-    """No globals, no per-namespace rows → indefinite retention; zero
-    ALTERs issued."""
-    ch = StubCH()
-    n = await retention_overrides.apply(
-        _FakeSettings(),
-        ch=ch,
-        namespace_overrides=[],
-        leader=True,
-    )
-    assert n == 0
-    assert ch.execute_calls == []
-
-
-@pytest.mark.asyncio
 async def test_apply_uses_provided_overrides_without_ch_query() -> None:
     """Passing namespace_overrides explicitly bypasses the CH read
     (test harness path; the boot hook fetches them itself)."""
-    ch = StubCH()
+    ch = _DiffCH({})
     n = await retention_overrides.apply(
         _FakeSettings(retention_audit_log_days=365),
         ch=ch,
@@ -262,8 +251,8 @@ async def test_apply_uses_provided_overrides_without_ch_query() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_per_namespace_emits_alters_for_all_tables() -> None:
-    """One namespace override → one ALTER per managed table (8)."""
-    ch = StubCH()
+    """One namespace override → one ALTER per managed table (7)."""
+    ch = _DiffCH({})
     n = await retention_overrides.apply(
         _FakeSettings(),
         ch=ch,
@@ -281,13 +270,13 @@ async def test_apply_continues_after_one_failure(
 ) -> None:
     """A bad ALTER on one table mustn't kill the rest."""
 
-    class FlakyCH(StubCH):
+    class FlakyCH(_DiffCH):
         async def execute(self, sql: str, params: Any = None) -> None:
             if "loom.documents" in sql:
                 raise RuntimeError("CH refused this one")
             await super().execute(sql, params)
 
-    ch = FlakyCH()
+    ch = FlakyCH({})
     with caplog.at_level(logging.ERROR, logger="server.storage.retention_overrides"):
         n = await retention_overrides.apply(
             _FakeSettings(retention_audit_log_days=365, retention_documents_days=180),
@@ -353,7 +342,115 @@ async def test_unchanged_ttl_issues_no_alter_and_changed_ttl_does() -> None:
     n = await retention_overrides.apply(settings_obj, ch=ch, namespace_overrides=[], leader=True)
     assert n == 1
     assert all("loom.memory " in c for c in ch.execute_calls), ch.execute_calls  # audit_log skipped
-    assert ch.lookups == 2
+    assert ch.lookups == len(retention_overrides.TARGETS)  # each table read once
+
+
+@pytest.mark.asyncio
+async def test_apply_zero_state_issues_no_alter_on_tables_without_ttl() -> None:
+    """No globals, no per-namespace rows and no TTL on any table: indefinite
+    retention, zero ALTERs issued."""
+    ch = _DiffCH({})
+    n = await retention_overrides.apply(_FakeSettings(), ch=ch, namespace_overrides=[], leader=True)
+    assert n == 0
+    assert ch.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_last_override_removes_the_ttl_it_left() -> None:
+    """A namespace that sets retention_days back to 0 (and no global window)
+    leaves no desired TTL; the TTL an earlier pass set must go, or its rows
+    keep being deleted."""
+    left = "multiIf(org = 'o' AND namespace = 'ns1', created_at + toIntervalDay(30), now()) DELETE"
+    ch = _DiffCH({"memory": left, "audit_log": left})
+    n = await retention_overrides.apply(_FakeSettings(), ch=ch, namespace_overrides=[], leader=True)
+    assert n == 2
+    assert sorted(ch.execute_calls) == [
+        "ALTER TABLE loom.audit_log REMOVE TTL",
+        "ALTER TABLE loom.memory REMOVE TTL",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_table_ttl_is_not_removed_when_its_lookup_fails() -> None:
+    """REMOVE TTL on a table without one is an error, so an unreadable
+    system.tables row defers the removal to the next pass."""
+    ch = _DiffCH({}, fail_lookup=True)
+    n = await retention_overrides.apply(_FakeSettings(), ch=ch, namespace_overrides=[], leader=True)
+    assert n == 0 and ch.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_ttl_removal_waits_for_unfinished_mutations() -> None:
+    left = "created_at + toIntervalDay(30) DELETE"
+    ch = _DiffCH({"memory": left, "audit_log": left})
+    ch.pending = {"memory": 2}
+    n = await retention_overrides.apply(_FakeSettings(), ch=ch, namespace_overrides=[], leader=True)
+    assert n == 1
+    assert ch.execute_calls == ["ALTER TABLE loom.audit_log REMOVE TTL"]
+
+
+@pytest.mark.asyncio
+async def test_a_ttl_an_overlapping_pass_removed_first_is_not_an_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _AlreadyRemoved(_DiffCH):
+        async def execute(self, sql: str, params: Any = None) -> None:
+            raise RuntimeError(
+                "Code: 36. DB::Exception: Table doesn't have any table TTL expression, "
+                "cannot remove. (BAD_ARGUMENTS)"
+            )
+
+    ch = _AlreadyRemoved({"memory": "created_at + toIntervalDay(30) DELETE"})
+    with caplog.at_level(logging.INFO, logger="server.storage.retention_overrides"):
+        n = await retention_overrides.apply(
+            _FakeSettings(), ch=ch, namespace_overrides=[], leader=True
+        )
+    assert n == 0
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_no_managed_table_has_a_schema_ttl() -> None:
+    """apply issues REMOVE TTL on a managed table with no window set, which
+    would strip a TTL the schema defines; a schema TTL on one of these tables
+    needs retention_overrides to restore it instead."""
+    schema = (ROOT / "schemas" / "schema.sql").read_text()
+    for target in retention_overrides.TARGETS:
+        m = re.search(rf"CREATE TABLE IF NOT EXISTS {re.escape(target.table)}\b.*?;", schema, re.S)
+        assert m, target.table
+        assert not re.search(r"^\s*TTL\b", m.group(0), re.M), (
+            f"{target.table} has a schema TTL that server/storage/retention_overrides.py "
+            "would remove when no window is set"
+        )
+
+
+def _engine_full(path: Path, table: str) -> str:
+    (row,) = run([], f"SELECT engine_full FROM system.tables WHERE name = '{table}'", path=path)
+    return str(row["engine_full"])
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
+@pytest.mark.asyncio
+async def test_a_cleared_window_removes_the_ttl_on_real_tables(tmp_path: Path) -> None:
+    tables = [t.table.removeprefix("loom.") for t in retention_overrides.TARGETS]
+    ch = KeptCH(tmp_path, "SET enable_quantized_codec = 1", *(ddl(t) for t in tables))
+    set_ttl = await retention_overrides.apply(
+        _FakeSettings(),
+        ch=ch,
+        namespace_overrides=[{"org": "o", "namespace": "ns1", "retention_days": 30}],
+        leader=True,
+    )
+    assert set_ttl == len(tables)
+    assert all(" TTL " in _engine_full(tmp_path, t) for t in tables)
+
+    removed = await retention_overrides.apply(
+        _FakeSettings(), ch=ch, namespace_overrides=[], leader=True
+    )
+    assert removed == len(tables)
+    assert not [t for t in tables if " TTL " in _engine_full(tmp_path, t)]
+
+    # an overlapping pass sends the same statement; the text apply matches is ClickHouse's
+    with pytest.raises(AssertionError, match=retention_overrides._NO_TTL_TO_REMOVE):
+        run(["ALTER TABLE loom.audit_log REMOVE TTL"], "SELECT 1", path=tmp_path)
 
 
 @pytest.mark.asyncio

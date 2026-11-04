@@ -27,6 +27,7 @@ from server.code.api.models_repos import (
     CodeRepoSetAccessOutput,
     CodeRepoSetSourceOutput,
 )
+from server.code.app.common import require_code_intel
 from server.code.app.index import repo_registry as reg
 from server.code.domain.index.repos import registry_repos
 from server.core.errors import AuthInsufficientError, ValidationError
@@ -173,6 +174,7 @@ async def handle_code_repo_remote_branches(input: Any) -> Any:
     token given (none for a public one), the default branch, which look like
     release branches, and which are indexed here already — so the add dialog
     can offer the choice instead of one text field."""
+    require_code_intel()
     _require_self_service()
     await _require_sandbox()
     _require_same_org(input.org)
@@ -305,6 +307,7 @@ async def _add_extra_branches(
 
 
 async def handle_code_repo_add(input: CodeRepoAddInput) -> CodeRepoAddOutput:
+    require_code_intel()
     _require_self_service()
     await _require_sandbox()
     _require_same_org(input.org)
@@ -394,6 +397,8 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     mis-clicked op cannot purge an index. The rows leave through an erasure saga: a detached
     `namespace_list` purge over the one namespace, loom-only, checkpointed, resumed by
     erasure_recovery if the process dies, and proven by the residue census."""
+    # Not behind the code switch: a retirement only deletes, so a maintainer can
+    # remove an index on a deployment that has code intelligence off.
     from server.code.app.index import retire
     from server.code.domain.index.repos import configured_repos, repo_for_namespace
     from server.core.ch import get_client
@@ -416,8 +421,16 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
             "entry there and swap — the page cannot retire an operator-owned index",
             code="REPO_FROM_CONFIG",
         )
+    from server.knowledge.app.sources import deactivate_namespace_sources, sources_lease
+
+    # The document sources registered on this namespace stop with the repository. Under
+    # the lease every source write of the namespace takes, an add runs wholly before
+    # (and is retired here) or after (and sees the repository gone). Sources first, so
+    # a call that fails between the two leaves the repository registered to retry.
     ch = get_client()
-    registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
+    async with sources_lease(input.org, input.namespace):
+        sources_off = await deactivate_namespace_sources(input.org, input.namespace)
+        registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
     await reg.refresh_db_repos(force=True)
     from server.identity.app.namespace import handle_namespace_delete
 
@@ -443,10 +456,12 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
         purged_tables=len(tables),
         erasure_id=erasure_id,
         mirror_removed=mirror_removed,
+        sources_deactivated=sources_off,
     )
 
 
 async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepoAddOutput:
+    require_code_intel()
     _require_self_service()
     await _require_sandbox()
     _require_same_org(input.org)
@@ -521,6 +536,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     this process enforces at once, and every other process re-reads the row
     within `code_repos_refresh_seconds`. Widening restricted → standard
     needs `confirm` = namespace; a restricted index is never `open`."""
+    require_code_intel()
     from server.code.domain.index.repos import repo_for_namespace
     from server.core.ch import get_client
     from server.identity.app import namespace_classification as nc
@@ -592,6 +608,7 @@ async def handle_code_repo_set_source(input: Any) -> Any:
     """The maintainer sets the trackers this repository reads, primary first
     (`CodeRepoSetSourceInput`). The links are the `tracker_binding` state row of the code
     namespace (comma-joined); `tracker_namespaces_for` reads it before the deployment's map."""
+    require_code_intel()
     from server.code.domain.index.repos import repo_for_namespace
     from server.code.store.index import CodeRepo
     from server.tracker.app import binding

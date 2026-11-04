@@ -270,11 +270,24 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 - `files` are repository paths the memory is about; `memory.for_file` serves them before
   an edit of those files.
 
-`memory.for_file` renders one line per memory, within its token budget. A row that does
-not fit is left out whole while the rows after it still get their turn, and a closing
-`- … <n> more` line, which counts against the budget too, says how many were left out and
-how to list them. The header and the removal footer are always printed, and the `… more`
-line whenever a row is left out, so a budget smaller than those can be exceeded.
+`memory.for_file` renders one line per memory. A decision or a constraint prints whole,
+up to the ceiling below, and does not count against the request's `token_budget` (300
+tokens by default); the other rows are held to it, cut to one line of 220 characters. A
+row that does not fit is left out whole while the rows after it still get their turn,
+and a closing `- … <n> more` line, which counts against the budget too, says how many
+were left out and how to list them. The header and the removal footer are always
+printed, and the `… more` line whenever a row is left out, so a budget smaller than those
+can be exceeded.
+
+Decisions and constraints share one ceiling, `memory_for_file_whole_tokens` (1,500
+tokens, about 6,000 characters), so a file governed by dozens of them cannot flood the
+prompt. They print in the block's order; one that would pass the ceiling is left out,
+and the ones after it that still fit print. A closing line counts those left out and
+names the first five keys, each read with `memory.get` (in the namespace it names, for a
+team row) or found with `loom_search`. A row left out with the newer row that supersedes
+it is counted on the `… more` line instead, never named as one to read. The default
+keeps the whole block under the 10,000 characters a coding-agent host passes from a hook
+to the model as it is.
 
 Each line:
 
@@ -284,26 +297,27 @@ Each line:
 - A line lists its `constraint`, `gotcha` and `decision` kinds in one bracket
   (`[constraint, decision]`; a line headed `Decision` leaves out `decision`).
 - `(pinned)` marks a pinned row. A pin is the row's own flag: a member of a code namespace
-  can set it on a row they write there, so `(pinned)` on a team row is not on its own proof
-  that a maintainer confirmed it.
-- `(unconfirmed)` marks a decision not pinned or attested in its current form (a stale
-  attestation does not count), and `(outcome: failed)` one whose recorded outcome failed.
+  can set it on a row they write there, so `(pinned)` on a team row says someone froze it,
+  not that a maintainer did.
+- A decision nobody pinned, such as one `loom decisions extract` wrote, carries no pin
+  mark: it is served as it is.
+- `(outcome: failed)` marks any decision whose recorded outcome failed, pinned or not.
 - A decision tagged `source-changed` (its source document no longer says it; see
   [extracting decisions](../features/tasks-and-decisions.md#extract-decisions-from-a-document))
-  reads `(source changed since confirmation)` when pinned or attested, `(source changed)`
-  when not.
+  reads `(source changed)`, pinned or not.
 - A note says when its linked code changed or went.
-- A string value is printed as text, not as the JSON it is stored as, and ends in `…`
-  when the read cut it; a cut object or list prints as stored.
+- A string value is printed as text, not as the JSON it is stored as, and a row other
+  than a decision or constraint ends in `…` when the read or the line cut it; a cut
+  object or list prints as stored.
 - A decision with a source carries ` — source: <source_resource_id>` after its value,
   whole, so a `knowledge:` citation keeps its `#section` and resolves through
-  `knowledge.get`; the value's cut does not reach it.
+  `knowledge.get`.
 - A newer row the conflict check linked to an older one of its type is placed above it,
   and a team line says which it supersedes (`supersedes decision` when the older is tagged
   `decision`). Two typed decisions the check linked each keep their place in the block,
-  with no such note, since each decision key is its own decision. When the budget leaves
-  out any row that supersedes others, in any namespace, every row it supersedes is left
-  out with it, so an older row never reads as current.
+  with no such note, since each decision key is its own decision. When the budget or the
+  ceiling leaves out any row that supersedes others, in any namespace, every row it
+  supersedes is left out with it, so an older row never reads as current.
 
 ## Memories linked to code
 

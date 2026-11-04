@@ -56,6 +56,8 @@ services:
       # `loom up`/`make bootstrap` generate this in the private .env. Refuse
       # to start auth with a repository-wide signing key or an empty secret.
       LOOM_JWT_SECRET: "${LOOM_JWT_SECRET:?run 'loom up' or set LOOM_JWT_SECRET in .env}"
+      # The extractor service below; .env holds the token both read.
+      LOOM_DOCUMENT_EXTRACTOR_URL: "http://extractor:8790"
       # Retrieval flags passed through for single-variable bench A/B runs.
       LOOM_MEMORY_EMBED_ANSWER_TOPIC: "${LOOM_MEMORY_EMBED_ANSWER_TOPIC:-true}"
       LOOM_MEMORY_CAPTURE_STRUCTURED_ANSWERS: "${LOOM_MEMORY_CAPTURE_STRUCTURED_ANSWERS:-true}"
@@ -75,3 +77,10 @@ services:
       LOOM_CODE_SCIP_PY_DELTA_ENABLED: "${LOOM_CODE_SCIP_PY_DELTA_ENABLED:-true}"
       LOOM_CODE_SCIP_GO_DELTA_ENABLED: "${LOOM_CODE_SCIP_GO_DELTA_ENABLED:-true}"
       LOOM_MCP_CODE_TOOLS: "${LOOM_MCP_CODE_TOOLS:-true}"
+
+  extractor:
+    image: loom-extractor:dev
+    build:
+      context: .
+      dockerfile: extractor/Dockerfile
+    container_name: loom-extractor

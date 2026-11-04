@@ -688,7 +688,9 @@ export function HeaderSearch({
               total={matchedDocuments.length}
               label="document"
               onClick={() => {
-                setView("knowledge");
+                // The header's namespace's documents, which the search listed: not a
+                // collection the Library may be showing.
+                useStore.getState().navigate("knowledge", { query: {} });
                 setOpen(false);
               }}
             />

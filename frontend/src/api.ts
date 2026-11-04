@@ -4,7 +4,7 @@
 
 import { noteCallEnd, noteCallStart } from "./lib/vitalsCounter";
 import { claimsFromToken } from "./lib/boot";
-import { apiErrorFromResponse } from "./lib/errors";
+import { ApiError, apiErrorFromResponse } from "./lib/errors";
 export { ApiError } from "./lib/errors";
 // The two code-plane shapes the shell reads; the plane itself lives in api/code.ts and rides with the Repositories view.
 import type { CodeIndexStatus, CodeRepoSummary } from "./api/code";
@@ -71,22 +71,74 @@ export function setToken(jwt: string): void {
   // Strip all whitespace before persisting — a pasted JWT can carry
   // internal newlines/spaces that make the Authorization header invalid.
   const cleaned = jwt.replace(/\s+/g, "");
+  localStorage.removeItem(KEY_SIGNED_OUT);
   localStorage.setItem(KEY_TOKEN, cleaned);
+}
+
+// Set by a sign-out in this browser and cleared by the next sign-in: until then, a tab that
+// loses the token or reloads goes to a plain sign-in, not "your session ended", whose SSO
+// gate would sign the person back in.
+const KEY_SIGNED_OUT = "loom_signed_out_v1";
+
+/** Whether the person signed out in this browser (in any tab) and has not signed in since. */
+export function signedOut(): boolean {
+  return localStorage.getItem(KEY_SIGNED_OUT) !== null;
 }
 
 export function clearToken(): void {
   localStorage.removeItem(KEY_TOKEN);
 }
 
+/** Call `fn` with each token another tab of this origin stores (a sign-in there), or null
+ *  when one drops it or signs out, and the token stored before; the returned function
+ *  stops listening. */
+export function onTokenStored(fn: (token: string | null, before: string | null) => void): () => void {
+  const listener = (e: StorageEvent) => {
+    // A browser fires it only on a change. A sign-out elsewhere counts even when this tab's
+    // token was already gone (its own removal, when there was one, follows as a token
+    // event), and so does a clear of the whole storage (no key), which drops the token.
+    if (e.key === KEY_TOKEN || e.key === null || (e.key === KEY_SIGNED_OUT && !!e.newValue && !token()))
+      fn(token(), e.oldValue);
+  };
+  window.addEventListener("storage", listener);
+  return () => window.removeEventListener("storage", listener);
+}
+
+// The person this page belongs to: boot's whoami answer (App keeps it in step).
+let pageOwner: WhoAmI | null = null;
+export function setPageOwner(owner: WhoAmI | null): void {
+  pageOwner = owner;
+}
+
+/** Whether `t` (none, or one an auth-off install ignores, counts) is the page's person's. */
+export function ownsToken(t: string | null): boolean {
+  if (!t || !pageOwner?.subject || isAuthDisabled()) return true;
+  const c = claimsFromToken(t);
+  // Claims it cannot read name no one: the server's answer to that token decides.
+  return !c || (c.subject === pageOwner.subject && (c.org ?? "") === (pageOwner.org ?? ""));
+}
+
+// The app's answer to a stored token the server refuses (expired or revoked): the session
+// ends (a card over the page, or the gate while booting). Registered by App, so this
+// module stays free of the store.
+let signInRejected: (() => void) | null = null;
+export function onSignInRejected(fn: () => void): void {
+  signInRejected = fn;
+}
+
 /** Sign out: forget the stored token here at once, and end its session on the server
  *  when it belongs to one (the dashboard's SSO token, or a `loom login` token pasted in).
  *  The revocation is sent without waiting for it: `keepalive` lets it finish across the
  *  page reload that follows, and it gives up after a few seconds. A token with no
- *  sign-in session (a minted one, maybe a CI job's too) is only forgotten here. */
-export function signOut(): void {
+ *  sign-in session (a minted one, maybe a CI job's too) is only forgotten here. Returns
+ *  false when another person's token is the stored one (another tab signed them in a
+ *  moment ago): it is not this page's to end, and the reload that follows opens their page. */
+export function signOut(): boolean {
   const t = token();
+  if (!ownsToken(t)) return false;
+  localStorage.setItem(KEY_SIGNED_OUT, "1");
   clearToken();
-  if (!t || !claimsFromToken(t)?.session) return;
+  if (!t || !claimsFromToken(t)?.session) return true;
   fetch("/oauth/revoke", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -96,6 +148,7 @@ export function signOut(): void {
   }).catch(() => {
     // Offline, too slow or the route is absent: the token is gone from this browser anyway.
   });
+  return true;
 }
 
 // Presence check that seeds auth state at boot: if a token is already stored, the SPA can
@@ -129,7 +182,11 @@ export interface WhoAmI {
 
 export async function whoami(): Promise<WhoAmI> {
   const r = await fetch("/v1/whoami", { headers: authHeader(), signal: boundedSignal() });
-  if (!r.ok) return { authenticated: false };
+  // A refused token answers 200 with authenticated=false. Anything else not ok (a replica
+  // whose keys are still loading answers 503) says nothing about the token: it is kept.
+  // Behind a proxy a refusal is the proxy's own 401 or 403: signed out, as before.
+  if (PROXY_MODE && (r.status === 401 || r.status === 403)) return { authenticated: false };
+  if (!r.ok) throw await apiErrorFromResponse(r);
   return r.json();
 }
 
@@ -190,6 +247,10 @@ export interface Identity {
   org: string;
   namespace: string;
   agent: string;
+  /** The user and session a row is filed under, when the inspector reads a row it was
+   *  opened on by its whole writer identity; absent reads the caller's own (`-`). */
+  user_id?: string;
+  session_id?: string;
 }
 
 // In-flight tracking — every active request() bumps the counter; the UI
@@ -251,23 +312,57 @@ async function request(method: "GET" | "POST", path: string, body?: unknown, sig
   _bump(+1);
   noteCallStart(); // the view's call count and span
   try {
-    const r = await fetch(
-      path,
-      method === "POST"
-        ? {
-            method,
-            headers: { "Content-Type": "application/json", ...authHeader() },
-            body: JSON.stringify(asDashboardCall(path, body)),
-            signal: boundedSignal(signal),
-          }
-        : { method, headers: authHeader(), signal: boundedSignal(signal) },
-    );
-    if (!r.ok) throw await apiErrorFromResponse(r);
-    return r;
+    return await send(method, path, body, signal, false);
   } finally {
     _bump(-1);
     noteCallEnd();
   }
+}
+
+async function send(
+  method: "GET" | "POST",
+  path: string,
+  body: unknown,
+  signal: AbortSignal | undefined,
+  retried: boolean,
+): Promise<Response> {
+  const sent = token();
+  // Another tab may have stored another person's token a moment ago, before this one heard
+  // of it (and reloads): this page's call never carries it.
+  if (!ownsToken(sent)) {
+    // Its words are the ended session's (sessionEnded): no message of its own is shown.
+    const err = new ApiError({ status: 401 });
+    err.sessionEnded = true;
+    throw err;
+  }
+  const r = await fetch(
+    path,
+    method === "POST"
+      ? {
+          method,
+          headers: { "Content-Type": "application/json", ...authHeader() },
+          body: JSON.stringify(asDashboardCall(path, body)),
+          signal: boundedSignal(signal),
+        }
+      : { method, headers: authHeader(), signal: boundedSignal(signal) },
+  );
+  if (r.status === 401 && sent) {
+    // The first refusal of the stored token ends the session, before any await, so
+    // concurrent ones end it once.
+    const ending = sent === token();
+    if (ending) signInRejected?.();
+    // A single-user install has no sign-in: the stale token is gone (this refusal or a
+    // concurrent one dropped it), so the call goes again without it.
+    if (isAuthDisabled() && !retried) return send(method, path, body, signal, true);
+    // A call raced by another tab's sign-in is not sent again under a token this tab has
+    // not checked: Retry sends it, and the error says so instead of "sign in again".
+    if (!ending && token() && ownsToken(token())) throw new ApiError({ status: 401, code: "SIGNED_IN_ELSEWHERE" });
+    const err = await apiErrorFromResponse(r);
+    err.sessionEnded = true;
+    throw err;
+  }
+  if (!r.ok) throw await apiErrorFromResponse(r);
+  return r;
 }
 
 export async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
@@ -402,6 +497,18 @@ export interface MemoryDetail {
   user_id?: string;
   session_id?: string;
   source_trace?: string;
+  /** How the content entered memory: asserted | extracted | observed | derived |
+   *  imported | external. */
+  source_class?: string;
+  /** The resource the fact was lifted from; "" when none. */
+  source_resource_id?: string;
+  /** '' | low | medium | high. */
+  sensitivity?: string;
+  /** SHA-256 of the live value; a write sends it as if_match_sha256. */
+  content_sha256?: string;
+  /** When the fact became true, and the closing bound of its validity; null when unset. */
+  valid_at?: string | null;
+  valid_to?: string | null;
   recall_count?: number;
   last_recalled_at?: string | null;
   recall_by_agent?: Array<{ agent: string; count: number; last_at: string | null }>;
@@ -534,31 +641,54 @@ export async function setMemory(
   return post<{ version: number; pinned: boolean }>("/v1/memory.set", body);
 }
 
+/** The source classes a write may declare (`server.memory.domain.provenance`); the
+ *  server derives the others from `source_trace`. */
+const DECLARABLE_SOURCE_CLASSES = new Set(["derived", "external", "imported"]);
+
+/** The identity of a row read with `getMemory`, for a write back to that row:
+ *  memory.get may answer with another agent's or session's row, and a write under
+ *  the caller's identity would land on a second row beside it. */
+export function rowIdentity(id: Identity, row: MemoryDetail): Identity & { user_id: string; session_id: string } {
+  return {
+    ...id,
+    agent: row.agent || id.agent,
+    user_id: row.user_id || "-",
+    session_id: row.session_id || "-",
+  };
+}
+
+/** Pin a row read with `getMemory`, at `rowIdentity`. memory.pin writes a whole new
+ *  version as memory.set does, so the row's fields go back with it; leaving
+ *  ttl_seconds out keeps the row's expiry. */
 export async function pinMemory(
   id: Identity,
   key: string,
-  value: unknown,
-  opts: {
-    tags?: string[];
-    memoryType?: MemoryListEntry["memory_type"];
-    /** Preserve the row's char_limit through the pin write — same
-     *  write-through semantic as setMemory. */
-    charLimit?: number | null;
-  } = {},
+  row: MemoryDetail,
 ): Promise<{ version: number; pinned: boolean }> {
   const body: Record<string, unknown> = {
-    ...id,
+    ...rowIdentity(id, row),
     memory_key: key,
-    value,
-    tags: opts.tags || [],
-    ...(opts.memoryType ? { memory_type: opts.memoryType } : {}),
+    value: row.value,
+    memory_type: row.memory_type,
+    tags: row.tags,
+    entities: row.entities,
   };
-  if (opts.charLimit != null) {
-    body.char_limit = opts.charLimit;
+  if (row.confidence != null) body.confidence = row.confidence;
+  if (row.sensitivity) body.sensitivity = row.sensitivity;
+  if (row.source_trace) body.source_trace = row.source_trace;
+  if (row.source_resource_id) body.source_resource_id = row.source_resource_id;
+  if (row.source_class && DECLARABLE_SOURCE_CLASSES.has(row.source_class)) {
+    body.source_class = row.source_class;
   }
+  if (row.valid_at) body.valid_at = row.valid_at;
+  if (row.valid_to) body.valid_to = row.valid_to;
+  if (row.char_limit != null) body.char_limit = row.char_limit;
+  // A change to the value since the read answers 409 instead of being reverted.
+  if (row.content_sha256) body.if_match_sha256 = row.content_sha256;
   return post<{ version: number; pinned: boolean }>("/v1/memory.pin", body);
 }
 
+/** `id` may name the row's user and session (`rowIdentity`); they default to '-'. */
 export async function unpinMemory(
   id: Identity,
   key: string,
@@ -1057,12 +1187,7 @@ export interface MemoryProvenance {
 
 // Resolve where a memory came from (source_trace + retained-transcript check).
 export async function getProvenance(id: Identity, memoryKey: string): Promise<MemoryProvenance> {
-  return post<MemoryProvenance>("/v1/memory.provenance", {
-    org: id.org,
-    namespace: id.namespace,
-    agent: id.agent,
-    memory_key: memoryKey,
-  });
+  return post<MemoryProvenance>("/v1/memory.provenance", { ...id, memory_key: memoryKey });
 }
 
 export interface CopyToResult {
@@ -1085,7 +1210,11 @@ export async function copyMemoryTo(
     from_org: source.org,
     from_namespace: source.namespace,
     memory_key: memoryKey,
-    from_agent: "*",
+    // A row opened under its user and session is copied as that exact row; otherwise the
+    // newest row of the key, whoever wrote it, as the Memories list shows it.
+    ...(source.user_id || source.session_id
+      ? { from_agent: source.agent, from_user_id: source.user_id ?? "-", from_session_id: source.session_id ?? "-" }
+      : { from_agent: "*" }),
     to_namespace: toNamespace,
     target_key: opts.targetKey ?? null,
     rationale: opts.rationale ?? "",
@@ -1383,3 +1512,4 @@ export * from "./api/code";
 export * from "./api/runs";
 export * from "./api/facts";
 export * from "./api/tracker";
+export * from "./api/assistant";

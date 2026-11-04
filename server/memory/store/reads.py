@@ -16,6 +16,7 @@ from server.identity.domain.read_scope import ReadFilters, scope_and, scope_wher
 from server.memory.domain.delete_marks import DELETE_VERSION_TRACE
 from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.memory.domain.identity_columns import IdentityColumn
+from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
 from server.memory.domain.temporal_sql import as_of_predicate, served_status_sql
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL
 from server.memory.store.rows import Identity, MemoryRow, _hydrate, parse_memory_value
@@ -330,6 +331,50 @@ async def memory_rows_by_identity_keys(
     return {_identity_key(r): _hydrate(r) for r in rows}
 
 
+async def served_key_rows(
+    org: str,
+    namespace: str,
+    memory_key: str,
+    *,
+    besides: tuple[str, str, str],
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """The distinct values of `memory_key` in the namespace that search serves, under every
+    user, agent and session other than `besides` (agent, user_id, session_id); a key's
+    memory.set chunks are shared by all of them. A row counts when it is live, not
+    expired, inside its validity, of a served status and embedded (a searchable type, not
+    `sensitivity: high`). `memory_type` and `value` (the stored JSON), once per distinct
+    pair. Sequentially consistent, since a delete decides on the answer."""
+    ch = ch or _default_client()
+    agent, user_id, session_id = besides
+    return await ch.query_all(
+        f"""
+        SELECT DISTINCT memory_type, value
+        FROM loom.memory FINAL
+        PREWHERE org = {{org:String}} AND namespace = {{ns:String}}
+             AND memory_key = {{key:String}}
+        WHERE tombstoned_at IS NULL
+          AND (expires_at IS NULL OR expires_at > now())
+          AND (valid_to IS NULL OR valid_to > now())
+          AND {served_status_sql()}
+          AND sensitivity != 'high'
+          AND memory_type NOT IN {{unsearchable:Array(String)}}
+          AND (agent, user_id, session_id)
+              != ({{agent:String}}, {{uid:String}}, {{sid:String}})
+        {_SEQUENTIAL}
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "key": memory_key,
+            "agent": agent,
+            "uid": user_id,
+            "sid": session_id,
+            "unsearchable": sorted(NON_SEARCHABLE_TYPES),
+        },
+    )
+
+
 async def key_heads_across_sessions(
     org: str,
     namespace: str,
@@ -614,8 +659,8 @@ _BULK_FETCH_SQL = """
             memory_key, memory_type, value, confidence, version, pinned,
             created_at, updated_at, expires_at, on_expire, expire_reason,
             valid_at, valid_to, temporal_anchor, temporal_confidence,
-            status, run_id, source_trace, char_limit, tags, entities, content_sha256,
-            duplicate_of, superseded_by, recall_count, last_recalled_at,
+            status, run_id, source_trace, source_resource_id, char_limit, tags, entities,
+            content_sha256, duplicate_of, superseded_by, recall_count, last_recalled_at,
             verified_by, verified_at, verified_sha256, sensitivity, actor, source_class,
             lock_mode, lock_reason, lock_until, locked_by, locked_at
         FROM loom.memory

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { installApi } from "./fixtures";
 
-// Every route has a budget. One parametrized test over the twenty dashboard routes with
+// Every route has a budget. One parametrized test over the twenty-two dashboard routes with
 // the default fixtures at 4x CPU: the page paints (a heading in <main>), its largest
 // contentful paint and its long tasks stay under budget, and its reads stay one per
 // question. The budgets are set for CI's slower runners — they catch a doubling, not a
@@ -22,6 +22,7 @@ const ROUTES: Array<[string, string]> = [
   ["Library", "/library"],
   ["Conversations", "/conversations"],
   ["Graph", "/graph"],
+  ["Assistant", "/assistant"],
   ["Spaces", "/spaces"],
   ["Profile", "/profile"],
   ["Runs", "/runs"],
@@ -33,7 +34,6 @@ const ROUTES: Array<[string, string]> = [
   ["Activity", "/admin/activity"],
   ["Usage", "/admin/usage"],
   ["Agents", "/admin/agents"],
-  ["Collections", "/admin/collections"],
   ["Users", "/admin/users"],
 ];
 

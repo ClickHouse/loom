@@ -8,6 +8,7 @@ from typing import Any
 
 from server.tasks.app.common import (
     _caller_is_human,
+    _err,
     _in_scope,
     _invalid,
     _triage_next,
@@ -33,7 +34,9 @@ def _missing_evidence(brief: dict[str, Any], required: Iterable[str]) -> list[st
     return missing
 
 
-async def _poster_may_post(inbox: InboxRow, subject: str, agent: str) -> bool:
+async def _poster_may_post(
+    inbox: InboxRow, subject: str, agent: str, *, hides_answer: bool = True
+) -> bool:
     # The posters list needs no read, so the owner check, last, decides alone.
     posters = set(inbox.get("posters") or [])
     if bool(subject) and subject in posters:
@@ -42,7 +45,20 @@ async def _poster_may_post(inbox: InboxRow, subject: str, agent: str) -> bool:
     # must name its subject.
     if not _token_subject() and agent != "-" and agent in posters:
         return True
-    return await _in_scope(inbox["org"], inbox["owner_namespace"], write=True)
+    return await _in_scope(
+        inbox["org"], inbox["owner_namespace"], write=True, hides_answer=hides_answer
+    )
+
+
+async def _require_poster(inbox: InboxRow, subject: str, agent: str) -> None:
+    """Refuse a caller that may not post to `inbox`. One that may not read its namespace
+    either gets the unregistered-name answer: the name is guessable, and a 403 would
+    confirm the inbox exists."""
+    if await _poster_may_post(inbox, subject, agent):
+        return
+    if not await _in_scope(inbox["org"], inbox["owner_namespace"], write=False):
+        raise _err(404, "RESOURCE_NOT_FOUND", f"inbox {inbox['inbox']!r} is not registered")
+    raise _err(403, "AUTH_INSUFFICIENT", "this principal may not post to that inbox")
 
 
 async def _is_owner_principal(inbox: InboxRow, subject: str) -> bool:

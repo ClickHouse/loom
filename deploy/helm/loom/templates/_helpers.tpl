@@ -36,6 +36,18 @@ app.kubernetes.io/name: {{ include "loom.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
+{{/* The extractor's pods carry a name of their own, never the selector labels
+above: every policy, Service and Deployment that selects Loom's pods would take
+them in too, and the web pods' NetworkPolicy would open their egress. */}}
+{{- define "loom.extractorName" -}}
+{{- include "loom.suffixed" (dict "root" . "suffix" "extractor") }}
+{{- end }}
+
+{{- define "loom.extractorSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "loom.name" . | trunc 53 | trimSuffix "-" }}-extractor
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
 {{- define "loom.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
 {{- default (include "loom.fullname" .) .Values.serviceAccount.name }}
@@ -135,6 +147,12 @@ LOOM_CH_READER_USER: {{ . | quote }}
 LOOM_SHUTDOWN_READY_DELAY_S: {{ .Values.shutdown.readyDelaySeconds | quote }}
 LOOM_GRACEFUL_SHUTDOWN_S: {{ .Values.shutdown.gracefulSeconds | quote }}
 LOOM_KEEP_ALIVE_S: {{ .Values.keepAliveSeconds | quote }}
+{{- $ownUrl := hasKey .Values.env "LOOM_DOCUMENT_EXTRACTOR_URL" }}
+{{- range .Values.extraEnv }}{{ if eq .name "LOOM_DOCUMENT_EXTRACTOR_URL" }}{{ $ownUrl = true }}{{ end }}{{ end }}
+{{- if and .Values.extractor.enabled (not $ownUrl) }}
+# The release's extractor (extractor.yaml); its token is in the release Secret.
+LOOM_DOCUMENT_EXTRACTOR_URL: {{ printf "http://%s:8790" (include "loom.extractorName" .) | quote }}
+{{- end }}
 # The web processes' shared files: serve.sh makes $XDG_RUNTIME_DIR/loom, 0700
 # and owned by the pod's user (an emptyDir itself is neither).
 XDG_RUNTIME_DIR: /run/user
@@ -202,7 +220,7 @@ root secret, so the pod template carries nothing to test a guess of any one
 key against; a root change itself rolls through the publish token. */}}
 {{- define "loom.secretChecksum" -}}
 {{- $s := .Values.secrets -}}
-{{- $keys := dict "ch" (ternary .Values.devClickhouse.password $s.clickhousePassword .Values.devClickhouse.enabled) "extra" $s.extra "previous" $s.jwtSecretPrevious -}}
+{{- $keys := dict "ch" (ternary .Values.devClickhouse.password $s.clickhousePassword .Values.devClickhouse.enabled) "extra" $s.extra "previous" $s.jwtSecretPrevious "extractor" (ternary $s.extractorToken "" .Values.extractor.enabled) -}}
 {{- printf "%s\n%s" $s.jwtSecret ($keys | toJson) | sha256sum -}}
 {{- end }}
 

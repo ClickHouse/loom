@@ -44,31 +44,6 @@ class OrphanDuplicate:
 
 
 @dataclass(frozen=True, slots=True)
-class KeyedRow:
-    """The live row of a key in a namespace, whichever identity wrote it."""
-
-    memory_id: str
-    memory_key: str
-    agent: str
-    user_id: str
-    session_id: str
-    status: str
-    duplicate_of: str
-
-    @classmethod
-    def from_row(cls, r: Mapping[str, Any]) -> KeyedRow:
-        return cls(
-            memory_id=_s(r, "memory_id"),
-            memory_key=_s(r, "memory_key"),
-            agent=_s(r, "agent"),
-            user_id=_s(r, "user_id"),
-            session_id=_s(r, "session_id"),
-            status=_s(r, "status"),
-            duplicate_of=_s(r, "duplicate_of"),
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class DuplicateCluster:
     """One canonical id and the duplicates naming it: each duplicate is
     (memory_id, memory_key, agent, created_at)."""
@@ -286,41 +261,6 @@ async def find_orphan_duplicates(
         params={"org": org, "ns": namespace, "lim": int(batch_size)},
     )
     return [OrphanDuplicate.from_row(r) for r in rows]
-
-
-async def find_row_by_key_namespace(
-    org: str,
-    namespace: str,
-    memory_key: str,
-    *,
-    ch: _CHClient | None = None,
-) -> KeyedRow | None:
-    """Find the active row for `memory_key` under (org, ns) without
-    requiring the full identity tuple.
-
-    Used by `memory.dedup_resolve` — the operator passes
-    `canonical_key` + `duplicate_key`; the agent / user_id / session_id
-    of those rows is whatever wrote them. Returns the row dict with
-    memory_id, agent, user_id, session_id, status, duplicate_of.
-    """
-    ch = ch or _default_client()
-    r = await ch.query_one(
-        """
-        SELECT memory_id, memory_key, agent, user_id, session_id, status, duplicate_of, created_at
-        FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND memory_key = {key:String}
-          AND tombstoned_at IS NULL
-        LIMIT 1
-        """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "key": memory_key,
-        },
-    )
-    return None if r is None else KeyedRow.from_row(r)
 
 
 async def find_duplicate_clusters(

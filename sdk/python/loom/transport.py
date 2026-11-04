@@ -1,10 +1,11 @@
 """HTTP transport with connection pooling, retries, and idempotency keys.
 
 The transport identifies itself (`User-Agent`, `X-Loom-SDK`,
-`X-Loom-Runtime`, `X-Loom-Retry-Count`), sends an `X-Request-Id` the server
-echoes, never exposes the credential through `repr()`, parses `Retry-After`
-as seconds or an HTTP-date, and hands back the response metadata
-(`CallResult`) when a caller asks for it.
+`X-Loom-Runtime`, `X-Loom-Retry-Count`), sends an `X-Request-Id` of the form
+the server accepts and echoes (1 to 64 letters, digits, `.`, `_` or `-`),
+never exposes the credential through `repr()`, parses `Retry-After` as
+seconds or an HTTP-date, and hands back the response metadata (`CallResult`)
+when a caller asks for it.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import platform
+import re
 import sys
 import time
 import uuid
@@ -173,6 +175,24 @@ class _Call:
 
     policy: RetryPolicy
     sent: int = 0
+
+
+# The request ids the server keeps as sent; it replaces any other with its own.
+_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+def _request_id_to_send(op_path: str, request_id: str | None) -> str:
+    """The caller's id when the server keeps it as sent, else a new uuid (with a
+    warning when the caller's id is replaced)."""
+    if request_id and _REQUEST_ID.fullmatch(request_id):
+        return request_id
+    if request_id:
+        logger.warning(
+            "%s request_id %r is not 1-64 letters, digits, '.', '_' or '-'; sending a generated id",
+            op_path,
+            request_id,
+        )
+    return str(uuid.uuid4())
 
 
 # Read by `_post_once` (a contextvar so a per-call override is safe under
@@ -442,9 +462,11 @@ class Transport:
                 read-only one).
             timeout_s: Per-call override of the Transport's default timeout,
                 for ops that legitimately run longer than the default.
-            request_id: Sent as `X-Request-Id`; a UUID is generated when
-                omitted. The server echoes it, and every `LoomError` this
-                call raises carries it as `.request_id`.
+            request_id: Sent as `X-Request-Id` when it is 1 to 64 letters,
+                digits, `.`, `_` or `-`, the form the server keeps; a UUID
+                is sent instead when it is omitted or of another form. The
+                server echoes the id, the log lines name it, and every
+                `LoomError` this call raises carries it as `.request_id`.
             retry: A `RetryPolicy` or a dict of its fields overriding the
                 Transport's policy for this call (`{"max_attempts": 1}`
                 disables retries).
@@ -464,7 +486,7 @@ class Transport:
             idempotency_key = str(uuid.uuid4())
         if idempotency_key is not None:
             headers["Idempotency-Key"] = idempotency_key
-        headers["X-Request-Id"] = request_id or str(uuid.uuid4())
+        headers["X-Request-Id"] = _request_id_to_send(op_path, request_id)
         payload = self.with_consumer(payload)
         if self.before_post is not None:
             extra = await self.before_post(op_path, payload)

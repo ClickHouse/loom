@@ -88,6 +88,13 @@ _SKIP_OPS = {
     "knowledge.bulk_delete",
     "knowledge.update_metadata",
     "knowledge.dedup_resolve",
+    # Document-source writes and the credential probe: each is ADMIN on the
+    # repository's code namespace, asserted in tests/unit/test_knowledge_sources.py.
+    "knowledge.source.add",
+    "knowledge.source.check",
+    "knowledge.source.rotate",
+    "knowledge.source.remove",
+    "knowledge.source.sync_now",
     "procedure.add",
     "procedure.record_run",
     "procedure.evolve",
@@ -214,9 +221,11 @@ _CORE = {
     "facts.list",
     "facts.traverse",
     "knowledge.search",
+    "knowledge.inspect",
     "namespace.snapshot",
     "namespace.get",
     "namespace.summary",
+    "namespace.tune",
     "memory.record.query",
     "blacklist.list",
     "blacklist.remove",
@@ -993,6 +1002,67 @@ def test_org_level_lookups_do_not_bypass_the_namespace(control_plane_url, seed, 
             },
         )
         assert r.status_code in _OK_STATUSES and not seed.leaked(r.text)
+
+
+def test_a_dash_org_is_the_tokens_own_org(control_plane_url, seed, tokens) -> None:
+    """An org of "-" is absent to the gate, which authorizes the call in the
+    token's org; the write lands there, and another org's token naming "-"
+    reaches none of it."""
+    nonce = _canary()
+    key = f"dash_org_{uuid.uuid4().hex[:6]}"
+    r = _post(
+        control_plane_url,
+        tokens["a_writer"],
+        "memory.set",
+        {"org": "-", "namespace": seed.ns_a, "agent": "a", "memory_key": key, "value": nonce},
+    )
+    assert r.status_code == 200, r.text
+    memory_id = r.json()["memory_id"]
+    r = _post(
+        control_plane_url,
+        tokens["a_writer"],
+        "memory.get_by_id",
+        {"org": seed.org, "memory_id": memory_id},
+    )
+    assert r.status_code == 200, r.text
+    row = r.json()
+    assert row["found"] is True, r.text[:200]
+    assert (row["memory_id"], row["namespace"], row["agent"], row["memory_key"]) == (
+        memory_id,
+        seed.ns_a,
+        "a",
+        key,
+    )
+    assert (row["value"], row["user_id"], row["session_id"]) == (nonce, "-", "-")
+    assert (row["actor"], row["source_class"], row["memory_type"]) == (
+        "process:alice",
+        "asserted",
+        "semantic",
+    )
+    # A write naming neither org nor namespace, read back the same way by
+    # another org: the reproduction of the leak.
+    dash = {"org": "-", "namespace": "-", "agent": "a", "memory_key": f"{key}_dash"}
+    r = _post(control_plane_url, tokens["a_writer"], "memory.set", {**dash, "value": nonce})
+    assert r.status_code == 200, r.text[:200]
+    dash_id = r.json()["memory_id"]
+    # memory.get answers no namespace or key: finding the row under the
+    # writer's org, namespace "-" and this key is what places it.
+    r = _post(control_plane_url, tokens["a_writer"], "memory.get", {**dash, "org": seed.org})
+    assert r.status_code == 200, r.text
+    row = r.json()
+    assert row["found"] is True, r.text[:200]
+    assert (row["memory_id"], row["agent"], row["value"], row["actor"], row["source_class"]) == (
+        dash_id,
+        "a",
+        nonce,
+        "process:alice",
+        "asserted",
+    )
+    assert (row["user_id"], row["session_id"], row["memory_type"]) == ("-", "-", "semantic")
+    for body in ({"org": "-", "namespace": seed.ns_a, "agent": "a", "memory_key": key}, dash):
+        r = _post(control_plane_url, tokens["other_org"], "memory.get", body)
+        assert r.status_code in _OK_STATUSES, r.text[:200]
+        assert nonce not in r.text, f"another org read a '-'-org write: {r.text[:200]}"
 
 
 def test_error_bodies_do_not_echo_canaries(control_plane_url, seed, tokens) -> None:

@@ -88,7 +88,7 @@ async def _run(
     )
     out = await h.run_saga(
         input=inp,
-        row={"id": "e1"},
+        row={"id": "e1", "actor": "human:t"},
         erasure_id="e1",
         requested_at=_now(),
         previously_completed=set(),
@@ -246,7 +246,11 @@ async def test_a_user_scope_tail_counts_by_user(monkeypatch) -> None:
     monkeypatch.setattr(erasure_census, "residue_census", fake_census)
     inp = ErasureRequestInput(org="o", scope_type="user_id", scope_value="alice", requester="t")
     out = await h.run_saga(
-        input=inp, row={}, erasure_id="e2", requested_at=_now(), previously_completed=set()
+        input=inp,
+        row={"actor": "human:t"},
+        erasure_id="e2",
+        requested_at=_now(),
+        previously_completed=set(),
     )
     assert out.status == "failed" and calls == ["user_id:alice:False"]
 
@@ -263,6 +267,7 @@ def _ledger_row(**over) -> dict[str, Any]:
         "scope_type": "namespace_list",
         "scope_value": '{"namespaces": ["lme-1"], "purge": true, "external": true}',
         "requester": "cli",
+        "actor": "",
         "urgency": "normal",
         "attempts": 4,
         "steps_completed": ["memory.tombstone"],
@@ -316,6 +321,7 @@ async def test_the_terminal_row_keeps_the_last_step_reason_and_the_verify_column
     assert t["row"] == h.request_row_template(
         erasure_id="e9",
         input=h.input_from_ledger_row(ledger_row),
+        actor="",  # the ledger row names no actor, and the terminal row keeps none
         requested_at=ledger_row["requested_at"],
         attempts=5,
     )

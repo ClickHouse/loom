@@ -58,6 +58,14 @@ class ExtractorUnavailable(Exception):
     later may succeed."""
 
 
+class FormatUnavailable(ExtractorUnavailable):
+    """No configured extractor takes this format: none is routed for it, the one
+    it is routed to does not declare it, or that one answers `format_unavailable`.
+    A deployment's configuration, not an outage: a caller that retries only
+    outages (an ingestion job) fails the source with `format_unavailable` instead.
+    Still an ExtractorUnavailable, as adding an extractor makes it extractable."""
+
+
 class ExtractionFailed(Exception):
     """This source cannot be extracted. `code` is the contract's (e.g.
     `format_mismatch`, `encoding`, `corrupt`, `too_large`, `timeout`,
@@ -231,7 +239,7 @@ def _refusal(status: int, data: bytes) -> ExtractionFailed | ExtractorUnavailabl
         message = ""
     message = message[:_MESSAGE_CHARS] or f"the extractor answered {status}"
     if code in _UNAVAILABLE_CODES:
-        return ExtractorUnavailable(message)
+        return FormatUnavailable(message)
     return ExtractionFailed(code, message)
 
 
@@ -253,10 +261,10 @@ async def extract(
         raise ExtractionFailed("unsupported_format", str(e)) from e
     url = endpoint_for(fmt, media_type)
     if not url:
-        raise ExtractorUnavailable(f"no extractor is configured for {fmt}")
+        raise FormatUnavailable(f"no extractor is configured for {fmt}")
     caps = await capabilities(url)
     if fmt not in caps.formats:
-        raise ExtractorUnavailable(f"the extractor for {fmt} does not declare it")
+        raise FormatUnavailable(f"the extractor for {fmt} does not declare it")
     if len(data) > caps.max_bytes:
         raise ExtractionFailed("too_large", f"the source is over the extractor's {caps.max_bytes}")
     params = {**(options or {}), "format": fmt, "name": name}

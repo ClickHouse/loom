@@ -63,6 +63,9 @@ async def knowledge_passages(
                         if bool(getattr(search_input, "tags_soft", False))
                         else [str(t) for t in (getattr(search_input, "tags", None) or []) if t]
                     ),
+                    # The ask's synthesis reads these passages; a rerank call would run
+                    # before its cost cap and synthesis switch are checked.
+                    rerank="none",
                 )
             )
             return list(getattr(res, "results", None) or [])

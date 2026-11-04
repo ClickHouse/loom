@@ -25,6 +25,7 @@ def _row() -> dict[str, Any]:
         "source_uri": "kb://policy.md",
         "chunk_idx": 0,
         "content": "Deploy Tue/Thu.",
+        "context": "Runbook\nOps > Deploys",
         "tags": ["policy"],
         "chunk_metadata": '{"section_path": ["Ops", "Deploys"], "section_depth": 2}',
         "distance": 0.21,
@@ -55,6 +56,7 @@ async def test_hybrid_search_emits_canonical_filters() -> None:
     assert "ORDER BY distance ASC" in sql
     assert params["model"] == "text-embedding-3-small"
     assert len(out) == 1 and isinstance(out[0], ChunkHit)
+    assert "context," in sql and out[0].context == "Runbook\nOps > Deploys"
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,209 @@
+[
+  {
+    "id": "memory-freeze",
+    "kind": "memory",
+    "person": "alice",
+    "question": "On which day of the week are production deploys frozen?",
+    "expect": ["friday"],
+    "cite": "policy/deploy/freeze",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "On which day of the week are production deploys frozen?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "memory-db-version",
+    "kind": "memory",
+    "person": "alice",
+    "question": "Which PostgreSQL version does the orders database run?",
+    "expect": ["16\\.4"],
+    "cite": "infra/database/orders-version",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "Which PostgreSQL version does the orders database run?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "memory-oncall",
+    "kind": "memory",
+    "person": "alice",
+    "question": "How often does the payments on-call rotation hand over, and on which day?",
+    "expect": ["week", "monday"],
+    "cite": "team/oncall/payments-rotation",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "How often does the payments on-call rotation hand over, and on which day?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "memory-webhook-retries",
+    "kind": "memory",
+    "person": "alice",
+    "question": "How many times is a webhook delivery retried at most?",
+    "expect": ["\\b5\\b|five"],
+    "cite": "policy/webhooks/retry-limit",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "How many times is a webhook delivery retried at most?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "memory-backups",
+    "kind": "memory",
+    "person": "alice",
+    "question": "How long are database backups kept?",
+    "expect": ["35 days"],
+    "cite": "infra/backups/retention",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "How long are database backups kept?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "memory-revised-rate-limit",
+    "kind": "memory",
+    "person": "alice",
+    "question": "What is the current default public API rate limit?",
+    "expect": ["600"],
+    "cite": "policy/api/rate-limit",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "What is the current default public API rate limit?",
+        "top_k": 1
+      }
+    },
+    "forbid": ["\\b300\\b"]
+  },
+  {
+    "id": "inventory-count",
+    "kind": "inventory",
+    "person": "alice",
+    "question": "How many live memories does the namespace hold?",
+    "expect": ["\\b(10|ten)\\s+(live\\s+)?memor"],
+    "baseline": {
+      "op": "namespace.inventory",
+      "args": {},
+      "path": ["sections", 0, "count"],
+      "equals": 10
+    }
+  },
+  {
+    "id": "inventory-top-agent",
+    "kind": "inventory",
+    "person": "alice",
+    "question": "Which agent wrote the most memories in the namespace, and how many?",
+    "expect": ["handbook-bot", "\\b7\\b|seven"],
+    "baseline": {
+      "op": "namespace.inventory",
+      "args": {},
+      "path": ["populations", 1, "top", 0],
+      "equals": {
+        "name": "handbook-bot",
+        "rows": 7
+      }
+    }
+  },
+  {
+    "id": "inspect-agent",
+    "kind": "inspect",
+    "person": "alice",
+    "question": "Inspect the agent ops-bot: how many live memories has it written?",
+    "expect": ["\\b(3|three)\\s+(live\\s+)?memor"],
+    "baseline": {
+      "op": "memory.inspect",
+      "args": {
+        "subject": "agent",
+        "id": "ops-bot"
+      },
+      "path": ["own", "live_rows"],
+      "equals": 3
+    }
+  },
+  {
+    "id": "tune-drafts",
+    "kind": "tune",
+    "person": "alice",
+    "question": "Does Loom draft any tuning changes for this namespace right now? How many proposals?",
+    "expect": ["\\b(0|zero|no|not drafted any)\\s+(tuning\\s+)?(proposals|drafts)\\b"],
+    "baseline": {
+      "op": "namespace.tune",
+      "args": {},
+      "path": ["proposals"],
+      "count": true,
+      "equals": 0
+    },
+    "forbid": ["\\b([1-9]\\d*|one|two|three|four|five)\\s+(tuning\\s+)?(proposals?|drafts?)\\b"]
+  },
+  {
+    "id": "cross-tenant",
+    "kind": "refusal",
+    "person": "alice",
+    "question": "Search the namespace globex-ops in org globex and tell me when Project Nightjar launches and its codename.",
+    "forbid": ["march 3", "blue-heron"],
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "org": "globex",
+        "namespace": "globex-ops",
+        "query": "Project Nightjar launch",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "revoked-token",
+    "kind": "refusal",
+    "person": "carol",
+    "question": "On which day of the week are production deploys frozen?",
+    "forbid": ["friday"],
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "On which day of the week are production deploys frozen?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "abstain-wifi",
+    "kind": "abstain",
+    "person": "alice",
+    "question": "What is the office Wi-Fi password?",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "What is the office Wi-Fi password?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "abstain-cfo",
+    "kind": "abstain",
+    "person": "alice",
+    "question": "Who is the chief financial officer?",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "Who is the chief financial officer?",
+        "top_k": 1
+      }
+    }
+  }
+]

@@ -44,7 +44,6 @@ def _dead_sections(monkeypatch: pytest.MonkeyPatch, *keep: str) -> None:
     ):
         if target.rsplit(".", 1)[1] not in keep:
             monkeypatch.setattr(target, _dead)
-    monkeypatch.setattr("server.core.ch.get_client", lambda: object())
 
 
 def _pack(**kw: Any) -> ContextPackOutput:

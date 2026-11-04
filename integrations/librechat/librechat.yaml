@@ -1,0 +1,60 @@
+# LibreChat v0.8.8 configuration for the Loom assistant toolset.
+version: 1.3.17
+cache: true
+
+interface:
+  agents:
+    use: true
+    create: true
+    share: false
+    public: false
+  # The agents API (/api/agents/v1), which the qualification harness calls with a
+  # per-user API key; set use and create to false when nobody needs it.
+  remoteAgents:
+    use: true
+    create: true
+    share: false
+    public: false
+  mcpServers:
+    use: true
+    create: false
+    share: false
+    public: false
+  sharedLinks:
+    share: false
+    public: false
+  # Every chat expires, not only temporary ones: a stored answer holds copies of the
+  # Loom rows its tool calls returned, which Loom's erasure does not reach.
+  retentionMode: all
+  generalChatRetention: 720
+  temporaryChatRetention: 24
+
+# LibreChat's own memory would keep a second copy of what a person tells the chat.
+memory:
+  disabled: true
+
+registration:
+  socialLogins: []
+
+endpoints:
+  anthropic:
+    titleConvo: false
+
+mcpSettings:
+  allowedAddresses:
+    - host.docker.internal:7777
+
+mcpServers:
+  loom:
+    type: streamable-http
+    url: http://host.docker.internal:7777/mcp?toolset=assistant
+    requiresOAuth: false
+    startup: false
+    timeout: 60000
+    serverInstructions: true
+    headers:
+      Authorization: "Bearer {{LOOM_TOKEN}}"
+    customUserVars:
+      LOOM_TOKEN:
+        title: Loom token
+        description: "Your own Loom viewer token: loom mint-token --subject <you> --org <org> --namespaces <ns> --roles viewer --user-token"

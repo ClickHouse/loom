@@ -85,15 +85,16 @@ Record a DECISION as a first-class object — call it whenever you choose betwee
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The run this decision was made in (run.begin). |
 | `category` | `str` | required | category + scenario identify the decision: re-deciding the same scenario supersedes the earlier record (history keeps it). |
-| `scenario` | `str` | required | The situation that needed deciding; `decision.precedents` matches a query against the decision's statement, which includes the start of the scenario. |
+| `scenario` | `str` | required | The situation that needed deciding; `decision.precedents` matches a query against the decision's statement, which opens with the scenario. |
 | `reasoning` | `str` | required | Why this outcome was chosen. |
 | `outcome` | `str` | required | What was decided. |
 | `alternatives` | `list[str]` | *(computed)* | What was considered and not chosen — the field every "why not X" question needs and most decision logs omit. |
 | `confidence` | `float` | `0.0` | The decider's confidence, 0-1; 0 records none (the memory row and edges then carry 1.0). |
+| `stage` | `Literal['decided', 'proposed']` | `'decided'` | "decided" (default), or "proposed" for an option put forward and not yet chosen or built (a proposal, a plan, an action item); unrelated to memory.set's `proposed`, a fact on trial. |
 | `decision_maker` | `str` | `''` | Who decided, a person or an agent; "" records the calling `agent`. |
 | `caused_by` | `list[str]` | *(computed)* | memory_keys (decisions, facts, procedures) that CAUSED or INFLUENCED this decision; each becomes an authored edge (memory.link) with this call as its evidence. |
 | `influenced_by` | `list[str]` | *(computed)* | Keys that shaped the decision without causing it; each becomes an `influenced` edge. |
-| `tags` | `list[str]` | *(computed)* | Extra tags on the memory row, beside `decision` and `decision:category:<category>`. |
+| `tags` | `list[str]` | *(computed)* | Extra tags on the memory row, beside `decision` and `decision:category:<category>`; a `decision:proposed` tag here is dropped (set it with `stage`). |
 | `valid_at` | `datetime \| None` | `None` | Real-world time the decision took effect; None = now. |
 | `files` | `list[str] \| None` | `None` | The repo files this decision governs (repo-relative path or bare filename); memory.for_file serves it before an edit of them. |
 | `source_class` | `Literal['derived', 'external', 'imported'] \| None` | `None` | Declare that this decision was derived from other content (`derived`) or came from outside (`external`, `imported`). |

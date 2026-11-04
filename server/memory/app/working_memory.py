@@ -31,6 +31,7 @@ from server.memory.api.models_working_memory import (
     WorkingMemoryReplaceInput,
     WorkingMemorySetInput,
 )
+from server.memory.app.scratchpad import run_rows
 from server.memory.store.rows import next_version
 
 log = logging.getLogger(__name__)
@@ -326,23 +327,15 @@ async def render_run_blocks(
     """The run's working-memory blocks as markdown, newest first, for a reader that has
     the run_id but not the writer's full identity: memory.ask is asked with agent="*",
     while the run scope wrote its notes as the agent it runs as. The run_id is unique to
-    one execution, so (org, namespace, run_id) is the scope. '' when the run has no
-    blocks; never raises."""
+    one execution, so (org, namespace, run_id) is the scope, narrowed by the request's
+    read scope (`scratchpad.run_rows`). '' when the run has no blocks or the read fails;
+    a refused read scope raises, as the rest of the call would."""
     if not run_id or run_id == "-":
         return ""
+    request_scope()  # a refusal is the caller's error, not a failed read
     ch = ch or get_client()
     try:
-        rows = await ch.query_all(
-            """
-            SELECT block_key, content
-            FROM loom.working_memory FINAL
-            WHERE org = {org:String} AND namespace = {ns:String} AND run_id = {run:String}
-              AND tombstoned_at IS NULL
-            ORDER BY updated_at DESC
-            LIMIT {lim:UInt32}
-            """,
-            params={"org": org, "ns": namespace, "run": run_id, "lim": int(limit)},
-        )
+        rows = await run_rows(ch, org, namespace, run_id, limit=limit)
     except Exception as e:  # noqa: BLE001 — a scratchpad read never blocks an answer
         log.warning("working_memory: run block read failed (open): %s", e)
         return ""

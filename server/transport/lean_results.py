@@ -321,10 +321,10 @@ def _explained_search(payload: dict[str, Any], why: Callable[[dict[str, Any]], s
     return out
 
 
-# What a knowledge hit carries into loom_search. `score` is
-# the fusion score the order already encodes, `source` is always "knowledge"
-# in the knowledge section, and `tags` are ingestion metadata (~8% of the
-# section's tokens, read by no consumer); `bodies="full"`
+# What a knowledge hit carries into loom_search. `score` is the fusion score and the
+# order already carries the ranking (fused, or a reranker's when `reranked_by` is
+# set); `source` is always "knowledge" in the knowledge section; `tags` are
+# ingestion metadata (~8% of the section's tokens, read by no consumer); `bodies="full"`
 # / `"unit"` keep the tags, `"none"` drops the chunk text too. The chunk text
 # itself stays whole by default: a 300-char window lost the answer in 30% of
 # relevant hits, and the best window policy saved less than the follow-up

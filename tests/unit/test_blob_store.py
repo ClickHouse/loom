@@ -159,7 +159,8 @@ def test_unreferenced_is_one_namespace_after_a_cursor() -> None:
     assert got == ["a" * 64]
     sql = seen["sql"]
     assert "HAVING max(created_at) < now64(3) - INTERVAL {age:UInt32} SECOND" in sql
-    assert sql.count("org = {org:String} AND namespace = {ns:String}") == 2
+    # the originals, the documents naming them, and the uploads and jobs holding them
+    assert sql.count("org = {org:String} AND namespace = {ns:String}") == 4
     assert "sha256 > {after:String}" in sql and "FROM loom.documents FINAL" in sql
     from server.knowledge.store.documents import LIVE_ORIGINAL_SQL
 

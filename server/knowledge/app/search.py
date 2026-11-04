@@ -70,6 +70,8 @@ class ChunkHit:
     agent: str = "-"
     session_id: str = "-"
     source_class: str = ""
+    # The chunk's stored context (title, description, breadcrumb), for a reranker.
+    context: str = ""
 
     @property
     def section(self) -> str:
@@ -149,6 +151,7 @@ async def hybrid_search(
             source_uri,
             chunk_idx,
             content,
+            context,
             tags,
             chunk_metadata,
             ingested_at,
@@ -169,6 +172,7 @@ async def hybrid_search(
             source_uri=r["source_uri"],
             chunk_idx=int(r["chunk_idx"]),
             content=r["content"],
+            context=r["context"],
             tags=list(r["tags"] or []),
             distance=float(r["distance"]),
             section_path=_section_path_of(r.get("chunk_metadata")),
@@ -240,8 +244,9 @@ async def lexical_search(
     ch: _CHClient | None = None,
 ) -> list[ChunkHit]:
     """The lexical leg: Okapi BM25 over the query tokens (`server.core.bm25`;
-    tf and the document length both counted in the chunk's words), restricted by the
-    text index to chunks that contain at least one token, top-K by BM25 descending.
+    tf and the document length both counted in the words of the chunk's context and
+    text), restricted by the text indexes to chunks whose context or text contains at
+    least one token, top-K by BM25 descending.
     Each hit also carries its cosine distance so fusion has both legs for every
     candidate. Returns [] when the query has no tokens or the corpus statistics are
     cold (no avgdl yet)."""
@@ -252,12 +257,15 @@ async def lexical_search(
     params["toks"] = q.tokens
     params["idfs"] = [float(x) for x in q.idfs]
     params["avgdl"] = float(q.avgdl)
-    # Candidate predicate over the lower-cased materialised copy: the text
-    # index on content_lc is tokenised with splitByNonAlpha,
-    # the same tokeniser the term-frequency view uses, so this is a
-    # skip-index lookup, not a scan. tf is counted over the same tokens, so
-    # numerator and document frequency agree at word boundaries.
-    where.append("hasAnyTokens(content_lc, {toks:Array(String)})")
+    # Both text indexes use the df views' tokeniser; a part without one of them
+    # (merged, or inserted before the context index) is read in full.
+    where.append(
+        "(hasAnyTokens(content_lc, {toks:Array(String)})"
+        " OR hasAnyTokens(context_lc, {toks:Array(String)}))"
+    )
+    # A chunk with no text is left out of the corpus statistics and the df views, so it
+    # is no lexical candidate either, whatever its context.
+    where.append("content != ''")
     # The row is split once; tf and dl both read the one array.
     bm25_expr = bm25.bm25_sum_sql(
         bm25.tf_array_sql("countEqual(words, tok)", "{toks:Array(String)}"),
@@ -265,13 +273,16 @@ async def lexical_search(
         dl="length(words)",
         avgdl="{avgdl:Float32}",
     )
+    # Direct read is off (the SETTINGS line), as the memory, tracker and code-grep
+    # text-index legs set it: it can drop rows under ORDER BY ... LIMIT.
     sql = f"""
-        WITH splitByNonAlpha(content_lc) AS words
+        WITH arrayConcat(splitByNonAlpha(context_lc), splitByNonAlpha(content_lc)) AS words
         SELECT
             namespace,
             source_uri,
             chunk_idx,
             content,
+            context,
             tags,
             chunk_metadata,
             ingested_at,
@@ -284,6 +295,7 @@ async def lexical_search(
         WHERE {" AND ".join(where)}
         ORDER BY lexical DESC, distance ASC
         LIMIT {{top_k:UInt32}}
+        SETTINGS query_plan_direct_read_from_text_index = 0
     """
     rows = await ch.query_all(sql, params=params)
     return [
@@ -292,6 +304,7 @@ async def lexical_search(
             source_uri=r["source_uri"],
             chunk_idx=int(r["chunk_idx"]),
             content=r["content"],
+            context=r["context"],
             tags=list(r["tags"] or []),
             distance=float(r["distance"]),
             section_path=_section_path_of(r.get("chunk_metadata")),

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _resetVitals, flushView, installVitals, startView } from "./vitals";
 import { noteCallEnd, noteCallStart } from "./vitalsCounter";
+import { setPageOwner, setToken } from "../api";
 
 // One ui.vitals row per page view, posted when the view ends, carrying the route, the
 // view's call count and span, the DOM size and the build; LCP only on the first view of
@@ -56,5 +57,26 @@ describe("ui.vitals", () => {
     startView("runs");
     flushView(null, "");
     expect(f).not.toHaveBeenCalled();
+  });
+
+  it("sends no row under a token that names someone other than the page's person", () => {
+    const fetchMock = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const part = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
+    setPageOwner({ authenticated: true, subject: "alice", org: "o" });
+    try {
+      setToken(`${part({ alg: "HS256" })}.${part({ sub: "bob", org: "o" })}.sig`);
+      startView("memories");
+      flushView({ org: "o", namespace: "n" }, "b1");
+      expect(fetchMock).not.toHaveBeenCalled();
+      // The page's own person's token: the row goes.
+      setToken(`${part({ alg: "HS256" })}.${part({ sub: "alice", org: "o" })}.sig`);
+      startView("memories");
+      flushView({ org: "o", namespace: "n" }, "b1");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      setPageOwner(null);
+      localStorage.clear();
+    }
   });
 });

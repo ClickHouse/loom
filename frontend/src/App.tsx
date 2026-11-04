@@ -1,11 +1,10 @@
-import { Suspense, lazy, useEffect, useMemo, useRef } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, type ReactElement } from "react";
 import { flushView, installVitals, startView } from "./lib/vitals";
 import { ReloadBar } from "./components/ReloadBar";
 import { sharedMine, sharedHealth } from "./lib/sharedReads";
 import { SkeletonCard } from "./components/Skeleton";
 import { Loading, LoadingSkeleton } from "./components/ui";
 import {
-  whoami,
   getSavedNamespace,
   defaultNamespace,
   isProxyMode,
@@ -14,12 +13,17 @@ import {
   setToken,
   hasToken,
   clearToken,
+  onSignInRejected,
+  onTokenStored,
+  setPageOwner,
+  signedOut,
   storedToken,
   type MyNamespaceEntry,
 } from "./api";
 import {
   canReadNamespace,
   deepLinkNamespace,
+  isCollectionName,
   isMemoryNamespace,
   landingTarget,
   needsMemoryNamespace,
@@ -27,7 +31,6 @@ import {
 import { claimsFromToken, provisionalNamespace, rememberKinds, takeLinkToken } from "./lib/boot";
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
-import { MemoryScopeMissing } from "./components/MemoryScopeMissing";
 import { useStore, pathnameView, linkedNamespace, addressPageNamespace } from "./lib/state";
 import { arriveAt, readPlace, restorePlace } from "./lib/place";
 import { useKeyboard } from "./lib/hooks";
@@ -38,8 +41,23 @@ import { MobileNav } from "./layout/MobileNav";
 import { ToastViewport, toast, toastError } from "./components/Toast";
 import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
-import { ProblemsBanner } from "./components/ProblemsBanner";
 import { shortcutOff } from "./lib/shortcuts";
+
+import { reloadPage } from "./lib/navigation";
+import { endSession, lostReason, sessionEndedNote, whoamiWhenReady } from "./lib/session";
+
+onSignInRejected(endSession);
+// A call carries only the token of the person whose page this is.
+useStore.subscribe((s) => setPageOwner(s.whoami));
+// A sign-in, a dropped token or a sign-out in another tab reaches this one from the first
+// moment (a proxy's header and an auth-off install keep no token; before boot has an
+// identity, boot's own checks decide).
+// Its handler ships in the session card's chunk; one that cannot load reloads, and the
+// fresh page decides on the stored token.
+onTokenStored((token, before) => {
+  if (!isProxyMode() && !isAuthDisabled())
+    void sessionCard.then((m) => (m?.tokenChangedElsewhere ?? reloadPage)(token, before));
+});
 
 // One view per chunk, so a person opening Memories does not pay for the code index
 // explorer, the graph and every admin page. React.lazy loads a view the first time it is
@@ -51,6 +69,7 @@ const Documents = lazy(() => import("./views/Documents").then((m) => ({ default:
 const Conversations = lazy(() => import("./views/Conversations").then((m) => ({ default: m.Conversations })));
 const Runs = lazy(() => import("./views/Runs").then((m) => ({ default: m.Runs })));
 const GraphExplorer = lazy(() => import("./views/Graph").then((m) => ({ default: m.GraphExplorer })));
+const Assistant = lazy(() => import("./views/Assistant").then((m) => ({ default: m.Assistant })));
 const Sharing = lazy(() => import("./views/Sharing").then((m) => ({ default: m.Sharing })));
 const Browse = lazy(() => import("./views/Browse").then((m) => ({ default: m.Browse })));
 const CodeView = lazy(() => import("./views/Code").then((m) => ({ default: m.CodeView })));
@@ -63,7 +82,6 @@ const Policies = lazy(() => import("./views/admin/Policies").then((m) => ({ defa
 const Audit = lazy(() => import("./views/admin/Audit").then((m) => ({ default: m.Audit })));
 const Spending = lazy(() => import("./views/admin/Spending").then((m) => ({ default: m.Spending })));
 const Agents = lazy(() => import("./views/admin/Agents").then((m) => ({ default: m.Agents })));
-const Collections = lazy(() => import("./views/admin/Collections").then((m) => ({ default: m.Collections })));
 const AdminUsersView = lazy(() => import("./views/admin/Users").then((m) => ({ default: m.Users })));
 const DeploymentSettings = lazy(() =>
   import("./views/admin/DeploymentSettings").then((m) => ({ default: m.DeploymentSettings })),
@@ -79,8 +97,35 @@ const ProfileSectionDialog = lazy(() =>
 );
 const HelpDialog = lazy(() => import("./components/HelpDialog").then((m) => ({ default: m.HelpDialog })));
 const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.TokenGate })));
+// The expired-session card's chunk is fetched as the app loads, from the build that served
+// it: it shows on a long-lived tab, the one most likely to predate a deploy, and a chunk
+// first asked for then would be gone and its stale-chunk reload would lose the page.
+// Should that fetch fail, no card shows (each view's error still says the session ended),
+// rather than an error page in place of the page.
+const sessionCard = import("./components/SessionExpiredBar").catch(() => ({
+  default: () => null,
+  tokenChangedElsewhere: reloadPage,
+}));
+// A stale chunk the reload handler (lib/staleChunk.ts) takes resolves to nothing: no card.
+const SessionExpiredBar = lazy<() => ReactElement | null>(() =>
+  sessionCard.then((m) => ({ default: m?.default ?? (() => null) })),
+);
+// The health problems banner shows on a degraded deployment only: its own chunk, and none
+// (it is best-effort) when that chunk cannot load.
+const ProblemsBanner = lazy<() => ReactElement | null>(() =>
+  import("./components/ProblemsBanner").then(
+    (m) => ({ default: m?.ProblemsBanner ?? (() => null) }),
+    () => ({ default: () => null }),
+  ),
+);
+
 const NamespaceNoAccess = lazy(() =>
   import("./components/NamespaceNoAccess").then((m) => ({ default: m.NamespaceNoAccess })),
+);
+// A memory view's page on a code or tracker namespace, or none: a page of its own, as
+// the views are.
+const MemoryScopeMissing = lazy(() =>
+  import("./components/MemoryScopeMissing").then((m) => ({ default: m.MemoryScopeMissing })),
 );
 
 export default function App() {
@@ -134,17 +179,27 @@ export default function App() {
 
   const inspectedKey = useStore((s) => s.inspectedMemoryKey);
   const inspectedAgent = useStore((s) => s.inspectedAgent);
+  const inspectedOwner = useStore((s) => s.inspectedOwner);
   // Override agent with the writer's identity (captured when the list-view
   // card was clicked) so strict-tuple memory.get doesn't 404 on cross-agent
   // rows. Memoised: a fresh object every render would replay the inspector's seven reads
   // on any App re-render.
   const inspectorIdentity = useMemo(
-    () => (identity ? (inspectedAgent ? { ...identity, agent: inspectedAgent } : identity) : null),
-    [identity, inspectedAgent],
+    () =>
+      identity
+        ? {
+            ...identity,
+            ...(inspectedAgent ? { agent: inspectedAgent } : {}),
+            // A row filed under a user or session is read under them, or memory.get misses it.
+            ...(inspectedOwner ?? {}),
+          }
+        : null,
+    [identity, inspectedAgent, inspectedOwner],
   );
   const inspect = useStore((s) => s.inspect);
   const setAuthed = useStore((s) => s.setAuthed);
   const gateReason = useStore((s) => s.gateReason);
+  const sessionExpired = useStore((s) => s.sessionExpired);
   const setWhoami = useStore((s) => s.setWhoami);
   // Boot settles the identity (a provisional namespace, then the answer): not a switch, so
   // the deep link's memory or thread stays open.
@@ -249,11 +304,15 @@ export default function App() {
   // Auth bootstrap on mount
   useEffect(() => {
     (async () => {
+      // A sign-in link's token, taken first thing; the catch below reads it too.
+      let link: ReturnType<typeof takeLinkToken> = null;
+      // The token boot asks whoami about; the catch reads it too.
+      let sent: string | null = null;
       try {
         // A login link (federation redirect) carries the token in the #token= fragment: taken
         // and scrubbed before anything can fail. The return to the page its sign-in started on
         // is a chunk of its own, and boot goes on without it.
-        const link = takeLinkToken();
+        link = takeLinkToken();
         if (link) {
           if (link.token) setToken(link.token);
           try {
@@ -304,18 +363,32 @@ export default function App() {
           ? sharedMine(early.org).catch(() => null)
           : null;
 
-        const w = await whoami();
-        if (!w.authenticated) {
+        sent = storedToken();
+        const w = await whoamiWhenReady();
+        // Another tab stored someone's token while whoami answered for this one: that
+        // token decides, on a fresh boot.
+        if (storedToken() && storedToken() !== sent) {
+          reloadPage();
+          return;
+        }
+        // A refused read (here or in another tab) dropped the token while whoami answered.
+        const dropped = !!sent && !storedToken();
+        if (!w.authenticated || dropped) {
           // A stored token the server no longer accepts is dead — drop it so the next
           // load doesn't retry it, and tell the gate why it is showing instead of a
-          // silent first-visit card.
-          if (hasToken()) {
+          // silent first-visit card. A sign-out (here or in another tab) is a plain
+          // sign-in. A refused sign-in link says so, and starts no sign-in by itself: it
+          // may be the way in while the identity provider is down.
+          const out = signedOut();
+          const note = sessionEndedNote();
+          if (((note || dropped) && !out) || hasToken()) {
             clearToken();
-            useStore.getState().setGateReason("expired");
+            useStore.getState().setGateReason(link?.token ? "refused" : note || lostReason(sent));
           }
           setAuthed(false);
           return;
         }
+        sessionEndedNote();
 
         setAuthed(true);
         setWhoami(w);
@@ -360,7 +433,12 @@ export default function App() {
         // says its access could not be checked.
         const known = useStore.getState().myNamespaces;
         const readable = linked !== null && (canReadNamespace(linked, claims, known) || (!known && linked === saved));
-        const denied = linked !== null && !readable ? linked : null;
+        // A Library link to a collection is the collection's: one its namespace denies the
+        // reader still opens, on the reader's own namespace, and the Library reads the
+        // collection only if collection.list names it.
+        const collectionLink =
+          initial === "knowledge" && isCollectionName(new URLSearchParams(location.search).get("collection"));
+        const denied = linked !== null && !readable && !collectionLink ? linked : null;
         const pick = readable ? linked : saved;
         const reach = readable ? [linked] : claims;
         // URL routing: an explicit path (e.g. /memories) always wins — the landing rule decides a
@@ -435,6 +513,15 @@ export default function App() {
           /* notification check is best-effort */
         }
       } catch (e) {
+        // Still unavailable after whoami's retries: the toast says so, and the token stays
+        // for the next load. A sign-in link refused on the way says so and leaves no note,
+        // so the next load does not start a sign-in by itself (the link may be the way in).
+        // A token refused on the way (the early read) says so on the gate, as the try would.
+        // Only a token this boot itself lost: an earlier load's note alone (a Reload while
+        // the server is away) starts no sign-in by itself.
+        const note = sessionEndedNote();
+        if (!storedToken() && (link?.token || (note && !signedOut() && sent)))
+          useStore.getState().setGateReason(link?.token ? "refused" : note);
         toastError("Auth bootstrap failed", e);
         setAuthed(false);
       }
@@ -488,7 +575,9 @@ export default function App() {
           {/* `relative`: a visually hidden (absolute) label inside a scrolled row is placed
               against main, so it can never stretch the page past the viewport. */}
           <main id="main" tabIndex={-1} className="relative flex-1 overflow-y-auto" ref={mainRef}>
-            <ProblemsBanner />
+            <Suspense fallback={null}>
+              <ProblemsBanner />
+            </Suspense>
             <PendingRequestBanner />
             {/* Keyed by view so each navigation replays the fade-in, and the no-access
                 page is a page of its own: leaving it mounts the view afresh, never under
@@ -539,7 +628,15 @@ export default function App() {
         </Suspense>
       )}
       <NetworkProgress />
-      <ToastViewport />
+      <ToastViewport
+        pinned={
+          sessionExpired ? (
+            <Suspense fallback={null}>
+              <SessionExpiredBar />
+            </Suspense>
+          ) : null
+        }
+      />
       <ConfirmViewport />
     </div>
   );
@@ -556,7 +653,8 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
   // no namespace — it would fire memory.* reads the token cannot make against a namespace
   // that holds no memories. One empty state, one place, says what the namespace is and
   // where its data lives.
-  if (needsMemoryNamespace(view) && !isMemoryNamespace(namespace, mine)) {
+  // The Library still mounts: on such a namespace it reads only the collections it lists.
+  if (needsMemoryNamespace(view) && view !== "knowledge" && !isMemoryNamespace(namespace, mine)) {
     return <MemoryScopeMissing view={view} />;
   }
   switch (view) {
@@ -598,8 +696,8 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
       return <Spending />; // file unchanged, just relabelled
     case "admin:agents":
       return <Agents />;
-    case "admin:collections":
-      return <Collections />;
+    case "assistant":
+      return <Assistant />;
     case "admin:users":
       return <AdminUsersView />;
     case "admin:settings":

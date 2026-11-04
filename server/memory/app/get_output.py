@@ -58,6 +58,8 @@ def row_output(
         verified_by=row.verified_by,
         actor=row.actor,
         source_class=row.source_class,
+        source_trace=row.source_trace,
+        source_resource_id=row.source_resource_id,
         **_lock.lock_state(row),
         verified_at=row.verified_at,
         verification=_trust.verification_state(row.verified_by, row.verified_sha256, sha),

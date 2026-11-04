@@ -526,18 +526,21 @@ Resolve one duplicate pair.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `canonical_key` | `str` | required | The key the duplicate points at; both keys must have a live row (else 404). |
-| `duplicate_key` | `str` | required | The key whose row is marked `duplicate`. |
+| `canonical_id` | `str` | required | The cluster's `canonical_id` from memory.dedup_list; must be a live row here (else 404). |
+| `duplicate_id` | `str` | required | A `duplicates[].memory_id` of that cluster, marked duplicate of `canonical_id` (else 404). |
 | `decision` | `Literal['keep_canonical', 'keep_duplicate', 'keep_both']` | required | Which side stays live; see the class docstring for each value. |
-| `confirm_canonical_key` | `str` | required | Must equal `canonical_key`, else 400 CONFIRM_CANONICAL_KEY_MISMATCH. |
+| `confirm_canonical_key` | `str` | required | Must equal the canonical row's key, else 400 CONFIRM_CANONICAL_KEY_MISMATCH. |
+| `canonical_key` | `str` | `''` | Removed, as a key does not name one row: accepted, unused and named in `ignored_args`. |
+| `duplicate_key` | `str` | `''` | Removed, as a key does not name one row: accepted, unused and named in `ignored_args`. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `canonical_key` | `str` | The canonical key, echoed. |
-| `duplicate_key` | `str` | The duplicate key, echoed. |
+| `canonical_key` | `str` | The canonical row's key. |
+| `duplicate_key` | `str` | The duplicate row's key. |
 | `decision` | `str` | The decision applied, echoed. |
 | `canonical_tombstoned` | `bool` | True when `keep_duplicate` tombstoned the canonical row. |
 | `duplicate_tombstoned` | `bool` | True when `keep_canonical` tombstoned the duplicate row. |
+| `ignored_args` | `list[str]` | Request fields the server did not apply: unknown keys and the removed key fields. |
 
 ## `memory.delete`
 
@@ -810,7 +813,7 @@ What Loom knows about ONE file, shaped for the moment before an edit: memories w
 | `path` | `str` | required | Repo-relative path ("src/Storages/MergeTreeData.cpp") or bare filename. |
 | `tags` | `list[str]` | *(computed)* | Optional tag filter (any-of), e.g. ["project:loom"] under the plugin's tag-scoped project mode. |
 | `top_k` | `int` | `8` | At most this many rows, across every namespace read. |
-| `token_budget` | `int` | `300` | Cap on the rendered block, which its header, removal footer and "… more" line can exceed; the hook injects `rendered` verbatim. |
+| `token_budget` | `int` | `300` | Cap on the rendered block's rows other than decisions and constraints, which print whole outside it; the hook injects `rendered` verbatim. |
 | `include_conflicted` | `bool` | `True` | Conflicted rows are still live facts a reader should see; duplicates, superseded and rejected rows are not. |
 | `extra_namespaces` | `list[str]` | *(computed)* | The repository's primary code namespace (its team file rules and design decisions), read beside `namespace`. |
 
@@ -819,9 +822,9 @@ What Loom knows about ONE file, shaped for the moment before an edit: memories w
 | `path` | `str` | The path matched, normalised to repo-relative form. |
 | `total` | `int` | Number of `hits` returned (after the `top_k` cut). |
 | `hits` | `list[_MemoryForFileHit]` | Matching rows: `constraint`-tagged first, then pinned, then by confidence, then newest; a row the conflict check linked to an older one of its namespace is placed above it (two typed decisions keep their order). |
-| `rendered` | `str` | Prompt-ready block, cut at token_budget. |
+| `rendered` | `str` | Prompt-ready block: decisions and constraints whole, the other rows cut at token_budget. |
 | `tokens_estimate` | `int` | Size of `rendered` at 4 chars per token; 0 when it is empty. |
-| `truncated` | `bool` | True when `token_budget` cut rows from `rendered`; `hits` still lists them. |
+| `truncated` | `bool` | True when `token_budget` or the decision ceiling left rows out of `rendered`; `hits` still lists them. |
 
 ## `memory.get`
 
@@ -866,6 +869,8 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `pinned` | `bool` | True when the row was saved with `memory.pin`: a write that does not pin never replaces it (409 PINNED_CONFLICT). |
 | `actor` | `str` | Who wrote the live version (`human:<subject>` / `process:<subject>`) and how the content entered memory (asserted \| extracted \| observed \| derived \| imported \| external). |
 | `source_class` | `str` | How the content entered memory: asserted \| extracted \| observed \| derived \| imported \| external; '' when not found. |
+| `source_trace` | `str` | The writer's provenance pointer, e.g. "conversation:<thread_id>"; '' when none. |
+| `source_resource_id` | `str` | The resource the fact was lifted from (memory.provenance cites it); '' when none. |
 | `agent` | `str` | Writer agent of the resolved row. |
 | `user_id` | `str` | The resolved row's user and session: a write back to this row (restore, verify) names them, since a key repeats across users and sessions. |
 | `session_id` | `str` | The session or conversation the row belongs to; `'-'` for none. |
@@ -1733,8 +1738,8 @@ Mark a memory as explicitly rejected (extractor / user review decided the candid
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `rejected` | `bool` | Always True: the status update is issued whether or not a row matched. |
-| `rejected_at` | `datetime \| None` | The server time the update was issued. |
+| `rejected` | `bool` | Always True, also when no live row matched (nothing is written then). |
+| `rejected_at` | `datetime \| None` | The server time of the reject. |
 
 ## `memory.related`
 

@@ -280,15 +280,17 @@ async def search_sections(
     if isinstance(know_result, Exception):
         payload["knowledge"] = {"error": _leg_error(know_result), "results": []}
     else:
+        know = know_result.model_dump()
 
         async def widen(k: int) -> list[dict[str, Any]]:
             wider = await knowledge_with_repo_docs(
                 know_input.model_copy(update={"top_k": k}), repo_namespace=repo_namespace
             )
+            # The served hits are the wider search's; so is the reranker that ordered them.
+            know["reranked_by"] = wider.reranked_by
             results: list[dict[str, Any]] = wider.model_dump()["results"]
             return results
 
-        know = know_result.model_dump()
         # Another bot's promoted rule is not a rule about this agent.
         know["results"] = await served_hits(
             know["results"], widen, lambda h: h["tags"], request_rule_agent(agent), top_k

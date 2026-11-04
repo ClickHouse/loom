@@ -247,6 +247,12 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "sdk_example",
     ),
+    "knowledge.source.add": ("plugin_hook",),
+    "knowledge.source.check": ("plugin_hook",),
+    "knowledge.source.list": ("plugin_hook",),
+    "knowledge.source.remove": ("plugin_hook",),
+    "knowledge.source.rotate": ("plugin_hook",),
+    "knowledge.source.sync_now": ("plugin_hook",),
     "knowledge.synthesize": ("sdk_method",),
     "knowledge.update_metadata": ("plugin_hook",),
     "knowledge.upsert": (
@@ -265,10 +271,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "memory.aggregate": ("sdk_method",),
     "memory.apply": ("sdk_method",),
-    "memory.ask": (
-        "sdk_method",
-        "plugin_hook",
-    ),
+    "memory.ask": ("sdk_method",),
     "memory.assign_category": ("sdk_method",),
     "memory.auto_retirements": ("plugin_hook",),
     "memory.bulk_get": (
@@ -314,6 +317,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "plugin_hook",
     ),
     "memory.import_curated": ("plugin_hook",),
+    "memory.inspect": ("plugin_hook",),
     "memory.lineage": (
         "sdk_method",
         "plugin_hook",
@@ -412,6 +416,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "namespace.guide_get": ("plugin_hook",),
     "namespace.guide_set": ("plugin_hook",),
+    "namespace.inventory": ("plugin_hook",),
     "namespace.join": ("plugin_hook",),
     "namespace.leave": ("plugin_hook",),
     "namespace.list": ("sdk_method",),
@@ -429,6 +434,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "plugin_hook",
     ),
+    "namespace.tune": ("plugin_hook",),
     "namespace.validate": (
         "sdk_method",
         "plugin_hook",

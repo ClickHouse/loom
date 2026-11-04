@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Smoke the released Compose/installer path in an isolated, disposable stack.
 
-    python scripts/gates/docker_quickstart_smoke.py --image loom:docker-smoke
+    python scripts/gates/docker_quickstart_smoke.py --image loom:docker-smoke \
+        --extractor-image loom-extractor:docker-smoke
 
 Only this run's generated Compose project and volumes are removed on exit.
 The script uses stdlib only and can run on a fresh CI runner without a Loom venv.
@@ -92,7 +93,7 @@ def latest_release() -> str:
     ).stdout.strip()
 
 
-def smoke(image: str, clickhouse_image: str) -> None:
+def smoke(image: str, extractor_image: str, clickhouse_image: str) -> None:
     with tempfile.TemporaryDirectory(prefix="loom-docker-smoke-") as temp:
         root = Path(temp)
         archive, checksum = build("smoke", root / "bundle", clickhouse_image)
@@ -109,9 +110,17 @@ def smoke(image: str, clickhouse_image: str) -> None:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
         repository, tag = image.rsplit(":", 1)
+        extractor_repository, extractor_tag = extractor_image.rsplit(":", 1)
+        # compose.yaml runs both images at LOOM_VERSION.
+        assert extractor_tag == tag, f"{extractor_image} is not tagged {tag}, as {image} is"
         update_env(
             stack / ".env",
-            {"LOOM_IMAGE_REPOSITORY": repository, "LOOM_VERSION": tag, "LOOM_PORT": str(port)},
+            {
+                "LOOM_IMAGE_REPOSITORY": repository,
+                "LOOM_EXTRACTOR_IMAGE_REPOSITORY": extractor_repository,
+                "LOOM_VERSION": tag,
+                "LOOM_PORT": str(port),
+            },
         )
         compose = [
             "docker",
@@ -144,6 +153,36 @@ def smoke(image: str, clickhouse_image: str) -> None:
             )
             saved = request(base, "/v1/memory.get", {**identity, "memory_key": "docker/smoke"})
             assert saved["found"] and saved["value"] == "Docker memory persists", saved
+            extractor = (ROOT / "scripts/gates/docker_extractor_smoke.py").read_text()
+            run(*compose, "exec", "-T", "loom", "python", "-", input=extractor, text=True)
+            # The service's network is internal: no route out. Its network does hold
+            # the server, so each extraction runs under a filter that makes no socket:
+            # applied here as a child applies it, it refuses even loom:7777.
+            probe = (
+                "import errno, socket, sys\n"
+                "address = socket.gethostbyname(sys.argv[2])  # DNS needs a socket too\n"
+                "if sys.argv[1] == 'filtered':\n"
+                "    from loom_extractor.child import no_new_privileges, no_sockets\n"
+                "    no_new_privileges(); no_sockets()\n"
+                "try:\n"
+                "    socket.create_connection((address, int(sys.argv[3])), timeout=5)\n"
+                "except OSError as e:\n"
+                "    print(errno.errorcode.get(e.errno, 'timeout'))\n"
+                "else:\n"
+                "    print('connected')\n"
+            )
+            for mode, host, port, want in (
+                ("plain", "1.1.1.1", "443", {"ENETUNREACH", "EHOSTUNREACH", "timeout"}),
+                ("filtered", "loom", "7777", {"EPERM"}),
+            ):
+                reach = subprocess.run(
+                    [*compose, "exec", "-T", "extractor", "python", "-c", probe, mode, host, port],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                got = reach.stdout.strip()
+                assert got in want, f"the extractor's {mode} connection to {host}:{port}: {got}"
             code = (ROOT / "scripts/gates/docker_code_smoke.py").read_text()
             run(*compose, "exec", "-T", "loom", "python", "-", input=code, text=True)
             run(*compose, "restart", "loom")
@@ -173,7 +212,7 @@ def smoke(image: str, clickhouse_image: str) -> None:
 
             smoke_providers(base, compose)
             print(
-                "PASS Docker quickstart: healthy, dashboard, memory, "
+                "PASS Docker quickstart: healthy, dashboard, memory, extractor, "
                 "compiler indexing, provider rebuild/recovery, restart persistence, "
                 "environment update/recreation"
             )
@@ -188,7 +227,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True, help="A built or published image repository:tag")
     parser.add_argument(
+        "--extractor-image", required=True, help="the extractor image, tagged as --image is"
+    )
+    parser.add_argument(
         "--clickhouse-image", help="the release the bundle names; default: the latest, resolved now"
     )
     args = parser.parse_args()
-    smoke(args.image, args.clickhouse_image or latest_release())
+    smoke(args.image, args.extractor_image, args.clickhouse_image or latest_release())

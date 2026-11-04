@@ -79,7 +79,10 @@ async def test_path_and_basename_are_bound_and_both_shapes_are_matched(
     # the attestation columns and the cut flag the verification state is derived from
     for column in ("verified_by", "verified_sha256", "content_sha256"):
         assert column in ch.sql
-    assert f"value_len > {mff._VALUE_BYTES} AS value_truncated" in ch.sql
+    assert f"value_len > {mff._READ_BYTES} AS value_truncated" in ch.sql
+    # a decision or constraint is read up to the ceiling, every other row up to 600 bytes
+    assert ch.params["whole_bytes"] == 1500 * mff._CHARS_PER_TOKEN * 12
+    assert "if((memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))" in ch.sql
 
 
 @pytest.mark.asyncio
@@ -99,7 +102,7 @@ async def test_hits_carry_their_matched_files_and_render_within_budget(
     ch = _CH(rows)
     monkeypatch.setattr(mff, "get_client", lambda: ch)
     out = await mff.handle_memory_for_file(
-        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", token_budget=90)
+        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", token_budget=60)
     )
     assert out.total == 3
     assert out.hits[0].matched_files == ["src/a.cpp"]
@@ -109,7 +112,9 @@ async def test_hits_carry_their_matched_files_and_render_within_budget(
     assert "- never_allocate_here [constraint] (pinned): Do not call allocate()" in out.rendered
     assert out.truncated is True
     assert 'more; memory.for_file(path="src/a.cpp") lists them.' in out.rendered
-    assert out.tokens_estimate <= 90
+    # the constraint prints outside the budget; the other rows fit inside it
+    constraint = out.rendered.splitlines()[1]
+    assert len(out.rendered) - len(constraint) - 1 <= 60 * mff._CHARS_PER_TOKEN
     assert "- third: Third fact about the file." in out.rendered
     # The hit carries the stored value whole; only the rendered block is cut.
     assert out.hits[1].value == "x" * 900
@@ -237,10 +242,16 @@ def test_a_team_decision_is_headed_decision_and_names_its_source() -> None:
     )
 
 
-def test_a_decisions_source_survives_the_value_cap() -> None:
-    line = _lines([_decision("design/long", "z" * 900)])[1]
-    assert f"… — source: {_SOURCE} [id: design/long]" in line
-    assert line.count("z") == mff._LINE_CHARS - 1
+def test_a_long_decision_prints_whole_with_its_source() -> None:
+    statement = "Spill to disk. Decided " + "z" * 900 + " because memory is bounded. Rejected: a."
+    line = _lines([_decision("design/long", statement)])[1]
+    assert line.endswith(f": {statement} — source: {_SOURCE} [id: design/long]")
+    assert "…" not in line
+
+
+def test_a_long_constraint_prints_whole() -> None:
+    rule = _row("rules/r", json.dumps("Keep " + "q" * 500 + "."), tags=["constraint"])
+    assert _lines([rule])[1] == "- rules/r [constraint]: Keep " + "q" * 500 + "."
 
 
 def test_a_decision_without_a_source_has_no_suffix() -> None:
@@ -248,16 +259,25 @@ def test_a_decision_without_a_source_has_no_suffix() -> None:
     assert line.endswith("Decided X because Y. [id: design/bare]") and "source:" not in line
 
 
-def test_an_unpinned_decision_is_unconfirmed_in_either_namespace() -> None:
+def test_an_unpinned_decision_has_no_status_note_in_either_namespace() -> None:
     team, own = _lines(
         [_decision("design/a", pinned=False), _decision("design/b", pinned=0, namespace="me")]
     )[1:3]
-    assert team.startswith("- Decision (by alice, 3 days ago) (unconfirmed): ")
-    assert own == f"- design/b [decision] (unconfirmed): Decided X because Y. — source: {_SOURCE}"
+    assert team.startswith("- Decision (by alice, 3 days ago): ")
+    assert own == f"- design/b [decision]: Decided X because Y. — source: {_SOURCE}"
+
+
+def test_an_extracted_decision_is_served_as_it_is() -> None:
+    # What `loom decisions extract` writes: unpinned, unattested, by its own agent.
+    row = _decision("design/x", pinned=False, agent="loom-decisions", actor="process:cli:decisions")
+    assert _lines([row])[1] == (
+        f"- Decision (by cli:decisions, 3 days ago): Decided X because Y. — source: {_SOURCE} "
+        "[id: design/x]"
+    )
 
 
 def test_a_row_that_is_not_a_decision_gets_no_decision_marks() -> None:
-    # No head, source or (unconfirmed); its value is printed as text like every row's.
+    # No head or source; its value is printed as text like every row's.
     rule = _decision("rules/r", "Keep 64.", memory_type="semantic", tags=["constraint"])
     note = _row("note", json.dumps("Mine."), source_resource_id=_SOURCE, namespace="me")
     assert _lines([rule, note])[1:3] == [
@@ -266,22 +286,209 @@ def test_a_row_that_is_not_a_decision_gets_no_decision_marks() -> None:
     ]
 
 
-def test_decision_lines_stay_inside_the_token_budget() -> None:
-    hits = [_decision(f"design/{i}", "w" * 300) for i in range(6)]
-    text, _, truncated = mff.render_block("src/a.cpp", hits, 200, home="me", now=_NOW)
-    rows = [ln for ln in text.splitlines() if ln.startswith("- Decision")]
-    assert truncated is True and 0 < len(rows) < len(hits)
-    # a row that does not fit is left out whole, never printed without its source
-    assert all(
-        ln.endswith(f"source: {_SOURCE} [id: {h['memory_key']}]")
-        for ln, h in zip(rows, hits[: len(rows)], strict=True)
+def test_decisions_do_not_count_against_the_token_budget() -> None:
+    decisions = [_decision(f"design/{i}", "w" * 300) for i in range(3)]
+    notes = [_row(f"note/{i}", json.dumps("n" * 150), namespace="me") for i in range(4)]
+    text, _, truncated = mff.render_block("src/a.cpp", decisions + notes, 100, home="me", now=_NOW)
+    lines = text.splitlines()
+    # every decision prints whole, the notes take the budget, and the rest are counted
+    assert all(f"[id: design/{i}]" in text for i in range(3))
+    budgeted = [ln for ln in lines if not ln.startswith("- Decision")]
+    assert truncated is True and len(budgeted) - 3 < len(notes)
+    assert "- … " in lines[-2] and "lists them." in lines[-2]
+    assert sum(len(ln) + 1 for ln in budgeted) - 1 <= 100 * mff._CHARS_PER_TOKEN
+
+
+def test_decisions_past_the_ceiling_are_left_out_and_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 250)
+    hits = [_decision(f"design/{i}", "w" * 300) for i in range(5)]
+    own = _decision("design/own", "w" * 300, namespace="me")
+    text, _, truncated = mff.render_block("src/a.cpp", [*hits, own], 300, home="me", now=_NOW)
+    lines = text.splitlines()
+    shown = [ln for ln in lines if ln.startswith("- Decision")]
+    assert truncated is True and len(shown) == 2
+    assert sum(len(ln) + 1 for ln in shown) <= 250 * mff._CHARS_PER_TOKEN
+    assert lines[-2] == (
+        "- … 4 more decisions or constraints left out to keep this block short; memory.get on "
+        'the key reads each, or loom_search: design/2 (namespace "code-repo"), design/3 '
+        '(namespace "code-repo"), design/4 (namespace "code-repo"), design/own.'
     )
-    # the "… more" line and the removal footer included, the block fits the budget
-    assert text.splitlines()[-2].startswith("- … ")
-    assert len(text) <= 200 * mff._CHARS_PER_TOKEN
 
 
-def test_a_long_decision_and_a_constraint_fit_the_default_budget() -> None:
+@pytest.mark.asyncio
+async def test_the_ceiling_is_read_from_its_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_for_file_whole_tokens", 100)
+    ch = _CH([_decision(f"design/{i}", "w" * 200, namespace=None) for i in range(2)])
+    monkeypatch.setattr(mff, "get_client", lambda: ch)
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
+    )
+    # the read limit and the render share the setting: one 200-character decision fits
+    assert ch.params["whole_bytes"] == 400 * 12
+    assert out.truncated is True and out.rendered.splitlines()[-1].endswith(": design/1.")
+
+
+class _CuttingCH(_CH):
+    """Applies the select's per-row read limit as ClickHouse would, on the stored bytes."""
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+        await super().query_all(sql, params)
+        out = []
+        for r in self.rows:
+            whole = mff._is_whole(r)
+            limit = self.params["whole_bytes"] if whole else mff._VALUE_BYTES
+            stored = r["value"].encode()
+            out.append(
+                r | {"value": stored[:limit].decode(), "value_truncated": len(stored) > limit}
+            )
+        return out
+
+
+@pytest.mark.asyncio
+async def test_an_escaped_constraint_under_the_ceiling_prints_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    # 300 characters, stored as 1,800 bytes of escapes: past the ceiling's 400 characters
+    # in bytes, inside it as printed.
+    monkeypatch.setattr(settings, "memory_for_file_whole_tokens", 100)
+    text = "决" * 300
+    rule = _row("rules/zh", json.dumps(text), tags=["constraint"])
+    assert len(rule["value"]) > 100 * mff._CHARS_PER_TOKEN
+    monkeypatch.setattr(mff, "get_client", lambda: _CuttingCH([rule]))
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
+    )
+    assert out.truncated is False
+    assert out.rendered.splitlines()[1] == f"- rules/zh [constraint]: {text}"
+
+
+@pytest.mark.asyncio
+async def test_an_emoji_constraint_under_the_ceiling_prints_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    # 300 emoji, each an escaped surrogate pair of 12 stored bytes.
+    monkeypatch.setattr(settings, "memory_for_file_whole_tokens", 100)
+    text = "😀" * 300
+    rule = _row("rules/emoji", json.dumps(text), tags=["constraint"])
+    assert len(rule["value"]) > 300 * 6 * 1.9
+    monkeypatch.setattr(mff, "get_client", lambda: _CuttingCH([rule]))
+    out = await mff.handle_memory_for_file(
+        MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
+    )
+    assert out.truncated is False
+    assert out.rendered.splitlines()[1] == f"- rules/emoji [constraint]: {text}"
+
+
+def test_a_more_line_from_a_left_out_constraint_fits_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 50)
+    # The notes alone fill the budget exactly; the constraint left out at the ceiling takes
+    # the older note with it, so the "… more" line it adds must fit too.
+    older = _row("notes/old", json.dumps("Keep 32."), namespace="me")
+    newer = _superseding("rules/new", older, "n" * 400, "me", tags=["constraint"])
+    header = "Loom: 3 memories anchored to src/a.cpp — read before editing:"
+    used = len(header) + len("- notes/old: Keep 32.") + 1
+    filler = _row(
+        "notes/f", json.dumps("f" * (240 - used - 1 - len("- notes/f: "))), namespace="me"
+    )
+    text, _, truncated = mff.render_block(
+        "src/a.cpp", [newer, older, filler], 60, home="me", now=_NOW
+    )
+    lines = text.splitlines()
+    assert truncated is True and lines[0] == header
+    budgeted = "\n".join(ln for ln in lines if "decision or constraint" not in ln)
+    assert len(budgeted) <= 60 * mff._CHARS_PER_TOKEN
+    assert any(ln.startswith("- … ") and "lists them" in ln for ln in lines)
+
+
+def test_notes_that_fit_exactly_print_beside_a_constraint_left_out_at_the_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 50)
+    # The constraint supersedes nothing, so no "… more" line can appear and none is reserved.
+    rule = _row("rules/long", json.dumps("n" * 400), tags=["constraint"], namespace="me")
+    header = "Loom: 2 memories anchored to src/a.cpp — read before editing:"
+    size = 240 - len(header) - 1 - len("- notes/f: ")
+    note = _row("notes/f", json.dumps("f" * size), namespace="me")
+    text, _, truncated = mff.render_block("src/a.cpp", [rule, note], 60, home="me", now=_NOW)
+    lines = text.splitlines()
+    assert truncated is True and lines[1] == "- notes/f: " + "f" * size
+    assert len("\n".join(lines[:2])) == 60 * mff._CHARS_PER_TOKEN
+    assert lines[2].endswith("loom_search: rules/long.")
+
+
+def test_a_left_out_constraint_takes_the_older_row_it_supersedes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 50)
+    older = _row("notes/old", json.dumps("Keep 32."), namespace="me")
+    newer = _superseding("rules/new", older, "n" * 400, "me", tags=["constraint"])
+    text, _, truncated = mff.render_block("src/a.cpp", [newer, older], 300, home="me", now=_NOW)
+    lines = text.splitlines()
+    assert truncated is True and "Keep 32." not in text
+    # the older row is counted, never named as one to read
+    assert lines[-2] == '- … 1 more; memory.for_file(path="src/a.cpp") lists them.'
+    assert lines[-1].endswith("loom_search: rules/new.")
+
+
+def test_a_left_out_budgeted_row_takes_the_older_constraint_it_supersedes() -> None:
+    older = _row("rules/old", json.dumps("Keep 32."), namespace="me", tags=["constraint"])
+    newer = _superseding("notes/new", older, "n" * 400, "me")
+    text, _, truncated = mff.render_block("src/a.cpp", [newer, older], 60, home="me", now=_NOW)
+    lines = text.splitlines()
+    assert truncated is True and "Keep 32." not in text and "rules/old" not in text
+    assert lines[-1] == '- … 2 more; memory.for_file(path="src/a.cpp") lists them.'
+
+
+def test_the_left_out_line_names_five_keys_then_counts_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 50)
+    hits = [_decision(f"design/{i}", "w" * 300, namespace="me") for i in range(8)]
+    text, _, _ = mff.render_block("src/a.cpp", hits, 300, home="me", now=_NOW)
+    assert text.splitlines()[-1].endswith(
+        "loom_search: design/0, design/1, design/2, design/3, design/4 and 3 more."
+    )
+
+
+def test_a_long_key_is_cut_on_the_left_out_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 50)
+    key = "design/" + "k" * 300
+    hits = [_decision(key, "w" * 300, namespace="me")]
+    text, _, _ = mff.render_block("src/a.cpp", hits, 300, home="me", now=_NOW)
+    named = text.splitlines()[-1].split("loom_search: ", 1)[1]
+    assert named == key[: mff._NAMED_KEY_CHARS - 1] + "…."
+
+
+def test_a_decision_past_the_ceiling_leaves_room_for_a_later_one_that_fits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mff.settings, "memory_for_file_whole_tokens", 100)
+    long = _decision("design/long", "w" * 600, namespace="me")
+    short = _decision("design/short", namespace="me")
+    text, _, _ = mff.render_block("src/a.cpp", [long, short], 300, home="me", now=_NOW)
+    assert "- design/short [decision] (pinned): Decided X because Y." in text
+    assert text.splitlines()[-1].endswith("loom_search: design/long.")
+
+
+def test_a_decision_cut_at_the_read_is_left_out_and_named() -> None:
+    # Longer than the ceiling: it cannot print whole, and the rows after it still print.
+    cut = _decision("design/huge", value_truncated=True) | {"value": json.dumps("h" * 80)[:40]}
+    text, _, truncated = mff.render_block(
+        "src/a.cpp", [cut, _decision("design/b")], 300, home="me", now=_NOW
+    )
+    assert truncated is True and "[id: design/b]" in text and "hhh" not in text
+    assert text.splitlines()[-2].endswith('design/huge (namespace "code-repo").')
+
+
+def test_a_long_decision_and_a_constraint_print_under_the_default_budget() -> None:
     source = "knowledge:design-docs/" + "s" * 300
     hits = [
         _row("rules/r", "Keep 64 buckets.", tags=["constraint"], namespace="code-repo"),
@@ -311,13 +518,13 @@ def test_a_source_with_a_line_break_stays_on_its_line() -> None:
 
 
 def test_a_row_too_long_for_the_budget_does_not_hide_the_rows_after_it() -> None:
-    long = _decision("design/long", source_resource_id="knowledge:d/" + "x" * 1500)
+    long = _row("notes/long", json.dumps("x" * 200), namespace="me")
     short = _row("rules/short", json.dumps("Keep 64."), namespace="me")
-    text, tokens, truncated = mff.render_block("src/a.cpp", [long, short], 300, home="me", now=_NOW)
+    text, tokens, truncated = mff.render_block("src/a.cpp", [long, short], 60, home="me", now=_NOW)
     lines = text.splitlines()
-    assert truncated is True and tokens <= 300
-    assert "- rules/short: Keep 64." in lines and "design/long" not in text
-    assert lines[-2].startswith("- … 1 more;")
+    assert truncated is True and tokens <= 60
+    assert "- rules/short: Keep 64." in lines and "notes/long" not in text
+    assert lines[-1].startswith("- … 1 more;")
 
 
 def test_a_block_that_fits_whole_reserves_nothing() -> None:
@@ -343,7 +550,7 @@ def _superseding(
 
 def test_a_superseded_row_is_left_out_with_the_row_that_supersedes_it() -> None:
     older = _row("rules/old", json.dumps("Keep 32."), namespace="code-repo")
-    newer = _superseding("rules/new", older, "n" * 200, "code-repo", tags=["constraint"])
+    newer = _superseding("rules/new", older, "n" * 200, "code-repo")
     text, tokens, truncated = mff.render_block(
         "src/a.cpp", [newer, older], 120, home="me", now=_NOW
     )
@@ -484,7 +691,7 @@ async def test_the_source_is_read_into_the_hit_and_the_block(
 def test_a_row_tagged_decision_is_a_decision() -> None:
     tagged = _decision("design/t", "v", memory_type="semantic", pinned=False)
     assert _lines([tagged])[1] == (
-        f"- Decision (by alice, 3 days ago) (unconfirmed): v — source: {_SOURCE} [id: design/t]"
+        f"- Decision (by alice, 3 days ago): v — source: {_SOURCE} [id: design/t]"
     )
 
 
@@ -544,24 +751,24 @@ def test_a_typed_decision_without_the_tag_is_marked_in_its_own_namespace() -> No
     assert _lines([own])[1] == "- design/own [decision] (pinned): v"
 
 
-def test_a_verified_decision_is_confirmed_and_a_stale_one_is_not() -> None:
+def test_an_attestation_adds_no_note_whether_current_or_stale() -> None:
     verified = _decision("design/v", pinned=False, verification="human")
     stale = _decision("design/s", pinned=False, verification="stale")
     first, second = _lines([verified, stale])[1:3]
     assert first.startswith("- Decision (by alice, 3 days ago): Decided X because Y.")
-    assert second.startswith("- Decision (by alice, 3 days ago) (unconfirmed): ")
+    assert second.startswith("- Decision (by alice, 3 days ago): Decided X because Y.")
 
 
-def test_an_unconfirmed_decision_whose_code_changed_notes_both() -> None:
+def test_an_unpinned_decision_whose_code_changed_notes_only_the_code() -> None:
     line = _lines([_decision("design/c", pinned=False, code_state="changed")])[1]
     assert line.startswith(
-        "- Decision (by alice, 3 days ago) (unconfirmed) (its code changed since it was "
+        "- Decision (by alice, 3 days ago) (its code changed since it was "
         "written: check before relying on it): Decided X because Y."
     )
 
 
 @pytest.mark.asyncio
-async def test_the_attestation_is_read_and_a_stale_one_leaves_a_decision_unconfirmed(
+async def test_the_attestation_is_read_into_the_hit_and_marks_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.core.hashing import sha256_value_json
@@ -594,7 +801,8 @@ async def test_the_attestation_is_read_and_a_stale_one_leaves_a_decision_unconfi
     )
     assert [h.verification for h in out.hits] == ["human", "stale"]
     first, second = out.rendered.splitlines()[1:3]
-    assert "(unconfirmed)" not in first and "(unconfirmed)" in second
+    assert first.startswith("- design/v [decision]: ")
+    assert second.startswith("- design/s [decision]: ")
 
 
 @pytest.mark.parametrize(
@@ -602,14 +810,17 @@ async def test_the_attestation_is_read_and_a_stale_one_leaves_a_decision_unconfi
     [('"short"', "human"), ('"' + "x" * 599 + '"', "stale")],
 )
 @pytest.mark.asyncio
-async def test_without_a_stored_hash_only_an_uncut_value_confirms(
+async def test_without_a_stored_hash_only_an_uncut_value_reads_attested(
     monkeypatch: pytest.MonkeyPatch, value: str, expected: str
 ) -> None:
     from server.core.hashing import sha256_value_json
 
+    # a note: a decision or constraint is read up to the ceiling, not cut at 600 bytes
     row = _decision(
-        "design/h",
+        "notes/h",
         value,
+        memory_type="semantic",
+        tags=[],
         pinned=0,
         namespace=None,
         verified_by="human:carol",
@@ -624,7 +835,6 @@ async def test_without_a_stored_hash_only_an_uncut_value_confirms(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
     )
     assert out.hits[0].verification == expected
-    assert ("(unconfirmed)" in out.rendered) is (expected == "stale")
 
 
 def test_a_stored_value_is_printed_as_text() -> None:
@@ -644,21 +854,21 @@ def test_a_decision_whose_outcome_failed_says_so() -> None:
 async def test_a_value_cut_by_the_select_is_printed_as_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The select cuts the stored JSON at 600 bytes and flags it; the handler's block decodes it.
+    # The select cuts a note's stored JSON at 600 bytes and flags it; the block decodes it.
     stored = json.dumps("Décidé " * 120)[:600]
-    ch = _CH([_decision("design/long", namespace=None, value_truncated=1) | {"value": stored}])
+    ch = _CH([_row("notes/long", stored, value_truncated=1)])
     monkeypatch.setattr(mff, "get_client", lambda: ch)
     out = await mff.handle_memory_for_file(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
     )
     line = out.rendered.splitlines()[1]
-    assert "(pinned): Décidé Décidé" in line and "\\u" not in line and '"' not in line
+    assert "- notes/long: Décidé Décidé" in line and "\\u" not in line and '"' not in line
 
 
 @pytest.mark.parametrize("cut", [0, 1, 6, 11])
 def test_a_cut_inside_a_surrogate_pair_leaves_no_half_of_it(cut: int) -> None:
     stored = json.dumps("a" * 10 + "😀" * 5)
-    hit = _decision("design/e", value_truncated=True) | {"value": stored[: len(stored) - 1 - cut]}
+    hit = _row("notes/e", stored[: len(stored) - 1 - cut], value_truncated=True, namespace="me")
     line = _lines([hit])[1]
     assert line.encode("utf-8")  # raises on a lone surrogate
     assert ": aaaaaaaaaa" in line
@@ -672,9 +882,9 @@ def test_a_lone_surrogate_in_a_whole_value_is_printed_encodable() -> None:
 
 def test_a_cut_value_shorter_than_the_line_still_ends_in_an_ellipsis() -> None:
     # Escaped CJK fills 600 stored bytes with about 99 characters, well under the line's cap.
-    cut = _decision("design/zh", value_truncated=True) | {"value": json.dumps("决定" * 100)[:600]}
-    body = _lines([cut])[1].split("(pinned): ", 1)[1]
-    assert body.startswith("决定") and body.split(" — source:")[0].endswith("…")
+    cut = _row("notes/zh", json.dumps("决定" * 100)[:600], value_truncated=True, namespace="me")
+    body = _lines([cut])[1].split("- notes/zh: ", 1)[1]
+    assert body.startswith("决定") and body.endswith("…")
 
 
 def test_a_rule_tagged_with_a_failure_is_not_a_failed_decision() -> None:
@@ -684,18 +894,16 @@ def test_a_rule_tagged_with_a_failure_is_not_a_failed_decision() -> None:
 
 def test_a_cut_object_value_prints_as_stored() -> None:
     raw = json.dumps({"k": "v" * 700})[:600]
-    hit = _decision("design/o", value_truncated=True) | {"value": raw}
+    hit = _row("notes/o", raw, value_truncated=True, namespace="me")
     assert raw[:40] in _lines([hit])[1]
 
 
-def test_a_decision_whose_source_changed_says_so_confirmed_or_not() -> None:
+def test_a_decision_whose_source_changed_says_so_pinned_or_not() -> None:
     tags = ["decision", "source-changed"]
     pinned = _lines([_decision("design/p", tags=tags)])[1]
-    assert pinned.startswith(
-        "- Decision (by alice, 3 days ago) (pinned) (source changed since confirmation): "
-    )
+    assert pinned.startswith("- Decision (by alice, 3 days ago) (pinned) (source changed): ")
     own = _lines([_decision("design/u", tags=tags, pinned=False, namespace="me")])[1]
-    assert own.startswith("- design/u [decision] (unconfirmed) (source changed): ")
+    assert own.startswith("- design/u [decision] (source changed): ")
     # A fact carrying the tag is no decision: nothing is added.
     fact = _row("fact", json.dumps("A plain fact."), tags=["source-changed"], namespace="me")
     assert "(source changed" not in _lines([fact])[1]
@@ -712,13 +920,13 @@ async def test_the_served_block_marks_a_decision_whose_source_changed(
     out = await mff.handle_memory_for_file(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", token_budget=300)
     )
-    assert "(unconfirmed) (source changed): Decided spill." in out.rendered
+    assert "- extracted [decision] (source changed): Decided spill." in out.rendered
 
 
-def test_an_attested_decision_whose_source_changed_reads_since_confirmation() -> None:
+def test_an_attested_decision_whose_source_changed_reads_source_changed() -> None:
     # `verification` as the handler derives it for an attestation binding the current value.
     hit = _decision(
         "design/a", pinned=False, tags=["decision", "source-changed"], verification="human"
     )
     line = _lines([hit])[1]
-    assert "(source changed since confirmation)" in line and "(unconfirmed)" not in line
+    assert line.startswith("- Decision (by alice, 3 days ago) (source changed): ")

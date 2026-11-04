@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { PasswordField } from "@clickhouse/click-ui/PasswordField";
@@ -9,14 +9,15 @@ import { Panel } from "../components/ui/Panel";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { selfSignup, setToken, loginWithPassword } from "../api";
 import { SIGN_IN_FROM } from "../lib/boot";
+import { goToSso } from "../lib/navigation";
 import { errorRequestId, humanizeError } from "../lib/format";
 import type { GateReason } from "../lib/state";
 import { Alert } from "../components/ui";
 
 interface TokenGateProps {
   onLogin: () => void;
-  /** Why the gate is showing: "expired" when a stored token was rejected by whoami;
-   *  null/undefined on a first visit. */
+  /** Why the gate is showing: "expired" when the server refused a sign-in session's stored
+   *  token, "ended" any other, "refused" one a sign-in link brought; null on a first visit. */
   reason?: GateReason;
 }
 
@@ -56,12 +57,37 @@ function rememberSignInStart(): void {
   }
 }
 
-/** Sends the browser to the identity provider; it comes back to `/me#token=…`. */
+// When the gate last started an SSO sign-in on its own in this tab, so a provider that
+// sends the browser straight back with a token the server refuses cannot loop.
+const SSO_RESUMED_AT = "loom_sso_resumed_v1";
+const SSO_RESUME_GAP_MS = 5 * 60 * 1000;
+
+/** Start one SSO sign-in without a click after an expired session; false when one was
+ *  started in the last few minutes (the button is shown instead). */
+export function resumeSsoOnce(now: number = Date.now()): boolean {
+  try {
+    const last = Number(sessionStorage.getItem(SSO_RESUMED_AT)) || 0;
+    if (now - last < SSO_RESUME_GAP_MS) return false;
+    sessionStorage.setItem(SSO_RESUMED_AT, String(now));
+  } catch {
+    return false; // no session storage: no loop guard, so no automatic sign-in
+  }
+  return true;
+}
+
+/** Sends the browser to the identity provider; it comes back to `/me#token=…`. After an
+ *  expired session (the gate shows only while the app boots) it goes there by itself, so a
+ *  person still signed in at the provider returns to the page they were on. */
 function SsoGate({ reason }: { reason?: GateReason }) {
+  useEffect(() => {
+    if (reason !== "expired" || !resumeSsoOnce()) return;
+    rememberSignInStart();
+    goToSso();
+  }, [reason]);
   return (
     <GateShell>
       <Panel className="space-y-4">
-        {reason === "expired" && <Alert role="status" state="neutral" text="Your session expired — sign in again." />}
+        <GateNotice reason={reason} />
         <a
           href="/oauth/sso"
           onClick={rememberSignInStart}
@@ -72,6 +98,15 @@ function SsoGate({ reason }: { reason?: GateReason }) {
       </Panel>
     </GateShell>
   );
+}
+
+/** Why the gate is showing, when it is not a first visit. */
+function GateNotice({ reason }: { reason?: GateReason }) {
+  if (reason === "expired" || reason === "ended")
+    return <Alert role="status" state="neutral" text="Your session ended — sign in again." />;
+  if (reason === "refused")
+    return <Alert role="status" state="neutral" text="The token this sign-in brought was refused — sign in again." />;
+  return null;
 }
 
 /** The sign-in page around either gate: the logo and its tagline. */
@@ -173,7 +208,7 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
   return (
     <GateShell>
       <Panel className="space-y-4">
-        {reason === "expired" && <Alert role="status" state="neutral" text="Your session expired — sign in again." />}
+        <GateNotice reason={reason} />
         <Tabs
           value={mode}
           onValueChange={(v) => {

@@ -218,7 +218,8 @@ matches only if it is listed.
   or while `LOOM_OPENAI_BASE_URL`, `LOOM_ANTHROPIC_BASE_URL`,
   `LOOM_EMBEDDING_BASE_URL`, `LOOM_INFERENCE_TOKEN_URL` or an entry of
   `LOOM_RERANK_ENDPOINTS_JSON` names another host, while the embedder is
-  Gemini's, or while `LOOM_CODE_SEARCH_RERANK_DEFAULT` is `builtin:cohere`.
+  Gemini's, or while `LOOM_CODE_SEARCH_RERANK_DEFAULT` or
+  `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT` is `builtin:cohere`.
   Both API roots count, the one for a provider you do not use included (their
   defaults are the providers' own APIs): a model named per request may be
   either provider's.

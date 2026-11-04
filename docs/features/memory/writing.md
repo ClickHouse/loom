@@ -57,9 +57,11 @@ The write succeeds whatever the shape. `advisories` names a shape recall cannot 
 | oversized      | The serialized value is longer than `LOOM_MEMORY_VALUE_ADVISORY_CHARS` (default 30,000). | Write the claim as the value and put the document in `knowledge.add`. |
 
 **Documents go to knowledge.** A value past a couple of kilobytes is usually a document.
-Long values are split into verbatim chunks (`chunks_written`), but a knowledge document
-is chunked on its headings and searched with its section. Store the document in
-[knowledge](../knowledge.md) and one short claim in memory.
+Long values are split into verbatim chunks (`chunks_written`): any value whose stored JSON
+runs past the 1,200-character excerpt it is embedded by, less its ` (#<key>)` suffix, which
+a non-ASCII text reaches at about 200 characters, since each such character is stored as a
+six-character escape. A knowledge document is chunked on its headings and searched with its
+section. Store the document in [knowledge](../knowledge.md) and one short claim in memory.
 
 **Size limits.** No fixed value cap. The request body is capped by `LOOM_MAX_REQUEST_BYTES`
 (32 MiB, 413 `PAYLOAD_TOO_LARGE`). A caller may set `char_limit` on a row (422
@@ -353,7 +355,22 @@ They answer predicate questions without parsing text.
   an `identity` field, an enum (`enum_values`), or constrained (`pattern`, `min_length`,
   `max_length`, `min_value`, `max_value`).
 - Identity fields derive the key when none is given (`key_source="identity"`), so two
-  writes of one entity land on one record.
+  writes of one entity land on one record. A name-like field (`name`, `title`, `label`,
+  `*_name`, `*_title`, `*_label`) keys on its words without case, a leading article or a
+  possessive; it drops accents and the other combining marks (the Japanese voicing mark,
+  the virama, Thai tone marks; Indic vowel signs stay), so `かぎ` and `かき` share a name key.
+  It is refused only when nothing is left once separators (spaces, `_`, `-`), combining
+  marks, a leading article and a possessive are dropped. Any other field keys on its
+  letters and digits a-z, 0-9 after case folding and compatibility decomposition with
+  accents stripped, so `INV-2024/001` and `inv 2024 001` agree. A value with none of those
+  (Cyrillic, CJK or Arabic text) keys on every letter, digit and combining mark it holds,
+  after NFKC normalisation and case folding. No mark is stripped there: Indic vowel signs,
+  Thai tone marks, the Japanese voicing mark and Arabic and Hebrew points tell words
+  apart, so `かぎ` and `かき` get two keys, as do a word written with and without its Arabic
+  vowel points. A value with any a-z or 0-9 after compatibility decomposition (`30 дней`,
+  `2024年度`, `№`, `℃`) keys on those characters alone, so two values that differ only in
+  their other characters share one key. Any other field with no letter or digit
+  (punctuation, symbols or marks alone) is refused with 400 `MISSING_IDENTITY_FIELD`.
 - Each field value carries a `state` (`value`, `unknown`, `rejected`, `absent`).
 - `memory.set_from_messages` with `record_schema` and `memory_key` extracts one record.
 
@@ -403,7 +420,7 @@ These writes send no event:
 - `memory.touch`, `memory.pin` and `memory.unpin`, `memory.lock` and `memory.unlock`,
   `memory.verify` and `memory.apply`
 - `memory.reject`, and the quarantine `memory.outcome` makes after repeated negative
-  outcomes. Both set the row's status to `rejected` in place, which takes it out of search:
+  outcomes. Both write the row again with status `rejected`, which takes it out of search:
   a receiver that mirrors what Loom serves reads the key again after one.
 - `memory.resolve_orphan_duplicates`, which re-activates rows
 - `memory.dedup_collapse`, which changes only the search mirror

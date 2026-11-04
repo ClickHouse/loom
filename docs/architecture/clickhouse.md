@@ -28,7 +28,7 @@ Retention is in [Partitioning and TTL](#partitioning-and-ttl).
 | Evidence and chunks          | `memory_evidence`, `memory_chunks`, `memory_chunk_sources`, `memory_belief_sources`, `session_summaries`, `derived_facts`                                                                                                                                                                              | `set_from_messages` projections, consolidation                                                                         |
 | Records and taxonomy         | `memory_records`, `memory_record_versions`, `memory_record_fields`, `memory_record_conflicts`, `memory_schemas`, `memory_schema_fields`, `categories`, `memory_categories`                                                                                                                             | `memory.record.*`, `namespace.*`, category assignment                                                                  |
 | Write-path state             | `memory_extraction_queue`, `memory_projection_failures`, `memory_drops`, `blacklist`, `blacklist_version`, `conflict_allowlist`, `learnings_queue`, `consolidation_runs`, `memory_ask_precedents`                                                                                                      | Deferred extraction, fail-open projections, `blacklist.*`, `conflicts.resolve`, `memory.consolidate`, `memory.ask`     |
-| Knowledge                    | `documents`, `document_blobs` (uploaded originals), `chunks`, `chunk_supersessions`, `chunk_term_freq`                                                                                                                                                                                                 | `knowledge.add`; `chunk_term_freq_mv`                                                                                  |
+| Knowledge                    | `documents`, `document_blobs` (uploaded originals), `chunks`, `chunk_supersessions`, `chunk_term_freq`                                                                                                                                                                                                 | `knowledge.add`; `chunk_term_freq_mv`, `chunk_context_term_freq_mv`                                                    |
 | Conversations                | `conversations`, `conversation_threads`, `conversation_embeddings`                                                                                                                                                                                                                                     | `conversation.*`; `conversation_titler`                                                                                |
 | Entity graph                 | `entity_edges`, `entity_degree`, `entity_triples`, `entity_edge_memories`, `entity_edge_rows`, `entity_triple_memories`, `entity_triple_rows`, `entity_vectors`, `entity_summaries`, `entity_canonical_map`, `entity_communities`, `operator_edges`                                                    | The `memory.set` after-write projection, `entity_extractor`, `entity_communities`; `entity_degree_mv`                  |
 | Code index                   | `code_files`, `code_chunks`, `code_symbols`, `code_edges`, `code_pr_history` and the other `code_*` tables                                                                                                                                                                                             | `code_ingest`, the `code_scip_*` workers, `code_pr_history`, `code_embed_recovery`, `code_summary`, `code_graph_stats` |
@@ -356,15 +356,17 @@ with `LOOM_TIERING_<TABLE>_WARM_DAYS` plus `LOOM_TIERING_WARM_VOLUME_NAME`. Per-
 `retention_days` or `warm_days` overrides become a `multiIf` in the same TTL expression
 (`server/storage/retention_overrides.py`). The worker leader applies them at boot and
 `retention_reconcile` keeps them in step, skipping unchanged tables because each
-`MODIFY TTL` is a mutation. Every window defaults to 0 (off).
+`MODIFY TTL` is a mutation. When the last window on a table is cleared, the same pass
+issues `ALTER TABLE … REMOVE TTL`; none of these tables has a schema TTL. Every window
+defaults to 0 (off).
 
 ### Merges and skip indexes
 
 A part count that keeps rising almost always means merges are failing. A skip index a
 merge cannot build fails every merge of that table until inserts get `TOO_MANY_PARTS`.
 Loom keeps such indexes out of merges with `exclude_materialize_skip_indexes_on_merge`
-(the text index `content_text` on `chunks`): inserted parts still build the index, merged
-parts do without it. The `clickhouse_parts` check of `ops.health`
+(the text indexes `content_text` and `context_text` on `chunks`): inserted parts still
+build the index, merged parts do without it. The `clickhouse_parts` check of `ops.health`
 (`_clickhouse_parts_check`) reads `system.part_log` for failed `MergeParts` events in the
 last quarter hour and reports the exception and this repair. For the same reason
 memory-content tables carry no rows TTL. The runbook is in
@@ -440,19 +442,19 @@ read it; the erasure saga deletes from it. A new `memory` column goes into
 
 ## Materialized views
 
-| View                                                                                                         | Kind                            | From → to                                             |
-| ------------------------------------------------------------------------------------------------------------ | ------------------------------- | ----------------------------------------------------- |
-| `memory_versions_mv`                                                                                         | insert-time                     | `memory` → `memory_versions`                          |
-| `memory_record_versions_mv`                                                                                  | insert-time                     | `memory_records` → `memory_record_versions`           |
-| `memory_usage_totals_mv`                                                                                     | insert-time                     | `memory_usage_events` → `memory_usage_totals`         |
-| `entity_degree_mv`                                                                                           | insert-time                     | `entity_edges` → `entity_degree`                      |
-| `session_brief_revisions_mv`                                                                                 | insert-time                     | `session_briefs` → `session_brief_revisions`          |
-| `chunk_term_freq_mv`, `code_term_freq_mv`, `code_doc_stats_mv`, `code_symbol_ids_mv`, `code_symbol_names_mv` | insert-time                     | Chunk and code-index statistics and lookups           |
-| `memory_term_freq_refresh`, `memory_doc_stats_refresh`                                                       | `REFRESH EVERY 1 MINUTE APPEND` | `memory_embeddings` → BM25 statistics                 |
-| `agent_cost_rollup_refresh`                                                                                  | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `agent_cost_rollup_daily`            |
-| `memory_exposure_breadth_hourly_refresh`                                                                     | `REFRESH EVERY 1 MINUTE APPEND` | `memory_exposures` → `memory_exposure_breadth_hourly` |
-| `subject_last_seen_refresh`                                                                                  | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `subject_last_seen`                  |
-| `loom_telemetry.sli_minute_refresh`                                                                          | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `loom_telemetry.sli_minute`          |
+| View                                                                                                                                       | Kind                            | From → to                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- | ----------------------------------------------------- |
+| `memory_versions_mv`                                                                                                                       | insert-time                     | `memory` → `memory_versions`                          |
+| `memory_record_versions_mv`                                                                                                                | insert-time                     | `memory_records` → `memory_record_versions`           |
+| `memory_usage_totals_mv`                                                                                                                   | insert-time                     | `memory_usage_events` → `memory_usage_totals`         |
+| `entity_degree_mv`                                                                                                                         | insert-time                     | `entity_edges` → `entity_degree`                      |
+| `session_brief_revisions_mv`                                                                                                               | insert-time                     | `session_briefs` → `session_brief_revisions`          |
+| `chunk_term_freq_mv`, `chunk_context_term_freq_mv`, `code_term_freq_mv`, `code_doc_stats_mv`, `code_symbol_ids_mv`, `code_symbol_names_mv` | insert-time                     | Chunk and code-index statistics and lookups           |
+| `memory_term_freq_refresh`, `memory_doc_stats_refresh`                                                                                     | `REFRESH EVERY 1 MINUTE APPEND` | `memory_embeddings` → BM25 statistics                 |
+| `agent_cost_rollup_refresh`                                                                                                                | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `agent_cost_rollup_daily`            |
+| `memory_exposure_breadth_hourly_refresh`                                                                                                   | `REFRESH EVERY 1 MINUTE APPEND` | `memory_exposures` → `memory_exposure_breadth_hourly` |
+| `subject_last_seen_refresh`                                                                                                                | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `subject_last_seen`                  |
+| `loom_telemetry.sli_minute_refresh`                                                                                                        | `REFRESH EVERY 1 MINUTE APPEND` | `agent_events` → `loom_telemetry.sli_minute`          |
 
 **Insert-time or refreshable.** An insert-time view writes one part per source insert. That
 suits a low-rate source or a target read back in the same request (`memory_versions`). A
@@ -504,11 +506,10 @@ flush never fails a request; a crash loses the queue.
 - **Fixed-length placeholders.** Rows awaiting an embedding store zero vectors with
   `embedding_dim = 0` (`server/core/vectors/placeholders.py`). Every vector leg filters
   `embedding_dim > 0`.
-- **No in-place updates on vector tables.** Write, fold and tombstone paths write new
-  versions; reinforcement lives in `memory_reinforcement`. One exception: `memory.reject`
-  (and negative-outcome escalation) quarantines a row with a lightweight `UPDATE` on
-  `memory` and `memory_embeddings` (`_quarantine_by_identity`); the patch-parts probe then
-  keeps codes-first reads off for that table until the patch merges.
+- **No in-place updates on vector tables.** Write, fold, reject and tombstone paths write
+  new versions; reinforcement lives in `memory_reinforcement`. A lightweight `UPDATE` on
+  `memory_embeddings` would leave a patch part, and the patch-parts probe keeps
+  codes-first reads off for the whole table until it merges.
 - **One model per row.** `embedding_model` is in the sort key, so a search compares only
   its own model's vectors. `loom reembed` regenerates vectors after a model change
   (`--in-database` uses `aiEmbed` on 26.7+).
@@ -602,10 +603,11 @@ primary-key ranges a read selects and resolves versions under `FINAL`.
 | Table         | Index                        | Indexed expression | Tokenizer         |
 | ------------- | ---------------------------- | ------------------ | ----------------- |
 | `chunks`      | `content_text`               | `content_lc`       | `splitByNonAlpha` |
+| `chunks`      | `context_text`               | `context_lc`       | `splitByNonAlpha` |
 | `code_chunks` | `idx_code_chunks_content_ng` | `lower(content)`   | `ngrams(3)`       |
 | `code_chunks` | `idx_code_chunks_lexemes`    | `lexemes`          | `splitByNonAlpha` |
 
-All three use `GRANULARITY 100000000`: one granule per part, a per-part posting list.
+All four use `GRANULARITY 100000000`: one granule per part, a per-part posting list.
 
 `memory_embeddings` and `memory_evidence` carry no text index: `hasAnyTokens` and
 `hasAllTokens` run on their lowercase columns after the key prefix narrows the read.
@@ -629,8 +631,8 @@ carried). It is visible to the next `FINAL` read, keeps prior versions in
 `memory_versions` and leaves `memory.restore` a window. Physical removal is for erasure
 with `purge=true` and runner state.
 
-- **Status flips and counter folds** on `loom.memory` (the usage fold's `evidence_count` /
-  `recall_count`, quarantine) use batched lightweight `UPDATE`: one statement per chunk of
+- **Counter folds** on `loom.memory` (the usage fold's `evidence_count` /
+  `recall_count`) use batched lightweight `UPDATE`: one statement per chunk of
   targets, with per-row values as parallel arrays through `transform()`
   (`server/memory/workers/usage_fold.py`). On ClickHouse Cloud each statement is a patch part and
   a Keeper entry, so cost is per statement. A pass is skipped while the table has too many
@@ -724,7 +726,10 @@ query hashes are unaffected.
 | Anything else       | `untagged:<module>.<function>` of the caller          |
 
 Request statements also send
-`query_id = "<request_id>:<n>"`. `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST=true` appends a
+`query_id = "<request_id>:<n>:<nonce>"`. `n` counts the request's statements and the
+nonce is drawn once per request, so two requests that carry the same caller id never
+send the same `query_id`. A carried insert prefixes it with `loom-carry/<process>/`.
+`LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST=true` appends a
 statement-shape hash and the first 200 characters. A new background loop calls
 `server.core.ch.set_query_tag(...)`; work scheduled from a request keeps the request's tag.
 
@@ -922,7 +927,7 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 - No expression is aliased with the name of a column its `WHERE` filters on.
 - Vector statements order by a bare ascending distance with one sort key and no `JOIN`,
   window or `LIMIT BY`; every vector leg filters `embedding_dim > 0`.
-- Vector tables are written as new versions, except the `memory.reject` quarantine flip.
+- Vector tables are written as new versions.
 - Every statement carries a `log_comment`, a class deadline and a pool slot.
 - `memory_versions` receives every `memory` row, and the column lists match.
 - No table that holds memory content has a schema TTL.

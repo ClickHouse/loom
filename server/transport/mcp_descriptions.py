@@ -482,7 +482,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "memories whose files[] facet names the path "
         "(repo-relative or bare filename both match). Rows tagged `constraint` "
         "come first, then pinned, then by confidence; `rendered` is a "
-        "prompt-ready block cut at token_budget. The Claude Code plugin calls "
+        "prompt-ready block: decisions and constraints whole, the other rows "
+        "cut at token_budget. The Claude Code plugin calls "
         "this from its PreToolUse hook on Edit/Write and injects `rendered` as "
         "additional context; call it yourself before changing a file you have "
         "not touched this session."
@@ -596,9 +597,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "an admin wants to review dedup queue."
     ),
     "memory.dedup_resolve": (
-        "Resolve a flagged dedup pair (merge, keep both, or tombstone "
-        "one). Call when the user reviews dedup queue entries and "
-        "decides on each."
+        "Resolve one pair from memory.dedup_list: pass its `canonical_id` "
+        "and a `duplicates[].memory_id` as `duplicate_id`; keep_canonical, "
+        "keep_duplicate or keep_both. Call when the user reviews dedup "
+        "queue entries and decides on each."
     ),
     "memory.dedup_collapse": (
         "Collapse every duplicate pair of the namespace onto its canonical "
@@ -1832,6 +1834,35 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "(key, memory_id, version, content_sha256); the calls the ledger files under `id` "
         "in the window; the guide revision and categories. An agent name records the "
         "writer, not a read boundary. `skipped` names sections not read, which are not empty."
+    ),
+    "namespace.tune": (
+        "Drafts of changes to the settings that create a namespace's memories, read-only: "
+        "extraction rules for the shapes the audit found, categories for much-used tags, "
+        "a guide naming the key layout. Each proposal has its real target, current and "
+        "proposed value, supporting rows (key, version, content_sha256) and a count of the "
+        "rows it must keep working for, the agents it affects and the write that would "
+        "apply it with its guard. Nothing is applied; show a proposal to the person to "
+        "approve, never apply it yourself."
+    ),
+    "knowledge.inspect": (
+        "A namespace's documents, read-only: live and deleted counts by format and source "
+        "scheme, retired versions, live chunks per embedding model and how many search can "
+        "serve; the newest documents with their chunks (searchable, unembedded, other "
+        "model, versions, sizes) and the decision rows citing them, split into decided and "
+        "proposed, each with confirmed, unconfirmed, source_changed and outcome_known; "
+        "findings on chunks (`kind` system_state: no chunks, no vector, "
+        "another model; usage_heuristic: two live versions); knowledge.ingest jobs by "
+        "state, sources with a job and no live document (a first ingest, or one after a "
+        "delete, queued or failed), and per listed document its "
+        "extraction coverage (unit, total, extracted, failed, lost) and its jobs (newest, "
+        "and the open one's ingestion_id for knowledge.ingest_status); ingest findings that "
+        "keep apart a backlog, an extractor unavailable, missing access and a job failed on "
+        "the server's side (system_state), "
+        "a file the extractor rejected (contract_violation) and an extraction that lost "
+        "structure (usage_heuristic), each with source samples and their job ids (a source a "
+        "later write or delete replaced is judged by none); "
+        "namespace.audit's document-shaped memory findings. `skipped` names sections not "
+        "read; their fields are null or empty, not zero."
     ),
     "namespace.inventory": (
         "What a namespace holds and who appears in it, read-only: live counts and "

@@ -882,11 +882,14 @@ async def test_dedup_resolve_announces_the_side_it_tombstones(
     from server.memory.api.models_graph import MemoryDedupResolveInput
     from server.memory.app import dedup
 
-    rows = {"m-canon": _memory_row("canon/key"), "m-dup": _memory_row("dup/key")}
-    ids = {"canon/key": "m-canon", "dup/key": "m-dup"}
-
-    async def find(org: str, namespace: str, key: str, **k: Any) -> Any:
-        return SimpleNamespace(memory_id=ids[key])
+    canon_id, dup_id = (
+        "11111111-1111-1111-1111-111111111111",
+        "33333333-3333-3333-3333-333333333333",
+    )
+    rows = {
+        canon_id: _memory_row("canon/key", memory_id=canon_id),
+        dup_id: _memory_row("dup/key", memory_id=dup_id, status="duplicate", duplicate_of=canon_id),
+    }
 
     async def get(memory_id: str, **k: Any) -> MemoryRow:
         return rows[memory_id]
@@ -897,7 +900,6 @@ async def test_dedup_resolve_announces_the_side_it_tombstones(
     async def clear(*a: Any, **k: Any) -> bool:
         return True
 
-    monkeypatch.setattr(memory_repo, "find_row_by_key_namespace", find)
     monkeypatch.setattr(memory_repo, "get_by_id", get)
     monkeypatch.setattr(memory_repo, "tombstone_by_id", tombstone)
     monkeypatch.setattr(memory_repo, "clear_duplicate_tag", clear)
@@ -905,8 +907,8 @@ async def test_dedup_resolve_announces_the_side_it_tombstones(
         MemoryDedupResolveInput(
             org="acme",
             namespace="chat",
-            canonical_key="canon/key",
-            duplicate_key="dup/key",
+            canonical_id=canon_id,
+            duplicate_id=dup_id,
             decision=decision,  # type: ignore[arg-type]
             confirm_canonical_key="canon/key",
         )
@@ -1046,7 +1048,7 @@ async def _run_saga(monkeypatch: pytest.MonkeyPatch, *, scope_type: str, value: 
         input=ErasureRequestInput(
             org="acme", scope_type=scope_type, scope_value=value, requester="t"
         ),
-        row={"id": "e1"},
+        row={"id": "e1", "actor": "human:t"},
         erasure_id="e1",
         requested_at=NOW,
         previously_completed=set(),

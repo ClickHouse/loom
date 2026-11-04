@@ -54,6 +54,41 @@ def test_empty_identity_is_rejected_not_repaired() -> None:
         canonical_record_key("invoice", {"invoice_number": None})
 
 
+def test_a_key_with_latin_letters_or_digits_is_unchanged() -> None:
+    # Pinned: a stored record is found again only under the key it was written with.
+    assert (
+        canonical_record_key(
+            "invoice", {"invoice_number": "INV-2024/001", "vendor_name": "The Vendor's Name"}
+        )
+        == "invoice:bef11f75f1b36a62"
+    )
+    assert canonical_value("scenario", "Выбор БД v2") == "v2", "the Latin form wins when it exists"
+    # The documented limit: any a-z or 0-9 is the whole key, whatever else the value says.
+    assert canonical_value("scenario", "30 дней") == canonical_value("scenario", "30 часов")
+
+
+def test_text_without_latin_letters_keys_on_its_own_script() -> None:
+    scenarios = ["Срок хранения журналов", "原始记录保留多久", "مدة الاحتفاظ بالسجلات", "किताब"]
+    keys = [canonical_record_key("decision", {"scenario": s}) for s in scenarios]
+    assert len(set(keys)) == len(scenarios), "each script gives its own key"
+    assert keys == [canonical_record_key("decision", {"scenario": s}) for s in scenarios]
+    assert canonical_value("scenario", "СРОК  хранения!") == canonical_value(
+        "scenario", "срок хранения"
+    ), "case, spacing and punctuation do not count"
+    assert canonical_value("scenario", "किताब") == "किताब", "an Indic vowel sign stays"
+    assert canonical_value("scenario", "보존") == "보존", "Hangul stays composed"
+    assert canonical_value("scenario", "原始记录") != canonical_value("scenario", "原始纪录")
+    for a, b in [("かぎ", "かき"), ("ไม่", "ไม้"), ("क्या", "कया"), ("كَتَبَ", "كتب")]:
+        assert canonical_value("scenario", a) != canonical_value("scenario", b), "a mark counts"
+
+
+def test_punctuation_alone_has_no_key() -> None:
+    assert canonical_value("scenario", "?! … —") == ""
+    assert canonical_value("scenario", "€$") == ""
+    with pytest.raises(ValueError):
+        canonical_record_key("decision", {"scenario": "?! … —"})
+
+
 # --- handler: a caller-less write lands on the derived key and supersedes ----
 
 
@@ -158,3 +193,24 @@ def test_caller_key_wins_and_missing_identity_is_rejected() -> None:
     assert ei.value.detail["code"] == "MISSING_IDENTITY_FIELD" and ei.value.detail["fields"] == [
         "vendor_name"
     ]
+
+
+def test_an_identity_value_of_punctuation_alone_is_a_missing_identity() -> None:
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as ei:
+        _write({"invoice_number": {"value": "X"}, "vendor_name": {"value": "  "}})
+    assert ei.value.status_code == 400 and ei.value.detail["fields"] == ["vendor_name"]
+    with pytest.raises(HTTPException) as ei:
+        _write({"invoice_number": {"value": "#/-"}, "vendor_name": {"value": "Y"}})
+    assert ei.value.detail["code"] == "MISSING_IDENTITY_FIELD"
+    assert ei.value.detail["fields"] == ["invoice_number"]
+    # A combining mark or a spacing vowel sign alone has no letter or digit to key on.
+    for marks in ["\u0301", "ा"]:
+        with pytest.raises(HTTPException) as ei:
+            _write({"invoice_number": {"value": marks}, "vendor_name": {"value": "Y"}})
+        assert ei.value.status_code == 400 and ei.value.detail["fields"] == ["invoice_number"]
+    out, _ = _write({"invoice_number": {"value": "٣٤٥"}, "vendor_name": {"value": "Вектор"}})
+    other, _ = _write({"invoice_number": {"value": "счёт"}, "vendor_name": {"value": "Вектор"}})
+    assert out.key_source == "identity" and out.memory_key.startswith("invoice:")
+    assert other.memory_key != out.memory_key

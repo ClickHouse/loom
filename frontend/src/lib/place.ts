@@ -12,6 +12,13 @@
  * `loomInspect`), merged over what is there: the Graph keeps its walk in the same state.
  */
 
+/** The user and session a memory row is filed under, when it is opened from a view that
+ *  names them: memory.get reads a row by its whole writer identity. */
+export interface InspectedOwner {
+  user_id: string;
+  session_id: string;
+}
+
 export interface Place {
   scrollTop: number;
   /** The `data-focus-key` of the element that had focus; null when nothing keyed did. */
@@ -19,6 +26,8 @@ export interface Place {
   /** The memory the drawer showed, and the writer agent it was read as. */
   inspected: string | null;
   inspectedAgent: string;
+  /** The user and session it was read under; null for the caller's own. */
+  inspectedOwner: InspectedOwner | null;
 }
 
 /** How long a restore waits for the page to draw what it restores (a lazy chunk, a list
@@ -47,7 +56,10 @@ function mainElement(): HTMLElement | null {
 /** Write the current place into the entry about to be left. `focusKey` names the element
  *  Back should focus when the focused one is not it (a popover link that opened the jump,
  *  where Back should land on the chip that opened the popover). */
-export function rememberPlace(inspected: { key: string | null; agent: string }, focusKey?: string | null): void {
+export function rememberPlace(
+  inspected: { key: string | null; agent: string; owner?: InspectedOwner | null },
+  focusKey?: string | null,
+): void {
   if (typeof window === "undefined") return;
   const active = document.activeElement;
   const keyed = active instanceof Element ? active.closest("[data-focus-key]") : null;
@@ -56,6 +68,7 @@ export function rememberPlace(inspected: { key: string | null; agent: string }, 
     focusKey: focusKey ?? keyed?.getAttribute("data-focus-key") ?? null,
     inspected: inspected.key,
     inspectedAgent: inspected.agent,
+    inspectedOwner: inspected.owner ?? null,
   };
   patchEntry({ loomPlace: place });
 }
@@ -71,7 +84,16 @@ export function readPlace(state: unknown): Place | null {
     focusKey: typeof r.focusKey === "string" ? r.focusKey : null,
     inspected: typeof r.inspected === "string" ? r.inspected : null,
     inspectedAgent: typeof r.inspectedAgent === "string" ? r.inspectedAgent : "",
+    inspectedOwner: owner(r.inspectedOwner),
   };
+}
+
+function owner(v: unknown): InspectedOwner | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  return typeof o.user_id === "string" && typeof o.session_id === "string"
+    ? { user_id: o.user_id, session_id: o.session_id }
+    : null;
 }
 
 /** The label of the entry the current one was reached from ("memory api/rate-limit"), set

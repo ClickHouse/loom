@@ -53,6 +53,8 @@ def row_for(table):
         row.update(memory_key="user_dog_name", memory_key_embedding_dim=3)
     if table == "code_chunks":
         row.update(context_text="contextual source", content="raw source")
+    if table == "chunks":
+        row.update(context="Handbook\nRefunds", content="Within 14 days.")
     if table == "categories":
         row.update(name="Category", description="Description")
     if table == "memory_chunks":
@@ -120,6 +122,24 @@ async def test_code_uses_context_and_falls_back_to_content(target):
     raw = {**contextual, "context_text": ""}
     await rebuild_batch("code_chunks", [contextual, raw], target)
     target.embed_many.assert_awaited_once_with(["contextual source", "raw source"])
+
+
+@pytest.mark.asyncio
+async def test_a_knowledge_chunk_embeds_its_context_before_its_text_as_its_write_did(target):
+    contextual = row_for("chunks")
+    raw = {**contextual, "context": ""}
+    await rebuild_batch("chunks", [contextual, raw], target)
+    target.embed_many.assert_awaited_once_with(
+        ["Handbook\nRefunds\n\nWithin 14 days.", "Within 14 days."]
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_titled_chunk_with_no_text_rebuilds_its_context_as_its_write_did(target):
+    """`knowledge.add` of empty content stores one empty chunk embedded as its context."""
+    row = {**row_for("chunks"), "content": "", "context": "T"}
+    await rebuild_batch("chunks", [row], target)
+    target.embed_many.assert_awaited_once_with(["T\n\n"])
 
 
 @pytest.mark.asyncio
@@ -205,7 +225,13 @@ async def test_cancellation_is_not_swallowed_as_provider_failure(target):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stored", [[], [0.0, 0.0, 0.0]], ids=["empty", "placeholder"])
 async def test_empty_unindexed_text_stays_unindexed_in_target_space(target, stored):
-    row = {**row_for("chunks"), "content": "", "embedding": stored, "embedding_dim": 0}
+    row = {
+        **row_for("chunks"),
+        "content": "",
+        "context": "",
+        "embedding": stored,
+        "embedding_dim": 0,
+    }
     result = (await rebuild_batch("chunks", [row], target)).rows[0]
     assert result["embedding_model"] == "target-model"
     assert result["embedding"] == []
@@ -232,7 +258,7 @@ async def test_a_structural_summary_card_without_text_rebuilds_as_a_placeholder(
 
 @pytest.mark.asyncio
 async def test_lost_source_text_cannot_silently_discard_an_existing_vector(target):
-    row = {**row_for("chunks"), "content": ""}
+    row = {**row_for("chunks"), "content": "", "context": ""}
     with pytest.raises(RebuildBatchError, match="source_text_missing"):
         await rebuild_batch("chunks", [row], target)
     target.embed_many.assert_not_awaited()

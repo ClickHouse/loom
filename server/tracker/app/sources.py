@@ -40,6 +40,7 @@ from server.tracker.api.models import (
 )
 from server.tracker.app import contract
 from server.tracker.domain import contract as record_contract
+from server.tracker.domain.sources import SOURCE_NAME_RE
 from server.tracker.store.source import contract_reports
 
 logger = logging.getLogger(__name__)
@@ -369,7 +370,6 @@ async def _none() -> dict[str, Any]:
 
 # ---- the write ops ---------------------------------------------
 
-_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{1,31}$")
 # `tracker-<team>` or `qa-<team>`
 _NS_RE = re.compile(r"^(?:tracker|qa)-[a-z0-9][a-z0-9-]{1,62}$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -589,7 +589,7 @@ async def _admissible(input: Any) -> tuple[str, list[dict[str, Any]]]:
             code="BAD_ORG",
         )
     name = str(input.name).strip().lower()
-    if not _NAME_RE.match(name):
+    if not SOURCE_NAME_RE.fullmatch(name):
         raise ValidationError(
             "source name: 2–32 lower-case letters, digits, - or _, starting with a letter",
             code="BAD_NAME",

@@ -153,9 +153,9 @@ _SPLIT_PARSERS: tuple[Any, ...] = (
 
 
 def _add_module_parsers(sub: Any) -> None:
-    """Subcommands registered by their own modules: code, decisions, okf, up, ch-setup,
-    participant, deployment, settings, secrets, signing-key, provider-lock and
-    export-analytics."""
+    """Subcommands registered by their own modules: code, decisions, knowledge,
+    okf, up, ch-setup, participant, deployment, settings, secrets, signing-key,
+    provider-lock and export-analytics."""
     from server.cli.code import register_code_cli
 
     register_code_cli(sub)
@@ -163,6 +163,10 @@ def _add_module_parsers(sub: Any) -> None:
     from server.cli.decisions import register_decisions_cli
 
     register_decisions_cli(sub)
+
+    from server.cli.knowledge import register_knowledge_cli
+
+    register_knowledge_cli(sub)
 
     from server.cli.okf import register_okf_cli
 
@@ -262,8 +266,9 @@ def _add_integrity_and_stats_parsers(sub: Any) -> None:
         "rechunk",
         help="Re-chunk and re-embed a namespace's knowledge documents from stored "
         "content through the current chunker, so every document carries section "
-        "metadata and document frequency. Idempotent; one embedding per new chunk. "
-        "Dry run by default (counts the documents and chunks); --apply re-chunks.",
+        "metadata, chunk context and document frequency. Idempotent; one embedding "
+        "per new chunk. Dry run by default (counts the documents and chunks); "
+        "--apply re-chunks.",
     )
     p_rechunk.add_argument("--org", required=True)
     p_rechunk.add_argument("--namespace", required=True)

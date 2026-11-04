@@ -8,6 +8,7 @@ the vector-search SQL lives in the search service.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime
@@ -18,7 +19,8 @@ from pydantic import BaseModel, ConfigDict
 
 from server.core.hashing import sha256_document_text
 from server.core.repo_base import _CHClient, _default_client
-from server.knowledge.domain.chunking import Chunk
+from server.knowledge.domain.chunking import Chunk, embedding_text
+from server.knowledge.domain.extract.structural import StructuralChunk
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL, SUPERSESSIONS_TABLE
 
 
@@ -53,6 +55,7 @@ class ChunkInsertRow(TypedDict):
     source_uri: str
     chunk_idx: int
     content: str
+    context: str
     tags: list[str]
     doc_metadata: str
     chunk_metadata: str
@@ -68,6 +71,8 @@ class ChunkInsertRow(TypedDict):
     user_id: str
     session_id: str
     source_class: str
+    keys: list[str]
+    embed_input_sha256: str
 
 
 def build_chunk_rows(
@@ -75,7 +80,8 @@ def build_chunk_rows(
     org: str,
     namespace: str,
     source_uri: str,
-    chunks: Sequence[Chunk],
+    chunks: Sequence[Chunk | StructuralChunk],
+    contexts: Sequence[str],
     embeddings: Sequence[list[float]],
     tags: list[str],
     metadata: str,
@@ -86,10 +92,12 @@ def build_chunk_rows(
     author: Mapping[str, str],
 ) -> list[ChunkInsertRow]:
     """One ingestion's loom.chunks rows, every column set: each chunk with its
-    vector, the document's tags and metadata (JSON), its own section metadata
-    and content hash (what upsert's duplicate count and the dedup report
-    match on), and the document's provenance (`author`: agent, user_id,
-    session_id, source_class) that search returns and filters on."""
+    context (`chunk_context`) and vector, the sha256 of the text the vector was
+    computed from (`embedding_text`), the document's tags and metadata (JSON),
+    its own section metadata, exact keys and content hash (what upsert's
+    duplicate count and the dedup report match on), and the document's
+    provenance (`author`: agent, user_id, session_id, source_class) that search
+    returns and filters on."""
     return [
         {
             "org": org,
@@ -97,6 +105,7 @@ def build_chunk_rows(
             "source_uri": source_uri,
             "chunk_idx": chunk.idx,
             "content": chunk.text,
+            "context": context,
             "tags": tags,
             "doc_metadata": metadata,
             "chunk_metadata": json.dumps(chunk.meta, sort_keys=True),
@@ -112,8 +121,12 @@ def build_chunk_rows(
             "user_id": author["user_id"],
             "session_id": author["session_id"],
             "source_class": author["source_class"],
+            "keys": list(chunk.keys),
+            "embed_input_sha256": hashlib.sha256(
+                embedding_text(context, chunk.text).encode()
+            ).hexdigest(),
         }
-        for chunk, embedding in zip(chunks, embeddings, strict=True)
+        for chunk, context, embedding in zip(chunks, contexts, embeddings, strict=True)
     ]
 
 
@@ -204,10 +217,15 @@ async def mark_doc_superseded(
     source_uri: str,
     *,
     embedding_model: str | None = None,
+    before_version: int | None = None,
+    only_version: int | None = None,
     when: datetime | None = None,
     ch: _CHClient | None = None,
 ) -> None:
-    """Mark every chunk of a document as superseded.
+    """Mark every chunk of a document as superseded, or with `before_version`
+    every chunk of an older ingestion (a publish retires what it replaced), or
+    with `only_version` the chunks of one ingestion (a publish that stopped
+    before its document row).
 
     Omit `embedding_model` to supersede across every embedding model for
     this doc (the knowledge.delete wire semantics). `when` defaults to
@@ -216,6 +234,12 @@ async def mark_doc_superseded(
     ch = ch or _default_client()
     where = ["source_uri = {uri:String}"]
     params: dict[str, Any] = {"org": org, "ns": namespace, "uri": source_uri}
+    if before_version is not None:
+        where.append("doc_version < {before:UInt64}")
+        params["before"] = before_version
+    if only_version is not None:
+        where.append("doc_version = {only:UInt64}")
+        params["only"] = only_version
     if embedding_model is not None:
         where.append("embedding_model = {em:String}")
         params["em"] = embedding_model
@@ -276,6 +300,19 @@ async def count_active_for_doc(
         + """
         """,
         params={"org": org, "ns": namespace, "uri": source_uri},
+    )
+    return int(row["n"]) if row else 0
+
+
+async def count_version(
+    org: str, namespace: str, source_uri: str, doc_version: int, *, ch: _CHClient | None = None
+) -> int:
+    """Live chunks of one ingestion of a document (`doc_version`)."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() AS n FROM loom.chunks WHERE org = {org:String} AND namespace = {ns:String}"
+        f" AND source_uri = {{uri:String}} AND doc_version = {{v:UInt64}} AND {LIVE_CHUNK_SQL}",
+        params={"org": org, "ns": namespace, "uri": source_uri, "v": doc_version},
     )
     return int(row["n"]) if row else 0
 
@@ -499,3 +536,35 @@ async def insert_chunks(
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
     return len(rows)
+
+
+async def vectors_by_input(
+    org: str,
+    namespace: str,
+    embedding_model: str,
+    embedding_dim: int,
+    input_shas: list[str],
+    *,
+    ch: _CHClient | None = None,
+) -> dict[str, list[float]]:
+    """The stored vector of each embedding input (by its sha256) this namespace
+    already embedded under `embedding_model`, live or not: the same text under
+    the same model is the same vector, and no namespace reuses another's."""
+    if not input_shas:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT embed_input_sha256 AS sha, any(embedding) AS vector FROM loom.chunks"
+        " WHERE org = {org:String} AND namespace = {ns:String} AND embedding_model = {em:String}"
+        " AND embed_input_sha256 IN {shas:Array(String)} AND embedding_dim = {dim:UInt16}"
+        " AND length(embedding) = {dim:UInt16}"
+        " GROUP BY embed_input_sha256",
+        params={
+            "org": org,
+            "ns": namespace,
+            "em": embedding_model,
+            "dim": embedding_dim,
+            "shas": input_shas,
+        },
+    )
+    return {str(r["sha"]): [float(x) for x in r["vector"]] for r in rows}

@@ -149,6 +149,19 @@ describe("writing the address", () => {
     expect(useStore.getState().pendingConversationThread).toEqual({ threadId: "t-2" });
   });
 
+  it("Back to a collection's document made in another namespace keeps and opens it; a namespace's does not", () => {
+    useStore.setState({ pendingDocSourceUri: null });
+    at("/library?namespace=old&collection=col-c&doc=x.md", { loomNamespace: "old" });
+    useStore.getState().arriveFromHistory("knowledge", null);
+    expect(address()).toBe("/library?namespace=team&collection=col-c&doc=x.md");
+    expect(useStore.getState().pendingDocSourceUri).toBe("x.md");
+    useStore.setState({ pendingDocSourceUri: null });
+    at("/library?namespace=old&doc=y.md", { loomNamespace: "old" });
+    useStore.getState().arriveFromHistory("knowledge", null);
+    expect(address()).toBe("/library?namespace=team");
+    expect(useStore.getState().pendingDocSourceUri).toBeNull();
+  });
+
   it("a move inside one view made before a switch names the page's namespace, keeping the view's keys", () => {
     // A Graph walk's entry carries no stamp of the app's; its address names the old namespace.
     at("/graph?namespace=old&seed=alpha", { graphSeed: "alpha" });

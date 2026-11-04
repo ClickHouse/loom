@@ -21,6 +21,7 @@ opt-in; one you leave unconfigured does nothing. They fall into three groups:
 | Any Agent-Skills client                               | the `loom` and `loom-code` skills, no hooks             | `skills/loom/`, `skills/loom-code/`: [below](#coding-agents)                               |
 | Aider, Continue, OpenCode, JetBrains AI               | transcript capture template                             | `integrations/generic/`: [below](#transcript-capture-hooks)                                |
 | Agents that only use shell grep                       | the grep shim                                           | `integrations/grep-shim/`: [grep-shim.md](grep-shim.md)                                    |
+| LibreChat v0.8.8                                      | chat client on the assistant toolset, per-user token    | `integrations/librechat/`: [librechat.md](librechat.md)                                    |
 | LangGraph, Strands Agents                             | Python SDK memory adapters; needs the framework         | `loom.integrations.langgraph`, `loom.integrations.strands`: [frameworks.md](frameworks.md) |
 | Agent orchestrators                                   | shared MCP mount                                        | [frameworks.md](frameworks.md)                                                             |
 | AX (sandboxed agent tasks)                            | Workspace manifest: MCP config, `AGENTS.md`, run budget | `integrations/ax/`: [README](../../../integrations/ax/README.md)                           |
@@ -80,7 +81,8 @@ The plugins capture sessions with their own hooks and do not need these template
 
 ## Joining a request across systems
 
-Every HTTP response carries an `X-Request-Id` (yours, if sent; else a generated UUID).
+Every HTTP response carries an `X-Request-Id`: yours, if you sent one of 1 to 64 letters,
+digits, `.`, `_` or `-`; else a generated UUID.
 The same id is written to:
 
 | System              | Where                                                     |

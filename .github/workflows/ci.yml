@@ -321,7 +321,8 @@ jobs:
           secret=$(openssl rand -hex 32)
           # Every optional object on, so each template renders at least once.
           on=(--set analyticsExport.enabled=true --set analyticsExport.bucket=ci --set analyticsExport.nameKeySecret.name=ci)
-          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}")
+          extractor=(--set extractor.enabled=true --set secrets.extractorToken="$(openssl rand -hex 24)")
+          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}" "${extractor[@]}")
           for overlay in values-eks.yaml values-kind.yaml; do
             args=(-f "$chart/$overlay" --set secrets.jwtSecret="$secret")
             helm lint --strict "$chart" "${args[@]}"
@@ -353,6 +354,20 @@ jobs:
           shared="is a Secret every web and workers pod loads"
           refused "$shared" "${on[@]}" --set analyticsExport.nameKeySecret.name=loom
           refused "$shared" "${on[@]}" --set "envFrom[0].secretRef.name=ci"
+          # The extractor's token is the release Secret's, 16 characters or more.
+          refused "extractor.enabled needs secrets.extractorToken" --set extractor.enabled=true
+          refused "secrets.extractorToken must be at least 16 characters" --set extractor.enabled=true --set secrets.extractorToken=short
+          refused "through secrets.extractorToken, not secrets.extra" "${extractor[@]}" --set secrets.extra.LOOM_DOCUMENT_EXTRACTOR_TOKEN=x
+          refused "extractor.env cannot set LOOM_EXTRACTOR_TOKEN" "${extractor[@]}" --set extractor.env.LOOM_EXTRACTOR_TOKEN=x
+          token="set it through secrets.extractorToken"
+          refused "$token" "${extractor[@]}" --set env.LOOM_DOCUMENT_EXTRACTOR_TOKEN=x
+          refused "$token" "${extractor[@]}" --set "extraEnv[0].name=LOOM_DOCUMENT_EXTRACTOR_TOKEN"
+          refused "$token" "${extractor[@]}" --set settingsFile.document_extractor_token=x
+      # What the extractor's pods can be reached by and reach, read off the render.
+      - name: extractor isolation
+        run: |
+          python3 -m pip install --quiet --user pyyaml==6.0.3
+          python3 scripts/gates/helm_extractor_isolation.py
 
   agent-plugins:
     name: coding-agent plugins (node --test)
@@ -530,6 +545,20 @@ jobs:
           done
           curl -sf http://127.0.0.1:5000/ >/dev/null
           echo "LOOM_TEST_S3_ENDPOINT=http://127.0.0.1:5000" >> "$GITHUB_ENV"
+      # The extractor the ingestion tests' in-process worker pass calls (tests/integration/test_knowledge_ingest_live.py).
+      - name: Start the reference extractor
+        run: |
+          token="$(openssl rand -hex 24)"
+          echo "::add-mask::$token"
+          (cd extractor && LOOM_EXTRACTOR_TOKEN="$token" LOOM_EXTRACTOR_PORT=8790 \
+            nohup python -m loom_extractor > "$GITHUB_WORKSPACE/extractor.log" 2>&1 &)
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8790/healthz >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8790/healthz >/dev/null || { tail -50 extractor.log; exit 1; }
+          echo "LOOM_DOCUMENT_EXTRACTOR_URL=http://127.0.0.1:8790" >> "$GITHUB_ENV"
+          echo "LOOM_DOCUMENT_EXTRACTOR_TOKEN=$token" >> "$GITHUB_ENV"
       # The whole directory on every pull request; no test is slow enough to
       # justify a separate merge-only tier.
       - name: pytest
@@ -583,6 +612,7 @@ jobs:
           path: |
             server.log
             server-auth.log
+            extractor.log
 
   mixed-version:
     name: builds N-1 and N on one ClickHouse

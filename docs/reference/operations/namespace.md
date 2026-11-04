@@ -439,7 +439,7 @@ Restore a snapshot payload into a target namespace.
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
-| `target_namespace` | `str` | required | Where the payload is written; created (with the caller as admin) when absent, and reactivated when soft-deleted. |
+| `target_namespace` | `str` | required | Where the payload is written, never a collection (`col-…`, `@me`); created (with the caller as admin) when absent, and reactivated when soft-deleted. |
 | `payload` | `NamespaceSnapshotOutput` | required | A `namespace.snapshot` output, unchanged. |
 | `rebind_agent` | `str \| None` | `None` | Rebind every memory row's `agent` to this when set; default preserves source. |
 
@@ -571,6 +571,34 @@ The de-facto taxonomy of a namespace — tags + entities across its memories.
 | `memory_types` | `list[_TaxonomyEntry]` | memory_types present in the namespace, with counts. |
 | `communities` | `list[_TaxonomyCommunity]` | Topic clusters from the entity graph, largest first; [] until the entity_communities worker has run. |
 | `communities_computed_at` | `str` | When the returned communities were computed; empty when none were returned. |
+
+## `namespace.tune`
+
+Draft changes to a namespace's extraction rules, categories and guide from what its rows and the audit show.
+
+`POST /v1/namespace.tune` · MCP `loom_namespace_tune` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `window_seconds` | `int` | `604800` | Ledger window the audit's usage checks cover, in seconds (default 7 days, 1 hour to 90 days). |
+| `sample_limit` | `int` | `5` | Supporting rows cited per proposal, 1 to 20 (default 5). |
+| `min_rows` | `int` | `5` | A tag or key prefix on at least this many live rows is drafted: a tag with no category of its name as a category, a prefix the guide does not name into the guide (default 5). |
+| `max_category_proposals` | `int` | `5` | Category drafts returned, most used tags first, 0 to 20 (default 5). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `org` | `str` | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | The namespace the op reads or writes. |
+| `computed_at` | `datetime` | When the drafts were read (UTC). |
+| `proposals` | `list[TuneProposal]` | The drafts, extraction instructions first, then categories, then the guide. |
+| `guide_revision` | `int \| None` | The guide's current revision (0: none written), which a guide draft's `expected_revision` carries; None when the guide could not be read. |
+| `categories_registered` | `int \| None` | Categories registered in the namespace now; None when they could not be read. |
+| `extraction_policy` | `str \| None` | The operator extraction policy the namespace's extractions run under (the org's, then the namespace's), for an org admin; None otherwise. |
+| `extraction_policy_unavailable` | `str` | Why `extraction_policy` is None, or "". |
+| `skipped` | `list[str]` | Sections that drafted nothing, as "section: reason": a read that failed, or evidence that rules the draft out. |
+| `model_used` | `bool` | Proposals use no model: every draft is built from the rows, the audit and the current settings. |
 
 ## `namespace.validate`
 

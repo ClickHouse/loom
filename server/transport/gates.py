@@ -11,6 +11,11 @@ here, once:
   the request's, else the op's plane default (code.* / tracker.*), else the
   verified token's own org. A namespace is never authorized without an org:
   that is a refusal (IDENTITY_INCOMPLETE), not a flat-role pass.
+- `with_resolved_org` / `with_target`: before validation a blank or "-"
+  org is set to the org the call acts in and a padded org or namespace is
+  stripped; after authorization an absent code namespace is set to the
+  authorized one, so the handler reads and writes where the call was
+  authorized.
 - `authorize`: first-contact provisioning, the role + namespace gate
   (`authorize_op`, raising PermissionError / IdentityIncompleteError), then
   the restricted-access audit row and the first-write registration.
@@ -27,16 +32,15 @@ here, once:
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from server.code.app.common import plane_namespace_for, plane_org_for
-from server.core.errors import IdentityIncompleteError, RateLimitedError
-from server.core.naming import named
-from server.settings import settings
+from server.core import fail_open
+from server.core.errors import IdentityIncompleteError
+from server.core.naming import present
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
@@ -61,20 +65,6 @@ END_USER_ORG_OPS = frozenset(
 # The code a role / namespace refusal carries on both transports: the one the
 # SDKs map (`AuthInsufficient`) and docs/reference/errors.md lists.
 ROLE_REFUSAL_CODE = "AUTH_INSUFFICIENT"
-
-# A fail-open gate logs at most once per this many seconds, with the count of
-# failures since its last line.
-FAIL_OPEN_LOG_INTERVAL_S = 60.0
-
-_FAIL_OPEN_TOTAL: dict[str, int] = {}
-_FAIL_OPEN_SINCE_LOG: dict[str, int] = {}
-_FAIL_OPEN_LAST_LOG: dict[str, float] = {}
-
-
-def present(value: Any) -> str | None:
-    """A request's identity field as the gates read it: None when absent,
-    empty or the "-" sentinel."""
-    return named(str(value or "").strip())
 
 
 def _token_org(auth: AuthInfo | None) -> str | None:
@@ -103,7 +93,7 @@ def authz_target(op: Operation, *, org: Any, namespace: Any, auth: AuthInfo | No
     `namespace`. Raises IdentityIncompleteError when an authenticated call
     names a namespace with no resolvable org (auth off authorizes nothing)."""
     named_ns = present(namespace)
-    resolved_org = present(org) or present(plane_org_for(op.name)) or _token_org(auth)
+    resolved_org = resolve_org(op, org, auth)
     resolved_ns = named_ns or present(plane_namespace_for(op.name))
     authz_ns = None if op.skip_namespace_authz else resolved_ns
     if auth is not None and authz_ns is not None and resolved_org is None:
@@ -117,6 +107,50 @@ def authz_target(op: Operation, *, org: Any, namespace: Any, auth: AuthInfo | No
         named_namespace=named_ns,
         register_namespace=resolved_ns,
     )
+
+
+def resolve_org(op: Operation, org: Any, auth: AuthInfo | None) -> str | None:
+    """The org a call acts in: the request's, else the op's plane default
+    (code.* / tracker.*), else the verified token's own single org."""
+    return present(org) or present(plane_org_for(op.name)) or _token_org(auth)
+
+
+def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None) -> dict[str, Any]:
+    """The arguments to validate, with `org` and `namespace` as the gate reads
+    them: an org sent as a blank or "-" string is the org the call acts in, and
+    a padded org or namespace is stripped. The handler, and a validator that
+    reads the org (an inbox's webhook secret names it), then see the tenant the
+    gate authorizes, never the literal "-" every token reaches or a padded name
+    an erasure of the org would miss. A copy: validation, and its own refusal
+    row, read it; every later refusal's ledger row reads the raw arguments as
+    sent. A missing, null or non-string value is left for validation."""
+    update: dict[str, str] = {}
+    if isinstance(args.get("org"), str):
+        org = resolve_org(op, args["org"], auth)
+        if org and org != args["org"]:
+            update["org"] = org
+    if isinstance(args.get("namespace"), str):
+        namespace = present(args["namespace"])
+        if namespace and namespace != args["namespace"]:
+            update["namespace"] = namespace
+    return {**args, **update} if update else args
+
+
+def with_target(input_obj: Any, target: Target) -> Any:
+    """The input with an absent namespace set to the one the gate authorized
+    (a code op's plane namespace). A namespace the op requires (the code.repo.*
+    writes) is never filled: "-" must not become the plane's default index.
+    Copied, not validated again, so an absent namespace leads no code fan-out
+    list."""
+    ns_field = type(input_obj).model_fields.get("namespace")
+    if (
+        target.register_namespace
+        and ns_field is not None
+        and not ns_field.is_required()
+        and present(input_obj.namespace) is None
+    ):
+        return input_obj.model_copy(update={"namespace": target.register_namespace})
+    return input_obj
 
 
 async def authorize(
@@ -273,29 +307,6 @@ def _would_act_as_nobody(op: Operation) -> bool:
     return carries_identity and (not op.read_only or op.name == "cost.summary")
 
 
-def _fail_open(gate: str, op_name: str, err: BaseException) -> None:
-    """Count one fail-open and log it at most once per interval per gate."""
-    _FAIL_OPEN_TOTAL[gate] = _FAIL_OPEN_TOTAL.get(gate, 0) + 1
-    _FAIL_OPEN_SINCE_LOG[gate] = _FAIL_OPEN_SINCE_LOG.get(gate, 0) + 1
-    now = time.monotonic()
-    last = _FAIL_OPEN_LAST_LOG.get(gate)
-    if last is None or now - last >= FAIL_OPEN_LOG_INTERVAL_S:
-        n = _FAIL_OPEN_SINCE_LOG.pop(gate, 1)
-        _FAIL_OPEN_LAST_LOG[gate] = now
-        log.warning(
-            "%s failed open (%d call(s) since the last line; latest %s): %s",
-            gate,
-            n,
-            op_name,
-            err,
-        )
-
-
-def fail_open_counts() -> dict[str, int]:
-    """Fail-opens per gate since the process started."""
-    return dict(_FAIL_OPEN_TOTAL)
-
-
 async def traffic_class(
     op: Operation, auth: AuthInfo | None, target: Target, args: Any
 ) -> tuple[str, str]:
@@ -311,7 +322,7 @@ async def traffic_class(
         else:
             cls, source = await classify(auth, target.org, target.namespace, args)
     except Exception as e:  # noqa: BLE001 — FAILS OPEN: classification never refuses a call
-        _fail_open("traffic_class", op.name, e)
+        fail_open.note("traffic_class", op.name, e)
         cls, source = "interactive", "default"
     set_current_traffic_class(cls, source)
     return cls, source
@@ -341,7 +352,7 @@ def rate_limit(
             traffic_class=traffic,
         )
     except Exception as e:  # noqa: BLE001 — FAILS OPEN: a limiter error admits the call
-        _fail_open("rate_limit", op.name, e)
+        fail_open.note("rate_limit", op.name, e)
         return None
 
 
@@ -360,49 +371,20 @@ def session_end_rate_limit(auth: AuthInfo | None, org: str) -> CheckResult | Non
             org=org or None,
         )
     except Exception as e:  # noqa: BLE001 — FAILS OPEN: a limiter error admits the DELETE
-        _fail_open("rate_limit", "run.complete", e)
+        fail_open.note("rate_limit", "run.complete", e)
         return None
-
-
-# Requests each org has running in this process (org -> count).
-_IN_FLIGHT: dict[str, int] = {}
-
-
-def tenant_inflight_cap() -> int:
-    """This process's share of LOOM_TENANT_MAX_CONCURRENT_REQUESTS, divided the way
-    the rate limits are (replicas × web workers, at least 1); 0 = no cap."""
-    configured = int(settings.tenant_max_concurrent_requests)
-    if configured <= 0:
-        return 0
-    from server.core.ratelimit import effective_divisor
-
-    return max(1, configured // effective_divisor(shared=False))
 
 
 @contextmanager
 def tenant_slot(auth: AuthInfo | None, target: Target | None) -> Iterator[None]:
-    """Hold one of the org's in-flight slots while the handler runs, released however
-    it ends. RateLimitedError (429 RATE_LIMITED) when the org's share is all in use. The
-    org is the verified token's, else the target's, as for the rate limiter."""
+    """Hold one of the org's in-flight slots while the handler runs
+    (`server.core.tenant_slots`). The org is the verified token's, else the
+    target's, as for the rate limiter."""
+    from server.core import tenant_slots
+
     org = _rate_limit_org(auth, target) if target is not None else _token_org(auth)
-    cap = tenant_inflight_cap()
-    if not org or cap <= 0:
+    with tenant_slots.hold(org):
         yield
-        return
-    if _IN_FLIGHT.get(org, 0) >= cap:
-        raise RateLimitedError(
-            f"org {org!r} already has {cap} requests running on this server; retry shortly",
-            retry_after_s=1,
-        )
-    _IN_FLIGHT[org] = _IN_FLIGHT.get(org, 0) + 1
-    try:
-        yield
-    finally:
-        left = _IN_FLIGHT[org] - 1
-        if left > 0:
-            _IN_FLIGHT[org] = left
-        else:
-            del _IN_FLIGHT[org]
 
 
 @dataclass(frozen=True, slots=True)

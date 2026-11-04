@@ -3622,8 +3622,187 @@
        "choices_help": [
         {
          "dest": "extract",
-         "help": "Mine one knowledge document into decision records: one model call per window of its sections (a heading over only an image and its caption is not sent), two when the first reply holds no decision or a reason that is not one span of the text, candidates kept only when their quote, reasoning and rejected options' reasons are the document's own words, the reasoning says more than the outcome (a ban may give no reason) and the quote is not in a recap, summary or background section, written through decision.record as agent loom-decisions. A re-run revises or retires the extractor's own unconfirmed rows and tags a confirmed (pinned or attested) row source-changed. Dry run by default (still calls the model); --apply writes. Exits 1 when it could not run on the document (no document, no chunks, no usable model, an unknown --repo or a namespace it may not use, --into without --repo or source on another repository's namespace, a --repo with no remote to tag rows with, the dashboard's repositories unread, its own rows unreadable, left in another namespace or linked to another repository, no window read), 2 when a write, or a read it needed (a window included), was refused or failed (a row changed since the run read it is reported, not counted).",
+         "help": "Mine one knowledge document into decision records: one model call per window of its sections (a heading over only an image and its caption is not sent), two when the first reply holds no decision or a reason that is not one span of the text, candidates kept only when their quote, reasoning and rejected options' reasons are the document's own words, the reasoning says more than the outcome (a ban may give no reason) and the quote is not in a recap, summary or background section, written through decision.record as agent loom-decisions. A re-run revises or retires the extractor's own rows and tags a pinned or attested row source-changed instead: pinning or attesting freezes a row against re-extraction. Dry run by default (still calls the model); --apply writes. Exits 1 when it could not run on the document (no document, no chunks, no usable model, model calls held for the org, which stops the run with nothing more written and nothing retired, an unknown --repo or a namespace it may not use, --into without --repo or source on another repository's namespace, a --repo with no remote to tag rows with, the dashboard's repositories unread, its own rows unreadable, left in another namespace or linked to another repository, no window read), 2 when a write, or a read it needed (a window included), was refused or failed (a row changed since the run read it is reported, not counted).",
          "metavar": "extract"
+        }
+       ]
+      }
+     ]
+    },
+    "knowledge": {
+     "prog": "loom knowledge",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "subcommand"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "subcommand",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "sync": {
+         "prog": "loom knowledge sync",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.knowledge:_cmd_sync"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "org",
+            "namespace",
+            "source",
+            "full"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--namespace"
+           ],
+           "dest": "namespace",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The repository's trunk code namespace",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--source"
+           ],
+           "dest": "source",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Only the source of this name",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--full"
+           ],
+           "dest": "full",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Record a full sync request for each source, as knowledge.source.sync_now full=true does, so every file is listed and waiting files are retried; a run while that request is unfinished goes on with it",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "sync": "loom knowledge sync"
+       },
+       "choices_help": [
+        {
+         "dest": "sync",
+         "help": "Run one sync pass over a repository namespace's document sources now: list each source's changed files (every file with --full), write the changed ones as documents and retire those a full listing no longer has, then mine each document written since it was last mined for decisions (model calls, within LOOM_KNOWLEDGE_SOURCE_SYNC_CAP_SHARE of the namespace's cost cap), bounded like a worker pass by LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS; run it again to go on. Leaves a manual knowledge_source_sync row in loom.worker_status. Exits 1 when a source's turn or a document's extraction failed.",
+         "metavar": "sync"
         }
        ]
       }
@@ -13097,6 +13276,7 @@
    "aliases_of": {
     "code": "loom code",
     "decisions": "loom decisions",
+    "knowledge": "loom knowledge",
     "export-okf": "loom export-okf",
     "import-okf": "loom import-okf",
     "okf-lint": "loom okf-lint",
@@ -13170,6 +13350,11 @@
      "metavar": "decisions"
     },
     {
+     "dest": "knowledge",
+     "help": "Knowledge documents and their sources.",
+     "metavar": "knowledge"
+    },
+    {
      "dest": "export-okf",
      "help": "Render a namespace as an OKF v0.2 bundle (Markdown + frontmatter) — the git-reviewable projection of Loom memory.",
      "metavar": "export-okf"
@@ -13186,7 +13371,7 @@
     },
     {
      "dest": "up",
-     "help": "Boot the local stack (Loom + ClickHouse) and print how to connect: creates .env and the ClickHouse config from their templates, runs docker compose up --build, waits for /v1/health, then prints the dashboard URL and the first memory.set (curl + Python SDK) and `claude mcp add` snippets — minting a writer token first when auth is on. Re-run any time.",
+     "help": "Boot the local stack (Loom, its document extractor and ClickHouse) and print how to connect: creates .env and the ClickHouse config from their templates, runs docker compose up --build, waits for /v1/health, then prints the dashboard URL and the first memory.set (curl + Python SDK) and `claude mcp add` snippets — minting a writer token first when auth is on. Re-run any time.",
      "metavar": "up"
     },
     {
@@ -13396,7 +13581,7 @@
     },
     {
      "dest": "rechunk",
-     "help": "Re-chunk and re-embed a namespace's knowledge documents from stored content through the current chunker, so every document carries section metadata and document frequency. Idempotent; one embedding per new chunk. Dry run by default (counts the documents and chunks); --apply re-chunks.",
+     "help": "Re-chunk and re-embed a namespace's knowledge documents from stored content through the current chunker, so every document carries section metadata, chunk context and document frequency. Idempotent; one embedding per new chunk. Dry run by default (counts the documents and chunks); --apply re-chunks.",
      "metavar": "rechunk"
     },
     {

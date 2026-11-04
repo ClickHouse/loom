@@ -20,8 +20,8 @@ WHAT: Ingest a document into the knowledge base for later retrieval via loom_sea
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `source_uri` | `str` | required | The document's stable identifier in the namespace; `get`, `upsert` and `delete` name it. |
 | `content` | `str` | required | The document's extracted text; it is split into chunks, and each chunk is embedded. |
-| `title` | `str` | `''` | Document title, stored on the document and prepended to each chunk before embedding. |
-| `description` | `str` | `''` | Prepended (with title) to each chunk before embedding so chunk vectors carry doc-level context. |
+| `title` | `str` | `''` | Document title, stored on the document and in each chunk's context, which heads the chunk's embedded text and is scored by the lexical leg. |
+| `description` | `str` | `''` | Stored (with the title) in each chunk's context, so both search legs carry doc-level context. |
 | `tags` | `list[str]` | *(computed)* | Labels stored on the document and on every chunk; search and list filter on them. |
 | `metadata` | `dict[str, Any]` | *(computed)* | Free-form JSON stored with the document and on every chunk; `knowledge.get` returns it. |
 | `original_bytes_b64` | `str \| None` | `None` | Original file bytes (base64), preserved alongside extracted text so users can download exactly what they uploaded. |
@@ -159,6 +159,122 @@ Fetch a single document by source_uri.
 | `ingested_at` | `datetime \| None` | When this version of the document was written. |
 | `superseded` | `bool \| None` | True when the returned version is soft-deleted or superseded. |
 | `doc_id` | `str \| None` | Id of the returned document version. |
+| `revision` | `int \| None` | The source's revision (1, 2, ... per source_uri); 0 for a document no write numbered. |
+| `format` | `str \| None` | For a file Loom extracted (knowledge.ingest): the format it was extracted as. |
+| `parser` | `str \| None` | For an extracted file: the extractor's parser and version that read it. |
+| `coverage` | `dict[str, Any] \| None` | For an extracted file: what was extracted (unit, total, extracted, failed, lost). |
+
+## `knowledge.ingest`
+
+Extract an uploaded file (the extractor service parses it, the server checks what it returns) and publish it as a document revision, asynchronously: the answer names the job, and…
+
+`POST /v1/knowledge.ingest` · MCP `loom_knowledge_ingest` · role `writer` · write · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `upload_id` | `str` | required | The `upload_id` POST /v1/knowledge.upload returned for the file. |
+| `source_uri` | `str` | required | The document's stable identifier in the namespace; a later ingest of the same source_uri publishes its next revision. |
+| `title` | `str` | `''` | Document title; empty takes the upload's file name. |
+| `description` | `str` | `''` | Prepended with the title to each chunk before embedding. |
+| `tags` | `list[str]` | *(computed)* | Labels stored on the document and every chunk. |
+| `metadata` | `dict[str, Any]` | *(computed)* | Free-form JSON stored with the document and every chunk. |
+| `expected_revision` | `int \| None` | `None` | Publish only if the source's live revision is this one (0: no live document); unset publishes over whatever is live. |
+| `allow_partial` | `bool` | `False` | Publish an extraction that lost part of the source (coverage incomplete), marked `partial`; off fails it instead. |
+| `options` | `KnowledgeIngestOptions` | *(computed)* | Overrides for what the file cannot say about itself. |
+| `agent` | `str` | `''` | The agent writing the document; an end-user token's signed agent takes its place. |
+| `session_id` | `str` | `''` | The session the document was written in. |
+| `source_class` | `str \| None` | `None` | `derived`, `external` or `imported` when the content is not the writer's own. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `ingestion_id` | `str` | The job's id; `knowledge.ingest_status` and `knowledge.ingest_cancel` take it. |
+| `state` | `str` | `pending` until a worker takes it. |
+| `source_uri` | `str` |  |
+| `namespace` | `str` | The namespace the op reads or writes. |
+
+## `knowledge.ingest_cancel`
+
+A pending job is cancelled at once; a running one stops before it publishes; a finished one stays as it ended.
+
+`POST /v1/knowledge.ingest_cancel` · MCP `loom_knowledge_ingest_cancel` · role `writer` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `ingestion_id` | `str` | required | The `ingestion_id` knowledge.ingest returned. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `found` | `bool` | False when no job of this id is in the namespace. |
+| `state` | `str` | The job's state after the call: `cancelled` for a job that had not started, its running state when the worker will stop it before publishing, or where it already ended (a published revision stays published). |
+| `cancelled` | `bool` | True when this call stopped the job, or asked the worker to. |
+
+## `knowledge.ingest_status`
+
+A knowledge.ingest job's state, stage, coverage, failure and published revision.
+
+`POST /v1/knowledge.ingest_status` · MCP `loom_knowledge_ingest_status` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `ingestion_id` | `str` | required | The `ingestion_id` knowledge.ingest returned. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `found` | `bool` | False when no job of this id is in the namespace; every other field is then empty. |
+| `ingestion_id` | `str` | The job asked about. |
+| `source_uri` | `str` |  |
+| `state` | `str` | pending, processing, ready, partial, failed or cancelled. |
+| `stage` | `str` | Where a processing job is, or where it last ran: parse, embed or publish; empty once it published. |
+| `attempts` | `int` | Runs of the job so far, a retry after a transient failure included. |
+| `error_code` | `str` | Why it failed (`format_unavailable`, `encoding`, `incomplete_extraction`, `revision_conflict`, `too_large`, `no_text`, `retries_exhausted`, ...), or `retrying` while it waits for its next attempt; empty otherwise. |
+| `error_message` | `str` | The failure in words, for a person; empty when it did not fail. |
+| `format` | `str` | The format the file was extracted as, empty before extraction. |
+| `coverage` | `dict[str, Any] \| None` | What the extraction covered (unit, total, extracted, failed, lost). |
+| `warnings` | `list[str]` | The extractor's warnings about the file. |
+| `chunks` | `int` | Chunks published, 0 until the job publishes. |
+| `revision` | `int` | The revision the job published, 0 until it does. |
+| `expected_revision` | `int \| None` | The revision the job requires to be live when it publishes; None for any. |
+| `filename` | `str` | The uploaded file's name. |
+| `retrieval` | `str` | Whether the document is searchable from this job: ready (published), pending (not yet), failed (it will not be) or cancelled. |
+| `cancel_requested` | `bool` | Whether knowledge.ingest_cancel was called for the job. |
+| `created_at` | `datetime \| None` |  |
+| `updated_at` | `datetime \| None` |  |
+
+## `knowledge.inspect`
+
+Report a namespace's documents, read-only.
+
+`POST /v1/knowledge.inspect` · MCP `loom_knowledge_inspect` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `sample_limit` | `int` | `20` | Newest live documents listed with their chunks and decisions, and the most sample URIs per finding, 0 to 100 (default 20). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `org` | `str` | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | The namespace the op reads or writes. |
+| `computed_at` | `datetime` | When the report started (UTC). |
+| `documents` | `DocumentTotals` | Live and deleted documents by format and source scheme, and retired versions. |
+| `chunks` | `ChunkTotals` | Live chunks by embedding model, and how many knowledge.search can return. |
+| `decisions` | `DecisionTotals` | Decision rows citing a document of the namespace, by stage. |
+| `listed` | `list[InspectDocument]` | The newest live documents, at most `sample_limit`, newest first. |
+| `listed_complete` | `bool` | True when `listed` holds every live document and the count was read. |
+| `findings` | `list[DocumentFinding]` | One per check that ran over the documents and chunks; a clean check is an `info` finding with count 0. |
+| `coverage` | `ReportCoverage` | Which document checks ran and which were skipped. |
+| `ingestions` | `IngestionTotals` | knowledge.ingest jobs by state, and the sources with a job and no live document (a first ingest, or one after a delete, queued or failed). |
+| `extraction` | `ExtractionTotals` | What the extractor kept of the live ingested documents. |
+| `ingest_findings` | `list[IngestFinding]` | One per ingestion and extraction check that ran: a backlog, an extractor unavailable, missing access, content the extractor rejected, jobs that failed on the server's side, extractions that lost structure. |
+| `memory_findings` | `list[MemoryFindingRef]` | namespace.audit's `oversized_values` and `episodic_blobs`, the memory rows that may belong in documents; mentor.brief reports the same shape per agent as `documents_as_memories`. |
+| `skipped` | `list[str]` | Sections not read, as "section: reason"; their fields are null or empty, not zero. |
 
 ## `knowledge.list`
 
@@ -249,12 +365,155 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 | `uri_prefix` | `list[str]` | *(computed)* | Directory scope: only chunks whose source_uri starts with one of these prefixes. |
 | `session_ids` | `list[str]` | *(computed)* | Only chunks of documents written in one of these sessions (a chat's own attachments, an agent run's output). |
 | `source_classes` | `list[str]` | *(computed)* | Only chunks of these classes, e.g. ["asserted"] for what people and their agents wrote as their own, without what an agent derived or fetched. |
+| `rerank` | `str` | `''` | Reranker for the fused head: "" = the deployment default (LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT), "none" = off, "builtin:openai[:<model>]", "builtin:cohere[:<model>]" or an endpoint name in LOOM_RERANK_ENDPOINTS_JSON (no URL). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `results` | `list[_SearchHit]` | Hits ranked by `score` (then similarity), best first; empty when nothing matched. |
+| `results` | `list[_SearchHit]` | Hits best first (empty when nothing matched): when `reranked_by` is set, the reranked head in the reranker's order, then the rest by `score`; else by `score` (then similarity). |
+| `reranked_by` | `str` | The reranker that ordered `results`; empty when no reranker ran, it failed, it ran past its time limit, or it kept the fused order. |
 | `embedding_model` | `str` | Embedding model the query was embedded with; only chunks of this model are searched. |
 | `namespaces_skipped` | `list[str]` | Namespaces of the caller an all_mine search did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
+
+## `knowledge.source.add`
+
+Register a document source on a repository's trunk code namespace: a kind, the ids it reads and a read-only credential.
+
+`POST /v1/knowledge.source.add` · MCP `loom_knowledge_source_add` · role `admin` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `name` | `str` | required | Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. |
+| `kind` | `str` | required | The source kind: `gdrive` (a shared folder), `linear` (a project tracker's project documents) or `recording` (a meeting store's transcripts). |
+| `config` | `dict[str, Any]` | required | The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: {project_ids: [1-20 project ids, UUIDs]}; recording: {provider: meet \| zoom, ids: [1-20… |
+| `credential` | `str` | required | The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an account that sees the projects; recording: for meet, an authorized_user JSON file… |
+| `dry_run` | `bool` | `False` | Probe and write nothing. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The registered source's name, normalised. |
+| `kind` | `str` | The source kind, normalised. |
+| `namespace` | `str` | The repository's trunk code namespace the source was registered on. |
+| `config` | `dict[str, Any]` | The config as stored. |
+| `probe` | `KnowledgeSourceProbe` | What the probe with the credential found. |
+| `dry_run` | `bool` | True when the call only probed. |
+
+## `knowledge.source.check`
+
+Probe a registered document source with its stored credential now (a check and a listing of each folder or project), nothing written.
+
+`POST /v1/knowledge.source.check` · MCP `loom_knowledge_source_check` · role `admin` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `name` | `str` | required | The source name. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The source checked. |
+| `reachable` | `bool` | False when the probe failed; `summary` says why. |
+| `documents` | `int` | Documents the source lists now: the first 1000 at most (gdrive), the first page of each project (linear). |
+| `more` | `bool` | True when more documents match than were listed, so `documents` is a lower bound. |
+| `sample` | `list[str]` | Up to five document titles, most recently changed first. |
+| `summary` | `str` | One line: what was found, or why it failed. |
+| `checked_at` | `str` | When the probe ran, ISO UTC. |
+
+## `knowledge.source.inspect`
+
+One registered document source: its config, its sync state and the documents it wrote (the 200 most recently ingested).
+
+`POST /v1/knowledge.source.inspect` · MCP `loom_knowledge_source_inspect` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `name` | `str` | required | The source name. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The source's name. |
+| `kind` | `str` | The source's kind. |
+| `config` | `dict[str, Any]` | The ids and filters the source reads; never a credential. |
+| `created_by` | `str` | Token subject of the maintainer who added it; '' with auth off. |
+| `created_at` | `str` | When it was added, ISO UTC. |
+| `sync` | `KnowledgeSourceSync` | The source's sync state: a waiting request and the last pass. |
+| `documents` | `list[KnowledgeSourceDocument]` | The source's live documents, most recently ingested first, at most 200. |
+
+## `knowledge.source.list`
+
+The document sources registered on a repository's code namespace, with each one's sync state.
+
+`POST /v1/knowledge.source.list` · MCP `loom_knowledge_source_list` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `sources` | `list[KnowledgeSourceEntry]` | The namespace's active sources, by name. |
+| `enabled` | `bool` | Whether this deployment runs the sync worker (LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED); false: sources are stored and probed, but nothing pulls from them. |
+
+## `knowledge.source.remove`
+
+Retire a registered document source: its registry row goes inactive and its credential is cleared.
+
+`POST /v1/knowledge.source.remove` · MCP `loom_knowledge_source_remove` · role `admin` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `name` | `str` | required | The source name. |
+| `confirm` | `str` | required | Type the source name to confirm. |
+| `delete_documents` | `bool` | `False` | Record a request to retire the source's documents (default keep them). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The source retired. |
+| `documents_pending` | `int` | Live documents the recorded delete request covers (none retired yet), 0 without `delete_documents`. |
+
+## `knowledge.source.rotate`
+
+Replace a registered document source's credential.
+
+`POST /v1/knowledge.source.rotate` · MCP `loom_knowledge_source_rotate` · role `admin` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `name` | `str` | required | The source name. |
+| `credential` | `str` | required | The replacement credential, of the same form as add's; stored encrypted, never returned. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The source whose credential was replaced. |
+| `probe` | `KnowledgeSourceProbe` | What the probe with the new credential found. |
+| `rotated_at` | `str` | When the credential was replaced, ISO UTC. |
+
+## `knowledge.source.sync_now`
+
+Record a request to sync one document source in its sync state: the sync worker starts its next pass with it.
+
+`POST /v1/knowledge.source.sync_now` · MCP `loom_knowledge_source_sync_now` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `name` | `str` | required | The source name. |
+| `full` | `bool` | `False` | Ask for a pass that lists every document, not only those changed since the last pass. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The source the request was recorded for. |
+| `enabled` | `bool` | Whether this deployment runs the sync worker; false: the request waits until it does. |
 
 ## `knowledge.synthesize`
 
@@ -279,11 +538,12 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | `chunks_read` | `int` | How many chunks the read windows covered. |
 | `documents` | `int` | How many of the named documents had chunks to read. |
 | `reduce_rounds` | `int` | How many fold rounds merged the notes into the answer; 1 when they fit one call. |
-| `citations` | `list[str]` | Distinct `source#idx` (or `source#a-b`) citations in the answer, in reading order. |
+| `citations` | `list[str]` | Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning documents) citations in the answer, in the order found; each names chunks the passes read. |
+| `unsupported_citations` | `list[str]` | Citations the model wrote naming a chunk the passes did not read; removed from `answer`. |
 | `truncated` | `bool` | True when the documents needed more than `max_windows` windows and only the first were read. |
-| `abstain` | `bool` | True when no answer was attempted; `abstain_reason` says why. |
-| `abstain_reason` | `str` | `budget_capped` (the namespace is over its cost cap) or `no_chunks` (the documents have no chunks); empty otherwise. |
-| `model` | `str` | LLM that wrote the notes and the answer; empty when it abstained. |
+| `abstain` | `bool` | True when there is no answer to give; `abstain_reason` says why. |
+| `abstain_reason` | `str` | `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents have none) or `empty_answer` (no letter or digit once unread citations are removed); empty otherwise. |
+| `model` | `str` | LLM that wrote the notes and the answer; empty when it abstained before any call. |
 
 ## `knowledge.update_metadata`
 
@@ -299,7 +559,7 @@ Edit doc-level metadata (title, description, tags).
 | `title` | `str \| None` | `None` | None means "leave unchanged" (sparse update); empty string is an explicit clear. |
 | `description` | `str \| None` | `None` | New description; None leaves it unchanged, empty string clears it. |
 | `tags` | `list[str] \| None` | `None` | New tag list, replacing the old one; None leaves it unchanged, `[]` clears it. |
-| `reindex` | `bool` | `False` | When True, re-embed every chunk with the new title + description prepended, routed through the upsert flow for identical supersession semantics (same content, fresh embeddings). |
+| `reindex` | `bool` | `False` | When True, rewrite every chunk with the new title + description in its context (re-embedded, re-scored by the lexical leg), routed through the upsert flow for identical supersession semantics (same content, fresh chunks). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -321,8 +581,8 @@ Same fields as knowledge.add.
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `source_uri` | `str` | required | The document's stable identifier in the namespace; `get`, `upsert` and `delete` name it. |
 | `content` | `str` | required | The document's extracted text; it is split into chunks, and each chunk is embedded. |
-| `title` | `str` | `''` | Document title, stored on the document and prepended to each chunk before embedding. |
-| `description` | `str` | `''` | Prepended (with title) to each chunk before embedding so chunk vectors carry doc-level context. |
+| `title` | `str` | `''` | Document title, stored on the document and in each chunk's context, which heads the chunk's embedded text and is scored by the lexical leg. |
+| `description` | `str` | `''` | Stored (with the title) in each chunk's context, so both search legs carry doc-level context. |
 | `tags` | `list[str]` | *(computed)* | Labels stored on the document and on every chunk; search and list filter on them. |
 | `metadata` | `dict[str, Any]` | *(computed)* | Free-form JSON stored with the document and on every chunk; `knowledge.get` returns it. |
 | `original_bytes_b64` | `str \| None` | `None` | Original file bytes (base64), preserved alongside extracted text so users can download exactly what they uploaded. |

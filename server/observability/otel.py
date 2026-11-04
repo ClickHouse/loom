@@ -65,6 +65,10 @@ def _parse_headers(raw: str) -> dict[str, str]:
     return out
 
 
+# The `service.namespace` resource value on every Loom span, log and metric
+# point: the deployment, per OTel semconv; the tenant rides `loom.namespace`.
+SERVICE_NAMESPACE = "loom"
+
 # Sign-in URLs carry codes and state in their query strings; whatever the
 # setting says, they never go into a trace.
 _SIGN_IN_URLS = "/oauth/"
@@ -193,7 +197,7 @@ def _start_tracing(exporter_mode: str, endpoint: str) -> tuple[Any, Any, Any] | 
     resource = Resource.create(
         {
             "service.name": settings.otel_service_name,
-            "service.namespace": "loom",
+            "service.namespace": SERVICE_NAMESPACE,
             "deployment.environment": settings.otel_environment,
             **_instance_attrs(),
         }

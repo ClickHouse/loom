@@ -717,19 +717,21 @@ def test_a_dashboard_save_off_the_gateway_answers_422(required: None, roots: Non
 
 
 @pytest.mark.parametrize("rerank", ["builtin:cohere", "builtin:cohere:rerank-english-v3.0"])
-def test_the_gateway_required_refuses_cohere_as_the_code_search_rerank_default(
-    monkeypatch: pytest.MonkeyPatch, rerank: str
+@pytest.mark.parametrize(
+    "setting", ["LOOM_CODE_SEARCH_RERANK_DEFAULT", "LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT"]
+)
+def test_the_gateway_required_refuses_cohere_as_a_search_rerank_default(
+    monkeypatch: pytest.MonkeyPatch, rerank: str, setting: str
 ) -> None:
-    env = _AT_GATEWAY | {
-        "LOOM_INFERENCE_GATEWAY_REQUIRED": "true",
-        "LOOM_CODE_SEARCH_RERANK_DEFAULT": rerank,
-    }
+    env = _AT_GATEWAY | {"LOOM_INFERENCE_GATEWAY_REQUIRED": "true", setting: rerank}
     for name, value in env.items():
         monkeypatch.setenv(name, value)
-    with pytest.raises(ValueError, match="LOOM_CODE_SEARCH_RERANK_DEFAULT"):
+    with pytest.raises(ValueError, match=setting):
         Settings(_env_file=None)  # type: ignore[call-arg]
-    monkeypatch.setenv("LOOM_CODE_SEARCH_RERANK_DEFAULT", "builtin:openai")
-    assert Settings(_env_file=None).code_search_rerank_default == "builtin:openai"  # type: ignore[call-arg]
+    monkeypatch.setenv(setting, "builtin:openai")
+    assert Settings(_env_file=None).model_dump()[setting.removeprefix("LOOM_").lower()] == (  # type: ignore[call-arg]
+        "builtin:openai"
+    )
 
 
 def test_a_namespace_that_stored_builtin_cohere_reranks_with_nothing(

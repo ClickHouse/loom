@@ -131,19 +131,20 @@ async def _bulk_existing_lookup(ch: Any, input: MemoryBulkSetInput, state: _Bulk
 
 
 async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, tuple[str, str]]:
-    """Phase 2: content hash -> (keeper key, keeper memory_id) of the live rows
-    under this identity (any session, any key) that already hold an entry's
-    exact bytes. Empty when the scope is not `identity` or the read failed."""
+    """Phase 2: content hash -> (keeper key, keeper memory_id) of the keys under
+    this identity (any session, any key) whose current version is live and holds
+    an entry's exact bytes. Empty when the scope is not `identity` or the read failed."""
     # Identity-scoped exact dedup. The gate above is session-scoped, so the same fact
     # re-observed in a later session, or extracted under a key variant, would land as a new
-    # active row (~9% of active rows in real namespaces were exact copies). A live active row
-    # in (org, namespace, agent, user_id) with the same content_sha256, under any key, IS the
-    # fact: the entry reinforces it instead of duplicating it. content_sha256 carries a
-    # bloom-filter index, so this is one cheap read. Both lookups feed a write, so they read
-    # with sequential consistency: on ClickHouse Cloud a row written a second ago by another
-    # replica is not yet visible to a plain read. The keeper may be `conflicted` or
-    # `duplicate` (the reader keeps those live): the same bytes under any live status are
-    # still the same fact. Fail-open: a lookup error writes the entry normally.
+    # active row (~9% of active rows in real namespaces were exact copies). A key in
+    # (org, namespace, agent, user_id) whose current version is live with the same
+    # content_sha256 IS the fact: the entry reinforces it instead of duplicating it.
+    # content_sha256 carries a bloom-filter index that narrows the keys read. Both lookups
+    # feed a write, so they read with sequential consistency: on ClickHouse Cloud a row
+    # written a second ago by another replica is not yet visible to a plain read. The keeper
+    # may be `conflicted` or `duplicate` (the reader keeps those live): the same bytes under
+    # any live status are still the same fact. Fail-open: a lookup error writes the entry
+    # normally.
     identity_dupes: dict[str, tuple[str, str]] = {}
     from server.settings import settings as _settings_dedup
 
@@ -161,27 +162,34 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
             }
             # Under own_session the keeper must be in the caller's session too.
             in_scope = scope_and(request_scope(), params)
+            # The hash filter only narrows the keys: each key's newest version is
+            # compared, so a superseded version not yet merged away is never a keeper.
+            identity = (
+                "org = {org:String} AND namespace = {ns:String}"
+                " AND agent = {agent:String} AND user_id = {uid:String}" + in_scope
+            )
             _rows = await ch.query_all(
                 f"""
-                SELECT content_sha256, memory_key,
+                SELECT argMax(content_sha256, version) AS head_sha, memory_key,
                        toString(argMax(memory_id, version)) AS memory_id
                 FROM loom.memory
-                WHERE org = {{org:String}}
-                  AND namespace = {{ns:String}}
-                  AND agent = {{agent:String}}
-                  AND user_id = {{uid:String}}
-                  AND content_sha256 IN {{shas:Array(String)}}{in_scope}
-                GROUP BY content_sha256, memory_key
-                HAVING argMax(tombstoned_at IS NULL, version) = 1
+                WHERE {identity}
+                  AND (session_id, memory_key) IN (
+                      SELECT session_id, memory_key FROM loom.memory
+                      WHERE {identity} AND content_sha256 IN {{shas:Array(String)}}
+                  )
+                GROUP BY session_id, memory_key
+                HAVING head_sha IN {{shas:Array(String)}}
+                   AND argMax(tombstoned_at IS NULL, version) = 1
                    AND argMax(status, version) IN {{live:Array(String)}}
-                ORDER BY content_sha256, memory_key
+                ORDER BY head_sha, memory_key, session_id
                 SETTINGS select_sequential_consistency = 1
                 """,
                 params=params,
             )
             for _r in _rows:
                 identity_dupes.setdefault(
-                    hash_text(_r["content_sha256"]), (str(_r["memory_key"]), str(_r["memory_id"]))
+                    hash_text(_r["head_sha"]), (str(_r["memory_key"]), str(_r["memory_id"]))
                 )
         except Exception as e:  # noqa: BLE001 — a dedup read never blocks an ingest
             log.warning("bulk_set identity-dedup lookup failed (non-fatal): %s", e)

@@ -5,7 +5,8 @@ The term-frequency views only see INSERTs. Supersession (knowledge) and
 tombstoning (memory) are ALTER UPDATEs the views never observe, so document
 frequency accumulates the vocabulary of rows that are no longer live. A
 rebuild deletes one namespace's aggregate rows and re-inserts them from the
-live rows with the view's own SELECT. `loom.memory_embeddings` is a
+live rows with the views' own SELECT (a knowledge chunk's terms are those of its
+context and its text). `loom.memory_embeddings` is a
 ReplacingMergeTree: without FINAL an older, untombstoned version of a
 tombstoned row still counts as live.
 """
@@ -27,7 +28,7 @@ _REBUILD_SQL: dict[str, tuple[str, str]] = {
         SELECT org, namespace, term, uniqExactState((source_uri, chunk_idx)) AS df_state, now()
         FROM loom.chunks
         ARRAY JOIN """
-        + bm25.terms_sql("content")
+        + bm25.terms_sql("concat(context, ' ', content)")
         + """ AS term
         WHERE org = {org:String} AND namespace = {ns:String}
           AND content != '' AND """

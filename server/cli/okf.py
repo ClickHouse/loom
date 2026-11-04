@@ -913,7 +913,9 @@ def _unchanged(payload: dict[str, Any], row: dict[str, Any]) -> bool:
     """True when the live row already holds everything memory.set would write.
     `content_sha256` covers the value only, so the metadata is compared too."""
     if payload.get("source_resource_id"):
-        return False  # memory.list and bulk_get do not return source_resource_id
+        # memory.list does not return source_resource_id, and naming it in bulk_get's
+        # `fields` is a 422 from a server that predates the field.
+        return False
     return (
         row.get("content_sha256") == sha256_value(payload["value"])
         and row.get("memory_type") == payload["memory_type"]

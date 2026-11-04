@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection
-from typing import Any
+from typing import Any, Literal
 
 SCHEMA_NAME = "decision"
 
@@ -16,6 +16,11 @@ FAILURE_TAG = "decision:failure"
 # The tag on a decision row whose source document no longer says what it says;
 # memory.for_file prints it beside the row's pin marker.
 SOURCE_CHANGED_TAG = "source-changed"
+# The tag on a decision recorded as proposed (put forward, not yet chosen or built); its
+# statement reads "Proposed ..." instead of "Decided ...".
+PROPOSED_TAG = "decision:proposed"
+# A decision's stage: chosen, or put forward and not yet chosen or built.
+Stage = Literal["decided", "proposed"]
 
 
 def is_decision(memory_type: str, tags: Collection[str]) -> bool:

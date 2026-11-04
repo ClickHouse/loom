@@ -18,7 +18,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Exporting usage to a data warehouse](docs/operations/analytics-export.md): `loom export-analytics` writes one UTC day of usage and a snapshot of the namespaces to an S3 bucket as Parquet files, one file per entity per day, for a data warehouse to load.
 - [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup, plus the document bucket while any catalog row names an object in it.
 - [Code index operations](docs/operations/code-index-operations.md): The code index runs only when an operator enables its workers and configures repositories.
-- [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse.
+- [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse, with the document extractor service as an image of its own (container images).
 - [Kubernetes](docs/operations/kubernetes.md): `deploy/helm/loom` runs Loom as N identical replicas on Kubernetes: one Deployment of web pods over one ClickHouse service, each pod a full replica.
 - [Maintenance](docs/operations/maintenance.md): Every command here is a `loom` subcommand; run it inside the container that has the deployment's environment (`docker exec loom-server loom …`, or `loom-workers` in a split deployment).
 - [Monitoring](docs/operations/monitoring.md): This page says what to watch.
@@ -27,7 +27,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Runtime settings](docs/operations/runtime-settings.md): Every setting is an environment variable `LOOM_<FIELD>` read at startup, and can also go in the YAML settings file (configuration reference).
 - [Single sign-on (OIDC)](docs/operations/sso.md): Loom can hand the human sign-in to an OpenID Connect identity provider.
 - [Troubleshooting](docs/operations/troubleshooting.md): Each entry gives a symptom, the check that confirms its cause, and the fix.
-- [Upgrades](docs/operations/upgrades.md): An upgrade replaces the image and applies the migrations the new build carries.
+- [Upgrades](docs/operations/upgrades.md): An upgrade replaces the image (and the document extractor's, which holds no state) and applies the migrations the new build carries.
 
 ## Features
 
@@ -47,6 +47,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [The grep shim](docs/features/integrations/grep-shim.md): Needs Node 18 or later, a viewer token, and a repository in the code index.
 - [Integrations](docs/features/integrations/index.md): Loom on a bare ClickHouse service is a complete deployment.
 - [Langfuse](docs/features/integrations/langfuse.md): Needs `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`; nothing is sent until both are set.
+- [LibreChat](docs/features/integrations/librechat.md): Needs LibreChat v0.8.8 (MIT), a Loom server that serves the assistant toolset, and one Loom `viewer` token per person.
 - [Connecting an MCP client](docs/features/integrations/mcp-clients.md): Loom serves its operations as MCP tools at `<loom>/mcp`.
 - [OKF bundles](docs/features/integrations/okf.md): A namespace can be rendered as an OKF (Open Knowledge Format) v0.2 bundle: one Markdown file per memory with YAML frontmatter, an `index.md` per directory listing each concept with a one-line description, and a `log.md` of changes.
 - [Knowledge documents](docs/features/knowledge.md): A knowledge document is text an agent looks things up in: a runbook, a specification, a README.

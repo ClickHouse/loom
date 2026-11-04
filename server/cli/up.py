@@ -4,7 +4,8 @@ What it does, in place of `make dev` + a health poll + `loom mint-token`:
 
   1. bootstrap: copy `.env.example` → `.env` and the ClickHouse
      `named_collections.xml` template when they are missing (the same two
-     files `make bootstrap` creates; no `make` needed).
+     files `make bootstrap` creates; no `make` needed), and give an `.env`
+     without one an extractor token.
   2. `docker compose --env-file .env -f compose.yaml -f
      dev/docker-compose.dev.yml --profile bundled up -d --build` (`--file` /
      `--no-build` override).
@@ -88,10 +89,14 @@ def repo_root(explicit: str | None) -> Path | None:
     return None
 
 
+_EXTRACTOR_TOKEN = "LOOM_DOCUMENT_EXTRACTOR_TOKEN"
+
+
 def bootstrap(root: Path, env_file: str) -> list[str]:
     """`make bootstrap` without make: create `.env` and the ClickHouse
-    named_collections.xml bind-mount file when missing. Returns one line per
-    file created (empty when both already existed)."""
+    named_collections.xml bind-mount file when missing, and give an `.env`
+    without an extractor token one. Returns one line per file created or
+    changed (empty when there was nothing to do)."""
     created: list[str] = []
     env_path = root / env_file
     if not env_path.exists():
@@ -104,12 +109,27 @@ def bootstrap(root: Path, env_file: str) -> list[str]:
             1,
         )
         template = template.replace(
+            f"{_EXTRACTOR_TOKEN}=", f"{_EXTRACTOR_TOKEN}={secrets.token_hex(24)}", 1
+        )
+        template = template.replace(
             "COMPOSE_PROJECT_NAME=",
             f"COMPOSE_PROJECT_NAME=loom-local-{secrets.token_hex(4)}",
             1,
         )
         write_private(env_path, template)
         created.append(f"created {env_file} from .env.example")
+    elif not read_env_file(env_path).get(_EXTRACTOR_TOKEN):
+        # An .env from before the extractor service: `make dev` would start it
+        # with no token, which it refuses.
+        text = env_path.read_text(encoding="utf-8")
+        line = f"{_EXTRACTOR_TOKEN}={secrets.token_hex(24)}"
+        # An empty value, bare or quoted, is the line to fill.
+        blank = re.compile(rf"^{_EXTRACTOR_TOKEN}=[ \t]*(?:\"\"|'')?[ \t]*$", re.MULTILINE)
+        text, filled = blank.subn(line, text, count=1)
+        if not filled:
+            text = text.rstrip("\n") + f"\n{line}\n"
+        write_private(env_path, text)
+        created.append(f"added {_EXTRACTOR_TOKEN} to {env_file}")
     nc = root / NAMED_COLLECTIONS
     named_collections_template = Path(str(nc) + ".template")
     if not nc.exists() and named_collections_template.exists():
@@ -120,8 +140,8 @@ def bootstrap(root: Path, env_file: str) -> list[str]:
 
 def read_env_file(path: Path) -> dict[str, str]:
     """KEY=VALUE lines of a dotenv file; comments and blanks skipped, a
-    surrounding pair of quotes stripped. Enough for the six LOOM_* keys the
-    mode detection reads — the container itself gets the file via compose."""
+    surrounding pair of quotes stripped. Not a full dotenv parser: the
+    containers get the file through compose."""
     out: dict[str, str] = {}
     if not path.is_file():
         return out
@@ -156,11 +176,10 @@ def stack_mode(env: dict[str, str]) -> str:
 # ---- 2. docker compose -------------------------------------------------------
 
 
-def compose_names(compose_text: str) -> tuple[str, str]:
-    """(service, container_name) of the Loom server in a compose file,
-    without PyYAML (not a server dependency): scan two-space service keys
-    under `services:` and their `container_name:`. Prefers the service named
-    `loom`; else the first non-clickhouse service with a container name."""
+def compose_services(compose_text: str) -> dict[str, str]:
+    """Each service of a compose file and its `container_name` ('' when it has
+    none), without PyYAML (not a server dependency): the two-space keys under
+    `services:` only, so a network or volume of the same name is not one."""
     services: dict[str, str] = {}
     in_services = False
     current = ""
@@ -179,6 +198,14 @@ def compose_names(compose_text: str) -> tuple[str, str]:
             services.setdefault(current, "")
         elif current and stripped.startswith("container_name:"):
             services[current] = stripped.split(":", 1)[1].strip().strip("\"'")
+    return services
+
+
+def compose_names(compose_text: str) -> tuple[str, str]:
+    """(service, container_name) of the Loom server in a compose file. Prefers
+    the service named `loom`; else the first non-clickhouse service with a
+    container name."""
+    services = compose_services(compose_text)
     if _FALLBACK_SERVICE in services:
         return _FALLBACK_SERVICE, services[_FALLBACK_SERVICE] or _FALLBACK_CONTAINER
     for name, container in services.items():
@@ -249,14 +276,15 @@ def compose_up(
     env_file: str,
     *,
     build: bool,
-    recreate_service: str = "",
+    recreate: tuple[str, ...] = (),
 ) -> int:
     tail = ["up", "-d", *(["--build"] if build else [])]
-    if recreate_service:
+    if recreate:
         # Compose may consider a manually restarted container current even after its
-        # env file changed.  Recreate only Loom so provider/auth changes take effect
+        # env file changed.  Recreate only Loom (and its extractor, which a stack
+        # started before it existed lacks) so provider/auth changes take effect
         # without disrupting the durable ClickHouse service.
-        tail.extend(["--force-recreate", "--no-deps", recreate_service])
+        tail.extend(["--force-recreate", "--no-deps", *recreate])
     argv = compose_argv(root, compose_files, env_file, *tail)
     env = dict(os.environ)
     # Importing Loom may have loaded the caller checkout's .env into os.environ.
@@ -606,10 +634,13 @@ def _cmd_up(args: argparse.Namespace) -> int:
     if missing := _missing_file(root, files):
         print(f"✗ compose file not found: {missing}", file=sys.stderr)
         return 2
+    texts = [(root / f).read_text(encoding="utf-8", errors="replace") for f in files]
     # The last file names the containers (the dev override does).
-    service, container = compose_names(
-        (root / files[-1]).read_text(encoding="utf-8", errors="replace")
-    )
+    service, container = compose_names(texts[-1])
+    # A stack started before the extractor service lacks its container: a rerun
+    # recreates it with loom.
+    extractor = any("extractor" in compose_services(t) for t in texts)
+    recreate = (service, "extractor") if extractor else (service,)
 
     status_code, body = _http_get_json(health_url, timeout=2.0)
     already_up = body is not None and body.get("status") == "ok"
@@ -623,7 +654,7 @@ def _cmd_up(args: argparse.Namespace) -> int:
         files,
         args.env_file,
         build=build,
-        recreate_service=service if already_up else "",
+        recreate=recreate if already_up else (),
     )
     if rc != 0:
         print(f"✗ docker compose up exited {rc}", file=sys.stderr)
@@ -713,11 +744,11 @@ def _cmd_down(args: argparse.Namespace) -> int:
 
 
 _UP_HELP = (
-    "Boot the local stack (Loom + ClickHouse) and print how to connect: creates "
-    ".env and the ClickHouse config from their templates, runs docker compose up "
-    "--build, waits for /v1/health, then prints the dashboard URL and the first "
-    "memory.set (curl + Python SDK) and `claude mcp add` snippets — minting a "
-    "writer token first when auth is on. Re-run any time."
+    "Boot the local stack (Loom, its document extractor and ClickHouse) and print "
+    "how to connect: creates .env and the ClickHouse config from their templates, "
+    "runs docker compose up --build, waits for /v1/health, then prints the "
+    "dashboard URL and the first memory.set (curl + Python SDK) and `claude mcp "
+    "add` snippets — minting a writer token first when auth is on. Re-run any time."
 )
 
 

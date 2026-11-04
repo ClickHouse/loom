@@ -3,7 +3,7 @@
 // calls and the build — posted when the viewer leaves the view (a navigation or the page
 // hiding), never inside the view's own measured window. Every observer is optional: a
 // browser without one reports what it has.
-import { authHeader, UI_CONSUMER } from "../api";
+import { authHeader, ownsToken, storedToken, UI_CONSUMER } from "../api";
 import { readCalls, resetCalls } from "./vitalsCounter";
 
 type Identity = { org: string; namespace: string };
@@ -83,6 +83,8 @@ export function flushView(identity: Identity | null, build: string): void {
   };
   firstView = false;
   route = "";
+  // Nothing of this page goes out under another person's token (another tab's sign-in).
+  if (!ownsToken(storedToken())) return;
   try {
     void fetch("/v1/ui.vitals", {
       method: "POST",

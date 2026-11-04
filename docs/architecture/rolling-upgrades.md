@@ -13,13 +13,14 @@ schema. These rules keep that safe. The operator procedure is in
    N-1 booting on N's schema logs one WARNING naming the migrations it does not carry
    (`server/boot.py::warn_newer_schema`) and serves.
 2. **A version row keeps columns its build does not know.** `loom.memory`,
-   `loom.shared`, `loom.memory_embeddings`, `loom.session_summaries` and
-   `loom.entity_summaries` are `ReplacingMergeTree(version)`: the newest row replaces
-   the whole previous one. Before each insert into them, `ch.insert` fills every stored
-   column outside its build's row builder from the newest stored version of the row's
-   key (`server/core/rmt_carry.py`), so N-1's touch, revision or tombstone keeps the
-   values N wrote to N's new columns. This costs a cached lookup while every build agrees
-   with the schema, and one extra keyed read per insert while a newer column exists.
+   `loom.shared`, `loom.memory_embeddings`, `loom.session_summaries`,
+   `loom.entity_summaries` and `loom.documents` are `ReplacingMergeTree(version)`: the
+   newest row replaces the whole previous one. Before each insert into them, `ch.insert`
+   fills every stored column outside its build's row builder from the newest stored
+   version of the row's key (`server/core/rmt_carry.py`), so N-1's touch, revision or
+   tombstone keeps the values N wrote to N's new columns. This costs a cached lookup
+   while every build agrees with the schema, and one extra keyed read per insert while a
+   newer column exists.
    - Each process checks `loom._migrations` and the carried tables' metadata time
      every 2 s in the background and then re-reads the column lists.
    - A write that took the lists before the `ALTER` would still drop the column. So
@@ -109,16 +110,19 @@ schema. These rules keep that safe. The operator procedure is in
    location answers such a download 410 and cannot erase such an object, so the store is
    switched on after the rollout, and no rollback goes past this build while rows name
    objects.
-10. **An exclusion N adds holds only among N's replicas.** `task.create` with an
-    idempotency key and the coverage watch's ready-event delivery hold a lease from this
-    build on (`insert_created_task`, `insert_ready_event`). One whose lease ran out
-    before its insert can still race the next, so both insert under one dedup token (the
-    key, or the event's task id) and storage drops the later row. An erased row's token
-    can outlive it and drop a new row too: with nothing stored, the row goes in again
-    under a fresh token. The build before takes no lease, and its client writes a random
-    dedup token over every insert's, so the key's token drops neither build's row for
-    the other. A create of each build racing on one key can store two tasks, and two
-    deliveries two ready events, as two replicas of the previous build already can.
+10. **A `task.create` key's exclusion holds only among N's replicas.** `task.create` with an
+    idempotency key holds a lease on the poster and its key (`_one_create_per_key`) and
+    inserts under the key's dedup token (`insert_created_task`); the coverage watch's
+    ready-event delivery holds one on the event's task id (`insert_ready_event`). One
+    whose lease ran out before its insert can still race the next, so both insert under
+    one dedup token (named by the same poster and key, or the event's task id) and
+    storage drops the later row. An erased row's token can outlive it and drop a new row
+    too: with nothing stored, the row goes in again under a fresh token. The build before
+    takes the delivery's lease and writes its token too, so deliveries exclude across
+    builds. Creates do not: the build before names the create's lease and token without
+    the poster, so neither build's create of a key excludes the other's, and racing they
+    can store two tasks. A build that looks a key up without the poster answers another
+    poster's task to a create with the same key until it stops serving.
     Each task is whole (its event and its lease row) and claimable: a create of N cut
     off after its task row is finished by its retry, which under the key's lease writes
     the created event the first one left out, and by the lease sweep, which writes its
@@ -283,6 +287,24 @@ schema. These rules keep that safe. The operator procedure is in
     maximum once N serves again (`loom bot create --replace` with the bot's key or trust and
     roles as registered, which also ends its tokens). The mixed-version gate does not check
     this rule.
+
+27. **An erasure saga's audit actor** (`loom.erasure_requests.actor`, migration
+    `081_erasure_request_actor.sql`): N-1 inserts ledger rows without the column, so a
+    saga it checkpoints reads `''` afterwards, and a later resume by N names the resuming
+    process (`erasure-recovery-worker` or the CLI command) on its failed and completed
+    rows instead of the principal that asked. N-1 also still writes the body's
+    `requester` as the `actor` of the `erasure.*` rows of a request or export it serves,
+    or of a saga it resumes. No gate holds the rollout: the cost is the actor named on
+    those audit rows, nothing is lost or refused, and it ends once no N-1 replica serves.
+    The mixed-version gate does not check this rule.
+28. **A new document-source kind** (`recording` in `loom.knowledge_sources.kind`): N-1
+    refuses to add one (`BAD_KIND`) and lists and inspects one like any source. Its
+    `check` and `rotate` of one fail with a server error, since it has no probe for the
+    kind. An N-1 sync worker that takes a recording source's turn reads it as a shared
+    folder: the credential is not a service account key, so the turn ends
+    `credential_invalid` before any request and retires nothing, and the next turn by N
+    writes the real status. No gate holds the rollout: the cost is that status, shown
+    until N's turn, and it ends once no N-1 replica serves.
 
 ## What checks them
 
