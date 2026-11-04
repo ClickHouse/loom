@@ -326,6 +326,31 @@ def _context(job: dict[str, Any], chunk: StructuralChunk) -> str:
     return chunk_context(job["title"], job["description"], chunk.breadcrumb)
 
 
+def _revision_for(job: dict[str, Any], prior: Any, version: int) -> int:
+    """The revision this publish takes over the source's latest row `prior`, or
+    JobFailed("revision_conflict") when the job may not publish over it."""
+    from server.knowledge.app.writes import next_revision
+
+    current = prior if prior is not None and prior.superseded_at is None else None
+    # This job's own live row, landed late after its chunks were retired: this
+    # publish replaces it at the same revision, so it is no conflict.
+    if current is not None and current.ingestion_id == job["ingestion_id"]:
+        return int(current.revision)
+    expected = int(job["expected_revision"])
+    at = current.revision if current is not None else 0
+    # 0 expects no live document; a live one written before revisions were
+    # numbered (or by an older build) also reads revision 0.
+    if expected >= 0 and (at != expected or (expected == 0 and current is not None)):
+        now_at = f"revision {at}" if current is not None else "no live document"
+        raise JobFailed("revision_conflict", f"the source has {now_at}, not {expected}")
+    # A write of the source that took its version after this one (a text write,
+    # a metadata edit or a delete, which take no claim) would outrank this row in
+    # FINAL: this publish would report a revision no reader sees.
+    if prior is not None and prior.version >= version:
+        raise JobFailed("revision_conflict", "a later write of this source landed first")
+    return next_revision(prior)
+
+
 async def _publish(
     job: dict[str, Any], parsed: Parsed, vectors: list[list[float]], lease: Any
 ) -> tuple[dict[str, Any], int]:
@@ -333,7 +358,6 @@ async def _publish(
     row as saved and the revision."""
     from server.core import leases
     from server.embedding import get_embedder
-    from server.knowledge.app.writes import next_revision
     from server.knowledge.store import chunks as chunks_repo
     from server.knowledge.store import documents as documents_repo
 
@@ -382,29 +406,9 @@ async def _publish(
             if await _cancelled(job):
                 raise JobFailed("cancelled", "cancelled before it was published")
             prior = await documents_repo.get_one(org, ns, uri, include_superseded=True)
-            live = prior is not None and prior.superseded_at is None
-            # This job's own live row, landed late after its chunks were retired:
-            # this publish replaces it at the same revision, so it is no conflict.
-            own = (
-                prior is not None
-                and prior.superseded_at is None
-                and prior.ingestion_id == job["ingestion_id"]
-            )
-            expected = int(job["expected_revision"])
-            at = prior.revision if live and prior is not None else 0
-            # 0 expects no live document; a live one written before revisions were
-            # numbered (or by an older build) also reads revision 0.
-            if not own and expected >= 0 and (at != expected or (expected == 0 and live)):
-                now_at = f"revision {at}" if live else "no live document"
-                raise JobFailed("revision_conflict", f"the source has {now_at}, not {expected}")
-            # A write of the source that took its version after this one (a text
-            # write, a metadata edit or a delete, which take no claim) would outrank
-            # this row in FINAL: this publish would report a revision no reader sees.
-            if prior is not None and prior.version >= version:
-                raise JobFailed("revision_conflict", "a later write of this source landed first")
+            revision = _revision_for(job, prior, version)
             if not lease.held:
                 raise LeaseLost(f"knowledge-ingest:{job['ingestion_id']}")
-            revision = prior.revision if own and prior is not None else next_revision(prior)
             row = documents_repo.build_document_row(
                 **author,
                 org=org,
