@@ -327,15 +327,19 @@ async def check(auth: AuthInfo, required_role: Role, org: str, namespace: str) -
     if not may_act_in_org(auth, org):
         raise refusal
     if not is_personal(namespace):
-        notes = [
-            f"a collection needs a grant of at least {required_role.name.lower()} on it "
-            "or a collection above it"
-        ]
+        role_name = required_role.name.lower()
+        # A token its own claim keeps out is told only what the claim must say, as the MCP
+        # screen tells it: it may hold the grant already, and only its owner can mint one.
         needs = claim_cap(auth, org, namespace, required_role)
-        if needs:
-            notes.append(needs)
+        notes = (
+            [f"{needs}, so the token's owner must mint one whose claim does"]
+            if needs
+            else [
+                f"a collection needs a grant of at least {role_name} on it or a collection above it"
+            ]
+        )
         if auth.creator:
-            notes.append("its creator must hold that role too")
+            notes.append(f"its creator must hold at least {role_name} there too")
         refusal = PermissionError(
             f"{refusal}: {', and '.join(notes)}; collection.list (or the dashboard's Library) "
             "lists the ones you can read"

@@ -184,7 +184,8 @@ test("the toolset decides: none on assistant alone, no writes on readonly, as th
   assert.equal(toolsetAllows("assistant+assistant"), null);
   assert.deepEqual(toolsetAllows("core,assistant"), { writes: true });
   assert.deepEqual(toolsetAllows("ReadOnly"), { writes: false });
-  for (const v of ["readonly,", "readonly+readonly", " readonly "]) assert.deepEqual(toolsetAllows(v), { writes: false }, v);
+  for (const v of ["readonly,", "readonly+readonly", " readonly "])
+    assert.deepEqual(toolsetAllows(v), { writes: false }, v);
   assert.deepEqual(toolsetAllows("core+readonly"), { writes: true });
   assert.deepEqual(toolsetAllows("core,coding"), { writes: true });
   assert.deepEqual(toolsetAllows(undefined), { writes: true });

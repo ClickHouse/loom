@@ -286,8 +286,11 @@ def test_a_token_is_named_in_the_refusal_only_when_its_claim_is_what_caps_it(
     )
     # The claim already names it with viewer: the missing piece is the grant.
     assert "claim must name it" not in refusal(scoped)
-    # A write the claim's viewer role caps: the claim is named.
-    assert "claim must name it" in refusal(scoped, Role.WRITER)
+    # A write the claim's viewer role caps: the claim is named, and no grant is asked for
+    # (the token may hold it already; only its owner can mint one that reaches it).
+    capped = refusal(scoped, Role.WRITER)
+    assert "claim must name it" in capped and "must mint one" in capped
+    assert "needs a grant" not in capped
     delegated = AuthInfo(
         subject="sa:bot",
         org=ORG,
@@ -296,7 +299,7 @@ def test_a_token_is_named_in_the_refusal_only_when_its_claim_is_what_caps_it(
         is_service_account=True,
         creator="alice",
     )
-    assert "its creator must hold that role too" in refusal(delegated)
+    assert "its creator must hold at least viewer there too" in refusal(delegated)
     # A delegated claim of `*` does not name it: the claim is what caps it.
     assert "claim must name it" in refusal(delegated)
     named = AuthInfo(
