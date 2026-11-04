@@ -386,11 +386,11 @@ async def _lookup(t: _Turn, page_id: str) -> bool | None:
 
 async def _block_page(t: _Turn, block_id: str) -> str | None:
     """The page a block sits in, walking its parents up (at most `_MAX_BLOCK_HOPS`
-    requests): its id, "" when the walk reaches no page of the source, or None when it
-    cannot tell (another failure, an unexpected parent, the bound). The workspace is
-    no page; and a block the store answers 404 for is not shared with the integration,
-    while every block under the listed pages and databases is, so the page is outside
-    the source. A rate limit or a 401 is raised."""
+    requests): its id, "" when the walk reaches no page (the workspace, or a block the
+    store answers 404 for), or None when it cannot tell (another failure, an unexpected
+    parent, the bound). A block the store answers 404 for is not shared with the
+    integration, while every block under the listed pages and databases is, so the
+    page is outside the source. A rate limit or a 401 is raised."""
     for _ in range(_MAX_BLOCK_HOPS):
         if not notion.valid_id(block_id):
             return None
