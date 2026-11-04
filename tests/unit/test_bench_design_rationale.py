@@ -1426,3 +1426,23 @@ def test_judge_agreement_leaves_out_change_answers_a_detector_decided():
     assert decided == {}  # the detector fired: the passes could not disagree
     open_ = score.judge_stability(ts, {"B1/arm0/s1": entry(False)})
     assert open_["orders"] == {"answers": 1, "agreement": 0.0}
+
+
+def test_judge_accuracy_against_humans_leaves_out_detector_decided_answers():
+    ts = load(EXAMPLE)
+
+    def entry(fired, forbidden):
+        verdict = {"forbidden_proposed": [0] if forbidden else [], "constraints_violated": []}
+        return {
+            "citations": [],
+            "detectors": [{"type": "x", "fired": fired}],
+            "passes": [{"model": "m", "order": 0, "repeat": 0, "verdict": verdict}],
+        }
+
+    judged = {"B1/arm0/s1": entry(True, False), "B1/arm0/s2": entry(False, False)}
+    labels = [
+        # The detector decided this one; the human agrees with it, the judge would not.
+        {"answer": "B1/arm0/s1", "field": "avoids", "value": False},
+        {"answer": "B1/arm0/s2", "field": "avoids", "value": True},
+    ]
+    assert score.judge_vs_human(ts, judged, labels) == {"items": 1, "accuracy": 1.0, "kappa": 1.0}
