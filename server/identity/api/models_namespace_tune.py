@@ -135,9 +135,13 @@ class ChunkingSample(BaseModel):
     population: int | None = None
     # Documents re-chunked, picked by a hash of their source_uri.
     documents: int
-    # Picked and not re-chunked: text longer than the sample takes, or an ingested
-    # document whose stored artifact is too large or could not be read.
+    # Picked and not re-chunked: text longer than the sample takes, an ingested document
+    # whose stored artifact is too large or could not be read, or a document past
+    # `load_cap`.
     unread: int
+    # The most the sample loads in all, characters of text plus bytes of artifact, in
+    # sample order; a document past it counts as unread.
+    load_cap: int
     # The embedding model this server embeds with, and the most tokens one input to it
     # may hold (null when its provider states none Loom checks).
     embedder_model: str

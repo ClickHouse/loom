@@ -16494,6 +16494,7 @@ class ChunkingSample(TypedDict, total=False):
     population: NotRequired[Optional[int]]
     documents: Required[int]
     unread: Required[int]
+    load_cap: Required[int]
     embedder_model: Required[str]
     input_token_limit: NotRequired[Optional[int]]
     current: Required["ChunkStats"]

@@ -7727,6 +7727,7 @@ export interface ChunkingSample {
   population?: number | null;
   documents: number;
   unread: number;
+  load_cap: number;
   embedder_model: string;
   input_token_limit?: number | null;
   current: ChunkStats;

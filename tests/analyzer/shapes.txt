@@ -625,6 +625,7 @@
 532b73367168	SELECT count() AS n FROM loom.events WHERE org = {org:String} AND namespace = {ns:String} AND ?
 536826142a9e	SELECT count() AS n FROM loom.events WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND ?
 537db1eef44c	ALTER TABLE loom.memory_reinforcement DELETE WHERE (org = {org:String} AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
+538a7fd3c1a1	SELECT source_uri, title, description, ingestion_id, artifact_sha256, doc_format, chars, if(cut AND sum(if(cut, chars, ?)) OVER ( ORDER BY cityHash64(source_uri), source_uri ROWS UNBOUNDED PRECEDING)
 53d24506ef23	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
 53d6938a1b94	ALTER TABLE loom.delete_version_checks DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync
 54325369241a	SELECT org, namespace, agent, user_id, session_id, memory_key, checked, tombstone, done FROM loom.delete_version_checks FINAL WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:St
@@ -1821,7 +1822,6 @@ e1515912d3bd	SELECT DISTINCT qualified_name, symbol_id FROM loom.code_symbols WH
 e161ba77e1ea	SELECT count() AS n FROM loom.memory_record_fields FINAL WHERE org = {org:String} AND namespace = {ns:String}
 e164289cbcf4	SELECT agent, count() AS rows, count() OVER () AS total FROM loom.documents FINAL WHERE org = {org:String} AND namespace = {ns:String} AND superseded_at IS NULL GROUP BY agent ORDER BY rows DESC, agen
 e166f10b342a	SELECT * FROM loom.scim_users FINAL WHERE deleted = ? ORDER BY user_name LIMIT {count:UInt32} OFFSET {skip:UInt32}
-e167a6d46d3e	SELECT source_uri, title, description, ingestion_id, artifact_sha256, if(format != ?, toString(format), if(JSONExtractString(metadata, ?) != ?, JSONExtractString(metadata, ?), if(blob_content_type !=
 e17744455f1f	DELETE FROM loom.conversation_embeddings WHERE (org = {org:String} AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS lightweight_deletes_sync = ?
 e1ad22795fae	SELECT count() AS n FROM loom.knowledge_ingest_cancels WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND ?
 e1d3cfd2dea5	ALTER TABLE loom.entity_canonical_map DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?

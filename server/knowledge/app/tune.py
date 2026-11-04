@@ -73,6 +73,10 @@ Guarded = Callable[[str, Callable[[], Awaitable[Any]], Any], Awaitable[Any]]
 # artifact is larger is not either. Both count as `unread`.
 MAX_DOCUMENT_CHARS = 2_000_000  # not a setting: bounds one request's memory
 MAX_ARTIFACT_BYTES = 8 * 1024 * 1024  # not a setting: bounds one request's memory
+# The most the whole sample loads: characters of text plus bytes of artifact. It bounds
+# one call's memory and the CPU of its cuts (each loaded character is cut and counted up
+# to six times); a document past it counts as `unread`.
+MAX_SAMPLE_CHARS = 8 * 1024 * 1024  # not a setting: bounds one viewer call's memory and CPU
 # The sections-cut rule: a size cutting more than this share of the sampled sections
 # drafts a larger one, which must cut at most this share. A change is a new rule version.
 CUT_SHARE = 0.25  # not a setting: the rule's threshold, versioned with it
@@ -84,7 +88,8 @@ _LARGER = (3 / 2, 2, 3, 4)
 MIN_CHUNK_SIZE = 200  # not a setting: the smallest size drafted
 # A size large enough that nothing is windowed: what a section's structure alone makes.
 _WHOLE = 1 << 62
-# Seconds one extractor's capabilities read may take here; a slower one reads as unread.
+# Seconds the capabilities read of every configured extractor, run at once, may take
+# here; a slower one reads as unread.
 CAPABILITIES_READ_S = 5.0  # not a setting: a draft's read, which must not hold the report
 # Agents named as affected, most documents first.
 MAX_AFFECTED_AGENTS = 20  # not a setting: bounds one response
@@ -135,7 +140,7 @@ def _cut(doc: _Doc, size: int, stride: int) -> list[tuple[Hashable, str, str]]:
         ]
     return [
         (c.section_idx, c.text, c.breadcrumb)
-        for c in chunk_document(doc.text, size=size, stride=min(stride, size))
+        for c in chunk_document(doc.text, size=size, stride=stride)
     ]
 
 
@@ -148,7 +153,7 @@ class _Measure:
 
 
 def _measure(docs: list[_Doc], size: int, stride: int, limit: int | None) -> _Measure:
-    stride = min(stride, size)
+    """The sample cut at `size` and `stride`, a stride the caller has clamped to the size."""
     lengths: list[int] = []
     sections = cut_sections = over = max_tokens = 0
     cut_docs: list[str] = []
@@ -198,29 +203,39 @@ def _scaled(size: int, factor: float) -> int:
 
 
 def _stride_for(new_size: int, size: int, stride: int) -> int:
-    """The stride at `new_size` with the current stride's ratio to the size."""
-    return max(1, min(new_size, round(min(stride, size) * new_size / size)))
+    """The stride at `new_size` with the current `stride`'s ratio to the positive `size`."""
+    return max(1, min(new_size, round(stride * new_size / size)))
 
 
 async def _load(org: str, namespace: str, rows: list[dict[str, Any]]) -> tuple[list[_Doc], int]:
-    """The sampled documents with what each is cut from, and how many could not be read."""
+    """The sampled documents with what each is cut from, in sample order until
+    MAX_SAMPLE_CHARS is loaded, and how many were not read: too long, past the total, or
+    an artifact that could not be read."""
     docs: list[_Doc] = []
-    unread = 0
+    unread = loaded = 0
     for r in rows:
         doc = _Doc(str(r["source_uri"]), str(r["title"]), str(r["description"]))
         sha = str(r["artifact_sha256"])
         if not sha:
-            if int(r["chars"]) > MAX_DOCUMENT_CHARS:
+            chars, doc.text = int(r["chars"]), str(r["text"])
+            # The read leaves out a text past its own bound or the total ('' for a
+            # non-empty document); this total also counts the artifacts loaded.
+            if (chars and not doc.text) or loaded + chars > MAX_SAMPLE_CHARS:
                 unread += 1
                 continue
-            doc.text = str(r["text"])
+            loaded += chars
             docs.append(doc)
             continue
         try:
             stored = await blobs.locate(org, namespace, sha)
-            if stored is None or stored.size > MAX_ARTIFACT_BYTES:
+            if (
+                stored is None
+                or stored.size > MAX_ARTIFACT_BYTES
+                or loaded + stored.size > MAX_SAMPLE_CHARS
+            ):
                 unread += 1
                 continue
+            loaded += stored.size
             data = await blobs.read(org, namespace, sha, stored=stored)
             if data is None:
                 unread += 1
@@ -266,7 +281,9 @@ async def _chunking(
     cap = settings.namespace_tune_document_sample
     rows = await guarded(
         "chunking",
-        lambda: store.sample_documents(org, ns, limit=cap, max_chars=MAX_DOCUMENT_CHARS),
+        lambda: store.sample_documents(
+            org, ns, limit=cap, max_chars=MAX_DOCUMENT_CHARS, total_chars=MAX_SAMPLE_CHARS
+        ),
         None,
     )
     if not rows:
@@ -288,11 +305,17 @@ async def _chunking(
         population=population,
         documents=len(docs),
         unread=unread,
+        load_cap=MAX_SAMPLE_CHARS,
         embedder_model=model,
         input_token_limit=limit,
         current=before.stats,
     )
     cur = before.stats
+    if size <= 0:
+        skipped.append(
+            "chunking: knowledge_chunk_size is 0 (one chunk per document); no size is drafted"
+        )
+        return sample, None
     if limit is not None and cur.over_input_limit:
         flagged, shrink = before.over, True
         factors = [f for f in _SMALLER if _scaled(size, f) < size]

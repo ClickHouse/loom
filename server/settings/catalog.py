@@ -5732,9 +5732,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # and three per category draft (`max_category_proposals`, default 5). Then the
     # document drafts: four document reads (counts, writers, the sample, the per-format
     # coverage) and the per-source job read, one artifact read per sampled ingested
-    # document (`namespace_tune_document_sample`, default 50), the sample cut in process
-    # up to six times, and, when a format fails, each extractor's capabilities (at most 5
-    # s each, cached for a minute).
+    # document (`namespace_tune_document_sample`, default 50), the sample (at most 8 Mi
+    # characters of text and artifact in all) cut in process up to six times, and, when a
+    # format fails, every extractor's capabilities read at once (5 s in all, cached for a
+    # minute).
     "namespace.tune": 8000,
     "namespace.browse": 120,
     "namespace.cancel_request": 80,

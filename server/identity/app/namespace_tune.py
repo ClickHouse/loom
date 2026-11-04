@@ -52,7 +52,7 @@ from server.identity.app.namespace_catalog import handle_namespace_list_categori
 from server.identity.app.namespace_guide import handle_namespace_guide_get
 from server.identity.app.request_scope import request_scope
 from server.identity.store import namespace_tune as store
-from server.knowledge.app.tune import document_drafts
+from server.knowledge.app.tune import DocumentDrafts, document_drafts
 from server.memory.app import extraction_policy
 from server.memory.app.finding_evidence import IDENTITY, revisions_for
 from server.memory.app.pipeline import OFFERED_CATEGORIES
@@ -619,7 +619,11 @@ async def handle_namespace_tune(input: NamespaceTuneInput) -> NamespaceTuneOutpu
         drafted = _guide_proposal(run, guide, prefixes, tags, agents, agents_total)
         if drafted is not None:
             out.proposals.append(drafted)
-    documents = await document_drafts(input, run.guarded, run.skipped)
+    documents = await run.guarded(
+        "documents",
+        lambda: document_drafts(input, run.guarded, run.skipped),
+        DocumentDrafts(),
+    )
     for p in documents.proposals:
         p.id = _proposal_id(p.target, p.proposed)
     out.proposals += documents.proposals

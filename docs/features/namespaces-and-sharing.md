@@ -278,8 +278,10 @@ this namespace's, and its `apply` names how the setting is changed (`via`).
   `namespace_tune_document_sample` live documents (default 50, picked by a hash of their
   `source_uri`) are cut again in process at the current `knowledge_chunk_size` and
   `knowledge_chunk_stride`, each by the chunker its write path uses: a text document's
-  text, an ingested document's stored artifact. Nothing is written, no model is called and
-  no text is returned. `chunking` reports the cut: chunk count, characters per chunk, the
+  text, an ingested document's stored artifact, until 8 MiB of text and artifact is
+  loaded; a document past that, a text over 2,000,000 characters or an artifact over 8
+  MiB counts as `unread`, and `load_cap` states the total. Nothing is written, no model is
+  called and no text is returned. `chunking` reports the cut: chunk count, characters per chunk, the
   sections the size cuts into more chunks than their structure makes (`sections_cut`), the
   largest embedding input in tokens and how many inputs are over the embedder's limit
   (null when its provider states none Loom checks). A size is drafted when an input is
@@ -289,7 +291,8 @@ this namespace's, and its `apply` names how the setting is changed (`via`).
   within it); the stride keeps its ratio to the size. `preview` holds the sample cut at
   both values. `apply` is `settings.set` (`POST /v1/admin/settings.set`, a platform
   admin) with `expected`, and `apply_also` sets the stride. A sample that breaks neither
-  rule drafts nothing, and stands as the evidence.
+  rule drafts nothing, and stands as the evidence; so does a `knowledge_chunk_size` of 0
+  (one chunk per document), for which no size is drafted.
 - **Extractor routes** (`settings.document_extractors_json`): a format whose sources'
   current job failed `format_unavailable`, or whose published extractions are
   incomplete, is routed to another configured extractor that declares it in its

@@ -81,6 +81,8 @@ SETUP = [
         agent="bot",
     ),
     _doc("files/c.toml", format="toml", ingestion_id=_id(2), coverage=WHOLE, agent="bot"),
+    # Published by a job and stored with no artifact: cut from its text, as a text write is.
+    _doc("files/plain.md", ingestion_id=_id(30), content="plain words", agent="bot"),
     _doc("docs/gone.md", superseded_at="2026-01-05 00:00:00"),
     _doc("docs/other.md", ns="other"),
     # No extractor takes these: by file name, by media type, by the declared format.
@@ -126,15 +128,27 @@ def _go(coro: Any) -> Any:
 
 
 def test_the_sample_is_a_stable_pick_of_live_documents_by_hash() -> None:
-    rows = _go(store.sample_documents("o", "ns", limit=4, max_chars=20, ch=_Local()))
-    again = _go(store.sample_documents("o", "ns", limit=4, max_chars=20, ch=_Local()))
+    rows = _go(
+        store.sample_documents("o", "ns", limit=4, max_chars=20, total_chars=1000, ch=_Local())
+    )
+    again = _go(
+        store.sample_documents("o", "ns", limit=4, max_chars=20, total_chars=1000, ch=_Local())
+    )
     assert [r["source_uri"] for r in rows] == [r["source_uri"] for r in again]
-    every = _go(store.sample_documents("o", "ns", limit=100, max_chars=20, ch=_Local()))
+    every = _go(
+        store.sample_documents("o", "ns", limit=100, max_chars=20, total_chars=1000, ch=_Local())
+    )
     uris = [r["source_uri"] for r in every]
     # Every live document of the namespace once; not the deleted one, not another
     # namespace's.
     assert sorted(uris) == sorted(
-        [*(f"docs/{i}.md" for i in range(8)), "docs/long.md", "files/q.sql", "files/c.toml"]
+        [
+            *(f"docs/{i}.md" for i in range(8)),
+            "docs/long.md",
+            "files/q.sql",
+            "files/c.toml",
+            "files/plain.md",
+        ]
     )
     # The pick of four is the first four of the hash order.
     assert [r["source_uri"] for r in rows] == uris[:4]
@@ -145,6 +159,8 @@ def test_the_sample_is_a_stable_pick_of_live_documents_by_hash() -> None:
     # An ingested document: its artifact and format, never its text.
     assert by["files/q.sql"]["text"] == "" and by["files/q.sql"]["artifact_sha256"] == "b" * 64
     assert by["files/q.sql"]["doc_format"] == "sql"
+    # A document with no artifact is read for its text, whoever published it.
+    assert by["files/plain.md"]["text"] == "plain words"
 
 
 def test_the_writers_count_live_documents_per_agent() -> None:
@@ -187,3 +203,15 @@ def test_the_extractions_are_counted_per_format_with_what_they_lost() -> None:
     }
     # Most incomplete first.
     assert rows[0]["doc_format"] == "sql"
+
+
+def test_the_sample_reads_text_only_up_to_its_total() -> None:
+    every = _go(
+        store.sample_documents("o", "ns", limit=100, max_chars=20, total_chars=40, ch=_Local())
+    )
+    texts = [r for r in every if r["text"]]
+    # In sample order, the texts read add up to no more than the total, and a text past it
+    # is left out even when a shorter one after it would fit.
+    assert texts and sum(int(r["chars"]) for r in texts) <= 40
+    cut = [r for r in every if not r["artifact_sha256"] and int(r["chars"]) <= 20]
+    assert [r["source_uri"] for r in texts] == [r["source_uri"] for r in cut][: len(texts)]

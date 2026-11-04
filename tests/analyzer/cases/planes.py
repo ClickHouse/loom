@@ -994,7 +994,9 @@ async def _tune_document_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     """The document reads behind `namespace.tune`'s chunking draft."""
     from server.knowledge.store import tune as store
 
-    await store.sample_documents(ORG, NS, limit=50, max_chars=2_000_000, ch=ch)
+    await store.sample_documents(
+        ORG, NS, limit=50, max_chars=2_000_000, total_chars=16 * 1024 * 1024, ch=ch
+    )
     await store.document_writers(ORG, NS, limit=20, ch=ch)
 
 

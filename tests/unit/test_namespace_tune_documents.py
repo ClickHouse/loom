@@ -386,3 +386,98 @@ async def test_the_handler_names_each_document_draft_by_its_value(
     (p,) = first.proposals
     assert p.id and p.id == again.proposals[0].id
     assert first.chunking is not None and first.chunking.current.sections_cut == 18
+
+
+def _two_paragraph_sections(uri: str, sha: str, docs: Docs) -> dict[str, Any]:
+    """An ingested document of three sections, each a heading and two paragraphs of 150
+    characters: at size 0 each paragraph is a chunk of its own."""
+    blocks: list[Block] = []
+    for s in range(3):
+        head = f"h{s}"
+        blocks.append(Block(id=head, type="heading", text=f"Part {s}", depth=1))
+        blocks += [
+            Block(
+                id=f"p{s}{p}",
+                type="paragraph",
+                text="word " * 30,
+                parent=head,
+                section_path=(f"Part {s}",),
+            )
+            for p in range(2)
+        ]
+    artifact = Artifact("markdown", "ref", "1", tuple(blocks), Coverage("lines", 9, 9))
+    docs.artifacts[sha] = artifact.to_json()
+    return _row(uri, "", ingestion_id="j", artifact_sha256=sha)
+
+
+@pytest.mark.asyncio
+async def test_a_chunk_size_of_zero_drafts_nothing_and_reports_the_sample(
+    docs: Docs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_chunk_size", 0)
+    monkeypatch.setattr(settings, "knowledge_chunk_stride", 0)
+    docs.sample = [_two_paragraph_sections(f"docs/{i}.md", f"{i}" * 64, docs) for i in range(5)]
+    out, skipped = await _drafts()
+    assert not out.proposals
+    assert out.chunking is not None and out.chunking.documents == 5
+    assert out.chunking.current.size == 0
+    assert (
+        "chunking: knowledge_chunk_size is 0 (one chunk per document); no size is drafted"
+        in skipped
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_size_below_the_smallest_drafted_one_still_drafts_a_larger_size(
+    docs: Docs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The chunker takes any positive size: 100 cuts every 150-character paragraph, and
+    # 400, the first candidate at or above the smallest drafted size that packs both
+    # paragraphs of a section, keeps each section whole.
+    monkeypatch.setattr(settings, "knowledge_chunk_size", 100)
+    monkeypatch.setattr(settings, "knowledge_chunk_stride", 80)
+    docs.sample = [_two_paragraph_sections(f"docs/{i}.md", f"{i}" * 64, docs) for i in range(5)]
+    out, _ = await _drafts()
+    (p,) = _target(out, "settings.knowledge_chunking")
+    assert p.preview.before.size == 100 and p.preview.after.size == 400
+    assert p.preview.after.sections_cut == 0 and p.preview.after.stride == 320
+
+
+@pytest.mark.asyncio
+async def test_the_sample_stops_loading_at_its_total_budget(
+    docs: Docs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tune, "MAX_SAMPLE_CHARS", 3 * 12_100)
+    out, _ = await _drafts()
+    # Each document is about 12,100 characters: three fit, the other three are unread.
+    assert out.chunking.documents == 3 and out.chunking.unread == 3
+    assert out.chunking.load_cap == 3 * 12_100
+
+
+@pytest.mark.asyncio
+async def test_two_unreachable_extractors_are_read_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import time
+
+    import httpx
+
+    from server.knowledge.app import extractors
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(5)
+        return httpx.Response(200)
+
+    monkeypatch.setattr(extractors, "transport", httpx.MockTransport(slow))
+    monkeypatch.setattr(extractors, "_declared", {})
+    monkeypatch.setattr(settings, "document_extractor_url", "http://one:8790")
+    monkeypatch.setattr(settings, "document_extractors_json", '{"pdf": "http://two:8790"}')
+    started = time.monotonic()
+    services = await extractors.configured_services(timeout_s=0.5)
+    # Read together: the whole read takes one timeout, not one per service.
+    assert time.monotonic() - started < 0.9
+    assert [(s.setting, s.formats) for s in services] == [
+        ("LOOM_DOCUMENT_EXTRACTOR_URL", None),
+        ('LOOM_DOCUMENT_EXTRACTORS_JSON["pdf"]', None),
+    ]

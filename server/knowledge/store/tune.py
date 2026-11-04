@@ -21,27 +21,49 @@ _LIVE = (
 
 
 async def sample_documents(
-    org: str, namespace: str, *, limit: int, max_chars: int, ch: _CHClient | None = None
+    org: str,
+    namespace: str,
+    *,
+    limit: int,
+    max_chars: int,
+    total_chars: int,
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Up to `limit` live documents picked by a hash of their source_uri, so the sample is
     spread over the namespace and the same while it does not change. Each row has its
     title, description, the length of its text (`chars`), its format and stored artifact
-    (`artifact_sha256`, set when knowledge.ingest published it) and, for a text document
-    no longer than `max_chars`, its text (`content`, else ''). The pick reads only the
-    sort key; the text is read for the picked documents alone."""
+    (`artifact_sha256`, set when knowledge.ingest stored one, which is cut instead of the
+    text) and, for a document with no artifact whose text is no longer than `max_chars`
+    and, with the shorter texts before it in sample order, no longer than `total_chars`,
+    its text (`text`, else ''). The pick reads only the sort key; the text is read for the
+    picked documents alone."""
     return await (ch or _default_client()).query_all(
         f"""
-        SELECT source_uri, title, description, ingestion_id, artifact_sha256,
-               {FORMAT_SQL} AS doc_format, lengthUTF8(content) AS chars,
-               if(ingestion_id = '' AND chars <= {{max_chars:UInt64}}, content, '') AS text
-        {_LIVE}
-          AND source_uri IN (
-              SELECT source_uri {_LIVE}
-              ORDER BY cityHash64(source_uri), source_uri
-              LIMIT {{lim:UInt32}})
+        SELECT source_uri, title, description, ingestion_id, artifact_sha256, doc_format,
+               chars,
+               if(cut AND sum(if(cut, chars, 0)) OVER (
+                      ORDER BY cityHash64(source_uri), source_uri
+                      ROWS UNBOUNDED PRECEDING) <= {{total_chars:UInt64}},
+                  content, '') AS text
+        FROM (
+            SELECT source_uri, title, description, ingestion_id, artifact_sha256, content,
+                   {FORMAT_SQL} AS doc_format, lengthUTF8(content) AS chars,
+                   artifact_sha256 = '' AND chars <= {{max_chars:UInt64}} AS cut
+            {_LIVE}
+              AND source_uri IN (
+                  SELECT source_uri {_LIVE}
+                  ORDER BY cityHash64(source_uri), source_uri
+                  LIMIT {{lim:UInt32}})
+        )
         ORDER BY cityHash64(source_uri), source_uri
         """,
-        params={"org": org, "ns": namespace, "lim": int(limit), "max_chars": int(max_chars)},
+        params={
+            "org": org,
+            "ns": namespace,
+            "lim": int(limit),
+            "max_chars": int(max_chars),
+            "total_chars": int(total_chars),
+        },
     )
 
 

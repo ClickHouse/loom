@@ -416,6 +416,20 @@ async def test_stored_text_never_chooses_a_target_or_an_op(world: World) -> None
 
 
 @pytest.mark.asyncio
+async def test_failed_document_drafts_are_skipped_not_raised(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def broken(*a: Any, **k: Any) -> Any:
+        raise ZeroDivisionError("a document draft failed")
+
+    monkeypatch.setattr(tune, "document_drafts", broken)
+    out = await tune.handle_namespace_tune(_inp())
+    assert "documents: ZeroDivisionError" in out.skipped
+    # The memory drafts stand.
+    assert _by_target(out, "namespace.category")
+
+
+@pytest.mark.asyncio
 async def test_a_failed_section_is_skipped_not_raised(world: World) -> None:
     world.fail = {"audit", "guide"}
     out = await tune.handle_namespace_tune(_inp())
