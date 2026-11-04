@@ -11,16 +11,44 @@ from pydantic import BaseModel, Field
 from server.identity.api.models_findings import FindingContract, ReportCoverage
 
 InspectSeverity = Literal["info", "warning"]
+# Why an ingestion job's last attempt failed, from its error_code (and, for an outage, the
+# class of its message; the message itself is not returned):
+# extractor_unavailable: no extractor takes the format, or the one routed to it is
+#   unreachable, slow past its timeout or failing (failed, or pending to retry), or
+#   answered an artifact that breaks the contract (`invalid_artifact`);
+# missing_access: the stored original could not be read (`original_gone`), or the
+#   extractor refused the server's credential (401, 403, 407);
+# bad_content: the extractor rejected the file, or the server refused what it made of it
+#   (an incomplete extraction without allow_partial, no text, too many chunks);
+# retrying: an open job whose last attempt hit another outage (a store or embedder), or a
+#   retried job a worker is running again; retries_exhausted: failed after such an outage
+#   used up knowledge_ingest_max_attempts, or after runs cut off before they finished;
+# revision_conflict: a later write of the source landed first; cancelled (a pending job
+#   with a cancel requested is cancelled already); internal: a server defect; "" when it
+#   did not fail.
+FailureClass = Literal[
+    "",
+    "extractor_unavailable",
+    "missing_access",
+    "bad_content",
+    "retrying",
+    "retries_exhausted",
+    "revision_conflict",
+    "cancelled",
+    "internal",
+]
 
 
 class KnowledgeInspectInput(BaseModel):
     """Report a namespace's documents, read-only.
 
     Counts by format, source and revision; the newest live documents with the chunks
-    search serves and the decisions recorded from them; findings on the chunks; and the
-    namespace audit's findings on memories shaped like documents. It reads what is
-    stored and never parses a document. A section that cannot be read is named in
-    `skipped` and its fields are null or empty.
+    search serves, the decisions recorded from them, what the extractor kept and their
+    knowledge.ingest jobs; the namespace's jobs, among them sources with a job and no live
+    document (a first ingest, or one after a delete, queued or failed); findings on the
+    chunks, the jobs and the extractions; and the namespace audit's findings on memories
+    shaped like documents. It reads what is stored and never parses a document. A section
+    that cannot be read is named in `skipped` and its fields are null or empty.
     """
 
     org: str
@@ -173,6 +201,85 @@ class InspectDocument(BaseModel):
     chunks: DocumentChunks | None = None
     # The decision rows citing it; null when the read failed or was not made.
     decisions: DocumentDecisions | None = None
+    # What the extractor kept of the live revision; null for a text write (knowledge.add,
+    # upsert, a source sync), which no extractor read.
+    extraction: ExtractionCoverage | None = None
+    # The knowledge.ingest jobs of its source_uri, among them a newer one still open or one
+    # that failed while this revision stayed live; null when there is none or the read
+    # failed (`skipped` says which).
+    jobs: SourceJobs | None = None
+
+
+class IngestJob(BaseModel):
+    """One knowledge.ingest job, as knowledge.ingest_status reads it, without its message."""
+
+    # Pass it to knowledge.ingest_status or knowledge.ingest_cancel.
+    ingestion_id: str
+    # pending, processing, ready, partial, failed or cancelled; a pending job with a cancel
+    # requested reads cancelled, the state knowledge.ingest_status answers for it.
+    state: str
+    # parse, embed or publish: where a processing job is or last ran; empty once published.
+    stage: str
+    # Runs started, counted against knowledge_ingest_max_attempts.
+    attempts: int
+    # The job's error_code ("" when its last attempt did not fail; `retrying` on a pending
+    # job an outage put back).
+    error_code: str
+    failure_class: FailureClass
+    # When knowledge.ingest queued it.
+    queued_at: datetime
+    # Its row's last change, as knowledge.ingest_status serves it; a cancel of a pending job
+    # is a row of its own and does not change it.
+    updated_at: datetime
+    # When it ended (ready, partial, failed or cancelled): its row's last change, which for
+    # a pending job cancelled is before the cancel; null while open.
+    ended_at: datetime | None = None
+    # When a pending job's next attempt is due; null once it is not pending.
+    next_attempt_at: datetime | None = None
+    # Processing, and no worker has updated it within its lease: the worker stopped, and a
+    # later pass runs it again from its first stage.
+    stalled: bool = False
+
+
+class SourceJobs(BaseModel):
+    """The knowledge.ingest jobs of one source_uri the job rows still hold (30 days)."""
+
+    source_uri: str
+    # Jobs of the source.
+    jobs: int
+    # Of those, pending or processing.
+    open_jobs: int
+    # The oldest open job, the one a worker runs next or is running ("" when none is
+    # open): pass it to knowledge.ingest_status or knowledge.ingest_cancel.
+    open_ingestion_id: str = ""
+    # The newest job of the source.
+    latest: IngestJob
+    # The open job when one is (the source waits on it), else the newest: the job the
+    # findings judge, unless `replaced`.
+    current: IngestJob
+    # No job is open and the source's document row was written or deleted after the newest
+    # ended (a text write or a delete, which write no job row): that job's outcome no longer
+    # says what search serves, and no finding counts the source. A metadata edit without
+    # reindex keeps the row's ingested_at and replaces nothing; a reindex rewrites the
+    # document and counts as a write.
+    replaced: bool = False
+
+
+class ExtractionCoverage(BaseModel):
+    """What the extractor reported for a published revision, from its artifact's coverage."""
+
+    # What the format is made of: lines, statements, keys, chars, pages, ...
+    unit: str
+    # Units in the source, and units extracted.
+    total: int
+    extracted: int
+    # Units the parser could not extract.
+    failed: int
+    # Capabilities the artifact cannot serve for this source (sql_structure, exact_keys,
+    # section_path, ...).
+    lost: list[str] = Field(default_factory=list)
+    # Every unit extracted, none failed and nothing lost.
+    complete: bool
 
 
 class DecisionTotals(BaseModel):
@@ -205,6 +312,76 @@ class DocumentFinding(FindingContract):
     ingested_samples: list[str] = Field(default_factory=list)
     detail: str
     remedy: str
+
+
+class IngestFinding(FindingContract):
+    """A finding on the namespace's knowledge.ingest jobs or on what its extractions kept.
+
+    `kind` is `system_state` for the deployment's state (a backlog, an extractor that is
+    not there, access it lacks, a job that failed on the server's side); a file the
+    extractor rejected is a `contract_violation` and a published revision that lost
+    structure a `usage_heuristic`."""
+
+    code: str
+    severity: InspectSeverity
+    # Sources (source_uri) that match.
+    count: int
+    # count / population: sources with a job for the job findings, live documents with an
+    # extraction for `extraction_incomplete`.
+    share: float = Field(ge=0.0, le=1.0)
+    # The source_uri of sources that match, at most `sample_limit`.
+    samples: list[str] = Field(default_factory=list)
+    # The job each sample names, in the same order (the open one, else the newest): pass
+    # it to knowledge.ingest_status. Empty for `extraction_incomplete`.
+    ingestion_ids: list[str] = Field(default_factory=list)
+    # Of `count`, sources with a job and no live document (a first ingest, or one after a
+    # delete, queued or failed).
+    without_document: int = 0
+    detail: str
+    remedy: str
+
+
+class IngestionTotals(BaseModel):
+    """The namespace's knowledge.ingest jobs the job rows still hold (30 days)."""
+
+    # Sources with a job; null when the read failed.
+    sources: int | None = None
+    # Of those, sources with no live document, not counting ones `replaced`.
+    without_document: int | None = None
+    # Sources whose document row was written or deleted after their newest job ended, none
+    # open: no finding counts them.
+    replaced: int | None = None
+    # Jobs by state, over every job.
+    pending: int | None = None
+    processing: int | None = None
+    # Processing jobs no worker has updated within their lease.
+    stalled: int | None = None
+    ready: int | None = None
+    partial: int | None = None
+    failed: int | None = None
+    cancelled: int | None = None
+    # When the oldest open job was queued; null when none is open.
+    oldest_open_queued_at: datetime | None = None
+    # This server's settings: the ingest worker runs (LOOM_KNOWLEDGE_INGEST_ENABLED), and an
+    # extractor is configured (LOOM_DOCUMENT_EXTRACTOR_URL or LOOM_DOCUMENT_EXTRACTORS_JSON).
+    # Another replica may be set otherwise; the jobs say what happened.
+    worker_enabled: bool
+    # Null when the extractor settings could not be read (`skipped` says why).
+    extractor_configured: bool | None = None
+    # Sources with no live document and not `replaced`, newest job first, at most
+    # `sample_limit`.
+    without_document_listed: list[SourceJobs] = Field(default_factory=list)
+
+
+class ExtractionTotals(BaseModel):
+    """What the extractor kept of the live documents knowledge.ingest published."""
+
+    # Live documents with an extraction's coverage; null when the read failed.
+    documents: int | None = None
+    # Of those, the ones not complete.
+    incomplete: int | None = None
+    # Per capability `coverage.lost` names, the live documents that lost it, most first.
+    lost: list[DocumentCount] = Field(default_factory=list)
 
 
 class MemoryFindingRef(BaseModel):
@@ -245,6 +422,15 @@ class KnowledgeInspectOutput(BaseModel):
     findings: list[DocumentFinding] = Field(default_factory=list)
     # Which document checks ran and which were skipped.
     coverage: ReportCoverage
+    # knowledge.ingest jobs by state, and the sources with a job and no live document (a
+    # first ingest, or one after a delete, queued or failed).
+    ingestions: IngestionTotals
+    # What the extractor kept of the live ingested documents.
+    extraction: ExtractionTotals
+    # One per ingestion and extraction check that ran: a backlog, an extractor unavailable,
+    # missing access, content the extractor rejected, jobs that failed on the server's side,
+    # extractions that lost structure. A clean check is an `info` finding with count 0.
+    ingest_findings: list[IngestFinding] = Field(default_factory=list)
     # namespace.audit's `oversized_values` and `episodic_blobs`, the memory rows that
     # may belong in documents; mentor.brief reports the same shape per agent as
     # `documents_as_memories`.

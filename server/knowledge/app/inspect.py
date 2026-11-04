@@ -2,23 +2,25 @@
 serves, and what was extracted from them, read-only.
 
 Every number comes from what is stored: the document rows (one per document, its
-current version), the live chunks and the retired ingestions, the decision rows whose
-citation names a document section, and namespace.audit's findings on memory rows shaped
-like documents, called in process and cited by code and count. Nothing parses a
-document, and nothing is written.
+current version, with the coverage its extraction reported), the live chunks and the
+retired ingestions, the knowledge.ingest job rows, the decision rows whose citation
+names a document section, and namespace.audit's findings on memory rows shaped like
+documents, called in process and cited by code and count. Nothing parses a document,
+nothing calls an extractor, and nothing is written.
 
 Documents are the namespace's under any read scope, as every `knowledge.*` read serves
-them; the decision rows are memory rows and are read inside the request's scope, and
-the audit, which reads every user's rows, is not run under a scope narrowed to one user
-or session. A section that cannot be read is named in `skipped` and its fields stay
-null or empty; a store that is down fails the call, as any read does.
+them, and so are the job rows, which knowledge.ingest_status serves to any of the
+namespace's viewers by id; the decision rows are memory rows and are read inside the
+request's scope, and the audit, which reads every user's rows, is not run under a scope
+narrowed to one user or session. A section that cannot be read is named in `skipped`
+and its fields stay null or empty; a store that is down fails the call, as any read does.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 from server.core.datetimes import naive_utc_now
 from server.core.errors import BACKEND_NOT_NOW
@@ -37,13 +39,23 @@ from server.knowledge.api.models_inspect import (
     DocumentDecisions,
     DocumentFinding,
     DocumentTotals,
+    ExtractionCoverage,
+    ExtractionTotals,
+    FailureClass,
+    IngestFinding,
+    IngestionTotals,
+    IngestJob,
     InspectDocument,
     KnowledgeInspectInput,
     KnowledgeInspectOutput,
     MemoryFindingRef,
+    SourceJobs,
 )
+from server.knowledge.app.ingest_run import JOB_LEASE_S
 from server.knowledge.store import inspect as store
+from server.knowledge.store.ingestions import OPEN_STATES
 from server.memory.app.query import document_decision_tally
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +138,170 @@ _CHECKS: dict[str, tuple[RuleContract, str, str, str]] = {
         "again and knowledge.ingest it.",
     ),
 }
+
+
+# Where the remedies below send a caller for one job, and how a failed source is ingested
+# again.
+_STATUS = (
+    " knowledge.ingest_status with the job's id (`ingestion_ids`, or a listed document's "
+    "`jobs`) shows its stage and error_code."
+)
+_REINGEST = (
+    "upload the original again (POST /v1/knowledge.upload; an upload expires) and "
+    "knowledge.ingest it: a failed job does not run again"
+)
+
+# code: (contract, detail, remedy); a hit is a warning, a clean check info. The predicates
+# are store.INGEST_CHECKS; extraction_incomplete reads the document rows' coverage.
+_INGEST_CHECKS: dict[str, tuple[RuleContract, str, str]] = {
+    "ingest_backlog": (
+        RuleContract(
+            "system_state",
+            1,
+            exceptions="An open job whose last attempt failed for the extractor or for "
+            "access is that finding's, not this one's.",
+            uncertainty="A job queued seconds ago waits for the next worker pass "
+            "(knowledge_ingest_interval_seconds), and the worker runs one job per pass, one "
+            "source's jobs in order: a young backlog is the queue working.",
+        ),
+        "Sources with a knowledge.ingest job pending or processing: queued, running within "
+        "its lease, stalled past it (`ingestions.stalled`: the worker stopped; a later pass "
+        "runs it again from its first stage), put back after a store or embedder outage "
+        "(failure_class `retrying`), or running again after any outage (it keeps the last "
+        "attempt's error_code until the run ends). A pending job with a cancel requested is "
+        "cancelled, not counted. Search serves the source's earlier revision, or nothing "
+        "for a first ingest, until it publishes.",
+        "Wait for the worker: it runs while LOOM_KNOWLEDGE_INGEST_ENABLED is on (see "
+        "`ingestions.worker_enabled`) and a store or embedder outage is retried up to "
+        "knowledge_ingest_max_attempts." + _STATUS + " knowledge.ingest_cancel stops a job "
+        "that is not wanted.",
+    ),
+    "extractor_unavailable": (
+        RuleContract(
+            "system_state",
+            1,
+            uncertainty="An extractor that was down when the job ran may be up now; a "
+            "pending job retries by itself.",
+        ),
+        "Sources whose job failed, or waits to retry, because no extractor could take its "
+        "format: none is configured or routed for it (error_code format_unavailable), the "
+        "one routed to it is unreachable, slow past its timeout or failing, or it answered "
+        "an artifact that breaks the extractor contract (invalid_artifact).",
+        "Configure an extractor for the format (LOOM_DOCUMENT_EXTRACTOR_URL, or a route in "
+        "LOOM_DOCUMENT_EXTRACTORS_JSON; see `ingestions.extractor_configured`) and make sure "
+        "it answers within LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S with an artifact the extractor "
+        "contract allows; then, for a failed job, " + _REINGEST + "." + _STATUS,
+    ),
+    "ingest_missing_access": (
+        RuleContract("system_state", 1),
+        "Sources whose job failed, or waits to retry, on access: the stored original could "
+        "not be read (error_code original_gone), or the extractor refused the server's "
+        "credential (it answered 401, 403 or 407).",
+        "For a refused credential, set the token the extractor expects "
+        "(LOOM_DOCUMENT_EXTRACTOR_TOKEN, or its URL's in LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON); "
+        "for original_gone, " + _REINGEST + "." + _STATUS,
+    ),
+    "ingest_content_rejected": (
+        RuleContract(
+            "contract_violation",
+            1,
+            exceptions="A job that published with allow_partial is extraction_incomplete's.",
+        ),
+        "Sources whose job failed on the file itself: the extractor refused it "
+        "(format_mismatch, encoding, corrupt, unsupported_format, too_large, ...), or the "
+        "server refused what it made of it (incomplete_extraction without allow_partial, "
+        "no_text, more chunks than knowledge_ingest_max_chunks, resource_limit for an "
+        "artifact over LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES). Search serves the "
+        "source's earlier revision, if it has one.",
+        "Read the job's error_code with knowledge.ingest_status; fix the file or its "
+        "options (format, encoding, sql_dialect), pass allow_partial to publish an "
+        "incomplete extraction, or raise LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES or "
+        "LOOM_KNOWLEDGE_INGEST_MAX_CHUNKS, and " + _REINGEST + ".",
+    ),
+    "ingest_failed_on_server": (
+        RuleContract(
+            "system_state",
+            1,
+            exceptions="An outage of the extractor, or a credential it refused, is that finding's.",
+        ),
+        "Sources whose job failed on the server's side: a store or embedder outage that used "
+        "up knowledge_ingest_max_attempts, runs cut off before they finished (a pass past "
+        "knowledge_ingest_max_pass_seconds, a process that stopped), both error_code "
+        "retries_exhausted, or a server defect (internal). Neither the file nor the "
+        "extractor is known to be at fault.",
+        "Once the store and embedder answer (or, for runs cut off, with "
+        "knowledge_ingest_max_pass_seconds above the extractor's timeout plus the source's "
+        "embedding), " + _REINGEST + ". For internal, the server log names the job's id "
+        "with its traceback." + _STATUS,
+    ),
+    "extraction_incomplete": (
+        RuleContract(
+            "usage_heuristic",
+            1,
+            uncertainty="An extractor that does not handle a construct loses it as a file "
+            "that breaks its format does; another extractor may keep it.",
+        ),
+        "Live documents knowledge.ingest published without all of their source: a unit not "
+        "extracted or failed, or a capability lost (`extraction.lost`: sql_structure, "
+        "exact_keys, section_path, ...). Search serves what was extracted.",
+        "Read a listed document's `extraction`; fix the source, or route its format to an "
+        "extractor that keeps it (LOOM_DOCUMENT_EXTRACTORS_JSON), and " + _REINGEST + ".",
+    ),
+}
+
+
+def _job(row: dict[str, Any], prefix: str) -> IngestJob:
+    """The job whose fields carry `prefix` (`latest_` or `open_`)."""
+    f = {k[len(prefix) :]: v for k, v in row.items() if k.startswith(prefix)}
+    state = str(f["state"])
+    ended = state not in OPEN_STATES
+    return IngestJob(
+        ingestion_id=str(f["ingestion_id"]),
+        state=state,
+        stage=str(f["stage"]),
+        attempts=int(f["attempts"]),
+        error_code=str(f["error_code"]),
+        failure_class=cast("FailureClass", str(f["failure_class"])),
+        queued_at=f["queued_at"],
+        updated_at=f["updated_at"],
+        ended_at=f["updated_at"] if ended else None,
+        next_attempt_at=f["next_attempt_at"] if state == "pending" else None,
+        stalled=bool(int(f["stalled"])),
+    )
+
+
+def _source_jobs(row: dict[str, Any]) -> SourceJobs:
+    latest = _job(row, "latest_")
+    open_jobs = int(row["open_jobs"])
+    current = _job(row, "open_") if open_jobs else latest
+    return SourceJobs(
+        source_uri=str(row["source_uri"]),
+        jobs=int(row["jobs"]),
+        open_jobs=open_jobs,
+        open_ingestion_id=current.ingestion_id if open_jobs else "",
+        latest=latest,
+        current=current,
+        replaced=bool(int(row["replaced"])),
+    )
+
+
+def _extraction(row: dict[str, Any]) -> ExtractionCoverage | None:
+    if not int(row["has_coverage"]):
+        return None
+    total, extracted, failed = (
+        int(row["cov_total"]),
+        int(row["cov_extracted"]),
+        int(row["cov_failed"]),
+    )
+    lost = [str(c) for c in row["cov_lost"]]
+    return ExtractionCoverage(
+        unit=str(row["cov_unit"]),
+        total=total,
+        extracted=extracted,
+        failed=failed,
+        lost=lost,
+        complete=extracted >= total and not failed and not lost,
+    )
 
 
 def _counts(groups: list[dict[str, Any]], key: str) -> list[DocumentCount]:
@@ -269,6 +445,112 @@ class _Inspect:
             self.rules.ran(code)
         return out
 
+    def _finding(
+        self,
+        code: str,
+        count: int,
+        population: int,
+        samples: list[tuple[str, str]],
+        without_document: int = 0,
+    ) -> IngestFinding:
+        contract, detail, remedy = _INGEST_CHECKS[code]
+        cut = samples[: self.inp.sample_limit]
+        self.rules.ran(code)
+        return IngestFinding(
+            code=code,
+            kind=contract.kind,
+            rule_version=contract.version,
+            source_op=SOURCE_OP,
+            severity="warning" if count else "info",
+            count=count,
+            population=population,
+            share=min(count / population, 1.0) if population else 0.0,
+            sample_limit=self.inp.sample_limit,
+            samples=[uri for uri, _ in cut],
+            ingestion_ids=[job for _, job in cut if job],
+            samples_complete=len(cut) >= count,
+            without_document=without_document,
+            detail=detail,
+            remedy=remedy,
+            exceptions=contract.exceptions,
+            uncertainty=contract.uncertainty,
+        )
+
+    async def ingestions(self) -> tuple[IngestionTotals, list[IngestFinding]]:
+        i = self.inp
+        out = IngestionTotals(
+            worker_enabled=settings.knowledge_ingest_enabled,
+            extractor_configured=await self.guarded(
+                "ingestions.extractor_configured", _extractor_configured, None
+            ),
+        )
+        health = await self.guarded(
+            "ingestions",
+            lambda: store.ingestion_health(i.org, i.namespace, lease_s=JOB_LEASE_S),
+            None,
+        )
+        findings: list[IngestFinding] = []
+        if health is None:
+            for code in store.INGEST_CHECKS:
+                self.rules.skip(code, "the job read failed")
+        else:
+            out.sources = int(health["sources"])
+            out.without_document = int(health["without_document"])
+            out.replaced = int(health["replaced"])
+            out.pending, out.processing, out.stalled = (
+                int(health[k]) for k in ("pending", "processing", "stalled")
+            )
+            out.ready, out.partial, out.failed, out.cancelled = (
+                int(health[k]) for k in ("ready", "partial", "failed", "cancelled")
+            )
+            if int(health["open_jobs"]):
+                out.oldest_open_queued_at = health["oldest_open_queued_at"]
+            for code in store.INGEST_CHECKS:
+                findings.append(
+                    self._finding(
+                        code,
+                        int(health[code]),
+                        out.sources,
+                        [(str(u), str(j)) for u, j in health[f"{code}_samples"]],
+                        int(health[f"{code}_without_document"]),
+                    )
+                )
+        if i.sample_limit and out.without_document:
+            rows = await self.guarded(
+                "ingestions.without_document",
+                lambda: store.sources_without_document(
+                    i.org, i.namespace, limit=i.sample_limit, lease_s=JOB_LEASE_S
+                ),
+                None,
+            )
+            out.without_document_listed = [_source_jobs(r) for r in rows or []]
+        return out, findings
+
+    async def extraction(self) -> tuple[ExtractionTotals, IngestFinding | None]:
+        i = self.inp
+        out = ExtractionTotals()
+        code = "extraction_incomplete"
+        health = await self.guarded(
+            "extraction", lambda: store.extraction_health(i.org, i.namespace), None
+        )
+        if health is None:
+            self.rules.skip(code, "the coverage read failed")
+            return out, None
+        out.documents, out.incomplete = int(health["documents"]), int(health["incomplete"])
+        names, counts = list(health["lost_names"]), list(health["lost_counts"])
+        if len(names) > store.MAX_GROUPS:
+            names, counts = names[: store.MAX_GROUPS], counts[: store.MAX_GROUPS]
+            self.skipped.append(
+                f"extraction: more than {store.MAX_GROUPS} lost capabilities; the counts "
+                "cover the first"
+            )
+        out.lost = [
+            DocumentCount(name=str(n), live=int(c), deleted=0)
+            for n, c in zip(names, counts, strict=True)
+        ]
+        uris = [(str(u), "") for u in health["incomplete_uris"]]
+        return out, self._finding(code, out.incomplete, out.documents, uris)
+
     async def listed(self, model: str) -> list[InspectDocument]:
         i = self.inp
         if not i.sample_limit:
@@ -297,6 +579,12 @@ class _Inspect:
             lambda: store.document_retired_versions(i.org, i.namespace, uris),
             None,
         )
+        jobs = await self.guarded(
+            "listed.jobs",
+            lambda: store.source_jobs(i.org, i.namespace, uris, lease_s=JOB_LEASE_S),
+            None,
+        )
+        jobs_by_uri = {str(j["source_uri"]): _source_jobs(j) for j in jobs or []}
         out = []
         for r in rows:
             uri = str(r["source_uri"])
@@ -311,6 +599,8 @@ class _Inspect:
                 ingestion_id=str(r["ingestion_id"]),
                 ingested_at=r["ingested_at"],
                 retired_versions=None if retired is None else retired.get(uri, 0),
+                extraction=_extraction(r),
+                jobs=jobs_by_uri.get(uri),
             )
             if chunks is not None:
                 doc.chunks = _document_chunks(c)
@@ -427,6 +717,10 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
         chunks, findings = ChunkTotals(), []
         for code in _CHECKS:
             run.rules.skip(code, "the embedder could not be built")
+    ingestions, ingest_findings = await run.ingestions()
+    extraction, incomplete = await run.extraction()
+    if incomplete is not None:
+        ingest_findings.append(incomplete)
     listed = await run.listed(model)
     decisions = await run.decisions(listed)
     memory_findings = await run.memory_findings()
@@ -440,10 +734,20 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
         listed=listed,
         listed_complete=documents.live is not None and len(listed) >= documents.live,
         findings=findings,
+        ingestions=ingestions,
+        extraction=extraction,
+        ingest_findings=ingest_findings,
         coverage=run.rules.coverage,
         memory_findings=memory_findings,
         skipped=run.skipped,
     )
+
+
+async def _extractor_configured() -> bool:
+    """An extractor URL is set: the default one, or a route. The routes are parsed from
+    LOOM_DOCUMENT_EXTRACTORS_JSON, which raises on a value that is not a JSON object of
+    strings."""
+    return bool(settings.document_extractor_url or settings.document_extractor_routes())
 
 
 async def _embedder_model() -> str:
