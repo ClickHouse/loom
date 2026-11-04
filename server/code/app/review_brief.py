@@ -278,7 +278,8 @@ async def _rationale_section(
     """The decisions and constraints the PR's files touch, from the repository's trunk
     code namespace as they are now, with the token check against the PR's diff (read only
     when a row has a name to check). Source paths are read first, at most
-    `code_review_brief_rationale_paths` of them."""
+    `code_review_brief_rationale_paths` of them; rows with something to check are kept
+    ahead of the `code_review_brief_rationale_rows` cut."""
     from server.code.app.memory_links import trunk_namespace
     from server.memory.app.code_plane_reads import decisions_for_paths
 
@@ -286,11 +287,12 @@ async def _rationale_section(
     rows = ((payload.get("sections") or {}).get("paths") or {}).get("rows") or []
     paths = [str(r["path"]) for r in sorted(rows, key=lambda r: r.get("class") != "src")]
     try:
-        found = await decisions_for_paths(
+        found, left = await decisions_for_paths(
             org,
             trunk_namespace(org, ns) or ns,
             paths[:most],
             limit=settings.code_review_brief_rationale_rows,
+            first=rb.has_check,
         )
         diff: str | None = ""
         cut = False
@@ -299,7 +301,14 @@ async def _rationale_section(
     except Exception as e:  # noqa: BLE001 — the stored sections serve without this one
         logger.warning("code.review_brief: rationale read failed: %s", e)
         return rb.failed_section("decisions_for_paths", e)
-    return rb.rationale_section(found, diff, diff_cut=cut, paths_left=len(paths) - most)
+    return rb.rationale_section(
+        found,
+        diff,
+        diff_cut=cut,
+        paths_left=len(paths) - most,
+        rows_left=len(left),
+        left_to_check=any(rb.has_check(d) for d in left),
+    )
 
 
 async def _pr_diff(

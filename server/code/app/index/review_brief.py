@@ -182,8 +182,9 @@ class Hunks:
 
 
 _HUNK_HEADER = re.compile(r"@@ -(\d+)(?:,(\d+))? \+\d+(?:,(\d+))? @@")
-# What may follow a hunk whose counted lines ran out.
-_AFTER_HUNK = ("diff ", "@@", "\\")
+# What may follow a hunk whose counted lines ran out (`--- ` starts the next file of a
+# plain `diff -u` with no `diff` lines).
+_AFTER_HUNK = ("diff ", "@@", "\\", "--- ")
 
 
 @dataclass
@@ -247,7 +248,7 @@ def _between_hunks(out: Hunks, cur: _Cursor, line: str) -> None:
     """Read one line outside a hunk: a file header, a hunk header, or anything else."""
     if cur.ended and line.startswith("\\"):
         return  # "\ No newline at end of file" after the hunk's last line
-    if cur.ended and line and not line.startswith(_AFTER_HUNK):
+    if cur.ended and not line.startswith(_AFTER_HUNK):
         out.malformed = True  # lines go on after the counts ran out
     cur.ended = False
     if line.startswith("--- "):
@@ -582,12 +583,21 @@ def names_in(added: str, names: list[str]) -> list[str]:
     return found
 
 
+def has_check(d: dict[str, Any]) -> bool:
+    """Whether the token check has something to look at in a `decisions_for_paths` row:
+    names to look for, or a value cut at the read that may hide some."""
+    constraint = "constraint" in d["tags"]
+    return bool(d.get("value_truncated") or checked_names(d["text"], constraint=constraint))
+
+
 def rationale_section(
     decisions: list[dict[str, Any]],
     diff: str | None,
     *,
     diff_cut: bool = False,
     paths_left: int = 0,
+    rows_left: int = 0,
+    left_to_check: bool = False,
 ) -> dict[str, Any]:
     """The `rationale` section over the rows `decisions_for_paths` read and the PR's diff
     (None: it could not be read). A row whose checked names the diff adds says `check`;
@@ -596,7 +606,9 @@ def rationale_section(
     may lie past any of these) or the diff could not be read; one with nothing to check
     says ''. `check` rows first, then constraints, then the rest, whole rows up to
     `code_review_brief_rationale_tokens` (the first always); the verdict reads every row:
-    check | unknown | clear | none (no row has anything to check)."""
+    check | unknown | clear | none (no row has anything to check). `rows_left` rows were
+    read and not served; when one of them had something to check (`left_to_check`) the
+    section is never `clear`."""
     added, malformed = added_text(diff) if diff is not None else (None, False)
     malformed = malformed and not diff_cut  # a cut diff ends inside a hunk anyway
     rows = []
@@ -627,6 +639,8 @@ def rationale_section(
     rows.sort(key=lambda r: (r["verdict"] != "check", r["kind"] != "constraint"))
     verdicts = {r["verdict"] for r in rows}
     verdict = next((v for v in ("check", "unknown", "clear") if v in verdicts), "none")
+    if left_to_check and verdict in ("clear", "none"):
+        verdict = "unknown"
     causes = []
     if diff is None and "unknown" in verdicts:
         causes.append("diff_unread")
@@ -638,6 +652,8 @@ def rationale_section(
         causes.append("value_cut")
     if paths_left > 0:
         causes.append(f"paths_not_read:{paths_left}")
+    if rows_left > 0:
+        causes.append(f"rows_not_read:{rows_left}")
     kept = rows[:1]
     for r in rows[1:]:
         if estimate_tokens([*kept, r]) > settings.code_review_brief_rationale_tokens:
@@ -712,6 +728,7 @@ __all__ = [
     "apply_budget",
     "canonical",
     "checked_names",
+    "has_check",
     "decisions_of",
     "deleted_ranges",
     "names_in",

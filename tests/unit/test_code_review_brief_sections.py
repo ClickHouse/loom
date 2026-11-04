@@ -681,18 +681,17 @@ async def test_rationale_is_read_on_every_call_and_never_stored(
     diffs: list[int] = []
     rule = "Keep `new_flag` off in the history file: CI randomizes it. Applies to `DB::Settings`."
 
-    async def _decisions(org: str, trunk: str, paths: Any, *, limit: int) -> list[dict[str, Any]]:
+    async def _decisions(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
         reads.append((trunk, list(paths)))
-        return [
-            {
-                "memory_key": "design/new-flag",
-                "tags": ["decision", "constraint"],
-                "pinned": False,
-                "code_state": "fresh",
-                "line": "- design/new-flag [constraint, decision]: Keep `new_flag` off …",
-                "text": rule,
-            }
-        ]
+        row = {
+            "memory_key": "design/new-flag",
+            "tags": ["decision", "constraint"],
+            "pinned": False,
+            "code_state": "fresh",
+            "line": "- design/new-flag [constraint, decision]: Keep `new_flag` off …",
+            "text": rule,
+        }
+        return [row], []
 
     async def _diff(org: str, ns: str, payload: Any, **kw: Any) -> tuple[str, bool]:
         diffs.append(kw["pr_number"])
@@ -733,11 +732,11 @@ async def test_rationale_reads_no_diff_when_no_row_names_anything_to_check(
     from server.code.app import memory_links
     from server.memory.app import code_plane_reads
 
-    async def _decisions(org: str, trunk: str, paths: Any, *, limit: int) -> list[dict[str, Any]]:
+    async def _decisions(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
         row = {"memory_key": "design/plain", "tags": ["decision"], "pinned": False}
         return [
             row | {"code_state": "", "line": "- design/plain: Decided Z.", "text": "Decided Z."}
-        ]
+        ], []
 
     async def _diff(*a: Any, **kw: Any) -> tuple[str, bool]:
         raise AssertionError("read a diff with nothing to check")
@@ -752,7 +751,7 @@ async def test_rationale_reads_no_diff_when_no_row_names_anything_to_check(
 
 
 @pytest.mark.asyncio
-async def test_rationale_reads_the_paths_and_rows_its_settings_allow(
+async def test_rationale_reads_source_paths_first_and_the_rows_its_settings_allow(
     wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.code.app import memory_links
@@ -761,19 +760,29 @@ async def test_rationale_reads_the_paths_and_rows_its_settings_allow(
 
     calls: list[tuple[list[str], int]] = []
 
-    async def _decisions(org: str, trunk: str, paths: Any, *, limit: int) -> list[dict[str, Any]]:
+    async def _decisions(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
         calls.append((list(paths), limit))
-        return []
+        return [], []
 
     monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
     monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _decisions)
-    monkeypatch.setattr(settings, "code_review_brief_rationale_paths", 2)
+    monkeypatch.setattr(settings, "code_review_brief_rationale_paths", 1)
     monkeypatch.setattr(settings, "code_review_brief_rationale_rows", 3)
-    wired["repo"] = _HandlerRepo(stored=None)
+    # a stored brief whose changed paths list the test file first
+    test_path, src_path = "tests/queries/0_stateless/03999_x.sql", "src/Core/Settings.cpp"
+    paths = [{"path": test_path, "class": "test"}, {"path": src_path, "class": "src"}]
+    payload = {
+        "pr_number": 117354,
+        "merge_sha": SHA,
+        "sections": {"paths": rb.section(rb.SERVED, verdict="src", rows=paths)},
+    }
+    wired["repo"] = _HandlerRepo(stored={"payload": json.dumps(payload)})
     out = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354))
-    assert calls == [(PATHS[:2], 3)]
+    assert out.source == "precomputed"
+    # the source path is read; the test path is the one left out
+    assert calls == [([src_path], 3)]
     sec = out.sections["rationale"]
-    assert sec["verdict"] == "none" and sec["causes"] == ["paths_not_read:2"]
+    assert sec["verdict"] == "none" and sec["causes"] == ["paths_not_read:1"]
 
 
 @pytest.mark.asyncio

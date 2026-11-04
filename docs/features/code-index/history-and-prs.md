@@ -77,15 +77,17 @@ decision recorded or changed after the merge shows up on the next read. It reads
 most `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` (8) rows, only when the caller may read the
 trunk namespace. It serves whole rows up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS`
 (250) tokens: rows that say `check` first, then constraints; the first row is always
-served. Each row carries the line the pre-edit block prints for it (value, source,
-`(pinned)`, a code-change note), `pinned`, `code_state` and a `verdict`:
+served. Rows with something to check are kept ahead of the row cap, and the rows it leaves
+out are counted (`rows_not_read`); when one of them had something to check, the section
+says `unknown`, never `clear`. Each row carries the line the pre-edit block prints for it
+(value, source, `(pinned)`, a code-change note), `pinned`, `code_state` and a `verdict`:
 
-| Row verdict | Meaning                                                                                                                                                                     |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `check`     | the diff adds a backticked name from the row's `Rejected:` options, or a setting name a constraint states (`names`)                                                         |
-| `clear`     | the row names such code and the diff adds none of it                                                                                                                        |
-| `unknown`   | no name found, but the diff could not be read here, was cut, or has a hunk that miscounts its lines, or the row's value was cut (`diff_cut`, `diff_malformed`, `value_cut`) |
-| `""`        | the row names nothing to check                                                                                                                                              |
+| Row verdict | Meaning                                                                                                                                                                                    |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `check`     | the diff adds a backticked name from the row's `Rejected:` options, or a setting name a constraint states (`names`)                                                                        |
+| `clear`     | the row names such code and the diff adds none of it                                                                                                                                       |
+| `unknown`   | no name found, but the diff could not be read here, was cut, or has a hunk that miscounts its lines, or the row's value was cut (`diff_unread`, `diff_cut`, `diff_malformed`, `value_cut`) |
+| `""`        | the row names nothing to check                                                                                                                                                             |
 
 The section's verdict is `check` when any row says so, then `unknown`, then `clear`, and
 `none` when no row has anything to check (or no decision touches the files). The check

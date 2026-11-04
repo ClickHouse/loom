@@ -5,6 +5,7 @@ decision rows per path through `memory.for_file`, gated on the trunk namespace."
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -97,9 +98,27 @@ def test_a_hunk_header_that_miscounts_is_malformed() -> None:
     assert rb.added_text(over) == ("one\ntwo\nthree", True)
     # overcount at the end of the diff
     assert rb.added_text(HEAD + "@@ -1,0 +1,2 @@\n+one\n") == ("one", True)
+    # a blank line after the counts ran out is a line the header did not count
+    assert rb.added_text(HEAD + "@@ -1,0 +1,1 @@\n+one\n\n+SpillingHashSet s;\n")[1] is True
     # a well-counted diff of two files is not
     good = HEAD + "@@ -1,0 +1,1 @@\n+one\n" + HEAD + "@@ -1,1 +1,1 @@\n-x\n+two\n"
     assert rb.added_text(good) == ("one\ntwo", False)
+
+
+def test_a_plain_multi_file_diff_without_diff_lines_is_well_formed() -> None:
+    plain = (
+        "--- a/src/a.cpp\n+++ b/src/a.cpp\n@@ -1,1 +1,1 @@\n-x\n+one\n"
+        "--- a/src/b.cpp\n+++ b/src/b.cpp\n@@ -1,0 +1,1 @@\n+two\n"
+    )
+    assert rb.added_text(plain) == ("one\ntwo", False)
+    assert rb.read_hunks(plain).paths == ["src/a.cpp", "src/b.cpp"]
+
+
+def test_a_blank_line_after_a_hunk_makes_the_check_unknown() -> None:
+    spill = _row("design/spill", DECISION, ["decision"])
+    blank = HEAD + "@@ -1,0 +1,1 @@\n+one\n\n+SpillingHashSet s;\n"
+    sec = rb.rationale_section([spill], blank)
+    assert sec["verdict"] == "unknown" and sec["causes"] == ["diff_malformed"]
 
 
 def test_a_form_feed_inside_an_added_line_does_not_split_it() -> None:
@@ -230,9 +249,10 @@ async def test_decisions_for_paths_merges_paths_worst_state_and_orders_constrain
 
     monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
     monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
-    rows = await code_plane_reads.decisions_for_paths(
+    rows, left = await code_plane_reads.decisions_for_paths(
         "acme", "code-widgets", ["src/a.cpp", "src/b.cpp", "src/a.cpp"], limit=5
     )
+    assert left == []
     assert [r["memory_key"] for r in rows] == ["design/rule", "design/a"]
     assert rows[1]["code_state"] == "changed"  # worst over both paths
     assert rows[1]["text"] == "Decided design/a."
@@ -244,6 +264,64 @@ async def test_decisions_for_paths_merges_paths_worst_state_and_orders_constrain
         i.namespace == "code-widgets" and i.extra_namespaces == ["code-widgets"] for i in seen
     )
     assert all(i.tags == ["decision", "constraint"] and not i.include_conflicted for i in seen)
+    # each path reads up to memory.for_file's ceiling; the cut is made after the merge
+    assert all(i.top_k == 50 for i in seen)
+
+
+@pytest.mark.asyncio
+async def test_a_row_to_check_is_kept_ahead_of_the_row_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import code_link_reads, for_file
+
+    async def _readable(org: str, nss: set[str]) -> set[str]:
+        return nss
+
+    rule = "Never block the fan-in. Applies to `DB::ExternalDistinctTransform`."
+    hits = [
+        _MemoryForFileHit(
+            memory_key=f"design/rule{i}",
+            memory_type="decision",
+            value=f'"{rule}"',
+            tags=["decision", "constraint"],
+            pinned=True,
+            namespace="code-widgets",
+        )
+        for i in range(8)
+    ]
+    hits.append(
+        _MemoryForFileHit(
+            memory_key="design/spill",
+            memory_type="decision",
+            value=json.dumps(DECISION),
+            tags=["decision"],
+            confidence=0.5,
+            namespace="code-widgets",
+        )
+    )
+
+    async def _for_file(inp: Any) -> MemoryForFileOutput:
+        return MemoryForFileOutput(path=inp.path, total=len(hits), hits=hits)
+
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
+    monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
+    rows, left = await code_plane_reads.decisions_for_paths(
+        "acme", "code-widgets", ["src/a.cpp"], limit=8, first=rb.has_check
+    )
+    assert rows[0]["memory_key"] == "design/spill" and len(rows) == 8 and len(left) == 1
+    sec = rb.rationale_section(
+        rows, DIFF, rows_left=len(left), left_to_check=any(rb.has_check(d) for d in left)
+    )
+    assert sec["verdict"] == "check" and sec["rows"][0]["memory_key"] == "design/spill"
+    assert sec["causes"] == ["rows_not_read:1"]
+
+
+def test_a_left_out_row_with_something_to_check_keeps_the_section_from_clear() -> None:
+    ratio = _row("design/ratio", CONSTRAINT, ["decision", "constraint"])
+    sec = rb.rationale_section([ratio], DIFF, rows_left=2, left_to_check=True)
+    assert sec["rows"][0]["verdict"] == "clear" and sec["verdict"] == "unknown"
+    assert sec["causes"] == ["rows_not_read:2"]
+    assert rb.rationale_section([ratio], DIFF, rows_left=2)["verdict"] == "clear"
 
 
 @pytest.mark.asyncio
@@ -260,8 +338,12 @@ async def test_decisions_for_paths_reads_nothing_from_a_trunk_the_caller_cannot_
 
     monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
     monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
-    assert await code_plane_reads.decisions_for_paths("acme", "code-widgets", ["a"], limit=5) == []
-    assert await code_plane_reads.decisions_for_paths("acme", "", ["a"], limit=5) == []
+    nothing: Any = ([], [])
+    assert (
+        await code_plane_reads.decisions_for_paths("acme", "code-widgets", ["a"], limit=5)
+        == nothing
+    )
+    assert await code_plane_reads.decisions_for_paths("acme", "", ["a"], limit=5) == nothing
 
 
 @pytest.mark.asyncio
@@ -368,7 +450,7 @@ async def test_decisions_for_paths_refuses_a_token_that_grants_the_branch_but_no
         got = await code_plane_reads.decisions_for_paths(
             "acme", "code-widgets", ["src/a.cpp"], limit=5
         )
-        assert got == [] and reads == []
+        assert got == ([], []) and reads == []
         set_current_auth(_token("code-widgets-release", "code-widgets"))
         await code_plane_reads.decisions_for_paths("acme", "code-widgets", ["src/a.cpp"], limit=5)
         assert reads == ["code-widgets"]
