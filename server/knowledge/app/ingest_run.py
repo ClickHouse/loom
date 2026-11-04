@@ -59,16 +59,14 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 # The lease a job runs under, and the claim a publish of one source runs under.
-# A run that gives up on a document insert whose outcome is unknown leaves the
-# job's lease to expire instead of releasing it (`Lease.let_expire`), so no
-# worker takes the job before the insert has landed or stopped. The run's last
-# `lease.held` check is inside the claimed block (renewed within JOB_LEASE_S / 2
-# before it), and the send comes within that block's bound of the check, so the
-# lease expires at least JOB_LEASE_S / 2 minus the block's bound after the send,
-# judged on the server's clock: past the insert's own
-# bound (its send may start on the server up to `rmt_carry._TRANSIT_S` later,
-# run for a claimed statement's server-side limit, and commit within
-# `rmt_carry._RELEASE_MARGIN_S`). The rerun reads its outcome from the stored rows.
+# A run that gives up on a document insert whose outcome is unknown leaves the job's lease to expire
+# instead of releasing it (`Lease.let_expire`), so no worker takes the job before the insert has
+# landed or stopped. The run's last `lease.held` check is inside the claimed block, and the lease
+# was renewed within JOB_LEASE_S / 2 before it; the send comes within the block's bound of that
+# check, so the lease expires at least JOB_LEASE_S / 2 minus the block's bound after the send,
+# judged on the server's clock. That is past the insert's own bound: its send may start on the
+# server up to `rmt_carry._TRANSIT_S` later, run for a claimed statement's server-side limit, and
+# commit within `rmt_carry._RELEASE_MARGIN_S`. The rerun reads its outcome from the stored rows.
 JOB_LEASE_S = 120.0  # not a setting: renewed while the job runs; it bounds a dead holder
 _SOURCE_CLAIM_S = 60.0  # not a setting: bounds one publish's few statements
 # The first retry waits this long, doubling per attempt.

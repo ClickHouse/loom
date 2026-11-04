@@ -1284,9 +1284,9 @@ def test_a_store_out_of_slots_puts_the_job_back(world: World) -> None:
 
 def test_a_rerun_comes_only_after_an_uncertain_insert_has_settled(world: World) -> None:
     """A run that gave up on an uncertain document insert leaves the job's lease
-    to expire. Its last `held` check is inside the claimed block (renewed
-    within half its TTL before it) and the send comes within the block's bound
-    of that check, so no other worker takes the job until the insert has landed
+    to expire. Its last `held` check is inside the claimed block, the lease
+    renewed within half its TTL before it, and the send comes within the
+    block's bound of that check, so no other worker takes the job until the insert has landed
     or stopped: a carried send starts within `_TRANSIT_S`, runs within a
     claimed statement's limit, and commits within `_RELEASE_MARGIN_S` more."""
     from server.core import leases, rmt_carry
