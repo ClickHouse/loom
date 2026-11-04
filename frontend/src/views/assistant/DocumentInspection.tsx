@@ -416,9 +416,11 @@ function ListedSection({ result }: { result: KnowledgeInspection }) {
         <p className="text-text-muted">The documents could not be listed.</p>
       ) : (
         <>
-          {!result.listed_complete && live !== null && (
+          {!result.listed_complete && result.listed.length > 0 && (
             <p className="text-xs text-text-muted">
-              Newest {fmtInt(result.listed.length)} of {fmtInt(live)} listed.
+              {live === null
+                ? `Newest ${fmtInt(result.listed.length)} listed; the total was not read.`
+                : `Newest ${fmtInt(result.listed.length)} of ${fmtInt(live)} listed.`}
             </p>
           )}
           {result.listed.length === 0 ? (

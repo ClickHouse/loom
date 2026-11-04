@@ -1229,6 +1229,18 @@ describe("Assistant: documents", () => {
     expect(within(result).queryByRole("list", { name: "Newest documents" })).toBeNull();
   });
 
+  it("says a listing may be partial when the documents total was not read", async () => {
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      documents: { ...KNOWLEDGE.documents, live: null, deleted: null, earlier_revisions: null, unnumbered: null },
+      listed_complete: false,
+      skipped: ["documents: TimeoutError"],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).getByText(/listed; the total was not read\./)).toBeInTheDocument();
+  });
+
   it("shows the documents a cut read counted, with the server's note, not as unread", async () => {
     const note = "more than 200 format and scheme pairs; the counts cover the first";
     inspectKnowledge.mockResolvedValueOnce({
