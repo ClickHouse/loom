@@ -10,7 +10,8 @@ runs no workers); then status, get, outline, search and download read it back.
   fails `revision_conflict` and leaves revision 2 serving.
 - An upload whose bytes contradict its name is stored, typed by its name, and its
   job fails with the extractor's code; an ingest of an unknown upload is 404.
-- The queue a worker pass reads offers each namespace its oldest open job.
+- The queue a worker pass reads offers each namespace its oldest due job, one
+  source's jobs one at a time.
 
 The job sends originals to the extractor the settings route SQL and TOML to
 (`extractors.endpoint_for`); the tests that publish skip without one.
@@ -21,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -232,9 +234,10 @@ async def test_a_mislabelled_upload_is_stored_and_the_extractor_refuses_it(
 @pytest.mark.asyncio
 async def test_the_queue_offers_each_namespace_its_oldest_open_job(control_plane_url: str) -> None:
     """What a worker pass reads (`ingestions.due`), for this test's org alone: one
-    candidate per namespace, the oldest open job of its sources; a later ingest of a
-    source waits behind the earlier one. The jobs are cancelled and ended after, so
-    none is left on the shared queue."""
+    candidate per namespace, the oldest due job of its sources; a later ingest of a
+    source waits behind the earlier one even while that one is not due (a retry's
+    delay). The jobs are cancelled and ended after, so none is left on the shared
+    queue."""
     from server.core.ch import get_client
     from server.knowledge.app import ingest_run
     from server.knowledge.store import ingestions
@@ -256,6 +259,13 @@ async def test_the_queue_offers_each_namespace_its_oldest_open_job(control_plane
         ch = get_client()
         await ch.connect()
         try:
+            # The source's first job waits for a retry: its later job is not offered.
+            first = await ingestions.get_ingestion(org, "a", jobs[0][1])
+            assert first is not None
+            later = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)
+            await ingestions.insert_ingestion(
+                ingestions.ingestion_row(first, next_attempt_at=later)
+            )
             # The whole queue's due jobs, then this org's: the limit is the queue's.
             due = await ingestions.due(100_000, stale_after_s=60)
             for ns, job_id in jobs:
@@ -265,7 +275,7 @@ async def test_the_queue_offers_each_namespace_its_oldest_open_job(control_plane
         finally:
             await ch.disconnect()
     offered = sorted((j["namespace"], j["ingestion_id"]) for j in due if j["org"] == org)
-    assert offered == [jobs[0], jobs[3]]
+    assert offered == [jobs[2], jobs[3]]
 
 
 @pytest.mark.asyncio
