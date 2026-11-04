@@ -316,8 +316,10 @@ def _blocks_markdown(blocks: list[dict[str, Any]], skipped: dict[str, int]) -> s
 def page_markdown(blocks: list[dict[str, Any]]) -> tuple[str, dict[str, int]]:
     """A page store's page, its blocks as the blocks API lists them (each block's
     children under `children`), as Markdown one to one: headings, paragraphs, lists,
-    to-dos, quotes, callouts, code fenced, tables, and toggles and columns with their
-    children inline. A run of pictures says so, since its content is not in the text.
+    to-dos, quotes, callouts, code fenced, tables, equations as `$$` blocks, dividers
+    as `---`, bookmarks, embeds and link previews as links, and toggles, columns and
+    synced blocks with their children inline. A run of pictures says so, since its
+    content is not in the text.
     Also the block types left out, by count: child databases, files, links that are
     not web addresses, synced copies whose original cannot be read and any type not
     mapped here. A child page is left out without a count: it is a document of its

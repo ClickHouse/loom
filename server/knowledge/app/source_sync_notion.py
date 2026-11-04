@@ -54,10 +54,10 @@ _MAX_CHILD_PAGES = 200  # not a setting: a bound on one source's share of a pass
 # may be coarser than its edits, and its clock may differ from ours, so a page read
 # sooner is read again.
 _SETTLE_S = 90.0  # not a setting: a margin on the store's stamp resolution and clock skew
-# Recorded reads one source keeps (`unchanged_reads`); past it, the newest stay. While
-# more than this many pages need a read, the overflow is read again on each listing
-# (about that many extra page reads, each a document slot of the pass), comes back
-# unchanged and evicts the next-oldest; nothing is lost. It keeps the state row small.
+# Recorded reads one source keeps (`unchanged_reads`), to keep the sync state row
+# small. Past this many recorded reads, the newest stay; each page beyond them is read
+# again on every listing and comes back unchanged. Changed pages are handled before
+# such re-reads, so the overflow delays only settling, never an edit.
 _MAX_UNCHANGED_READS = 500  # not a setting: a bound on one sync state row
 
 
@@ -145,6 +145,9 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     stored = {
         d["file_id"]: d for d in await store.source_revisions(src.org, src.namespace, src.name)
     }
+    # Pages that changed first, then re-reads that only settle a page: a pass bound
+    # spent on re-reads can delay settling, never an edit.
+    t.items.sort(key=lambda f: not _changed(f, stored.get(f["id"])))
     for f in t.items:  # a child found while syncing is appended and handled too
         if not await _sync_page(t, f, stored.get(f["id"]), run):
             break
@@ -175,6 +178,16 @@ async def _forget_unlisted_without_documents(t: _Turn) -> None:
     for child_id in list(t.known):
         if child_id in t.unanswered and child_id not in held:
             t.known.pop(child_id)
+
+
+def _changed(f: dict[str, Any], stored: dict[str, str] | None) -> bool:
+    """Whether a listed page differs from its stored copy: none stored, another
+    revision or another address."""
+    if stored is None:
+        return True
+    return stored["source_revision"] != f["modifiedTime"] or stored["source_uri"] != (
+        sync.source_uri_of(f)
+    )
 
 
 def _prune_reads(t: _Turn, *, whole: bool) -> None:
@@ -490,12 +503,11 @@ def _record_children(
 
 
 async def _add_new_children(t: _Turn, children: list[str]) -> None:
-    """List the children a read page holds that this turn has not, so they are
-    synced in this turn. A rate limit or a refused token ends the turn (its status
-    says so).
+    """List the children a read page holds that this turn has not, so they are synced
+    in this turn. A rate limit or a refused token ends the turn (its status says so).
     A child that cannot be read now stays known and is read next turn; any failure
-    other than not found leaves the turn incomplete, so a failed or cut turn forgets
-    no child it could not read."""
+    other than not found leaves the turn incomplete, so a failed or cut turn forgets no
+    child it could not read."""
     for child in children:
         try:
             page = await notion.page(t.token, child)

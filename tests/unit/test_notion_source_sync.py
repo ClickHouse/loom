@@ -1199,3 +1199,24 @@ def test_a_read_evicted_past_the_cap_costs_one_block_read_and_is_recorded_again(
     assert [p for p in _paths(world) if p.startswith("/blocks/")] == [f"/blocks/{evicted}/children"]
     assert world.upserts == 2
     assert evicted in _detail(world)["unchanged_reads"]
+
+
+def test_an_edited_page_goes_before_re_reads_that_only_settle(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.sources[0] = _source(config={"page_ids": [PAGE, ROW2], "database_ids": [DB]})
+    world.rows = [ROW1]
+    for page_id in (PAGE, ROW1, ROW2):
+        world.pages[page_id] = _page(
+            page_id, "2026-03-01T00:00:00.000Z", parent=DB if page_id == ROW1 else ""
+        )
+    world.now = datetime(2026, 3, 1, 0, 0, 30, tzinfo=UTC)
+    _run(full=True)  # all three written 30 s after their revision: none settled
+    monkeypatch.setattr(source_sync_notion, "_MAX_UNCHANGED_READS", 1)
+    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
+    world.pages[ROW1] = _page(ROW1, "2026-03-01T00:04:00.000Z", parent=DB)
+    world.blocks[ROW1] = [_para("Edited in the database.")]
+    world.now = datetime(2026, 3, 1, 0, 5, tzinfo=UTC)
+    out = _run()
+    assert out.cut
+    assert world.docs[_uri(world, ROW1)]["input"].content == "Edited in the database."
