@@ -11,8 +11,8 @@ runs no workers); then status, get, outline, search and download read it back.
 - An upload whose bytes contradict its name is stored, typed by its name, and its
   job fails with the extractor's code; an ingest of an unknown upload is 404.
 
-The worker pass reaches the extractor at LOOM_DOCUMENT_EXTRACTOR_URL with
-LOOM_DOCUMENT_EXTRACTOR_TOKEN from this process's environment.
+The worker pass sends originals to the extractor the settings route SQL and TOML to
+(`extractors.endpoint_for`); the tests that publish skip without one.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
 
+
 @pytest.fixture
 def extractor_routed() -> None:
     """The tests that publish send SQL and TOML originals to an extractor; without one
@@ -39,6 +40,7 @@ def extractor_routed() -> None:
 
     if not (endpoint_for("sql", "") and endpoint_for("toml", "")):
         pytest.skip("no document extractor is routed for sql and toml")
+
 
 SQL = (
     b"-- Raw events are kept for 30 days.\n"

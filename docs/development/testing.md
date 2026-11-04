@@ -61,9 +61,9 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
   in `LOOM_TEST_S3_ENDPOINT` (CI runs a local one, see `.github/workflows/ci.yml`) and
   skips without it.
 - The publishing tests in `tests/integration/test_knowledge_ingest_live.py` run a worker
-  pass that sends originals to a document extractor: they need one reachable through
-  `LOOM_DOCUMENT_EXTRACTOR_URL` (or `LOOM_DOCUMENT_EXTRACTORS_JSON`) and
-  `LOOM_DOCUMENT_EXTRACTOR_TOKEN`, and skip without one. CI runs the reference
+  pass that sends originals to a document extractor: they need one routed for SQL and
+  TOML (`LOOM_DOCUMENT_EXTRACTOR_URL` or `LOOM_DOCUMENT_EXTRACTORS_JSON`, with its token;
+  see the [configuration reference](../reference/configuration.md)), and skip without one. CI runs the reference
   extractor (see `.github/workflows/ci.yml`; [running it](../../extractor/README.md)).
 - CI sets `LOOM_LATENCY_BUDGET_MULTIPLIER=10`: shared runners are noisy enough that the
   default per-op budgets fire violations.
