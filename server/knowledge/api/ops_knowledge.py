@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from server.knowledge.api.models_inspect import KnowledgeInspectInput, KnowledgeInspectOutput
 from server.knowledge.api.models_knowledge import (
     KnowledgeAddInput,
     KnowledgeAddOutput,
@@ -49,6 +50,7 @@ from server.knowledge.app.ingest import (
     handle_knowledge_ingest_cancel,
     handle_knowledge_ingest_status,
 )
+from server.knowledge.app.inspect import handle_knowledge_inspect
 from server.knowledge.app.knowledge_search import handle_knowledge_search
 from server.knowledge.app.reads import handle_knowledge_reads
 from server.knowledge.app.synthesize import handle_knowledge_synthesize
@@ -250,6 +252,17 @@ knowledge_ingest_cancel = Operation(
     maturity="experimental",
 )
 
+knowledge_inspect = Operation(
+    name="knowledge.inspect",
+    maturity="experimental",
+    input_model=KnowledgeInspectInput,
+    output_model=KnowledgeInspectOutput,
+    handler=handle_knowledge_inspect,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
 OPERATIONS: list[Operation] = [
     knowledge_add,
     knowledge_reads,
@@ -260,6 +273,7 @@ OPERATIONS: list[Operation] = [
     knowledge_list,
     knowledge_get,
     knowledge_outline,
+    knowledge_inspect,
     knowledge_synthesize,
     knowledge_bulk_add,
     knowledge_bulk_delete,

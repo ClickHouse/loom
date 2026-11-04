@@ -892,6 +892,18 @@ async def memory_tally(org: str, namespace: str) -> tuple[int, datetime | None]:
     return await memory_repo.live_tally(org, namespace, scope=request_scope())
 
 
+async def document_decision_tally(
+    org: str, namespace: str, source_uris: list[str]
+) -> list[dict[str, Any]]:
+    """The live decision rows citing a document of the namespace, inside the request's
+    read scope, per document of `source_uris` and '' for the rest."""
+    from server.memory.store import document_decisions
+
+    return await document_decisions.decisions_by_document(
+        org, namespace, source_uris, scope=request_scope()
+    )
+
+
 async def identity_tally(
     org: str, namespace: str, column: IdentityColumn, *, limit: int
 ) -> tuple[int, list[tuple[str, int]]]:
