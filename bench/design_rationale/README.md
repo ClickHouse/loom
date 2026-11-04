@@ -181,6 +181,7 @@ extraction precision. `score --human-labels` takes a list of
 accuracy and kappa; labels on `avoids` or `satisfies` for a change answer a detector
 decided are left out, and `detector_fired` labels are never counted. `score` writes
 `metrics.json` and prints aggregate tables with no task text; `score --summary <file>`
-also writes the aggregates without the per-task rows or document ids, with the run's flags
-and its spend by ledger stage and the answers' cost per arm, the file a published result
-commits. The run directory holds the task set's content: keep it out of the repository.
+also writes the aggregates without the per-task rows or document ids, with the task set's
+counts (documents, revisions, tasks by kind and subtype, tasks with gold rows), the run's
+flags with K and the judge orders and repeats, and its spend by ledger stage and the
+answers' cost per arm, the file a published result commits. The run directory holds the task set's content: keep it out of the repository.

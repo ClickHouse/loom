@@ -185,7 +185,8 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument(
         "--summary",
         type=Path,
-        help="Also write the aggregates without the per-task rows, the run's flags and "
+        help="Also write the aggregates without the per-task rows or document ids, the "
+        "task set's counts, the run's flags with K and the judge orders and repeats, and "
         "its spend to this file (the committed results artifact)",
     )
     return p

@@ -8,6 +8,7 @@ import dataclasses
 import json
 import re
 import subprocess
+from collections import Counter
 from datetime import date
 from pathlib import Path
 
@@ -1354,7 +1355,7 @@ def test_score_writes_the_summary_without_per_task_rows(tmp_path):
     out.mkdir()
     ledger = Ledger(out / "ledger.jsonl", 1.0)
     model = _fake_model(ledger)
-    cfg = _config(out, arms=[0, 1, 3, 4], k=2, judge_orders=1)
+    cfg = _config(out, arms=[0, 1, 3, 4], k=2)
     run.run(ts, cfg, FakeLoom(), model, [model], ledger, FakeCodeIndex())
     sheet = out / "extraction_labels.todo.json"
     labels = [{**row, "verdict": "correct"} for row in json.loads(sheet.read_text())]
@@ -1378,9 +1379,16 @@ def test_score_writes_the_summary_without_per_task_rows(tmp_path):
     assert spend["total"] == round(sum(r["usd"] for r in ledger.rows()), 4)
     assert spend["answers_by_arm"]["0"]["answers"] == 2 * len(list(ts.all_tasks()))
     assert (1, 0) in {(c["treatment"], c["reference"]) for c in summary["comparisons"]}
-    assert summary["task_set"]["tasks"] == {k: len(ts.tasks.get(k, [])) for k in "ABC"}
-    assert summary["task_set"]["revised_documents"] == 1
-    assert summary["run"]["judge_orders"] == 1
+    counts = summary["task_set"]
+    revisions = [d for d in ts.documents.values() if d.revision_of]
+    assert counts["tasks"] == {k: len(ts.tasks.get(k, [])) for k in "ABC"}
+    assert counts["c_subtypes"] == dict(Counter(t["subtype"] for t in ts.tasks["C"]))
+    assert counts["documents"] == len(ts.documents) - len(revisions)
+    assert counts["revisions"] == len(revisions)
+    assert counts["revised_documents"] == len({d.revision_of for d in revisions})
+    assert counts["tasks_with_gold_rows"] == sum(1 for _, t in ts.all_tasks() if t["gold_rows"])
+    assert summary["run"]["judge_orders"] == 2
+    assert summary["run"]["judge_repeats"] == cfg.judge_repeats
     assert set(summary["a_answers_without_claims"]) == {"0", "1", "3", "4"}
     # Scoring again regenerates the same file.
     assert main([*argv, "--summary", str(path)]) == 0

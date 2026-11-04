@@ -560,7 +560,9 @@ def summary(ts: TaskSet, metrics: dict[str, Any], out_dir: Path) -> dict[str, An
         subtypes[t["subtype"]] += 1
     task_set = {
         "documents": sum(1 for d in ts.documents.values() if not d.revision_of),
-        "revised_documents": sum(1 for d in ts.documents.values() if d.revision_of),
+        # A document can be revised more than once: entries and distinct bases.
+        "revisions": sum(1 for d in ts.documents.values() if d.revision_of),
+        "revised_documents": len({d.revision_of for d in ts.documents.values() if d.revision_of}),
         "tasks": {kind: len(ts.tasks.get(kind, [])) for kind in ("A", "B", "C")},
         "c_subtypes": dict(sorted(subtypes.items())),
         "tasks_with_gold_rows": sum(1 for _, t in ts.all_tasks() if t["gold_rows"]),

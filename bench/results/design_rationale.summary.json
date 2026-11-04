@@ -1,6 +1,7 @@
 {
   "task_set": {
     "documents": 5,
+    "revisions": 4,
     "revised_documents": 4,
     "tasks": {
       "A": 10,
