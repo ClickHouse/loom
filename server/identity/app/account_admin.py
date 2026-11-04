@@ -191,6 +191,7 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
         )
     pending = [g for g in grants if g["revoked_at"] is None and g["status"] == "pending"]
     live = [g for g in grants if g["revoked_at"] is None]
+    was_linked = False
     if was and live:
         with own_write_reads():  # a link another process just made
             was_linked = (org, namespace) in await sso_links.linked(was)
