@@ -339,9 +339,10 @@ Grants follow the same rule: an account's email is another spelling of its owner
 grant written under it admits the account, only when the account is an SSO account or a
 linked one (`VERIFIED_EMAIL_SQL` in `server/core/grant_sql.py`, read by
 `server/auth/aliases.py`, the grant map and `grants.list`). An unverified pair still caps
-the account's claims and is still reached by a revocation, where reaching further fails
-closed. So revoking an account that registered someone else's address also revokes that
-address; release such an account instead.
+the account's claims and is still reached by a subject revocation
+(`/v1/admin/revoke_subject`), where reaching further fails closed. So revoking the subject
+of an account that registered someone else's address also revokes that address; release
+such an account instead.
 
 With `LOOM_SCIM_TOKEN` set, the provider deactivates people over SCIM 2.0 (`/scim/v2`,
 `server/auth/scim.py`); that bearer token, compared in constant time, is the only credential
