@@ -12,8 +12,8 @@ class KnowledgeSourceProbe(BaseModel):
     """What a probe that succeeded found; a probe that fails refuses the call."""
 
     # Documents the source lists now: at most 1000 (gdrive, recording), each
-    # project's first page (linear), the listed pages and 100 of up to three
-    # databases (notion).
+    # project's first page (linear), the listed pages and the first 100 pages of each
+    # of up to three databases (notion).
     documents: int = 0
     # True when more documents match than were listed, so `documents` is a lower bound.
     more: bool = False
@@ -224,8 +224,8 @@ class KnowledgeSourceCheckOutput(BaseModel):
     # False when the probe failed; `summary` says why.
     reachable: bool = True
     # Documents the source lists now: at most 1000 (gdrive, recording), each
-    # project's first page (linear), the listed pages and 100 of up to three
-    # databases (notion).
+    # project's first page (linear), the listed pages and the first 100 pages of each
+    # of up to three databases (notion).
     documents: int = 0
     # True when more documents match than were listed, so `documents` is a lower bound.
     more: bool = False

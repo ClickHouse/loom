@@ -417,7 +417,7 @@ Probe a registered document source with its stored credential now (a check and a
 | --- | --- | --- |
 | `name` | `str` | The source checked. |
 | `reachable` | `bool` | False when the probe failed; `summary` says why. |
-| `documents` | `int` | Documents the source lists now: at most 1000 (gdrive, recording), each project's first page (linear), the listed pages and 100 of up to three databases (notion). |
+| `documents` | `int` | Documents the source lists now: at most 1000 (gdrive, recording), each project's first page (linear), the listed pages and the first 100 pages of each of up to three databases (notion). |
 | `more` | `bool` | True when more documents match than were listed, so `documents` is a lower bound. |
 | `sample` | `list[str]` | Up to five document titles, most recently changed first. |
 | `summary` | `str` | One line: what was found, or why it failed. |
