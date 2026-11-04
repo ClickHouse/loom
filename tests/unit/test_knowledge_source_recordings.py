@@ -763,3 +763,22 @@ def test_two_ids_naming_one_space_list_each_record_once(
     assert len(world.upserts) == 1
     assert _detail(world, "calls")["documents_seen"] == 1
     assert sum(r.url.path.endswith("/transcripts") for r in stores.requests) == 1
+
+
+def test_a_transcript_is_mined_for_decisions_by_the_same_leg(
+    world: _World,  # noqa: F811
+    stores: _Stores,
+) -> None:
+    world.sources = [_source("meet", [SPACE], MEET_KEY)]
+    start, end = _ago(5), _ago(4)
+    stores.records = [_meet_record("r1", start, end)]
+    stores.transcripts["r1"] = _generated("r1", "t1")
+    stores.entries["t1"] = [_entry("r1", "p1", "We keep the hash join.", start, end)]
+    result = asyncio.run(source_sync.run_sync())
+    uri = "https://meet.googleapis.com/v2/conferenceRecords/r1"
+    assert [u for u, actor, _ in world.mined] == [uri] and result.extracted == 1
+    assert world.mined[0][1] == SYNC_WORKER_ACTOR
+    revision = world.docs[uri]["metadata"]["source_revision"]
+    assert _detail(world, "calls")["mined"] == {uri: revision}
+    asyncio.run(source_sync.run_sync())
+    assert len(world.mined) == 1
