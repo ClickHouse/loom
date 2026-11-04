@@ -1214,6 +1214,21 @@ describe("Assistant: documents", () => {
     expect(within(result).queryByText("The job checks did not run.")).toBeNull();
   });
 
+  it("says there is no live document to list while a first ingest is queued", async () => {
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      documents: { ...KNOWLEDGE.documents, live: 0, deleted: 0, by_format: [], by_source_scheme: [] },
+      listed: [],
+      listed_complete: true,
+      ingestions: { ...KNOWLEDGE.ingestions, sources: 1, pending: 1 },
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).queryByRole("status")).toBeNull();
+    expect(within(result).getByText("No live document to list.")).toBeInTheDocument();
+    expect(within(result).queryByRole("list", { name: "Newest documents" })).toBeNull();
+  });
+
   it("shows the documents a cut read counted, with the server's note, not as unread", async () => {
     const note = "more than 200 format and scheme pairs; the counts cover the first";
     inspectKnowledge.mockResolvedValueOnce({

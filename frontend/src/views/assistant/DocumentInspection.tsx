@@ -421,11 +421,15 @@ function ListedSection({ result }: { result: KnowledgeInspection }) {
               Newest {fmtInt(result.listed.length)} of {fmtInt(live)} listed.
             </p>
           )}
-          <ul className="space-y-2" aria-label="Newest documents">
-            {result.listed.map((d) => (
-              <DocumentRow key={d.source_uri} doc={d} jobsUnread={readFailed(result, "listed.jobs")} />
-            ))}
-          </ul>
+          {result.listed.length === 0 ? (
+            <p className="text-text-muted">No live document to list.</p>
+          ) : (
+            <ul className="space-y-2" aria-label="Newest documents">
+              {result.listed.map((d) => (
+                <DocumentRow key={d.source_uri} doc={d} jobsUnread={readFailed(result, "listed.jobs")} />
+              ))}
+            </ul>
+          )}
         </>
       )}
     </section>
