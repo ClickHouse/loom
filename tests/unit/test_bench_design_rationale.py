@@ -1237,3 +1237,17 @@ def test_an_interrupted_setup_erases_its_namespaces_and_is_not_resumed(tmp_path)
     assert len(loom.erased) == 3
     with pytest.raises(run.RunError, match="setup failed"):
         run.run(ts, _config(out), FakeLoom(), model, [model], ledger)
+
+
+def test_a_finished_run_with_its_namespaces_kept_reruns_with_nothing_to_do(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    cfg = _config(out, arms=[0, 3], k=1, judge_orders=1, keep_namespaces=True)
+    loom = FakeLoom()
+    assert run.run(ts, cfg, loom, model, [model], ledger) is True
+    rows = len(ledger.rows())
+    assert run.run(ts, cfg, loom, model, [model], ledger) is True
+    assert len(ledger.rows()) == rows and loom.erased == []

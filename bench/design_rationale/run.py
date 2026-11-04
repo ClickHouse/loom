@@ -1,8 +1,8 @@
 """The `run` command: set up the arms in the harness's Loom, read the surfaces, answer
 each task K times per arm, and judge each answer. Every stage writes its JSON file in
-the output directory and skips what is already there, so a run stopped by the spend cap,
-or by an error after its setup, resumes where it stopped; its namespaces are kept until
-every answer is judged.
+the output directory and skips what is already there, so a run stopped by the spend
+cap, or that fails or is interrupted after its setup, resumes where it stopped; its
+namespaces are kept until every answer is judged.
 """
 
 from __future__ import annotations
