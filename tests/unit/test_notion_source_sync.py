@@ -1113,10 +1113,15 @@ def test_a_database_page_read_within_the_margin_is_listed_again_by_an_incrementa
     world.pages[ROW1] = _page(ROW1, "2026-03-01T00:00:00.000Z", parent=DB)
     world.now = datetime(2026, 3, 1, 0, 1, 15, tzinfo=UTC)  # first read 75 s after its edit
     _run(full=True)
+    # 150 s behind the listing's start: the 90 s margin and the shared minute.
+    stamp = world.states["wiki"]["state_value"]
+    assert stamp == "2026-02-28T23:58:45.000Z"
     world.blocks[ROW1] = [_para("Edited in the same minute.")]
     world.now = datetime(2026, 3, 1, 0, 20, tzinfo=UTC)
     world.requests.clear()
     _run()  # incremental: listed again and rewritten
+    query = next(r for r in world.requests if r.url.path.endswith("/query"))
+    assert json.loads(query.content)["filter"]["last_edited_time"]["after"] == stamp
     assert f"/blocks/{ROW1}/children" in _paths(world)
     assert world.docs[_uri(world, ROW1)]["input"].content == "Edited in the same minute."
     assert world.docs[_uri(world, ROW1)]["metadata"]["read_at"] == "2026-03-01T00:20:00.000Z"

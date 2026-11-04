@@ -281,26 +281,26 @@ has the listed revision is skipped only when that copy was read 90 seconds or mo
 the revision; one read sooner is read and written again with its new read time, so an
 edit made just before or after a read is not lost to an equal stamp or a clock skew, and
 the page is skipped once its stored copy was read past the margin. The stamp trails the
-listing by those 90 seconds as well, so a database page read within the margin is listed
-again by the next incremental turn. The rewrite embeds the page again (the writer embeds
-every write), so a page read within 90 seconds of its revision costs one more embedding,
-once in practice, since the next pass reads it past the margin. A turn handles the pages
-that changed (no stored copy, another revision or another address) before such re-reads,
-so a pass bound spent on them delays no edit. A changed page's blocks are read, nested
-blocks included, at most 300 requests a page, and turned into Markdown one to one:
-headings, paragraphs, bulleted and numbered lists, to-dos (`- [x]`), quotes and callouts
-as `>` quotes, code fenced with its language, tables as Markdown tables (the first row
-as the header row), equations as `$$` blocks, dividers as `---`, bookmarks, embeds and
-link previews as links, toggles, columns and synced blocks with their children inline,
-and a run of images or videos as `> [image-only: N pictures, rationale not extracted]`
-followed by their captions. Left out and counted by type in the document's metadata
-(`skipped_blocks`): a child database, a file, a PDF, a link that is not an https
-address, a synced copy whose original is not shared with the integration, and any type
-the converter does not map. `ingested_format` is `blocks`, `read_at` is when the page
-was read, and `text_sha256` is an exact hash of its title, Markdown and left-out blocks.
-The [mining](#mining-decisions) step keys a page by its revision and that hash, so a
-copy written again with the same text is not mined again, and one with other text at the
-same revision is.
+listing by those 90 seconds more than the minute above (150 seconds in all), so a
+database page read within the margin is listed again by the next incremental turn. The
+rewrite embeds the page again (the writer embeds every write), so a page read within 90
+seconds of its revision costs one more embedding, once in practice, since the next pass
+reads it past the margin. A turn handles the pages that changed (no stored copy, another
+revision or another address) before such re-reads, so a pass bound spent on them delays
+no edit. A changed page's blocks are read, nested blocks included, at most 300 requests
+a page, and turned into Markdown one to one: headings, paragraphs, bulleted and numbered
+lists, to-dos (`- [x]`), quotes and callouts as `>` quotes, code fenced with its
+language, tables as Markdown tables (the first row as the header row), equations as `$$`
+blocks, dividers as `---`, bookmarks, embeds and link previews as links, toggles,
+columns and synced blocks with their children inline, and a run of images or videos as
+`> [image-only: N pictures, rationale not extracted]` followed by their captions. Left
+out and counted by type in the document's metadata (`skipped_blocks`): a child database,
+a file, a PDF, a link that is not an https address, a synced copy whose original is not
+shared with the integration, and any type the converter does not map. `ingested_format`
+is `blocks`, `read_at` is when the page was read, and `text_sha256` is an exact hash of
+its title, Markdown and left-out blocks. The [mining](#mining-decisions) step keys a
+page by its revision and that hash, so a copy written again with the same text is not
+mined again, and one with other text at the same revision is.
 
 A child page is a document of its own. The child pages a read page holds are kept in the
 source's sync state, at most 200 per source (more are counted in their parent's
