@@ -4204,6 +4204,10 @@ settings:
   # cite a row's content hash; a larger row is cited with none. 0 = cite no hash. [live]
   # namespace_report_hash_max_bytes: 65536
 
+  # Most live documents namespace.tune re-chunks in process to judge the chunk size and
+  # stride, picked by a hash of their source_uri; the report states the cap. [live]
+  # namespace_tune_document_sample: 50
+
   # Seconds a namespace's relation cardinalities (one or many) are cached for the triple
   # writer. [live]
   # namespace_ontology_cardinality_ttl_s: 60.0

@@ -215,6 +215,14 @@ class World:
 
         monkeypatch.setattr(tune, "revisions_for", revisions_for)
 
+        async def no_documents(*a: Any, **k: Any) -> Any:
+            from server.knowledge.app.tune import DocumentDrafts
+
+            return DocumentDrafts()
+
+        # The document drafts are test_namespace_tune_documents.py's.
+        monkeypatch.setattr(tune, "document_drafts", no_documents)
+
 
 @pytest.fixture
 def world(monkeypatch: pytest.MonkeyPatch) -> World:

@@ -46,6 +46,8 @@ def _report_billed(model: str, data: dict[str, Any]) -> int:
 
 
 class OpenAIEmbedder:
+    # The most tokens one input may hold; a longer one is refused before the call.
+    max_input_tokens: ClassVar[int] = _MAX_INPUT_TOKENS
     DEFAULT_DIMS: ClassVar[dict[str, int]] = {
         "text-embedding-3-small": 1536,
         "text-embedding-3-large": 3072,

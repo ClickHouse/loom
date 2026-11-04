@@ -7668,7 +7668,7 @@ export interface NamespaceTuneInput {
 
 export interface TuneProposal {
   id: string;
-  target: "extraction_instructions.request" | "namespace.category" | "namespace.guide";
+  target: "extraction_instructions.request" | "namespace.category" | "namespace.guide" | "settings.knowledge_chunking" | "settings.document_extractors_json";
   scope: string;
   title: string;
   rationale: string;
@@ -7681,6 +7681,8 @@ export interface TuneProposal {
   effect?: "future";
   historical: string;
   apply: TuneApply;
+  apply_also?: TuneApply[];
+  preview?: ChunkingPreview | null;
   limits?: string;
 }
 
@@ -7689,14 +7691,45 @@ export interface TuneEvidence {
   supporting_count?: number;
   supporting?: FindingEvidence[];
   counter_count?: number | null;
+  documents?: string[];
 }
 
 export interface TuneApply {
   op: string;
+  via?: "op" | "admin_route" | "environment";
   args: Record<string, unknown>;
   args_complete?: boolean;
   required_role: string;
   guard: string;
+}
+
+export interface ChunkingPreview {
+  before: ChunkStats;
+  after: ChunkStats;
+}
+
+export interface ChunkStats {
+  size: number;
+  stride: number;
+  chunks: number;
+  min_chars: number;
+  median_chars: number;
+  p90_chars: number;
+  max_chars: number;
+  sections: number;
+  sections_cut: number;
+  max_input_tokens: number;
+  over_input_limit?: number | null;
+}
+
+export interface ChunkingSample {
+  cap: number;
+  population?: number | null;
+  documents: number;
+  unread: number;
+  embedder_model: string;
+  input_token_limit?: number | null;
+  current: ChunkStats;
 }
 
 export interface NamespaceTuneOutput {
@@ -7708,6 +7741,7 @@ export interface NamespaceTuneOutput {
   categories_registered?: number | null;
   extraction_policy?: string | null;
   extraction_policy_unavailable?: string;
+  chunking?: ChunkingSample | null;
   skipped?: string[];
   model_used?: boolean;
 }
@@ -10644,7 +10678,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "namespace.snapshot", group: "namespace", method: "snapshot", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
   { name: "namespace.summary", group: "namespace", method: "summary", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 300, audit: false, readOnly: true },
   { name: "namespace.taxonomy", group: "namespace", method: "taxonomy", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
-  { name: "namespace.tune", group: "namespace", method: "tune", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 5000, audit: false, readOnly: true },
+  { name: "namespace.tune", group: "namespace", method: "tune", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 8000, audit: false, readOnly: true },
   { name: "namespace.validate", group: "namespace", method: "validate", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "observe.crystallize", group: "observe", method: "crystallize", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 2000, audit: false, readOnly: false },
   { name: "observe.record", group: "observe", method: "record", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: false },

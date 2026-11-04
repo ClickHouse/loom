@@ -4906,6 +4906,13 @@
           "type": "number",
           "description": "Seconds a namespace's taxonomy is reused: one is four FINAL scans of the namespace (about 20 MB per open on a large namespace) and changes only when the namespace does."
         },
+        "namespace_tune_document_sample": {
+          "default": 50,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most live documents namespace.tune re-chunks in process to judge the chunk size and stride, picked by a hash of their source_uri; the report states the cap."
+        },
         "namespace_write_marks_flush_interval_s": {
           "default": 5.0,
           "type": "number",
