@@ -660,7 +660,6 @@ def judge(
             "\n".join(f"- [{k}] {ts.gold[k].value}" for k in t.get("gold_rows", [])) or "(none)"
         )
         rubric = [d["rubric"] for d in t.get("detector", []) if d["type"] == "judge"]
-        rubric += t.get("judge_rubric", [])
         context = surf[surface_key(tid, arm)]["context"]
         done = {(p["model"], p["order"], p["repeat"]) for p in entry["passes"]}
         for model in judges:

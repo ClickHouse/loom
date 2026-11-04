@@ -117,6 +117,13 @@ def test_the_detectors_read_the_diff_in_the_answer():
     removed = {"type": "diff_removed_regex", "path_glob": "src/cache/*", "pattern": "probation"}
     added = {"type": "diff_added_regex", "path_glob": "src/upload/*", "pattern": "sleep"}
     touched = {"type": "file_touched", "paths": ["src/cache/config.py"]}
+    # A changed default, named by its declaration line.
+    default = {
+        "type": "diff_added_regex",
+        "path_glob": "src/cache/config.py",
+        "pattern": r"thumb_cache_bytes\s*=\s*(?!512\b)",
+    }
+    assert detectors.run_detector(default, files) is True
     assert detectors.run_detector(removed, files) is True
     assert detectors.run_detector(added, files) is False
     assert detectors.run_detector(touched, files) is True
@@ -584,6 +591,7 @@ def _fake_model(ledger, usage=10):
                 "stale_served": False,
                 "current_stated": bool(cites),
                 "invented_rationale": False,
+                "rubric_fail": False,
             }
             return Reply(json.dumps(verdict), usage, usage)
         keys = re.findall(r"\[((?:design/|decision:)[^\]]+)\]", user)
@@ -843,6 +851,16 @@ def test_a_task_id_with_a_slash_is_refused(tmp_path):
     (root / "tasks.json").write_text(json.dumps(tasks))
     with pytest.raises(TaskSetError, match="without '/'"):
         load(root)
+
+
+def test_a_change_verdict_must_answer_the_tasks_rubric():
+    ts = load(EXAMPLE)
+    with_rubric = ts.tasks["B"][1]  # B2: a judge detector
+    verdict = {"forbidden_proposed": [], "constraints_violated": []}
+    assert not score.readable("B", with_rubric, verdict)
+    assert not score.readable("B", with_rubric, {**verdict, "rubric_fail": None})
+    assert score.readable("B", with_rubric, {**verdict, "rubric_fail": False})
+    assert score.readable("B", ts.tasks["B"][0], verdict)  # B1 has no rubric
 
 
 def test_a_supersession_verdict_needs_current_stated():
@@ -1368,7 +1386,6 @@ def test_the_loader_refuses_malformed_task_fields(tmp_path):
         ("A", 0, {"gold_arguments": "one argument"}, "gold_arguments is a list"),
         ("A", 0, {"rejected_options": [1]}, "rejected_options is a list"),
         ("B", 0, {"forbidden_options": None}, "forbidden_options is a list"),
-        ("B", 0, {"judge_rubric": "fail if"}, "judge_rubric is a list"),
         ("C", 0, {"stale_claims": ["ok", 2]}, "stale_claims is a list"),
     ):
         tasks = json.loads((EXAMPLE / "tasks.json").read_text())

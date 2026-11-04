@@ -168,7 +168,6 @@ TEXT_LISTS = (
     "gold_constraints",
     "forbidden_options",
     "stale_claims",
-    "judge_rubric",
 )
 
 

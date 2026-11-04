@@ -70,8 +70,7 @@
       ],
       "forbidden_options": ["fixed-interval retries"],
       "detector": [
-        {"type": "diff_added_regex", "path_glob": "src/upload/*", "pattern": "sleep\\(\\s*1(\\.0)?\\s*\\)"},
-        {"type": "judge", "rubric": "fail if an attempt no longer carries the same idempotency key"}
+        {"type": "diff_added_regex", "path_glob": "src/upload/*", "pattern": "sleep\\(\\s*1(\\.0)?\\s*\\)"}
       ]
     }
   ],

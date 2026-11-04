@@ -108,7 +108,7 @@ each comparison reports its minimum detectable effect.
 | Kind | Fields                                                                                                                                                   |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A    | `question`, `gold_arguments` (list), `rejected_options` (list)                                                                                           |
-| B    | `task`, `gold_constraints`, `forbidden_options`, `detector` (list), optional `judge_rubric` (list)                                                       |
+| B    | `task`, `gold_constraints`, `forbidden_options`, `detector` (list; a `judge` detector carries the rubric)                                                |
 | C    | `question`, `subtype` (`supersession` or `abstention`); a supersession task adds `current` (the design now) and `stale_claims` (the reversed statements) |
 
 A detector is one of:
