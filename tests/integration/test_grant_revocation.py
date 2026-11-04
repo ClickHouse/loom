@@ -4,7 +4,9 @@ over real HTTP against a server that requires auth.
 Each case first proves the token works, then takes the grant away the way an
 operator or the subject would, then replays what used to bring the access
 back: a self-join, a fresh join request, a re-request, an approval below the
-current role. A claim never backed by a grant keeps working.
+current role. A claim never backed by a grant keeps working. A self-signup
+account's email is unverified, so a grant written under that address never
+backs its claim (self-signup is open here for the two cases that need it).
 """
 
 from __future__ import annotations
@@ -258,4 +260,5 @@ def test_a_self_signup_naming_someone_elses_address_holds_none_of_its_grants(bas
     assert login.status_code == 200, login.text
     mine = _call(base, "namespace.list_mine", str(login.json()["token"]))
     assert mine.status_code == 200, mine.text
-    assert ns not in mine.text
+    listed = {r["namespace"] for r in mine.json()["rows"]}
+    assert mallory in listed and ns not in listed  # her own namespace, not Bob's grant

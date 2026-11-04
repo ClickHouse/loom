@@ -1,8 +1,9 @@
 """The claim cap's grant read on ClickHouse: which tied spellings set the rank.
 
-An active account whose email is verified (no password, as an SSO account's, or
-linked in `loom.sso_links`) ties its login handle and email as one person, so
-a grant under either counts; a password account's unverified email only caps. A deactivated account's pair,
+An active account whose email is verified ties its login handle and email as
+one person, so a grant under either counts. The email is verified when the
+account has no password (an SSO account) or is linked to it in `loom.sso_links`.
+A password account's unverified email only caps. A deactivated account's pair,
 and a released account's `released_aliases`, still tie the spellings, but only
 to cap: their revoked rows cap a token's claim, their live grants never admit it.
 """
