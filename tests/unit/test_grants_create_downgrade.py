@@ -264,7 +264,9 @@ async def test_a_row_taken_under_another_spelling_is_audited_when_its_reply_is_l
         await grants_mod.handle_grants_revoke(
             GrantsRevokeInput(org="o", namespace="ns", subject="bob@corp.example")
         )
-    assert audited == [("grants.revoke", {"subject": "mallory", "named": "bob@corp.example"})]
+    assert audited == [
+        ("grants.revoke", {"namespace": "ns", "subject": "mallory", "named": "bob@corp.example"})
+    ]
 
 
 @pytest.mark.asyncio

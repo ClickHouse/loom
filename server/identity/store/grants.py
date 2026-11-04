@@ -398,8 +398,9 @@ async def stored_spellings(
     ch: _CHClient | None = None,
 ) -> list[str]:
     """The subjects the rows on (org, namespace) are stored under that match one of
-    `spellings` in any case, as the gate matches them: the live rows, or every row
-    ever written when `live` is False."""
+    `spellings` in any case, as the gate matches them: the rows not revoked (a
+    pending request too, as `find_any_grant` reads them), or every row ever
+    written when `live` is False."""
     if not spellings:
         return []
     ch = ch or _default_client()

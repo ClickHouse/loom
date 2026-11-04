@@ -321,7 +321,7 @@ async def test_an_admin_revoked_meanwhile_stops_the_persons_later_row(
         )
     assert [r["subject"] for r in _handler_env["rows"]] == ["dave"]
     # The call failed, so no op audit row: the row that went is audited on its own.
-    assert ("grants.revoke", {"subject": "dave", "named": "dave"}) in audited
+    assert ("grants.revoke", {"namespace": "code-x", "subject": "dave", "named": "dave"}) in audited
 
 
 @pytest.mark.parametrize(

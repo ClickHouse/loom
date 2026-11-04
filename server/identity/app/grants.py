@@ -421,7 +421,7 @@ async def _audit_stored_row(input: GrantsRevokeInput, subject: str) -> None:
         org=input.org,
         namespace=input.namespace,
         actor=auth.subject if auth is not None and auth.subject else "anonymous",
-        subject={"subject": subject, "named": input.subject},
+        subject={"namespace": input.namespace, "subject": subject, "named": input.subject},
         request_id=request_id_var.get() or "",
     )
 
