@@ -22,6 +22,7 @@ from server.erasure.store.mutations import (
     tombstone_scoped,
 )
 from server.erasure.store.predicates import (
+    CHUNK_KEYS_IN,
     NS_EQ,
     NS_IN,
     ORG_NS,
@@ -29,7 +30,7 @@ from server.erasure.store.predicates import (
     PARENT_KEYS_IN,
     UID,
 )
-from server.erasure.store.scope_reads import hashes
+from server.erasure.store.scope_reads import hashes, slices_or_one_empty, user_key_pairs
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 from server.settings import settings
@@ -556,13 +557,22 @@ async def tombstone_memory_chunks_by_user(
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """Tombstone the verbatim chunks a user wrote. Every chunk writer stamps the
-    request's user, and users of one namespace share extractor keys
-    (`user_employer`), so the chunk's own `user_id` is the scope, never its parent
-    key: another user's (or the no-user writer's) chunks of the key stay."""
-    return await tombstone_scoped(
-        "loom.memory_chunks", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
-    )
+    """Tombstone the verbatim chunks of a user: the chunks stamped with the
+    user, and the no-user ('-') chunks whose parent (namespace, key) pairs are
+    the user's, read from loom.memory (tombstoned rows included — the memory
+    step runs first and the chunks must follow it, not escape it). Another
+    user's chunks of a shared key stay (`CHUNK_KEYS_IN`)."""
+    ch = ch or _default_client()
+    total = 0
+    for part in slices_or_one_empty(await user_key_pairs(org, user_id, ch=ch)):
+        total += await tombstone_scoped(
+            "loom.memory_chunks",
+            org=org,
+            scope_where=CHUNK_KEYS_IN,
+            params={"uid": user_id, "keys": part},
+            ch=ch,
+        )
+    return total
 
 
 async def tombstone_memory_chunks_by_namespace(

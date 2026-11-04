@@ -1,7 +1,8 @@
-"""A user erasure tombstones the verbatim chunks the user wrote, run as real SQL on
-clickhouse-local: another user's chunks of the same (namespace, memory_key), and the
-no-user writer's, stay live. Users share a key within a namespace (`user_employer`),
-and every chunk carries its writer's user_id."""
+"""A user erasure tombstones the user's verbatim chunks, run as real SQL on
+clickhouse-local: another user's chunks of the same (namespace, memory_key) stay
+live. Users share a key within a namespace (`user_employer`), and each memory's
+chunks carry their writer's user_id; a no-user ('-') chunk of the key may be the
+user's legacy chunk and goes with them, as the write path retires it."""
 
 from __future__ import annotations
 
@@ -41,7 +42,6 @@ async def test_another_users_chunks_of_the_same_key_stay_live(tmp_path: Path) ->
         ddl("memory_chunks"),
         _memory("u1"),
         _memory("u2"),
-        _memory("-"),
         _chunk("u1", 0),
         _chunk("u2", 1),
         _chunk("-", 2),
@@ -51,5 +51,5 @@ async def test_another_users_chunks_of_the_same_key_stay_live(tmp_path: Path) ->
         "SELECT user_id, tombstoned_at IS NOT NULL AS gone"
         " FROM loom.memory_chunks FINAL ORDER BY chunk_index"
     )
-    assert [(r["user_id"], r["gone"]) for r in rows] == [("u1", 1), ("u2", 0), ("-", 0)]
-    assert n == 1
+    assert [(r["user_id"], r["gone"]) for r in rows] == [("u1", 1), ("u2", 0), ("-", 1)]
+    assert n == 2

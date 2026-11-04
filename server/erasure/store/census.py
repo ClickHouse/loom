@@ -26,6 +26,7 @@ from server.erasure.store.predicates import (
     ORPHAN_LEARNINGS,
     PAYLOAD_UID,
     UID,
+    USER_CHUNKS,
     USER_COMMUNITY_ROWS,
     USER_CONFLICT_RECORD_IDS,
     USER_PARENT_KEYS,
@@ -112,7 +113,7 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate(
         "loom.memory_chunks",
         LIVE,
-        UID,
+        USER_CHUNKS,
         "memory_chunks.tombstone",
         "memory_chunks.tombstone",
     ),
@@ -190,7 +191,7 @@ _CENSUS: tuple[Substrate, ...] = (
     # memories linked (communities) — parent-key predicates, as for the graph
     # links. Read at census time from loom.memory's tombstoned rows and the
     # edge links; under a purge the memory rows are gone and the predicates
-    # read 0.
+    # read 0, as `USER_CHUNKS` does.
     Substrate(
         "loom.entity_communities",
         "1",

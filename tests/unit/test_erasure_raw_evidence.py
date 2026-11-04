@@ -69,19 +69,41 @@ def test_namespace_scope_deletes_by_namespace_and_is_idempotent() -> None:
     assert params["ns"] == "ns"
 
 
-def test_memory_chunks_user_scope_is_the_chunks_own_user() -> None:
-    """Users of one namespace share extractor keys (`user_employer`), so the step
-    and the census match the chunk's own `user_id`, never its parent key."""
+def test_memory_chunks_user_scope_walks_parent_keys() -> None:
     ch = _StubCH([5])
     n = asyncio.run(memory_steps.tombstone_memory_chunks_by_user("o", "alice", ch=ch))
     assert n == 5
-    assert ch.read_calls == []
+    ((read_sql, read_params),) = ch.read_calls
+    assert "FROM (SELECT namespace, memory_key FROM loom.memory" in read_sql
+    assert read_params == {"org": "o", "uid": "alice"}
     sql, params = ch.execute_calls[0]
-    assert "loom.memory_chunks" in sql and erasure_predicates.UID in sql
-    assert "UPDATE tombstoned_at" in sql and "parent_memory_key" not in sql
+    assert "loom.memory_chunks" in sql
+    assert "UPDATE tombstoned_at" in sql and "SELECT" not in sql
     assert params["uid"] == "alice" and "now" in params
+    assert params["keys"] == [("ns-a", "user_employer")]
+
+
+def test_memory_chunks_user_scope_is_namespace_qualified() -> None:
+    """Extractor keys (`user_employer`) repeat across namespaces: alice's
+    `user_employer` in ns A must not tombstone another user's chunks of
+    `user_employer` in ns B. The step and the census match the
+    (namespace, parent_memory_key) pair: the census through the user's keys
+    subquery, the step through the pairs that subquery returns, so the census
+    finds exactly what the step erases."""
+    ch = _StubCH([1])
+    asyncio.run(memory_steps.tombstone_memory_chunks_by_user("o", "alice", ch=ch))
+    count_sql, _ = ch.query_one_calls[0]
+    mutate_sql, _ = ch.execute_calls[0]
+    for sql in (count_sql, mutate_sql):
+        assert erasure_predicates.CHUNK_KEYS_IN in sql
+    ((read_sql, _),) = ch.read_calls
+    assert erasure_predicates.USER_KEYS_SUBQ in read_sql
     (chunks,) = [s for s in erasure_census._CENSUS if s.table == "loom.memory_chunks"]
-    assert chunks.user_pred == erasure_predicates.UID
+    assert chunks.user_pred == erasure_predicates.USER_CHUNKS
+    assert erasure_predicates.USER_CHUNKS == (
+        "(user_id = {uid:String} OR (user_id = '-' AND "
+        f"(namespace, parent_memory_key) IN {erasure_predicates.USER_KEYS_SUBQ}))"
+    )
 
 
 def test_memory_chunks_namespace_scope() -> None:
