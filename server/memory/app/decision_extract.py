@@ -202,7 +202,7 @@ class ExtractReport:
     # `may_write` said no before a write: the run stopped there; what it wrote stays.
     write_stopped: bool = False
 
-    def stopped(self) -> bool:
+    def reads_stopped(self) -> bool:
         return self.held is not None or self.out_of_time
 
 
@@ -332,6 +332,15 @@ def _refusal(e: BaseException) -> str:
 # Each decision's writes with their audit rows, as one unit a cancel does not cut short;
 # shutdown drains them (`server.core.background.drain_task_sets`).
 _WRITES = TaskSet()
+
+
+async def finish_writes() -> None:
+    """Wait for the write units still running, such as the one a cancelled run left: a
+    caller that bills a run's spend drains its accumulator after them. A cancel of this
+    wait leaves them running."""
+    pending = [t for t in _WRITES if not t.done()]
+    if pending:
+        await asyncio.shield(asyncio.gather(*pending, return_exceptions=True))
 
 
 async def _whole[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -792,13 +801,13 @@ async def _candidates(
     for w in wins:
         first = dx.breadcrumb(w.chunks[0].section_path)
         cands = await read(w, first, report)
-        if report.stopped():
+        if report.reads_stopped():
             break
         retried = cands == [] and dx.more_than_a_caption("\n\n".join(c.text for c in w.chunks))
         if retried:
             report.retried.append(Retried(first, _EMPTY_REPLY))
             cands = await read(w, first, report)
-        if report.stopped():
+        if report.reads_stopped():
             break
         if cands is None:
             continue
@@ -811,7 +820,7 @@ async def _candidates(
             report.retried.append(Retried(section, _STITCHED))
             note = dx.stitched_note([(outcome, span) for outcome, span, _ in failed])
             again = await read(w, section, report, note=note, answered_already=True)
-            if report.stopped():
+            if report.reads_stopped():
                 break
             repaired = _repairs(w, again or [], failed, state.kept[before:], report)
             _check_window(org, t, source_uri, w, repaired, state, report)

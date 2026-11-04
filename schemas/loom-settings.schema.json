@@ -2885,9 +2885,9 @@
         },
         "knowledge_source_sync_max_pass_seconds": {
           "default": 600,
-          "minimum": 60,
+          "minimum": 180,
           "type": "integer",
-          "description": "Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it."
+          "description": "Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it. At least 180: 90 for the sync, then 60 of read time for one document's extraction and 30 for its writes before the deadline."
         },
         "knowledge_sources_max_per_namespace": {
           "default": 8,

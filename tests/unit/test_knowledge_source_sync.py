@@ -115,7 +115,7 @@ class _World:
         self.over_cap: set[tuple[str, str]] = set()
         self.cap_reads: list[dict[str, Any]] = []
         self.cost_rows: list[dict[str, Any]] = []
-        # The source lease a turn holds; a test loses it by setting `held` false.
+        # The source lease the current turn holds; a test loses it by setting `held` false.
         self.lease = SimpleNamespace(held=True)
 
     # store
@@ -227,6 +227,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
 
     @contextlib.asynccontextmanager
     async def _cluster(name: str, **kw: Any) -> AsyncIterator[Any]:
+        w.lease = SimpleNamespace(held=True)  # each turn's own lease
         yield w.lease
 
     monkeypatch.setattr(leases, "holding", _holding)
@@ -1799,10 +1800,11 @@ def test_mining_shares_the_pass_bound_and_goes_on_next_pass(
 def test_a_document_is_not_started_with_too_little_time_left(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_sync_max_pass_seconds", 60)
+    monkeypatch.setattr(settings, "knowledge_source_sync_max_pass_seconds", 180)
+    # More than the 150 s of read time the smallest pass leaves: no try is spent.
+    monkeypatch.setattr(source_sync, "_MIN_MINE_S", 151.0)
     world.files = [_file("doc1", DOCS, REV1)]
     result = asyncio.run(source_sync.run_sync())
-    # 60 s less the margin leaves under the floor: no try is spent, the pass is cut.
     assert world.mined == [] and result.cut
     assert (_detail(world)["pending_extract"], _detail(world).get("extract_waits")) == (1, None)
 
@@ -1917,3 +1919,183 @@ def test_a_deferred_source_shows_why_it_waits(
     world.files = [_file("doc1", DOCS, REV1)]
     asyncio.run(source_sync.run_sync())
     assert (_detail(world)["extract_error"], _detail(world)["pending_extract"]) == (why, 1)
+
+
+def test_the_pass_bound_inside_a_turn_is_why_the_rest_wait(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answers = [True, True, False]  # the leg's check, the first document's, the second's
+    monkeypatch.setattr(source_sync, "_time_for_one", lambda run: answers.pop(0))
+    _two_docs(world)
+    result = asyncio.run(source_sync.run_sync())
+    assert [uri for uri, _, _ in world.mined] == [DOC1]
+    assert result.cut and result.extract_deferred == 1
+    detail = _detail(world)
+    assert (detail["pending_extract"], detail["extract_error"]) == (1, "pass_bound")
+
+
+def test_the_reason_clears_once_nothing_waits(world: _World) -> None:
+    world.over_cap = {(ORG, NS)}
+    world.files = [_file("doc1", DOCS, REV1)]
+    asyncio.run(source_sync.run_sync())
+    assert _detail(world)["extract_error"] == "over_cap"
+    world.docs[DOC1]["actor"] = "agent:someone"  # no longer the source's: nothing waits
+    asyncio.run(source_sync.run_sync())
+    assert (_detail(world)["extract_error"], _detail(world)["pending_extract"]) == ("", 0)
+
+
+def _second_source(world: _World) -> None:
+    world.sources.append(_source("notes", source_id="id-notes"))
+    world.docs[DOC2] = {
+        "actor": SYNC_WORKER_ACTOR,
+        "tags": ["source:notes"],
+        "metadata": {"ingested_from": "doc2", "source_revision": REV2},
+    }
+
+
+def test_a_lease_lost_mid_write_ends_that_source_and_the_leg_goes_on(world: _World) -> None:
+    from server.memory.app.decision_extract import ExtractReport
+
+    _second_source(world)
+
+    def _lost(uri: str) -> ExtractReport | None:
+        if uri != DOC1:
+            return None
+        world.lease.held = False
+        return ExtractReport(uri, False, error="stopped", write_stopped=True)
+
+    world.mine_answer = _lost
+    _two_docs(world)
+    asyncio.run(source_sync.run_sync())
+    # The first source records nothing; the second, under its own lease, is mined.
+    assert [uri for uri, _, _ in world.mined] == [DOC1, DOC2]
+    assert "mined" not in _detail(world) and _detail(world, "notes")["mined"] == {DOC2: REV2}
+
+
+def test_a_stopped_pass_ends_the_leg_with_nothing_recorded(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app.decision_extract import ExtractReport
+    from server.workers import pass_context
+
+    _second_source(world)
+    stopped: list[bool] = []
+    monkeypatch.setattr(pass_context, "stop_requested", lambda: bool(stopped))
+
+    def _stop(uri: str) -> ExtractReport:
+        stopped.append(True)
+        return ExtractReport(uri, False, error="stopped", write_stopped=True)
+
+    world.mine_answer = _stop
+    _two_docs(world)
+    asyncio.run(source_sync.run_sync())
+    assert [uri for uri, _, _ in world.mined] == [DOC1]
+    assert "mined" not in _detail(world) and "mined" not in _detail(world, "notes")
+
+
+@pytest.mark.parametrize("how", ["lease_lost", "check_stop", "cancelled"])
+def test_a_turn_ended_from_outside_writes_no_state_and_is_mined_next_pass(
+    world: _World, monkeypatch: pytest.MonkeyPatch, how: str
+) -> None:
+    from server.memory.app import decision_extract
+    from server.workers import pass_context
+
+    world.files = [_file("doc1", DOCS, REV1)]
+    asyncio.run(source_sync.run_sync())  # synced, then mined
+    mined_before = _detail(world)["mined"]
+    world.files = [_file("doc1", DOCS, "2026-03-01T00:00:00.000Z")]
+    started = asyncio.Event()
+    checks = (pass_context.check_stop, source_sync._extract_all)
+    mined = decision_extract.extract_document
+
+    async def _ends(*a: Any, **kw: Any) -> Any:
+        started.set()
+        if how == "lease_lost":
+            raise asyncio.CancelledError  # as the lease's loss cancels the turn's body
+        await asyncio.sleep(5)
+
+    if how == "lease_lost":
+
+        @contextlib.asynccontextmanager
+        async def _losing(name: str, **kw: Any) -> AsyncIterator[Any]:
+            try:
+                yield world.lease
+            except asyncio.CancelledError:
+                raise leases.LeaseLost(name) from None
+
+        monkeypatch.setattr(leases, "cluster_lease", _losing)
+    if how == "check_stop":
+        # The supervisor stops the pass once the leg has started: the leg's own check
+        # before the document raises.
+        leg: list[bool] = []
+        real_check, real_all = checks
+
+        def _check() -> None:
+            if leg:
+                raise pass_context.PassStopped
+            real_check()
+
+        async def _all(*a: Any, **kw: Any) -> None:
+            leg.append(True)
+            await real_all(*a, **kw)
+
+        monkeypatch.setattr(pass_context, "check_stop", _check)
+        monkeypatch.setattr(source_sync, "_extract_all", _all)
+    else:
+        monkeypatch.setattr(decision_extract, "extract_document", _ends)
+
+    async def _run() -> None:
+        task = asyncio.create_task(source_sync.run_sync())
+        if how == "cancelled":
+            await started.wait()
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, pass_context.PassStopped):
+            await task
+
+    asyncio.run(_run())
+    assert _detail(world)["mined"] == mined_before
+    # The next pass, with nothing ending it.
+    monkeypatch.setattr(pass_context, "check_stop", checks[0])
+    monkeypatch.setattr(source_sync, "_extract_all", checks[1])
+    monkeypatch.setattr(decision_extract, "extract_document", mined)
+    monkeypatch.setattr(leases, "cluster_lease", _plain_lease(world))
+    asyncio.run(source_sync.run_sync())
+    assert _detail(world)["mined"] == {DOC1: "2026-03-01T00:00:00.000Z"}
+
+
+def _plain_lease(world: _World) -> Any:
+    @contextlib.asynccontextmanager
+    async def _cluster(name: str, **kw: Any) -> AsyncIterator[Any]:
+        yield world.lease
+
+    return _cluster
+
+
+def test_a_write_unit_a_cancel_leaves_running_is_billed(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import decision_extract
+    from server.observability import cost_accumulator
+
+    started = asyncio.Event()
+
+    async def _unit() -> None:
+        started.set()
+        await asyncio.sleep(0.05)
+        cost_accumulator.report_llm("m", 7, 1)  # the write's embedding, say
+
+    async def _extract(*a: Any, **kw: Any) -> Any:
+        await decision_extract._whole(_unit())
+
+    monkeypatch.setattr(decision_extract, "extract_document", _extract)
+    world.files = [_file("doc1", DOCS, REV1)]
+
+    async def _run() -> None:
+        task = asyncio.create_task(source_sync.run_sync())
+        await started.wait()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_run())
+    assert [(r["org"], r["llm_input_tokens"]) for r in world.cost_rows] == [(ORG, 7)]

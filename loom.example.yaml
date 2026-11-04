@@ -2518,7 +2518,8 @@ settings:
   # knowledge_source_sync_idle_interval_seconds: 1800
 
   # Seconds one sync pass may run before it is cancelled; it stops starting sources at
-  # three quarters of it. [restart]
+  # three quarters of it. At least 180: 90 for the sync, then 60 of read time for one
+  # document's extraction and 30 for its writes before the deadline. [restart]
   # knowledge_source_sync_max_pass_seconds: 600
 
   # Documents one pass fetches, writes, retires or mines for decisions across all

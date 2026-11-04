@@ -135,6 +135,9 @@ _MINE_MARGIN_S = 30.0  # not a setting: time for the writes after the last read
 # A document is not started with less read time than this left: the try would be spent
 # on a run cut short. The pass counts as spent instead.
 _MIN_MINE_S = 60.0  # not a setting: a few windows' model calls
+# A document whose reads run out with at least this share of a pass's read time will not
+# finish in any pass: the sync before it rarely leaves less.
+_FULL_READ_SHARE = 0.75  # not a setting: a bound on how much of a pass one document may need
 _FORMAT_OF_MIME = {
     GDRIVE_MIME_TYPES["pdf"]: "pdf",
     GDRIVE_MIME_TYPES["pptx"]: "pptx",
@@ -1052,8 +1055,11 @@ class _Mined:
     # Why the turn left documents for a later pass (`over_cap`, `held:<code>`).
     deferred: str = ""
     # What stops the whole leg: `held:<code>` for a hold on every org's calls, or
-    # `stopped` when the pass was stopped or the source's lease lost mid-write.
+    # `stopped` when the pass was stopped mid-write.
     stop: str = ""
+    # The run stopped writing because the source's lease was lost: this source's turn
+    # ends with nothing recorded, and the leg goes on to the next source.
+    lease_lost: bool = False
 
 
 async def _extract_pending(order: list[KnowledgeSource], run: Pass, result: PassResult) -> None:
@@ -1127,7 +1133,7 @@ def _full_read_s() -> float:
     """The read time a document has when the leg starts it early in a pass: one that
     runs out of it will not fit in any pass."""
     read_s = float(settings.knowledge_source_sync_max_pass_seconds) - _MINE_MARGIN_S
-    return read_s * _BUDGET_FRACTION
+    return read_s * _FULL_READ_SHARE
 
 
 def _time_for_one(run: Pass) -> bool:
@@ -1175,9 +1181,13 @@ async def _extract_source(
                 # What was settled before the failure stays settled.
                 await _write_mined(src, mined, docs, pending=len(todo) - len(mined.settled))
                 raise
-            if mined.stop != "stopped":
-                await _write_mined(src, mined, docs, pending=len(todo) - len(mined.settled))
-    except (leases.LeaseBusy, SourceGone):
+            if mined.stop == "stopped":
+                return mined.stop  # the pass was stopped: it writes nothing more
+            if mined.lease_lost:
+                return ""  # as a lost lease ends the turn: the next copy records it
+            await _write_mined(src, mined, docs, pending=len(todo) - len(mined.settled))
+    except (leases.LeaseBusy, leases.LeaseLost, SourceGone):
+        # Another copy may hold the source now: it records the source's turn.
         return ""
     except Exception as e:  # noqa: BLE001 — one source's failure must not stop the others
         result.errors.append(f"{_cursor_of(src)}: extraction {type(e).__name__}")
@@ -1209,6 +1219,7 @@ async def _extract_all(
     for doc in todo:
         if not _time_for_one(run):
             result.cut = True
+            mined.deferred = "pass_bound"
             return
         if await _over_cap(src):
             mined.deferred = "over_cap"
@@ -1249,8 +1260,10 @@ async def _extract_one(
     if report.held is not None or report.write_stopped:
         # A wait, not a try: the document stays unmined, what it wrote stays, and the
         # counts of the last turn that tried one stand.
-        if report.write_stopped:
+        if report.write_stopped and pass_context.stop_requested():
             mined.stop = "stopped"
+        elif report.write_stopped:
+            mined.lease_lost = True
         elif isinstance(report.held, customer.GROUP_HOLDS):
             mined.deferred = f"held:{report.held.code}"
             _HELD.hold([(src.org, src.namespace)], hold_seconds(report.held))
@@ -1283,7 +1296,7 @@ async def _mine(
     """`extract_document` on one document, its spend billed to the source's namespace,
     which the cap reads. Run as its own task, so the cost accumulator it binds leaves
     the pass's own (the sync's embedding spend) as it was."""
-    from server.memory.app.decision_extract import extract_document
+    from server.memory.app.decision_extract import extract_document, finish_writes
     from server.observability import cost_accumulator
     from server.workers.cost_event import emit_worker_cost_event_for
 
@@ -1299,6 +1312,9 @@ async def _mine(
             may_write=may_write,
         )
     finally:
+        # A write unit a cancel left running bills to this accumulator (its task copied
+        # this context): wait for it, so its spend is in the row too.
+        await finish_writes()
         emit_worker_cost_event_for(
             org=src.org, namespace=src.namespace, operation=f"worker.{WORKER}", started=started
         )
@@ -1348,7 +1364,9 @@ async def _write_mined(
         detail = json_object(current.get("detail", ""))
         before = dict(detail)
         detail["pending_extract"] = pending
-        if waiting and waiting != "nothing":
+        if waiting == "nothing":
+            detail["extract_error"] = ""  # nothing waits: no reason stands
+        elif waiting:
             detail["extract_error"] = waiting
         if mined is not None:
             live = {d["source_uri"] for d in docs}

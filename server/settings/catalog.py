@@ -2076,8 +2076,9 @@ class KnowledgeSettings(BaseModel):
     # pass stays under three intervals, so the worker never reads as stalled.
     knowledge_source_sync_idle_interval_seconds: int = Field(default=1800, ge=60)
     # Seconds one sync pass may run before it is cancelled; it stops starting sources
-    # at three quarters of it.
-    knowledge_source_sync_max_pass_seconds: int = Field(default=600, ge=60)
+    # at three quarters of it. At least 180: 90 for the sync, then 60 of read time for
+    # one document's extraction and 30 for its writes before the deadline.
+    knowledge_source_sync_max_pass_seconds: int = Field(default=600, ge=180)
     # Documents one pass fetches, writes, retires or mines for decisions across all
     # sources; the rest wait for the next pass.
     knowledge_source_sync_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
