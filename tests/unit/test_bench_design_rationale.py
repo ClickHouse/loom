@@ -127,10 +127,12 @@ def test_the_detectors_read_the_diff_in_the_answer():
 
 def test_the_setting_detector_compares_the_value_as_a_token():
     setting = {"type": "setting_default_changed", "setting": "thumb_cache_bytes", "from": "512"}
-    same = detectors.diff_files("+++ b/a.py\n+thumb_cache_bytes = 512 * MiB  # documented\n")
+    same = detectors.diff_files(
+        "--- a/a.py\n+++ b/a.py\n+thumb_cache_bytes = 512 * MiB  # documented\n"
+    )
     assert detectors.run_detector(setting, same) is False
     # 5120 contains 512 as text, not as a value.
-    bigger = detectors.diff_files("+++ b/a.py\n+thumb_cache_bytes = 5120 * MiB\n")
+    bigger = detectors.diff_files("--- a/a.py\n+++ b/a.py\n+thumb_cache_bytes = 5120 * MiB\n")
     assert detectors.run_detector(setting, bigger) is True
 
 
@@ -1317,29 +1319,27 @@ def test_a_whole_ledger_row_without_its_newline_is_kept(tmp_path):
     assert [r["usd"] for r in Ledger(path, 1.0).rows()] == [0.25, 0.5]
 
 
-def test_removed_and_added_lines_that_look_like_headers_are_lines():
-    # Inside a counted hunk every line is content: a removed `-- x`, an added `++ x`, and
-    # a `--- a/`, `+++ b/` pair of content lines.
-    diff = (
-        "--- a/src/q.sql\n+++ b/src/q.sql\n@@ -1,2 +1,2 @@\n"
-        "--- drop the old index\n+++ keep the new one\n"
-        "--- a/x.py\n+++ b/x.py\n"
+def test_a_diff_is_read_file_by_file_without_trusting_hunk_counts():
+    two = (
+        "diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n"
+        "@@ -1,1 +1,1 @@\n"  # undercounted: three lines follow
+        " keep\n\n-old\n+new\n"  # a blank context line too
+        "@@ -9 +9 @@\n-later\n+later2\n"  # a second hunk in the same file
+        "--- a/src/b.py\n+++ b/src/b.py\n@@ -1 +1 @@\n-b0\n+b1\n"
     )
-    assert detectors.diff_files(diff) == {
-        "src/q.sql": {
-            "-": ["-- drop the old index", "-- a/x.py"],
-            "+": ["++ keep the new one", "++ b/x.py"],
-        },
+    assert detectors.diff_files(two) == {
+        "src/a.py": {"-": ["old", "later"], "+": ["new", "later2"]},
+        "src/b.py": {"-": ["b0"], "+": ["b1"]},
     }
-    # A second file after the hunk: its header pair counts though no `@@` follows it.
-    two = diff + "--- a/src/r.sql\n+++ b/src/r.sql\n-old\n+new\n"
-    assert detectors.diff_files(two)["src/r.sql"] == {"-": ["old"], "+": ["new"]}
-    # `+++` headers alone, two files.
-    only = "+++ b/a.py\n+x = 1\n+++ b/b.py\n-y = 2\n"
+    # `+++` headers with no `---`, each before its hunk.
+    only = "+++ b/a.py\n@@ -0,0 +1 @@\n+x = 1\n+++ b/b.py\n@@ -1 +0,0 @@\n-y = 2\n"
     assert detectors.diff_files(only) == {
         "a.py": {"+": ["x = 1"], "-": []},
         "b.py": {"+": [], "-": ["y = 2"]},
     }
+    # A removed `-- x` and an added `++ x` alone are lines.
+    lines = "--- a/q.sql\n+++ b/q.sql\n@@ -1 +1 @@\n--- drop it\n context\n+++ add it\n"
+    assert detectors.diff_files(lines) == {"q.sql": {"-": ["-- drop it"], "+": ["++ add it"]}}
 
 
 def test_a_detector_without_its_keys_is_refused(tmp_path):
@@ -1349,3 +1349,23 @@ def test_a_detector_without_its_keys_is_refused(tmp_path):
     (root / "tasks.json").write_text(json.dumps(tasks))
     with pytest.raises(TaskSetError, match="setting_default_changed detector without"):
         load(root)
+
+
+def test_a_detector_of_the_wrong_shape_is_refused(tmp_path):
+    root = _copy_example(tmp_path)
+    for broken, message in (
+        ({"detector": {"type": "judge", "rubric": "r"}}, "detector is a list"),
+        ({"detector": ["file_touched"]}, "an object with a known type"),
+        ({"detector": [{"type": "file_touched", "paths": "src/a.py"}]}, "list of strings"),
+        ({"detector": [{"type": "diff_added_regex", "pattern": 3}]}, "pattern is a string"),
+        ({"detector": [{"type": "judge", "rubric": ["r"]}]}, "rubric is a string"),
+        (
+            {"detector": [{"type": "setting_default_changed", "setting": "s", "from": "5 MiB"}]},
+            "one word or number",
+        ),
+    ):
+        tasks = json.loads((EXAMPLE / "tasks.json").read_text())
+        tasks["B"][0].update(broken)
+        (root / "tasks.json").write_text(json.dumps(tasks))
+        with pytest.raises(TaskSetError, match=message):
+            load(root)

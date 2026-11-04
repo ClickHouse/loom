@@ -158,6 +158,28 @@ def _gold(root: Path, documents: dict[str, Document]) -> list[GoldRow]:
     return gold
 
 
+def _check_detector(tid: str, d: Any) -> None:
+    if not isinstance(d, dict) or d.get("type") not in DETECTOR_TYPES:
+        raise TaskSetError(f"task {tid}: a detector is an object with a known type")
+    missing = [k for k in DETECTOR_TYPES[d["type"]] if k not in d]
+    if missing:
+        raise TaskSetError(f"task {tid}: a {d['type']} detector without {missing}")
+    paths = d.get("paths", [])
+    if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+        raise TaskSetError(f"task {tid}: a detector's paths is a list of strings")
+    for key in ("pattern", "path_glob", "setting", "rubric"):
+        if key in d and not isinstance(d[key], str):
+            raise TaskSetError(f"task {tid}: a detector's {key} is a string")
+    for key in ("from", "to"):
+        # Compared as one token after the setting name.
+        if key in d and (
+            not isinstance(d[key], str | int | float)
+            or not str(d[key]).split()
+            or len(str(d[key]).split()) != 1
+        ):
+            raise TaskSetError(f"task {tid}: a detector's {key} is one word or number")
+
+
 def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
     tid = t.get("id", "?")
     if not isinstance(tid, str) or not tid or "/" in tid:
@@ -178,12 +200,11 @@ def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
     for name in need:
         if name not in t:
             raise TaskSetError(f"task {tid}: {kind} task without {name!r}")
-    for d in t.get("detector", []):
-        if d.get("type") not in DETECTOR_TYPES:
-            raise TaskSetError(f"task {tid}: unknown detector type {d.get('type')!r}")
-        missing = [k for k in DETECTOR_TYPES[d["type"]] if k not in d]
-        if missing:
-            raise TaskSetError(f"task {tid}: a {d['type']} detector without {missing}")
+    detectors = t.get("detector", [])
+    if not isinstance(detectors, list):
+        raise TaskSetError(f"task {tid}: detector is a list")
+    for d in detectors:
+        _check_detector(tid, d)
     if kind == "C":
         if t["subtype"] not in C_SUBTYPES:
             raise TaskSetError(f"task {tid}: subtype is one of {C_SUBTYPES}")

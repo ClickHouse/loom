@@ -18,58 +18,49 @@ def extract_diff(text: str) -> str:
     return text.split("## Diff", 1)[1] if "## Diff" in text else ""
 
 
-_HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+def _header_path(line: str) -> str:
+    return re.sub(r"^[ab]/", "", line[4:].strip().split("\t")[0])
 
 
 def diff_files(diff: str) -> Diff:
-    """path -> {"+": added lines, "-": removed lines} of a unified diff. A hunk ends by
-    the line counts its `@@ -a,b +c,d @@` header gives: until then every line is content,
-    so a removed `-- x` line (`--- x`) or an added `++ x` line (`+++ x`) is never a file
-    header. Outside a hunk a `--- ` or `+++ ` line is one, alone too: a model's diff may
-    give either alone. A `@@` with no counts falls back to reading a `--- `/`+++ ` pair as
-    a header only when a `@@` line follows it."""
+    """path -> {"+": added lines, "-": removed lines} of a unified diff. A file header is
+    a `diff --git a/x b/y` line, a `--- ` line right before a `+++ ` line (the path from
+    the `+++`, or the `---` one when the file was deleted), or a `+++ ` line right before
+    a `@@` line. Hunk counts are not read: models miscount them. `@@` and `\ No newline`
+    lines are skipped; any other line is added (`+`), removed (`-`) or context.
+    Accepted: a removed line `-- x` right before an added line `++ y` reads as a header;
+    it is rare and only labels the lines after it with another file."""
     files: Diff = {}
     current = None
-    old = new = 0  # lines the counted hunk still holds
-    uncounted = False  # inside a hunk whose header gave no counts
+
+    def open_file(path: str) -> None:
+        nonlocal current
+        if path and path != "/dev/null":
+            current = files.setdefault(path, {"+": [], "-": []})
+
     lines = diff.splitlines()
+    skip = False
     for i, line in enumerate(lines):
-        if old > 0 or new > 0:
-            if line.startswith("\\"):
-                continue  # "\ No newline at end of file" is no line of the hunk
-            kind = line[:1] if line[:1] in "+-" else " "
-            old -= kind in " -"
-            new -= kind in " +"
-            if current is not None and kind != " ":
-                current[kind].append(line[1:])
+        if skip:
+            skip = False
             continue
         nxt = lines[i + 1] if i + 1 < len(lines) else ""
-        after = lines[i + 2] if i + 2 < len(lines) else ""
-        pair_then_hunk = (
-            line.startswith("--- ") and nxt.startswith("+++ ") and after.startswith("@@")
-        )
-        if line.startswith(("--- ", "+++ ")) and (not uncounted or pair_then_hunk):
-            uncounted = False
-            path = re.sub(r"^[ab]/", "", line[4:].strip().split("\t")[0])
-            if path != "/dev/null":
-                current = files.setdefault(path, {"+": [], "-": []})
-            continue
         if line.startswith("diff --git "):
-            uncounted = False
             m = re.match(r"diff --git a/(\S+) b/(\S+)", line)
             if m:
-                current = files.setdefault(m.group(2), {"+": [], "-": []})
+                open_file(m.group(2))
             continue
-        if line.startswith("@@"):
-            m = _HUNK.match(line)
-            if m:
-                old = int(m.group(1) or 1)
-                new = int(m.group(2) or 1)
-                uncounted = False
-            else:
-                uncounted = True
+        if line.startswith("--- ") and nxt.startswith("+++ "):
+            new = _header_path(nxt)
+            open_file(new if new != "/dev/null" else _header_path(line))
+            skip = True
             continue
-        if current is not None and line and line[0] in "+-":
+        if line.startswith("+++ ") and nxt.startswith("@@"):
+            open_file(_header_path(line))
+            continue
+        if line.startswith(("@@", "\\")) or current is None:
+            continue
+        if line.startswith(("+", "-")):
             current[line[0]].append(line[1:])
     return files
 
@@ -115,14 +106,14 @@ def run_detector(d: dict[str, Any], files: Diff) -> bool | None:
                 if name not in line:
                     continue
                 values = _value_tokens(line, name)
-                if "to" in d and _norm(d["to"]) in values:
+                if "to" in d and _norm(str(d["to"])) in values:
                     return True
                 # A declaration naming the setting with some other default.
                 declared = re.search(
                     r"DECLARE|\{\s*\"" + re.escape(name) + r"|\b" + re.escape(name) + r"\s*[:=]",
                     line,
                 )
-                if declared and values and _norm(d["from"]) not in values:
+                if declared and values and _norm(str(d["from"])) not in values:
                     return True
         return False
     raise ValueError(f"unknown detector type {kind!r}")
