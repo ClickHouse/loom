@@ -13,7 +13,7 @@ guardrails are rules, not a person's approval:
   `SHOW GRANTS FINAL` name for the user, its roles' grants included, is one a
   read-only user holds (SELECT, SHOW, dictGet, a temporary table), and none is
   granted WITH GRANT OPTION or WITH ADMIN OPTION; a type the check does not
-  know is refused. Every granted role is a default role, so
+  know is refused. Every granted role must be a default role, so that
   `system.enabled_roles` shows the whole role chain and any admin option in
   it. The roles are reported back so the registrant can see them;
 - **the schema meets the record contract**: the same `describe` + `diff`
@@ -112,10 +112,15 @@ class GrantReview:
         return " ".join(why)
 
 
-def review_grants(lines: list[str]) -> GrantReview:
-    """Parse `SHOW GRANTS` output: `GRANT <types> ON <scope> TO <user>` lines
-    name access types; `GRANT <role>[, …] TO <user>` lines name roles;
-    `REVOKE` lines only narrow a grant. Any other line is refused."""
+def review_grants(lines: list[str], enabled: list[dict[str, Any]]) -> GrantReview:
+    """Review `SHOW GRANTS` output and the `system.enabled_roles` rows.
+
+    `GRANT <types> ON <scope> TO <user>` lines name access types; `GRANT
+    <role>[, …] TO <user>` lines name roles; `REVOKE` lines only narrow a
+    grant. Any other line is refused. The enabled roles show what the lines
+    cannot: a granted role that is not enabled (not a default role, so its
+    chain cannot be checked) and an admin option on any role in the chain,
+    nested ones included."""
     rev = GrantReview()
     for raw in lines:
         # whitespace collapses outside quoted names only, which keep theirs
@@ -145,7 +150,13 @@ def review_grants(lines: list[str]) -> GrantReview:
             name = _ACCESS_TYPE.fullmatch(_QUOTED.sub("_", t))
             if name is None or name.group(1).strip().upper() not in _READ_ACCESS:
                 rev.refused.append(t)
-    rev.refused = list(dict.fromkeys(rev.refused))  # FINAL repeats the direct grants
+    enabled_names = {str(r.get("role_name")) for r in enabled}
+    rev.not_enabled.extend(r for r in rev.roles if r not in enabled_names)
+    rev.refused.extend(
+        f"WITH ADMIN OPTION ({r.get('role_name')})" for r in enabled if r.get("with_admin_option")
+    )
+    # FINAL repeats the direct grants, and a direct role's option shows twice
+    rev.refused = list(dict.fromkeys(rev.refused))
     return rev
 
 
@@ -163,19 +174,6 @@ def _unquote(name: str) -> str:
     if len(name) > 1 and name[0] == name[-1] and name[0] in '`"':
         return re.sub(r"\\(.)", lambda m: _ESCAPES.get(m[1], m[1]), name[1:-1])
     return name
-
-
-def review_roles(rev: GrantReview, enabled: list[dict[str, Any]]) -> None:
-    """Add what `system.enabled_roles` shows that `SHOW GRANTS` cannot: a
-    granted role that is not enabled (not a default role, so its chain cannot
-    be checked) and an admin option on any role in the chain, nested ones
-    included."""
-    names = {str(r.get("role_name")) for r in enabled}
-    rev.not_enabled.extend(r for r in rev.roles if r not in names)
-    rev.refused.extend(
-        f"WITH ADMIN OPTION ({r.get('role_name')})" for r in enabled if r.get("with_admin_option")
-    )
-    rev.refused = list(dict.fromkeys(rev.refused))  # a direct role's option shows twice
 
 
 class ProbeError(RuntimeError):
@@ -287,8 +285,8 @@ async def probe_credential(
                 ) from e
             raise ProbeError(f"{sql} refused for {user!r}: {str(e) or type(e).__name__}") from e
         grant_rows = answers["SHOW GRANTS"] + answers["SHOW GRANTS FINAL"]
-        grants = review_grants([str(next(iter(r.values()))) for r in grant_rows if r])
-        review_roles(grants, answers[_ENABLED_ROLES])
+        lines = [str(next(iter(r.values()))) for r in grant_rows if r]
+        grants = review_grants(lines, answers[_ENABLED_ROLES])
         tables: list[dict[str, Any]] = []
         if inspect:
             tables = await _inspect_tables(query, database, timeout_s)
@@ -403,5 +401,4 @@ __all__ = [
     "host_refusal",
     "probe_credential",
     "review_grants",
-    "review_roles",
 ]

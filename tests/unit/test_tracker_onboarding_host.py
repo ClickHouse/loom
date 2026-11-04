@@ -228,7 +228,7 @@ def test_show_grants_final_carries_what_a_role_chain_grants() -> None:
     lines = []
     for sql in ("SHOW GRANTS FOR u", "SHOW GRANTS FOR u FINAL"):
         lines += [next(iter(r.values())) for r in run(setup, sql)]
-    rev = ob.review_grants(lines)
+    rev = ob.review_grants(lines, [{"role_name": "a"}, {"role_name": "b"}])
     assert rev.roles == ["a"] and rev.refused == ["INSERT"]
     # the nested admin option is in neither statement: the enabled roles carry it
     assert not any("ADMIN OPTION" in line for line in lines)

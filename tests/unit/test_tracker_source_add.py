@@ -134,7 +134,7 @@ def _auth(subject: str = "alice") -> AuthInfo:
 def _probe(grants: list[str] | None = None, described: rc.Described | None = None):
     async def _fake(**kw: Any) -> ob.ProbeResult:
         return ob.ProbeResult(
-            grants=ob.review_grants(grants or RO_GRANTS),
+            grants=ob.review_grants(grants or RO_GRANTS, [{"role_name": "analyst"}]),
             described=described if described is not None else _full_schema(),
         )
 
@@ -221,18 +221,19 @@ def _cfg(monkeypatch):
 
 
 def test_grant_review_names_what_it_refuses_and_the_roles() -> None:
-    rev = ob.review_grants(RO_GRANTS)
+    rev = ob.review_grants(RO_GRANTS, [{"role_name": "analyst"}])
     assert rev.read_only and rev.roles == ["analyst"] and rev.refused == []
-    rev = ob.review_grants(["GRANT SELECT, INSERT ON loom_qa.* TO u", "GRANT ALL ON *.* TO u"])
+    rev = ob.review_grants(["GRANT SELECT, INSERT ON loom_qa.* TO u", "GRANT ALL ON *.* TO u"], [])
     assert not rev.read_only and rev.refused == ["INSERT", "ALL"]
     rev = ob.review_grants(
         [
             "GRANT ALTER TABLE, DROP TABLE ON loom_qa.* TO u",
             "GRANT CREATE TEMPORARY TABLE ON *.* TO u",
-        ]
+        ],
+        [],
     )
     assert rev.refused == ["ALTER TABLE", "DROP TABLE"]
-    assert ob.review_grants(["GRANT CREATE TEMPORARY TABLE ON *.* TO u"]).read_only
+    assert ob.review_grants(["GRANT CREATE TEMPORARY TABLE ON *.* TO u"], []).read_only
 
 
 def test_grant_review_refuses_what_it_cannot_classify_as_read_only() -> None:
@@ -252,38 +253,43 @@ def test_grant_review_refuses_what_it_cannot_classify_as_read_only() -> None:
         "GRANT to TO u",
     ]
     for line in refused:
-        assert not ob.review_grants([line]).read_only, line
-    rev = ob.review_grants(["GRANT SELECT(id, title), SHOW TABLES ON loom_qa.t TO u"])
+        assert not ob.review_grants([line], [{"role_name": "analyst"}]).read_only, line
+    rev = ob.review_grants(["GRANT SELECT(id, title), SHOW TABLES ON loom_qa.t TO u"], [])
     assert rev.read_only and rev.refused == []
-    assert ob.review_grants(["GRANT analyst TO u", "REVOKE SELECT ON loom_qa.x FROM u"]).read_only
+    assert ob.review_grants(
+        ["GRANT analyst TO u", "REVOKE SELECT ON loom_qa.x FROM u"], [{"role_name": "analyst"}]
+    ).read_only
     rev = ob.review_grants(
-        ["GRANT SELECT(`a, b`, `c ON d`) ON db.t TO `loom-ro`", "GRANT `my, role` TO `loom-ro`"]
+        ["GRANT SELECT(`a, b`, `c ON d`) ON db.t TO `loom-ro`", "GRANT `my, role` TO `loom-ro`"],
+        [{"role_name": "my, role"}],
     )
     assert rev.read_only and rev.roles == ["my, role"]
-    rev = ob.review_grants(["GRANT analyst TO u WITH ADMIN OPTION"])
+    # a direct role's admin option shows in the line and the enabled roles: named once
+    enabled = [{"role_name": "analyst", "with_admin_option": 1}]
+    rev = ob.review_grants(["GRANT analyst TO u WITH ADMIN OPTION"], enabled)
     assert rev.roles == ["analyst"] and rev.refused == ["WITH ADMIN OPTION (analyst)"]
-    ob.review_roles(rev, [{"role_name": "analyst", "with_admin_option": 1}])
-    assert rev.refused == ["WITH ADMIN OPTION (analyst)"]
     # a line with two scopes is one the check does not parse
-    assert not ob.review_grants(["GRANT SELECT ON db.t, INSERT ON db.x TO u"]).read_only
+    assert not ob.review_grants(["GRANT SELECT ON db.t, INSERT ON db.x TO u"], []).read_only
 
 
 def test_role_review_refuses_a_role_that_is_not_enabled_or_holds_an_admin_option() -> None:
     # SHOW GRANTS prints `a\\\`b` for a role named a\`b
-    rev = ob.review_grants([r"GRANT analyst, `my  role`, `a\\\`b` TO u"])
     enabled = [{"role_name": "analyst"}, {"role_name": "my  role"}, {"role_name": r"a\`b"}]
-    ob.review_roles(rev, enabled)
+    rev = ob.review_grants([r"GRANT analyst, `my  role`, `a\\\`b` TO u"], enabled)
     assert rev.read_only
     # a role that is not a default role is not enabled, so its chain is unseen
-    rev = ob.review_grants(["GRANT analyst, other TO u"])
-    ob.review_roles(rev, [{"role_name": "analyst", "with_admin_option": 0}])
+    enabled = [{"role_name": "analyst", "with_admin_option": 0}]
+    rev = ob.review_grants(["GRANT analyst, other TO u"], enabled)
     assert rev.not_enabled == ["other"] and not rev.read_only
     assert rev.refusal("u").endswith("Run: SET DEFAULT ROLE ALL TO u")
     assert rev.refusal("loom-ro").endswith("Run: SET DEFAULT ROLE ALL TO `loom-ro`")
+    # both causes: each gets its sentence
+    rev = ob.review_grants(["GRANT INSERT ON db.* TO u", "GRANT other TO u"], [])
+    assert rev.refusal("u").startswith("'u' holds more than read access (INSERT); ")
+    assert "'u' holds roles that are not default roles (other)" in rev.refusal("u")
     # an admin option on a nested role shows only in the enabled roles
-    rev = ob.review_grants(["GRANT analyst TO u"])
     enabled = [{"role_name": "analyst"}, {"role_name": "nested", "with_admin_option": 1}]
-    ob.review_roles(rev, enabled)
+    rev = ob.review_grants(["GRANT analyst TO u"], enabled)
     assert rev.refused == ["WITH ADMIN OPTION (nested)"]
 
 

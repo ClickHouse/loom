@@ -34,7 +34,7 @@ from tests.unit.test_tracker_source_add import (  # noqa: F401 — _cfg is the a
 def _probe_result(unreadable: dict[str, str] | None = None):
     async def _fake(**kw: Any) -> ob.ProbeResult:
         return ob.ProbeResult(
-            grants=ob.review_grants(RO_GRANTS),
+            grants=ob.review_grants(RO_GRANTS, [{"role_name": "analyst"}]),
             described=_full_schema(),
             unreadable=dict(unreadable or {}),
         )

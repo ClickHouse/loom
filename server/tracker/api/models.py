@@ -656,8 +656,7 @@ class TrackerSourceAddOutput(BaseModel):
     namespaces: list[dict[str, Any]] = Field(default_factory=list)
     # The record-contract report (`ok`, missing tables and columns, type mismatches, …).
     contract: dict[str, Any] = Field(default_factory=dict)
-    # roles the credential holds, shown so the registrant can see them; the
-    # read-only check reads their grants too
+    # Roles the credential holds; the read-only check reads their grants too.
     roles: list[str] = Field(default_factory=list)
     # `admin` when the caller becomes the namespaces' first admin; "" with auth off.
     my_role: str = ""
@@ -728,8 +727,7 @@ class TrackerSourceInspectOutput(BaseModel):
     database: str
     # [{table, engine, rows, columns: [{name, type}]}]
     tables: list[dict[str, Any]] = Field(default_factory=list)
-    # roles the credential holds, shown so the caller can see them; the
-    # read-only check reads their grants too
+    # Roles the credential holds; the read-only check reads their grants too.
     roles: list[str] = Field(default_factory=list)
     # {mode: views|mapping, roles: {logical: table}, fields: {logical: {column: {from,
     #  confidence}}}, mapping: mapping.SourceMapping JSON | None}

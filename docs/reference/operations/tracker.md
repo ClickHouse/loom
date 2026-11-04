@@ -281,7 +281,7 @@ Register a tracker source: a ClickHouse endpoint and database holding the record
 | `database` | `str` | The database the source reads. |
 | `namespaces` | `list[dict[str, Any]]` | [{namespace, repos, classification, join_policy}] |
 | `contract` | `dict[str, Any]` | The record-contract report (`ok`, missing tables and columns, type mismatches, …). |
-| `roles` | `list[str]` | roles the credential holds, shown so the registrant can see them; the read-only check reads their grants too |
+| `roles` | `list[str]` | Roles the credential holds; the read-only check reads their grants too. |
 | `my_role` | `str` | `admin` when the caller becomes the namespaces' first admin; "" with auth off. |
 | `dry_run` | `bool` | A dry run says what it would write and writes nothing; view_templates = table → a CREATE OR REPLACE VIEW draft for each required table the schema fails on ({} when it meets the contract) |
 | `written` | `bool` | True when the source and its namespaces were stored; False on a dry run. |
@@ -329,7 +329,7 @@ Connect with a read-only credential and say what the database holds — every ta
 | `host` | `str` | The host inspected (only the host part of a URL). |
 | `database` | `str` | The database inspected. |
 | `tables` | `list[dict[str, Any]]` | [{table, engine, rows, columns: [{name, type}]}] |
-| `roles` | `list[str]` | roles the credential holds, shown so the caller can see them; the read-only check reads their grants too |
+| `roles` | `list[str]` | Roles the credential holds; the read-only check reads their grants too. |
 | `proposal` | `dict[str, Any]` | {mode: views\|mapping, roles: {logical: table}, fields: {logical: {column: {from, confidence}}}, mapping: mapping.SourceMapping JSON \| None} |
 
 ## `tracker.source.list`
