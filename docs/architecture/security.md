@@ -1098,8 +1098,8 @@ longer its file's, or when a namespace admin asked (`knowledge.source.remove` wi
 `delete_documents`); never on a fetch error, and never touches a live document another
 writer or source holds ([document sources](../features/knowledge.md#syncing-a-source)).
 Any holder of a writer grant on the namespace may still `knowledge.delete` a synced
-document, as any other; while its file is in the folder, the next full listing writes it
-again.
+document, as any other; while its item is still in the source, a later turn writes it
+again (a folder's next full listing, a project's next turn).
 
 ## Audit log
 

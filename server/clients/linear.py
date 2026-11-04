@@ -8,16 +8,18 @@ GraphQL variable, never inside the query text.
 Errors carry the HTTP status and the error's type, never the response body, which
 can name documents or the tracker's own hosts. The API reports most failures as
 GraphQL errors, often with HTTP 200 or 400, so each error's `extensions.code` and
-`extensions.type` are read as well as the status: a rate limit raises
-`RateLimited` (a 429, or any error typed `ratelimited`), a refused key
-`CredentialRefused`, an id the key cannot see `NotFound`, an answer over the
-caller's size bound `TooLarge`, and any other failure `LinearError`. An answer
-with any GraphQL error raises, so a listing is never taken from a partial answer.
-Nothing here retries: the sync worker's next pass is the retry.
+`extensions.type` are read as well as the status: a rate limit raises `RateLimited`
+(a 429, or any error typed `ratelimited`), a refused key `CredentialRefused`, the
+tracker's own not-found error `NotFound` (an answer that merely lacks the object is
+a `LinearError`, never evidence of absence), an answer over the caller's size bound
+`TooLarge`, and any other failure `LinearError`. An answer with any GraphQL error
+raises, so a listing is never taken from a partial answer. Nothing here retries: the
+sync worker's next pass is the retry.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -29,6 +31,9 @@ from server.clients._http import get_client
 _GRAPHQL_URL = "https://api.linear.app/graphql"
 # Documents per listing page: the API's own default page size.
 PAGE_SIZE = 50  # not a setting: the API's page size, the same on every deployment
+# Seconds between listing pages, so a long list stays under the API's hourly
+# request limit per key.
+PAGE_PACE_S = 0.5  # not a setting: the API's limit, the same on every deployment
 # A bound on one listing page's answer (50 nodes of ids, titles, stamps and links).
 _PAGE_MAX_BYTES = 4 * 1024 * 1024  # not a setting: far above any real page
 # The tracker's ids are UUIDs.
@@ -185,7 +190,8 @@ async def documents_page(
     api_key: str, project_id: str, *, after: str = "", first: int = PAGE_SIZE
 ) -> tuple[list[dict[str, Any]], str]:
     """One page of a project's documents (id, title, updatedAt, url) and the cursor
-    of the next page, '' after the last. NotFound when the key cannot see the project."""
+    of the next page, '' after the last. NotFound when the tracker says the key
+    cannot see the project."""
     what = f"project {project_id}"
     variables: dict[str, Any] = {"id": project_id, "first": first}
     if after:
@@ -193,7 +199,8 @@ async def documents_page(
     data = await _query(api_key, _PROJECT_DOCUMENTS, variables, what, max_bytes=_PAGE_MAX_BYTES)
     project = data.get("project")
     if not isinstance(project, dict):
-        raise NotFound(what, "not_found")
+        # Not the tracker's not-found error: no evidence the project is gone.
+        raise LinearError(what, "no_project")
     connection = project.get("documents")
     if not isinstance(connection, dict):
         raise LinearError(what, "no_documents")
@@ -212,7 +219,8 @@ async def documents_page(
 
 
 async def project_documents(api_key: str, project_id: str) -> list[dict[str, Any]]:
-    """Every document of a project, every page read; a failure on any page raises."""
+    """Every document of a project, every page read and paced; a failure on any page
+    raises."""
     found: list[dict[str, Any]] = []
     cursor = ""
     while True:
@@ -220,6 +228,7 @@ async def project_documents(api_key: str, project_id: str) -> list[dict[str, Any
         found.extend(nodes)
         if not cursor:
             return found
+        await asyncio.sleep(PAGE_PACE_S)
 
 
 def _checked(document_id: str) -> str:
@@ -230,14 +239,15 @@ def _checked(document_id: str) -> str:
 
 async def document(api_key: str, document_id: str, *, max_bytes: int) -> dict[str, Any]:
     """One document's Markdown `content`, `updatedAt` and `url`, its answer read up to
-    `max_bytes`; NotFound when the key cannot see it."""
+    `max_bytes`; NotFound when the tracker says the key cannot see it."""
     what = f"document {document_id}"
     data = await _query(
         api_key, _DOCUMENT, {"id": _checked(document_id)}, what, max_bytes=max_bytes
     )
     doc = data.get("document")
     if not isinstance(doc, dict):
-        raise NotFound(what, "not_found")
+        # Not the tracker's not-found error: no evidence the document is gone.
+        raise LinearError(what, "no_document")
     return doc
 
 
@@ -254,11 +264,13 @@ async def document_state(api_key: str, document_id: str) -> dict[str, Any]:
     )
     doc = data.get("document")
     if not isinstance(doc, dict):
-        raise NotFound(what, "not_found")
+        # Not the tracker's not-found error: no evidence the document is gone.
+        raise LinearError(what, "no_document")
     return doc
 
 
 __all__ = [
+    "PAGE_PACE_S",
     "PAGE_SIZE",
     "CredentialRefused",
     "LinearError",

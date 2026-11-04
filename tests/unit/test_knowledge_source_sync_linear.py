@@ -136,6 +136,7 @@ def tracker(world: _World, monkeypatch: pytest.MonkeyPatch) -> _Tracker:
     t = _Tracker()
     client = httpx.AsyncClient(transport=httpx.MockTransport(t.answer))
     monkeypatch.setattr(linear, "get_client", lambda: client)
+    monkeypatch.setattr(linear, "PAGE_PACE_S", 0.0)
     world.sources = [_linear_source()]
     return t
 
@@ -365,3 +366,134 @@ def test_a_credential_that_no_longer_opens_calls_nothing(world: _World, tracker:
     world.sources = [_linear_source(credential_enc="not-sealed")]
     _sync()
     assert _detail(world)["status"] == "credential_invalid" and not tracker.requests
+
+
+def _two_synced(tracker: _Tracker) -> None:
+    """Documents 1 and 2 synced, then document 2 dropped from its project's list."""
+    tracker.projects[PROJECT] = [_node(1, "2026-01-01T00:00:00.000Z")]
+    tracker.projects[OTHER] = [_node(2, "2026-01-02T00:00:00.000Z")]
+    _sync()
+    tracker.projects[OTHER] = []
+
+
+def _lookups(tracker: _Tracker) -> int:
+    return sum(1 for r in tracker.requests if r["op"] == "DocumentState")
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(200, json={"data": {}}),
+        httpx.Response(200, json={"data": {"document": None}}),
+        httpx.Response(503),
+        _graphql_error(400, "FORBIDDEN"),
+        _graphql_error(200, "INTERNAL_ERROR"),
+    ],
+)
+def test_a_lookup_that_does_not_say_not_found_retires_nothing(
+    world: _World, tracker: _Tracker, answer: httpx.Response
+) -> None:
+    _two_synced(tracker)
+    tracker.answers["DocumentState"] = answer
+    result = _sync()
+    assert _lookups(tracker) == 1
+    assert result.removed == 0 and len(world.docs) == 2
+    assert _detail(world)["status"] == "ok"
+
+
+@pytest.mark.parametrize(
+    "answer, status",
+    [
+        (_graphql_error(400, "RATELIMITED"), "rate_limited"),
+        (httpx.Response(429), "rate_limited"),
+        (_graphql_error(400, "AUTHENTICATION_ERROR"), "credential_invalid"),
+        (httpx.Response(401), "credential_invalid"),
+    ],
+)
+def test_a_rate_limit_or_a_refused_key_on_a_lookup_stops_the_retiring(
+    world: _World, tracker: _Tracker, answer: httpx.Response, status: str
+) -> None:
+    tracker.projects[PROJECT] = [_node(n, f"2026-01-0{n}T00:00:00.000Z") for n in (1, 2, 3)]
+    _sync()
+    tracker.projects[PROJECT] = []
+    tracker.answers["DocumentState"] = answer
+    result = _sync()
+    assert _lookups(tracker) == 1  # the first lookup stops the others
+    assert result.removed == 0 and len(world.docs) == 3
+    assert _detail(world)["status"] == status
+
+
+def test_a_stored_document_with_no_usable_id_is_never_looked_up_or_retired(
+    world: _World, tracker: _Tracker
+) -> None:
+    tracker.projects[PROJECT] = [_node(1, "2026-01-01T00:00:00.000Z")]
+    uri = "https://tracker.example.com/acme/document/kept-9"
+    world.docs[uri] = {
+        "actor": SYNC_WORKER_ACTOR,
+        "tags": ["source:decks"],
+        "metadata": {"ingested_from": "not-an-id", "source_revision": "x"},
+    }
+    result = _sync()
+    assert result.removed == 0 and uri in world.docs and _lookups(tracker) == 0
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(200, json={"data": {}}),
+        httpx.Response(200, json={"data": {"document": None}}),
+    ],
+)
+def test_a_fetch_answered_without_the_document_waits(
+    world: _World, tracker: _Tracker, answer: httpx.Response
+) -> None:
+    tracker.projects[PROJECT] = [_node(1, "2026-01-01T00:00:00.000Z")]
+    tracker.answers["Document"] = answer
+    result = _sync()
+    assert result.changed == 0 and result.unconverted == 0
+    detail = _detail(world)
+    assert detail["status"] == "failed" and detail["error"] == f"document {_doc_id(1)}: no_document"
+    assert detail["file_waits"][_doc_id(1)][1] == 1
+
+
+def test_a_refused_fetch_is_given_up_at_once_and_an_internal_error_waits(
+    world: _World, tracker: _Tracker
+) -> None:
+    tracker.projects[PROJECT] = [_node(n, f"2026-01-0{n}T00:00:00.000Z") for n in (1, 2)]
+    tracker.answers[_doc_id(1)] = _graphql_error(200, "FORBIDDEN")
+    tracker.answers[_doc_id(2)] = _graphql_error(200, "INTERNAL_ERROR")
+    result = _sync()
+    assert result.unconverted == 1
+    detail = _detail(world)
+    assert detail["unconverted_reasons"] == {"graphql_forbidden": 1}
+    assert detail["status"] == "failed"
+    assert detail["error"] == f"document {_doc_id(2)}: graphql_internal_error"
+    tracker.requests.clear()
+    _sync()
+    assert tracker.fetches(_doc_id(1)) == 0 and tracker.fetches(_doc_id(2)) == 1
+
+
+def test_the_key_and_the_tracker_s_text_never_reach_the_state(
+    world: _World, tracker: _Tracker
+) -> None:
+    tracker.projects[PROJECT] = [_node(n, f"2026-01-0{n}T00:00:00.000Z") for n in (1, 2)]
+    echo = f"bad key {KEY} for Roadmap"
+    tracker.answers[_doc_id(1)] = _graphql_error(200, "FORBIDDEN", echo)
+    tracker.answers[_doc_id(2)] = _graphql_error(502, "INTERNAL_ERROR", echo)
+    tracker.answers[OTHER] = _graphql_error(400, "AUTHENTICATION_ERROR", echo)
+    _sync()
+    state = json.dumps(world.states["decks"])
+    assert KEY not in state and "Roadmap" not in state
+
+
+def test_list_pages_are_paced(world: _World, tracker: _Tracker, monkeypatch) -> None:
+    slept: list[float] = []
+
+    async def _sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(linear, "PAGE_PACE_S", 0.5)
+    monkeypatch.setattr(linear.asyncio, "sleep", _sleep)
+    tracker.projects[PROJECT] = [_node(n, f"2026-01-0{n}T00:00:00.000Z") for n in (1, 2, 3, 4, 5)]
+    _sync()
+    assert slept == [0.5, 0.5]  # three pages of the first project, one of the other

@@ -96,6 +96,11 @@ def _error(status: int, message: str, **extensions: Any) -> httpx.Response:
         (_error(200, SECRET_TEXT, type="forbidden"), source_probes.SourceUnreachable, "forbidden"),
         (httpx.Response(503, text=SECRET_TEXT), source_probes.SourceUnreachable, "http_503"),
         (httpx.Response(200, text=SECRET_TEXT), source_probes.SourceUnreachable, "no_data"),
+        (
+            httpx.Response(200, json={"data": {"project": None}}),
+            source_probes.SourceUnreachable,
+            "no_project",
+        ),
     ],
 )
 def test_failures_are_told_apart_and_carry_no_body(

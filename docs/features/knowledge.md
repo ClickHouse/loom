@@ -248,16 +248,16 @@ Trouble with one file is that file's:
 
 A source's `sync` in `list` and `inspect` shows what its last turn did:
 
-| Field                    | Meaning                                                                                                                                                                                                                                                                                                                |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                                                                                                                                                                                                         |
-| `last_synced_at`         | When the last turn ended.                                                                                                                                                                                                                                                                                              |
-| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                                                                                                                                                              |
-| `documents_seen`         | Files (or a project's documents) the turn listed.                                                                                                                                                                                                                                                                      |
-| `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                                                                                                                                                        |
-| `unconverted`, `skipped` | Files it did not write: the store gave no https link, no extractor, refused or too large, or given up after three passes on the same revision; another writer's document at the address.                                                                                                                               |
-| `unconverted_reasons`    | Why, by count: `no_address` (the store gave no https link), `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`; for a project's documents also `not_found` and `graphql_<type>`. |
-| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text; for a turn that did not fail, why it is incomplete (`pass bound reached`, `listing: incomplete search`).                                                                                                                       |
+| Field                    | Meaning                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                                                                                                                                                                                                                                                                                   |
+| `last_synced_at`         | When the last turn ended.                                                                                                                                                                                                                                                                                                                                                                        |
+| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                                                                                                                                                                                                                                        |
+| `documents_seen`         | Files (or a project's documents) the turn listed.                                                                                                                                                                                                                                                                                                                                                |
+| `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                                                                                                                                                                                                                                  |
+| `unconverted`, `skipped` | Files it did not write: the store gave no https link, no extractor, refused or too large, or given up after three passes on the same revision; another writer's document at the address.                                                                                                                                                                                                         |
+| `unconverted_reasons`    | Why, by count: `no_address` (the store gave no https link), `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`; for a project's documents also `not_found`, `graphql_<type>` and `no_document` or `no_data` (the answer lacked the document, or any data). |
+| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text; for a turn that did not fail, why it is incomplete (`pass bound reached`, `listing: incomplete search`).                                                                                                                                                                                                 |
 
 `loom knowledge sync --org O --namespace <trunk namespace> [--source NAME] [--full]` runs
 one such pass over one namespace's sources now, in-process, and leaves a manual
@@ -278,17 +278,21 @@ and is bounded by `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES`; its revision is i
 a renamed document is written at its new address and its old one retired.
 
 A document is retired only when the list was read whole, every project on every page,
-and the tracker, asked about that document, reports it not found, trashed, archived or
-in none of the source's projects. A project the key's account cannot see, any other
-failure on a list page, an answer that carries a GraphQL error beside its data and a
-page that promises another without a cursor leave the turn `failed` and retire nothing,
-while the other projects' documents are still written. The API reports most failures as
-GraphQL errors, often with HTTP 200 or 400, so a turn reads the errors' type as well as
-the status: a `429` or an error typed `RATELIMITED` is `rate_limited`, a `401` or an
-authentication error is `credential_invalid`, and either ends the turn. A document the
-tracker refuses or no longer finds is given up on its revision (`not_found`,
-`http_<status>`, `graphql_<type>`); a `5xx`, a timeout or an answer without data makes
-it wait.
+and the tracker, asked about that document, answers its own not-found error or reports
+it trashed, archived or in none of the source's projects; an answer that only lacks the
+document, or a lookup that fails, retires nothing. A project the key's account cannot
+see, any other failure on a list page, an answer that carries a GraphQL error beside its
+data and a page that promises another without a cursor leave the turn `failed` and
+retire nothing, while the other projects' documents are still written. The API reports
+most failures as GraphQL errors, often with HTTP 200 or 400, so a turn reads the errors'
+type as well as the status: a `429` or an error typed `RATELIMITED` is `rate_limited`, a
+`401` or an authentication error is `credential_invalid`, and either ends the turn. A
+document the tracker no longer finds (`not_found`), one over the size bound and one it
+refuses (a `4xx`, or a GraphQL error typed `FORBIDDEN`, `INVALID_INPUT`,
+`FEATURE_NOT_ACCESSIBLE` or `USER_ERROR`: `http_<status>`, `graphql_<type>`) are given
+up on their revision at once; any other GraphQL error, a `5xx`, a timeout and an answer
+without the document (`no_document`) make it wait. List pages are paced half a second
+apart.
 
 ## Searching
 

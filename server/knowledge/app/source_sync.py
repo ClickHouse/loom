@@ -1,8 +1,11 @@
 """The sync of registered document sources into their repositories' documents:
 one pass over every active source, run by the `knowledge_source_sync` worker and
-by `loom knowledge sync`. A folder's turn is below; a tracker project's documents
-have their own turn in `source_sync_linear`, which shares the pass, the bounds,
-the waits and the state this module keeps.
+by `loom knowledge sync`. A folder's turn is below; each other kind has its own
+turn module (`source_sync_linear`), chosen by `_turn_of`, which builds on the
+public helpers here: `Pass` and `TurnResult`, `start_waits`, `full_due` and
+`capped` for a turn's start and stamp, `sync_item` for one listed item (with
+`waiting`, `give_up`, `wait`, `may_write` and `require_current`),
+`write_document`, `retire_absent` and `retire`, and `client_error`.
 
 A pass reads the active sources and drops those whose namespace is inactive or no
 longer a repository's trunk. Sources a maintainer asked to sync (`sync_now`) go
@@ -25,7 +28,7 @@ up on their revision at once, so later passes skip them without a fetch; one
 with no https link or a format no extractor declares costs no fetch and is
 counted again each pass. A file whose fetch, extraction or write fails in a way
 that may pass (a 5xx or a timeout on that file, its extractor call, the write)
-waits: the turn stays incomplete for `_WAIT_PASSES` passes on the same revision,
+waits: the turn stays incomplete for `WAIT_PASSES` passes on the same revision,
 then the file is given up on. A given-up file is tried again when it changes,
 once after each completed full listing, and on a full sync request. What fails
 for every file stays the turn's: the token exchange, the listing, a 401, a rate
@@ -99,7 +102,7 @@ _LEASE_TTL_S = 120.0  # not a setting: the entry-lease shape
 # write) holds the turn before the file counts as unconverted: about 45 minutes at
 # the default interval, past a restart or a redeploy of the service it needs, and
 # short enough that one file cannot hold a source's stamp for good.
-_WAIT_PASSES = 3  # not a setting: a bound on how long one file may stall a stamp
+WAIT_PASSES = 3  # not a setting: a bound on how long one file may stall a stamp
 # How far behind the listing's start the stamp stays: a file the store stamps just
 # before the listing but indexes just after it is listed again next turn.
 _STAMP_SKEW_S = 60.0  # not a setting: a margin on the store's own indexing delay
@@ -181,7 +184,7 @@ class PassResult:
 
 
 @dataclass
-class _Pass:
+class Pass:
     """What every turn of one pass shares: the time and document budget, and per
     uploaded format whether an extractor serves it (None: its service could not be
     read this pass)."""
@@ -215,7 +218,7 @@ async def run_sync(
     `namespace`, and `only` one source by name). `full` records a full sync request
     for each (`source_ops.request_full_sync`), as `sync_now(full=true)` does."""
     result = PassResult()
-    run = _Pass(budget=_budget(), left=int(settings.knowledge_source_sync_documents_per_pass))
+    run = Pass(budget=_budget(), left=int(settings.knowledge_source_sync_documents_per_pass))
     found = await store.all_active_sources()
     if org:
         found = [s for s in found if (s.org, s.namespace) == (org, namespace)]
@@ -285,7 +288,7 @@ async def _source_turn(src: KnowledgeSource) -> AsyncIterator[None]:
 
 
 async def _sync_one(
-    src: KnowledgeSource, state: dict[str, str], run: _Pass, result: PassResult
+    src: KnowledgeSource, state: dict[str, str], run: Pass, result: PassResult
 ) -> None:
     try:
         async with _source_turn(src):
@@ -330,7 +333,7 @@ def _turn_of(kind: str) -> Callable[..., Awaitable[TurnResult]]:
     return _turn
 
 
-def _full_due(detail: dict[str, Any]) -> bool:
+def full_due(detail: dict[str, Any]) -> bool:
     last = str(detail.get("full_listed_at") or "")
     try:
         listed = datetime.fromisoformat(last)
@@ -340,14 +343,14 @@ def _full_due(detail: dict[str, Any]) -> bool:
     return age >= int(settings.knowledge_source_sync_full_interval_seconds)
 
 
-async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass) -> TurnResult:
+async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnResult:
     """List, fetch, convert and write one source's changed files; retire those a
     complete full listing no longer has."""
     detail = json_object(state.get("detail", ""))
     stamp = state.get("state_value", "")
     turn = TurnResult()
-    turn.full = bool(detail.get("full")) or not gdrive.valid_stamp(stamp) or _full_due(detail)
-    _start_waits(turn, detail)
+    turn.full = bool(detail.get("full")) or not gdrive.valid_stamp(stamp) or full_due(detail)
+    start_waits(turn, detail)
     credential = unseal("knowledge_sources.credential", src.credential_enc)
     if not credential:
         # Fail closed: a credential that no longer opens is never read as "no auth".
@@ -365,10 +368,10 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass) -> Turn
         turn.fail("rate_limited", "rate_limited")
         return turn
     except gdrive.CredentialRefused as e:
-        turn.fail("credential_invalid", _error(e))
+        turn.fail("credential_invalid", client_error(e))
         return turn
     except gdrive.DriveError as e:
-        turn.fail("failed", _error(e))
+        turn.fail("failed", client_error(e))
         return turn
     if turn.full and not await _folders_visible(token, folders, turn):
         return turn
@@ -381,7 +384,7 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass) -> Turn
     trusted = turn.full and turn.complete
     files = [f for f in files if gdrive.valid_file_id(str(f.get("id") or ""))]
     turn.documents_seen = len(files)
-    turn.newest = _capped(
+    turn.newest = capped(
         max((str(f.get("modifiedTime") or "") for f in files), default=""), listed_at
     )
     if trusted:
@@ -398,11 +401,14 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: _Pass) -> Turn
         # its document is kept only if the lookup finds the file still there.
         addresses = {str(f["id"]): source_uri_of(f) for f in files}
         listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
-        await _retire_absent(src, token, listed, run, turn)
+        async def gone(file_id: str) -> bool | None:
+            return await _file_gone(token, file_id, set(folders), turn)
+
+        await retire_absent(src, listed, gone, run, turn)
     return turn
 
 
-def _start_waits(turn: TurnResult, detail: dict[str, Any]) -> None:
+def start_waits(turn: TurnResult, detail: dict[str, Any]) -> None:
     """The turn's file waits, from the stored ones. A full sync request
     (`sync_now(full=true)`, `loom knowledge sync --full`) retries every waiting
     file, once per request. A periodic full listing gives each given-up
@@ -421,13 +427,13 @@ def _start_waits(turn: TurnResult, detail: dict[str, Any]) -> None:
     elif turn.full and detail.get("retry_granted_for") != listed:
         turn.retry_granted_for = listed
         for file_id, entry in waits.items():
-            if isinstance(entry, list) and len(entry) == 3 and int(entry[1]) >= _WAIT_PASSES:
-                waits[file_id] = [entry[0], _WAIT_PASSES - 1, entry[2]]
+            if isinstance(entry, list) and len(entry) == 3 and int(entry[1]) >= WAIT_PASSES:
+                waits[file_id] = [entry[0], WAIT_PASSES - 1, entry[2]]
     turn.waits = waits
     turn.waits_read = True
 
 
-def _capped(newest: str, listed_at: datetime) -> str:
+def capped(newest: str, listed_at: datetime) -> str:
     """`newest`, but never later than the listing's start less the skew margin: a
     file stamped in the store's future, or indexed just after the listing, is
     listed again rather than skipped by the next incremental turn."""
@@ -457,22 +463,27 @@ async def _folders_visible(token: str, folders: list[str], turn: TurnResult) -> 
             return False
         except gdrive.DriveError as e:
             if e.status == 401:
-                turn.fail("credential_invalid", _error(e))
+                turn.fail("credential_invalid", client_error(e))
                 return False
-            turn.fail("failed", _error(e))
+            turn.fail("failed", client_error(e))
             return True
     return True
 
 
-async def _retire_absent(
-    src: KnowledgeSource, token: str, listed: dict[str, str], run: _Pass, turn: TurnResult
+async def retire_absent(
+    src: KnowledgeSource,
+    listed: dict[str, str],
+    gone: Callable[[str], Awaitable[bool | None]],
+    run: Pass,
+    turn: TurnResult,
 ) -> None:
-    """Retire the source's documents whose file a complete full listing lacks, or
-    that sit at an address that is no longer their file's. A file missing from the
-    listing is looked up first: a listing paged while files changed can miss one,
-    so only a file the store reports gone, trashed or out of every folder counts."""
+    """Retire the source's documents whose item a complete listing lacks, or that
+    sit at an address that is no longer their item's. `listed` maps each listed
+    item's id to its address. An item missing from the listing is looked up first
+    with `gone(id)`: a listing paged while items changed can miss one, so only an
+    item the store reports gone counts. `gone` answers False when the lookup fails
+    (nothing is retired) and None when the turn must stop (it records why)."""
     docs = await store.source_revisions(src.org, src.namespace, src.name, searchable_only=False)
-    folders = set(src.config.get("folder_ids") or [])
     for doc in docs:
         address = listed.get(doc["file_id"])
         if address == doc["source_uri"]:
@@ -482,12 +493,12 @@ async def _retire_absent(
             return
         run.left -= 1
         if address is None:
-            gone = await _file_gone(token, doc["file_id"], folders, turn)
-            if gone is None:
+            found_gone = await gone(doc["file_id"])
+            if found_gone is None:
                 return
-            if not gone:
+            if not found_gone:
                 continue
-        await _require_current(src)
+        await require_current(src)
         if await retire(src, doc["source_uri"]):
             turn.removed += 1
 
@@ -505,13 +516,13 @@ async def _file_gone(token: str, file_id: str, folders: set[str], turn: TurnResu
         return None
     except gdrive.DriveError as e:
         if e.status == 401:
-            turn.fail("credential_invalid", _error(e))
+            turn.fail("credential_invalid", client_error(e))
             return None
         return False
     return bool(state.get("trashed")) or not folders & set(state.get("parents") or [])
 
 
-def _error(e: BaseException) -> str:
+def client_error(e: BaseException) -> str:
     """The client's own message: what failed and the HTTP status, never a body."""
     return str(e)[:200]
 
@@ -523,7 +534,7 @@ def source_uri_of(f: dict[str, Any]) -> str:
     return link.split("#", 1)[0].split("?", 1)[0]
 
 
-def _waiting(turn: TurnResult, f: dict[str, Any]) -> list[Any] | None:
+def waiting(turn: TurnResult, f: dict[str, Any]) -> list[Any] | None:
     """The file's wait entry, dropped when its revision changed since."""
     file_id = str(f["id"])
     entry = turn.waits.get(file_id)
@@ -536,59 +547,95 @@ def _waiting(turn: TurnResult, f: dict[str, Any]) -> list[Any] | None:
     return entry
 
 
-async def _sync_file(
+async def sync_item(
     src: KnowledgeSource,
-    token: str,
     f: dict[str, Any],
+    uri: str,
     prior: dict[str, str] | None,
-    run: _Pass,
+    run: Pass,
     turn: TurnResult,
+    fetch_and_write: Callable[[], Awaitable[str]],
+    before_fetch: Callable[[], Awaitable[bool]] | None = None,
 ) -> bool:
-    """Handle one listed file; False when the turn must stop listing."""
-    waits = turn.waits
+    """Handle one listed item (`f`: its `id` and its revision as `modifiedTime`) at
+    address `uri`; False when the turn must stop listing. In order: an item with no
+    https address is unconverted; one whose stored copy has this revision and
+    address is skipped; one given up on this revision is unconverted; one at an
+    address another writer holds is skipped; `before_fetch` (a kind's own checks)
+    may settle it; then it costs one of the pass bound and `fetch_and_write` runs,
+    answering `written`, `waiting`, `given_up` or `stop`. A written item that moved
+    to a new address has its old one retired."""
+    file_id = str(f["id"])
     revision = str(f.get("modifiedTime") or "")
-    uri = source_uri_of(f)
     if not uri.startswith("https://"):
         turn.unconverted_for("no_address")
         return True
     if prior and prior["source_revision"] == revision and prior["source_uri"] == uri:
-        waits.pop(str(f["id"]), None)
+        turn.waits.pop(file_id, None)
         return True  # unchanged: no fetch, no embedding
-    entry = _waiting(turn, f)
-    if entry is not None and int(entry[1]) >= _WAIT_PASSES:
+    entry = waiting(turn, f)
+    if entry is not None and int(entry[1]) >= WAIT_PASSES:
         # It waited its passes on this revision: unconverted until it changes.
         turn.unconverted_for(str(entry[2]))
         return True
     # Before any fetch: an address another writer holds costs nothing.
-    if not await _may_write(src, uri):
-        waits.pop(str(f["id"]), None)
+    if not await may_write(src, uri):
+        turn.waits.pop(file_id, None)
         turn.skipped += 1
         return True
-    try:
-        if not await _servable(f, run):
-            waits.pop(str(f["id"]), None)
-            turn.unconverted_for("no_extractor")  # costs no fetch, so none of the bound
-            return True
-    except extractors.ExtractorUnavailable as e:
-        # The service its format is routed to cannot be read: the whole format waits,
-        # the turn's, not this file's.
-        turn.fail("failed", f"extractor_unavailable: {e}"[:200])
-        return True
-    if _over_size(f):
-        _give_up(f, turn, "too_large")  # the listing says so: no fetch, none of the bound
+    if before_fetch is not None and not await before_fetch():
         return True
     if run.spent():
         turn.stop_at_bound()
         return False
     run.left -= 1
-    outcome = await _fetch_and_write(src, token, f, uri, turn)
+    outcome = await fetch_and_write()
     if outcome == "stop":
         return False
     if outcome not in ("waiting", "given_up"):
-        waits.pop(str(f["id"]), None)
+        turn.waits.pop(file_id, None)
     if outcome == "written" and prior and prior["source_uri"] != uri:
         if await retire(src, prior["source_uri"]):
             turn.removed += 1
+    return True
+
+
+async def _sync_file(
+    src: KnowledgeSource,
+    token: str,
+    f: dict[str, Any],
+    prior: dict[str, str] | None,
+    run: Pass,
+    turn: TurnResult,
+) -> bool:
+    """Handle one listed file; False when the turn must stop listing."""
+    uri = source_uri_of(f)
+
+    async def before_fetch() -> bool:
+        return await _fetchable(f, run, turn)
+
+    async def fetch_and_write() -> str:
+        return await _fetch_and_write(src, token, f, uri, turn)
+
+    return await sync_item(src, f, uri, prior, run, turn, fetch_and_write, before_fetch)
+
+
+async def _fetchable(f: dict[str, Any], run: Pass, turn: TurnResult) -> bool:
+    """Whether a file goes on to its fetch; one that does not is counted here, at no
+    fetch and none of the bound."""
+    try:
+        if not await _servable(f, run):
+            turn.waits.pop(str(f["id"]), None)
+            turn.unconverted_for("no_extractor")
+            return False
+    except extractors.ExtractorUnavailable as e:
+        # The service its format is routed to cannot be read: the whole format waits,
+        # the turn's, not this file's.
+        turn.fail("failed", f"extractor_unavailable: {e}"[:200])
+        return False
+    if _over_size(f):
+        give_up(f, turn, "too_large")  # the listing says so
+        return False
     return True
 
 
@@ -596,8 +643,8 @@ async def _fetch_and_write(
     src: KnowledgeSource, token: str, f: dict[str, Any], uri: str, turn: TurnResult
 ) -> str:
     """Fetch, convert and write one file: `written`, `waiting` (a failure that may
-    pass holds the turn for `_WAIT_PASSES` passes), `given_up` (a refusal gives the
-    file up at once; for both the wait entry is kept, and `_start_waits` says when
+    pass holds the turn for `WAIT_PASSES` passes), `given_up` (a refusal gives the
+    file up at once; for both the wait entry is kept, and `start_waits` says when
     it is tried again) or `stop` (the turn's own failure: a rate limit, a refused
     credential)."""
     try:
@@ -606,45 +653,53 @@ async def _fetch_and_write(
         turn.fail("rate_limited", "rate_limited")
         return "stop"
     except gdrive.TooLarge:
-        return _give_up(f, turn, "too_large")
+        return give_up(f, turn, "too_large")
     except gdrive.DriveError as e:
         if e.status == 401:
-            turn.fail("credential_invalid", _error(e))
+            turn.fail("credential_invalid", client_error(e))
             return "stop"
         if e.refused:
             # The store refuses this one file (an export over its limit, a download
             # turned off, an API not enabled): the others go on.
-            return _give_up(f, turn, f"http_{e.status}")
+            return give_up(f, turn, f"http_{e.status}")
         # A 5xx, a timeout, an answer that is not JSON: this file may fetch next time.
         reason = f"http_{e.status}" if e.status else "unreachable"
-        return _wait(f, turn, reason, _error(e))
+        return wait(f, turn, reason, client_error(e))
     except extractors.ExtractionFailed as e:
         log.info("knowledge_source_sync: %s not extracted: %s", f["id"], e.code)
-        return _give_up(f, turn, f"extraction_failed:{e.code}")
+        return give_up(f, turn, f"extraction_failed:{e.code}")
     except extractors.ExtractorUnavailable as e:
         # This one file's extraction: the format's other files may still go through.
-        return _wait(f, turn, "extractor_unavailable", f"extractor_unavailable: {e}")
+        return wait(f, turn, "extractor_unavailable", f"extractor_unavailable: {e}")
     except Exception as e:  # noqa: BLE001 — one file's conversion must not stop the others
         log.warning("knowledge_source_sync: reading %s failed: %s", f["id"], e)
-        return _wait(f, turn, f"fetch_failed:{type(e).__name__}", type(e).__name__)
-    await _require_current(src)
+        return wait(f, turn, f"fetch_failed:{type(e).__name__}", type(e).__name__)
+    await require_current(src)
     try:
-        await _write(src, f, uri, fetched)
+        await write_document(
+            src,
+            f,
+            uri,
+            fetched.content,
+            ingested_format=fetched.ingested_format,
+            original=fetched.original,
+            extra_metadata={"extraction_coverage": fetched.coverage} if fetched.coverage else None,
+        )
     except ValidationError as e:
         # The write refuses this file whatever the pass: it will not go through.
-        return _give_up(f, turn, f"write_refused:{e.to_detail().get('code') or 'invalid'}")
+        return give_up(f, turn, f"write_refused:{e.to_detail().get('code') or 'invalid'}")
     except Exception as e:  # noqa: BLE001 — one file's write must not stop the others
         log.warning("knowledge_source_sync: writing %s failed: %s", f["id"], e)
-        return _wait(f, turn, f"write_failed:{type(e).__name__}", type(e).__name__)
+        return wait(f, turn, f"write_failed:{type(e).__name__}", type(e).__name__)
     turn.changed += 1
     return "written"
 
 
-def _give_up(f: dict[str, Any], turn: TurnResult, reason: str) -> str:
+def give_up(f: dict[str, Any], turn: TurnResult, reason: str) -> str:
     """A file refused for good: unconverted now, and recorded as given up on its
     revision, so later passes skip it without a fetch or any of the bound until it
-    changes or `_start_waits` grants a retry."""
-    turn.waits[str(f["id"])] = [str(f.get("modifiedTime") or ""), _WAIT_PASSES, reason]
+    changes or `start_waits` grants a retry."""
+    turn.waits[str(f["id"])] = [str(f.get("modifiedTime") or ""), WAIT_PASSES, reason]
     turn.unconverted_for(reason)
     return "given_up"
 
@@ -660,16 +715,16 @@ def _over_size(f: dict[str, Any]) -> bool:
     return size > int(settings.knowledge_source_sync_max_file_bytes)
 
 
-def _wait(f: dict[str, Any], turn: TurnResult, reason: str, error: str) -> str:
+def wait(f: dict[str, Any], turn: TurnResult, reason: str, error: str) -> str:
     """One more pass this file waited on its revision; unconverted once it waited
-    `_WAIT_PASSES`, else the turn stays incomplete. Always `waiting`: the entry
+    `WAIT_PASSES`, else the turn stays incomplete. Always `waiting`: the entry
     stays once exhausted too, so a given-up file is tried again only when it
-    changes or `_start_waits` grants a retry."""
+    changes or `start_waits` grants a retry."""
     file_id, revision = str(f["id"]), str(f.get("modifiedTime") or "")
-    entry = _waiting(turn, f)
+    entry = waiting(turn, f)
     passes = int(entry[1]) + 1 if entry is not None else 1
     turn.waits[file_id] = [revision, passes, reason]
-    if passes >= _WAIT_PASSES:
+    if passes >= WAIT_PASSES:
         turn.unconverted_for(reason)
     else:
         turn.fail("failed", error[:200])
@@ -685,7 +740,7 @@ class _Fetched:
     coverage: dict[str, Any] = field(default_factory=dict)
 
 
-async def _servable(f: dict[str, Any], run: _Pass) -> bool:
+async def _servable(f: dict[str, Any], run: Pass) -> bool:
     """Whether the file can be turned into text here: a native document or deck, or
     an uploaded file whose format an extractor service declares. ExtractorUnavailable
     when the service its format is routed to could not be read: down is not the
@@ -729,14 +784,14 @@ async def _fetch(token: str, f: dict[str, Any]) -> _Fetched:
     return _Fetched(convert.artifact_markdown(artifact), fmt, data, convert.coverage_of(artifact))
 
 
-async def _may_write(src: KnowledgeSource, uri: str) -> bool:
+async def may_write(src: KnowledgeSource, uri: str) -> bool:
     """Whether the live document at `uri`, if any, is this source's: a document
     another writer or another source holds is never overwritten or retired."""
     doc = await documents.get_one(src.org, src.namespace, uri, include_superseded=False)
     return doc is None or (doc.actor == SYNC_WORKER_ACTOR and source_tag(src.name) in doc.tags)
 
 
-async def _require_current(src: KnowledgeSource) -> None:
+async def require_current(src: KnowledgeSource) -> None:
     """SourceGone unless the source is still active as the registration this turn
     started with: a remove during the turn stops it before its next write."""
     with sequential_reads():
@@ -750,7 +805,21 @@ def _repo_tag(src: KnowledgeSource) -> str:
     return repo_tag(cfg.git_remote or cfg.repo) if cfg is not None else ""
 
 
-async def _write(src: KnowledgeSource, f: dict[str, Any], uri: str, fetched: _Fetched) -> None:
+async def write_document(
+    src: KnowledgeSource,
+    f: dict[str, Any],
+    uri: str,
+    content: str,
+    *,
+    ingested_format: str,
+    original: bytes = b"",
+    extra_metadata: dict[str, Any] | None = None,
+) -> None:
+    """Write one item (`f`: its `id`, `name`, `modifiedTime` and, with an original,
+    its `mimeType`) at `uri` with `knowledge.upsert`, as the sync worker: tagged
+    `source-kind:design_doc`, the repository's `repo:<id>` and `source:<name>`,
+    class `imported`, with the source's kind and name, the item's id and revision
+    and the conversion in its metadata."""
     tags = ["source-kind:design_doc", source_tag(src.name)]
     if repo := _repo_tag(src):
         tags.insert(1, repo)
@@ -759,26 +828,23 @@ async def _write(src: KnowledgeSource, f: dict[str, Any], uri: str, fetched: _Fe
         "source_name": src.name,
         "source_revision": str(f.get("modifiedTime") or ""),
         "ingested_from": str(f["id"]),
-        "ingested_format": fetched.ingested_format,
+        "ingested_format": ingested_format,
+        **(extra_metadata or {}),
     }
-    if fetched.coverage:
-        metadata["extraction_coverage"] = fetched.coverage
     pass_context.check_stop()  # a stopped pass or a lost lease writes nothing
     await writes.handle_knowledge_upsert(
         KnowledgeUpsertInput(
             org=src.org,
             namespace=src.namespace,
             source_uri=uri,
-            content=fetched.content,
+            content=content,
             title=str(f.get("name") or ""),
-            description=convert.description_of(fetched.content),
+            description=convert.description_of(content),
             tags=tags,
             metadata=metadata,
-            original_bytes_b64=(
-                base64.b64encode(fetched.original).decode() if fetched.original else None
-            ),
-            original_filename=str(f.get("name") or "") if fetched.original else "",
-            blob_content_type=str(f.get("mimeType") or "") if fetched.original else "",
+            original_bytes_b64=base64.b64encode(original).decode() if original else None,
+            original_filename=str(f.get("name") or "") if original else "",
+            blob_content_type=str(f.get("mimeType") or "") if original else "",
             source_class="imported",
         )
     )
@@ -787,7 +853,7 @@ async def _write(src: KnowledgeSource, f: dict[str, Any], uri: str, fetched: _Fe
 async def retire(src: KnowledgeSource, uri: str) -> bool:
     """Retire one of the source's documents, with the audit row the transport would
     have written for `knowledge.delete`; False when it is no longer the source's."""
-    if not await _may_write(src, uri):
+    if not await may_write(src, uri):
         return False
     pass_context.check_stop()
     out = await writes.handle_knowledge_delete(
@@ -848,7 +914,7 @@ async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnRes
 
 
 async def _retire_removed_sources(
-    run: _Pass, result: PassResult, *, org: str, namespace: str, only: str
+    run: Pass, result: PassResult, *, org: str, namespace: str, only: str
 ) -> None:
     """Retire the documents of removed sources whose maintainer asked for it, then
     clear the request once none is left."""
@@ -872,7 +938,7 @@ async def _retire_removed_sources(
             pass_context.note_failure(e, _cursor_of(src))
 
 
-async def _retire_all(src: KnowledgeSource, run: _Pass, result: PassResult) -> None:
+async def _retire_all(src: KnowledgeSource, run: Pass, result: PassResult) -> None:
     docs = await store.source_documents(src.org, src.namespace, src.name)
     for doc in docs:
         if run.spent():
@@ -897,11 +963,25 @@ async def _retire_all(src: KnowledgeSource, run: _Pass, result: PassResult) -> N
 
 
 __all__ = [
+    "WAIT_PASSES",
+    "WORKER",
+    "Pass",
     "PassResult",
     "SourceGone",
     "TurnResult",
-    "WORKER",
+    "capped",
+    "client_error",
+    "full_due",
+    "give_up",
+    "may_write",
+    "require_current",
     "retire",
+    "retire_absent",
     "run_sync",
     "source_uri_of",
+    "start_waits",
+    "sync_item",
+    "wait",
+    "waiting",
+    "write_document",
 ]
