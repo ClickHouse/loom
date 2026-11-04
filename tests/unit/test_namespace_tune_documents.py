@@ -843,3 +843,26 @@ async def test_a_format_no_extractor_is_configured_for_says_so(docs: Docs) -> No
     (p,) = _target(out, "settings.document_extractors_json")
     assert "no extractor is configured for it" in p.rationale
     assert "no service" not in p.rationale
+
+
+@pytest.mark.asyncio
+async def test_failed_sources_with_and_without_an_extractor_are_told_apart(docs: Docs) -> None:
+    # No default URL; application/pdf goes to X, which does not declare pdf, and a pdf of
+    # another media type goes to no service.
+    x, t = "http://x:8080", "http://pdf-t:8080"
+    docs.routed = {("pdf", "application/pdf"): x, "pdf": ""}
+    docs.services = [
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["application/pdf"]', x, frozenset()),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["docx"]', t, frozenset({"pdf", "docx"})),
+    ]
+    docs.unavailable = [
+        _pdf_job("files/a.pdf", "application/pdf"),
+        _pdf_job("files/b.pdf", "application/octet-stream"),
+    ]
+    out, _ = await _drafts()
+    (p,) = _target(out, "settings.document_extractors_json")
+    assert (
+        "pdf: 2 sources failed format_unavailable; 1 goes to "
+        'LOOM_DOCUMENT_EXTRACTORS_JSON["application/pdf"], which does not declare it; '
+        "1 has no extractor configured;" in p.rationale
+    ), p.rationale

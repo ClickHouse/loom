@@ -555,11 +555,19 @@ def _judge_format(
     )
     answers_lossy = lossy and pick.url not in producers
     # '' is no service: no default URL and no route for the format.
-    goes_to = (
-        "no extractor is configured for it"
-        if set(stuck) == {""}
-        else f"they go to {_names(services, set(stuck))}, which does not declare it"
-    )
+    unrouted = len(stuck.get("", []))
+    routed = {u: v for u, v in stuck.items() if u}
+    named = f"{_names(services, set(routed))}, which does not declare it"
+    if not routed:
+        goes_to = "no extractor is configured for it"
+    elif not unrouted:
+        goes_to = f"they go to {named}"
+    else:
+        n = sum(len(v) for v in routed.values())
+        goes_to = (
+            f"{n} {'goes' if n == 1 else 'go'} to {named}; {unrouted} "
+            f"{'has' if unrouted == 1 else 'have'} no extractor configured"
+        )
     parts = [f"{failed}; {goes_to}"] if stuck else []
     if answers_lossy:
         parts.append(f"{_lost(row or {})} under {_names(services, producers)}")
