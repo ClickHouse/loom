@@ -15,8 +15,9 @@ export interface KnowledgeSourceSync {
   documents_seen: number;
   changed: number;
   removed: number;
-  /** Files not ingested, and why, as reason -> files. */
+  /** Files not ingested. */
   unconverted: number;
+  /** Why, as reason -> files. */
   unconverted_reasons: Record<string, number>;
   /** Files not written because another writer's document holds their address. */
   skipped: number;
@@ -150,7 +151,7 @@ const REASON_LABEL: Record<string, string> = {
   extractor_unavailable: "extractor unavailable",
 };
 
-/** Why files were not converted, most first: "no extractor for the format: 2; too_large…".
+/** Why files were not converted, most first: "no extractor for the format: 2; http_404: 1".
  *  A reason the card has no words for is shown as the server wrote it. */
 export function unconvertedDetail(reasons: Record<string, number>): string {
   return Object.entries(reasons)

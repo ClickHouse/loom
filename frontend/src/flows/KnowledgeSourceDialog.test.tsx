@@ -138,6 +138,7 @@ describe("AddSourceDialog", () => {
     expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
     expectKeyNowhere();
   });
+
   it("a refused add keeps the passed check, so Add can be tried again", async () => {
     vi.mocked(addKnowledgeSource).mockImplementation(async (_id, _f, dryRun) => {
       if (dryRun) return addResult(true);
@@ -172,6 +173,7 @@ describe("RotateSourceDialog", () => {
     fireEvent.change(field, { target: { value: KEY } });
     fireEvent.click(rotate);
     await waitFor(() => expect(onRotated).toHaveBeenCalled());
+    expect(rotateKnowledgeSource).toHaveBeenCalledTimes(1);
     expect(rotateKnowledgeSource).toHaveBeenCalledWith(NS, "design-docs", KEY);
     expectKeyNowhere();
   });

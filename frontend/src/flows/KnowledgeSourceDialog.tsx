@@ -58,8 +58,9 @@ function ProbeResult({ probe, lead }: { probe: KnowledgeSourceProbe; lead: strin
       </p>
       {probe.sample.length > 0 && (
         <ul className="list-disc pl-5 text-xs text-text-muted" aria-label="Sample documents">
-          {probe.sample.map((t) => (
-            <li key={t} className="break-words">
+          {probe.sample.map((t, i) => (
+            // Titles can repeat, so the position is the key.
+            <li key={i} className="break-words">
               {t}
             </li>
           ))}
