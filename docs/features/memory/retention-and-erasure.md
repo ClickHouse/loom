@@ -115,8 +115,8 @@ A `user_id` erasure removes the verbatim chunks stamped with the user, and the c
 stamped with no user (`-`) under one of the user's `(namespace, key)` pairs. A no-user chunk
 can belong to the user's own memory, and the write path retires such chunks as the
 writer's too, so the erasure takes them rather than leave the user's text. A no-user chunk
-of another memory of the key (a no-user memory's, or another user's) goes with them, and
-that memory stays live. Another user's own chunks of the key stay.
+of another memory of the key (a no-user memory's, or another user's legacy chunk) goes with
+them, and that memory stays live. Another user's own chunks of the key stay.
 
 ### The saga
 
