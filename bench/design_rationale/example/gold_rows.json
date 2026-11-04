@@ -1,0 +1,51 @@
+[
+  {
+    "memory_key": "design/thumbnail-cache/segmented-lru",
+    "value": "Decided a segmented LRU (probation and protected segments, protected capped at 80%) because a gallery scan touches thousands of thumbnails once and must only churn probation. Rejected: plain LRU — one scan evicts the whole working set; LFU — stale popular entries never leave and counters cost 16 bytes per entry. Applies to `SegmentedLru`, src/cache/segmented_lru.py.",
+    "tags": ["decision", "source-kind:design_doc"],
+    "files": ["src/cache/segmented_lru.py"],
+    "document": "thumbnail-cache",
+    "section": "Thumbnail cache eviction > Segmented LRU"
+  },
+  {
+    "memory_key": "design/thumbnail-cache/size-with-memory-limit",
+    "value": "thumb_cache_bytes stays at 512 MiB unless the container memory limit rises with it, because the renderer needs 1 GiB of headroom and a larger cache under the same limit gets the process killed. Applies to src/cache/config.py.",
+    "tags": ["decision", "constraint", "source-kind:design_doc"],
+    "files": ["src/cache/config.py"],
+    "document": "thumbnail-cache",
+    "section": "Thumbnail cache eviction > Cache size"
+  },
+  {
+    "memory_key": "design/upload/backoff-full-jitter",
+    "value": "Decided exponential backoff with full jitter (200 ms start, 30 s cap, at most 5 attempts) because jitter spreads many clients' retries after a gateway restart. Rejected: fixed-interval retries — every client retries in the same second and the gateway falls over again. Applies to `RetryPolicy`, src/upload/retry.py.",
+    "tags": ["decision", "source-kind:design_doc"],
+    "files": ["src/upload/retry.py"],
+    "document": "upload-retries",
+    "section": "Upload retry policy > Backoff"
+  },
+  {
+    "memory_key": "design/upload/idempotency-key",
+    "value": "Every upload attempt carries the same idempotency key, because a retry after a lost response must never store the original twice. Applies to src/upload/client.py.",
+    "tags": ["decision", "constraint", "source-kind:design_doc"],
+    "files": ["src/upload/client.py"],
+    "document": "upload-retries",
+    "section": "Upload retry policy > Idempotency"
+  },
+  {
+    "memory_key": "design/upload/retried-statuses",
+    "value": "Only 5xx responses and timeouts are retried; a 429 is reported to the caller, never retried. Applies to src/upload/retry.py.",
+    "tags": ["decision", "source-kind:design_doc"],
+    "files": ["src/upload/retry.py"],
+    "document": "upload-retries",
+    "section": "Upload retry policy > What is retried"
+  },
+  {
+    "memory_key": "design/upload/retried-statuses",
+    "value": "Decided to retry 5xx responses, timeouts and 429 responses, a 429 after the delay its Retry-After header asks for, because the gateway sheds load with 429 during deploys and those uploads succeed seconds later. Applies to src/upload/retry.py.",
+    "tags": ["decision", "source-kind:design_doc"],
+    "files": ["src/upload/retry.py"],
+    "document": "upload-retries",
+    "section": "Upload retry policy > What is retried",
+    "after_revision": true
+  }
+]

@@ -577,6 +577,62 @@ above 0.84: 14 hits instead of 17, margin 0.0156 instead of 0.0056) and 0.87 for
 deployment's cached questions over two repositories. Re-run the script for a new embedder
 before serving the cache on it.
 
+### Design rationale
+
+`bench/design_rationale/` measures whether the design decisions Loom serves from a
+repository's design documents keep a coding agent from re-proposing a rejected option,
+and whether its answers to "why" questions are correct, cited and free of stale or
+invented rationale. No measurement is recorded yet: the task set is private material,
+read from a directory given on the command line, and only the synthetic set in
+`bench/design_rationale/example/` is committed
+([schema](../../bench/design_rationale/README.md)).
+
+| Arm | The agent is shown                                                                                               |
+| --- | ---------------------------------------------------------------------------------------------------------------- |
+| 0   | Nothing                                                                                                          |
+| 1   | The whole document through `knowledge.get`                                                                       |
+| 2   | The document as knowledge, through `loom_search`                                                                 |
+| 3   | The gold rows through the pre-edit block and the `loom_search` memory section                                    |
+| 4   | The same surfaces over rows extracted from the documents (`loom decisions extract`, or a document source's sync) |
+
+**Metrics.** Why questions (A): argument-level precision and recall against the gold
+arguments, and the share of answers a judge flags as potentially misleading. Change tasks
+(B): avoidance (no forbidden option proposed; deterministic diff detectors first, a judge
+for the rest) and design satisfaction (no gold constraint broken). Supersession and
+abstention (C): a reversed statement served as governing, or a rationale invented where
+none is recorded, fails. Citations: recall (claims with a citation whose resolved text
+supports them) and precision (citations that resolve through `knowledge.get` or
+`memory.get` and support what they are cited for; a pointer to a deleted document fails).
+Injected tokens per task and surface, pre-edit blocks over 300 tokens, and the arm 1 to
+arm 3 token ratio. Extraction precision per document from a human-judged file, with the
+misleading-rationale rate and the share of gold rows whose source carries no extractable
+text.
+
+**Statistics.** Each task is answered K times per arm (default 4); every answer is judged
+in both orders (gold before and after the answer) and twice per order, and the report
+gives the agreement between orders, repeats and judge models. Arms are compared paired
+per task, with a bootstrap that resamples whole documents (`bench/bootstrap.py`), and
+each comparison reports its minimum detectable effect from the run's own spread. With a
+handful of documents the interval is too narrow: read the cluster count beside it.
+
+**Run** against a Loom server and ClickHouse the run started, with the server's
+environment in the shell (arm 4 runs the extraction CLI):
+
+```bash
+PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> --dry-run \
+  --reader-model <m> --judge-model <m> --extract-model <the server's LOOM_LLM_MODEL>
+PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> \
+  --base-url http://127.0.0.1:<port> --reader-model <m> --judge-model <m> \
+  --extract-model <m> --max-usd <cap>
+PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale score <taskset> --out <dir> \
+  --extraction-labels <dir>/extraction_labels.json
+```
+
+The dry run prints the calls, tokens and spend a run would take, typical and at every
+output cap. A real run refuses to start without `--max-usd` or with an unpriced model,
+and refuses each call whose worst case would cross the cap. The run directory holds the
+task set's text: keep it out of the repository.
+
 ## Reference computations
 
 Deterministic outputs of the scoring code on fixed input, pinned by unit tests. The

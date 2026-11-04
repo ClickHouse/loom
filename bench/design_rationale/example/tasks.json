@@ -1,0 +1,97 @@
+{
+  "system": "the thumbnail service",
+  "A": [
+    {
+      "id": "A1",
+      "document": "thumbnail-cache",
+      "question": "Why does the thumbnail cache use a segmented LRU instead of a plain LRU list?",
+      "gold_rows": ["design/thumbnail-cache/segmented-lru"],
+      "gold_arguments": [
+        "a gallery scan touches thousands of thumbnails exactly once",
+        "under a plain LRU one scan evicts the whole working set",
+        "under the segmented LRU a scan only churns the probation segment"
+      ],
+      "rejected_options": ["plain LRU", "LFU"]
+    },
+    {
+      "id": "A2",
+      "document": "thumbnail-cache",
+      "question": "Why was LFU not chosen for thumbnail eviction?",
+      "gold_rows": ["design/thumbnail-cache/segmented-lru"],
+      "gold_arguments": [
+        "entries popular in the past keep high counts and never leave",
+        "the per-entry counters cost 16 bytes each"
+      ],
+      "rejected_options": ["LFU"]
+    },
+    {
+      "id": "A3",
+      "document": "upload-retries",
+      "question": "Why do upload retries use full jitter?",
+      "gold_rows": ["design/upload/backoff-full-jitter"],
+      "gold_arguments": [
+        "full jitter spreads the retries of many clients after a gateway restart",
+        "fixed-interval retries make every client retry in the same second and the gateway falls over again"
+      ],
+      "rejected_options": ["fixed-interval retries"]
+    }
+  ],
+  "B": [
+    {
+      "id": "B1",
+      "document": "thumbnail-cache",
+      "task": "Simplify the thumbnail cache: replace the two-segment eviction with one LRU list.",
+      "gold_rows": ["design/thumbnail-cache/segmented-lru"],
+      "gold_constraints": ["a single gallery scan must not evict the hot working set"],
+      "forbidden_options": ["a plain single-list LRU"],
+      "detector": [
+        {"type": "diff_removed_regex", "path_glob": "src/cache/*", "pattern": "probation|protected"}
+      ]
+    },
+    {
+      "id": "B2",
+      "document": "thumbnail-cache",
+      "task": "Thumbnails are evicted too often under load; raise the cache size.",
+      "gold_rows": ["design/thumbnail-cache/size-with-memory-limit"],
+      "gold_constraints": ["thumb_cache_bytes rises only together with the container memory limit"],
+      "forbidden_options": ["raising thumb_cache_bytes alone"],
+      "detector": [
+        {"type": "setting_default_changed", "setting": "thumb_cache_bytes", "from": "512"},
+        {"type": "judge", "rubric": "fail if the cache default grows and the memory limit does not"}
+      ]
+    },
+    {
+      "id": "B3",
+      "document": "upload-retries",
+      "task": "Make upload retries predictable: retry once per second instead of with backoff.",
+      "gold_rows": ["design/upload/backoff-full-jitter", "design/upload/idempotency-key"],
+      "gold_constraints": [
+        "retries after a gateway restart must not arrive together",
+        "every attempt keeps the same idempotency key"
+      ],
+      "forbidden_options": ["fixed-interval retries"],
+      "detector": [
+        {"type": "diff_added_regex", "path_glob": "src/upload/*", "pattern": "sleep\\(\\s*1(\\.0)?\\s*\\)"},
+        {"type": "diff_removed_regex", "path_glob": "src/upload/*", "pattern": "idempotency"}
+      ]
+    }
+  ],
+  "C": [
+    {
+      "id": "C1",
+      "document": "upload-retries",
+      "subtype": "supersession",
+      "question": "Does the upload client retry a 429 response?",
+      "gold_rows": ["design/upload/retried-statuses"],
+      "current": "yes: a 429 is retried after the delay its Retry-After header asks for",
+      "stale_claims": ["a 429 response is never retried and is reported to the caller"]
+    },
+    {
+      "id": "C2",
+      "document": "thumbnail-cache",
+      "subtype": "abstention",
+      "question": "Why does the thumbnail encoder use quality 82 for JPEG output?",
+      "gold_rows": []
+    }
+  ]
+}

@@ -1,0 +1,104 @@
+# Design-rationale bench
+
+Measures whether the design decisions Loom serves from a repository's design documents
+keep a coding agent from re-proposing rejected options, and whether the agent answers
+"why" questions correctly, cited, and without stale or invented rationale. The manual is
+`python -m bench.design_rationale --help`; this page is the task-set schema.
+
+The real task set is private material and is never committed. The harness reads a task
+set from the directory given on the command line; `example/` is a small synthetic one
+(an invented thumbnail service) that the unit tests run end to end.
+
+## Arms
+
+| Arm | What the agent is shown                                                                                                                                               |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0   | Nothing                                                                                                                                                               |
+| 1   | The whole document, through `knowledge.get`                                                                                                                           |
+| 2   | The document ingested as knowledge, through the knowledge hits of `loom_search`                                                                                       |
+| 3   | The gold rows, through the pre-edit block (`memory.for_file` for each file the task touches) and the memory section of `loom_search`                                  |
+| 4   | The same surfaces over the rows `loom decisions extract --apply` mined from the documents, or with `--arm4-namespace` the rows a document source's sync already wrote |
+
+Each arm's namespace lives in its own org, since a search reads every namespace of its
+org. The gold rows are never written where arm 4 extracts.
+
+## Task kinds
+
+- **A, why questions.** Scored on argument precision and recall against the gold
+  arguments, a potentially-misleading flag, and citations.
+- **B, change tasks** where the obvious change is a rejected option or breaks a
+  constraint. The agent writes a plan and a diff; deterministic detectors read the diff
+  first, a judge the rest. Scored on avoidance (no forbidden option proposed) and design
+  satisfaction (no constraint broken).
+- **C, supersession and abstention.** A supersession task asks about a statement a later
+  revision of the document reversed: serving the stale statement as governing fails. An
+  abstention task asks about something no document records: an invented rationale fails.
+
+## Directory layout
+
+```
+<taskset>/
+  documents.json
+  gold_rows.json
+  tasks.json
+  <the document files documents.json names>
+```
+
+`documents.json` is a list of documents:
+
+| Field         | Meaning                                                                                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | The document's id, which tasks and gold rows name                                                                                                                      |
+| `source_uri`  | The `source_uri` it is ingested under                                                                                                                                  |
+| `title`       | Its title                                                                                                                                                              |
+| `path`        | The markdown file, relative to the directory (or absolute)                                                                                                             |
+| `revision_of` | Optional: the id of the document this one revises. It shares that document's `source_uri` and is ingested after every first version, so the earlier text is superseded |
+
+`gold_rows.json` is a list of decision rows, written with `memory.set` (and `memory.pin`
+when pinned) in arm 3:
+
+| Field                                                 | Meaning                                                                                                                                              |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory_key`, `value`, `files`, `tags`, `memory_type` | As `memory.set` takes them (`memory_type` defaults to `decision`)                                                                                    |
+| `document`, `section`                                 | Where the row's reasoning is written; or `source_resource_id` as `knowledge:<ns>/<source_uri>#<section>`, whose namespace is replaced with the run's |
+| `pinned`                                              | Default true                                                                                                                                         |
+| `after_revision`                                      | Written after the revisions are ingested: a key written again is a Revise of the earlier row                                                         |
+| `image_only`                                          | Its source section carries no extractable text (counted per document in `score --extraction-labels`)                                                 |
+
+`tasks.json` holds `"system"` (how the prompts name the code base) and the lists `"A"`,
+`"B"`, `"C"`. Every task has `id`, `document` (or `deck`) and `gold_rows` (keys of
+`gold_rows.json`).
+
+| Kind | Fields                                                                                                                                                   |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A    | `question`, `gold_arguments` (list), `rejected_options` (list)                                                                                           |
+| B    | `task`, `gold_constraints`, `forbidden_options`, `detector` (list), optional `judge_rubric` (list)                                                       |
+| C    | `question`, `subtype` (`supersession` or `abstention`); a supersession task adds `current` (the design now) and `stale_claims` (the reversed statements) |
+
+A detector is one of:
+
+| `type`                    | Fires when                                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------ |
+| `file_touched`            | the diff modifies any of `paths`                                                     |
+| `diff_added_regex`        | an added line in a file matching `path_glob` matches `pattern`                       |
+| `diff_removed_regex`      | a removed line in a file matching `path_glob` matches `pattern`                      |
+| `setting_default_changed` | an added line declares `setting` with a default other than `from` (or contains `to`) |
+| `judge`                   | never: its `rubric` goes to the judge                                                |
+
+A detector that fires is a failure of the task. The paths detectors name are also the
+files whose pre-edit block arms 3 and 4 read.
+
+## Outputs
+
+`run --out <dir>` writes, and resumes from: `state.json` (namespaces, extraction
+reports), `surfaces.json` (what each arm injected per task, with token counts),
+`answers.json`, `judged.json` (citations with their resolution, detector results, every
+judge pass), `ledger.jsonl` (every model call and its price; the extraction leg as an
+estimate charged before it runs), `extract_<doc>.log` and
+`extraction_labels.todo.json`. Fill each row's `verdict` (`correct`, `partly`, `wrong`
+or `misleading`) and pass the file to `score --extraction-labels` for extraction
+precision. `score --human-labels` takes a list of
+`{"answer": "<task>/arm<a>/s<k>", "field": "avoids", "value": true}` and reports judge
+accuracy and kappa. `score` writes `metrics.json` and prints aggregate tables with no
+task text. The run directory holds the task set's content: keep it out of the
+repository.
