@@ -139,9 +139,10 @@ class _SearchHit(BaseModel):
     agent: str = "-"
     session_id: str = "-"
     source_class: str = ""
-    # The revision of the document this chunk belongs to (0 for one written before
-    # revisions were numbered) and its format (`sql`, `markdown`, ...; '' for text a
-    # caller extracted): a citation names the revision it read.
+    # The document revision this chunk was written as and the document's format (`sql`,
+    # `markdown`, ...; '' for text a caller extracted), as the chunk records them: a
+    # citation names the revision it read. 0 and '' for a chunk written before they were
+    # recorded.
     revision: int = 0
     format: str = ""
     # For a chunk of an extracted file: its blocks' type (`sql_statement`, `toml_table`,
@@ -174,7 +175,8 @@ class KnowledgeSearchInput(BaseModel):
     namespaces: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
         default_factory=list, max_length=100
     )
-    # hybrid: vector leg + BM25 lexical leg fused by reciprocal rank;
+    # hybrid: the vector leg, the BM25 lexical leg and the exact-key leg (the query's
+    # identifiers looked up in an extracted file's chunk keys) fused by reciprocal rank;
     # semantic: vector only;
     # lexical: BM25 only.
     search_mode: Literal["hybrid", "semantic", "lexical"] = "hybrid"
@@ -207,8 +209,9 @@ class KnowledgeSearchInput(BaseModel):
     # agents wrote as their own, without what an agent derived or fetched.
     # Empty = every class.
     source_classes: list[str] = Field(default_factory=list, max_length=8)
-    # Only chunks of documents in these formats (`sql`, `toml`, `markdown`, ...; '' for
-    # text a caller extracted). Empty = every format.
+    # Only chunks written as these document formats (`sql`, `toml`, `markdown`, ...; ''
+    # for text a caller extracted, and for a chunk written before formats were
+    # recorded). Empty = every format.
     formats: list[Annotated[str, Field(max_length=32)]] = Field(default_factory=list, max_length=16)
     # Only chunks of these block types (`sql_statement`, `toml_table`, `toml_key`,
     # `heading`, `paragraph`, `code`, `mixed`, ...). Empty = every type; text a caller
@@ -398,9 +401,9 @@ class KnowledgeSynthesizeInput(BaseModel):
 class _CitedChunk(BaseModel):
     source_uri: str
     chunk_idx: int
-    # The document's revision the chunk was read from (0 for one written before
-    # revisions were numbered), and where the chunk sits in the source for an extracted
-    # file (`line_start`, `line_end`, a key path, ...; None for text a caller extracted).
+    # The document revision the chunk was written as (0 for a chunk written before it was
+    # recorded), and where the chunk sits in the source for an extracted file
+    # (`line_start`, `line_end`, a key path, ...; None for text a caller extracted).
     revision: int = 0
     locator: dict[str, Any] | None = None
 

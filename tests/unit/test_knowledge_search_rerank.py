@@ -13,17 +13,6 @@ from server.memory.app import rerank as rerank_mod
 from server.settings import settings
 
 
-@pytest.fixture(autouse=True)
-def _no_document_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The hits' documents are not stored: every hit reads revision 0, no format."""
-    from server.knowledge.store import documents as documents_repo
-
-    async def _none(*a: Any, **k: Any) -> dict[Any, Any]:
-        return {}
-
-    monkeypatch.setattr(documents_repo, "revisions_and_formats", _none)
-
-
 def _input(**kw: Any) -> KnowledgeSearchInput:
     return KnowledgeSearchInput(org="o", namespace="n", query="refunds", **kw)
 

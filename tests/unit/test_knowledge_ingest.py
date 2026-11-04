@@ -1326,3 +1326,37 @@ def test_the_last_lease_check_is_inside_the_claimed_block(world: World) -> None:
     world.lose_lease_in_claim = True
     job_id = _ingest(world, _upload(world))
     assert _run(world, job_id) is None and world.documents == []
+
+
+def test_each_published_chunk_records_its_revision_and_format(world: World) -> None:
+    """Search and citations read a chunk's revision off the chunk: it is the revision
+    its document row takes, not whichever is live when it is read."""
+    _run(world, _ingest(world, _upload(world)))
+    _run(world, _ingest(world, _upload(world)))
+    by_version: dict[int, set[tuple[int, str]]] = {}
+    for c in world.chunks:
+        meta = json.loads(c["chunk_metadata"])
+        by_version.setdefault(c["doc_version"], set()).add((meta["revision"], meta["format"]))
+    assert sorted(by_version.values(), key=str) == [{(1, "sql")}, {(2, "sql")}]
+    assert [d["revision"] for d in world.documents] == [1, 2]
+
+
+def test_a_write_between_the_revision_and_the_claim_fails_the_publish(world: World) -> None:
+    """The chunks recorded a revision decided before they were written; a text write
+    of the source landing before the claim makes it stale, so the publish fails and
+    its chunks are retired."""
+    _run(world, _ingest(world, _upload(world)))
+
+    def text_write_lands(rows: Any) -> None:
+        world.chunks.extend(rows)
+        doc = world.documents[-1]
+        world.documents.append(
+            {**doc, "version": doc["version"] + 1, "revision": 2, "ingestion_id": ""}
+        )
+
+    world.on_chunks = text_write_lands
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "failed"
+    job = world.job(job_id)
+    assert job is not None and job["error_code"] == "revision_conflict"
+    assert world.retired == [job["doc_version"]]

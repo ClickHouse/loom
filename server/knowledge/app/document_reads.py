@@ -22,6 +22,7 @@ from server.knowledge.api.models_knowledge import (
     _KnowledgeListEntry,
     _OutlineEntry,
 )
+from server.knowledge.domain.chunk_metadata import read_structure
 from server.knowledge.domain.chunking import Chunk
 from server.operations.read_projection import resolve as _resolve_projection
 
@@ -206,8 +207,8 @@ async def handle_knowledge_get(input: KnowledgeGetInput) -> KnowledgeGetOutput:
 
 async def document_chunks(org: str, namespace: str, source_uri: str) -> list[CorpusChunk]:
     """The document's live chunks for the current embedding model, in document order, each
-    with its section path. Empty for a document chunked under another model, until
-    `loom rechunk`."""
+    with its section path, the revision it was written as and its locator. Empty for a
+    document chunked under another model, until `loom rechunk`."""
     from server.knowledge.store import chunks as knowledge_repo
     from server.memory.domain.corpus_synthesis import CorpusChunk
 
@@ -216,22 +217,15 @@ async def document_chunks(org: str, namespace: str, source_uri: str) -> list[Cor
     )
     out: list[CorpusChunk] = []
     for r in rows:
-        try:
-            raw = json.loads(r.chunk_metadata) if r.chunk_metadata else {}
-        except (TypeError, ValueError):
-            raw = {}
-        path = raw.get("section_path") if isinstance(raw, dict) else None
+        meta = read_structure(r.chunk_metadata)
         out.append(
             CorpusChunk(
                 source_uri=source_uri,
                 idx=int(r.chunk_idx),
                 text=str(r.content or ""),
-                section_path=tuple(str(p) for p in path) if isinstance(path, list) else (),
-                locator=(
-                    raw["locator"]
-                    if isinstance(raw, dict) and isinstance(raw.get("locator"), dict)
-                    else None
-                ),
+                section_path=meta.section_path,
+                revision=meta.revision,
+                locator=meta.locator,
             )
         )
     return out

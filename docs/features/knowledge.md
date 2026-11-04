@@ -446,20 +446,26 @@ an exact-key leg, and fuses them by reciprocal rank:
 
 Each hit carries `source_uri`, `chunk_idx`, `content`, `section` (the breadcrumb as
 text) and `section_path`, `similarity`, `lexical_score`, `score` (the fused rank in
-hybrid mode) and, on a fan-out, the `namespace` it came from. A citation names what
-it read: `revision` is the document's revision (0 for one written before revisions
-were numbered) and `format` its format. A chunk of an [ingested file](#ingesting-files)
-also carries its `block_type` and its `locator` (its lines, a key path), so a caller
-opens the passage in the source.
+hybrid mode) and, on a fan-out, the `namespace` it came from. A citation names what it
+read: `revision` is the document revision the chunk was written as and `format` its
+document's format. A chunk of an [ingested file](#ingesting-files) also carries its
+`block_type` and its `locator` (its lines, a key path), so a caller opens the passage in
+the source.
 
 **Exact keys.** An extracted file's chunks carry the names their blocks define or read
-(the tables a SQL statement creates and reads, a TOML key path). In hybrid mode the
-query's identifier-shaped terms (`events`, `server.port`), as written and lowercased,
-are looked up in them, and the chunks that name the most rank first in a third leg; a
-hit from it reports `keys_matched`. Identifiers that share their words (`orders_daily`,
-`daily_orders`) read the same to BM25, and the exact-key leg tells them apart. A
-block type filter leaves out text a caller extracted (it has none); a TOML table packs
-with its keys, so its chunk's type is `mixed`.
+(the tables and columns a SQL statement creates and reads, a TOML key path). In hybrid
+mode the query's identifiers are looked up in them, and the chunks that name the most
+rank first in a third leg; a hit from it reports `keys_matched`. A term counts as an
+identifier when it cannot be a plain word (an underscore, a dot, a `$` or a digit, or a
+capital after its first letter: `orders_daily`, `server.port`, `userId`), or when it is
+the whole query; a plain word in a question (`status`, `name`) is as often a column of
+many tables as the word the question means, and the lexical leg matches it already.
+Identifiers that share their words (`orders_daily`, `daily_orders`) read the same to
+BM25, and the exact-key leg tells them apart. A block type filter leaves out text a
+caller extracted (it has none); a TOML table packs with its keys, so its chunk's type
+is `mixed`. A chunk records the revision and format it was written as; one written
+before they were recorded reads revision 0 and format `""` until its document is
+written again.
 
 **Reranking.** `rerank` names a reranker (`builtin:openai[:<model>]`,
 `builtin:cohere[:<model>]` or an endpoint in `LOOM_RERANK_ENDPOINTS_JSON`; a URL is

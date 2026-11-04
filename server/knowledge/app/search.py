@@ -1,13 +1,11 @@
-"""knowledge.search hybrid retrieval service.
-
-Vector + tag-filter + recency search over `loom.chunks`, returning top-K
-results to the caller.
+"""knowledge.search's legs over `loom.chunks`: the vector leg, the BM25 lexical leg
+and the exact-key leg, each under the same filters (tags, recency, URI prefix,
+session, class, format, block type), and their reciprocal-rank fusion.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, TypedDict
@@ -15,6 +13,7 @@ from typing import Any, Protocol, TypedDict
 from server.core import bm25
 from server.core.repo_base import _default_client
 from server.core.vectors.search_settings import vector_search_settings
+from server.knowledge.domain.chunk_metadata import read_structure
 from server.knowledge.domain.live_chunks import live_chunk_sql
 
 
@@ -43,8 +42,8 @@ class HybridSearchQuery:
     # Only chunks of documents written in these sessions / of these classes; empty = all.
     session_ids: list[str] = field(default_factory=list)
     source_classes: list[str] = field(default_factory=list)
-    # Only chunks of documents in these formats (`sql`, `markdown`, ...; '' for text a
-    # caller extracted) / of these block types (`sql_statement`, `toml_table`, ...).
+    # Only chunks written as these document formats (`sql`, `markdown`, ...; '' for text
+    # a caller extracted) / of these block types (`sql_statement`, `toml_key`, ...).
     formats: list[str] = field(default_factory=list)
     block_types: list[str] = field(default_factory=list)
     # Exact-key leg input: the query's candidate keys; empty = no exact-key leg.
@@ -78,8 +77,11 @@ class ChunkHit:
     source_class: str = ""
     # The chunk's stored context (title, description, breadcrumb), for a reranker.
     context: str = ""
-    # From an extracted document's structural chunk: its blocks' type and where in the
-    # source it sits (lines, a key path, ...). '' and None for text a caller extracted.
+    # The document revision and format the chunk was written as; for an extracted
+    # file's chunk, its blocks' type and where it sits in the source (lines, a key
+    # path, ...). 0, '', '' and None when the chunk records none.
+    revision: int = 0
+    format: str = ""
     block_type: str = ""
     locator: dict[str, Any] | None = None
     # The query's keys this chunk defines or reads (the exact-key leg).
@@ -139,30 +141,9 @@ def fuse_rrf(
     return fused[:top_k]
 
 
-class _Structure(TypedDict):
-    section_path: tuple[str, ...]
-    block_type: str
-    locator: dict[str, Any] | None
-
-
-def _structure(chunk_metadata: object) -> _Structure:
-    """The section path, block type and locator a chunk's metadata records; empty for
-    text a caller extracted, or metadata that does not read."""
-    meta: object = None
-    if chunk_metadata and isinstance(chunk_metadata, str):
-        try:
-            meta = json.loads(chunk_metadata)
-        except (TypeError, ValueError):
-            meta = None
-    if not isinstance(meta, dict):
-        meta = {}
-    path = meta.get("section_path")
-    locator = meta.get("locator")
-    return {
-        "section_path": (tuple(str(p) for p in path if str(p)) if isinstance(path, list) else ()),
-        "block_type": str(meta.get("block_type") or ""),
-        "locator": locator if isinstance(locator, dict) else None,
-    }
+def _structure(chunk_metadata: object) -> dict[str, Any]:
+    """The ChunkHit fields a chunk's metadata records (`read_structure`)."""
+    return dataclasses.asdict(read_structure(chunk_metadata))
 
 
 async def hybrid_search(
@@ -263,12 +244,8 @@ def _common_where(q: HybridSearchQuery) -> tuple[list[str], dict[str, Any]]:
         )
         params["block_types"] = list(q.block_types)
     if q.formats:
-        # The document row holds the format: a chunk counts when its live document does.
-        where.append(
-            "(namespace, source_uri) IN (SELECT namespace, source_uri FROM loom.documents FINAL"
-            " WHERE org = {org:String} AND namespace IN {nss:Array(String)}"
-            " AND superseded_at IS NULL AND format IN {formats:Array(String)})"
-        )
+        # Each chunk records the format its document was written as.
+        where.append("JSONExtractString(chunk_metadata, 'format') IN {formats:Array(String)}")
         params["formats"] = list(q.formats)
     prefixes = [p for p in (q.uri_prefixes or []) if p]
     if prefixes:

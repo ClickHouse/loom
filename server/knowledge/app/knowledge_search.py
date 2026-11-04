@@ -1,5 +1,6 @@
-"""knowledge.search: hybrid (vector + lexical + tags + recency) over one namespace or the
-caller's namespaces, the addressed one and the private ones first.
+"""knowledge.search over one namespace or the caller's namespaces, the addressed one
+and the private ones first: in hybrid mode the vector, BM25 and exact-key legs fused
+by reciprocal rank, each under the request's filters.
 """
 
 from __future__ import annotations
@@ -69,7 +70,6 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
         )
     results_per_ns = await _search_private_first(input, namespaces, search)
     all_hits = _as_search_hits(results_per_ns)
-    await _attach_revisions(input.org, all_hits)
     all_hits.sort(key=lambda x: (x.score, x.similarity), reverse=True)
     reranked_by = ""
     if endpoint and len(all_hits) > 1:
@@ -167,9 +167,10 @@ async def _rerank(
 def _namespaces_search(
     input: KnowledgeSearchInput, embedder: Embedder, query_vec: list[float], pool: int
 ) -> Callable[[list[str]], Awaitable[list[tuple[str, list[ChunkHit]]]]]:
-    """A search over several namespaces in the requested mode, one statement
-    per leg whatever their number: the vector leg, the lexical leg, or both
-    fused. The hits come back grouped per namespace."""
+    """A search over several namespaces in the requested mode, one statement per leg
+    whatever their number: the vector leg alone (semantic), the lexical leg alone
+    (lexical), or in hybrid mode the vector, lexical and exact-key legs fused. The hits
+    come back grouped per namespace."""
     from server.knowledge.app import bm25 as knowledge_bm25
     from server.knowledge.app.search import (
         HybridSearchQuery,
@@ -205,7 +206,13 @@ def _namespaces_search(
             block_types=list(input.block_types),
         )
         if input.search_mode == "semantic" or not tokens:
-            return await hybrid_search(base)
+            # No lexical leg; a hybrid query of short identifiers (`id`, `db.ts`) still
+            # has its exact keys.
+            if not keys:
+                return await hybrid_search(base)
+            keyed_q = dataclasses.replace(base, top_k=max(top_k * 3, 20), keys=keys)
+            sem, keyed = await asyncio.gather(hybrid_search(keyed_q), keys_search(keyed_q))
+            return fuse_rrf(sem, [], top_k=top_k, keyed=keyed) if keyed else sem[:top_k]
         # Lexical leg needs corpus statistics; a cold corpus (no view rows,
         # no avgdl) or a failed read degrades to the vector leg alone.
         from server.core.ch import get_client as _get_ch
@@ -310,27 +317,14 @@ def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_S
                     agent=h.agent,
                     session_id=h.session_id,
                     source_class=h.source_class,
+                    revision=h.revision,
+                    format=h.format,
                     block_type=h.block_type,
                     locator=h.locator,
                     keys_matched=list(h.keys_matched),
                 )
             )
     return all_hits
-
-
-async def _attach_revisions(org: str, hits: list[_SearchHit]) -> None:
-    """Each hit's document revision and format, from one read of the hits' documents."""
-    from server.knowledge.store import documents as documents_repo
-
-    if not hits:
-        return
-    found = await documents_repo.revisions_and_formats(
-        org,
-        sorted({h.namespace for h in hits}),
-        sorted({h.source_uri for h in hits}),
-    )
-    for h in hits:
-        h.revision, h.format = found.get((h.namespace, h.source_uri), (0, ""))
 
 
 async def _narrow_spans(embedder: Embedder, query_vec: list[float], top: list[_SearchHit]) -> None:

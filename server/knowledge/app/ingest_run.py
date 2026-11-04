@@ -312,16 +312,11 @@ def _context(job: dict[str, Any], chunk: StructuralChunk) -> str:
     return chunk_context(job["title"], job["description"], chunk.breadcrumb)
 
 
-def _revision_for(job: dict[str, Any], prior: Any, version: int) -> int:
+def _revision_for(job: dict[str, Any], prior: Any) -> int:
     """The revision this publish takes over the source's latest row `prior`, or
     JobFailed("revision_conflict") when the job may not publish over it."""
     from server.knowledge.app.writes import next_revision
 
-    # A write of the source that took its version after this one (a text write,
-    # a metadata edit or a delete, which take no claim) would outrank this row in
-    # FINAL: this publish would report a revision no reader sees.
-    if prior is not None and prior.version >= version:
-        raise JobFailed("revision_conflict", "a later write of this source landed first")
     current = prior if prior is not None and prior.superseded_at is None else None
     expected = int(job["expected_revision"])
     at = current.revision if current is not None else 0
@@ -331,6 +326,30 @@ def _revision_for(job: dict[str, Any], prior: Any, version: int) -> int:
         now_at = f"revision {at}" if current is not None else "no live document"
         raise JobFailed("revision_conflict", f"the source has {now_at}, not {expected}")
     return next_revision(prior)
+
+
+def _version_of(doc: Any) -> int | None:
+    return None if doc is None else int(doc.version)
+
+
+async def _check_unchanged(job: dict[str, Any], prior: Any, version: int) -> None:
+    """Under the source's claim: JobFailed("revision_conflict") when the source is no
+    longer as it was when this publish decided its revision, or when its latest row
+    would outrank this one."""
+    from server.knowledge.store import documents as documents_repo
+
+    latest = await documents_repo.get_one(
+        job["org"], job["namespace"], job["source_uri"], include_superseded=True
+    )
+    # Any write of the source since the revision was decided (a text write, a metadata
+    # edit or a delete, which take no claim) changes its latest version: this publish's
+    # revision, which its chunks record, is stale.
+    if _version_of(latest) != _version_of(prior):
+        raise JobFailed("revision_conflict", "the source changed while it was published")
+    # A row stamped after this one (a writer whose clock runs ahead) would outrank it in
+    # FINAL: this publish would report a revision no reader sees.
+    if latest is not None and latest.version >= version:
+        raise JobFailed("revision_conflict", "a later write of this source landed first")
 
 
 async def _publish(
@@ -347,6 +366,10 @@ async def _publish(
     if await _cancelled(job):
         raise JobFailed("cancelled", "cancelled before it was published")
     await _retire_unpublished(job)  # an earlier run's half-done publish
+    # The revision is decided before the chunks are written, since each chunk records
+    # it; the claimed block refuses the publish if the source has changed since.
+    prior = await documents_repo.get_one(org, ns, uri, include_superseded=True)
+    revision = _revision_for(job, prior)
     embedder = get_embedder()
     now = datetime.now(UTC).replace(tzinfo=None)
     version = time.time_ns()
@@ -362,6 +385,8 @@ async def _publish(
         tags=tags,
         metadata=job["metadata"],
         doc_version=version,
+        revision=revision,
+        doc_format=parsed.artifact.format,
         embedding_model=embedder.model_name,
         embedding_dim=embedder.dim,
         now=now,
@@ -387,8 +412,7 @@ async def _publish(
                 )
             if await _cancelled(job):
                 raise JobFailed("cancelled", "cancelled before it was published")
-            prior = await documents_repo.get_one(org, ns, uri, include_superseded=True)
-            revision = _revision_for(job, prior, version)
+            await _check_unchanged(job, prior, version)
             if not lease.held:
                 raise LeaseLost(f"knowledge-ingest:{job['ingestion_id']}")
             row = documents_repo.build_document_row(

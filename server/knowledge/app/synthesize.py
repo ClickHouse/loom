@@ -111,7 +111,7 @@ async def handle_knowledge_synthesize(
     # Punctuation or list markers left by the removed citations are no answer either.
     if not any(ch.isalnum() for ch in answer):
         answer = ""
-    located = await _located(input, wins, cs.cited_chunks(cited, read) if answer else [])
+    located = _located(wins, cs.cited_chunks(cited, read) if answer else [])
     return KnowledgeSynthesizeOutput(
         answer=answer,
         windows=len(wins),
@@ -128,23 +128,14 @@ async def handle_knowledge_synthesize(
     )
 
 
-async def _located(
-    input: KnowledgeSynthesizeInput, wins: list[Window], chunks: list[tuple[str, int]]
-) -> list[_CitedChunk]:
-    """Each cited chunk with its document's revision and its locator."""
-    from server.knowledge.store import documents as documents_repo
-
-    if not chunks:
-        return []
+def _located(wins: list[Window], chunks: list[tuple[str, int]]) -> list[_CitedChunk]:
+    """Each cited chunk with the revision it was written as and its locator, as read."""
     by_key = {(c.source_uri, c.idx): c for w in wins for c in w.chunks}
-    revisions = await documents_repo.revisions_and_formats(
-        input.org, [input.namespace], sorted({uri for uri, _ in chunks})
-    )
     return [
         _CitedChunk(
             source_uri=uri,
             chunk_idx=idx,
-            revision=revisions.get((input.namespace, uri), (0, ""))[0],
+            revision=by_key[(uri, idx)].revision,
             locator=by_key[(uri, idx)].locator,
         )
         for uri, idx in chunks
