@@ -281,10 +281,11 @@ to `max_pages`.
 - **A cursor is a place in the list, not a snapshot.** A grant written during a walk (a new
   grant, a role change, an approval) moves to the front of the list, which the walk has
   passed, and a revoked one drops out. A `grants.revoke` takes the person's row under
-  every verified spelling, so no older spelling brings them back. A tie between a login
-  and an email made between pages can hide the person it joins, not even listed in
-  `also`, and a tie removed can list them twice.
-  Everyone else comes back exactly once; a walk started after the change sees it.
+  every verified spelling, so no older spelling brings them back; a `namespace.leave`
+  drops only the caller's row under their exact subject, so one under their verified
+  email can. A tie between a login and an email made between pages can hide the person it
+  joins, not even listed in `also`, and a tie removed can list them twice. Everyone else
+  comes back exactly once; a walk started after the change sees it.
 - **A failed read fails the call.** The answer is 503 `BACKEND_UNAVAILABLE` when ClickHouse
   is unreachable and 504 `BACKEND_TIMEOUT` past the read deadline, never a list with people
   unfolded. Retry with the same cursor: it holds only a position.

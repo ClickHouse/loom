@@ -416,8 +416,7 @@ async def _audit_stored_row(
     from server.observability import audit
 
     auth = current_auth()
-    taken: dict[str, str] = {"namespace": input.namespace, "subject": subject}
-    taken["named"] = input.subject
+    taken = {"namespace": input.namespace, "subject": subject, "named": input.subject}
     if unconfirmed:
         taken["landed"] = "unknown"
     await audit.emit(
