@@ -96,6 +96,7 @@ def _set_into(ch: KeptCH, monkeypatch: pytest.MonkeyPatch, before: Any = None) -
             user_id=inp.user_id,
             session_id=inp.session_id,
             value=json.dumps(inp.value),
+            tags=list(inp.tags),
         )
         await ch.insert("loom.memory", [row])
         return SimpleNamespace(version=row["version"])
@@ -1258,3 +1259,24 @@ async def test_one_tombstone_statement_retires_each_key_by_its_own_writer(local:
         _KEY: "tombstoned",
         other_key: "active",
     }
+
+
+@pytest.mark.asyncio
+async def test_the_record_read_takes_the_stage_from_its_writers_row(
+    local: KeptCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import decision as h
+    from server.memory.domain.decision_schema import PROPOSED_TAG
+
+    _set_into(local, monkeypatch)
+    plan = record_input(caused_by=[], influenced_by=[], stage="proposed")
+    key = (await h.handle_decision_record(plan)).memory_key
+    assert (await h._decision_records(local, "o", "n", [key]))[key]["stage"] == "proposed"
+    # Recorded again as decided by the same writer: its newest row has no tag.
+    await h.handle_decision_record(plan.model_copy(update={"stage": "decided"}))
+    assert (await h._decision_records(local, "o", "n", [key]))[key]["stage"] == "decided"
+    # Another identity's tagged row under the key says nothing about the record.
+    other = _memory_row("other", "decision", time.time_ns())
+    other.update(memory_key=key, tags=["decision", PROPOSED_TAG])
+    await local.insert("loom.memory", [other])
+    assert (await h._decision_records(local, "o", "n", [key]))[key]["stage"] == "decided"

@@ -55,6 +55,8 @@ export interface NavItem {
    *  (Repositories, Tasks), or the whole deployment (Deployment settings). Read out in the
    *  item's tooltip so a namespace switch never surprises. */
   scope?: "namespace" | "org" | "deployment";
+  /** The tooltip's scope read-out, where the scope alone does not say it. */
+  hint?: string;
   badge?: number;
   // Tone steers the dot's color so a warning (over-cap) reads
   // differently from a neutral count (review queue). Number >= 999
@@ -84,7 +86,13 @@ export const RAIL_GROUPS: NavGroup[] = [
     label: "Memory",
     items: [
       { id: "memories", label: "Memories", icon: "clock", scope: "namespace" },
-      { id: "knowledge", label: "Library", icon: "document", scope: "namespace" },
+      {
+        id: "knowledge",
+        label: "Library",
+        icon: "document",
+        scope: "namespace",
+        hint: "in the namespace picked above, or a collection you read",
+      },
       // Route id stays "sessions" (stable deep links); the label matches the
       // view it renders — Conversations (threads), not the run-session that
       // groups runs in the Runs view.
@@ -152,15 +160,7 @@ export const ADMIN_GROUPS: NavGroup[] = [
     ],
   },
 ];
-/** Collections: the org's shared knowledge, which grants open. Every admin sees the ones
- *  their grants reach, so it heads the Access group for all of them. */
-export const COLLECTIONS_ITEM: NavItem = {
-  id: "admin:collections",
-  label: "Collections",
-  icon: "folder-open",
-  scope: "org",
-};
-export const ADMIN_BASE: NavItem[] = [...ADMIN_GROUPS.flatMap((g) => g.items), COLLECTIONS_ITEM];
+export const ADMIN_BASE: NavItem[] = ADMIN_GROUPS.flatMap((g) => g.items);
 
 /** A view that lives in the admin drawer: the `admin:` ids and the routes
  * filed there under a stable non-prefixed id (Flow). The drawer opens on a deep link to
@@ -182,9 +182,8 @@ export const ADMIN_OPERATOR_ONLY: NavItem[] = [{ id: "admin:users", label: "User
 export const ADMIN_PLATFORM_ONLY: NavItem[] = [
   { id: "admin:settings", label: "Deployment settings", icon: "settings", scope: "deployment" },
 ];
-/** The drawer's Access group: Collections, then the operator entries shown to platform /
- *  org admins. */
-const ACCESS_GROUP: NavGroup = { label: "Access", items: [COLLECTIONS_ITEM, ...ADMIN_OPERATOR_ONLY] };
+/** The drawer's Access group: the operator entries shown to platform / org admins. */
+const ACCESS_GROUP: NavGroup = { label: "Access", items: ADMIN_OPERATOR_ONLY };
 const DEPLOYMENT_GROUP: NavGroup = { label: "Deployment", items: ADMIN_PLATFORM_ONLY };
 
 /** The operator entries the caller's claims open: Users for an org or platform admin,
@@ -562,6 +561,7 @@ function GroupLabel({ children }: { children: string | null }) {
 
 /** The scope read-out for an item's tooltip / title. */
 export function scopeHint(item: NavItem): string {
+  if (item.hint) return item.hint;
   if (item.scope === "org") return "across every namespace";
   if (item.scope === "deployment") return "for every org on this Loom";
   if (item.scope === "namespace") return "in the namespace picked above";

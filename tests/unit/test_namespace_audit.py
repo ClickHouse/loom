@@ -1218,12 +1218,13 @@ _THRESHOLDS = {
         ),
     ),
     "telemetry_unavailable": (
-        2,
+        3,
         (na.TELEMETRY_LAG_SECONDS, na._REPORT_OPS),
         (
             60,
             "('namespace.audit', 'namespace.validate', 'namespace.summary', "
-            "'namespace.inventory', 'namespace.tune', 'memory.inspect', 'mentor.brief')",
+            "'namespace.inventory', 'namespace.tune', 'memory.inspect', 'knowledge.inspect', "
+            "'mentor.brief')",
         ),
     ),
 }

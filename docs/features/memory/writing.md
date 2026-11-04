@@ -355,7 +355,22 @@ They answer predicate questions without parsing text.
   an `identity` field, an enum (`enum_values`), or constrained (`pattern`, `min_length`,
   `max_length`, `min_value`, `max_value`).
 - Identity fields derive the key when none is given (`key_source="identity"`), so two
-  writes of one entity land on one record.
+  writes of one entity land on one record. A name-like field (`name`, `title`, `label`,
+  `*_name`, `*_title`, `*_label`) keys on its words without case, a leading article or a
+  possessive; it drops accents and the other combining marks (the Japanese voicing mark,
+  the virama, Thai tone marks; Indic vowel signs stay), so `かぎ` and `かき` share a name key.
+  It is refused only when nothing is left once separators (spaces, `_`, `-`), combining
+  marks, a leading article and a possessive are dropped. Any other field keys on its
+  letters and digits a-z, 0-9 after case folding and compatibility decomposition with
+  accents stripped, so `INV-2024/001` and `inv 2024 001` agree. A value with none of those
+  (Cyrillic, CJK or Arabic text) keys on every letter, digit and combining mark it holds,
+  after NFKC normalisation and case folding. No mark is stripped there: Indic vowel signs,
+  Thai tone marks, the Japanese voicing mark and Arabic and Hebrew points tell words
+  apart, so `かぎ` and `かき` get two keys, as do a word written with and without its Arabic
+  vowel points. A value with any a-z or 0-9 after compatibility decomposition (`30 дней`,
+  `2024年度`, `№`, `℃`) keys on those characters alone, so two values that differ only in
+  their other characters share one key. Any other field with no letter or digit
+  (punctuation, symbols or marks alone) is refused with 400 `MISSING_IDENTITY_FIELD`.
 - Each field value carries a `state` (`value`, `unknown`, `rejected`, `absent`).
 - `memory.set_from_messages` with `record_schema` and `memory_key` extracts one record.
 

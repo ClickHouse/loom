@@ -1085,19 +1085,24 @@ actor kind no token maps to, so a caller cannot forge one
 
 A document a registered document source's sync wrote carries the actor
 `worker:knowledge-source-sync` and the class `imported`. No token maps to that actor
-kind, so no request can write a document that reads as synced from a source: a
-source's documents are those tagged `source:<name>` with that actor, and only the
-sync worker writes, rewrites or retires them. The worker opens a source's credential
-only for its own turn; a credential that does not open stops the turn with
-`credential_invalid` and nothing is fetched without it. It retires a document only when
-a complete full listing no longer has the file and a lookup of that file reports it
-gone, trashed or out of every folder of the source, when the document sits at an
-address that is no longer its file's, or when a namespace admin asked
-(`knowledge.source.remove` with `delete_documents`); never on a fetch error, and never
-touches a live document another writer or source holds
-([document sources](../features/knowledge.md#syncing-a-source)). Any holder of a writer
-grant on the namespace may still `knowledge.delete` a synced document, as any other;
-while its file is in the folder, the next full listing writes it again.
+kind, so no request can write a document that reads as synced from a source: a source's
+documents are those tagged `source:<name>` with that actor, and only the sync worker
+writes, rewrites or retires them. The worker opens a source's credential only for its
+own turn; a credential that does not open stops the turn with `credential_invalid` and
+nothing is fetched without it. It retires a document only when a complete full listing
+no longer has the file and a lookup of that file reports it gone, trashed or out of
+every folder of the source (for a tracker project's documents: a list read whole, every
+project on every page, and a lookup reporting the document not found, trashed, archived
+or in none of the source's projects), when the document sits at an address that is no
+longer its file's, or when a namespace admin asked (`knowledge.source.remove` with
+`delete_documents`); never on a fetch error or a recording its meeting store stopped
+listing, and never touches a live document another
+writer or source holds ([document sources](../features/knowledge.md#syncing-a-source)).
+Any holder of a writer grant on the namespace may still `knowledge.delete` a synced
+document, as any other; while its item is still in the source, a later turn writes it
+again (a folder's next full listing, a project's next turn). A meeting store's token goes only to that
+store's own hosts, a transcript download's link included
+([recordings](../features/knowledge.md#a-recording-source)).
 
 ## Audit log
 

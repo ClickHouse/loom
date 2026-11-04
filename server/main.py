@@ -308,7 +308,10 @@ _otel.init_otel(app)
 # innermost middleware: the 413 still passes out through the header middleware.
 from server.transport.body_limit import BodyLimitMiddleware as _BodyLimit  # noqa: E402
 
-app.add_middleware(_BodyLimit, max_bytes=settings.max_request_bytes)
+# An upload's route bounds its own body (LOOM_KNOWLEDGE_UPLOAD_MAX_BYTES).
+app.add_middleware(
+    _BodyLimit, max_bytes=settings.max_request_bytes, own_limit=("/v1/knowledge.upload",)
+)
 
 from server.transport.model_maintenance import ModelMaintenanceMiddleware  # noqa: E402
 
@@ -497,10 +500,12 @@ _task_watch.attach(app)
 from server import health as _health  # noqa: E402
 from server.auth import routes as _auth_routes  # noqa: E402
 from server.knowledge.app import download_routes as _knowledge_download  # noqa: E402
+from server.knowledge.app import upload_routes as _knowledge_upload  # noqa: E402
 
 _auth_routes.attach(app)
 _health.attach(app)
 _knowledge_download.attach(app)
+_knowledge_upload.attach(app)
 
 
 @app.get("/v1/api/openapi.json")

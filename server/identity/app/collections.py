@@ -173,12 +173,17 @@ async def handle_collection_list(input: CollectionListInput) -> CollectionListOu
         roles: dict[str, Role | None] = dict.fromkeys(page, Role.ADMIN)
     else:
         roles = await sharing.roles(auth, input.org, page)
+    with own_write_reads():  # a collection created on another replica a moment ago
+        described = await namespaces_repo.descriptions(
+            input.org, [ns for ns in page if roles.get(ns) is not None]
+        )
     entries = [
         _CollectionEntry(
             namespace=ns,
             parent=tree.parent.get(ns, ""),
             personal=sharing.is_personal(ns),
             role=role.name.lower(),
+            description=described.get(ns, ""),
         )
         for ns in page
         if (role := roles.get(ns)) is not None

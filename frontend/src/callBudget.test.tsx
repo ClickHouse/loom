@@ -149,7 +149,8 @@ const BUDGET: Record<string, { render: () => JSX.Element; view: View; allow: Rec
   Documents: {
     render: () => <Documents />,
     view: "knowledge",
-    allow: { "/v1/knowledge.list": 1 },
+    // The select above the list reads the collections the person can open, once.
+    allow: { "/v1/knowledge.list": 1, "/v1/collection.list": 1 },
   },
   Repositories: {
     render: () => <CodeView />,

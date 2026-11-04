@@ -36,6 +36,7 @@ from server.core.ch import sequential_reads
 from server.core.ch_params import chunks
 from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.store.documents import LIVE_ORIGINAL_SQL
+from server.knowledge.store.ingestions import HELD_SQL
 from server.settings import DOCUMENT_UPLOAD_BUDGET_S, settings
 
 log = logging.getLogger(__name__)
@@ -298,8 +299,10 @@ async def unreferenced(
     ch: _CHClient | None = None,
 ) -> list[str]:
     """Up to `limit` shas of the namespace's originals, in order after `after`,
-    that no live document names and nothing has written for `min_age_s`: those
-    of deleted and re-uploaded documents, and of documents retention removed."""
+    that no live document names (as its original or as its extraction
+    artifact), no unexpired upload or open ingestion needs, and nothing has
+    written for `min_age_s`: those of deleted and re-uploaded documents, of
+    documents retention removed, and of uploads never ingested."""
     ch = ch or _default_client()
     rows = await ch.query_all(
         f"""
@@ -307,9 +310,10 @@ async def unreferenced(
         FROM {TABLE}
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND sha256 > {{after:String}}
           AND toString(sha256) NOT IN (
-              SELECT blob_path FROM loom.documents FINAL
+              SELECT arrayJoin([blob_path, artifact_sha256]) FROM loom.documents FINAL
               WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {LIVE_ORIGINAL_SQL}
           )
+          AND toString(sha256) NOT IN ({HELD_SQL})
         GROUP BY sha256
         HAVING max(created_at) < now64(3) - INTERVAL {{age:UInt32}} SECOND
         ORDER BY sha256

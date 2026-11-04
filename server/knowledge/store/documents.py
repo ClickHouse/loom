@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict
 
 from server.core.hashing import hash_text, sha256_document_text
 from server.core.repo_base import _CHClient, _default_client
+from server.core.rmt_carry import register
 from server.core.tag_sql import TagFilter, tag_where
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 
@@ -48,6 +49,15 @@ class DocumentRow(BaseModel):
     session_id: str = "-"
     actor: str = ""
     source_class: str = ""
+    # The source's revision (1, 2, ... per source_uri; 0 on a row no write numbered)
+    # and, for a file Loom parsed, its format, extraction artifact (a sha256 in
+    # loom.document_blobs), parser, coverage JSON and the ingestion that published it.
+    revision: int = 0
+    format: str = ""
+    artifact_sha256: str = ""
+    parser: str = ""
+    coverage: str = ""
+    ingestion_id: str = ""
 
 
 def _hydrate(row: dict[str, Any]) -> DocumentRow:
@@ -75,6 +85,12 @@ def _hydrate(row: dict[str, Any]) -> DocumentRow:
         session_id=row.get("session_id") or "-",
         actor=row.get("actor") or "",
         source_class=row.get("source_class") or "",
+        revision=int(row.get("revision") or 0),
+        format=row.get("format") or "",
+        artifact_sha256=row.get("artifact_sha256") or "",
+        parser=row.get("parser") or "",
+        coverage=row.get("coverage") or "",
+        ingestion_id=row.get("ingestion_id") or "",
     )
 
 
@@ -105,7 +121,9 @@ async def get_one(
                tags, metadata, version, superseded_at, ingested_at, blob_path, blob_size,
                toString(blob_content_type) AS blob_content_type,
                original_filename, content_sha256, blob_erased_at,
-               agent, user_id, session_id, actor, toString(source_class) AS source_class
+               agent, user_id, session_id, actor, toString(source_class) AS source_class,
+               revision, toString(format) AS format, artifact_sha256, parser, coverage,
+               ingestion_id
         FROM loom.documents FINAL
         WHERE {" AND ".join(where)}
         LIMIT 1
@@ -113,6 +131,24 @@ async def get_one(
         params={"org": org, "ns": namespace, "uri": source_uri},
     )
     return _hydrate(row) if row else None
+
+
+async def revision_by_ingestion(
+    org: str, namespace: str, source_uri: str, ingestion_id: str, *, ch: _CHClient | None = None
+) -> int | None:
+    """The revision an ingestion job published for the source, from any version
+    row of it that names the job, the latest or not: a later write of the
+    source (a text write, which names no job) does not hide it. Read without
+    FINAL; None when no row names the job (it did not publish, or merges have
+    folded its row into a later write's)."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT revision FROM loom.documents"
+        " WHERE org = {org:String} AND namespace = {ns:String} AND source_uri = {uri:String}"
+        " AND ingestion_id = {id:String} ORDER BY version DESC LIMIT 1",
+        params={"org": org, "ns": namespace, "uri": source_uri, "id": ingestion_id},
+    )
+    return int(row["revision"]) if row else None
 
 
 # A document that still serves its original: a write without fresh bytes carries
@@ -170,7 +206,9 @@ async def get_many_by_uris(
                tags, metadata, version, superseded_at, ingested_at, blob_path, blob_size,
                toString(blob_content_type) AS blob_content_type,
                original_filename, content_sha256, blob_erased_at,
-               agent, user_id, session_id, actor, toString(source_class) AS source_class
+               agent, user_id, session_id, actor, toString(source_class) AS source_class,
+               revision, toString(format) AS format, artifact_sha256, parser, coverage,
+               ingestion_id
         FROM loom.documents FINAL
         WHERE {" AND ".join(where)}
         """,
@@ -325,9 +363,20 @@ DOCUMENT_COLUMNS: tuple[str, ...] = (
     "session_id",
     "actor",
     "source_class",
+    "revision",
+    "format",
+    "artifact_sha256",
+    "parser",
+    "coverage",
+    "ingestion_id",
 )
 
 _REQUIRED_DOCUMENT_COLUMNS = ("org", "namespace", "source_uri", "content", "version")
+
+# A version row carries any column of the live table this build does not write
+# (server/core/rmt_carry.py): a later build's columns survive this build's
+# metadata edits and deletes. The key is the table's ORDER BY.
+register("loom.documents", key=("org", "namespace", "source_uri"), columns=DOCUMENT_COLUMNS)
 
 
 class DocumentInsertRow(TypedDict):
@@ -356,6 +405,12 @@ class DocumentInsertRow(TypedDict):
     session_id: str
     actor: str
     source_class: str
+    revision: int
+    format: str
+    artifact_sha256: str
+    parser: str
+    coverage: str
+    ingestion_id: str
 
 
 def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) -> DocumentInsertRow:
@@ -388,6 +443,12 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
         "session_id": "-",
         "actor": "",
         "source_class": "",
+        "revision": 0,
+        "format": "",
+        "artifact_sha256": "",
+        "parser": "",
+        "coverage": "",
+        "ingestion_id": "",
     }
     if existing is not None:
         row.update({c: getattr(existing, c) for c in DOCUMENT_COLUMNS if c != "content_sha256"})

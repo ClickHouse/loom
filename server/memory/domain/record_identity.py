@@ -8,13 +8,19 @@ guarantee; a key derived from the record's own identity values can.
 
 Canonicalisation is per field kind, because one global normaliser both
 over- and under-merges:
-  name-like fields (name, title, label, and *_name / *_title) — NFKD, strip
+  name-like fields (name, title, label, and *_name / *_title / *_label) — NFKD, strip
     combining marks, drop a leading article and a possessive, split on
     whitespace / '_' / '-', join with '_', uppercase: "The Vendor's name"
     and "vendor name" agree.
   every other field — NFKD, casefold, keep [a-z0-9] only: "INV-2024/001",
     "inv 2024 001" and "inv_2024_001" agree, and digits survive so
-    "run-1" and "run-2" do not.
+    "run-1" and "run-2" do not. A value with none of a-z, 0-9 (a scenario in
+    Cyrillic, CJK or Arabic) keeps instead every letter, digit and combining
+    mark of the raw value, after NFKC and casefold: no mark is stripped, as
+    Indic vowel signs, Thai tone marks, the Japanese voicing mark and
+    Arabic and Hebrew points tell words apart. Only such values take that
+    form, so every key with an a-z, 0-9 form stays as it was; a value of
+    punctuation, symbols or marks alone has neither and is empty.
 Lists sort. The key is blake2b over the schema name plus the sorted
 (field, canonical value) pairs, 16 hex characters, prefixed by the schema
 name so keys never collide across schemas and read as what they are.
@@ -61,6 +67,7 @@ def canonical_value(field_name: str, value: Any) -> str:
         text = str(int(value)) if float(value).is_integer() else repr(float(value))
     else:
         text = str(value)
+    raw = text
     text = _strip_marks(text).strip()
     if not text:
         return ""
@@ -72,7 +79,15 @@ def canonical_value(field_name: str, value: Any) -> str:
                 break
         text = _POSSESSIVE.sub("", text)
         return "_".join(p for p in _SPLIT.split(text) if p).upper()
-    return _NON_ALNUM.sub("", text.casefold())
+    ascii_form = _NON_ALNUM.sub("", text.casefold())
+    if ascii_form:
+        return ascii_form
+    # From the raw value, not the mark-stripped text: in these scripts a mark tells words
+    # apart (かぎ and かき, ไม่ and ไม้, क्या and कया).
+    folded = unicodedata.normalize("NFKC", raw).casefold()
+    if not any(ch.isalnum() for ch in folded):
+        return ""
+    return "".join(ch for ch in folded if ch.isalnum() or unicodedata.category(ch).startswith("M"))
 
 
 def canonical_record_key(schema_name: str, identity_values: dict[str, Any]) -> str:

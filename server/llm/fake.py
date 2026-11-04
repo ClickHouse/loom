@@ -61,6 +61,7 @@ def _decisions_from_sections(user: str) -> dict[str, object]:
                 "alternatives": [],
                 "quote": body[: body.index(second, len(first)) + len(second)],
                 "is_constraint": False,
+                "stage": "decided",
                 "mentions": _CAMEL_RE.findall(f"{first} {second}"),
             }
         )

@@ -159,6 +159,119 @@ Fetch a single document by source_uri.
 | `ingested_at` | `datetime \| None` | When this version of the document was written. |
 | `superseded` | `bool \| None` | True when the returned version is soft-deleted or superseded. |
 | `doc_id` | `str \| None` | Id of the returned document version. |
+| `revision` | `int \| None` | The source's revision (1, 2, ... per source_uri); 0 for a document no write numbered. |
+| `format` | `str \| None` | For a file Loom extracted (knowledge.ingest): the format it was extracted as. |
+| `parser` | `str \| None` | For an extracted file: the extractor's parser and version that read it. |
+| `coverage` | `dict[str, Any] \| None` | For an extracted file: what was extracted (unit, total, extracted, failed, lost). |
+
+## `knowledge.ingest`
+
+Extract an uploaded file (the extractor service parses it, the server checks what it returns) and publish it as a document revision, asynchronously: the answer names the job, and…
+
+`POST /v1/knowledge.ingest` · MCP `loom_knowledge_ingest` · role `writer` · write · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `upload_id` | `str` | required | The `upload_id` POST /v1/knowledge.upload returned for the file. |
+| `source_uri` | `str` | required | The document's stable identifier in the namespace; a later ingest of the same source_uri publishes its next revision. |
+| `title` | `str` | `''` | Document title; empty takes the upload's file name. |
+| `description` | `str` | `''` | Prepended with the title to each chunk before embedding. |
+| `tags` | `list[str]` | *(computed)* | Labels stored on the document and every chunk. |
+| `metadata` | `dict[str, Any]` | *(computed)* | Free-form JSON stored with the document and every chunk. |
+| `expected_revision` | `int \| None` | `None` | Publish only if the source's live revision is this one (0: no live document); unset publishes over whatever is live. |
+| `allow_partial` | `bool` | `False` | Publish an extraction that lost part of the source (coverage incomplete), marked `partial`; off fails it instead. |
+| `options` | `KnowledgeIngestOptions` | *(computed)* | Overrides for what the file cannot say about itself. |
+| `agent` | `str` | `''` | The agent writing the document; an end-user token's signed agent takes its place. |
+| `session_id` | `str` | `''` | The session the document was written in. |
+| `source_class` | `str \| None` | `None` | `derived`, `external` or `imported` when the content is not the writer's own. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `ingestion_id` | `str` | The job's id; `knowledge.ingest_status` and `knowledge.ingest_cancel` take it. |
+| `state` | `str` | `pending` until a worker takes it. |
+| `source_uri` | `str` |  |
+| `namespace` | `str` | The namespace the op reads or writes. |
+
+## `knowledge.ingest_cancel`
+
+A pending job is cancelled at once; a running one stops before it publishes; a finished one stays as it ended.
+
+`POST /v1/knowledge.ingest_cancel` · MCP `loom_knowledge_ingest_cancel` · role `writer` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `ingestion_id` | `str` | required | The `ingestion_id` knowledge.ingest returned. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `found` | `bool` | False when no job of this id is in the namespace. |
+| `state` | `str` | The job's state after the call: `cancelled` for a job that had not started, its running state when the worker will stop it before publishing, or where it already ended (a published revision stays published). |
+| `cancelled` | `bool` | True when this call stopped the job, or asked the worker to. |
+
+## `knowledge.ingest_status`
+
+A knowledge.ingest job's state, stage, coverage, failure and published revision.
+
+`POST /v1/knowledge.ingest_status` · MCP `loom_knowledge_ingest_status` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `ingestion_id` | `str` | required | The `ingestion_id` knowledge.ingest returned. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `found` | `bool` | False when no job of this id is in the namespace; every other field is then empty. |
+| `ingestion_id` | `str` | The job asked about. |
+| `source_uri` | `str` |  |
+| `state` | `str` | pending, processing, ready, partial, failed or cancelled. |
+| `stage` | `str` | Where a processing job is, or where it last ran: parse, embed or publish; empty once it published. |
+| `attempts` | `int` | Runs of the job so far, a retry after a transient failure included. |
+| `error_code` | `str` | Why it failed (`format_unavailable`, `encoding`, `incomplete_extraction`, `revision_conflict`, `too_large`, `no_text`, `retries_exhausted`, ...), or `retrying` while it waits for its next attempt; empty otherwise. |
+| `error_message` | `str` | The failure in words, for a person; empty when it did not fail. |
+| `format` | `str` | The format the file was extracted as, empty before extraction. |
+| `coverage` | `dict[str, Any] \| None` | What the extraction covered (unit, total, extracted, failed, lost). |
+| `warnings` | `list[str]` | The extractor's warnings about the file. |
+| `chunks` | `int` | Chunks published, 0 until the job publishes. |
+| `revision` | `int` | The revision the job published, 0 until it does. |
+| `expected_revision` | `int \| None` | The revision the job requires to be live when it publishes; None for any. |
+| `filename` | `str` | The uploaded file's name. |
+| `retrieval` | `str` | Whether the document is searchable from this job: ready (published), pending (not yet), failed (it will not be) or cancelled. |
+| `cancel_requested` | `bool` | Whether knowledge.ingest_cancel was called for the job. |
+| `created_at` | `datetime \| None` |  |
+| `updated_at` | `datetime \| None` |  |
+
+## `knowledge.inspect`
+
+Report a namespace's documents, read-only.
+
+`POST /v1/knowledge.inspect` · MCP `loom_knowledge_inspect` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `sample_limit` | `int` | `20` | Newest live documents listed with their chunks and decisions, and the most sample URIs per finding, 0 to 100 (default 20). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `org` | `str` | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | The namespace the op reads or writes. |
+| `computed_at` | `datetime` | When the report started (UTC). |
+| `documents` | `DocumentTotals` | Live and deleted documents by format and source scheme, and retired versions. |
+| `chunks` | `ChunkTotals` | Live chunks by embedding model, and how many knowledge.search can return. |
+| `decisions` | `DecisionTotals` | Decision rows citing a document of the namespace, by stage. |
+| `listed` | `list[InspectDocument]` | The newest live documents, at most `sample_limit`, newest first. |
+| `listed_complete` | `bool` | True when `listed` holds every live document and the count was read. |
+| `findings` | `list[DocumentFinding]` | One per check that ran over the documents and chunks; a clean check is an `info` finding with count 0. |
+| `coverage` | `ReportCoverage` | Which document checks ran and which were skipped. |
+| `memory_findings` | `list[MemoryFindingRef]` | namespace.audit's `oversized_values` and `episodic_blobs`, the memory rows that may belong in documents; mentor.brief reports the same shape per agent as `documents_as_memories`. |
+| `skipped` | `list[str]` | Sections not read, as "section: reason"; their fields are null or empty, not zero. |
 
 ## `knowledge.list`
 
@@ -269,9 +382,9 @@ Register a document source on a repository's trunk code namespace: a kind, the i
 | `org` | `str` | required | The org. |
 | `namespace` | `str` | required | The repository's trunk code namespace. |
 | `name` | `str` | required | Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. |
-| `kind` | `str` | required | The source kind; `gdrive` is the one kind served. |
-| `config` | `dict[str, Any]` | required | The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}. |
-| `credential` | `str` | required | The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only); stored encrypted, never returned. |
+| `kind` | `str` | required | The source kind: `gdrive` (a shared folder), `linear` (a project tracker's project documents) or `recording` (a meeting store's transcripts). |
+| `config` | `dict[str, Any]` | required | The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: {project_ids: [1-20 project ids, UUIDs]}; recording: {provider: meet \| zoom, ids: [1-20… |
+| `credential` | `str` | required | The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an account that sees the projects; recording: for meet, an authorized_user JSON file… |
 | `dry_run` | `bool` | `False` | Probe and write nothing. |
 
 | Output field | Type | Meaning |
@@ -285,7 +398,7 @@ Register a document source on a repository's trunk code namespace: a kind, the i
 
 ## `knowledge.source.check`
 
-Probe a registered document source with its stored credential now (folder checks and a listing), nothing written.
+Probe a registered document source with its stored credential now (a check and a listing of each folder or project), nothing written.
 
 `POST /v1/knowledge.source.check` · MCP `loom_knowledge_source_check` · role `admin` · idempotent · not listed under the MCP `all` toolset
 
@@ -299,8 +412,8 @@ Probe a registered document source with its stored credential now (folder checks
 | --- | --- | --- |
 | `name` | `str` | The source checked. |
 | `reachable` | `bool` | False when the probe failed; `summary` says why. |
-| `documents` | `int` | Documents the source lists now, the first 1000 at most. |
-| `more` | `bool` | True when more than 1000 documents match, so `documents` is a lower bound. |
+| `documents` | `int` | Documents the source lists now: the first 1000 at most (gdrive), the first page of each project (linear). |
+| `more` | `bool` | True when more documents match than were listed, so `documents` is a lower bound. |
 | `sample` | `list[str]` | Up to five document titles, most recently changed first. |
 | `summary` | `str` | One line: what was found, or why it failed. |
 | `checked_at` | `str` | When the probe ran, ISO UTC. |
@@ -373,7 +486,7 @@ Replace a registered document source's credential.
 | `org` | `str` | required | The org. |
 | `namespace` | `str` | required | The repository's trunk code namespace. |
 | `name` | `str` | required | The source name. |
-| `credential` | `str` | required | The replacement credential (gdrive: a service account's JSON key); stored encrypted, never returned. |
+| `credential` | `str` | required | The replacement credential, of the same form as add's; stored encrypted, never returned. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

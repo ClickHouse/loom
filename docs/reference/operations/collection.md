@@ -19,7 +19,7 @@ Create a collection: a namespace read and written only through grants.
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The collection's name, also its namespace: 'col-' then lowercase letters, digits and '-'. |
 | `parent` | `str` | `''` | The collection it sits in and inherits grants from; '' for a top-level one. |
-| `description` | `str` | `''` | What the collection holds, shown beside its name; '' for none. |
+| `description` | `str` | `''` | What the collection holds, shown beside its name (at most 2000 characters); '' for none. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ List the collections the caller can read, by name.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `collections` | `list[_CollectionEntry]` | The collections the caller can read on this page, by name, with its role. |
+| `collections` | `list[_CollectionEntry]` | The collections the caller can read on this page, by name, with the caller's role and the collection's description. |
 | `next_cursor` | `str \| None` | Pass as `cursor` for the next page; none on the last. |
 
 ## `collection.move`

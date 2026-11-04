@@ -30,6 +30,7 @@ import server.auth.bearer as bearer_mod
 import server.transport.mcp_call as mcp_call
 import server.transport.mcp_outcome as mcp_outcome
 from server.auth.jwt import AuthInfo, TokenError
+from server.core import fail_open
 from server.core.errors import IdentityIncompleteError
 from server.operations.base import Operation, Role
 from server.operations.registry import OPERATIONS_BY_NAME
@@ -256,15 +257,15 @@ def test_a_limiter_that_raises_admits_the_call_and_logs_once(
         raise RuntimeError("bucket table unreadable")
 
     monkeypatch.setattr(probe["limiter"], "check", _boom)
-    monkeypatch.setattr(gates, "_FAIL_OPEN_LAST_LOG", {})
-    before = gates.fail_open_counts().get("rate_limit", 0)
+    monkeypatch.setattr(fail_open, "_FAIL_OPEN_LAST_LOG", {})
+    before = fail_open.counts().get("rate_limit", 0)
     body = {"org": "acme", "namespace": "team"}
-    with caplog.at_level(logging.WARNING, logger="server.transport.gates"):
+    with caplog.at_level(logging.WARNING, logger="server.core.fail_open"):
         for _ in range(2):
             assert _http(probe, "alice", body).status_code == 200
             assert _mcp(probe, "alice", body)["result"]["isError"] is False
     assert probe["ran"] == 4
-    assert gates.fail_open_counts()["rate_limit"] == before + 4
+    assert fail_open.counts()["rate_limit"] == before + 4
     assert sum("rate_limit failed open" in r.getMessage() for r in caplog.records) == 1
 
 

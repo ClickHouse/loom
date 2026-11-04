@@ -18,7 +18,10 @@ class CollectionCreateInput(BaseModel):
         description="The collection it sits in and inherits grants from; '' for a top-level one.",
     )
     description: str = Field(
-        default="", description="What the collection holds, shown beside its name; '' for none."
+        default="",
+        max_length=2000,
+        description="What the collection holds, shown beside its name (at most 2000 "
+        "characters); '' for none.",
     )
 
 
@@ -60,11 +63,13 @@ class _CollectionEntry(BaseModel):
     parent: str
     personal: bool
     role: str  # the caller's role there: viewer, writer or admin
+    description: str = ""  # what it holds, as `collection.create` was given it
 
 
 class CollectionListOutput(BaseModel):
     collections: list[_CollectionEntry] = Field(
-        description="The collections the caller can read on this page, by name, with its role."
+        description="The collections the caller can read on this page, by name, with the "
+        "caller's role and the collection's description."
     )
     next_cursor: str | None = Field(
         default=None, description="Pass as `cursor` for the next page; none on the last."

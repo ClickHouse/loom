@@ -18,7 +18,9 @@ header read:
 The cap is `LOOM_MAX_REQUEST_BYTES` (32 MiB by default — a 400-message
 `memory.set_from_messages` is a few hundred KB, the largest `memory.import`
 about 10 MB of printable ASCII text, more when its text is non-ASCII or control
-characters). Websocket and lifespan scopes pass through untouched.
+characters). Websocket and lifespan scopes pass through untouched, and so do
+the paths in `own_limit`, whose route streams the body against a cap of its
+own (`POST /v1/knowledge.upload`, `LOOM_KNOWLEDGE_UPLOAD_MAX_BYTES`).
 """
 
 from __future__ import annotations
@@ -44,12 +46,17 @@ def _too_large_response(limit: int, declared: int | None) -> tuple[dict[str, Any
 class BodyLimitMiddleware:
     """Refuse request bodies larger than `max_bytes`."""
 
-    def __init__(self, app: Any, max_bytes: int) -> None:
+    def __init__(self, app: Any, max_bytes: int, own_limit: tuple[str, ...] = ()) -> None:
         self.app = app
         self.max_bytes = int(max_bytes)
+        self.own_limit = frozenset(own_limit)
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        if scope.get("type") != "http" or self.max_bytes <= 0:
+        if (
+            scope.get("type") != "http"
+            or self.max_bytes <= 0
+            or scope.get("path") in self.own_limit
+        ):
             await self.app(scope, receive, send)
             return
 

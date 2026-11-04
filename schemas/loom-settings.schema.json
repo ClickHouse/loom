@@ -2753,6 +2753,39 @@
           "type": "integer",
           "description": "Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks."
         },
+        "knowledge_ingest_enabled": {
+          "default": true,
+          "type": "boolean",
+          "description": "The worker that runs ingestion jobs: extract, chunk, embed, publish."
+        },
+        "knowledge_ingest_idle_interval_seconds": {
+          "default": 15,
+          "type": "integer",
+          "description": "Seconds between passes when the last one found nothing to do."
+        },
+        "knowledge_ingest_interval_seconds": {
+          "default": 2,
+          "type": "integer",
+          "description": "Seconds between ingestion passes while jobs wait."
+        },
+        "knowledge_ingest_max_attempts": {
+          "default": 5,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Attempts a job gets after a transient failure (a provider or store outage) before it fails for good."
+        },
+        "knowledge_ingest_max_chunks": {
+          "default": 20000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most chunks one source may publish; a larger extraction fails with `too_large` rather than flood the embedder."
+        },
+        "knowledge_ingest_max_pass_seconds": {
+          "default": 900,
+          "minimum": 60,
+          "type": "integer",
+          "description": "Seconds one pass, which runs one job, may take before it is cancelled: the extractor's timeout plus embedding the largest source. A job cut off runs again from its start and counts toward its attempts."
+        },
         "knowledge_repo_docs_list_ttl_s": {
           "default": 60.0,
           "exclusiveMinimum": 0,
@@ -2808,16 +2841,23 @@
           "type": "number",
           "description": "Seconds a document source's probe (add, check, rotate) may take in all; past it add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false."
         },
+        "knowledge_source_sync_cap_share": {
+          "default": 0.25,
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "type": "number",
+          "description": "The share of a namespace's daily LLM cost cap the sync may spend mining changed documents for decisions, counted over its own calls; the rest stays for requests."
+        },
         "knowledge_source_sync_documents_per_pass": {
           "default": 40,
           "minimum": 1,
           "type": "integer",
-          "description": "Documents one pass fetches, writes or retires across all sources; the rest wait for the next pass."
+          "description": "Documents one pass fetches, writes, retires or mines for decisions across all sources; the rest wait for the next pass."
         },
         "knowledge_source_sync_enabled": {
           "default": false,
           "type": "boolean",
-          "description": "The knowledge_source_sync worker: pulls each registered document source's changed files into its repository's documents. Off by default: it needs each source's credential and spends embedding calls on every changed document."
+          "description": "The knowledge_source_sync worker: pulls each registered document source's changed files into its repository's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions."
         },
         "knowledge_source_sync_full_interval_seconds": {
           "default": 86400,
@@ -2845,15 +2885,27 @@
         },
         "knowledge_source_sync_max_pass_seconds": {
           "default": 600,
-          "minimum": 60,
+          "minimum": 180,
           "type": "integer",
-          "description": "Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it."
+          "description": "Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it. At least 180: 90 for the sync, then 60 of read time for one document's extraction and 30 for its writes before the deadline."
         },
         "knowledge_sources_max_per_namespace": {
           "default": 8,
           "minimum": 1,
           "type": "integer",
           "description": "Active document sources (knowledge.source.add) one repository namespace may register; an add past it is refused with SOURCE_QUOTA."
+        },
+        "knowledge_upload_max_bytes": {
+          "default": 67108864,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Largest file POST /v1/knowledge.upload accepts, in bytes; a larger body is refused with 413 before any of it is stored."
+        },
+        "knowledge_upload_ttl_seconds": {
+          "default": 86400,
+          "minimum": 60,
+          "type": "integer",
+          "description": "Seconds an upload stays ingestible; the originals sweep keeps its bytes until then, and knowledge.ingest refuses it after."
         },
         "langfuse_capture_io_level": {
           "default": "off",

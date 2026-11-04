@@ -829,6 +829,19 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_CHUNK_SIZE` | `int` | `1500` | live | Sliding-window chunking on knowledge.add/upsert, in characters. chunk_size 0 = one chunk per doc (hurts long-form retrieval). Smaller chunks mean more embed calls; 1500/1230 stays well under the text-embedding-3 context. |
 | `LOOM_KNOWLEDGE_CHUNK_STRIDE` | `int` | `1230` | live | Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks. |
 
+### Server-side ingestion (knowledge.upload, knowledge.ingest)
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_UPLOAD_MAX_BYTES` | `int` | `67108864` | live | Largest file POST /v1/knowledge.upload accepts, in bytes; a larger body is refused with 413 before any of it is stored. |
+| `LOOM_KNOWLEDGE_UPLOAD_TTL_SECONDS` | `int` | `86400` |  | Seconds an upload stays ingestible; the originals sweep keeps its bytes until then, and knowledge.ingest refuses it after. |
+| `LOOM_KNOWLEDGE_INGEST_ENABLED` | `bool` | `True` |  | The worker that runs ingestion jobs: extract, chunk, embed, publish. |
+| `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | `int` | `2` |  | Seconds between ingestion passes while jobs wait. |
+| `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS` | `int` | `15` |  | Seconds between passes when the last one found nothing to do. |
+| `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS` | `int` | `900` |  | Seconds one pass, which runs one job, may take before it is cancelled: the extractor's timeout plus embedding the largest source. A job cut off runs again from its start and counts toward its attempts. |
+| `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS` | `int` | `5` |  | Attempts a job gets after a transient failure (a provider or store outage) before it fails for good. |
+| `LOOM_KNOWLEDGE_INGEST_MAX_CHUNKS` | `int` | `20000` | live | Most chunks one source may publish; a larger extraction fails with `too_large` rather than flood the embedder. |
+
 ### Timeouts, budgets and caches
 
 | Variable | Type | Default | Live | Meaning |
@@ -854,13 +867,14 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | --- | --- | --- | --- | --- |
 | `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` | `int` | `8` | live | Active document sources (knowledge.source.add) one repository namespace may register; an add past it is refused with SOURCE_QUOTA. |
 | `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` | `float` | `20.0` | live | Seconds a document source's probe (add, check, rotate) may take in all; past it add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false. |
-| `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | `bool` | `False` |  | The knowledge_source_sync worker: pulls each registered document source's changed files into its repository's documents. Off by default: it needs each source's credential and spends embedding calls on every changed document. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | `bool` | `False` |  | The knowledge_source_sync worker: pulls each registered document source's changed files into its repository's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between sync passes while there are sources. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_IDLE_INTERVAL_SECONDS` | `int` | `1800` |  | Seconds between passes that found no source to sync; one idle sleep plus one pass stays under three intervals, so the worker never reads as stalled. |
-| `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_PASS_SECONDS` | `int` | `600` |  | Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it. |
-| `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes or retires across all sources; the rest wait for the next pass. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_PASS_SECONDS` | `int` | `600` |  | Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it. At least 180: 90 for the sync, then 60 of read time for one document's extraction and 30 for its writes before the deadline. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes, retires or mines for decisions across all sources; the rest wait for the next pass. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_FULL_INTERVAL_SECONDS` | `int` | `86400` | live | Seconds after which a source's next pass lists every file, not only those changed since the last one: what finds a file trashed or moved out of a folder. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` | `int` | `67108864` | live | Bytes of one file a sync downloads or exports; a larger file is not ingested. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_CAP_SHARE` | `float` | `0.25` | live | The share of a namespace's daily LLM cost cap the sync may spend mining changed documents for decisions, counted over its own calls; the rest stays for requests. |
 
 ## Mcp
 

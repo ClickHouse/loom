@@ -2440,6 +2440,38 @@ settings:
   # step is chunk_size, so no text falls between chunks. [live]
   # knowledge_chunk_stride: 1230
 
+  # --- server-side ingestion (knowledge.upload, knowledge.ingest) ---
+
+  # Largest file POST /v1/knowledge.upload accepts, in bytes; a larger body is refused
+  # with 413 before any of it is stored. [live]
+  # knowledge_upload_max_bytes: 67108864
+
+  # Seconds an upload stays ingestible; the originals sweep keeps its bytes until then,
+  # and knowledge.ingest refuses it after. [restart]
+  # knowledge_upload_ttl_seconds: 86400
+
+  # The worker that runs ingestion jobs: extract, chunk, embed, publish. [restart]
+  # knowledge_ingest_enabled: true
+
+  # Seconds between ingestion passes while jobs wait. [restart]
+  # knowledge_ingest_interval_seconds: 2
+
+  # Seconds between passes when the last one found nothing to do. [restart]
+  # knowledge_ingest_idle_interval_seconds: 15
+
+  # Seconds one pass, which runs one job, may take before it is cancelled: the
+  # extractor's timeout plus embedding the largest source. A job cut off runs again from
+  # its start and counts toward its attempts. [restart]
+  # knowledge_ingest_max_pass_seconds: 900
+
+  # Attempts a job gets after a transient failure (a provider or store outage) before it
+  # fails for good. [restart]
+  # knowledge_ingest_max_attempts: 5
+
+  # Most chunks one source may publish; a larger extraction fails with `too_large`
+  # rather than flood the embedder. [live]
+  # knowledge_ingest_max_chunks: 20000
+
   # --- timeouts, budgets and caches ---
 
   # Seconds the repository-docs read for a brief may take. [live]
@@ -2474,7 +2506,8 @@ settings:
 
   # The knowledge_source_sync worker: pulls each registered document source's changed
   # files into its repository's documents. Off by default: it needs each source's
-  # credential and spends embedding calls on every changed document. [restart]
+  # credential, spends embedding calls on every changed document and model calls mining
+  # it for decisions. [restart]
   # knowledge_source_sync_enabled: false
 
   # Seconds between sync passes while there are sources. [restart]
@@ -2485,11 +2518,12 @@ settings:
   # knowledge_source_sync_idle_interval_seconds: 1800
 
   # Seconds one sync pass may run before it is cancelled; it stops starting sources at
-  # three quarters of it. [restart]
+  # three quarters of it. At least 180: 90 for the sync, then 60 of read time for one
+  # document's extraction and 30 for its writes before the deadline. [restart]
   # knowledge_source_sync_max_pass_seconds: 600
 
-  # Documents one pass fetches, writes or retires across all sources; the rest wait for
-  # the next pass. [live]
+  # Documents one pass fetches, writes, retires or mines for decisions across all
+  # sources; the rest wait for the next pass. [live]
   # knowledge_source_sync_documents_per_pass: 40
 
   # Seconds after which a source's next pass lists every file, not only those changed
@@ -2498,6 +2532,11 @@ settings:
 
   # Bytes of one file a sync downloads or exports; a larger file is not ingested. [live]
   # knowledge_source_sync_max_file_bytes: 67108864
+
+  # The share of a namespace's daily LLM cost cap the sync may spend mining changed
+  # documents for decisions, counted over its own calls; the rest stays for requests.
+  # [live]
+  # knowledge_source_sync_cap_share: 0.25
 
   # ===== The MCP transport: tool listing, lean results, session runs =====
 

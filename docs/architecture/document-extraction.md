@@ -5,9 +5,9 @@ its own dependencies, never the Loom server. The server sends the original's byt
 to, reads the artifact back as untrusted input, and cuts structural chunks from its blocks, so a SQL statement, a TOML
 key and a Markdown section are all cited by a locator into the source. Loom ships a reference extractor
 (`extractor/loom_extractor/`) for Markdown, HTML, plain text, SQL and TOML; an operator can run another behind the same
-[wire contract](../reference/extractor-contract.md). The document-source sync calls it for the PDFs and `.pptx` files a
-registered folder holds ([syncing a source](../features/knowledge.md#syncing-a-source));
-`knowledge.add` takes text the caller extracted.
+[wire contract](../reference/extractor-contract.md). `knowledge.ingest` extracts an uploaded original this way
+([ingestion](#ingestion)), and the document-source sync calls it for the PDFs and `.pptx` files a registered folder
+holds ([syncing a source](../features/knowledge.md#syncing-a-source)); `knowledge.add` takes text the caller extracted.
 
 ## The service boundary
 
@@ -211,6 +211,41 @@ characters. A block it cut is marked (`attrs.keys_truncated`, `attrs.section_tru
 
 Each chunk carries the ids of the blocks it was cut from, their type (`mixed` when they differ), the merged locator of
 their span (a field such as `key_path` survives only when every block agrees) and the union of their keys.
+
+## Ingestion
+
+`knowledge.ingest` runs a job (`server/knowledge/app/ingest_run.py`, worker `knowledge_ingest`) over an original that
+`POST /v1/knowledge.upload` stored. The upload names the format from the file name and media type and never reads the
+bytes; the job reads the original and sends it to the extractor through the client above, checks the artifact, stores it
+as an original of its own (content-addressed), cuts structural chunks with each chunk's context (`chunk_context`: the
+title, description and section breadcrumb), embeds them, reusing the vector of an input this namespace already embedded
+under the same model, and publishes the next revision of the source: the chunks, then, under the source's claim, the
+revision check, the document row and the earlier version's chunks retired. The claim covers those few statements, not
+the chunk insert, so its time limits hold for a source of any size. A source the extractor refuses fails the job with
+its code; a format no configured extractor takes fails it with `format_unavailable`; an artifact that breaks the
+contract fails it with `invalid_artifact`; an extractor that cannot be reached, times out or answers a status that is
+neither a result nor a refusal puts the job back with a growing delay (at most an hour) until
+`LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS`. Nothing is published before every slow step has run, so a failed or cancelled job
+leaves the earlier revision serving. The job row records the chunk version a publish inserts before it writes the
+document row; when a run stops between the two, its retry, its failure or its next run retires those chunks. The
+document row names the job that wrote it (`ingestion_id`, kept by a metadata edit and a delete) and a rerun looks for
+any version row of the source that names it, so a text write since does not hide it, and a run that stopped mid-publish
+(still `processing` at the publish stage, which is saved with its chunk version), when a later write of the source (a
+text write, a metadata edit or a delete) has landed since and the job's row is not found (a merge may have folded it
+away), fails `revision_conflict` rather than perhaps publish its older file over that write; a job a retry put back to
+pending is not judged so. A document insert that failed transiently (its own timeout, or the source claim's deadline
+cutting it off) may still land, so the run stops there as a crash would and the job stays `processing` at its publish
+stage, its chunks live: the run leaves the job's lease to expire rather than release it, so no worker takes the job
+until the lease's TTL has run out on the server's clock, past the insert's own bound (a carried send's start window, a
+claimed statement's server-side limit and a commit margin), and by then the insert has landed or been stopped: the next
+run finishes it published when its row landed (whatever was written after it: a delete or a text write stands), fails it
+as overtaken as above, or retires the chunks; a rerun of a job that published finishes without publishing again or
+retiring the chunks it published. A cancel is a row of its own (`loom.knowledge_ingest_cancels`), never a version of the
+job's, which only the worker holding the job's lease writes; the worker reads it before the publish and when it takes
+the job, and a job whose own publish is found ends published whatever cancel came after. A pass runs one job under
+`LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS`, taking one source's jobs one at a time in the order they were asked (only the
+oldest open job of a source is offered, a stale one before any later one), and namespaces in turn (the one served
+longest ago first), and a run cut off at that deadline or by a stopped process counts toward the job's attempts.
 
 ## Dependencies
 

@@ -1,0 +1,51 @@
+{
+  "tenants": [
+    {
+      "org": "acme",
+      "namespace": "acme-handbook",
+      "writers": {
+        "handbook-bot": [
+          ["policy/deploy/freeze", "Production deploys are frozen on Fridays from 14:00 UTC until Monday 09:00 UTC."],
+          ["infra/database/orders-version", "The orders database runs PostgreSQL 16.4."],
+          [
+            "team/oncall/payments-rotation",
+            "The payments on-call rotation is weekly and hands over on Mondays at 09:00 UTC."
+          ],
+          [
+            "policy/webhooks/retry-limit",
+            "Webhook deliveries are retried at most 5 times, with exponential backoff starting at 30 seconds."
+          ],
+          ["infra/region/primary", "The primary hosting region is eu-west-1; us-east-1 is the warm standby."],
+          ["policy/api/rate-limit", "The default public API rate limit is 300 requests per minute per key."],
+          ["team/owners/billing-service", "The billing service is owned by the Ledger team."]
+        ],
+        "ops-bot": [
+          ["runbook/incident/sev1-page", "A SEV1 incident pages the incident commander within 5 minutes."],
+          ["infra/backups/retention", "Database backups are kept for 35 days."],
+          ["infra/cache/eviction", "The session cache evicts entries after 12 hours of inactivity."]
+        ]
+      },
+      "revisions": [
+        [
+          "handbook-bot",
+          "policy/api/rate-limit",
+          "The default public API rate limit is 600 requests per minute per key."
+        ]
+      ]
+    },
+    {
+      "org": "globex",
+      "namespace": "globex-ops",
+      "writers": {
+        "globex-bot": [
+          ["project/nightjar/launch", "Project Nightjar launches on March 3 under the codename BLUE-HERON-77."]
+        ]
+      },
+      "revisions": []
+    }
+  ],
+  "people": [
+    { "name": "alice", "org": "acme", "namespace": "acme-handbook", "revoked": false },
+    { "name": "carol", "org": "acme", "namespace": "acme-handbook", "revoked": true }
+  ]
+}

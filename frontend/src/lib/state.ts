@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { Identity, MyNamespaceEntry, WhoAmI } from "../api";
 import { hasToken, isAuthDisabled, isProxyMode } from "../api";
 import { sameIdentity } from "./boot";
-import { NAMESPACE_NAME } from "./namespace";
+import { NAMESPACE_NAME, isCollectionName } from "./namespace";
 import { patchEntry, readPlace, rememberPlace, type InspectedOwner, type Place } from "./place";
 
 export type View =
@@ -26,7 +26,6 @@ export type View =
   | "admin:activity"
   | "admin:usage"
   | "admin:agents"
-  | "admin:collections"
   | "admin:users"
   | "admin:settings";
 
@@ -51,7 +50,6 @@ export const ALL_VIEWS: View[] = [
   "admin:activity",
   "admin:usage",
   "admin:agents",
-  "admin:collections",
   "admin:users",
   "admin:settings",
 ];
@@ -99,7 +97,8 @@ const VIEW_QUERY_KEYS: Partial<Record<View, readonly string[]>> = {
   // the memory in the drawer, the document in the preview, the thread in the replay.
   // Memories also carries its tab: `?section=insights` is the Insights tab (MemoryTabs).
   memories: ["memory", "section"],
-  knowledge: ["doc"],
+  // The Library also carries the collection it shows (`?collection=`).
+  knowledge: ["doc", "collection"],
   sessions: ["thread"],
 };
 
@@ -221,6 +220,9 @@ function linkedAgent(key: string): string {
 
 // The URL keys that name an object of one namespace: a switch drops them.
 const SWITCH_CLEARS = ["memory", "thread", "doc", "task"];
+// A collection is the org's, not a namespace's: an entry made in another namespace keeps it,
+// and only the person's own switch of namespace leaves it.
+const PICK_CLEARS = [...SWITCH_CLEARS, "collection"];
 
 /** The namespace the current history entry was made in: the app's stamp, else the one its
  *  address names (the entry a link opened, which boot rewrites and never stamps). */
@@ -228,6 +230,12 @@ function entryNamespace(): string | null {
   const s: unknown = typeof history === "undefined" ? null : history.state;
   const ns = s && typeof s === "object" ? (s as Record<string, unknown>).loomNamespace : null;
   return typeof ns === "string" ? ns : urlParam(NAMESPACE_KEY);
+}
+
+/** A document the entry opens in a collection: the collection's, like the collection itself,
+ *  so an entry made in another namespace keeps it. */
+function collectionDoc(view: View): string | null {
+  return view === "knowledge" && isCollectionName(urlParam("collection")) ? urlParam("doc") : null;
 }
 
 /** Whether what the current entry names belongs to `namespace`: an entry made in another
@@ -242,7 +250,8 @@ function entryHere(namespace: string | null): boolean {
 export function addressPageNamespace(): void {
   const namespace = useStore.getState().identity?.namespace ?? null;
   const here = entryHere(namespace);
-  const want = addressFor(pageNamespace(), here ? [] : SWITCH_CLEARS);
+  const keepDoc = !here && collectionDoc(useStore.getState().view) !== null;
+  const want = addressFor(pageNamespace(), here ? [] : SWITCH_CLEARS.filter((k) => !(keepDoc && k === "doc")));
   // An entry made in another namespace becomes this one's, so what is opened on it next
   // reopens after a reload, and what it remembered of the other never does.
   if (!here || want !== window.location.pathname + window.location.search + window.location.hash)
@@ -376,6 +385,11 @@ interface AppState {
   setMemoryTagFilter: (tag: string | null) => void;
   openDocument: (sourceUri: string) => void;
   clearPendingDoc: () => void;
+  /** The Library shows a place other than the header's namespace (a collection, or one it
+   *  is confirming), or shows nothing of a namespace that holds no documents: the header's
+   *  New › Document, which adds to the header's namespace, steps aside then. */
+  libraryElsewhere: boolean;
+  setLibraryElsewhere: (elsewhere: boolean) => void;
   openConversationThread: (threadId: string) => void;
   clearPendingConversationThread: () => void;
   inspectProfile: (label: string | null) => void;
@@ -435,14 +449,14 @@ export const useStore = create<AppState>((set, get) => ({
   setWhoami: (whoami) => set({ whoami }),
   // A memory belongs to its namespace: a switch, from any picker, closes the open one. The
   // address names the new namespace and drops the keys that name an object of the one left
-  // (`?memory=`, `?thread=`, `?doc=`, `?task=`), and the entry is stamped with the new
+  // (`?memory=`, `?thread=`, `?doc=`, `?task=`, `?collection=`), and the entry is stamped with the new
   // namespace and forgets the memory it remembered, so neither a reload nor Back reopens
   // the old namespace's object here. Any pick leaves a link's unreadable namespace, the
   // namespace the page already shows included.
   setIdentity: (identity) => {
     const s = get();
     if (s.identity && identity && (s.identity.namespace !== identity.namespace || s.deniedNamespace)) {
-      patchEntry(stampFor(identity.namespace), addressFor(identity.namespace, SWITCH_CLEARS));
+      patchEntry(stampFor(identity.namespace), addressFor(identity.namespace, PICK_CLEARS));
       // The Recall Lab's run filter names a run of the namespace left.
       set({
         identity,
@@ -488,7 +502,8 @@ export const useStore = create<AppState>((set, get) => ({
   arriveFromHistory: (view, place) => {
     // An entry made in another namespace reopens nothing it names in this one.
     const here = entryHere(get().identity?.namespace ?? null);
-    const opened = here ? openedByUrl(view) : {};
+    const doc = collectionDoc(view);
+    const opened = here ? openedByUrl(view) : doc ? { pendingDocSourceUri: doc } : {};
     const inspected = here ? (place?.inspected ?? null) : null;
     set({
       view,
@@ -547,6 +562,8 @@ export const useStore = create<AppState>((set, get) => ({
   },
   memoriesVersion: 0,
   bumpMemoriesVersion: () => set((s) => ({ memoriesVersion: s.memoriesVersion + 1 })),
+  libraryElsewhere: false,
+  setLibraryElsewhere: (libraryElsewhere) => set({ libraryElsewhere }),
   paletteRequest: null,
   openPalette: (hint) => set((s) => ({ paletteRequest: { hint, nonce: (s.paletteRequest?.nonce ?? 0) + 1 } })),
   clearPaletteRequest: () => set({ paletteRequest: null }),

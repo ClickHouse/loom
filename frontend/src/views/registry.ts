@@ -26,7 +26,6 @@ export const VIEW_LOADERS: Record<View, () => Promise<unknown>> = {
   "admin:activity": () => import("./admin/Audit"),
   "admin:usage": () => import("./admin/Spending"),
   "admin:agents": () => import("./admin/Agents"),
-  "admin:collections": () => import("./admin/Collections"),
   "admin:users": () => import("./admin/Users"),
   "admin:settings": () => import("./admin/DeploymentSettings"),
 };

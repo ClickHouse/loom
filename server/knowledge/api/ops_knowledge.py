@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from server.knowledge.api.models_inspect import KnowledgeInspectInput, KnowledgeInspectOutput
 from server.knowledge.api.models_knowledge import (
     KnowledgeAddInput,
     KnowledgeAddOutput,
@@ -17,6 +18,12 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeDeleteOutput,
     KnowledgeGetInput,
     KnowledgeGetOutput,
+    KnowledgeIngestCancelInput,
+    KnowledgeIngestCancelOutput,
+    KnowledgeIngestInput,
+    KnowledgeIngestOutput,
+    KnowledgeIngestStatusInput,
+    KnowledgeIngestStatusOutput,
     KnowledgeListInput,
     KnowledgeListOutput,
     KnowledgeOutlineInput,
@@ -38,6 +45,12 @@ from server.knowledge.app.document_reads import (
     handle_knowledge_list,
     handle_knowledge_outline,
 )
+from server.knowledge.app.ingest import (
+    handle_knowledge_ingest,
+    handle_knowledge_ingest_cancel,
+    handle_knowledge_ingest_status,
+)
+from server.knowledge.app.inspect import handle_knowledge_inspect
 from server.knowledge.app.knowledge_search import handle_knowledge_search
 from server.knowledge.app.reads import handle_knowledge_reads
 from server.knowledge.app.synthesize import handle_knowledge_synthesize
@@ -204,6 +217,52 @@ knowledge_dedup_resolve = Operation(
 )
 
 
+# Extraction of an uploaded file (POST /v1/knowledge.upload) by the extractor
+# service, and its publication, as a job.
+knowledge_ingest = Operation(
+    name="knowledge.ingest",
+    input_model=KnowledgeIngestInput,
+    output_model=KnowledgeIngestOutput,
+    handler=handle_knowledge_ingest,
+    idempotent=False,  # each call queues a job, which publishes a revision
+    required_role=Role.WRITER,
+    audit=False,
+    maturity="experimental",
+)
+
+knowledge_ingest_status = Operation(
+    name="knowledge.ingest_status",
+    input_model=KnowledgeIngestStatusInput,
+    output_model=KnowledgeIngestStatusOutput,
+    handler=handle_knowledge_ingest_status,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+    maturity="experimental",
+)
+
+knowledge_ingest_cancel = Operation(
+    name="knowledge.ingest_cancel",
+    input_model=KnowledgeIngestCancelInput,
+    output_model=KnowledgeIngestCancelOutput,
+    handler=handle_knowledge_ingest_cancel,
+    idempotent=True,
+    required_role=Role.WRITER,
+    audit=False,
+    maturity="experimental",
+)
+
+knowledge_inspect = Operation(
+    name="knowledge.inspect",
+    maturity="experimental",
+    input_model=KnowledgeInspectInput,
+    output_model=KnowledgeInspectOutput,
+    handler=handle_knowledge_inspect,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
 OPERATIONS: list[Operation] = [
     knowledge_add,
     knowledge_reads,
@@ -214,9 +273,13 @@ OPERATIONS: list[Operation] = [
     knowledge_list,
     knowledge_get,
     knowledge_outline,
+    knowledge_inspect,
     knowledge_synthesize,
     knowledge_bulk_add,
     knowledge_bulk_delete,
     knowledge_dedup_list,
     knowledge_dedup_resolve,
+    knowledge_ingest,
+    knowledge_ingest_status,
+    knowledge_ingest_cancel,
 ]

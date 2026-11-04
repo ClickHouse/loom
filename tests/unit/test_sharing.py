@@ -227,8 +227,11 @@ def test_a_removed_member_reads_nothing_through_the_group(org_state: dict[str, A
 def test_another_org_s_token_reaches_no_collection(org_state: dict[str, Any]) -> None:
     org_state["grants"] = {"user:alice": {"col-q3": 3}}
     alice_elsewhere = verify_token(end_user_issuer.mint("globex", "alice", private_pem=_PRIVATE))
-    with pytest.raises(PermissionError):
+    with pytest.raises(PermissionError) as refused:
         asyncio.run(sharing.check(alice_elsewhere, Role.VIEWER, ORG, "col-q3"))
+    assert "collection.list" not in str(refused.value), (
+        "another org's caller gets the short refusal"
+    )
     assert _shared(alice_elsewhere) == []
 
 
@@ -242,6 +245,125 @@ def test_an_org_admin_without_a_grant_reads_no_collection(org_state: dict[str, A
     )
     with pytest.raises(PermissionError):
         asyncio.run(sharing.check(admin, Role.VIEWER, ORG, "col-hr"))
+
+
+def test_a_refusal_points_at_the_library_and_confirms_nothing(
+    org_state: dict[str, Any],
+) -> None:
+    org_state["tree"] = sharing.Tree(parent={"col-hr": ""})
+    messages = []
+    for name in ("col-hr", "col-never-made"):
+        with pytest.raises(PermissionError) as refused:
+            asyncio.run(sharing.check(_user("alice"), Role.VIEWER, ORG, name))
+        messages.append(str(refused.value).replace(name, "<name>"))
+    assert "a grant of at least viewer" in messages[0]
+    # No tool route: the gate knows no transport (an assistant connection has no loom_op).
+    assert "collection.list (or the dashboard's Library) lists the ones you can read" in messages[0]
+    assert messages[0] == messages[1], "an existing and a missing collection read the same"
+    # Someone else's personal collection takes no grant: no advice to ask for one.
+    with pytest.raises(PermissionError) as refused:
+        asyncio.run(sharing.check(_user("alice"), Role.VIEWER, ORG, "col-me-0123456789abcdef"))
+    assert "collection.list" not in str(refused.value)
+    assert "grant of at least" not in str(refused.value)
+
+
+def test_a_token_is_named_in_the_refusal_only_when_its_claim_is_what_caps_it(
+    org_state: dict[str, Any],
+) -> None:
+    org_state["tree"] = sharing.Tree(parent={"col-hr": ""})
+
+    def refusal(auth: AuthInfo, role: Role = Role.VIEWER, grant: int = 0) -> str:
+        """The refusal, with `grant` (a rank) held on col-hr by the token's own subject."""
+        org_state["grants"] = {auth.subject: {"col-hr": grant}} if grant else {}
+        with pytest.raises(PermissionError) as refused:
+            asyncio.run(sharing.check(auth, role, ORG, "col-hr"))
+        return str(refused.value)
+
+    scoped = AuthInfo(
+        subject="alice",
+        org=ORG,
+        namespaces=("col-hr",),
+        roles=(Role.VIEWER,),
+        is_service_account=False,
+        ns_roles=(("col-hr", "viewer"),),
+    )
+    # The claim already names it with viewer: the missing piece is the grant.
+    assert "claim must name it" not in refusal(scoped)
+    # A write the claim's viewer role caps: both needs are named, the claim and the grant a
+    # new token is capped to, in the same words whatever the grants hold (they are never
+    # read for the words: they would confirm a collection the token cannot see).
+    capped = refusal(scoped, Role.WRITER, grant=2)
+    assert "claim must name it with at least writer" in capped
+    # The grant is read for the token's own subject, so it is the one named.
+    assert "'alice' must hold a grant of at least writer" in capped
+    assert refusal(scoped, Role.WRITER, grant=1) == capped
+    delegated = AuthInfo(
+        subject="sa:bot",
+        org=ORG,
+        namespaces=("*",),
+        roles=(Role.WRITER,),
+        is_service_account=True,
+        creator="alice",
+    )
+    assert "its creator must hold at least viewer there too" in refusal(delegated)
+    # A delegated claim of `*` does not name it: the claim is what caps it.
+    assert "claim must name it" in refusal(delegated, grant=1)
+    named = AuthInfo(
+        subject="sa:bot",
+        org=ORG,
+        namespaces=("col-hr",),
+        roles=(Role.WRITER,),
+        is_service_account=True,
+        creator="alice",
+    )
+    assert "claim must name it" not in refusal(named)
+    # A delegated token whose own role is short of the write: its claim is the cap.
+    viewer_bot = AuthInfo(
+        subject="sa:bot",
+        org=ORG,
+        namespaces=("col-hr",),
+        roles=(Role.VIEWER,),
+        is_service_account=True,
+        creator="alice",
+    )
+    assert "this token's claim must carry at least writer" in refusal(viewer_bot, Role.WRITER, 2)
+    # A scoped writer whose ns_write leaves the collection out: its write set is the cap, and
+    # its claim, which already names the collection as writer, is not blamed.
+    scoped_writer = AuthInfo(
+        subject="alice",
+        org=ORG,
+        namespaces=("col-hr", "n"),
+        roles=(Role.WRITER,),
+        is_service_account=False,
+        ns_roles=(("col-hr", "writer"), ("n", "writer")),
+        write_namespaces=("n",),
+    )
+    text = refusal(scoped_writer, Role.WRITER, grant=2)
+    assert "this token's write set (ns_write) must include it" in text
+    assert "claim must name it" not in text
+    # A claim that names the collection with a role no grant carries: the role is the fix.
+    odd_role = AuthInfo(
+        subject="alice",
+        org=ORG,
+        namespaces=("col-hr",),
+        roles=(Role.VIEWER,),
+        is_service_account=False,
+        ns_roles=(("col-hr", "org_admin"),),
+    )
+    assert "this token's claim must name it with at least viewer" in refusal(odd_role, grant=1)
+    # Blocked twice (a write set and a claim that leave it out): both are named at once.
+    scoped_bot = AuthInfo(
+        subject="sa:bot",
+        org=ORG,
+        namespaces=("ns1",),
+        roles=(Role.WRITER,),
+        is_service_account=True,
+        ns_roles=(("ns1", "writer"),),
+        write_namespaces=("ns1",),
+    )
+    text = refusal(scoped_bot, Role.WRITER, grant=2)
+    assert "this token's write set (ns_write) must include it" in text
+    assert "this token's claim must name it" in text
 
 
 # ── rows ──────────────────────────────────────────────────────────────────
@@ -924,6 +1046,21 @@ def test_an_outage_answers_503_for_a_collection_as_for_any_namespace(
         asyncio.run(sharing.readable(user, ORG))
 
 
+def test_an_unreadable_grant_refuses_with_the_short_words(
+    monkeypatch: pytest.MonkeyPatch, org_state: dict[str, Any]
+) -> None:
+    """A tree that cannot be read refuses (fail closed), but asks for no grant: the caller
+    may already hold one, and should retry rather than ask for it."""
+
+    async def _broken(*_a: Any) -> Any:
+        raise RuntimeError("corrupt")
+
+    monkeypatch.setattr(sharing, "tree", _broken)
+    with pytest.raises(PermissionError) as refused:
+        asyncio.run(sharing.check(_user("alice"), Role.WRITER, ORG, "col-hr"))
+    assert str(refused.value) == f"principal 'user:alice' cannot access {ORG}/col-hr"
+
+
 def test_every_op_an_end_user_reaches_without_a_namespace_is_known() -> None:
     """An op that names no namespace and is not org-level passes the role gate
     on the end user's org membership alone: memory.get_by_id authorizes its
@@ -1579,3 +1716,13 @@ def test_a_tree_write_whose_reply_is_lost_still_moves_the_watermark(
         else:
             asyncio.run(collections.retire(ORG, "col-q3-docs"))
     assert moved == [grant_cache.COLLECTIONS]
+
+
+def test_a_collection_description_is_held_to_2000_characters() -> None:
+    from pydantic import ValidationError
+
+    from server.identity.api.models_collections import CollectionCreateInput
+
+    CollectionCreateInput(org="o", namespace="col-a", description="x" * 2000)
+    with pytest.raises(ValidationError):
+        CollectionCreateInput(org="o", namespace="col-a", description="x" * 2001)

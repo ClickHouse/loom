@@ -90,6 +90,7 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "conversation_embeddings": ("gap", "memory"),
     "conversation_threads": ("gap", "memory"),
     "documents": ("builder", "test_document_row_builder.py"),
+    "knowledge_ingestions": ("builder", "test_knowledge_ingest.py"),
     "embedding_cache": ("gap", "platform"),
     "entity_canonical_map": ("gap", "memory"),
     "entity_communities": ("gap", "memory"),

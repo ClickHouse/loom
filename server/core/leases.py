@@ -173,6 +173,15 @@ class Lease:
         except Exception as e:  # noqa: BLE001 — the lease expires by its TTL
             log.warning("lease %s: release failed (%s); it expires by its TTL", self.name, e)
 
+    def let_expire(self) -> None:
+        """Stop renewing and leave the key to expire by its TTL, judged on the
+        server's clock: `release` then deletes nothing. For a holder that cannot
+        tell whether its last write will still land, so no other process may
+        start on what the lease guards until that write has landed or stopped."""
+        if self._renewer is not None:
+            self._renewer.cancel()
+        self._sent = False
+
     def keep_renewed(self, on_lost: Callable[[], Any] | None = None) -> None:
         """Renew from a task until `release`; call `on_lost` once the lease is lost."""
         self._renewer = asyncio.create_task(self._renew_loop(on_lost), name=f"lease {self.name}")
