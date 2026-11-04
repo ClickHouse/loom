@@ -1329,22 +1329,46 @@ def test_score_writes_the_summary_without_per_task_rows(tmp_path):
     out.mkdir()
     ledger = Ledger(out / "ledger.jsonl", 1.0)
     model = _fake_model(ledger)
-    cfg = _config(out, arms=[0, 1, 3], k=2, judge_orders=1)
-    run.run(ts, cfg, FakeLoom(), model, [model], ledger)
+    cfg = _config(out, arms=[0, 1, 3, 4], k=2, judge_orders=1)
+    run.run(ts, cfg, FakeLoom(), model, [model], ledger, FakeCodeIndex())
+    sheet = out / "extraction_labels.todo.json"
+    labels = [{**row, "verdict": "correct"} for row in json.loads(sheet.read_text())]
+    sheet.write_text(json.dumps(labels))
     path = tmp_path / "summary.json"
-    assert main(["score", str(EXAMPLE), "--out", str(out), "--summary", str(path)]) == 0
+    argv = ["score", str(EXAMPLE), "--out", str(out), "--extraction-labels", str(sheet)]
+    assert main([*argv, "--summary", str(path)]) == 0
     first = path.read_text()
     summary = json.loads(first)
     assert "per_task" not in summary
     assert summary["run"]["reader"] == "gpt-4o-mini" and summary["run"]["k"] == 2
-    assert "org" not in summary["run"]
+    assert "org" not in summary["run"] and "arm4_namespace" not in summary["run"]
+    # Document ids can name private material: the extraction figures are a list.
+    assert isinstance(summary["extraction"]["documents"], list)
+    assert summary["extraction"]["documents"]
+    for doc_id in ts.documents:
+        assert doc_id not in first
     spend = summary["spend_usd"]
     assert spend["total"] == round(sum(r["usd"] for r in ledger.rows()), 4)
     assert spend["answers_by_arm"]["0"]["answers"] == 2 * len(list(ts.all_tasks()))
     assert {(c["treatment"], c["reference"]) for c in summary["comparisons"]} >= {(1, 0)}
     # Scoring again regenerates the same file.
-    assert main(["score", str(EXAMPLE), "--out", str(out), "--summary", str(path)]) == 0
+    assert main([*argv, "--summary", str(path)]) == 0
     assert path.read_text() == first
+
+
+def test_the_summary_of_an_unpriced_reader_has_no_answer_cost(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    run.run(ts, _config(out, arms=[0], k=1, judge_orders=1), FakeLoom(), model, [model], ledger)
+    state = json.loads((out / "state.json").read_text())
+    state["flags"]["reader"] = "a-model-with-no-price"
+    (out / "state.json").write_text(json.dumps(state))
+    summary = score.summary(score.score(ts, out), out)
+    assert summary["spend_usd"]["answers_by_arm"][0]["usd"] is None
+    assert summary["spend_usd"]["answers_by_arm"][0]["answers"] == len(list(ts.all_tasks()))
 
 
 def test_a_ledger_line_cut_short_by_an_interrupt_is_dropped(tmp_path, capsys):

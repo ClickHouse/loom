@@ -610,9 +610,10 @@ is the share of answers that would steer an engineer wrong. B avoids: no rejecte
 proposed (deterministic detectors first, the judge for the rest); B satisfies: no gold
 constraint broken. C passes: a supersession answer does not present a reversed statement as
 the current design, an abstention answer says no decision is recorded and invents none.
-C states current is over the supersession tasks only. No arm served a reversed statement as
-current. Abstention tasks failed (no abstention, or an invented rationale) on 2% of judgements
-in arm 0, 32% in arm 1, 10% in arm 2, 3% in arm 3 and 12% in arm 4.
+No arm served a reversed statement as current. C states current, averaged over the
+supersession tasks: 17% in arm 0, 98% in arm 1, 100% in arms 2 and 3, and 20% in arm 4.
+Abstention tasks failed (no abstention, or an invented rationale), averaged over the
+abstention tasks: 2% in arm 0, 32% in arm 1, 10% in arm 2, 3% in arm 3 and 12% in arm 4.
 
 Paired per task, bootstrap over documents, 95% interval, and the minimum detectable effect
 taken from that interval. With five clusters the bootstrap intervals and the MDEs taken from
@@ -662,8 +663,9 @@ Arm 4's A precision has 9 tasks: on one task every answer abstained and made no 
 | 4   |                             366, 849 |             71 |          272 |                            0.011 |
 
 Arm 1 injects 1.83 times arm 3's tokens. By ledger stage the run spent 0.099 USD on answers,
-0.321 on 2,100 judge passes, 0.173 on extraction (an estimate the ledger charges before each
-call) and 0.004 on the server's own model calls: 0.597 USD in all. The ledger does not split
+0.321 on 2,100 judge passes and 0.004 on the server's own model calls. For extraction the
+ledger charges an upper bound once per document before its extraction run, 0.173 USD in all,
+so the extraction spent at most 0.173 and the run at most 0.597 USD. The ledger does not split
 judging by arm.
 
 **Reading.** Resolved against zero (the interval's lower bound above it, or its upper bound
@@ -674,11 +676,9 @@ C. The whole document in context (arm 1) raises A precision and recall over arm 
 avoidance is not resolved against arm 0 (-8.9, -18.2 .. +6.7) and falls below the gold rows
 by 79 points; it also fails more C tasks than arm 0 and arm 3. A hypothesis, not tested
 here: a decision row names the rejected option as rejected, and a whole document does not.
-Arm 4 states the current design on 20% of supersession judgements against 100% for arm 3;
-whether the revisions' reversals were extracted is not counted here.
 
-**Treatment check.** Arm 3's pre-edit block served 27 of 30 tasks that name files and search
-served 29 of 30; arm 4's pre-edit block served 5 of 30 and search 30 of 30. Extraction wrote 32
+**Treatment check.** Of the 30 tasks with gold rows, arm 3's pre-edit block served 27 and
+search served 29; arm 4's pre-edit block served 5 and search 30. Extraction wrote 32
 rows across the documents and their revisions, 14 with files, with no extraction failure and
 no failed code lookup.
 
@@ -687,9 +687,8 @@ repeats on 97.2% of 500. 70 of 2,100 judge passes were unreadable (3 answers uns
 
 **Limits.** One reader and one judge model; no second judge and no human-labelled slice, so
 judge accuracy and kappa are not measured. Extraction precision is not measured (no row was
-labelled). Five documents give five clusters. No
-patch is applied and no test runs, so change-task pass rate is not measured. The task set is
-private: the numbers are reproducible only by a holder of the set.
+labelled). No patch is applied and no test runs, so change-task pass rate is not measured.
+The task set is private: the numbers are reproducible only by a holder of the set.
 
 - **Models:** reader, judge and extraction `gpt-6-luna`; the server's embeddings
   `text-embedding-3-large` (the [models table](#models)).

@@ -19,7 +19,7 @@ from statistics import mean
 from typing import Any
 
 from bench.bootstrap import paired_bootstrap
-from bench.design_rationale.llm import cost_usd
+from bench.design_rationale.llm import cost_usd, price
 from bench.design_rationale.taskset import TaskSet, parse_key, surface_key
 
 # z(0.975) + z(0.80): the effect a two-sided 5% test detects with 80% power is this many
@@ -526,9 +526,9 @@ def score(
 
 
 def summary(metrics: dict[str, Any], out_dir: Path) -> dict[str, Any]:
-    """The run's aggregates without the per-task rows (task ids can name private
-    material), with the run's flags and its spend: by ledger stage, and the answers'
-    cost per arm."""
+    """The run's aggregates without the per-task rows (task and document ids can name
+    private material), with the run's flags and its spend: by ledger stage, and the
+    answers' cost per arm (None for a reader the price table does not list)."""
     state = json.loads((out_dir / "state.json").read_text())
     answers = json.loads((out_dir / "answers.json").read_text())
     flags = state.get("flags") or {}
@@ -540,13 +540,21 @@ def summary(metrics: dict[str, Any], out_dir: Path) -> dict[str, Any]:
         except json.JSONDecodeError:
             continue  # a row an interrupt cut short, as the ledger itself drops it
         by_stage[row["stage"]] += row["usd"]
+    priced = price(flags["reader"]) is not None
     answer_usd: dict[int, float] = defaultdict(float)
     answer_n: dict[int, int] = defaultdict(int)
     for key, a in answers.items():
         arm = parse_key(key)[1]
-        answer_usd[arm] += cost_usd(flags["reader"], a.get("in", 0), a.get("out", 0))
+        if priced:
+            answer_usd[arm] += cost_usd(flags["reader"], a.get("in", 0), a.get("out", 0))
         answer_n[arm] += 1
     samples = {key.rsplit("/s", 1)[1] for key in answers}
+    aggregates = {k: v for k, v in metrics.items() if k != "per_task"}
+    if "extraction" in aggregates:
+        # Documents in id order, as the report lists them, without their ids.
+        extraction = dict(aggregates["extraction"])
+        extraction["documents"] = list(extraction["documents"].values())
+        aggregates["extraction"] = extraction
     run = {k: v for k, v in flags.items() if k not in ("org", "arm4_namespace")}
     return {
         "run": {**run, "k": len(samples)},
@@ -554,11 +562,11 @@ def summary(metrics: dict[str, Any], out_dir: Path) -> dict[str, Any]:
             "by_stage": {k: round(v, 4) for k, v in sorted(by_stage.items())},
             "total": round(sum(by_stage.values()), 4),
             "answers_by_arm": {
-                arm: {"answers": answer_n[arm], "usd": round(answer_usd[arm], 4)}
-                for arm in sorted(answer_usd)
+                arm: {"answers": n, "usd": round(answer_usd[arm], 4) if priced else None}
+                for arm, n in sorted(answer_n.items())
             },
         },
-        **{k: v for k, v in metrics.items() if k != "per_task"},
+        **aggregates,
     }
 
 
