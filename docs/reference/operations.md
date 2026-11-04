@@ -497,7 +497,7 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.touch`](operations/memory.md#memorytouch) | Change only a memory's expiry: set a new TTL (`ttl_seconds`) or clear it (`clear_expiry`), for one key or up to 1,000 (`memory_keys`), without rewriting its value, entities, conflict state or… | writer | write | no |  |
 | [`memory.unlock`](operations/memory.md#memoryunlock) | Lift a memory.lock (admin). | admin | idempotent | no | yes |
 | [`memory.unpin`](operations/memory.md#memoryunpin) | Remove the write-time pin from one live memory. | admin | idempotent | no | yes |
-| [`memory.update`](operations/memory.md#memoryupdate) | Key-addressed update: the fact changed or got more specific. | writer | write | yes | yes |
+| [`memory.update`](operations/memory.md#memoryupdate) | Key-addressed update: the fact changed or got more specific. | writer | write | yes |  |
 | [`memory.update_by_id`](operations/memory.md#memoryupdate_by_id) | Update a memory by UUID with an optimistic concurrency check. | writer | idempotent | yes |  |
 | [`memory.verify`](operations/memory.md#memoryverify) | Attest to (or revoke the attestation on) one memory. | writer | idempotent | yes | yes |
 

@@ -2080,8 +2080,8 @@ async def test_each_write_leaves_the_audit_row_the_transport_would(monkeypatch) 
     with pipeline_actor(cli_actor("decisions")):
         await _run()
     events = [(e, a) for e, a, _ in world.audits]
-    # decision.record and memory.delete_version declare an audit row; memory.update_by_id
-    # does not, as over the transport.
+    # decision.record and memory.delete_version declare an audit row. The update handler
+    # is stubbed here; its own row is tested in test_memory_update_by_key.py.
     assert sorted(events) == [
         ("decision.record", "process:cli:decisions"),
         ("memory.delete_version", "process:cli:decisions"),

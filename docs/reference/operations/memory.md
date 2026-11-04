@@ -2358,7 +2358,7 @@ Remove the write-time pin from one live memory.
 
 Key-addressed update: the fact changed or got more specific.
 
-`POST /v1/memory.update` · MCP `loom_memory_update` · role `writer` · write · audited
+`POST /v1/memory.update` · MCP `loom_memory_update` · role `writer` · write
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
