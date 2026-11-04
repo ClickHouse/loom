@@ -804,7 +804,7 @@ describe("RepositoryCard — sources", () => {
     const group = screen.getByRole("group", { name: "Sources" });
     expect(await within(group).findByText("design-docs")).toBeInTheDocument();
     expect(within(group).getByText("Synced")).toBeInTheDocument();
-    expect(within(group).getByText("12 files listed · 3 written · 1 not converted")).toBeInTheDocument();
+    expect(within(group).getByText("12 documents listed · 3 written · 1 not converted")).toBeInTheDocument();
     expect(within(group).getByText(/Sync is off on this deployment/)).toBeInTheDocument();
     expect(within(group).queryByRole("button", { name: "Add a source" })).toBeNull();
     expect(within(group).queryByRole("button", { name: "Actions for design-docs" })).toBeNull();

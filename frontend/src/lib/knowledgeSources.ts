@@ -17,7 +17,7 @@ export interface KnowledgeSourceSync {
   removed: number;
   /** Files not ingested. */
   unconverted: number;
-  /** Why, as reason -> files. */
+  /** Why, as reason -> documents. */
   unconverted_reasons: Record<string, number>;
   /** Files not written because another writer's document holds their address. */
   skipped: number;
@@ -122,7 +122,7 @@ export function syncBadge(sync: KnowledgeSourceSync): SyncBadge {
             tone: "warn",
             tip: `The last turn stopped early (${sync.error}); the next one goes on.`,
           }
-        : { text: "Synced", tone: "ok", tip: "The last turn read every changed file." };
+        : { text: "Synced", tone: "ok", tip: "The last turn read every changed document." };
     case "rate_limited":
       return { text: "Rate limited", tone: "warn", tip: "The source limited the last turn; the next one retries." };
     case "credential_invalid":
@@ -142,11 +142,11 @@ export function syncBadge(sync: KnowledgeSourceSync): SyncBadge {
   }
 }
 
-/** "40 files listed · 3 written · 1 retired · 2 not converted · 1 skipped"; "" before a
+/** "40 documents listed · 3 written · 1 retired · 2 not converted · 1 skipped"; "" before a
  *  first turn. Every count is information: nothing here waits for a person. */
 export function syncCounts(sync: KnowledgeSourceSync): string {
   if (!sync.status) return "";
-  const parts = [`${sync.documents_seen} ${sync.documents_seen === 1 ? "file" : "files"} listed`];
+  const parts = [`${sync.documents_seen} ${sync.documents_seen === 1 ? "document" : "documents"} listed`];
   parts.push(`${sync.changed} written`);
   if (sync.removed) parts.push(`${sync.removed} retired`);
   if (sync.unconverted) parts.push(`${sync.unconverted} not converted`);
@@ -161,7 +161,7 @@ const REASON_LABEL: Record<string, string> = {
   extractor_unavailable: "extractor unavailable",
 };
 
-/** Why files were not converted, most first: "no extractor for the format: 2; http_404: 1".
+/** Why documents were not converted, most first: "no extractor for the format: 2; http_404: 1".
  *  A reason the card has no words for is shown as the server wrote it. */
 export function unconvertedDetail(reasons: Record<string, number>): string {
   return Object.entries(reasons)

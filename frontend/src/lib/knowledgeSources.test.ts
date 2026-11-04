@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   credentialLabel,
   emptySourceForm,
-  kindLabel,
   folderIds,
+  kindLabel,
   probeCount,
   retiredMessage,
   sourceAddBody,
@@ -52,10 +52,10 @@ describe("syncBadge", () => {
 describe("syncCounts", () => {
   it("says nothing before a first turn, then only the counts that are not zero past the first two", () => {
     expect(syncCounts(sync())).toBe("");
-    expect(syncCounts(sync({ status: "ok", documents_seen: 1 }))).toBe("1 file listed · 0 written");
+    expect(syncCounts(sync({ status: "ok", documents_seen: 1 }))).toBe("1 document listed · 0 written");
     expect(
       syncCounts(sync({ status: "ok", documents_seen: 40, changed: 3, removed: 1, unconverted: 2, skipped: 1 })),
-    ).toBe("40 files listed · 3 written · 1 retired · 2 not converted · 1 skipped");
+    ).toBe("40 documents listed · 3 written · 1 retired · 2 not converted · 1 skipped");
   });
 
   it("explains the unconverted reasons, most first, keeping unknown ones as written", () => {

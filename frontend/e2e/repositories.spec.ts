@@ -298,7 +298,7 @@ test.describe("document sources", () => {
     const sources = card(page).getByRole("group", { name: "Sources" });
     await expect(sources).toContainText("design-docs");
     await expect(sources).toContainText("Synced");
-    await expect(sources).toContainText("12 files listed · 3 written · 1 not converted");
+    await expect(sources).toContainText("12 documents listed · 3 written · 1 not converted");
     await expect(sources.getByRole("button")).toHaveCount(0);
     await page.waitForTimeout(300);
     expect(requested).toEqual(["/v1/knowledge.source.list"]);
