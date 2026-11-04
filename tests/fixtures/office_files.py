@@ -22,8 +22,9 @@ def pdf(
     broken_cmap: bool = False,
 ) -> bytes:
     """A PDF of `pages` (each its lines, None for a page of one image, FORM_IMAGE,
-    INLINE_IMAGE or FORM_INLINE_IMAGE) with `outline` entries `(title, page index, children)`. With
-    `broken_cmap`, the font's character map gives `A` a lone surrogate."""
+    INLINE_IMAGE or FORM_INLINE_IMAGE) with `outline` entries `(title, page index,
+    children)`. With `broken_cmap`, the font's character map gives `A` a lone
+    surrogate."""
     objs: list[bytes] = []
 
     def add(body: bytes) -> int:
@@ -58,9 +59,15 @@ def pdf(
     page_ids = []
     for text in pages:
         if text == INLINE_IMAGE:
-            stream, res = b"q 100 0 0 100 0 0 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q", b"<< >>"
+            stream, res = (
+                b"q 100 0 0 100 0 0 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q",
+                b"<< >>",
+            )
         elif text == FORM_INLINE_IMAGE:
-            stream, res = b"q 100 0 0 100 0 0 cm /Fm1 Do Q", b"<< /XObject << /Fm1 %d 0 R >> >>" % form_inline
+            stream, res = (
+                b"q 100 0 0 100 0 0 cm /Fm1 Do Q",
+                b"<< /XObject << /Fm1 %d 0 R >> >>" % form_inline,
+            )
         elif text is None or text == FORM_IMAGE:
             stream, res = (
                 b"q 100 0 0 100 0 0 cm /Im1 Do Q",
