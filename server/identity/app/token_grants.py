@@ -166,17 +166,18 @@ async def cascade_revoke_to_created_tokens(
 
     try:
         if unheld:
-            creators = [
-                c
-                for c in await spellings(org, subject, ch=ch)
-                # An account naming the address that still holds an active grant of
-                # its own here keeps its tokens' grants: they may be what that grant
-                # gave. A pending request admits nothing, so it keeps nothing.
-                if c.lower() == subject.lower()
-                or not await grants_repo.stored_spellings(
-                    org, namespace, await verified_spellings(org, c, ch=ch), rows="active", ch=ch
-                )
-            ]
+            creators = []
+            for c in await spellings(org, subject, ch=ch):
+                if c.lower() != subject.lower():
+                    # An account naming the address that still holds an active grant
+                    # of its own here keeps its tokens' grants: they may be what that
+                    # grant gave. A pending request admits nothing, so it keeps none.
+                    own = await verified_spellings(org, c, ch=ch)
+                    if await grants_repo.stored_spellings(
+                        org, namespace, own, rows="active", ch=ch
+                    ):
+                        continue
+                creators.append(c)
         else:
             creators = await verified_spellings(org, subject, ch=ch)
     except Exception as e:  # noqa: BLE001 — the tokens made under the exact subject still go

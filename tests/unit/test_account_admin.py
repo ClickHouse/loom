@@ -692,3 +692,33 @@ def test_a_link_leaves_an_old_address_another_account_holds_verified(
     # The row capped lee's tokens at rank 0 while the tie held: it is carried to
     # lee, revoked, so a token minted under the tie stays capped.
     assert [g["namespace"] for g in plan["revoked"]] == ["team"]
+
+
+@pytest.mark.parametrize(
+    ("elsewhere", "line"),
+    [
+        (True, "lee@home.io is another account's verified email: its grants stay theirs"),
+        (False, "revoked under lee@home.io, so revoked for lee too: team"),
+    ],
+)
+def test_the_link_dry_run_names_whose_grants_it_caps(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], elsewhere: bool, line: str
+) -> None:
+    import argparse
+
+    from server.cli import sso
+
+    async def plan(email: str, org: str, namespace: str) -> dict[str, Any]:
+        row = {"owner_email": "lee"}
+        revoked = [{"namespace": "team"}]
+        return {"row": row, "was": "lee@home.io", "revoked": revoked, "elsewhere": elsewhere}
+
+    async def link(*a: Any, **k: Any) -> Any:
+        raise AssertionError("a dry run links nothing")
+
+    monkeypatch.setattr(account_admin, "link_plan", plan)
+    monkeypatch.setattr(account_admin, "link_account", link)
+    monkeypatch.setattr(sso, "run_connected", lambda run: asyncio.run(run(None)))
+    args = argparse.Namespace(email="lee@corp.io", org="acme", namespace="lee", dry_run=True)
+    assert sso._cmd_link(args) == 0
+    assert line in capsys.readouterr().out

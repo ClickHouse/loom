@@ -246,9 +246,9 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
     namespaces and tokens. The operator vouches that `email` is theirs. A grant
     revoked under the old address (any, when it is another account's verified
     email) stops capping the person's tokens once the address is untied, so each
-    is carried to the subject, revoked. Holds the
-    address as JIT holds it, so no SSO sign-in makes a second account for it
-    meanwhile. Returns the address it had and the namespaces carried."""
+    is carried to the subject, revoked. Holds the address as JIT holds it, so no
+    SSO sign-in makes a second account for it meanwhile. Returns the address it
+    had and the namespaces carried."""
     from server.auth.self_signup import CLAIM_TTL_S, email_claim
     from server.core import leases
     from server.core.ch import get_client
@@ -293,9 +293,9 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
 
 async def _carry_revoked(revoked: list[dict[str, Any]], owner: str, by: str) -> list[str]:
     """The subject's own revoked row on each namespace a row under the old address
-    named (`link_plan`'s list), unless the subject has a row there already (checked again under the
-    grant claims): it caps the person's tokens as the address's did. Returns
-    the namespaces carried."""
+    named (`link_plan`'s list), unless the subject has a row there already
+    (checked again under the grant claims): it caps the person's tokens as the
+    address's did. Returns the namespaces carried."""
     from server.auth.grant_claims import grant_change
     from server.core.ch import get_client
     from server.identity.store import grants
