@@ -556,3 +556,29 @@ async def test_an_update_that_finds_no_row_leaves_no_audit_row(audited) -> None:
         MemoryUpdateByIdInput(org="test", memory_id=_ID_A, value="x")
     )
     assert out.updated is False and _audit_rows(ch) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verdict", ["merge", "duplicate"])
+async def test_a_revision_written_as_a_duplicate_is_audited_as_one(
+    audited, monkeypatch: pytest.MonkeyPatch, verdict: str
+) -> None:
+    import json
+
+    from server.memory.app import conflicts as cf
+    from server.memory.domain.conflicts import ConflictResult
+
+    ch = audited([_cand(_ID_A)], _row())
+
+    async def _restated(**_: Any) -> ConflictResult:
+        return ConflictResult(
+            verdict=verdict, peers=[], existing_memory_id=_ID_B, duplicate_of_id=_ID_B
+        )
+
+    monkeypatch.setattr(cf, "check_on_commit", _restated)
+    out = await update_mod.handle_memory_update(
+        MemoryUpdateInput(org="test", namespace="personal", memory_key="deploy_day", value="x")
+    )
+    assert out.updated and out.duplicate_of == _ID_B
+    [row] = _audit_rows(ch)
+    assert json.loads(row["subject"])["verdict"] == "duplicate"

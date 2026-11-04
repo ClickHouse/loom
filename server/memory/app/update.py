@@ -778,7 +778,10 @@ async def _write_revision(
             await _record_revision(
                 memory_row,
                 op=op,
-                verdict=conflict_result.verdict if conflict_result is not None else "",
+                # As memory.set records it: a row written as a duplicate says so.
+                verdict="duplicate"
+                if duplicate_of_id
+                else (conflict_result.verdict if conflict_result is not None else ""),
             )
         for done in [memory_done, *others_done]:
             if isinstance(done, BaseException):
