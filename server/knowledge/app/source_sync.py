@@ -609,13 +609,8 @@ async def _sync_file(
 ) -> bool:
     """Handle one listed file; False when the turn must stop listing."""
     uri = source_uri_of(f)
-
-    async def before_fetch() -> bool:
-        return await _fetchable(f, run, turn)
-
-    async def fetch_and_write() -> str:
-        return await _fetch_and_write(src, token, f, uri, turn)
-
+    before_fetch = functools.partial(_fetchable, f, run, turn)
+    fetch_and_write = functools.partial(_fetch_and_write, src, token, f, uri, turn)
     return await sync_item(src, f, uri, prior, run, turn, fetch_and_write, before_fetch)
 
 

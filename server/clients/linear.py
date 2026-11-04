@@ -70,7 +70,8 @@ class LinearError(RuntimeError):
     """`reason` is a short label for what failed (`http_500`, `not_found`,
     `graphql_internal_error`); `status` is the HTTP status the tracker answered, 0
     when it gave none (a network error, a bound passed here); `kind` is the first
-    GraphQL error's type, lower-cased, '' when there was none."""
+    `extensions.type` or `extensions.code` among the errors, lower-cased with `_` as
+    a space, '' when there was none."""
 
     def __init__(self, what: str, reason: str, *, status: int = 0, kind: str = "") -> None:
         super().__init__(f"{what}: {reason}")
@@ -146,7 +147,7 @@ def _raise_for(status: int, body: Any, what: str) -> None:
     if status == 429 or "ratelimited" in kinds:
         raise RateLimited(what, "rate_limited", status=status, kind="ratelimited")
     if status == 401 or "authentication error" in kinds:
-        raise CredentialRefused(what, "credential_refused", status=401, kind=kind)
+        raise CredentialRefused(what, "credential_refused", status=status, kind=kind)
     if _not_found(errors):
         raise NotFound(what, "not_found", status=status, kind=kind)
     if kind:

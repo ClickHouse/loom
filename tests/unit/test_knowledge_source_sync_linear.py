@@ -302,6 +302,23 @@ def test_a_next_page_without_a_cursor_is_no_list(world: _World, tracker: _Tracke
     assert _detail(world)["error"] == f"project {PROJECT}: no_cursor"
 
 
+def test_a_next_page_with_the_same_cursor_is_no_list(world: _World, tracker: _Tracker) -> None:
+    info = {"hasNextPage": True, "endCursor": "c1"}
+    page = {"data": {"project": {"id": PROJECT, "documents": {"nodes": [], "pageInfo": info}}}}
+    tracker.answers["ProjectDocuments"] = httpx.Response(200, json=page)
+    _sync()
+    assert _detail(world)["error"] == f"project {PROJECT}: no_cursor"
+    listings = [r for r in tracker.requests if r["op"] == "ProjectDocuments"]
+    assert [r["variables"].get("after") for r in listings][:2] == [None, "c1"]
+
+
+def test_a_page_without_page_info_is_no_list(world: _World, tracker: _Tracker) -> None:
+    page = {"data": {"project": {"id": PROJECT, "documents": {"nodes": []}}}}
+    tracker.answers["ProjectDocuments"] = httpx.Response(200, json=page)
+    _sync()
+    assert _detail(world)["error"] == f"project {PROJECT}: no_page_info"
+
+
 def test_one_document_s_failure_waits_for_that_document_alone(
     world: _World, tracker: _Tracker
 ) -> None:
@@ -510,3 +527,14 @@ def test_list_pages_are_paced(
     tracker.projects[PROJECT] = [_node(n, f"2026-01-0{n}T00:00:00.000Z") for n in (1, 2, 3, 4, 5)]
     _sync()
     assert slept == [0.5, 0.5]  # three pages of the first project, one of the other
+
+
+def test_an_untyped_403_on_a_fetch_is_given_up_at_once(world: _World, tracker: _Tracker) -> None:
+    tracker.projects[PROJECT] = [_node(1, "2026-01-01T00:00:00.000Z")]
+    tracker.answers[_doc_id(1)] = httpx.Response(403)
+    result = _sync()
+    assert result.unconverted == 1 and _detail(world)["status"] == "ok"
+    assert _detail(world)["unconverted_reasons"] == {"http_403": 1}
+    tracker.requests.clear()
+    _sync()
+    assert tracker.fetches(_doc_id(1)) == 0
