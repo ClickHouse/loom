@@ -542,3 +542,45 @@ async def test_an_old_address_is_held_elsewhere_only_by_a_verified_account(
     from server.identity.app import account_admin
 
     assert await account_admin._verified_elsewhere(ORG, namespace, email) is held
+
+
+@pytest.mark.asyncio
+async def test_a_link_away_from_a_verified_email_leaves_its_grants_and_caps_the_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # mallory3 typed Carol's address, which u-carol holds verified. Linking mallory3
+    # to an address of her own leaves Carol's grants under it live, and carries each
+    # to mallory3 revoked, so a token minted under the old tie stays capped.
+    from contextlib import asynccontextmanager
+
+    from server.core import leases
+    from server.identity.app import account_admin
+
+    @asynccontextmanager
+    async def _held(*_a: Any, **_k: Any) -> Any:
+        yield True
+
+    kept = KeptCH(tmp_path, *SETUP, ddl("audit_log"), ddl("acl_versions"))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
+    monkeypatch.setattr("server.observability.audit.get_client", lambda: kept)
+    monkeypatch.setattr(sso_links, "get_client", lambda: kept)
+    monkeypatch.setattr(grants, "_default_client", lambda: kept)
+    monkeypatch.setattr(leases, "holding", _held)
+    monkeypatch.setattr(account_admin.settings, "oauth_login_provider", "oidc")
+    was, carried = await account_admin.link_account(
+        "mallory3@corp.example", ORG, "mallory3", by="op"
+    )
+    assert (was, carried) == ("carol@corp.example", ["team-x", "team-y"])
+    rows = await kept.query_all(
+        "SELECT namespace, subject, revoked_at IS NULL AS live FROM loom.namespace_grants"
+        " FINAL WHERE org = {org:String} AND subject IN ('mallory3', 'carol@corp.example')"
+        " ORDER BY namespace, subject",
+        {"org": ORG},
+    )
+    assert [(r["namespace"], r["subject"], int(r["live"])) for r in rows] == [
+        ("team-u", "mallory3", 1),
+        ("team-x", "carol@corp.example", 1),
+        ("team-x", "mallory3", 0),
+        ("team-y", "carol@corp.example", 1),
+        ("team-y", "mallory3", 0),
+    ]

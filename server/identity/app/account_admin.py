@@ -146,8 +146,9 @@ async def _verified_elsewhere(org: str, namespace: str, email: str) -> bool:
 
 async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
     """What `link_account` would change: the account row, the address it names
-    now, and the revoked grants that address carries. Raises ValueError when it
-    cannot take `email`."""
+    now, the grants under it to carry to the subject revoked (its revoked ones,
+    or all of them when it is another account's verified email, `elsewhere`).
+    Raises ValueError when it cannot take `email`."""
     from server.core.ch import get_client, own_write_reads
     from server.identity.store import namespaces
 
@@ -235,7 +236,7 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
         # Where the subject has a row of its own it caps its tokens already.
         mine = {r["namespace"] for r in own}
         revoked = [g for g in revoked if g["namespace"] not in mine]
-    return {"row": row, "was": was, "revoked": revoked}
+    return {"row": row, "was": was, "revoked": revoked, "elsewhere": elsewhere}
 
 
 async def link_account(email: str, org: str, namespace: str, *, by: str) -> tuple[str, list[str]]:
@@ -291,8 +292,8 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
 
 
 async def _carry_revoked(revoked: list[dict[str, Any]], owner: str, by: str) -> list[str]:
-    """The subject's own revoked row on each namespace an address's revoked row
-    named, unless the subject has a row there already (checked again under the
+    """The subject's own revoked row on each namespace a row under the old address
+    named (`link_plan`'s list), unless the subject has a row there already (checked again under the
     grant claims): it caps the person's tokens as the address's did. Returns
     the namespaces carried."""
     from server.auth.grant_claims import grant_change

@@ -135,7 +135,13 @@ def _cmd_link(args: argparse.Namespace) -> int:
             if args.dry_run:
                 if plan["revoked"]:
                     names = ", ".join(sorted({g["namespace"] for g in plan["revoked"]}))
-                    print(f"  revoked under {plan['was']}, so revoked for {owner} too: {names}")
+                    if plan["elsewhere"]:
+                        print(
+                            f"  {plan['was']} is another account's verified email: its "
+                            f"grants stay theirs, and are revoked for {owner} too: {names}"
+                        )
+                    else:
+                        print(f"  revoked under {plan['was']}, so revoked for {owner} too: {names}")
                 return 0
             _, carried = await account_admin.link_account(
                 args.email, args.org, args.namespace, by=_by()
