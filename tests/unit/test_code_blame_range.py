@@ -567,6 +567,14 @@ async def test_trunk_and_sibling_namespaces_are_read_only_when_the_caller_may_re
     assert "code-clickhouse-26-3" not in head_reads
     assert out.window["sources"]["to"] == "mirror_ref"
 
+    readable = {NS, "code-clickhouse-26-3"}
+    repo.window_calls.clear()
+    out = await h.handle_code_blame_range(
+        CodeBlameRangeInput(namespace="code-clickhouse-26-3", from_sha=BASE, **base)
+    )
+    assert sorted(c[0] for c in repo.window_calls) == [NS, "code-clickhouse-26-3"]
+    assert "skipped" not in out.legs["ledger"]
+
 
 @pytest.mark.asyncio
 async def test_blame_failure_falls_back_to_the_ledger_floor_and_names_the_cause(wired) -> None:
