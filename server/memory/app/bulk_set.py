@@ -131,19 +131,20 @@ async def _bulk_existing_lookup(ch: Any, input: MemoryBulkSetInput, state: _Bulk
 
 
 async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, tuple[str, str]]:
-    """Phase 2: content hash -> (keeper key, keeper memory_id) of the live rows
-    under this identity (any session, any key) that already hold an entry's
-    exact bytes. Empty when the scope is not `identity` or the read failed."""
+    """Phase 2: content hash -> (keeper key, keeper memory_id) of the keys under
+    this identity (any session, any key) whose current version is live and holds
+    an entry's exact bytes. Empty when the scope is not `identity` or the read failed."""
     # Identity-scoped exact dedup. The gate above is session-scoped, so the same fact
     # re-observed in a later session, or extracted under a key variant, would land as a new
-    # active row (~9% of active rows in real namespaces were exact copies). A live active row
-    # in (org, namespace, agent, user_id) with the same content_sha256, under any key, IS the
-    # fact: the entry reinforces it instead of duplicating it. content_sha256 carries a
-    # bloom-filter index, so this is one cheap read. Both lookups feed a write, so they read
-    # with sequential consistency: on ClickHouse Cloud a row written a second ago by another
-    # replica is not yet visible to a plain read. The keeper may be `conflicted` or
-    # `duplicate` (the reader keeps those live): the same bytes under any live status are
-    # still the same fact. Fail-open: a lookup error writes the entry normally.
+    # active row (~9% of active rows in real namespaces were exact copies). A key in
+    # (org, namespace, agent, user_id) whose current version is live with the same
+    # content_sha256 IS the fact: the entry reinforces it instead of duplicating it.
+    # content_sha256 carries a bloom-filter index that narrows the keys read. Both lookups
+    # feed a write, so they read with sequential consistency: on ClickHouse Cloud a row
+    # written a second ago by another replica is not yet visible to a plain read. The keeper
+    # may be `conflicted` or `duplicate` (the reader keeps those live): the same bytes under
+    # any live status are still the same fact. Fail-open: a lookup error writes the entry
+    # normally.
     identity_dupes: dict[str, tuple[str, str]] = {}
     from server.settings import settings as _settings_dedup
 
