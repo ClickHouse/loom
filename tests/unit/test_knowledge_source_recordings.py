@@ -739,3 +739,27 @@ def test_a_space_s_listing_error_names_the_configured_id(monkeypatch: pytest.Mon
     session = source_sync_recording.Session("meet", "tok")
     with pytest.raises(recording.RecordingError, match="^space abc-mnop-xyz: http_500$"):
         asyncio.run(source_sync_recording.list_recordings(session, ["abc-mnop-xyz"]))
+
+
+def test_two_ids_naming_one_space_list_each_record_once(
+    world: _World,  # noqa: F811
+    stores: _Stores,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _canonical(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/v2/spaces/"):
+            return httpx.Response(200, json={"name": f"spaces/{SPACE}"})
+        return stores.answer(request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_canonical))
+    monkeypatch.setattr(recording, "get_client", lambda: client)
+    world.sources = [_source("meet", ["abc-mnop-xyz", SPACE], MEET_KEY)]
+    stores.records = [_meet_record("r1", "2026-01-02T10:00:00Z", "2026-01-02T10:40:00Z")]
+    stores.transcripts["r1"] = _generated("r1", "t1")
+    stores.entries["t1"] = [
+        _entry("r1", "p1", "Once.", "2026-01-02T10:01:00Z", "2026-01-02T10:01:01Z")
+    ]
+    asyncio.run(source_sync.run_sync())
+    assert len(world.upserts) == 1
+    assert _detail(world, "calls")["documents_seen"] == 1
+    assert sum(r.url.path.endswith("/transcripts") for r in stores.requests) == 1

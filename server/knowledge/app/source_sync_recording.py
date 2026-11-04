@@ -126,7 +126,12 @@ async def list_recordings(
             if e.status != 403:
                 raise
             lost.append(str(e))
-    return items, lost
+    # Two configured ids can name one space (its id and its meeting code): each
+    # recording is handled once, as first listed.
+    unique: dict[str, dict[str, Any]] = {}
+    for f in items:
+        unique.setdefault(f["id"], f)
+    return list(unique.values()), lost
 
 
 async def _meet_listing(token: str, space_id: str, since: str) -> list[dict[str, Any]]:
