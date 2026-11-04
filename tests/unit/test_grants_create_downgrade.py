@@ -236,7 +236,7 @@ async def test_a_row_taken_under_another_spelling_is_audited_when_its_reply_is_l
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The row under mallory's handle may have landed; a retry would find nothing,
-    # so its audit row is written whether the insert answered or not.
+    # so its audit row is written whether the insert answered or not, marked so.
     from server.identity.api.models_grants import GrantsRevokeInput
 
     audited: list[Any] = []
@@ -264,8 +264,17 @@ async def test_a_row_taken_under_another_spelling_is_audited_when_its_reply_is_l
         await grants_mod.handle_grants_revoke(
             GrantsRevokeInput(org="o", namespace="ns", subject="bob@corp.example")
         )
+    # Marked unconfirmed: the insert raised, so the row may or may not have landed.
     assert audited == [
-        ("grants.revoke", {"namespace": "ns", "subject": "mallory", "named": "bob@corp.example"})
+        (
+            "grants.revoke",
+            {
+                "namespace": "ns",
+                "subject": "mallory",
+                "named": "bob@corp.example",
+                "landed": "unknown",
+            },
+        )
     ]
 
 

@@ -407,21 +407,26 @@ async def revoke_grant(
     return GrantsRevokeOutput(revoked=True, revoked_at=revoked_at)
 
 
-async def _audit_stored_row(input: GrantsRevokeInput, subject: str) -> None:
+async def _audit_stored_row(
+    input: GrantsRevokeInput, subject: str, *, unconfirmed: bool = False
+) -> None:
     """The op's own audit row names the subject asked for; a row taken under
     another spelling, or one of several, gets one of its own, so the log shows
-    whose grant went."""
+    whose grant went. `unconfirmed`: its insert raised, and it may not have landed."""
     from server.auth.context import current_auth
     from server.core.logging_config import request_id_var
     from server.observability import audit
 
     auth = current_auth()
+    row: dict[str, str] = {"namespace": input.namespace, "subject": subject, "named": input.subject}
+    if unconfirmed:
+        row["landed"] = "unknown"
     await audit.emit(
         "grants.revoke",
         org=input.org,
         namespace=input.namespace,
         actor=auth.subject if auth is not None and auth.subject else "anonymous",
-        subject={"namespace": input.namespace, "subject": subject, "named": input.subject},
+        subject=row,
         request_id=request_id_var.get() or "",
     )
 
@@ -541,7 +546,8 @@ async def _write_revoke(
 ) -> datetime:
     """`grants.revoke`'s write, under the grant's claim. Refuses to revoke a
     namespace's last active admin. An `audited` row gets its own audit row even
-    when the reply is lost: the row may have landed, and a retry finds nothing."""
+    when the insert raises (marked unconfirmed): the row may have landed with
+    its reply lost, and a retry would find nothing."""
     if _active_admin(row):
         await _refuse_last_admin(input)
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -559,9 +565,12 @@ async def _write_revoke(
                 "version": _version(),
             }
         )
-    finally:
+    except BaseException:
         if audited:
-            await _audit_stored_row(input, subject)
+            await _audit_stored_row(input, subject, unconfirmed=True)
+        raise
+    if audited:
+        await _audit_stored_row(input, subject)
     return now
 
 
