@@ -100,8 +100,10 @@ link --email <their provider address> --org <org> --namespace <ns>` shows
   account's subject, revoked, so it goes on capping the person's tokens. It
   refuses an old address that still holds live grants of its own (when the old
   address is linked, grant them to the account's subject and revoke them first;
-  when it was never verified, they admit no one, so revoke them) or a pending
-  request to join (reject it), and an address another account already names.
+  when it was never verified, they admit no one, so revoke them; when another
+  account's verified email it is, they are that account's and the link leaves
+  them) or a pending request to join (reject it), and an address another account
+  already names.
   When that is a JIT account an earlier SSO sign-in made, `loom claim-release`
   it first: its memories stay behind in it (carry them over with
   `namespace.snapshot` and `namespace.restore`), and grants made to it must be

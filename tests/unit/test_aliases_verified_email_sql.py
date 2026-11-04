@@ -270,12 +270,14 @@ async def test_revoking_a_handle_leaves_the_tokens_its_unverified_email_names(
 
 
 @pytest.mark.asyncio
-async def test_revoking_a_handle_by_its_email_row_leaves_a_squatters_tokens(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("named", ["u-carol", "carol@corp.example"])
+async def test_revoking_a_verified_person_leaves_a_squatters_tokens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, named: str
 ) -> None:
     # u-carol's row on team-y is stored under her verified email, which a
-    # self-signup account also typed. Revoking u-carol takes that row; the tokens
-    # the other account made stay, since the revoke named a handle.
+    # self-signup account also typed. Revoking her, by handle or by address,
+    # takes that row; the tokens the other account made stay, since a verified
+    # account holds the address.
     from server.identity.api.models_grants import GrantsRevokeInput
     from server.identity.app import grants as grants_app
     from server.identity.store import grants as grants_repo
@@ -292,7 +294,7 @@ async def test_revoking_a_handle_by_its_email_row_leaves_a_squatters_tokens(
     )
     monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
     monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
-    body = GrantsRevokeInput(org=ORG, namespace="team-y", subject="u-carol")
+    body = GrantsRevokeInput(org=ORG, namespace="team-y", subject=named)
     assert (await grants_app.handle_grants_revoke(body)).revoked is True
     live = await kept.query_all(
         "SELECT subject FROM loom.namespace_grants FINAL WHERE org = {org:String}"

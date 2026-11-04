@@ -152,11 +152,11 @@ async def cascade_revoke_to_created_tokens(
     """A person's grant on ``namespace``, stored under `subject`, was revoked by
     a revoke that named `named`: revoke the grants every live token they created
     holds there, under the stored subject's spellings. When the revoke named an
-    address, those are every spelling a revocation reaches (`aliases.spellings`),
-    an unverified pair too (the tokens an unverified account made while the
-    address's grant admitted it); when it named a handle, the verified ones only,
-    since an unverified account naming the email may be someone else's. Returns
-    tokens touched."""
+    address no verified account holds, those are every spelling a revocation
+    reaches (`aliases.spellings`), an unverified pair too (the tokens an
+    unverified account made while the address's grant admitted it); otherwise
+    the verified ones only, since an unverified account naming the email may be
+    someone else's. Returns tokens touched."""
     if ch is None:
         from server.core.ch import get_client
 
@@ -164,7 +164,10 @@ async def cascade_revoke_to_created_tokens(
     from server.auth.aliases import spellings, verified_spellings
 
     try:
-        if "@" in named:
+        held = "@" in named and any(
+            "@" not in s for s in await verified_spellings(org, named, ch=ch)
+        )
+        if "@" in named and not held:
             creators = await spellings(org, subject, ch=ch)
         else:
             creators = await verified_spellings(org, subject, ch=ch)

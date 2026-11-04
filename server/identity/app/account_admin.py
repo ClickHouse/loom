@@ -125,6 +125,25 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
     return linked
 
 
+async def _verified_elsewhere(org: str, namespace: str, email: str) -> bool:
+    """Whether another active account in `org` holds `email` verified (an SSO
+    account's, or one linked to it), so grants under it are that account's."""
+    from server.core.ch import get_client, own_write_reads
+    from server.core.grant_sql import VERIFIED_EMAIL_SQL
+
+    with own_write_reads():
+        row = await get_client().query_one(
+            f"""
+            SELECT 1 AS held FROM loom.namespaces FINAL
+            WHERE org = {{org:String}} AND namespace != {{ns:String}} AND active = 1
+              AND contact_email = {{email:String}} AND {VERIFIED_EMAIL_SQL}
+            LIMIT 1
+            """,
+            params={"org": org, "ns": namespace, "email": email},
+        )
+    return row is not None
+
+
 async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
     """What `link_account` would change: the account row, the address it names
     now, and the revoked grants that address carries. Raises ValueError when it
@@ -186,12 +205,14 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
                 f"{was} holds grants of its own: {named}; grant them to "
                 f"{row['owner_email']} and revoke them first"
             )
-        # An unlinked password account's address was never verified: its grants
-        # admit no one, and are not the person's to carry over.
-        raise ValueError(
-            f"{was} holds grants of its own: {named}; they admit no one (the address "
-            "was never verified): revoke them first"
-        )
+        # An unlinked password account's address was never verified here: its grants
+        # do not admit this account. When another account's verified email it is,
+        # they are that account's and the link leaves them; else they admit no one.
+        if not await _verified_elsewhere(org, namespace, was):
+            raise ValueError(
+                f"{was} holds grants of its own: {named}; they admit no one (the "
+                "address was never verified): revoke them first"
+            )
     revoked = [g for g in grants if g["revoked_at"] is not None] if was else []
     if revoked:
         with own_write_reads():
