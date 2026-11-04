@@ -5,16 +5,16 @@ numbered paragraph or a `List` style) as one list block per run, other
 paragraphs, tables (one block each, a row per line and its cells joined by
 ` | `, `attrs.table` its shape), then footnotes and endnotes.
 
-Read as the document holds it: inserted text is kept, and deleted text and
-moved text at its old place left out, a content control's or a custom XML
-element's text is read in place (in the body, a table's rows and its cells),
-and an alternate-content choice is read once (its fallback copy is skipped).
-Headers, footers and comments are not the document's body and are not read. An
-embedded document (`altChunk`) is a failed unit, as is a document of pictures
-and no text: what it says is in them. The body is one part, so a body nested
-past what the reader walks fails the file. A DOCX has no pages of its own
-(pagination is the renderer's), so a block's locator is empty and its section
-path is what a citation names.
+Read as the document holds it: inserted text is kept, and a tracked deletion
+(its runs, rows and cells) and moved text at its old place left out, a content
+control's or a custom XML element's text is read in place (in the body, a
+table's rows and its cells), and an alternate-content choice is read once (its
+fallback copy is skipped). Headers, footers and comments are not the
+document's body and are not read. An embedded document (`altChunk`) is a
+failed unit, as is a document of pictures and no text: what it says is in
+them. The body is one part, so a body nested past what the reader walks fails
+the file. A DOCX has no pages of its own (pagination is the renderer's), so a
+block's locator is empty and its section path is what a citation names.
 
 Pure and I/O-free.
 """
@@ -31,9 +31,10 @@ PARSER_VERSION = "1"
 _MAIN = "word/document.xml"
 _MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
 _PICT = q("w:pict")
-# An alternate-content fallback copy, and the old place of moved text (a tracked
-# move keeps its text in ordinary runs at both places).
-_NOT_READ = {_MC_FALLBACK, q("w:moveFrom")}
+# What the document no longer holds, or holds twice: a tracked deletion (its runs
+# keep their tabs, breaks and pictures), the old place of moved text (a tracked move
+# keeps its text in ordinary runs at both places), an alternate-content fallback copy.
+_NOT_READ = {q("w:del"), q("w:moveFrom"), _MC_FALLBACK}
 _HEADING_NAME = re.compile(r"heading ([1-9])")
 # How far a style's `basedOn` chain is followed for an outline level.
 _MAX_BASED_ON = 16  # not a setting: a bound on hostile input
@@ -86,8 +87,8 @@ def _heading_levels(pkg: Package) -> dict[str, int]:
 
 
 def _text(el: Element) -> str:
-    """`el`'s text in document order: runs, tabs and breaks; deleted text, moved
-    text at its old place and an alternate-content fallback are not read."""
+    """`el`'s text in document order: runs, tabs and breaks; a tracked deletion,
+    moved text at its old place and an alternate-content fallback are not read."""
     out: list[str] = []
 
     def walk(node: Element) -> None:
@@ -129,10 +130,29 @@ def _children(el: Element, tag: str) -> list[Element]:
     return out
 
 
+def _deleted(el: Element, props: str, mark: str) -> bool:
+    """Whether a row or cell is a tracked deletion (`w:trPr/w:del`, `w:tcPr/w:cellDel`)."""
+    pr = el.find(q(props))
+    return pr is not None and pr.find(q(mark)) is not None
+
+
+def _draws(el: Element) -> bool:
+    """Whether `el` holds a picture or a drawing the document still holds."""
+    for child in el:
+        if child.tag in _NOT_READ:
+            continue
+        if child.tag in (q("w:drawing"), _PICT) or _draws(child):
+            return True
+    return False
+
+
 def _table(tbl: Element) -> tuple[str, int, int]:
     rows = []
     for tr in _children(tbl, q("w:tr")):
-        rows.append([" ".join(_text(tc).split()) for tc in _children(tr, q("w:tc"))])
+        if _deleted(tr, "w:trPr", "w:del"):
+            continue
+        cells = [tc for tc in _children(tr, q("w:tc")) if not _deleted(tc, "w:tcPr", "w:cellDel")]
+        rows.append([" ".join(_text(tc).split()) for tc in cells])
     columns = max((len(r) for r in rows), default=0)
     return "\n".join(" | ".join(r) for r in rows), len(rows), columns
 
@@ -153,7 +173,7 @@ class _Body:
 
     def paragraph(self, p: Element) -> None:
         text = _text(p)
-        if p.find(f".//{q('w:drawing')}") is not None or p.find(f".//{_PICT}") is not None:
+        if _draws(p):
             self.drawings = True
         if not text:
             return
@@ -173,7 +193,7 @@ class _Body:
 
     def table(self, tbl: Element) -> None:
         self.close_list()
-        if tbl.find(f".//{q('w:drawing')}") is not None or tbl.find(f".//{_PICT}") is not None:
+        if _draws(tbl):
             self.drawings = True
         text, rows, columns = _table(tbl)
         if text.strip(" |\n"):

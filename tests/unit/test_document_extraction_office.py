@@ -73,7 +73,8 @@ def _texts(a: Artifact) -> list[tuple[str, str, tuple[str, ...]]]:
 def test_docx_headings_lists_tables_and_notes_read_in_document_order() -> None:
     tracked = (
         "<w:p><w:r><w:t>Kept </w:t></w:r><w:ins><w:r><w:t>inserted</w:t></w:r></w:ins>"
-        "<w:del><w:r><w:delText>deleted</w:delText></w:r></w:del>"
+        "<w:del><w:r><w:delText>co</w:delText><w:noBreakHyphen/><w:tab/>"
+        "<w:delText>op</w:delText></w:r></w:del>"
         # A tracked move keeps its text in ordinary runs at both places.
         "<w:moveFrom><w:r><w:t> moved</w:t></w:r></w:moveFrom>"
         "<w:moveTo><w:r><w:t> moved</w:t></w:r></w:moveTo></w:p>"
@@ -82,13 +83,23 @@ def test_docx_headings_lists_tables_and_notes_read_in_document_order() -> None:
         "<w:p><w:r><mc:AlternateContent><mc:Choice><w:t>Box text</w:t></mc:Choice>"
         "<mc:Fallback><w:t>Box text</w:t></mc:Fallback></mc:AlternateContent></w:r></w:p>"
     )
+    gone = "<w:del><w:r><w:delText>retired</w:delText></w:r></w:del>"
+    deleted_cell = '<w:tc><w:tcPr><w:cellDel w:id="1"/></w:tcPr>' + _wp("Was") + "</w:tc>"
+    deleted_row = f'<w:tr><w:trPr><w:del w:id="2"/></w:trPr><w:tc><w:p>{gone}</w:p></w:tc></w:tr>'
     table = (
-        "<w:tbl><w:tr><w:tc>" + _wp("System") + "</w:tc><w:tc>" + _wp("Owner") + "</w:tc></w:tr>"
-        "<w:tr><w:tc>"
+        "<w:tbl><w:tr><w:tc>"
+        + _wp("System")
+        + "</w:tc><w:tc>"
+        + _wp("Owner")
+        + "</w:tc>"
+        + deleted_cell
+        + "</w:tr><w:tr><w:tc>"
         + _wp("billing")
         + "</w:tc><w:tc>"
         + _wp("finance")
-        + "</w:tc></w:tr></w:tbl>"
+        + "</w:tc></w:tr>"
+        + deleted_row
+        + "</w:tbl>"
     )
     body = (
         _wp("Data policy", "Heading1")
@@ -632,3 +643,8 @@ def test_a_slide_nested_past_what_the_walk_reads_fails_that_slide_alone() -> Non
     a = extract(_zip(_deck({"a.xml": _slide(_sp("Fine")), "b.xml": _slide(deep)})), "deck.pptx")
     assert [b.text for b in a.blocks] == ["Fine"]
     assert [f.unit for f in a.coverage.failed] == ["slide 2"]
+
+
+def test_a_docx_whose_only_picture_was_deleted_is_no_pictures_only_document() -> None:
+    a = extract(_zip(_docx_parts("<w:p><w:del><w:r><w:drawing/></w:r></w:del></w:p>")), "a.docx")
+    assert a.blocks == () and a.coverage.failed == ()
