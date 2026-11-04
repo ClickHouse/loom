@@ -2270,9 +2270,10 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "knowledge.search": (
         "Search the namespace's documents. Hits carry the document's `source_uri`, its "
-        "section breadcrumb and a score: cite the source_uri and section. Read a hit's full "
-        "text with loom_knowledge_get before quoting more than the excerpt. Memories are "
-        "searched with loom_memory_search."
+        "`section` breadcrumb and a score: cite the source_uri and section, and the "
+        "`revision` when you read the document with loom_knowledge_get. A hit is the nearest "
+        "passage, not an answer: when no hit states the fact, say it is not in the "
+        "documents. Memories are searched with loom_memory_search."
     ),
     "knowledge.list": (
         "Enumerate the namespace's documents (source_uri and title), for an inventory. "
@@ -2280,8 +2281,8 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "knowledge.get": (
         "Fetch one document by `source_uri` (latest version; `include_superseded=true` "
-        "reads a soft-deleted one). Cite the source_uri with its `doc_id` (or "
-        "`ingested_at`), and quote the passage you rely on."
+        "reads a soft-deleted one). Cite the source_uri with its `revision`, and quote "
+        "the passage you rely on."
     ),
     "code.search": (
         "Search the shared code index of a repository by concept ('quota enforcement'). "

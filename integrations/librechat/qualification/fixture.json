@@ -42,10 +42,69 @@
         ]
       },
       "revisions": []
+    },
+    {
+      "org": "acme",
+      "namespace": "acme-library",
+      "writers": {},
+      "documents": {
+        "docs-bot": [
+          {
+            "source_uri": "handbook/deploy-runbook.md",
+            "title": "Deploy runbook",
+            "content": "# Deploy runbook\n\nHow services reach production.\n\n## Release train\n\nReleases leave the main branch every Tuesday and Thursday at 10:00 UTC. A release needs two approving reviews before it joins the train.\n\n## Rollback\n\n### Application rollback\n\nRoll back an application release with `deployctl rollback --to previous`. A rollback must finish within 15 minutes of the decision to roll back.\n\n### Database migrations\n\nA schema migration is never rolled back in place. Ship a forward fix instead; the migration's owner writes it within one business day.\n\n## Canary\n\nA canary receives 5 percent of production traffic for 30 minutes before the full rollout starts.\n"
+          },
+          {
+            "source_uri": "contracts/hosting-agreement.txt",
+            "title": "Hosting agreement",
+            "content": "Hosting agreement between Acme and Northwind Hosting.\n\nThe provider guarantees 99.95 percent monthly uptime for the production cluster. Severity 1 support tickets are answered within 30 minutes, at any hour; other tickets within one business day.\n\nThe agreement renews every 12 months unless either party gives 60 days written notice before the renewal date.\n"
+          },
+          {
+            "source_uri": "schema/orders.sql",
+            "title": "Orders table",
+            "content": "-- The storefront's orders, one row per placed order.\nCREATE TABLE orders\n(\n    order_id UInt64,\n    customer_id UInt64,\n    placed_at DateTime,\n    total_cents UInt64\n)\nENGINE = MergeTree\nORDER BY (customer_id, placed_at)\nTTL placed_at + INTERVAL 400 DAY;\n"
+          },
+          {
+            "source_uri": "config/cache.toml",
+            "title": "Cache settings",
+            "content": "# Session cache\n[session]\nttl_hours = 12\nmax_entries = 50000\n\n# Price cache\n[pricing]\nttl_minutes = 5\n"
+          },
+          {
+            "source_uri": "handbook/oncall-policy.md",
+            "title": "On-call policy",
+            "content": "# On-call policy\n\n## Paging\n\nA page must be acknowledged within 15 minutes, day or night.\n\n## Handover\n\nOn-call hands over on Wednesdays at 16:00 UTC.\n"
+          }
+        ]
+      },
+      "document_revisions": [
+        {
+          "writer": "docs-bot",
+          "source_uri": "handbook/oncall-policy.md",
+          "title": "On-call policy",
+          "content": "# On-call policy\n\n## Paging\n\nA page must be acknowledged within 10 minutes, day or night.\n\n## Handover\n\nOn-call hands over on Wednesdays at 16:00 UTC.\n"
+        }
+      ],
+      "revisions": []
     }
   ],
   "people": [
-    { "name": "alice", "org": "acme", "namespace": "acme-handbook", "revoked": false },
-    { "name": "carol", "org": "acme", "namespace": "acme-handbook", "revoked": true }
+    {
+      "name": "alice",
+      "org": "acme",
+      "namespace": "acme-handbook",
+      "revoked": false
+    },
+    {
+      "name": "carol",
+      "org": "acme",
+      "namespace": "acme-handbook",
+      "revoked": true
+    },
+    {
+      "name": "dave",
+      "org": "acme",
+      "namespace": "acme-library",
+      "revoked": false
+    }
   ]
 }
