@@ -1645,7 +1645,15 @@ describe("Assistant: documents", () => {
       source_uri: uri,
       title: `Note ${k + 1}`,
       ingested_at: `2026-11-02T09:${String(59 - k).padStart(2, "0")}:00`,
-      chunks: notes.chunks && { ...notes.chunks, live: 1, searchable: 0, unembedded: 1 },
+      chunks: notes.chunks && {
+        ...notes.chunks,
+        live: 1,
+        searchable: 0,
+        unembedded: 1,
+        min_chars: 300,
+        median_chars: 300,
+        max_chars: 300,
+      },
     }));
     inspectKnowledge.mockResolvedValueOnce({
       ...KNOWLEDGE,
