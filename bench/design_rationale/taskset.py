@@ -12,13 +12,14 @@ from pathlib import Path
 from typing import Any
 
 KINDS = ("A", "B", "C")
-DETECTOR_TYPES = (
-    "file_touched",
-    "diff_added_regex",
-    "diff_removed_regex",
-    "setting_default_changed",
-    "judge",
-)
+# Each detector type and the keys it needs (`path_glob` and `to` are optional).
+DETECTOR_TYPES = {
+    "file_touched": ("paths",),
+    "diff_added_regex": ("pattern",),
+    "diff_removed_regex": ("pattern",),
+    "setting_default_changed": ("setting", "from"),
+    "judge": ("rubric",),
+}
 C_SUBTYPES = ("supersession", "abstention")
 
 
@@ -180,6 +181,9 @@ def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
     for d in t.get("detector", []):
         if d.get("type") not in DETECTOR_TYPES:
             raise TaskSetError(f"task {tid}: unknown detector type {d.get('type')!r}")
+        missing = [k for k in DETECTOR_TYPES[d["type"]] if k not in d]
+        if missing:
+            raise TaskSetError(f"task {tid}: a {d['type']} detector without {missing}")
     if kind == "C":
         if t["subtype"] not in C_SUBTYPES:
             raise TaskSetError(f"task {tid}: subtype is one of {C_SUBTYPES}")

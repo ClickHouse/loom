@@ -18,36 +18,56 @@ def extract_diff(text: str) -> str:
     return text.split("## Diff", 1)[1] if "## Diff" in text else ""
 
 
+_HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+
+
 def diff_files(diff: str) -> Diff:
-    """path -> {"+": added lines, "-": removed lines} of a unified diff. Inside a hunk a
-    removed `-- comment` line reads `--- comment` and an added `++x` line `+++x`, so
-    there a `--- ` and `+++ ` pair is a file header only when a `@@` line follows it;
-    outside a hunk any `--- `/`+++ ` line is one (a model's diff may give either alone)."""
+    """path -> {"+": added lines, "-": removed lines} of a unified diff. A hunk ends by
+    the line counts its `@@ -a,b +c,d @@` header gives: until then every line is content,
+    so a removed `-- x` line (`--- x`) or an added `++ x` line (`+++ x`) is never a file
+    header. Outside a hunk a `--- ` or `+++ ` line is one, alone too: a model's diff may
+    give either alone. A `@@` with no counts falls back to reading a `--- `/`+++ ` pair as
+    a header only when a `@@` line follows it."""
     files: Diff = {}
     current = None
-    in_hunk = False
+    old = new = 0  # lines the counted hunk still holds
+    uncounted = False  # inside a hunk whose header gave no counts
     lines = diff.splitlines()
     for i, line in enumerate(lines):
+        if old > 0 or new > 0:
+            if line.startswith("\\"):
+                continue  # "\ No newline at end of file" is no line of the hunk
+            kind = line[:1] if line[:1] in "+-" else " "
+            old -= kind in " -"
+            new -= kind in " +"
+            if current is not None and kind != " ":
+                current[kind].append(line[1:])
+            continue
         nxt = lines[i + 1] if i + 1 < len(lines) else ""
         after = lines[i + 2] if i + 2 < len(lines) else ""
-        header = line.startswith(("--- ", "+++ ")) and (
-            not in_hunk
-            or (line.startswith("--- ") and nxt.startswith("+++ ") and after.startswith("@@"))
+        pair_then_hunk = (
+            line.startswith("--- ") and nxt.startswith("+++ ") and after.startswith("@@")
         )
-        if header:
-            in_hunk = False
+        if line.startswith(("--- ", "+++ ")) and (not uncounted or pair_then_hunk):
+            uncounted = False
             path = re.sub(r"^[ab]/", "", line[4:].strip().split("\t")[0])
             if path != "/dev/null":
                 current = files.setdefault(path, {"+": [], "-": []})
             continue
         if line.startswith("diff --git "):
-            in_hunk = False
+            uncounted = False
             m = re.match(r"diff --git a/(\S+) b/(\S+)", line)
             if m:
                 current = files.setdefault(m.group(2), {"+": [], "-": []})
             continue
         if line.startswith("@@"):
-            in_hunk = True
+            m = _HUNK.match(line)
+            if m:
+                old = int(m.group(1) or 1)
+                new = int(m.group(2) or 1)
+                uncounted = False
+            else:
+                uncounted = True
             continue
         if current is not None and line and line[0] in "+-":
             current[line[0]].append(line[1:])

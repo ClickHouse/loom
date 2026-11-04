@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 import bench.design_rationale.__main__ as cli
-from bench.design_rationale import detectors, run, score
+from bench.design_rationale import detectors, llm, run, score
 from bench.design_rationale.__main__ import main
 from bench.design_rationale.llm import (
     CHARS_PER_TOKEN_WORST,
@@ -1296,10 +1296,11 @@ def test_save_json_leaves_the_old_file_whole_when_a_write_fails(tmp_path, monkey
     path = tmp_path / "answers.json"
     run.save_json(path, {"A1/arm0/s1": {"text": "kept"}})
 
-    def broken(self, text, *args, **kwargs):
-        raise OSError("disk full")
+    def broken(src, dst):
+        raise OSError("rename refused")
 
-    monkeypatch.setattr(Path, "write_text", broken)
+    # The temp file is written, then the rename fails.
+    monkeypatch.setattr(llm.os, "replace", broken)
     with pytest.raises(OSError):
         run.save_json(path, {"A1/arm0/s1": {"text": "lost"}})
     monkeypatch.undo()
@@ -1317,13 +1318,34 @@ def test_a_whole_ledger_row_without_its_newline_is_kept(tmp_path):
 
 
 def test_removed_and_added_lines_that_look_like_headers_are_lines():
+    # Inside a counted hunk every line is content: a removed `-- x`, an added `++ x`, and
+    # a `--- a/`, `+++ b/` pair of content lines.
     diff = (
         "--- a/src/q.sql\n+++ b/src/q.sql\n@@ -1,2 +1,2 @@\n"
         "--- drop the old index\n+++ keep the new one\n"
+        "--- a/x.py\n+++ b/x.py\n"
     )
-    files = detectors.diff_files(diff)
-    assert list(files) == ["src/q.sql"]
-    assert files["src/q.sql"] == {"-": ["-- drop the old index"], "+": ["++ keep the new one"]}
-    # A second file after a hunk: its header pair is followed by its own hunk.
-    two = diff + "--- a/src/r.sql\n+++ b/src/r.sql\n@@ -1 +1 @@\n-old\n+new\n"
+    assert detectors.diff_files(diff) == {
+        "src/q.sql": {
+            "-": ["-- drop the old index", "-- a/x.py"],
+            "+": ["++ keep the new one", "++ b/x.py"],
+        },
+    }
+    # A second file after the hunk: its header pair counts though no `@@` follows it.
+    two = diff + "--- a/src/r.sql\n+++ b/src/r.sql\n-old\n+new\n"
     assert detectors.diff_files(two)["src/r.sql"] == {"-": ["old"], "+": ["new"]}
+    # `+++` headers alone, two files.
+    only = "+++ b/a.py\n+x = 1\n+++ b/b.py\n-y = 2\n"
+    assert detectors.diff_files(only) == {
+        "a.py": {"+": ["x = 1"], "-": []},
+        "b.py": {"+": [], "-": ["y = 2"]},
+    }
+
+
+def test_a_detector_without_its_keys_is_refused(tmp_path):
+    root = _copy_example(tmp_path)
+    tasks = json.loads((root / "tasks.json").read_text())
+    del tasks["B"][1]["detector"][0]["from"]  # a setting_default_changed detector
+    (root / "tasks.json").write_text(json.dumps(tasks))
+    with pytest.raises(TaskSetError, match="setting_default_changed detector without"):
+        load(root)
