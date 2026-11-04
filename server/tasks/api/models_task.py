@@ -202,11 +202,11 @@ class InboxRegisterOutput(BaseModel):
 class InboxListInput(_Caller):
     """Inboxes the caller may see: those owned by ``namespace`` (the
     authorized namespace) plus, with ``mine_everywhere``, every inbox in the
-    org whose owner namespace the caller can read or that lists the caller
-    (subject or agent) as a poster."""
+    org the caller may post to: one whose owner namespace the caller can write,
+    or that lists the caller (subject or agent) as a poster."""
 
-    # Also list every org inbox the caller can read or is listed on as a poster;
-    # false lists only inboxes owned by `namespace`.
+    # Also list every org inbox the caller may post to (write on its owner namespace,
+    # or listed as a poster); false lists only inboxes owned by `namespace`.
     mine_everywhere: bool = False
     # At most this many inbox rows are read, 1-500 (with `mine_everywhere`, before
     # the visibility filter).

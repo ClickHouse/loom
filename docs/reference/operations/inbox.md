@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `inbox.list`
 
-Inboxes the caller may see: those owned by ``namespace`` (the authorized namespace) plus, with ``mine_everywhere``, every inbox in the org whose owner namespace the caller can read or that lists the…
+Inboxes the caller may see: those owned by ``namespace`` (the authorized namespace) plus, with ``mine_everywhere``, every inbox in the org the caller may post to: one whose owner namespace the…
 
 `POST /v1/inbox.list` · MCP `loom_inbox_list` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -19,7 +19,7 @@ Inboxes the caller may see: those owned by ``namespace`` (the authorized namespa
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
-| `mine_everywhere` | `bool` | `False` | Also list every org inbox the caller can read or is listed on as a poster; false lists only inboxes owned by `namespace`. |
+| `mine_everywhere` | `bool` | `False` | Also list every org inbox the caller may post to (write on its owner namespace, or listed as a poster); false lists only inboxes owned by `namespace`. |
 | `limit` | `int` | `200` | At most this many inbox rows are read, 1-500 (with `mine_everywhere`, before the visibility filter). |
 
 | Output field | Type | Meaning |

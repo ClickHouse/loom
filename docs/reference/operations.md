@@ -368,7 +368,7 @@ Fields for every `inbox` op: [operations/inbox.md](operations/inbox.md).
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`inbox.list`](operations/inbox.md#inboxlist) | Inboxes the caller may see: those owned by ``namespace`` (the authorized namespace) plus, with ``mine_everywhere``, every inbox in the org whose owner namespace the caller can read or that lists the… | viewer | read | no |  |
+| [`inbox.list`](operations/inbox.md#inboxlist) | Inboxes the caller may see: those owned by ``namespace`` (the authorized namespace) plus, with ``mine_everywhere``, every inbox in the org the caller may post to: one whose owner namespace the… | viewer | read | no |  |
 | [`inbox.policy_list`](operations/inbox.md#inboxpolicy_list) | List an inbox's trust policies. | viewer | read | no |  |
 | [`inbox.policy_set`](operations/inbox.md#inboxpolicy_set) | Set the trust mode an inbox owner chose for a poster and task kind (Loom stores it, never changes it). | admin | idempotent | no | yes |
 | [`inbox.principals`](operations/inbox.md#inboxprincipals) | The identities loom already knows in the org — the poster picker's source. | admin | idempotent | no |  |

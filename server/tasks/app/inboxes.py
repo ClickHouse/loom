@@ -109,8 +109,9 @@ async def handle_inbox_list(input: InboxListInput) -> InboxListOutput:
     if input.mine_everywhere:
         rows = await repo.list_inboxes(input.org, limit=input.limit)
         subject = _caller_subject()
-        # An agent LABEL admits only a caller with no token, as it does for posting
-        # (_poster_may_post): with a token, a listed entry must name its subject.
+        # The inboxes the caller may post to, by the rule posting applies
+        # (_poster_may_post): listed by subject, or write on the owner namespace. An agent
+        # LABEL admits only a caller with no token: with one, the entry must name its subject.
         label = input.agent if input.agent != "-" and not _token_subject() else ""
         keep = []
         for r in rows:
@@ -119,7 +120,7 @@ async def handle_inbox_list(input: InboxListInput) -> InboxListOutput:
                 r["owner_namespace"] == input.namespace
                 or (subject and subject in posters)
                 or (label and label in posters)
-                or await _in_scope(input.org, r["owner_namespace"], write=False, hides_answer=False)
+                or await _in_scope(input.org, r["owner_namespace"], write=True, hides_answer=False)
             ):
                 keep.append(r)
         rows = keep

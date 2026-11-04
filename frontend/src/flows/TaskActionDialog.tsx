@@ -44,7 +44,7 @@ interface Props {
   task: TaskListRow | TaskRow;
   /** For reassign: a first list of inboxes the task may move to; the dialog
    *  then asks `inbox.list mine_everywhere` for every inbox the caller may
-   *  read or post into — the ones a blind post can reach. */
+   *  post into — the ones a reassign can reach. */
   inboxes?: Inbox[];
   onDone: (task: TaskRow, replacement?: TaskRow) => void;
   /** Where the focus goes as the dialog closes; without it, back to the control that opened it. */
