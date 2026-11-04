@@ -66,7 +66,9 @@ def register_decisions_cli(sub: Any) -> None:
         "extractor's own rows and tags a pinned or attested row source-changed instead: "
         "pinning or attesting freezes a row against re-extraction. Dry run by default (still "
         "calls the model); --apply writes. Exits 1 when it could not run on the document (no "
-        "document, no chunks, no usable model, an unknown --repo or a namespace it may not "
+        "document, no chunks, no usable model, model calls held for the org (switched off, or "
+        "refused or deferred by the inference gateway: nothing more is written and nothing "
+        "retired), an unknown --repo or a namespace it may not "
         "use, --into without --repo or source on another repository's namespace, a --repo "
         "with no remote to tag rows with, the dashboard's repositories unread, its own rows "
         "unreadable, left in another namespace or linked to another repository, no window "
@@ -131,7 +133,8 @@ def _cmd_extract(args: argparse.Namespace) -> int:
 
 
 def exit_code(report: ExtractReport) -> int:
-    """1 when the run could not go ahead (no document, no chunks, no usable model, an
+    """1 when the run could not go ahead (no document, no chunks, no usable model, model
+    calls held for the org, which stops the run where it is and retires nothing, an
     unknown --repo or a namespace it may not use, --into without --repo or source on another
     repository's namespace, a --repo with no remote to tag rows with, the dashboard's
     repositories unread, the extractor's rows unreadable, left in another namespace or linked

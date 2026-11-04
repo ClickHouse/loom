@@ -239,7 +239,7 @@ left, its delete request is cleared.
 
 The stamp moves only when every listed file was handled. A turn cut short (a rate limit,
 a failure, the pass bound) is listed again on the next pass, and the files it wrote are
-skipped by revision. One pass fetches, writes and retires at most
+skipped by revision. One pass fetches, writes, retires and mines at most
 `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` documents (default 40) across all
 sources, so a large folder's first sync spans several passes.
 
@@ -262,6 +262,59 @@ Trouble with one file is that file's:
   gives it up again), and on a full sync request (`sync_now(full=true)` or
   `loom knowledge sync --full`), which resets the waits once per request.
 
+### Mining decisions
+
+After every source's turn, the same pass mines for decisions each of the source's
+documents whose stored revision is not the one last mined for it, oldest first, with
+the extraction `loom decisions extract --apply` runs
+([extract decisions from a document](tasks-and-decisions.md#extract-decisions-from-a-document)).
+The revision a document was mined at is recorded only once its extraction is done, so a
+document written by a turn that failed or was stopped is mined on a later pass, as is
+one synced while no extraction ran. The rows
+go to the source's namespace, the repository's trunk code namespace, each citing its
+document in `source_resource_id`, written through `decision.record` as agent
+`loom-decisions` with the actor `worker:knowledge-source-sync` and the audit row the
+transport would write.
+
+Nobody has to confirm a row: an unpinned extracted row is served as it is, and a later
+write of the document revises or retires the extractor's own rows. A pinned or attested
+row, or one with a recorded outcome, is never rewritten: it is tagged `source-changed`
+and counted `flagged_pinned`, and `loom decisions extract` without `--apply` prints the
+body a maintainer may record instead.
+
+The model calls bill the source's namespace (operation `worker.knowledge_source_sync`
+in `loom.agent_events`). Before each document the pass reads the namespace's spend: one
+whose spend on these calls in the last 24 hours reached
+`LOOM_KNOWLEDGE_SOURCE_SYNC_CAP_SHARE` (default 0.25) of its daily cost cap, or the whole
+cap, is left for a later pass; a cap that cannot be read counts as reached. An org whose
+model calls are switched off, a namespace whose calls the inference gateway refuses or
+asks to wait, for an embedding too (left for the time the gateway names), and every org
+while the switch cannot be read are left the same way, with no try counted. A deployment
+with no usable model mines nothing. A source left for a later pass shows why in
+`extract_error`: `over_cap`, `switched_off`, `switch_unread`, `no_model`, `held`,
+`held:<code>` or `pass_bound` (the pass had no time or document left for it).
+
+Each decision's writes run whole with their audit row: a pass cancelled mid-write
+finishes the write it is in, and shutdown waits for it. Before each write the run checks
+that its pass is not stopped and that it still holds the source's lease; when either
+ends, it stops there, keeps what it wrote, retires nothing, and the document is mined
+again on a later pass.
+
+A document whose extraction fails stays pending for three tries on the same revision,
+then is counted `unextracted` and left until the sync writes it again. The reasons:
+`not_run` (it could not run on the document, such as one with no chunks for the current
+embedding model), `refused` (a read or a write it needed was refused for a reason of the
+moment, such as a busy key, or failed) and `failed:<error>`. A write refused for a
+reason every run would meet (a blacklisted decision, a pinned peer it contradicts, a
+body the op does not take) is not a failure: the document is mined with its other
+decisions. A document's model reads stop 30 seconds before the pass's deadline, with
+nothing written (`out_of_time`), and it goes first among its source's documents on the
+next pass; one that runs out of time with three quarters of a pass's read time or more
+is given up on at once (`too_large_for_pass`): the worker does not mine a document that
+large, and `loom decisions extract` runs it with no deadline. A document is not started
+with less than a minute of read time left. A document retired, or held by another writer
+since, is not mined.
+
 A source's `sync` in `list` and `inspect` shows what its last turn did:
 
 | Field                    | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -274,6 +327,12 @@ A source's `sync` in `list` and `inspect` shows what its last turn did:
 | `unconverted`, `skipped` | Files it did not write: the store gave no https link, no extractor, refused or too large, a recording with no transcript yet, or given up after three passes on the same revision; another writer's document at the address.                                                                                                                                                                                                                                                       |
 | `unconverted_reasons`    | Why, by count: `no_address` (the store gave no https link), `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`, `no_transcript` (a recording with no finished transcript), `transcript_off_host`; for a project's documents also `not_found`, `graphql_<type>` and `no_document` or `no_data` (the answer lacked the document, or any data). |
 | `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text; for a turn that did not fail, why it is incomplete (`pass bound reached`, `listing: incomplete search`).                                                                                                                                                                                                                                                                                   |
+| `pending_extract`        | Documents whose stored revision is not yet mined for decisions, as of the last pass.                                                                                                                                                                                                                                                                                                             |
+| `last_extracted_at`      | When the last mining turn ended.                                                                                                                                                                                                                                                                                                                                                                 |
+| `extracted`              | Documents that turn mined, each with or without a decision.                                                                                                                                                                                                                                                                                                                                      |
+| `flagged_pinned`         | Decision rows it tagged `source-changed` rather than rewriting them: pinned, attested, or with a recorded outcome.                                                                                                                                                                                                                                                                               |
+| `unextracted`            | Documents it gave up on: three failed tries, or too large for a pass.                                                                                                                                                                                                                                                                                                                            |
+| `extract_error`          | Why an extraction failed in the last mining turn (`not_run`, `refused`, `out_of_time`, `too_large_for_pass`, `failed:<error>`), or why documents wait (`over_cap`, `switched_off`, `switch_unread`, `no_model`, `held`, `held:<code>`, `pass_bound`).                                                                                                                                            |
 
 ### A recording source
 
@@ -326,7 +385,7 @@ document: the document is written as the sync worker with `user_id` `-`, so a
 namespace's erasure removes it and an erasure scoped to one user does not; a speaker's
 words are removed with `knowledge.delete` of the document (and at the store, or the next
 full listing writes them again). Decision records mined from a transcript
-(`loom decisions extract`) can quote a speaker too; deleting the transcript leaves them,
+(by the sync's [mining](#mining-decisions), or `loom decisions extract`) can quote a speaker too; deleting the transcript leaves them,
 and `memory.delete` of each decision's row (which retires its record) or the
 namespace's erasure removes them.
 

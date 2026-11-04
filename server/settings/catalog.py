@@ -2067,7 +2067,8 @@ class KnowledgeSettings(BaseModel):
     knowledge_source_probe_timeout_s: Annotated[float, LIVE] = Field(default=20.0, gt=0, le=25.0)
     # The knowledge_source_sync worker: pulls each registered document source's changed
     # files into its repository's documents. Off by default: it needs each source's
-    # credential and spends embedding calls on every changed document.
+    # credential, spends embedding calls on every changed document and model calls
+    # mining it for decisions.
     knowledge_source_sync_enabled: bool = False
     # Seconds between sync passes while there are sources.
     knowledge_source_sync_interval_seconds: int = Field(default=900, ge=60)
@@ -2077,8 +2078,8 @@ class KnowledgeSettings(BaseModel):
     # Seconds one sync pass may run before it is cancelled; it stops starting sources
     # at three quarters of it.
     knowledge_source_sync_max_pass_seconds: int = Field(default=600, ge=60)
-    # Documents one pass fetches, writes or retires across all sources; the rest wait
-    # for the next pass.
+    # Documents one pass fetches, writes, retires or mines for decisions across all
+    # sources; the rest wait for the next pass.
     knowledge_source_sync_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
     # Seconds after which a source's next pass lists every file, not only those
     # changed since the last one: what finds a file trashed or moved out of a folder.
@@ -2087,6 +2088,9 @@ class KnowledgeSettings(BaseModel):
     knowledge_source_sync_max_file_bytes: Annotated[int, LIVE] = Field(
         default=64 * 1024 * 1024, ge=1024 * 1024
     )
+    # The share of a namespace's daily LLM cost cap the sync may spend mining changed
+    # documents for decisions, counted over its own calls; the rest stays for requests.
+    knowledge_source_sync_cap_share: Annotated[float, LIVE] = Field(default=0.25, gt=0.0, le=1.0)
 
     def document_extractor_routes(self) -> dict[str, str]:
         """The operator's per-format extractor URLs, format or media type → URL;

@@ -2841,16 +2841,23 @@
           "type": "number",
           "description": "Seconds a document source's probe (add, check, rotate) may take in all; past it add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false."
         },
+        "knowledge_source_sync_cap_share": {
+          "default": 0.25,
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "type": "number",
+          "description": "The share of a namespace's daily LLM cost cap the sync may spend mining changed documents for decisions, counted over its own calls; the rest stays for requests."
+        },
         "knowledge_source_sync_documents_per_pass": {
           "default": 40,
           "minimum": 1,
           "type": "integer",
-          "description": "Documents one pass fetches, writes or retires across all sources; the rest wait for the next pass."
+          "description": "Documents one pass fetches, writes, retires or mines for decisions across all sources; the rest wait for the next pass."
         },
         "knowledge_source_sync_enabled": {
           "default": false,
           "type": "boolean",
-          "description": "The knowledge_source_sync worker: pulls each registered document source's changed files into its repository's documents. Off by default: it needs each source's credential and spends embedding calls on every changed document."
+          "description": "The knowledge_source_sync worker: pulls each registered document source's changed files into its repository's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions."
         },
         "knowledge_source_sync_full_interval_seconds": {
           "default": 86400,

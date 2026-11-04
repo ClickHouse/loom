@@ -3732,6 +3732,12 @@ export interface KnowledgeSourceSync {
   unconverted_reasons?: Record<string, number>;
   skipped?: number;
   error?: string;
+  pending_extract?: number;
+  last_extracted_at?: string;
+  extracted?: number;
+  flagged_pinned?: number;
+  unextracted?: number;
+  extract_error?: string;
 }
 
 export interface KnowledgeSourceDocument {
