@@ -247,32 +247,6 @@ async def roles(auth: AuthInfo, org: str, namespaces: list[str]) -> dict[str, Ro
     return out
 
 
-async def granted(auth: AuthInfo, org: str, namespace: str) -> Role | None:
-    """The best role the request's grants give on the collection `namespace`, before the
-    token's own claim caps it (`roles` applies that cap); None when none does or it is no
-    collection in the tree."""
-    collections = await tree(org)
-    if namespace not in collections.parent:
-        return None
-    lineage = collections.lineage(namespace)
-    return _best(await _grant_maps(org, await principals(auth, org)), lineage)
-
-
-async def claim_advice(auth: AuthInfo, org: str, namespace: str, required_role: Role) -> str | None:
-    """What the token's own claim must say when it alone keeps the request below
-    `required_role`: the grants already reach it, so only a token whose claim does helps.
-    None when a grant is what is missing (a new token, capped to the same grants, would not
-    help) or the grants cannot be read now."""
-    needs = claim_cap(auth, org, namespace, required_role)
-    if not needs:
-        return None
-    try:
-        best = await granted(auth, org, namespace)
-    except Exception:  # noqa: BLE001 — advice only: a refusal never fails for want of it
-        return None
-    return needs if best is not None and best.value >= required_role.value else None
-
-
 # Grant-map reads one request runs at once: each holds a ClickHouse connection.
 # not a setting: one request's fan-out; the ClickHouse pool bounds the total
 _GRANT_READS_AT_ONCE = 8
@@ -365,15 +339,16 @@ async def check(auth: AuthInfo, required_role: Role, org: str, namespace: str) -
     if is_personal(namespace):
         raise bare
     role_name = required_role.name.lower()
-    # Grants that already reach the role, under a claim that keeps the token out: only a
-    # token whose claim does helps. Otherwise the grant is missing (a new token is capped to
-    # the same grants). A missing collection has no grant either, so the words confirm
-    # nothing about it.
-    needs = await claim_advice(auth, org, namespace, required_role)
+    # Read from the token alone, never from the grants: what the caller's grants reach on a
+    # collection it cannot see would confirm the collection exists. A token its claim caps is
+    # told both what it needs (a claim that names it, and a grant that a new token is
+    # capped to).
+    grant = f"a grant of at least {role_name} on it or a collection above it"
+    needs = claim_cap(auth, org, namespace, required_role)
     notes = (
-        [f"{needs}, so the token's owner must mint one whose claim does"]
+        [needs, f"the token's owner must hold {grant}"]
         if needs
-        else [f"a collection needs a grant of at least {role_name} on it or a collection above it"]
+        else [f"a collection needs {grant}"]
     )
     if auth.creator:
         notes.append(f"its creator must hold at least {role_name} there too")

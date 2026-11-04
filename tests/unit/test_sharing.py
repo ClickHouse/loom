@@ -288,15 +288,13 @@ def test_a_token_is_named_in_the_refusal_only_when_its_claim_is_what_caps_it(
     )
     # The claim already names it with viewer: the missing piece is the grant.
     assert "claim must name it" not in refusal(scoped)
-    # A write the claim's viewer role caps, while the grant reaches writer: only the claim is
-    # named (only a token whose claim names it with writer helps).
+    # A write the claim's viewer role caps: both needs are named, the claim and the grant a
+    # new token is capped to, in the same words whatever the grants hold (they are never
+    # read for the words: they would confirm a collection the token cannot see).
     capped = refusal(scoped, Role.WRITER, grant=2)
-    assert "claim must name it" in capped and "must mint one" in capped
-    assert "needs a grant" not in capped
-    # The same claim with no writer grant: the grant is asked for, since a new token is
-    # capped to the same grants.
-    ungranted = refusal(scoped, Role.WRITER, grant=1)
-    assert "needs a grant of at least writer" in ungranted and "must mint" not in ungranted
+    assert "claim must name it with at least writer" in capped
+    assert "the token's owner must hold a grant of at least writer" in capped
+    assert refusal(scoped, Role.WRITER, grant=1) == capped
     delegated = AuthInfo(
         subject="sa:bot",
         org=ORG,
@@ -364,30 +362,6 @@ def test_a_token_is_named_in_the_refusal_only_when_its_claim_is_what_caps_it(
     text = refusal(scoped_bot, Role.WRITER, grant=2)
     assert "this token's write set (ns_write) must include it" in text
     assert "this token's claim must name it" in text
-
-
-def test_claim_advice_names_the_claim_only_when_the_grants_already_reach_the_role(
-    org_state: dict[str, Any],
-) -> None:
-    """A new token is capped to the same grants: the claim is the fix only when they reach."""
-    org_state["tree"] = sharing.Tree(parent={"col-hr": ""})
-    scoped = AuthInfo(
-        subject="alice",
-        org=ORG,
-        namespaces=("n",),
-        roles=(Role.WRITER,),
-        is_service_account=False,
-        ns_roles=(("n", "writer"),),
-    )
-    org_state["grants"] = {"alice": {"col-hr": 1}}
-    assert asyncio.run(sharing.claim_advice(scoped, ORG, "col-hr", Role.VIEWER)) == (
-        "this token's claim must name it"
-    )
-    assert asyncio.run(sharing.claim_advice(scoped, ORG, "col-hr", Role.WRITER)) is None
-    org_state["grants"] = {}
-    assert asyncio.run(sharing.claim_advice(scoped, ORG, "col-hr", Role.VIEWER)) is None
-    # A name no collection holds has no grant either: the same answer as a missing grant.
-    assert asyncio.run(sharing.claim_advice(scoped, ORG, "col-missing", Role.VIEWER)) is None
 
 
 # ── rows ──────────────────────────────────────────────────────────────────

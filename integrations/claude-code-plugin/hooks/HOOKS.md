@@ -114,8 +114,8 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   mounts the same server.
 - **loom-session-start, collections line.** One `collection.list` for the
   session's org, cached a minute per (server, org, token, toolset); when the token
-  reads shared collections, a few lines say how `knowledge.search` searches
-  one alone by name and list up to six, those the caller holds most on first, one JSON line
+  reads shared collections, a few lines list up to six (how a search covers
+  them is the server's own instructions' to say), those the caller holds most on first, one JSON line
   each with the caller's role and description. When the caller writes one of
   them and the toolset is not read-only, they also say how `knowledge.add`
   writes one when asked. The names and descriptions are their creators'

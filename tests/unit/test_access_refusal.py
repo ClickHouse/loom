@@ -113,25 +113,23 @@ def test_a_scoped_token_refused_a_collection_is_told_its_claim_must_name_it() ->
             ns_roles=ns_roles,
         )
 
-    # The grants reach it and the claim does not (`sharing.claim_advice` says what the claim
-    # must say): the claim is the token owner's to change, and no grant is asked for.
+    # Both needs, read from the token alone: a claim that names it, and the grant a new
+    # token is capped to.
     capped = mcp_auth._not_accessible_result(
-        "loom_memory_get",
-        scoped((("n", "writer"),)),
-        "col-research",
-        needs="this token's claim must name it",
+        "loom_memory_get", scoped((("n", "writer"),)), "col-research"
     )
     text = capped["structuredContent"]["error"]
     assert text == (
         "namespace 'col-research' is not in your accessible list: this token's claim must name"
-        " it, so the token's owner must mint one whose claim does."
+        " it, and the token's owner must hold a grant of at least viewer on it or a collection"
+        " above it."
     )
-    # No grant reaches it: the grant is what is missing, whatever the claim says.
-    ungranted = mcp_auth._not_accessible_result(
-        "loom_memory_get", scoped((("n", "writer"),)), "col-research"
+    # Its claim already names the collection: the grant is what is missing.
+    named = mcp_auth._not_accessible_result(
+        "loom_memory_get", scoped((("col-research", "viewer"),)), "col-research"
     )
-    assert "must mint" not in ungranted["structuredContent"]["error"]
-    assert "grant on it" in ungranted["structuredContent"]["error"]
+    assert "claim must" not in named["structuredContent"]["error"]
+    assert "grant on it" in named["structuredContent"]["error"]
 
 
 def test_a_delegated_token_refused_a_collection_is_told_its_creator_needs_a_grant() -> None:
@@ -163,3 +161,20 @@ def test_an_unverified_collection_refusal_asks_for_no_grant() -> None:
         "loom_memory_get", auth, "col-research", unverified=True
     )["structuredContent"]["error"]
     assert text == "namespace 'col-research' is not in your accessible list."
+
+
+def test_a_claim_capped_delegated_token_is_told_its_creator_needs_a_grant_too() -> None:
+    """The MCP screen says what the gate says: the claim, the grant and the creator's."""
+    bot = AuthInfo(
+        subject="sa:bot",
+        org="clickhouse",
+        namespaces=("*",),
+        roles=(Role.WRITER,),
+        is_service_account=True,
+        creator="alice",
+    )
+    text = mcp_auth._not_accessible_result("loom_memory_get", bot, "col-research")[
+        "structuredContent"
+    ]["error"]
+    assert "this token's claim must name it" in text
+    assert text.endswith("This token's creator must hold a grant on it too.")

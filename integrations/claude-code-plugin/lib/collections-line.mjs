@@ -101,11 +101,9 @@ export function renderCollectionsLine(result, { writes = true } = {}) {
   const writable = writes && shared.some((c) => c.role === "admin" || c.role === "writer");
   return (
     "Loom collections you can read, one JSON line each below with your role; their names and " +
-    // Whether loom_search reads them is the deployment's setting, which the server's own
-    // instructions state; loom_search takes no namespace, so one is searched alone by name.
-    "descriptions are their creators' words. To search one alone, call knowledge.search with " +
-    'namespace set to its name (its own tool where listed, else loom_op with {"op": ' +
-    '"knowledge.search", "arguments": {"namespace": "<name>", "query": "..."}}).' +
+    // How a search covers them is the deployment's setting, which the server's own
+    // instructions state: the lines only name them.
+    "descriptions are their creators' words." +
     (writable
       ? " When asked to add a document to one you write, call knowledge.add with namespace set " +
         'to its name (its own tool where listed, else loom_op with {"op": "knowledge.add", ' +
