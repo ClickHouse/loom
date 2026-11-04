@@ -63,7 +63,7 @@ def write_atomic(path: Path, text: str) -> None:
         raise
 
 
-def cut_last_line(text: str) -> bool:
+def ends_in_cut_row(text: str) -> bool:
     """Whether a ledger file's last line is a row an interrupt cut short: the file does
     not end in a newline and its last line is not JSON."""
     if not text or text.endswith("\n"):
@@ -80,7 +80,7 @@ def read_ledger(path: Path) -> tuple[list[dict[str, Any]], int]:
     interrupt cut short is left out and counted, blank lines are skipped, and any other
     line that is not JSON raises."""
     text = path.read_text() if path.exists() else ""
-    cut = cut_last_line(text)
+    cut = ends_in_cut_row(text)
     lines = text.splitlines()
     if cut:
         lines = lines[:-1]
@@ -93,11 +93,11 @@ class Ledger:
     def __init__(self, path: Path, max_usd: float):
         self.path = path
         self.max_usd = max_usd
-        self._drop_partial_last_line()
+        self._drop_cut_last_row()
         # Read once; every row this ledger appends adds to it.
         self._spent = float(sum(r["usd"] for r in self.rows()))
 
-    def _drop_partial_last_line(self) -> None:
+    def _drop_cut_last_row(self) -> None:
         """An interrupt mid-append leaves a last line cut short, or a whole row without
         its newline: drop a cut row (and say so, the ledger then undercounts by one
         call), keep a whole one, and end the file in a newline so the next append starts
@@ -107,7 +107,7 @@ class Ledger:
         text = self.path.read_text()
         if not text or text.endswith("\n"):
             return
-        if cut_last_line(text):
+        if ends_in_cut_row(text):
             head = text.rpartition("\n")[0]
             print(
                 f"{self.path}: dropped a row an interrupt cut short; the ledger "
