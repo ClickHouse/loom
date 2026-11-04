@@ -29,6 +29,7 @@ import {
   runHookMain,
   scheduleExit,
 } from "../lib/loom-client.mjs";
+import { createHash } from "node:crypto";
 import { ensureCredential, renderFirstSessionNotice } from "../lib/first-session.mjs";
 import { duplicateNotice } from "../lib/mcp-duplicate.mjs";
 import { localFirstOn } from "../lib/code-shunt.mjs";
@@ -49,6 +50,7 @@ import { readRecording, recordingFromNamespace, recordingPrimerLine, writeRecord
 import { teamRulesLine } from "../lib/file-context.mjs";
 import { applyPluginOptions, installTokenNotice, saveInstallServerUrl } from "../lib/plugin-options.mjs";
 import { cacheIsFresh, countsBody, renderTaskLine, summarizeCounts } from "../lib/task-inbox.mjs";
+import { listBody, renderCollectionsLine, toolsetAllows } from "../lib/collections-line.mjs";
 import { briefPrimerEnabled, primerLine } from "../lib/session-brief.mjs";
 import { readJsonFile, sweepStaleStateFiles, tmpStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
@@ -104,7 +106,7 @@ async function main() {
 
   // The primer's parts are independent bounded reads: run them side by side,
   // so a hung server costs the session one request bound, not one per part.
-  const [result, codeBlock, taskLine, briefsLine, recording] = await Promise.all([
+  const [result, codeBlock, taskLine, briefsLine, recording, collectionsText] = await Promise.all([
     postBounded(
       "context.pack",
       startPackBody(scope, payload, { tokenBudget, runId: sessionRunId(payload.session_id) || "" }),
@@ -116,6 +118,7 @@ async function main() {
     envSwitch("LOOM_TASK_INBOX_LINE", true) ? taskInboxLine(scope, token) : "",
     briefPrimerEnabled() ? savedBriefsLine(scope, token) : "",
     recordingState(scope, token),
+    envSwitch("LOOM_COLLECTIONS_LINE", true) ? collectionsLine(scope, token) : "",
   ]);
 
   // A user-scope MCP entry duplicating this plugin's mount.
@@ -127,7 +130,7 @@ async function main() {
       repo: scope.repo,
       rendered: result && typeof result.rendered === "string" ? result.rendered : "",
       codeBlock,
-      lines: [taskLine, briefsLine],
+      lines: [taskLine, briefsLine, collectionsText],
       // The model must not log turns itself: the Stop hook does, when the
       // owner's Recording switch is on. Always said, even with no primer.
       recordingLine: recordingPrimerLine(recording, scope.namespace),
@@ -167,6 +170,36 @@ async function taskInboxLine(scope, token) {
   if (cacheIsFresh(cached)) return cached.line;
   const result = await postBounded("task.counts", countsBody(scope), { token, serverUrl: resolveServerUrl() });
   const line = renderTaskLine(summarizeCounts(result));
+  writeJsonFile(cp, { ts: Date.now(), line });
+  return line;
+}
+
+/** A few lines naming the collections this token can read (`collection.list`), so an agent
+ *  can write into one or say where a hit came from without being told the names. Cached a
+ *  minute per (server, org, token, toolset), the failures too; "" when there are none or on any error. */
+async function collectionsLine(scope, token) {
+  // A read-only toolset routes no write, and the assistant toolset neither tool the line names.
+  const allows = toolsetAllows(process.env.CLAUDE_PLUGIN_OPTION_TOOLSET);
+  if (!scope || !scope.org || !allows) return "";
+  // The answer is the token's own (its grants in the org): two agents sharing this home with
+  // their own tokens never read each other's line. tmpStatePath hashes the key again.
+  const tokenId = createHash("sha256")
+    .update(String(token || ""))
+    .digest("hex")
+    .slice(0, 16);
+  const cp = tmpStatePath(
+    "collections",
+    `${resolveServerUrl()}|${scope.org}|${tokenId}|${process.env.CLAUDE_PLUGIN_OPTION_TOOLSET || ""}`,
+  );
+  const cached = readJsonFile(cp, null);
+  if (cacheIsFresh(cached)) return cached.line;
+  const result = await postBounded("collection.list", listBody(scope), { token, serverUrl: resolveServerUrl() });
+  let line = "";
+  try {
+    line = renderCollectionsLine(result, allows);
+  } catch {
+    // A Node built without Intl: the primer goes on without the lines.
+  }
   writeJsonFile(cp, { ts: Date.now(), line });
   return line;
 }

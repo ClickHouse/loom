@@ -10,8 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import Request, Response
 
+from server.auth.fanout import knowledge_search_reads_collections
 from server.code.domain.scope import set_code_scope
 from server.core.naming import present
+from server.observability.consumer import ASSISTANT_CONSUMER
+from server.operations.base import Role
 from server.transport.mcp_config import (
     _LOOM_SEARCH_TOOL_NAME,
     _TRANSPORT_ERROR_ID,
@@ -45,19 +48,70 @@ async def _may_read(auth: AuthInfo, org: str, ns: str) -> tuple[bool, bool]:
     return True, False
 
 
-def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]:
-    """A namespace the token may not read."""
+def _not_accessible_result(
+    tool_name: Any, auth: Any, ns: str, *, assistant: bool = False, unverified: bool = False
+) -> dict[str, Any]:
+    """A namespace the token may not read. `assistant`: the connection is the assistant
+    toolset, which reaches neither loom_search nor loom_op, so neither is suggested.
+    `unverified`: the check itself failed (a grant could not be read), so a collection's
+    refusal asks for no grant: the caller may hold one and should retry."""
     from server.transport import access_refusal as ar
 
     if ar.is_plane_tool(str(tool_name or "")):
         return ar.mcp_result(
             ar.refusal(str(getattr(auth, "subject", "") or ""), str(getattr(auth, "org", "")), ns)
         )
+    from server.auth import sharing
+
+    # Someone else's personal collection takes no grant: no advice could work. Any other
+    # collection is shared by grants, never joined; the words are the same whether or not
+    # it exists.
+    if sharing.is_personal(ns) or (unverified and sharing.is_collection(ns)):
+        return _refusal_body(f"namespace {ns!r} is not in your accessible list.", ns)
+    creator = ""
+    if sharing.is_collection(ns):
+        # A token capped by its own claim is told only what the claim must say: it may hold
+        # a grant already, and only the token's owner can mint one whose claim reaches it.
+        needs = sharing.claim_cap(auth, auth.org, ns, Role.VIEWER)
+        if needs:
+            return _refusal_body(
+                f"namespace {ns!r} is not in your accessible list: {needs}, so the token's owner"
+                " must mint one whose claim does.",
+                ns,
+            )
+        # A delegated token's creator needs the role too, as the gate says.
+        if getattr(auth, "creator", None):
+            creator = " This token's creator must hold a grant on it too."
     msg = (
-        f"namespace {ns!r} is not in your accessible list and you don't have an active grant "
-        f"on it. Omit the namespace argument to use your default namespace (loom_search "
-        f"reads your own namespaces), or request a grant from the dashboard's Spaces page."
+        f"namespace {ns!r} is not in your accessible list and you don't have an active grant on it."
     )
+    if assistant:
+        msg += (
+            f" Ask the collection's admin for a grant on it or a collection above it.{creator}"
+            if sharing.is_collection(ns)
+            else " Omit the namespace argument to use your default namespace, or request a "
+            "grant from the dashboard's Spaces page."
+        )
+    else:
+        ask = (
+            "ask the collection's admin for a grant on it or a collection above it; the op "
+            "collection.list (through loom_op) names the collections you can read"
+            if sharing.is_collection(ns)
+            else "request a grant from the dashboard's Spaces page"
+        )
+        reads = (
+            "your namespaces and the collections you can read"
+            if knowledge_search_reads_collections()
+            else "your namespaces"
+        )
+        msg += (
+            " Omit the namespace argument to use your default namespace (loom_search reads "
+            f"{reads}), or {ask}.{creator}"
+        )
+    return _refusal_body(msg, ns)
+
+
+def _refusal_body(msg: str, ns: str) -> dict[str, Any]:
     body = {"error": msg, "code": "NAMESPACE_NOT_ACCESSIBLE", "namespace": ns}
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
 
@@ -108,7 +162,7 @@ async def _plane_namespace(
     if to and to != ns:
         allowed, unverified = await _may_read(auth, org, to)
         if not allowed:
-            return _not_accessible_result(tool_name, auth, to), unverified
+            return _not_accessible_result(tool_name, auth, to, unverified=unverified), unverified
         nr.RESOLVED.set({"from": ns, "to": to})
         return to, False
     return nr.unknown_result(ns, nr.suggest(ns, nr.suggestable(org, auth.can_access))), False
@@ -372,7 +426,14 @@ async def _screen_namespace(
         if isinstance(resolved, dict):  # on the name it resolved to, or an unknown name
             refusal, unverified = resolved, resolved_unverified
         else:  # on the name given
-            refusal, unverified = _not_accessible_result(tool_name, auth, req_ns), given_unverified
+            refusal = _not_accessible_result(
+                tool_name,
+                auth,
+                req_ns,
+                assistant=consumer == ASSISTANT_CONSUMER,
+                unverified=given_unverified,
+            )
+            unverified = given_unverified
         # The org the token may act in, as HTTP records the same refusal.
         code = str(refusal["structuredContent"]["code"])
         _ledger_refusal(

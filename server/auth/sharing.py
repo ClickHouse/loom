@@ -166,26 +166,50 @@ def _best(maps: list[grant_cache.GrantMap], lineage: list[str]) -> Role | None:
     return rank_role(max((m.rank(ns) or 0 for m in maps for ns in lineage), default=0))
 
 
+def _claim_limits(auth: AuthInfo, org: str, namespace: str) -> list[tuple[Role | None, str]]:
+    """Each limit the token's own claim sets on `namespace`, whatever its grants, with what
+    the claim must say to lift it: `viewer` outside its `ns_write` set; for a scoped or
+    delegated token, nothing (None) unless the claim names `namespace` (a `*` does not), and
+    no more than the claim's own role there (None for a role no grant carries)."""
+    limits: list[tuple[Role | None, str]] = []
+    if auth.write_namespaces and not auth.can_write(org, namespace):
+        limits.append((Role.VIEWER, "this token's write set (ns_write) must include it"))
+    if not (auth.has_ns_roles() or auth.creator):
+        return limits
+    from server.auth.authz import names_namespace  # authz imports this module
+
+    if not names_namespace(auth, org, namespace):
+        limits.append((None, "this token's claim must name it"))
+    elif auth.has_ns_roles():
+        limits.append(
+            (
+                auth.effective_role(org, namespace),
+                "this token's claim must name it with at least {role}",
+            )
+        )
+    else:
+        own = max(auth.roles, key=lambda r: r.value, default=None)
+        limits.append((own, "this token's claim must carry at least {role}"))
+    return limits
+
+
+def _claim_ceiling(auth: AuthInfo, org: str, namespace: str) -> Role | None:
+    """The most the token's own claim lets it hold on `namespace` (`_claim_limits`): None
+    for nothing, `admin` when the claim sets no limit."""
+    ceilings = [limit for limit, _ in _claim_limits(auth, org, namespace)]
+    if None in ceilings:
+        return None
+    return min([Role.ADMIN, *ceilings], key=lambda r: r.value)  # type: ignore[union-attr]
+
+
 def _capped(
     auth: AuthInfo, org: str, namespace: str, granted: Role | None, creator: Role | None
 ) -> Role | None:
-    """`granted`, for a scoped or delegated token no further than its own claim
-    names `namespace`, and for a delegated one no further than its creator's
-    role there (`creator`); outside a token's `ns_write` set, `viewer` at most,
-    as on any namespace."""
-    if granted is not None and auth.write_namespaces and not auth.can_write(org, namespace):
-        granted = min(granted, Role.VIEWER, key=lambda r: r.value)
-    if granted is None or not (auth.has_ns_roles() or auth.creator):
-        return granted
-    from server.auth.authz import names_namespace
-
-    if not names_namespace(auth, org, namespace):
+    """`granted`, no further than the token's own claim allows (`_claim_ceiling`), and for
+    a delegated token no further than its creator's role there (`creator`)."""
+    if granted is None:
         return None
-    if auth.has_ns_roles():
-        own = auth.effective_role(org, namespace)
-    else:
-        own = max(auth.roles, key=lambda r: r.value, default=None)
-    ceilings = [granted, own, *([creator] if auth.creator else [])]
+    ceilings = [granted, _claim_ceiling(auth, org, namespace), *([creator] if auth.creator else [])]
     if None in ceilings:
         return None
     return min(ceilings, key=lambda r: r.value)  # type: ignore[union-attr]
@@ -272,6 +296,20 @@ async def readable(auth: AuthInfo | None, org: str) -> list[str]:
     return sorted(found | shared)
 
 
+def claim_cap(auth: AuthInfo, org: str, namespace: str, required_role: Role) -> str | None:
+    """What the token's own claim must say when it, rather than a missing grant, keeps the
+    token below `required_role` on `namespace` (`_claim_limits`, the limits the gate
+    applies): every limit that does, so one re-mint lifts them all; None when none does.
+    Read from the token alone, so it says nothing about the collection."""
+    role = required_role.name.lower()
+    needs = [
+        why.format(role=role)
+        for limit, why in _claim_limits(auth, org, namespace)
+        if limit is None or limit.value < required_role.value
+    ]
+    return ", and ".join(needs) or None
+
+
 async def check(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> None:
     """The gate for a collection: PermissionError unless the request holds
     `required_role` there. A platform admin (an operator's erasure or export)
@@ -281,15 +319,35 @@ async def check(auth: AuthInfo, required_role: Role, org: str, namespace: str) -
 
     if auth.has_role(Role.PLATFORM_ADMIN):
         return
-    refusal = PermissionError(f"principal {auth.subject!r} cannot access {org}/{namespace}")
+    # The same words whether or not the collection exists, so they confirm nothing.
+    bare = PermissionError(f"principal {auth.subject!r} cannot access {org}/{namespace}")
+    refusal = bare
+    # Another org's caller, and someone else's personal collection (which takes no grant),
+    # get the short refusal: the advice below could not work for them.
     if not may_act_in_org(auth, org):
         raise refusal
+    if not is_personal(namespace):
+        notes = [
+            f"a collection needs a grant of at least {required_role.name.lower()} on it "
+            "or a collection above it"
+        ]
+        needs = claim_cap(auth, org, namespace, required_role)
+        if needs:
+            notes.append(needs)
+        if auth.creator:
+            notes.append("its creator must hold that role too")
+        refusal = PermissionError(
+            f"{refusal}: {', and '.join(notes)}; collection.list (or the dashboard's Library) "
+            "lists the ones you can read"
+        )
     try:
         granted = await role(auth, org, namespace)
     except BACKEND_NOT_NOW:
         raise  # an outage answers 503, as for any namespace, so a caller retries
     except Exception as e:  # a tree or grant that cannot be read admits nothing: refused
         note_unreadable()
-        raise refusal from e
+        # Unverified, not refused for a missing grant: the short words, so a caller that holds
+        # one retries rather than asking for it.
+        raise bare from e
     if granted is None or granted.value < required_role.value:
         raise refusal
