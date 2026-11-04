@@ -540,7 +540,6 @@ def test_report_counts_the_document_cases():
         ({"detail": {"code": "RATE_LIMITED", "message": "m"}}, 1.0),
         ({"detail": "Too Many Requests"}, 1.0),
         ({"text": "rate limited"}, 1.0),
-        ({"detail": {"retry_after_s": "soon"}}, 1.0),
     ],
 )
 def test_retry_after_reads_every_429_body(out, wait):

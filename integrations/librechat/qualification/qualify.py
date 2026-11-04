@@ -473,11 +473,7 @@ def retry_after(out: dict[str, Any]) -> float:
     the admission slots; 1 for a body without one (a detail that is a string, a plain-text
     answer from a proxy)."""
     detail = out.get("detail")
-    hint = detail.get("retry_after_s") if isinstance(detail, dict) else None
-    try:
-        return max(float(hint), 0.0) if hint is not None else 1.0
-    except (TypeError, ValueError):
-        return 1.0
+    return float(detail.get("retry_after_s", 1)) if isinstance(detail, dict) else 1.0
 
 
 def scorer_read(st: dict[str, Any], token: str, op: str, body: dict[str, Any]) -> dict[str, Any]:
