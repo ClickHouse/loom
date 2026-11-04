@@ -1239,3 +1239,26 @@ def test_a_refused_child_s_wait_moves_once_a_turn_when_its_parent_is_read_again(
     world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
     _run()
     assert _detail(world)["file_waits"][CHILD][1:] == [1, "child_http_403"]
+
+
+def test_a_child_inside_an_unreadable_synced_copy_stays_known(world: _Store) -> None:
+    _only_the_page(world)
+    copy = {
+        "type": "synced_block",
+        "id": COLUMNS,
+        "synced_block": {"synced_from": {"block_id": ORIGINAL}},
+    }
+    world.blocks[PAGE] = [_para("Parent."), copy]
+    world.blocks[ORIGINAL] = [_child_page(CHILD)]
+    world.pages[CHILD] = _page(
+        CHILD, "2026-01-04T00:00:00.000Z", title="Child", parent_of=_under_block(ORIGINAL)
+    )
+    _run()
+    assert _detail(world)["child_pages"] == {CHILD: PAGE}
+    # The parent is read again while the copy's original is no longer shared.
+    world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
+    world.answers[f"/blocks/{ORIGINAL}/children"] = httpx.Response(403)
+    _run()
+    _run(full=True)
+    assert _detail(world)["child_pages"] == {CHILD: PAGE}
+    assert _uri(world, CHILD) in world.docs and world.audits == []

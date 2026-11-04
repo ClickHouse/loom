@@ -329,7 +329,9 @@ def _drop_out_of_scope(t: _Turn) -> None:
 
 async def _page_gone(t: _Turn, page_id: str) -> bool | None:
     """Whether the store says the page is gone, as `_lookup` answers; a known child
-    found gone is forgotten."""
+    found gone is forgotten. A child refused this turn is kept with no second read."""
+    if page_id in t.refused:
+        return False
     gone = await _lookup(t, page_id)
     if gone:
         t.known.pop(page_id, None)
@@ -338,9 +340,9 @@ async def _page_gone(t: _Turn, page_id: str) -> bool | None:
 
 async def _lookup(t: _Turn, page_id: str) -> bool | None:
     """Whether the store says the page is gone: not found, in the trash, or under none
-    of the listed pages, listed databases and pages this turn listed. A refusal (403)
-    or another failure retires nothing; a rate limit or a 401 is the turn's, and None
-    stops the retiring."""
+    of the listed pages, listed databases, pages this turn listed, or children the
+    store refused this turn. A refusal (403) or another failure retires nothing; a
+    rate limit or a 401 is the turn's, and None stops the retiring."""
     try:
         page = await notion.page(t.token, page_id)
     except notion.NotionError as e:
@@ -417,7 +419,10 @@ async def _fetch_and_write(t: _Turn, f: dict[str, Any], uri: str) -> str:
     except Exception as e:  # noqa: BLE001 — one page's conversion must not stop the others
         log.warning("knowledge_source_sync: reading %s failed: %s", f["id"], e)
         return sync.wait(f, result, f"fetch_failed:{type(e).__name__}", type(e).__name__)
-    found = _record_children(t, f["id"], convert.child_page_ids(blocks), skipped)
+    children = convert.child_page_ids(blocks)
+    found = _record_children(
+        t, f["id"], children, skipped, whole=not convert.unreadable_blocks(blocks)
+    )
     if not content.strip():
         outcome = sync.give_up(f, result, "no_text")
     elif len(content.encode()) > int(settings.knowledge_source_sync_max_file_bytes):
@@ -469,13 +474,15 @@ async def _write(
 
 
 def _record_children(
-    t: _Turn, parent: str, children: list[str], skipped: dict[str, int]
+    t: _Turn, parent: str, children: list[str], skipped: dict[str, int], *, whole: bool
 ) -> list[str]:
-    """Record the child pages a read page holds, replacing what it held before; the
-    ones past `_MAX_CHILD_PAGES` are counted in its `skipped_blocks`. Returns the
-    recorded ones this turn has not listed."""
+    """Record the child pages a read page holds, replacing what it held before when its
+    blocks were read `whole`; when some could not be read (a synced copy of an
+    unshared original), the children it held before stay. The ones past
+    `_MAX_CHILD_PAGES` are counted in its `skipped_blocks`. Returns the recorded ones
+    this turn has not listed."""
     for child, held_by in list(t.known.items()):
-        if held_by == parent and child not in children:
+        if whole and held_by == parent and child not in children:
             t.known.pop(child)
     listed_pages = set(t.src.config.get("page_ids") or [])
     over = 0

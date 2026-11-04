@@ -346,6 +346,17 @@ def child_page_ids(blocks: list[dict[str, Any]]) -> list[str]:
     return found
 
 
+def unreadable_blocks(blocks: list[dict[str, Any]]) -> bool:
+    """Whether any of `blocks` or their children could not be read (`unreadable`), so
+    the child pages it held are not all known."""
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("unreadable") or unreadable_blocks(block.get("children") or []):
+            return True
+    return False
+
+
 def coverage_of(artifact: Artifact) -> dict[str, Any]:
     """How much of the original the artifact holds, for the document's metadata, so
     a partial extraction is never read as the whole file."""
@@ -375,6 +386,7 @@ __all__ = [
     "description_of",
     "drop_number_runs",
     "page_markdown",
+    "unreadable_blocks",
     "presentation_markdown",
     "slide_markdown",
 ]
