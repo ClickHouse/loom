@@ -235,14 +235,21 @@ def _version_row(
     )
 
 
+def _versions_ch(*rows: str) -> clickhouse_local.LocalCH:
+    """loom.memory holding `rows` as separate parts: merges are stopped, so a superseded
+    version stays in the table the way it does until ClickHouse merges it away."""
+    return clickhouse_local.LocalCH(
+        clickhouse_local.ddl("memory"), "SYSTEM STOP MERGES loom.memory", *rows
+    )
+
+
 @pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.asyncio
 async def test_a_superseded_version_with_the_same_bytes_is_not_a_keeper() -> None:
     """K held VALUE, then was revised; until the parts merge the old version is still
     in the table. K's current value is compared, so only a key that holds VALUE now
     is the keeper."""
-    ch = clickhouse_local.LocalCH(
-        clickhouse_local.ddl("memory"),
+    ch = _versions_ch(
         _version_row("user_task_branch", VALUE, 1),
         _version_row("user_task_branch", "User's task branch is main.", 2),
         _version_row("user_task_note", VALUE, 1, session="s-other"),
@@ -256,8 +263,7 @@ async def test_a_superseded_version_with_the_same_bytes_is_not_a_keeper() -> Non
 async def test_a_key_whose_current_value_holds_the_bytes_is_the_keeper() -> None:
     """The reverse revision: K's newest version holds VALUE, so it is the keeper,
     under any key and any session."""
-    ch = clickhouse_local.LocalCH(
-        clickhouse_local.ddl("memory"),
+    ch = _versions_ch(
         _version_row("user_task_branch", "User's task branch is main.", 1),
         _version_row("user_task_branch", VALUE, 2),
         _version_row("other_key", "unrelated", 1, session="s-other"),
@@ -271,8 +277,7 @@ async def test_a_key_whose_current_value_holds_the_bytes_is_the_keeper() -> None
 async def test_a_key_deleted_or_retired_since_is_not_a_keeper() -> None:
     """A key whose newest version is a tombstone or no longer live is not the fact,
     though its newest version still carries the bytes."""
-    ch = clickhouse_local.LocalCH(
-        clickhouse_local.ddl("memory"),
+    ch = _versions_ch(
         _version_row("user_task_branch", VALUE, 1),
         _version_row("user_task_branch", VALUE, 2, tombstoned=True),
         _version_row("user_task_alt", VALUE, 1),
@@ -290,8 +295,7 @@ async def test_the_same_key_in_two_sessions_picks_one_keeper_every_time() -> Non
     row, so a retry reinforces the same memory_id."""
     first = "11111111-1111-1111-1111-111111111111"
     second = "22222222-2222-2222-2222-222222222222"
-    ch = clickhouse_local.LocalCH(
-        clickhouse_local.ddl("memory"),
+    ch = _versions_ch(
         _version_row("user_task_branch", VALUE, 1, session="z", memory_id=second),
         _version_row("user_task_branch", VALUE, 1, session="a", memory_id=first),
     )
