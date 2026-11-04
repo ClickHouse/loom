@@ -18,6 +18,16 @@ set from the directory given on the command line; `example/` is a small syntheti
 | 2   | The document ingested as knowledge, through the knowledge hits of `loom_search`                                                                                       |
 | 3   | The gold rows, through the pre-edit block (`memory.for_file` for each file the task touches) and the memory section of `loom_search`                                  |
 | 4   | The same surfaces over the rows `loom decisions extract --apply` mined from the documents, or with `--arm4-namespace` the rows a document source's sync already wrote |
+| 5   | The gold rows through the memory section of `loom_search` only                                                                                                        |
+
+An extracted row names code by its names. Its files, which give it a pre-edit block,
+come from the repository's code index: with `--code-index` (a Loom that indexes the
+repository, its org and namespace) each name is looked up with read-only `code.symbol`
+calls and a name with one defining file that is not a test or a page links the row to
+that file, the rule `loom decisions extract --repo` applies. The harness's own Loom has
+no code index, and an arm's org must not hold one another arm reads. Without
+`--code-index` arm 4 is served through `loom_search` only, and arm 5 is added so that
+arm 4 is compared with gold rows served the same way.
 
 Each arm's namespace lives in its own org, since a search reads every namespace of its
 org. The gold rows are never written where arm 4 extracts.
@@ -66,7 +76,7 @@ when pinned) in arm 3:
 | `image_only`                                          | Its source section carries no extractable text (counted per document in `score --extraction-labels`)                                                 |
 
 `tasks.json` holds `"system"` (how the prompts name the code base) and the lists `"A"`,
-`"B"`, `"C"`. Every task has `id`, `document` (or `deck`) and `gold_rows` (keys of
+`"B"`, `"C"`. Every task has `id`, `document` and `gold_rows` (keys of
 `gold_rows.json`).
 
 | Kind | Fields                                                                                                                                                   |
@@ -86,16 +96,20 @@ A detector is one of:
 | `judge`                   | never: its `rubric` goes to the judge                                                |
 
 A detector that fires is a failure of the task. The paths detectors name are also the
-files whose pre-edit block arms 3 and 4 read.
+files whose pre-edit block arms 3 and 4 read. The harness applies no patch and runs no
+test, so a change's test pass rate is not measured.
 
 ## Outputs
 
-`run --out <dir>` writes, and resumes from: `state.json` (namespaces, extraction
-reports), `surfaces.json` (what each arm injected per task, with token counts),
-`answers.json`, `judged.json` (citations with their resolution, detector results, every
-judge pass), `ledger.jsonl` (every model call and its price; the extraction leg as an
-estimate charged before it runs), `extract_<doc>.log` and
-`extraction_labels.todo.json`. Fill each row's `verdict` (`correct`, `partly`, `wrong`
+`run --out <dir>` writes: `state.json` (namespaces, extraction reports),
+`surfaces.json` (what each arm injected per task, with token counts and the keys each
+surface served), `answers.json`, `judged.json` (citations with their resolution,
+detector results, every judge pass), `ledger.jsonl` (every provider request and its
+price; the extraction leg as an estimate charged before it runs; the server's own spend
+in the run's orgs read back from `cost.summary`), `extract_<doc>.log` and
+`extraction_labels.todo.json`. A run the spend cap stops keeps its namespaces and
+resumes on the same `--out`; a finished run, or one whose setup failed, erases them
+(unless `--keep-namespaces`) and is not resumed. Fill each row's `verdict` (`correct`, `partly`, `wrong`
 or `misleading`) and pass the file to `score --extraction-labels` for extraction
 precision. `score --human-labels` takes a list of
 `{"answer": "<task>/arm<a>/s<k>", "field": "avoids", "value": true}` and reports judge

@@ -1,9 +1,13 @@
 """Model calls under a spend cap.
 
-Every call is priced before it is sent, at its whole prompt plus its full output cap, and
-refused when that would take the ledger past `--max-usd`; after the call the ledger
-records what the provider billed. The extraction leg runs in the server's code, so its
-calls enter the ledger as an estimate charged before the run (`estimated: true`).
+Every request is priced before it is sent, at its whole body (a character as a token, over
+three: tokenizers rarely do worse) plus its full output cap, and refused when that would
+take the ledger past `--max-usd`; after it the ledger records what the provider billed. A
+provider client that resends (a learned field, a raised cap for a starved reply) is
+checked and recorded request by request. The extraction leg runs in the server's code, so
+its calls enter the ledger as an estimate charged before the run (`estimated: true`), and
+the server's own model and embedding spend in the run's orgs is read back from
+`cost.summary` (`stage: server`).
 """
 
 from __future__ import annotations
@@ -20,7 +24,8 @@ import httpx
 
 from server.observability.cost_accumulator import PRICE_PER_1K_TOKENS
 
-CHARS_PER_TOKEN = 4
+# The input estimate of the cap check: one token per three characters, a padded count.
+CHARS_PER_TOKEN_WORST = 3
 
 
 class CapReached(RuntimeError):
@@ -66,17 +71,24 @@ class Ledger:
     def record(
         self, stage: str, model: str, tokens_in: int, tokens_out: int, *, estimated: bool = False
     ) -> None:
-        row = {
-            "t": time.time(),
-            "stage": stage,
-            "model": model,
-            "in": tokens_in,
-            "out": tokens_out,
-            "usd": cost_usd(model, tokens_in, tokens_out),
-            "estimated": estimated,
-        }
+        self._append(
+            {
+                "stage": stage,
+                "model": model,
+                "in": tokens_in,
+                "out": tokens_out,
+                "usd": cost_usd(model, tokens_in, tokens_out),
+                "estimated": estimated,
+            }
+        )
+
+    def record_usd(self, stage: str, usd: float, **extra: Any) -> None:
+        """Spend the ledger did not price itself (the server's, read from cost.summary)."""
+        self._append({"stage": stage, "usd": usd, "estimated": False, **extra})
+
+    def _append(self, row: dict[str, Any]) -> None:
         with self.path.open("a") as f:
-            f.write(json.dumps(row) + "\n")
+            f.write(json.dumps({"t": time.time(), **row}) + "\n")
 
 
 @dataclass
@@ -90,21 +102,53 @@ class Reply:
 Complete = Callable[[str, str, int], Reply]
 
 
-def provider_complete(model: str) -> Complete:
-    """One chat call through the bench's provider client (bench/judges.py)."""
-    from bench.judges import achat
+def _usage(data: Any) -> tuple[int, int]:
+    """(input, output) tokens of a provider reply, either provider's shape."""
+    u = data.get("usage") if isinstance(data, dict) else None
+    if not isinstance(u, dict):
+        return 0, 0
+    tin = u.get("prompt_tokens", u.get("input_tokens", 0))
+    tout = u.get("completion_tokens", u.get("output_tokens", 0))
+    return int(tin or 0), int(tout or 0)
 
-    def complete(system: str, user: str, max_tokens: int) -> Reply:
+
+class ProviderComplete:
+    """One chat call through the bench's provider client (bench/judges.py), every HTTP
+    request it sends checked against the cap and every reply recorded."""
+
+    def __init__(self, model: str, ledger: Ledger):
+        self.model = model
+        self.ledger = ledger
+        self.stage = ""
+
+    async def _before(self, request: httpx.Request) -> None:
+        body = json.loads(request.content or b"{}")
+        cap = body.get("max_completion_tokens") or body.get("max_tokens") or 0
+        self.ledger.check(self.model, len(request.content) // CHARS_PER_TOKEN_WORST, int(cap))
+
+    async def _after(self, response: httpx.Response) -> None:
+        await response.aread()
+        try:
+            tin, tout = _usage(response.json())
+        except ValueError:
+            tin = tout = 0
+        self.ledger.record(self.stage, self.model, tin, tout)
+
+    def __call__(self, system: str, user: str, max_tokens: int) -> Reply:
+        from bench.judges import achat
+
         async def call() -> tuple[str, dict[str, int]]:
-            async with httpx.AsyncClient() as client:
+            hooks: dict[str, list[Callable[..., Any]]] = {
+                "request": [self._before],
+                "response": [self._after],
+            }
+            async with httpx.AsyncClient(event_hooks=hooks) as client:
                 return await achat(
-                    client, model, user, max_tokens=max_tokens, system=system, timeout_s=300.0
+                    client, self.model, user, max_tokens=max_tokens, system=system, timeout_s=300.0
                 )
 
         text, usage = asyncio.run(call())
         return Reply(text, usage["prompt_tokens"], usage["completion_tokens"])
-
-    return complete
 
 
 class Model:
@@ -118,8 +162,13 @@ class Model:
         self.priced = priced
 
     def __call__(self, stage: str, system: str, user: str, max_tokens: int) -> Reply:
+        if isinstance(self.complete, ProviderComplete):
+            # The client checks and records each request it sends.
+            self.complete.stage = stage
+            return self.complete(system, user, max_tokens)
         if self.priced:
-            self.ledger.check(self.name, (len(system) + len(user)) // CHARS_PER_TOKEN, max_tokens)
+            worst_in = (len(system) + len(user)) // CHARS_PER_TOKEN_WORST
+            self.ledger.check(self.name, worst_in, max_tokens)
         reply = self.complete(system, user, max_tokens)
         if self.priced:
             self.ledger.record(stage, self.name, reply.tokens_in, reply.tokens_out)

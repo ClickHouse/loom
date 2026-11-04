@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from datetime import date, timedelta
 from typing import Any
 
 import httpx
@@ -18,7 +19,7 @@ import httpx
 from bench._http import post_json
 from bench.bench_namespaces import (
     erase_bench_namespaces_sync,
-    register_bench_namespace_sync,
+    register_body,
     remember_bench_namespace,
 )
 
@@ -95,16 +96,32 @@ class Loom:
 
     # ---- namespaces
 
-    def register(self, namespace: str, description: str, keep: bool) -> None:
+    def register(self, namespace: str, description: str, keep: bool, cap_usd: float) -> None:
+        """A bench namespace whose daily cost cap is the run's cap, so the server's own model
+        calls on its writes and reads stop there too. A refusal stops the run: a namespace
+        without the cap would let the server spend past it."""
         org = self.orgs[namespace]
-        register_bench_namespace_sync(
-            self._post, org=org, namespace=namespace, description=description, keep=keep
-        )
+        extra = {"daily_cost_cap_usd": cap_usd} if cap_usd > 0 else None
+        body = register_body(org, namespace, description=description, keep=keep, extra=extra)
+        self._post("/v1/namespace.register", body)
         remember_bench_namespace(org, namespace)
 
     def erase(self, namespaces: list[str]) -> None:
         for ns in namespaces:
             erase_bench_namespaces_sync(self._post, org=self.orgs[ns], namespaces=[ns])
+
+    def server_spend(self, namespaces: list[str]) -> float:
+        """USD the server spent on model and embedding calls in these namespaces' orgs over
+        the last two days, as its own cost ledger records it."""
+        today = date.today()
+        total = 0.0
+        for org in sorted({self.orgs[ns] for ns in namespaces}):
+            window = {"from_date": str(today - timedelta(days=1)), "to_date": str(today)}
+            # traffic_class reads the events themselves: the daily rollup lags them.
+            body = {"org": org, "traffic_class": "bench", **window}
+            out = self._post("/v1/cost.summary", body)
+            total += float(out.get("total_cost_usd") or 0.0)
+        return total
 
     # ---- writes
 
@@ -133,7 +150,7 @@ class Loom:
         if row.pinned:
             self.op("memory.pin", body)
 
-    def extract(self, namespace: str, source_uri: str, repo: str = "") -> tuple[int, str]:
+    def extract(self, namespace: str, source_uri: str, window_chars: int) -> tuple[int, str]:
         """`loom decisions extract --apply` on one document: (exit code, its report)."""
         cmd = [
             sys.executable,
@@ -147,12 +164,36 @@ class Loom:
             namespace,
             "--source-uri",
             source_uri,
+            "--window-chars",
+            str(window_chars),
             "--apply",
         ]
-        if repo:
-            cmd += ["--repo", repo]
         done = subprocess.run(cmd, capture_output=True, text=True, check=False)
         return done.returncode, done.stdout + done.stderr
+
+    def set_files(self, namespace: str, key: str, files: list[str]) -> bool:
+        """Write `files` on an extracted row: a new version under the extractor's identity
+        with every other field as read. False when the row is gone."""
+        row = self.memory_get(namespace, key)
+        if not row.get("found"):
+            return False
+        confidence = row.get("confidence")
+        self.op(
+            "memory.set",
+            {
+                "namespace": namespace,
+                "agent": row.get("agent") or "loom-decisions",
+                "memory_key": key,
+                "memory_type": row.get("memory_type") or "decision",
+                "value": row["value"],
+                "tags": row.get("tags") or [],
+                "files": files,
+                "confidence": 0.5 if confidence is None else confidence,
+                "source_resource_id": row.get("source_resource_id") or "",
+                "source_class": "derived",
+            },
+        )
+        return True
 
     # ---- reads
 
@@ -172,14 +213,12 @@ class Loom:
     def search(self, namespace: str, query: str, session: str) -> dict[str, Any]:
         """The loom_search tool's answer as an MCP client gets it: {"text": the summary,
         "knowledge": the structured knowledge hits}."""
+        arguments = {"org": self.orgs[namespace], "namespace": namespace, "query": query}
         body = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "tools/call",
-            "params": {
-                "name": "loom_search",
-                "arguments": {"org": self.orgs[namespace], "namespace": namespace, "query": query},
-            },
+            "params": {"name": "loom_search", "arguments": arguments},
         }
         headers = {"Accept": "application/json, text/event-stream", "Mcp-Session-Id": session}
         if self.token:
@@ -200,3 +239,38 @@ class Loom:
         return dict(
             self.op("memory.get", {"namespace": namespace, "agent": AGENT, "memory_key": key})
         )
+
+
+class CodeIndex:
+    """Read-only `code.symbol` lookups against the Loom that indexes the repository, for
+    the files of extracted rows: the harness's own Loom has no code index, and an arm's
+    org must not share one with another arm."""
+
+    def __init__(self, base_url: str, org: str, namespace: str, token: str = ""):
+        self.base_url = base_url.rstrip("/")
+        self.org = org
+        self.namespace = namespace
+        self.token = token
+        self.client = httpx.Client(timeout=120.0)
+
+    def close(self) -> None:
+        self.client.close()
+
+    def definitions(self, name: str) -> list[tuple[str, str]] | None:
+        """(path, qualified name) of each definition; None when the index did not answer."""
+        body = {
+            "org": self.org,
+            "namespace": self.namespace,
+            "name": name,
+            "include_body": False,
+            "include_history": False,
+            "include_examples": False,
+            "include_lessons": False,
+        }
+        try:
+            out = post_json(
+                self.client, self.base_url + "/v1/code.symbol", body, token=self.token, attempts=3
+            )
+        except httpx.HTTPError:
+            return None
+        return [(d["path"], d["symbol"]) for d in out.get("definitions") or []]

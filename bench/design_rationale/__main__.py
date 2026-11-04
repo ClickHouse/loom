@@ -4,7 +4,7 @@ re-proposing rejected options, and does it answer "why" questions correctly and 
     PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> --dry-run
     PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> \\
         --base-url http://127.0.0.1:<port> --org <org> --reader-model <m> --judge-model <m> \\
-        --extract-model <server's LOOM_LLM_MODEL> --max-usd 5
+        --code-index <url> --code-index-org <org> --code-index-namespace <ns> --max-usd 5
     PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale score <taskset> --out <dir>
 
 The task set is a directory (bench/design_rationale/README.md has its schema;
@@ -12,11 +12,19 @@ The task set is a directory (bench/design_rationale/README.md has its schema;
 1 the whole document through knowledge.get; 2 the document as knowledge through
 loom_search; 3 the gold rows through the pre-edit block (memory.for_file) and the
 loom_search memory section; 4 the same surfaces over the rows `loom decisions extract`
-mined from the documents (or, with --arm4-namespace, rows a document source's sync wrote).
+mined from the documents (or, with --arm4-namespace, rows a document source's sync wrote);
+5 the gold rows through the loom_search memory section only.
+
+Arm 4's rows name code by its names; the files that give them a pre-edit block come from
+a code index of the repository (--code-index: read-only code.symbol calls on the Loom that
+indexes it, with the extractor's own rule: one defining file that is not a test or a page).
+Without one, arm 4 is served through loom_search only, and arm 5 is added so that arm 4 is
+compared with gold rows served the same way.
 
 `run --dry-run` reads nothing but the task set and prints the calls, tokens and spend a
 run would take. A real run needs a Loom server and ClickHouse this run started, with the
-server's environment in this shell (the extraction runs the CLI in a child process), and
+server's environment in this shell (the extraction runs the CLI in a child process, whose
+model is read from that environment and must match --extract-model when given), and
 --max-usd: every call is refused once its worst case would cross the cap. `--offline`
 answers and judges with a stub that costs nothing and measures nothing: it checks the
 plumbing against a server. `score` reads the run's files only.
@@ -32,7 +40,7 @@ from pathlib import Path
 
 from bench.design_rationale import run as runner
 from bench.design_rationale import score as scorer
-from bench.design_rationale.llm import Ledger, Model, Reply, price, provider_complete
+from bench.design_rationale.llm import Ledger, Model, ProviderComplete, Reply, price
 from bench.design_rationale.taskset import TaskSetError, load
 
 
@@ -73,7 +81,12 @@ def parser() -> argparse.ArgumentParser:
         default="bench",
         help="Org prefix: each arm's namespace goes in its own org <org>-dr-<role>",
     )
-    r.add_argument("--arms", type=_arms, default=[0, 1, 2, 3, 4])
+    r.add_argument(
+        "--arms",
+        type=_arms,
+        default=[0, 1, 2, 3, 4],
+        help="Comma list of arms (default 0,1,2,3,4; 5 is added when arm 4 has no code index)",
+    )
     r.add_argument("--k", type=int, default=4, help="Samples per task and arm (default 4)")
     r.add_argument("--tasks", default="", help="Comma list of task ids (default all)")
     r.add_argument("--reader-model", default=os.environ.get("BENCH_READER_MODEL", ""))
@@ -98,15 +111,24 @@ def parser() -> argparse.ArgumentParser:
     )
     r.add_argument(
         "--extract-model",
-        default=os.environ.get("LOOM_LLM_MODEL", ""),
-        help="The server's extraction model, for its spend estimate",
+        default="",
+        help="The model the extraction must run on; refused when this environment's "
+        "server settings name another (default: the one they name)",
     )
     r.add_argument(
-        "--extract-repo",
-        default="",
-        help="Passed to `loom decisions extract --repo` to link rows to code",
+        "--extract-window-chars",
+        type=int,
+        default=6000,
+        help="Passed to `loom decisions extract --window-chars` (default 6000)",
     )
-    r.add_argument("--extract-window-chars", type=int, default=6000)
+    r.add_argument(
+        "--code-index",
+        default="",
+        help="Base URL of the Loom whose code index resolves arm 4's code names",
+    )
+    r.add_argument("--code-index-org", default="")
+    r.add_argument("--code-index-namespace", default="")
+    r.add_argument("--code-index-token", default=os.environ.get("LOOM_CODE_INDEX_TOKEN", ""))
     r.add_argument(
         "--arm4-namespace",
         default="",
@@ -145,24 +167,57 @@ def _config(a: argparse.Namespace) -> runner.Config:
         only={t for t in a.tasks.split(",") if t},
         keep_namespaces=a.keep_namespaces,
         arm4_namespace=a.arm4_namespace,
-        extract_repo=a.extract_repo,
         extract_model=a.extract_model,
         extract_window_chars=a.extract_window_chars,
     )
 
 
+def server_extract_model() -> tuple[str, str]:
+    """(provider, model) the extraction child will run on: the server settings this
+    environment resolves, as the CLI resolves them."""
+    from server.llm.client import get_llm_client
+
+    client = get_llm_client()
+    return str(getattr(client, "provider", "")), str(getattr(client, "model", ""))
+
+
+def _fail(message: str) -> int:
+    print(message, file=sys.stderr)
+    return 2
+
+
 def cmd_run(a: argparse.Namespace) -> int:
     ts = load(a.taskset)
     cfg = _config(a)
+    if 4 in cfg.arms and 3 in cfg.arms and not a.code_index and 5 not in cfg.arms:
+        cfg.arms = [*cfg.arms, 5]
+        print(
+            "arm 4 has no code index, so no pre-edit block: arm 5 (gold rows through "
+            "loom_search only) is added as its like-for-like reference"
+        )
+    if runner.own_extraction(cfg):
+        provider, model = server_extract_model()
+        if cfg.extract_model and cfg.extract_model != model:
+            return _fail(
+                f"the extraction would run on {model!r} (this environment's server "
+                f"settings), not --extract-model {cfg.extract_model!r}"
+            )
+        if a.offline and provider != "fake":
+            return _fail(
+                "--offline with arm 4 needs LOOM_LLM_PROVIDER=fake: the extraction "
+                f"would call {provider}"
+            )
+        cfg.extract_model = model
     if a.dry_run:
         runner.print_plan(runner.plan(ts, cfg))
         return 0
     if not a.base_url:
-        print("--base-url (or LOOM_BASE_URL) names the run's own Loom server", file=sys.stderr)
-        return 2
+        return _fail("--base-url (or LOOM_BASE_URL) names the run's own Loom server")
+    if a.code_index and not (a.code_index_org and a.code_index_namespace):
+        return _fail("--code-index needs --code-index-org and --code-index-namespace")
     if not a.offline:
         models = [cfg.reader, *cfg.judges] + (
-            [cfg.extract_model] if 4 in cfg.arms and not cfg.arm4_namespace else []
+            [cfg.extract_model] if runner.own_extraction(cfg) else []
         )
         if not cfg.reader or not cfg.judges:
             print("--reader-model and --judge-model are required", file=sys.stderr)
@@ -173,7 +228,7 @@ def cmd_run(a: argparse.Namespace) -> int:
         if a.max_usd <= 0:
             print("--max-usd is required for a run that calls a provider", file=sys.stderr)
             return 2
-    from bench.design_rationale.loom import Loom
+    from bench.design_rationale.loom import CodeIndex, Loom
 
     a.out.mkdir(parents=True, exist_ok=True)
     ledger = Ledger(a.out / "ledger.jsonl", a.max_usd)
@@ -184,13 +239,22 @@ def cmd_run(a: argparse.Namespace) -> int:
         cfg.judges = ["offline"]
         cfg.extract_model = cfg.extract_model or "fake-echo-1"
     else:
-        reader = Model(cfg.reader, provider_complete(cfg.reader), ledger)
-        judges = [Model(m, provider_complete(m), ledger) for m in cfg.judges]
+        reader = Model(cfg.reader, ProviderComplete(cfg.reader, ledger), ledger)
+        judges = [Model(m, ProviderComplete(m, ledger), ledger) for m in cfg.judges]
     loom = Loom(a.base_url, a.token)
+    code = (
+        CodeIndex(a.code_index, a.code_index_org, a.code_index_namespace, a.code_index_token)
+        if a.code_index
+        else None
+    )
     try:
-        runner.run(ts, cfg, loom, reader, judges, ledger)
+        runner.run(ts, cfg, loom, reader, judges, ledger, code)
+    except runner.RunError as e:
+        return _fail(str(e))
     finally:
         loom.close()
+        if code is not None:
+            code.close()
     print(f"spent {ledger.spent():.4f} USD (ledger {ledger.path})")
     return 0
 

@@ -46,6 +46,13 @@ def _norm(value: str) -> str:
     return value.replace("_", "").replace("'", "").replace('"', "").strip().lower()
 
 
+def _value_tokens(line: str, name: str) -> set[str]:
+    """The tokens of what a line assigns or declares for `name`: the text after the name,
+    split into words and numbers (`512` is not `5120`), normalised as `_norm` does."""
+    after = line.split(name, 1)[1]
+    return {_norm(t) for t in re.findall(r"[A-Za-z0-9_.]+", after)}
+
+
 def run_detector(d: dict[str, Any], files: Diff) -> bool | None:
     """True when the diff does what the detector looks for (a failure of the task), False
     when it does not, None for a `judge` detector (no deterministic signal)."""
@@ -69,14 +76,15 @@ def run_detector(d: dict[str, Any], files: Diff) -> bool | None:
             for line in f["+"]:
                 if name not in line:
                     continue
-                if "to" in d and _norm(d["to"]) in _norm(line):
+                values = _value_tokens(line, name)
+                if "to" in d and _norm(d["to"]) in values:
                     return True
                 # A declaration naming the setting with some other default.
                 declared = re.search(
                     r"DECLARE|\{\s*\"" + re.escape(name) + r"|\b" + re.escape(name) + r"\s*[:=]",
                     line,
                 )
-                if declared and _norm(d["from"]) not in _norm(line):
+                if declared and values and _norm(d["from"]) not in values:
                     return True
         return False
     raise ValueError(f"unknown detector type {kind!r}")

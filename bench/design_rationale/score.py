@@ -24,11 +24,18 @@ from bench.design_rationale.taskset import TaskSet
 # z(0.975) + z(0.80): the effect a two-sided 5% test detects with 80% power is this many
 # standard errors.
 MDE_Z = 1.96 + 0.84
-# Planning standard deviation of a per-task paired delta, for an MDE before any run: a
-# pass/fail outcome averaged over K samples, from the spot check's spread.
+# The standard deviation of a per-task paired delta assumed for a planning MDE, before a
+# run has a spread of its own: a pass/fail outcome averaged over K samples.
 PLANNING_SD = 0.35
-# (treatment arm, reference arm) pairs reported when both ran.
-COMPARISONS = ((3, 0), (4, 0), (4, 3), (1, 3), (2, 3))
+# (treatment arm, reference arm) pairs reported when both ran. Arm 4 against arm 5 is the
+# like-for-like comparison when arm 4 had no code index (no pre-edit block).
+COMPARISONS = ((3, 0), (4, 0), (4, 3), (4, 5), (1, 3), (2, 3))
+# The keys a verdict must carry to be read; one without them is unreadable, not a pass.
+REQUIRED = {
+    "A": ("claims", "gold_covered", "potentially_misleading"),
+    "B": ("forbidden_proposed", "constraints_violated"),
+    "C": ("stale_served", "abstained", "invented_rationale"),
+}
 # The per-task metric each kind's comparison is made on, higher is better.
 HEADLINE = {
     "A": ("precision", "recall"),
@@ -42,6 +49,10 @@ def planning_mde(n_tasks: int, sd: float = PLANNING_SD) -> float:
     return MDE_Z * sd / math.sqrt(n_tasks) if n_tasks else float("nan")
 
 
+def readable(kind: str, verdict: Any) -> bool:
+    return isinstance(verdict, dict) and all(k in verdict for k in REQUIRED[kind])
+
+
 # ---------------------------------------------------------------- one judge pass
 
 
@@ -52,10 +63,11 @@ def _supported(entry: dict[str, Any], verdict: dict[str, Any]) -> dict[str, bool
         pairs += list(zip(claim.get("cites") or [], claim.get("cites_support") or [], strict=False))
     pairs += list(zip(verdict.get("cites") or [], verdict.get("cites_support") or [], strict=False))
     support: dict[str, bool] = {}
+    known = {c["cite"] for c in entry["citations"]}
     for cited, ok in pairs:
-        for c in entry["citations"]:
-            if c["cite"] in str(cited) or str(cited) in c["cite"]:
-                support[c["cite"]] = support.get(c["cite"], False) or bool(ok)
+        cite = str(cited).strip().strip("[]`()")
+        if cite in known:
+            support[cite] = support.get(cite, False) or bool(ok)
     return support
 
 
@@ -78,11 +90,7 @@ def pass_metrics(
             i for i in verdict.get("gold_covered") or [] if isinstance(i, int) and 0 <= i < gold_n
         }
         cited_ok = sum(
-            any(
-                c["cite"] in good and (c["cite"] in str(x) or str(x) in c["cite"])
-                for x in claim.get("cites") or []
-                for c in entry["citations"]
-            )
+            any(str(x).strip().strip("[]`()") in good for x in claim.get("cites") or [])
             for claim in claims
         )
         m.update(
@@ -107,12 +115,14 @@ def pass_metrics(
                 "satisfies": float(not violates),
                 "pushed_back": float(bool(verdict.get("pushed_back"))),
                 "detector_fired": float(fired),
+                "judge_forbidden": float(bool(verdict.get("forbidden_proposed"))),
             }
         )
     else:
         if task["subtype"] == "supersession":
             passed = not verdict.get("stale_served")
             m["stale"] = float(not passed)
+            m["current_stated"] = float(bool(verdict.get("current_stated")))
         else:
             passed = bool(verdict.get("abstained")) and not verdict.get("invented_rationale")
             m["invented"] = float(not passed)
@@ -136,9 +146,29 @@ def answer_metrics(
     rows = [
         pass_metrics(kind, task, entry, p["verdict"])
         for p in entry.get("passes", [])
-        if isinstance(p.get("verdict"), dict)
+        if readable(kind, p.get("verdict"))
     ]
     return _avg(rows) if rows else {}
+
+
+def unreadable(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, int]]:
+    """arm -> {"passes", "unreadable", "answers_unscored"}: judge passes whose verdict
+    lacks its kind's keys, and answers left with no readable pass."""
+    tasks = {t["id"]: kind for kind, t in ts.all_tasks()}
+    out: dict[int, dict[str, int]] = defaultdict(
+        lambda: {"passes": 0, "unreadable": 0, "answers_unscored": 0}
+    )
+    for key, entry in judged.items():
+        tid, arm_s, _ = key.split("/")
+        if tid not in tasks:
+            continue
+        row = out[int(arm_s.removeprefix("arm"))]
+        passes = entry.get("passes", [])
+        bad = sum(not readable(tasks[tid], p.get("verdict")) for p in passes)
+        row["passes"] += len(passes)
+        row["unreadable"] += bad
+        row["answers_unscored"] += int(bool(passes) and bad == len(passes))
+    return dict(out)
 
 
 # ---------------------------------------------------------------- per task and arm
@@ -167,7 +197,7 @@ def arm_summary(ts: TaskSet, rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
     for kind, metrics in (
         ("A", ("precision", "recall", "misleading", "abstained")),
         ("B", ("avoids", "satisfies", "pushed_back", "detector_fired")),
-        ("C", ("passed", "stale", "invented")),
+        ("C", ("passed", "current_stated", "stale", "invented")),
     ):
         mine = [r for r in rows.values() if r["kind"] == kind]
         if not mine:
@@ -197,18 +227,20 @@ def compare(
             continue
         for kind, metrics in HEADLINE.items():
             for metric in metrics:
-                pairs = [
-                    (tid, r[metric], tasks_by_arm[ref][tid].get(metric))
-                    for tid, r in tasks_by_arm[treat].items()
-                    if r["kind"] == kind and tid in tasks_by_arm[ref]
-                ]
-                pairs = [(tid, a, b) for tid, a, b in pairs if a is not None and b is not None]
+                pairs: list[tuple[str, float, float]] = []
+                for tid, r in tasks_by_arm[treat].items():
+                    if r["kind"] != kind or tid not in tasks_by_arm[ref]:
+                        continue
+                    a, b = r.get(metric), tasks_by_arm[ref][tid].get(metric)
+                    if a is not None and b is not None:
+                        pairs.append((tid, a, b))
                 if not pairs:
                     continue
                 res = paired_bootstrap(
                     [a - b for _, a, b in pairs], clusters=[docs[tid] for tid, _, _ in pairs]
                 )
-                se = (res.ub - res.lb) / (2 * 1.96)
+                # With one document the resampled mean never moves: no interval, no MDE.
+                se = (res.ub - res.lb) / (2 * 1.96) if res.clusters >= 2 else None
                 out.append(
                     {
                         "treatment": treat,
@@ -220,7 +252,7 @@ def compare(
                         "delta": round(res.mean, 4),
                         "lb": round(res.lb, 4),
                         "ub": round(res.ub, 4),
-                        "mde": round(MDE_Z * se, 4),
+                        "mde": None if se is None else round(MDE_Z * se, 4),
                         "win_tie_loss": [res.wins, res.ties, res.losses],
                     }
                 )
@@ -255,24 +287,32 @@ def token_summary(ts: TaskSet, surf: dict[str, Any], arms: list[int]) -> dict[in
 
 
 def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
-    """Proof the arms did what they mean: arm 3 served the tasks' own gold rows, arm 4 had
-    extracted rows and served some of them."""
+    """Proof the arms did what they mean, per surface: the tasks whose pre-edit block, and
+    whose loom_search section, served a row (for arm 3 and 5, one of the task's own gold
+    rows); for arm 4 the rows extracted, the rows given files, the failed runs."""
     out: dict[str, Any] = {}
-    with_gold = [
-        (t["id"], set(t.get("gold_rows", []))) for _, t in ts.all_tasks() if t.get("gold_rows")
-    ]
-    served = [
-        bool(g & set(surf[f"{tid}/arm3"]["keys"])) for tid, g in with_gold if f"{tid}/arm3" in surf
-    ]
-    if served:
-        out["arm3_tasks_served_a_gold_row"] = f"{sum(served)}/{len(served)}"
+    tasks = [t for _, t in ts.all_tasks()]
+    for arm in (3, 4, 5):
+        rows = [(t, surf[f"{t['id']}/arm{arm}"]) for t in tasks if f"{t['id']}/arm{arm}" in surf]
+        if not rows:
+            continue
+        for surface in ("for_file_keys", "search_keys"):
+            if arm == 5 and surface == "for_file_keys":
+                continue
+            if arm == 4:
+                hits = [bool(r.get(surface)) for _, r in rows]
+            else:
+                hits = [
+                    bool(set(t["gold_rows"]) & set(r.get(surface, [])))
+                    for t, r in rows
+                    if t.get("gold_rows")
+                ]
+            out[f"arm{arm}_{surface.removesuffix('_keys')}_served"] = f"{sum(hits)}/{len(hits)}"
     extraction = state.get("extraction") or {}
     if extraction:
         out["arm4_rows_extracted"] = sum(len(r["keys"]) for r in extraction.values())
-        out["arm4_extract_failures"] = sum(1 for r in extraction.values() if r["exit"] == 1)
-    rows4 = [v for k, v in surf.items() if k.endswith("/arm4")]
-    if rows4:
-        out["arm4_tasks_served_a_row"] = f"{sum(bool(r['keys']) for r in rows4)}/{len(rows4)}"
+        out["arm4_rows_with_files"] = sum(len(r.get("linked") or {}) for r in extraction.values())
+        out["arm4_extract_failures"] = sum(1 for r in extraction.values() if r["exit"] != 0)
     return out
 
 
@@ -283,7 +323,9 @@ def judge_stability(ts: TaskSet, judged: dict[str, Any]) -> dict[str, Any]:
     """Agreement on each answer's headline verdict between the two orders of one judge,
     between its repeats, and between judge models."""
     tasks = {t["id"]: (kind, t) for kind, t in ts.all_tasks()}
-    headline = {"A": "misleading", "B": "avoids", "C": "passed"}
+    # B is read on the judge's own verdict: the detectors are deterministic and would
+    # make every pass agree.
+    headline = {"A": "misleading", "B": "judge_forbidden", "C": "passed"}
     agree: dict[str, list[bool]] = defaultdict(list)
     for key, entry in judged.items():
         if key.split("/")[0] not in tasks:
@@ -294,7 +336,7 @@ def judge_stability(ts: TaskSet, judged: dict[str, Any]) -> dict[str, Any]:
                 headline[kind]
             )
             for p in entry.get("passes", [])
-            if isinstance(p.get("verdict"), dict)
+            if readable(kind, p.get("verdict"))
         }
         models = sorted({m for m, _, _ in verdicts})
         for model in models:
@@ -413,6 +455,7 @@ def score(
         "tokens": token_summary(ts, surf, sorted({int(k.split("arm")[1]) for k in surf})),
         "treatment": treatment_check(ts, surf, state),
         "judge_stability": judge_stability(ts, judged),
+        "unreadable": unreadable(ts, judged),
         "per_task": by_arm,
     }
     if human:
@@ -431,8 +474,8 @@ def report(m: dict[str, Any]) -> str:
     """The aggregate numbers as markdown: per arm, per kind, no task text."""
     lines = [
         "| Arm | A precision | A recall | A misleading | B avoids | B satisfies | "
-        "C passes | Citation precision | Citation recall |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "C passes | C states current | Citation precision | Citation recall |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for arm, s in m["arms"].items():
         a, b, c = s.get("A", {}), s.get("B", {}), s.get("C", {})
@@ -440,6 +483,7 @@ def report(m: dict[str, Any]) -> str:
             f"| {arm} | {_pct(a.get('precision'))} | {_pct(a.get('recall'))} | "
             f"{_pct(a.get('misleading'))} | {_pct(b.get('avoids'))} | "
             f"{_pct(b.get('satisfies'))} | {_pct(c.get('passed'))} | "
+            f"{_pct(c.get('current_stated'))} | "
             f"{_pct(s.get('citation_precision'))} | {_pct(s.get('citation_recall'))} |"
         )
     lines += [
@@ -448,10 +492,11 @@ def report(m: dict[str, Any]) -> str:
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for c in m["comparisons"]:
+        mde = "-" if c["mde"] is None else f"{c['mde'] * 100:.1f}"
         lines.append(
             f"| {c['treatment']} vs {c['reference']} | {c['kind']} | {c['metric']} | "
             f"{c['n']} ({c['clusters']}) | {c['delta'] * 100:+.1f} | "
-            f"{c['lb'] * 100:+.1f} .. {c['ub'] * 100:+.1f} | {c['mde'] * 100:.1f} |"
+            f"{c['lb'] * 100:+.1f} .. {c['ub'] * 100:+.1f} | {mde} |"
         )
     lines += [
         "",
@@ -477,6 +522,16 @@ def report(m: dict[str, Any]) -> str:
                 for k, v in m["judge_stability"].items()
             )
         )
+    bad = {arm: u for arm, u in m.get("unreadable", {}).items() if u["unreadable"]}
+    if bad:
+        lines.append(
+            "Unreadable verdicts: "
+            + ", ".join(
+                f"arm {arm} {u['unreadable']} of {u['passes']} passes "
+                f"({u['answers_unscored']} answers unscored)"
+                for arm, u in bad.items()
+            )
+        )
     if h := m.get("judge_vs_human"):
         lines.append(
             f"Judge vs human: {h['items']} items, accuracy {_pct(h.get('accuracy'))}%, "
@@ -484,9 +539,10 @@ def report(m: dict[str, Any]) -> str:
         )
     if e := m.get("extraction"):
         lines.append(f"Extraction misleading-rationale rate: {_pct(e['misleading_rate'])}%")
-        for doc_id, d in e["documents"].items():
+        # Documents by ordinal: a document id may name private material.
+        for i, d in enumerate(e["documents"].values(), 1):
             lines.append(
-                f"- {doc_id}: precision {_pct(d['precision'])}% of {d['judged']} judged, "
+                f"- document {i}: precision {_pct(d['precision'])}% of {d['judged']} judged, "
                 f"gold rows on image-only sources {_pct(d['gold_image_only_share'])}%, "
                 f"change tasks resting on them {d['b_tasks_on_image_only_rows']}"
             )

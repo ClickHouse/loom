@@ -1,6 +1,7 @@
 """The `run` command: set up the arms in the harness's Loom, read the surfaces, answer
 each task K times per arm, and judge each answer. Every stage writes its JSON file in the
-output directory and skips what is already there, so a stopped run resumes.
+output directory and skips what is already there, so a run stopped by the spend cap
+resumes where it stopped; its namespaces are kept until every answer is judged.
 """
 
 from __future__ import annotations
@@ -13,31 +14,50 @@ from pathlib import Path
 from typing import Any
 
 from bench.design_rationale import detectors, prompts
-from bench.design_rationale.llm import CapReached, Ledger, Model, cost_usd, parse_json, price
+from bench.design_rationale.llm import (
+    CHARS_PER_TOKEN_WORST,
+    CapReached,
+    Ledger,
+    Model,
+    cost_usd,
+    parse_json,
+    price,
+)
 from bench.design_rationale.loom import (
+    CodeIndex,
     Loom,
     knowledge_section,
     memory_section,
     section_keys,
     tokens,
 )
-from bench.design_rationale.taskset import TaskSet
+from bench.design_rationale.taskset import Document, TaskSet
 
-ARMS = (0, 1, 2, 3, 4)
+ARMS = (0, 1, 2, 3, 4, 5)
 ARM_NAMES = {
     0: "no design knowledge",
     1: "whole document through knowledge.get",
     2: "document as knowledge, through loom_search",
     3: "gold rows through the pre-edit block and loom_search",
     4: "extracted rows through the pre-edit block and loom_search",
+    5: "gold rows through loom_search only",
 }
+# The namespace each arm's rows or documents are read from.
+ARM_HOME = {2: "kb", 3: "gold", 4: "extract", 5: "gold"}
 # Planning estimates for a dry run, before any surface is read.
 SEARCH_SECTION_TOKENS = 800  # a loom_search section with the reading rule
 PRE_EDIT_TOKENS = 300  # the pre-edit block's budget per file
 CITED_TEXT_TOKENS = 1200  # the cited source text a judge reads
+JUDGE_FRAME_TOKENS = 900  # the judge's instructions and gold lists
 TYPICAL_OUT = {"A": 400, "B": 900, "C": 400, "judge": 500, "extract": 800}
 JUDGE_OUT_CAP = 4000
-EXTRACT_PROMPT_TOKENS = 1200  # the extractor's instructions around one window
+# A known decision as the extractor's prompt lists it on a re-run: category, scenario and
+# outcome, at most this many characters together (an assumed bound for the estimate).
+KNOWN_DECISION_CHARS = 600
+
+
+class RunError(RuntimeError):
+    pass
 
 
 @dataclass
@@ -48,16 +68,14 @@ class Config:
     k: int = 4
     reader: str = ""
     judges: list[str] = field(default_factory=list)
-    judge_orders: int = 1
-    judge_repeats: int = 1
+    judge_orders: int = 2
+    judge_repeats: int = 2
     max_usd: float = 0.0
     only: set[str] = field(default_factory=set)
     keep_namespaces: bool = False
     arm4_namespace: str = ""
-    extract_repo: str = ""
     extract_model: str = ""
     extract_window_chars: int = 6000
-    extract_out_cap: int = 4000
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -72,100 +90,101 @@ def answer_key(tid: str, arm: int, sample: int) -> str:
     return f"{tid}/arm{arm}/s{sample}"
 
 
+def own_extraction(cfg: Config) -> bool:
+    return 4 in cfg.arms and not cfg.arm4_namespace
+
+
+# ---------------------------------------------------------------- extraction bound
+
+
+def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:
+    """(calls, input tokens, output tokens) one extraction run on `doc` may spend at most:
+    a call per window or per section, whichever is more, the windows counted at three per
+    window's length (a window is cut at section bounds, and a window can be read twice);
+    each call carries a window, the prompt and, on a re-run over a revision, the known
+    decisions it lists; each may write up to the extractor's output cap."""
+    from server.memory.domain import decision_extract as dx
+    from server.settings import settings
+    from server.settings.budgets import llm_max_tokens
+
+    sections = sum(1 for line in doc.content.splitlines() if line.startswith("#"))
+    calls = max(1, math.ceil(3 * len(doc.content) / window_chars), sections)
+    known = settings.memory_decision_extract_known_max if doc.revision_of else 0
+    prompt = dx.system_prompt(3, [("", "", "x" * KNOWN_DECISION_CHARS)] * known)
+    tin = (min(window_chars, len(doc.content)) + len(prompt)) // CHARS_PER_TOKEN_WORST
+    return calls, calls * tin, calls * llm_max_tokens("decision_extract")
+
+
 # ---------------------------------------------------------------- plan (dry run)
 
 
-def extraction_calls(ts: TaskSet, window_chars: int) -> list[tuple[str, int]]:
-    """(document id, most model calls) of each extraction run: one per window, two when
-    the first reply is unusable; a revised document is extracted again."""
-    return [
-        (d.id, 2 * max(1, math.ceil(len(d.content) / window_chars))) for d in ts.documents.values()
-    ]
+def _priced(models: list[str], tin: int, tout: int) -> float | None:
+    """USD of calls spread evenly over `models`; None when one has no price."""
+    if not models or not all(price(m) for m in models):
+        return None
+    return round(sum(cost_usd(m, tin, tout) for m in models) / len(models), 4)
 
 
 def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
-    """The calls and tokens a run would spend, worst case (every output at its cap, the
-    figure the spend cap holds against) and typical (outputs at `TYPICAL_OUT`)."""
+    """The calls and tokens a run would spend, worst case (inputs at three characters a
+    token and every output at its cap, the figure the spend cap holds against) and typical
+    (outputs at `TYPICAL_OUT`)."""
     tasks = ts.all_tasks(cfg.only)
     passes = max(1, len(cfg.judges)) * cfg.judge_orders * cfg.judge_repeats
     rows: list[dict[str, Any]] = []
     for arm in cfg.arms:
         for kind, t in tasks:
             if arm == 1:
-                ctx = tokens(ts.document_of(t).content)
-            elif arm == 2:
+                ctx = len(ts.document_of(t).content) // CHARS_PER_TOKEN_WORST
+            elif arm in (2, 5):
                 ctx = SEARCH_SECTION_TOKENS
             elif arm in (3, 4):
                 ctx = SEARCH_SECTION_TOKENS + PRE_EDIT_TOKENS * len(ts.task_paths(t))
             else:
                 ctx = 0
             system, user, cap = prompts.answer_prompt(kind, t, "", ts.system)
-            a_in = tokens(system + user) + ctx
-            j_in = 900 + ctx + cap + CITED_TEXT_TOKENS
-            rows.append(
-                {"arm": arm, "kind": kind, "answer_in": a_in, "answer_cap": cap, "judge_in": j_in}
-            )
+            a_in = len(system + user) // CHARS_PER_TOKEN_WORST + ctx
+            j_in = JUDGE_FRAME_TOKENS + ctx + cap + CITED_TEXT_TOKENS
+            rows.append({"kind": kind, "answer_in": a_in, "answer_cap": cap, "judge_in": j_in})
     k = cfg.k
     answer_calls = len(rows) * k
     judge_calls = answer_calls * passes
+    bounds = (
+        [extraction_bound(d, cfg.extract_window_chars) for d in ts.documents.values()]
+        if own_extraction(cfg)
+        else []
+    )
+    n_extract = sum(b[0] for b in bounds)
     usage = {
         "answer": {
+            "model": cfg.reader,
             "calls": answer_calls,
             "in": sum(r["answer_in"] for r in rows) * k,
             "out_worst": sum(r["answer_cap"] for r in rows) * k,
             "out_typical": sum(TYPICAL_OUT[r["kind"]] for r in rows) * k,
         },
         "judge": {
+            "model": ",".join(cfg.judges),
             "calls": judge_calls,
             "in": sum(r["judge_in"] for r in rows) * k * passes,
             "out_worst": JUDGE_OUT_CAP * judge_calls,
             "out_typical": TYPICAL_OUT["judge"] * judge_calls,
         },
+        "extract": {
+            "model": cfg.extract_model,
+            "calls": n_extract,
+            "in": sum(b[1] for b in bounds),
+            "out_worst": sum(b[2] for b in bounds),
+            "out_typical": n_extract * TYPICAL_OUT["extract"],
+        },
     }
-    extract = (
-        extraction_calls(ts, cfg.extract_window_chars)
-        if (4 in cfg.arms and not cfg.arm4_namespace)
-        else []
-    )
-    n_extract = sum(n for _, n in extract)
-    usage["extract"] = {
-        "calls": n_extract,
-        "in": n_extract * (cfg.extract_window_chars // 4 + EXTRACT_PROMPT_TOKENS),
-        "out_worst": n_extract * cfg.extract_out_cap,
-        "out_typical": n_extract * TYPICAL_OUT["extract"],
-    }
-    models = {
-        "answer": cfg.reader,
-        "judge": cfg.judges[0] if cfg.judges else "",
-        "extract": cfg.extract_model,
-    }
+    models = {"answer": [cfg.reader], "judge": cfg.judges, "extract": [cfg.extract_model]}
     for stage, u in usage.items():
-        model = models[stage]
-        if stage == "judge" and len(cfg.judges) > 1:
-            # Judge calls split evenly over the judge models.
-            share = [
-                cost_usd(m, u["in"], u["out_worst"]) / len(cfg.judges)
-                for m in cfg.judges
-                if price(m)
-            ]
-            typ = [
-                cost_usd(m, u["in"], u["out_typical"]) / len(cfg.judges)
-                for m in cfg.judges
-                if price(m)
-            ]
-            priced = len(share) == len(cfg.judges)
-            u["usd_worst"] = round(sum(share), 4) if priced else None
-            u["usd_typical"] = round(sum(typ), 4) if priced else None
-        elif price(model) or not u["calls"]:
-            u["usd_worst"] = (
-                round(cost_usd(model, u["in"], u["out_worst"]), 4) if u["calls"] else 0.0
-            )
-            u["usd_typical"] = (
-                round(cost_usd(model, u["in"], u["out_typical"]), 4) if u["calls"] else 0.0
-            )
-        else:
-            u["usd_worst"] = u["usd_typical"] = None
-        u["model"] = model if stage != "judge" else ",".join(cfg.judges)
+        if not u["calls"]:
+            u["usd_worst"] = u["usd_typical"] = 0.0
+            continue
+        u["usd_worst"] = _priced(models[stage], u["in"], u["out_worst"])
+        u["usd_typical"] = _priced(models[stage], u["in"], u["out_typical"])
     from bench.design_rationale.score import planning_mde
 
     counts = {kind: sum(1 for kk, _ in tasks if kk == kind) for kind in "ABC"}
@@ -207,7 +226,7 @@ def print_plan(p: dict[str, Any]) -> None:
     )
 
 
-# ---------------------------------------------------------------- setup
+# ---------------------------------------------------------------- namespaces
 
 
 def namespaces(state: dict[str, Any], cfg: Config) -> dict[str, str]:
@@ -235,85 +254,145 @@ def bind(loom: Loom, state: dict[str, Any], cfg: Config) -> dict[str, str]:
     return ns
 
 
+def owned(cfg: Config, ns: dict[str, str]) -> list[str]:
+    """The namespaces this run creates, and erases."""
+    roles = ["kb"] + (["gold"] if {3, 5} & set(cfg.arms) else [])
+    roles += ["extract"] if own_extraction(cfg) else []
+    return [ns[r] for r in roles]
+
+
+def record_server_spend(loom: Loom, ledger: Ledger, state: dict[str, Any], cfg: Config) -> None:
+    """Charge the ledger with what the server spent in the run's orgs since the last read:
+    embeddings and any model call its writes and reads made."""
+    spent = loom.server_spend(list(namespaces(state, cfg).values()))
+    if "server_usd_seen" not in state:
+        # The first read, before any write: what earlier runs spent in these orgs.
+        state["server_usd_seen"] = spent
+    elif spent > state["server_usd_seen"]:
+        ledger.record_usd("server", round(spent - state["server_usd_seen"], 6))
+        state["server_usd_seen"] = spent
+
+
+# ---------------------------------------------------------------- setup
+
+
 def gold_pointer(ts: TaskSet, row: Any, kb: str) -> str:
     uri = ts.documents[row.document].source_uri
     return f"knowledge:{kb}/{uri}" + (f"#{row.section}" if row.section else "")
 
 
-def setup(ts: TaskSet, cfg: Config, loom: Loom, ledger: Ledger, state: dict[str, Any]) -> None:
+def setup(
+    ts: TaskSet,
+    cfg: Config,
+    loom: Loom,
+    ledger: Ledger,
+    state: dict[str, Any],
+    code: CodeIndex | None,
+) -> None:
     """Fill the arms' namespaces: documents into kb (and extract), gold rows into gold
     (never into extract), the extractor over extract; then each revision, the gold rows
     written after it, and the extractor again over each revised document."""
     if state.get("setup_done"):
         return
     ns = namespaces(state, cfg)
-    own_extract = 4 in cfg.arms and not cfg.arm4_namespace
-    targets = ["kb"] + (["gold"] if 3 in cfg.arms else []) + (["extract"] if own_extract else [])
-    for name in targets:
-        loom.register(ns[name], f"design-rationale bench: {name}", keep=cfg.keep_namespaces)
-    doc_targets = ["kb"] + (["extract"] if own_extract else [])
+    for name in owned(cfg, ns):
+        loom.register(name, "design-rationale bench", keep=cfg.keep_namespaces, cap_usd=cfg.max_usd)
+    record_server_spend(loom, ledger, state, cfg)
+    doc_targets = ["kb"] + (["extract"] if own_extraction(cfg) else [])
     reports: dict[str, Any] = state.setdefault("extraction", {})
     for revised in (False, True):
         docs = [d for d in ts.documents.values() if bool(d.revision_of) == revised]
         for d in docs:
             for name in doc_targets:
                 loom.upsert_document(ns[name], d.source_uri, d.title, d.content)
-        if 3 in cfg.arms:
+        if {3, 5} & set(cfg.arms):
             for row in ts.gold_writes:
                 if row.after_revision == revised:
                     loom.write_gold(ns["gold"], row, gold_pointer(ts, row, ns["kb"]))
-        if own_extract:
+        if own_extraction(cfg):
             for d in docs:
-                reports[d.id] = run_extraction(ts, cfg, loom, ledger, ns["extract"], d)
-    if own_extract:
+                reports[d.id] = run_extraction(cfg, loom, ledger, ns["extract"], d, code)
+    if own_extraction(cfg):
         write_label_sheet(cfg, loom, ns["extract"], reports)
+    record_server_spend(loom, ledger, state, cfg)
     state["setup_done"] = True
 
 
-def write_label_sheet(cfg: Config, loom: Loom, namespace: str, reports: dict[str, Any]) -> None:
-    """`extraction_labels.todo.json`: each extracted row with an empty verdict, for the
-    human who judges extraction precision (`score --extraction-labels`)."""
-    sheet = []
-    for doc_id, r in reports.items():
-        for key in r["keys"]:
-            got = loom.memory_get(namespace, key)
-            if not got.get("found"):
-                continue  # retired by a later run over the revised document
-            sheet.append(
-                {
-                    "document": doc_id,
-                    "memory_key": key,
-                    "value": got.get("value"),
-                    "source_resource_id": got.get("source_resource_id"),
-                    "verdict": "",
-                }
-            )
-    save_json(cfg.out / "extraction_labels.todo.json", sheet)
+def parse_report(report: str) -> dict[str, list[str]]:
+    """Each kept row's key and the code names its signal lines list, from the extractor's
+    printed report (`- recorded <key>` followed by `    signal: <name>: <signal>, ...`)."""
+    rows: dict[str, list[str]] = {}
+    current = None
+    for line in report.splitlines():
+        if line.startswith(("- recorded ", "- revised ", "- unchanged ")):
+            current = line.split()[2].rstrip(":")
+            rows.setdefault(current, [])
+        elif line.startswith("    signal: ") and current is not None:
+            name = line.removeprefix("    signal: ").partition(": ")[0]
+            if name and name != "no code names":
+                rows[current].append(name)
+        elif not line.startswith("    "):
+            current = None
+    return rows
+
+
+def link_files(code: CodeIndex, names: list[str]) -> list[str]:
+    """The files the extractor would link a row to on a repository's index: each name with
+    exactly one defining file that a decision can govern (not a test, not a page)."""
+    from server.memory.domain import decision_extract as dx
+
+    files: list[str] = []
+    for name in names:
+        path = dx.definition_path(code.definitions(name) or [])
+        if path and dx.governs(path) and path not in files:
+            files.append(path)
+    return files
 
 
 def run_extraction(
-    ts: TaskSet, cfg: Config, loom: Loom, ledger: Ledger, namespace: str, doc: Any
+    cfg: Config, loom: Loom, ledger: Ledger, namespace: str, doc: Document, code: CodeIndex | None
 ) -> dict[str, Any]:
     """`loom decisions extract --apply` on one document, its worst-case spend charged to
-    the ledger first: the calls run in the server's code, out of the ledger's sight."""
-    calls = 2 * max(1, math.ceil(len(doc.content) / cfg.extract_window_chars))
-    tin = calls * (cfg.extract_window_chars // 4 + EXTRACT_PROMPT_TOKENS)
-    tout = calls * cfg.extract_out_cap
+    the ledger first: the calls run in the server's code, out of the ledger's sight. With a
+    code index, each kept row's code names are resolved there and the files written on it,
+    so arm 4 reaches the pre-edit block as arm 3 does."""
+    calls, tin, tout = extraction_bound(doc, cfg.extract_window_chars)
     ledger.check(cfg.extract_model, tin, tout)
     ledger.record("extract", cfg.extract_model, tin, tout, estimated=True)
-    rc, report = loom.extract(namespace, doc.source_uri, cfg.extract_repo)
+    rc, report = loom.extract(namespace, doc.source_uri, cfg.extract_window_chars)
     (cfg.out / f"extract_{doc.id}.log").write_text(report)
-    recorded = [
-        line.split()[2].rstrip(":")
-        for line in report.splitlines()
-        if line.startswith(("- recorded ", "- revised ", "- unchanged "))
-    ]
+    rows = parse_report(report)
+    linked: dict[str, list[str]] = {}
+    if code is not None:
+        for key, names in rows.items():
+            files = link_files(code, names)
+            if files and loom.set_files(namespace, key, files):
+                linked[key] = files
     image_only = sum(
         1
         for line in report.splitlines()
         if line.startswith("- image-only, rationale not extracted")
     )
-    return {"exit": rc, "keys": recorded, "image_only_sections": image_only}
+    return {"exit": rc, "keys": list(rows), "linked": linked, "image_only_sections": image_only}
+
+
+def write_label_sheet(cfg: Config, loom: Loom, namespace: str, reports: dict[str, Any]) -> None:
+    """`extraction_labels.todo.json`: each extracted row once, with an empty verdict, for
+    the human who judges extraction precision (`score --extraction-labels`)."""
+    sheet: dict[str, dict[str, Any]] = {}
+    for doc_id, r in reports.items():
+        for key in r["keys"]:
+            got = loom.memory_get(namespace, key)
+            if not got.get("found"):
+                continue  # retired by a later run over the revised document
+            sheet[key] = {
+                "document": doc_id,
+                "memory_key": key,
+                "value": got.get("value"),
+                "source_resource_id": got.get("source_resource_id"),
+                "verdict": "",
+            }
+    save_json(cfg.out / "extraction_labels.todo.json", list(sheet.values()))
 
 
 # ---------------------------------------------------------------- surfaces
@@ -328,8 +407,8 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
     tasks = ts.all_tasks(cfg.only)
     for arm in cfg.arms:
         session = f"{state['prefix']}-arm{arm}"
-        home = {2: ns["kb"], 3: ns["gold"], 4: ns["extract"]}.get(arm, "")
-        if arm in (3, 4):
+        home = ns[ARM_HOME[arm]] if arm in ARM_HOME else ""
+        if arm in (3, 4, 5):
             # The reading rule rides on a session's first search with memory hits: warm
             # the session so every task sees what a mid-session search shows.
             for _, t in tasks:
@@ -356,8 +435,8 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
                 section = knowledge_section(found["text"], found["knowledge"])
                 entry["context"] = section or "(none)"
                 entry["tokens"] = {"search_knowledge": tokens(section)}
-            elif arm in (3, 4):
-                blocks = [loom.for_file(home, p) for p in ts.task_paths(t)]
+            elif arm in (3, 4, 5):
+                blocks = [] if arm == 5 else [loom.for_file(home, p) for p in ts.task_paths(t)]
                 section = memory_section(loom.search(home, query, session)["text"])
                 parts = [b["rendered"] for b in blocks if b["rendered"]]
                 if section:
@@ -368,9 +447,9 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
                     "for_file": [b["tokens"] for b in blocks],
                     "search_memory": tokens(section),
                 }
-                entry["keys"] = list(
-                    dict.fromkeys([k for b in blocks for k in b["keys"]] + section_keys(section))
-                )
+                entry["for_file_keys"] = list(dict.fromkeys(k for b in blocks for k in b["keys"]))
+                entry["search_keys"] = section_keys(section)
+                entry["keys"] = list(dict.fromkeys(entry["for_file_keys"] + entry["search_keys"]))
             out[key] = entry
             save_json(path, out)
     return out
@@ -410,7 +489,7 @@ class Resolver:
         self.cache: dict[tuple[str, str, str], tuple[bool, str]] = {}
 
     def resolve(self, cite: dict[str, Any], arm: int) -> tuple[bool, str]:
-        rows_ns = {3: self.ns["gold"], 4: self.ns["extract"]}.get(arm, "")
+        rows_ns = self.ns[ARM_HOME[arm]] if arm in (3, 4, 5) else ""
         key = (cite["kind"], cite["cite"], rows_ns)
         if key not in self.cache:
             self.cache[key] = self._resolve(cite, rows_ns)
@@ -455,13 +534,13 @@ def judge(
     path = cfg.out / "judged.json"
     out = load_json(path)
     resolver = Resolver(ts, loom, namespaces(state, cfg))
+    tasks = {t["id"]: (kind, t) for kind, t in ts.all_tasks()}
     for key, answer in ans.items():
         tid, arm_s, _sample = key.split("/")
-        arm = int(arm_s.removeprefix("arm"))
-        found = [(kind, t) for kind, t in ts.all_tasks() if t["id"] == tid]
-        if not found:
+        if tid not in tasks:
             continue
-        kind, t = found[0]
+        arm = int(arm_s.removeprefix("arm"))
+        kind, t = tasks[tid]
         entry = out.get(key) or {}
         if "citations" not in entry:
             cites = detectors.find_citations(answer["text"], resolver.uris)
@@ -524,25 +603,46 @@ def judge(
 
 
 def run(
-    ts: TaskSet, cfg: Config, loom: Loom, reader: Model, judges: list[Model], ledger: Ledger
-) -> None:
+    ts: TaskSet,
+    cfg: Config,
+    loom: Loom,
+    reader: Model,
+    judges: list[Model],
+    ledger: Ledger,
+    code: CodeIndex | None = None,
+) -> bool:
+    """One pass of every stage; True when every answer is judged. A run the cap stops
+    keeps its namespaces, so the next invocation on the same `--out` resumes it; a
+    finished run, or one whose setup failed, erases them (unless --keep-namespaces), and
+    is not resumed."""
     cfg.out.mkdir(parents=True, exist_ok=True)
     state_path = cfg.out / "state.json"
     state = load_json(state_path)
-    bind(loom, state, cfg)
+    if state.get("erased"):
+        raise RunError(f"{cfg.out}: this run's namespaces were erased; score it or start anew")
+    ns = bind(loom, state, cfg)
+    finished = False
     try:
-        setup(ts, cfg, loom, ledger, state)
+        try:
+            setup(ts, cfg, loom, ledger, state, code)
+        except BaseException:
+            # Half-filled namespaces never serve a resumed run.
+            if not cfg.keep_namespaces:
+                loom.erase(owned(cfg, ns))
+                state["erased"] = True
+            raise
         save_json(state_path, state)
         surf = surfaces(ts, cfg, loom, state)
+        record_server_spend(loom, ledger, state, cfg)
         ans = answers(ts, cfg, reader, surf)
         judge(ts, cfg, judges, loom, state, surf, ans)
+        record_server_spend(loom, ledger, state, cfg)
+        finished = True
     except CapReached as e:
-        print(f"stopped: {e}")
+        print(f"stopped: {e}; run again with the same --out (and a higher --max-usd) to resume")
     finally:
+        if finished and not cfg.keep_namespaces:
+            loom.erase(owned(cfg, ns))
+            state["erased"] = True
         save_json(state_path, state)
-        if not cfg.keep_namespaces and state.get("setup_done"):
-            ns = namespaces(state, cfg)
-            loom.erase([v for k, v in ns.items() if not (k == "extract" and cfg.arm4_namespace)])
-            # A resumed run fills the same names again; --keep-namespaces avoids that.
-            state["setup_done"] = False
-            save_json(state_path, state)
+    return finished

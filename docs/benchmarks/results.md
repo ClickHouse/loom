@@ -594,6 +594,11 @@ read from a directory given on the command line, and only the synthetic set in
 | 2   | The document as knowledge, through `loom_search`                                                                 |
 | 3   | The gold rows through the pre-edit block and the `loom_search` memory section                                    |
 | 4   | The same surfaces over rows extracted from the documents (`loom decisions extract`, or a document source's sync) |
+| 5   | The gold rows through the `loom_search` memory section only                                                      |
+
+An extracted row's files come from the repository's code index (`--code-index`:
+read-only `code.symbol` lookups under the extractor's own linking rule). Without one,
+arm 4 has no pre-edit block and is compared with arm 5, gold rows served the same way.
 
 **Metrics.** Why questions (A): argument-level precision and recall against the gold
 arguments, and the share of answers a judge flags as potentially misleading. Change tasks
@@ -604,7 +609,8 @@ none is recorded, fails. Citations: recall (claims with a citation whose resolve
 supports them) and precision (citations that resolve through `knowledge.get` or
 `memory.get` and support what they are cited for; a pointer to a deleted document fails).
 Injected tokens per task and surface, pre-edit blocks over 300 tokens, and the arm 1 to
-arm 3 token ratio. Extraction precision per document from a human-judged file, with the
+arm 3 token ratio. No patch is applied and no test is run, so a change's test pass rate
+is not measured. Extraction precision per document from a human-judged file, with the
 misleading-rationale rate and the share of gold rows whose source carries no extractable
 text.
 
@@ -616,22 +622,27 @@ each comparison reports its minimum detectable effect from the run's own spread.
 handful of documents the interval is too narrow: read the cluster count beside it.
 
 **Run** against a Loom server and ClickHouse the run started, with the server's
-environment in the shell (arm 4 runs the extraction CLI):
+environment in the shell (arm 4 runs the extraction CLI, on the model those settings
+name):
 
 ```bash
 PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> --dry-run \
-  --reader-model <m> --judge-model <m> --extract-model <the server's LOOM_LLM_MODEL>
+  --reader-model <m> --judge-model <m>
 PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> \
   --base-url http://127.0.0.1:<port> --reader-model <m> --judge-model <m> \
-  --extract-model <m> --max-usd <cap>
+  --code-index <url> --code-index-org <org> --code-index-namespace <ns> --max-usd <cap>
+# fill each verdict in <dir>/extraction_labels.todo.json, then:
 PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale score <taskset> --out <dir> \
-  --extraction-labels <dir>/extraction_labels.json
+  --extraction-labels <dir>/extraction_labels.todo.json
 ```
 
 The dry run prints the calls, tokens and spend a run would take, typical and at every
 output cap. A real run refuses to start without `--max-usd` or with an unpriced model,
-and refuses each call whose worst case would cross the cap. The run directory holds the
-task set's text: keep it out of the repository.
+and refuses each provider request whose worst case would cross the cap. The extraction's
+worst case is charged before each document, the server's own model and embedding spend
+in the run's orgs is read back from `cost.summary`, and each namespace is registered with
+the cap as its daily cost cap. A run the cap stops resumes on the same `--out`. The run
+directory holds the task set's text: keep it out of the repository.
 
 ## Reference computations
 

@@ -159,7 +159,7 @@ def _gold(root: Path, documents: dict[str, Document]) -> list[GoldRow]:
                 memory_type=r.get("memory_type", "decision"),
                 pinned=bool(r.get("pinned", True)),
                 after_revision=bool(r.get("after_revision", False)),
-                image_only=bool(r.get("image_only", r.get("_image_only", False))),
+                image_only=bool(r.get("image_only", False)),
             )
         )
     return gold
@@ -167,10 +167,8 @@ def _gold(root: Path, documents: dict[str, Document]) -> list[GoldRow]:
 
 def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
     tid = t.get("id", "?")
-    # The private set names its document `deck`; both spellings are read.
-    t.setdefault("document", t.get("deck", ""))
-    if t["document"] not in ts.documents:
-        raise TaskSetError(f"task {tid}: unknown document {t['document']!r}")
+    if t.get("document") not in ts.documents:
+        raise TaskSetError(f"task {tid}: unknown document {t.get('document')!r}")
     for key in t.get("gold_rows", []):
         if key not in ts.gold:
             raise TaskSetError(f"task {tid}: unknown gold row {key!r}")
