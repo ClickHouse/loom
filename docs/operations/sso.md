@@ -98,9 +98,10 @@ link --email <their provider address> --org <org> --namespace <ns>` shows
   nobody can register the freed address and inherit what it named. The old
   address's links go, and a grant once revoked under it is carried to the
   account's subject, revoked, so it goes on capping the person's tokens. It
-  refuses an old address that still holds live grants of its own (grant them
-  to the account's subject and revoke them first) or a pending request to join
-  (reject it), and an address another account already names. When that is a
+  refuses an old address that still holds live grants of its own (when the old
+  address is linked, grant them to the account's subject and revoke them first;
+  when it was never verified, they admit no one, so revoke them) or a pending
+  request to join (reject it), and an address another account already names. When that is a
   JIT account an earlier SSO sign-in made, `loom claim-release` it first: its
   memories stay behind in it (carry them over with `namespace.snapshot` and
   `namespace.restore`), and grants made to it must be made again.

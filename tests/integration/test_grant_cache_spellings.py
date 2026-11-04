@@ -1,7 +1,8 @@
 """The claim cap's grant read on ClickHouse: which tied spellings set the rank.
 
-An active account's login handle and email are one person, so a grant under
-either counts. A deactivated account's pair, and a released account's
+An active account whose email is verified (no password, as an SSO account's)
+ties its login handle and email as one person, so a grant under either counts;
+a password account's unverified email only caps. A deactivated account's pair, and a released account's
 `released_aliases`, still tie the spellings, but only to cap: their revoked
 rows cap a token's claim, their live grants never admit it.
 """
@@ -27,7 +28,13 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
     name = f"it-spellings-{uuid.uuid4().hex[:8]}"
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
-    account = {"org": name, "created_at": now, "updated_at": now, "released_aliases": []}
+    account = {
+        "org": name,
+        "created_at": now,
+        "updated_at": now,
+        "released_aliases": [],
+        "password_hash": "",
+    }
 
     def _account(namespace: str, owner: str, contact: str, **over: Any) -> dict[str, Any]:
         row = {**account, "namespace": namespace, "owner_email": owner, "contact_email": contact}
@@ -37,6 +44,8 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
         "loom.namespaces",
         [
             _account("h", "h", "h@x"),
+            # A password account, never linked: its email is unverified.
+            _account("u", "u", "u@x", password_hash="x"),
             _account("d", "d", "d@x", active=False),
             _account("r", "", "", active=False, released_aliases=["r", "r@x"]),
             # Released, then re-registered by an admin: its owner is not the released person.
@@ -44,7 +53,7 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
         ],
     )
     grants: list[dict[str, Any]] = []
-    for spelling in ("h@x", "d@x", "r@x", "admin@x"):
+    for spelling in ("h@x", "d@x", "r@x", "admin@x", "u@x"):
         for namespace, revoked in (("live", None), ("gone", now)):
             grants.append(
                 {
@@ -81,6 +90,7 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
     ("subject", "ranks"),
     [
         ("h", {"live": 2, "gone": 0}),  # an active account: one person
+        ("u", {"live": 0, "gone": 0}),  # an unverified email: caps, never admits
         ("d", {"live": 0, "gone": 0}),  # deactivated: caps, never admits
         ("r", {"live": 0, "gone": 0}),  # released: caps, never admits
         ("r@x", {"live": 2, "gone": 0}),  # a spelling's own grants count

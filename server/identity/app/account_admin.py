@@ -179,11 +179,18 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
         )
     live = [g for g in grants if g["revoked_at"] is None]
     if was and live:
-        # Granted to the address by name, they would reach no one once it is untied.
         named = ", ".join(f"{g['namespace']} ({g['role']})" for g in live)
+        if (org, namespace) in await sso_links.linked(was):
+            # A linked address's grants admit the person; untied, they would reach no one.
+            raise ValueError(
+                f"{was} holds grants of its own: {named}; grant them to "
+                f"{row['owner_email']} and revoke them first"
+            )
+        # An unlinked password account's address was never verified: its grants
+        # admit no one, and are not the person's to carry over.
         raise ValueError(
-            f"{was} holds grants of its own: {named}; grant them to "
-            f"{row['owner_email']} and revoke them first"
+            f"{was} holds grants of its own: {named}; they admit no one (the address "
+            "was never verified): revoke them first"
         )
     revoked = [g for g in grants if g["revoked_at"] is not None] if was else []
     if revoked:
