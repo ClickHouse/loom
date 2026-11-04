@@ -222,9 +222,9 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
             f"address was never verified): grant them to {row['owner_email']} if "
             "they were meant for this account, and revoke them first"
         )
-    # Each row under the old address capped this account's tokens at rank 0 while
-    # the unverified tie held: a revoked one, or any when the address is another
-    # account's, is carried to the subject revoked, so the cap outlives the tie.
+    # Each revoked row under the old address capped this account's tokens while the
+    # tie held, and when the address is another account's every row did (at rank
+    # 0): each is carried to the subject revoked, so the cap outlives the tie.
     revoked = [g for g in grants if elsewhere or g["revoked_at"] is not None] if was else []
     if revoked:
         with own_write_reads():

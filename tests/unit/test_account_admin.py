@@ -653,25 +653,29 @@ def test_a_link_refuses_an_old_address_with_live_grants(
         asyncio.run(account_admin.link_plan("lee@corp.io", "acme", "lee"))
 
 
-@pytest.mark.parametrize("status", ["active", "pending"])
+@pytest.mark.parametrize("status", ["active", "pending", "revoked", "none"])
 def test_a_link_leaves_an_old_address_another_account_holds_verified(
     monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
     # The old address is an SSO account's verified email too: its grants and its
     # requests are that account's, and linking this one away from the address
-    # leaves them.
+    # leaves them. The link says so whatever rows the address holds, none too.
     import server.core.ch as ch_mod
 
     row = {"active": True, "password_hash": "h", "contact_email": "lee@home.io"}
     row |= {"owner_email": "lee", "org": "acme", "namespace": "lee"}
-    grant = {"namespace": "team", "role": "writer", "status": status, "revoked_at": None}
+    revoked_at = datetime(2026, 1, 1) if status == "revoked" else None
+    grant = {"namespace": "team", "role": "writer", "status": "active", "revoked_at": revoked_at}
+    if status == "pending":
+        grant["status"] = "pending"
+    rows = [] if status == "none" else [grant]
 
     class _CH:
         async def query_one(self, *_a: Any, **_k: Any) -> None:
             return None  # no other account names the new address
 
         async def query_all(self, sql: str, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
-            return [] if "DISTINCT namespace" in sql else [grant]  # lee has no row of its own
+            return [] if "DISTINCT namespace" in sql else rows  # lee has no row of its own
 
     async def _row(org: str, namespace: str) -> dict[str, Any]:
         return row
@@ -688,10 +692,10 @@ def test_a_link_leaves_an_old_address_another_account_holds_verified(
     monkeypatch.setattr(account_admin.sso_links, "linked", _linked)
     monkeypatch.setattr(account_admin, "_verified_elsewhere", _held)
     plan = asyncio.run(account_admin.link_plan("lee@corp.io", "acme", "lee"))
-    assert plan["was"] == "lee@home.io"
+    assert plan["was"] == "lee@home.io" and plan["elsewhere"] is True
     # The row capped lee's tokens at rank 0 while the tie held: it is carried to
     # lee, revoked, so a token minted under the tie stays capped.
-    assert [g["namespace"] for g in plan["revoked"]] == ["team"]
+    assert [g["namespace"] for g in plan["revoked"]] == ([] if status == "none" else ["team"])
 
 
 _ELSEWHERE = "is another account's verified email: its grants stay theirs"
