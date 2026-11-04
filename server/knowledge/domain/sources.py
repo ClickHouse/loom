@@ -18,7 +18,7 @@ from server.tracker.domain.sources import SOURCE_NAME_RE
 
 # The kinds a source may be. Each has a config parser here and a probe in
 # `server.knowledge.app.source_probes`.
-KINDS = ("gdrive", "linear", "recording")
+KINDS = ("gdrive", "linear", "notion", "recording")
 
 # A shared-folder store's file kinds, by the name a config's `include` uses.
 GDRIVE_MIME_TYPES = {
@@ -33,6 +33,8 @@ MAX_FOLDERS = 20  # not a setting: the add op's wire contract (1 to 20 folders)
 # A tracker project id is a UUID; it travels as a GraphQL variable.
 _PROJECT_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 MAX_PROJECTS = 20  # not a setting: the add op's wire contract (1 to 20 projects)
+# A page store's page and database ids, together, at most.
+MAX_PAGE_STORE_IDS = 20  # not a setting: the add op's wire contract, few enough to probe each
 
 # A meeting store's recordings, by `provider`: a meeting space's id (it goes into a
 # request path and a listing filter) or a numeric meeting id.
@@ -107,6 +109,8 @@ def parse_config(kind: str, config: dict[str, Any]) -> dict[str, Any]:
         return _gdrive_config(config)
     if kind == "linear":
         return _linear_config(config)
+    if kind == "notion":
+        return _notion_config(config)
     if kind == "recording":
         return _recording_config(config)
     raise SourceConfigError(f"no config rule for kind {kind!r}")
@@ -163,6 +167,41 @@ def _linear_config(config: dict[str, Any]) -> dict[str, Any]:
     return {"project_ids": projects}
 
 
+def _page_store_ids(config: dict[str, Any], key: str) -> list[str]:
+    raw = config.get(key, [])
+    if not isinstance(raw, list):
+        raise SourceConfigError(f"config.{key}: a list of ids")
+    ids: list[str] = []
+    for value in raw:
+        normal = _page_store_id(value) if isinstance(value, str) else ""
+        if not normal:
+            raise SourceConfigError(f"config.{key}: {value!r} is not an id (32 hex digits)")
+        if normal not in ids:
+            ids.append(normal)
+    return ids
+
+
+def _page_store_id(value: str) -> str:
+    """The dashed lower-case form of an id given with or without dashes, or ""."""
+    hexes = value.strip().lower().replace("-", "")
+    if not re.fullmatch(r"[0-9a-f]{32}", hexes):
+        return ""
+    return f"{hexes[:8]}-{hexes[8:12]}-{hexes[12:16]}-{hexes[16:20]}-{hexes[20:]}"
+
+
+def _notion_config(config: dict[str, Any]) -> dict[str, Any]:
+    unknown = sorted(set(config) - {"page_ids", "database_ids"})
+    if unknown:
+        raise SourceConfigError(f"unknown config keys: {', '.join(unknown)}")
+    pages = _page_store_ids(config, "page_ids")
+    databases = _page_store_ids(config, "database_ids")
+    if not 1 <= len(pages) + len(databases) <= MAX_PAGE_STORE_IDS:
+        raise SourceConfigError(
+            f"config.page_ids and config.database_ids: 1 to {MAX_PAGE_STORE_IDS} ids in all"
+        )
+    return {"page_ids": pages, "database_ids": databases}
+
+
 def _recording_config(config: dict[str, Any]) -> dict[str, Any]:
     unknown = sorted(set(config) - {"provider", "ids"})
     if unknown:
@@ -200,8 +239,8 @@ def json_object(raw: str) -> dict[str, Any]:
 
 
 # The parts of a stored sync state a reader sees, with their types. The rest
-# (`full`, `full_listed_at`, `file_waits`, `waits_reset_for`, `retry_granted_for`) is
-# the worker's own bookkeeping.
+# (`full`, `full_listed_at`, `file_waits`, `waits_reset_for`, `retry_granted_for`, and
+# a page store's `child_pages`) is the worker's own bookkeeping.
 SYNC_FIELDS: dict[str, type] = {
     "requested_at": str,
     "last_synced_at": str,
@@ -234,6 +273,7 @@ __all__ = [
     "KINDS",
     "KnowledgeSource",
     "MAX_FOLDERS",
+    "MAX_PAGE_STORE_IDS",
     "MAX_PROJECTS",
     "MAX_RECORDING_IDS",
     "RECORDING_ID_RE",

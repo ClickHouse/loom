@@ -1,11 +1,13 @@
 """The sync of registered document sources into their repositories' documents:
 one pass over every active source, run by the `knowledge_source_sync` worker and
 by `loom knowledge sync`. A folder's turn is below; each other kind has its own
-turn module (`source_sync_linear`, `source_sync_recording`), chosen by `_turn_of`,
-which builds on the public helpers here: `Pass` and `TurnResult`, `start_waits`,
-`full_due` and `capped` for a turn's start and stamp, `sync_item` for one listed
-item, with `give_up`, `wait` and `require_current` for its fetch,
-`write_document`, `retire_absent` and `retire`, and `client_error`.
+turn module (`source_sync_linear`, `source_sync_notion`, `source_sync_recording`),
+chosen by `_turn_of`, which builds on the public helpers here: `Pass` and
+`TurnResult`, `start_waits`, `full_due`, `capped`, `stamp_of` and `valid_stamp` for a
+turn's start and stamp, `sync_item` for one listed item, with `give_up`, `wait` and
+`require_current` for its fetch, `write_document`, `retire_absent` and `retire`, and
+`client_error`. A kind's own bookkeeping goes in `TurnResult.kind_state`, which the
+sync state keeps.
 
 A pass reads the active sources and drops those whose namespace is inactive or no
 longer a repository's trunk. Sources a maintainer asked to sync (`sync_now`) go
@@ -184,6 +186,8 @@ class TurnResult:
     # The newest revision the listing returned, capped at the listing's start.
     newest: str = ""
     full: bool = False
+    # A kind's own bookkeeping, written into the sync state as it is.
+    kind_state: dict[str, Any] = field(default_factory=dict)
 
     def fail(self, status: str, error: str) -> None:
         """The turn ends `status` with `error`, as a pair: the first plain failure
@@ -376,6 +380,10 @@ def _turn_of(kind: str) -> Callable[..., Awaitable[TurnResult]]:
         from server.knowledge.app import source_sync_linear
 
         return source_sync_linear.turn
+    if kind == "notion":
+        from server.knowledge.app import source_sync_notion
+
+        return source_sync_notion.turn
     if kind == "recording":
         from server.knowledge.app import source_sync_recording
 
@@ -399,7 +407,7 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     detail = json_object(state.get("detail", ""))
     stamp = state.get("state_value", "")
     turn = TurnResult()
-    turn.full = bool(detail.get("full")) or not gdrive.valid_stamp(stamp) or full_due(detail)
+    turn.full = bool(detail.get("full")) or not valid_stamp(stamp) or full_due(detail)
     start_waits(turn, detail)
     credential = unseal("knowledge_sources.credential", src.credential_enc)
     if not credential:
@@ -494,7 +502,18 @@ def capped(newest: str, listed_at: datetime) -> str:
         return ""
     if seen <= cap:
         return newest
-    return cap.strftime("%Y-%m-%dT%H:%M:%S.") + f"{cap.microsecond // 1000:03d}Z"
+    return stamp_of(cap)
+
+
+def stamp_of(at: datetime) -> str:
+    """`at` (UTC) as the stores write their stamps: RFC 3339 with milliseconds."""
+    return at.strftime("%Y-%m-%dT%H:%M:%S.") + f"{at.microsecond // 1000:03d}Z"
+
+
+def valid_stamp(stamp: str) -> bool:
+    """Whether a stored stamp is one a store reported or `stamp_of` wrote: RFC 3339,
+    UTC, the one form every store's stamps take (the folder client's check)."""
+    return gdrive.valid_stamp(stamp)
 
 
 async def _folders_visible(token: str, folders: list[str], turn: TurnResult) -> bool:
@@ -942,6 +961,7 @@ async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnRes
             skipped=turn.skipped,
             error=turn.error or turn.note,
         )
+        detail.update(turn.kind_state)
         if turn.waits_read:
             detail["file_waits"] = turn.waits
             if turn.waits_reset_for:
@@ -951,7 +971,7 @@ async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnRes
         stamp = current.get("state_value", "")
         if turn.complete:
             # A change made after this listing is stamped later than anything it saw.
-            stamp = max(turn.newest, stamp if gdrive.valid_stamp(stamp) else "")
+            stamp = max(turn.newest, stamp if valid_stamp(stamp) else "")
             if turn.full:
                 detail["full_listed_at"] = now
             if detail.get("requested_at") == asked:
@@ -1025,6 +1045,15 @@ def _extract_waits(detail: dict[str, Any]) -> dict[str, list[Any]]:
     return {k: v for k, v in stored.items() if isinstance(v, list) and len(v) == 3}
 
 
+def _mined_revision(doc: dict[str, str]) -> str:
+    """The revision a document is mined at: its source revision, with the hash of its
+    text for a kind that records one (`text_sha256`), since such a copy can be written
+    again at the same revision, with other text or the same. Every other kind keeps no
+    `text_sha256`, so its key is the source revision alone."""
+    text = doc.get("text_sha256") or ""
+    return f"{doc['source_revision']}@{text}" if text else doc["source_revision"]
+
+
 def _unmined(docs: list[dict[str, str]], detail: dict[str, Any]) -> list[dict[str, str]]:
     """The documents whose stored revision is not the one last mined: one whose last try
     ran out of read time first, so it gets the most of the next pass, then oldest first."""
@@ -1032,10 +1061,10 @@ def _unmined(docs: list[dict[str, str]], detail: dict[str, Any]) -> list[dict[st
 
     def order(d: dict[str, str]) -> tuple[bool, str, str]:
         wait = waits.get(d["source_uri"]) or ["", 0, ""]
-        late = wait[0] == d["source_revision"] and wait[2] == "out_of_time"
+        late = wait[0] == _mined_revision(d) and wait[2] == "out_of_time"
         return not late, d["source_revision"], d["source_uri"]
 
-    todo = [d for d in docs if mined.get(d["source_uri"]) != d["source_revision"]]
+    todo = [d for d in docs if mined.get(d["source_uri"]) != _mined_revision(d)]
     return sorted(todo, key=order)
 
 
@@ -1257,7 +1286,7 @@ async def _extract_one(
     may_write: Callable[[], bool],
 ) -> bool:
     """Mine one document; False when a hold or a lost lease stops the source's turn."""
-    uri, revision = doc["source_uri"], doc["source_revision"]
+    uri, revision = doc["source_uri"], _mined_revision(doc)
     await require_current(src)
     pass_context.check_stop()  # a stopped pass or a lost worker's lease writes nothing
     run.left -= 1
@@ -1430,8 +1459,10 @@ __all__ = [
     "retire_absent",
     "run_sync",
     "source_uri_of",
+    "stamp_of",
     "start_waits",
     "sync_item",
+    "valid_stamp",
     "wait",
     "write_document",
 ]

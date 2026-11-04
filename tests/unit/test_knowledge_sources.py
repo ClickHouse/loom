@@ -152,6 +152,18 @@ def test_add_probes_then_stores_the_credential_sealed(fake: _Store) -> None:
     assert SECRET not in out.model_dump_json()
 
 
+def test_a_page_store_source_stores_its_ids_in_one_form(fake: _Store) -> None:
+    page = "0123456789abcdef0123456789ABCDEF"
+    dashed = "01234567-89ab-cdef-0123-456789abcdef"
+    config = {"page_ids": [page, dashed], "database_ids": ["fedcba98-7654-3210-fedc-ba9876543210"]}
+    out = asyncio.run(app.handle_knowledge_source_add(_add(kind="notion", config=config)))
+    assert out.config == {
+        "page_ids": [dashed],
+        "database_ids": ["fedcba98-7654-3210-fedc-ba9876543210"],
+    }
+    assert fake.probes[-1][0] == "notion"  # type: ignore[attr-defined]
+
+
 def test_a_dry_run_probes_and_writes_nothing(fake: _Store) -> None:
     out = asyncio.run(app.handle_knowledge_source_add(_add(dry_run=True)))
     assert out.dry_run
@@ -162,7 +174,16 @@ def test_a_dry_run_probes_and_writes_nothing(fake: _Store) -> None:
     ("kw", "code"),
     [
         ({"name": "x"}, "BAD_NAME"),
-        ({"kind": "notion"}, "BAD_KIND"),
+        ({"kind": "ftp"}, "BAD_KIND"),
+        ({"kind": "notion"}, "BAD_CONFIG"),  # a folder config is not a page store's
+        ({"kind": "notion", "config": {"page_ids": []}}, "BAD_CONFIG"),
+        ({"kind": "notion", "config": {"page_ids": ["not-an-id"]}}, "BAD_CONFIG"),
+        ({"kind": "notion", "config": {"page_ids": "a" * 32}}, "BAD_CONFIG"),
+        (
+            {"kind": "notion", "config": {"page_ids": [f"{n:032x}" for n in range(21)]}},
+            "BAD_CONFIG",
+        ),
+        ({"kind": "notion", "config": {"database_ids": [{"id": 1}]}}, "BAD_CONFIG"),
         ({"config": {"folder_ids": ["bad id'"]}}, "BAD_CONFIG"),
         ({"config": {"folder_ids": [FOLDER + "\n"]}}, "BAD_CONFIG"),
         ({"config": {"folder_ids": [FOLDER], "include": ["xls"]}}, "BAD_CONFIG"),

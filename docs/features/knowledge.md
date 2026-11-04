@@ -75,12 +75,14 @@ Markdown built from its text, and the `X-Loom-Download-Source` header says `blob
 A repository's maintainers register the document sources Loom pulls the repository's
 documents from. A source lives on the repository's trunk code namespace, the one its
 documents live in, so whoever reads the repository sees where its documents come from,
-and only the namespace's admins change that. Two kinds are served: `gdrive`, a shared
+and only the namespace's admins change that. Four kinds are served: `gdrive`, a shared
 folder of docs, slides, decks and PDFs, read with a service account the folders are
 shared to read-only, whose credential is the account's JSON key; `linear`, the
 documents of a project tracker's projects, read with a read-only API key of an account
-that sees the projects; and `recording`, the transcripts of a meeting store's
-recordings ([recordings](#a-recording-source)). The
+that sees the projects; `notion`, a page store's pages and databases, read with an
+integration that has read content access and that the pages and databases are shared
+with, whose credential is the integration's token; and `recording`, the transcripts of
+a meeting store's recordings ([recordings](#a-recording-source)). The
 `knowledge_source_sync` worker pulls each source's files into the repository's
 documents ([syncing](#syncing-a-source)); `list` says whether this deployment runs it
 (`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
@@ -105,24 +107,29 @@ again.
 
 A source's `config` holds ids and filters, never a host or a URL: `gdrive` takes
 `folder_ids` (1 to 20) and `include` (any of `docs`, `slides`, `pdf`, `pptx`; all by
-default); `linear` takes `project_ids` (1 to 20 project UUIDs); `recording` takes
-`provider` (`meet` or `zoom`) and `ids` (1 to 20 meeting space ids for `meet`, numeric
-meeting ids for `zoom`). The store's API hosts
-are fixed in the server, so a registered source cannot point the server at another host.
-The credential is sealed at rest under its own purpose (`loom secrets reseal` covers
-it), held in memory only for a probe, never returned by any op and never written to an
-audit row. `add` records the namespace, name, kind, config and `dry_run`; `rotate` the
-namespace and name; `remove` and `sync_now` their input (namespace, name, `confirm` and
-`delete_documents`, or `full`). `check` is admin-only because its probe spends the
-source's rate limit.
+default); `linear` takes `project_ids` (1 to 20 project UUIDs); `notion` takes
+`page_ids` and `database_ids`, 1 to 20 ids in all, each 32 hex digits with or without
+dashes (stored dashed, lower case); `recording` takes `provider` (`meet` or `zoom`) and
+`ids` (1 to 20 meeting space ids for `meet`, numeric meeting ids for `zoom`). The
+store's API hosts are fixed in the server, so a registered source cannot point the
+server at another host. The credential is sealed at rest under its own purpose
+(`loom secrets reseal` covers it), held in memory only for a probe, never returned by
+any op and never written to an audit row. `add` records the namespace, name, kind,
+config and `dry_run`; `rotate` the namespace and name; `remove` and `sync_now` their
+input (namespace, name, `confirm` and `delete_documents`, or `full`). `check` is
+admin-only because its probe spends the source's rate limit.
 
 A `gdrive` probe exchanges the key for a read-only token, checks every folder together
 (one call each) and lists the included files of all folders in one call, the first 1000
 at most. A `linear` probe reads the first page (50 documents) of every project together,
-so a project the key's account cannot see refuses the probe. A `recording` probe
-exchanges its credential, reads each id and counts the recordings it lists. Each is
-bounded as a whole by `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` (default 20 s); past it `add` and
-`rotate` answer `SOURCE_UNREACHABLE` and `check` answers `reachable: false`.
+so a project the key's account cannot see refuses the probe. A `notion` probe reads each
+listed page and database in turn (one in the trash refuses) and counts the listed pages
+and the first 100 pages of each of up to three databases (read from each database's
+first data source), so a probe of 20 ids stays well inside its bound at the store's
+pace; `more` says the count leaves pages out. A `recording` probe exchanges its
+credential, reads each id and counts the recordings it lists. Each is bounded as a whole
+by `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` (default 20 s); past it `add` and `rotate`
+answer `SOURCE_UNREACHABLE` and `check` answers `reachable: false`.
 
 Every write of a namespace's sources (`add`, `rotate`, `remove`, `sync_now`, and the
 retirement in `code.repo.remove`) is serialized by a lease, so a write's checks still
@@ -165,23 +172,23 @@ are gone; one whose documents were kept refuses it with `SOURCE_DOCUMENTS_KEPT` 
 they are deleted (`knowledge.delete`). A removed source with no documents frees its
 name at once.
 
-| Code                    | When                                                                                                                                                      |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NOT_A_CODE_NAMESPACE`  | `add`, `check`, `rotate` or `sync_now` names a namespace that is not a repository's trunk code namespace.                                                 |
-| `BAD_NAME`              | The name is not 2-32 lower-case letters, digits, `-` or `_`, starting with a letter.                                                                      |
-| `BAD_KIND`              | The kind is not one the server serves.                                                                                                                    |
-| `BAD_CONFIG`            | The config has an unknown key, a malformed folder, project, space or meeting id, an unknown `include` value or an unknown `provider`.                     |
-| `SOURCE_EXISTS`         | The namespace has an active source of that name.                                                                                                          |
-| `SOURCE_QUOTA`          | The namespace has `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` active sources (default 8).                                                                  |
-| `NO_ROOT_SECRET`        | The deployment has no `LOOM_JWT_SECRET`, so a credential cannot be stored.                                                                                |
-| `CREDENTIAL_REFUSED`    | The credential is not of the kind's form, or the store refused it; nothing is stored.                                                                     |
-| `SOURCE_UNREACHABLE`    | A folder, project, space or meeting is not visible to the account, the store failed or rate-limited the probe, or the probe timed out; nothing is stored. |
-| `SOURCE_DELETE_PENDING` | `add` names a removed source whose documents are still waiting to be retired.                                                                             |
-| `SOURCE_DOCUMENTS_KEPT` | `add` names a removed source whose kept documents are still live; delete them first.                                                                      |
-| `SOURCE_REPLACED`       | `rotate` or `sync_now`'s source was removed and added again during the call (409); act on the current source.                                             |
-| `SOURCE_TAGS_LOCKED`    | A write that keeps the sync worker as a document's author changes its `source:*` tags.                                                                    |
-| `SOURCE_NOT_FOUND`      | No active source of that name in the namespace (404).                                                                                                     |
-| `CONFIRM_REQUIRED`      | `remove`'s `confirm` is not the source's name.                                                                                                            |
+| Code                    | When                                                                                                                                                                                                                         |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NOT_A_CODE_NAMESPACE`  | `add`, `check`, `rotate` or `sync_now` names a namespace that is not a repository's trunk code namespace.                                                                                                                    |
+| `BAD_NAME`              | The name is not 2-32 lower-case letters, digits, `-` or `_`, starting with a letter.                                                                                                                                         |
+| `BAD_KIND`              | The kind is not one the server serves.                                                                                                                                                                                       |
+| `BAD_CONFIG`            | The config has an unknown key, a malformed folder, project, page, database, space or meeting id, an unknown `include` value or an unknown `provider`, or a `notion` config with no id or more than 20.                       |
+| `SOURCE_EXISTS`         | The namespace has an active source of that name.                                                                                                                                                                             |
+| `SOURCE_QUOTA`          | The namespace has `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` active sources (default 8).                                                                                                                                     |
+| `NO_ROOT_SECRET`        | The deployment has no `LOOM_JWT_SECRET`, so a credential cannot be stored.                                                                                                                                                   |
+| `CREDENTIAL_REFUSED`    | The credential is not of the kind's form, or the store refused it; nothing is stored.                                                                                                                                        |
+| `SOURCE_UNREACHABLE`    | A folder, project, page, database, space or meeting is not visible to the account or integration, a page or database is in the trash, the store failed or rate-limited the probe, or the probe timed out; nothing is stored. |
+| `SOURCE_DELETE_PENDING` | `add` names a removed source whose documents are still waiting to be retired.                                                                                                                                                |
+| `SOURCE_DOCUMENTS_KEPT` | `add` names a removed source whose kept documents are still live; delete them first.                                                                                                                                         |
+| `SOURCE_REPLACED`       | `rotate` or `sync_now`'s source was removed and added again during the call (409); act on the current source.                                                                                                                |
+| `SOURCE_TAGS_LOCKED`    | A write that keeps the sync worker as a document's author changes its `source:*` tags.                                                                                                                                       |
+| `SOURCE_NOT_FOUND`      | No active source of that name in the namespace (404).                                                                                                                                                                        |
+| `CONFIRM_REQUIRED`      | `remove`'s `confirm` is not the source's name.                                                                                                                                                                               |
 
 A probe's error names the HTTP status (`http_403`), never the store's response text.
 
@@ -262,6 +269,73 @@ Trouble with one file is that file's:
   gives it up again), and on a full sync request (`sync_now(full=true)` or
   `loom knowledge sync --full`), which resets the waits once per request.
 
+A `notion` source's turn follows the same rules, with pages for files. Its listing is
+each listed page, the pages of each listed database, read through the database's data
+sources (on an incremental turn, only the pages edited after the stamp), and each known
+child page. Within each server process, the requests of one integration are paced to the
+store's average of three a second; two integrations do not wait on each other, and a
+rate limit (`429`) ends the turn, which the next pass retries. A page's revision is its
+last edit time and its address the page URL the store reports, so a renamed page moves
+to its new address and the document at the old one is retired. A page whose stored copy
+has the listed revision is skipped only when that copy was read 90 seconds or more after
+the revision; one read sooner is read and written again with its new read time, so an
+edit made just before or after a read is not lost to an equal stamp or a clock skew, and
+the page is skipped once its stored copy was read past the margin. The stamp trails the
+listing by 150 seconds, the minute above plus the 90-second margin, so a database page
+read within the margin is listed again by the next incremental turn. The rewrite embeds
+the page again (the writer embeds every write), so a page read within 90 seconds of its
+revision costs one more embedding, once in practice, since the next pass reads it past
+the margin. A turn handles the pages that changed (no stored copy, another revision or
+another address) before such re-reads, so a pass bound spent on them delays no edit. A
+changed page's blocks are read, nested blocks included, at most 300 requests a page, and
+turned into Markdown one to one: headings, paragraphs, bulleted and numbered lists,
+to-dos (`- [x]`), quotes and callouts as `>` quotes, code fenced with its language,
+tables as Markdown tables (the first row as the header row), equations as `$$` blocks,
+dividers as `---`, bookmarks, embeds and link previews as links, toggles, columns and
+synced blocks with their children inline, and a run of images or videos as
+`> [image-only: N pictures, rationale not extracted]` followed by their captions. Left
+out and counted by type in the document's metadata (`skipped_blocks`): a child database,
+a file, a PDF, a link that is not an https address, a synced copy whose original is not
+shared with the integration, and any type the converter does not map. `ingested_format`
+is `blocks`, `read_at` is when the page was read, and `text_sha256` is an exact hash of
+its title, Markdown and left-out blocks. The [mining](#mining-decisions) step keys a
+page by its revision and that hash, so a copy written again with the same text is not
+mined again, and one with other text at the same revision is.
+
+A child page is a document of its own. The child pages a read page holds are kept in the
+source's sync state, at most 200 per source (more are counted in their parent's
+`skipped_blocks`), and each later turn reads every known child once for its revision; a
+child found while a turn syncs its parent, and a grandchild found while it syncs the
+child, are synced in that turn. A child page inside a column, a toggle, a list item or a
+synced block belongs to the page whose blocks held it. For a page under a block that no
+page of the source is known to hold, a full turn's lookup reads the block's parents up
+to the page that holds it, at most four requests (each paced like the others): that page
+is judged like any holder, the workspace counts as gone, and so does a block the store
+answers 404 for: such a block is not shared with the integration, and every block under
+the listed pages and databases is, so the page is outside the source; and a walk that
+cannot tell (another failure, an unexpected parent, the bound) keeps the document. A
+page found under a listed page this way is known again. A page whose blocks could not
+all be read (a synced copy of an unshared original) keeps the child pages it held
+before. A known child is forgotten in three ways only: its page is read and no longer
+holds it; a complete full turn's lookup finds it gone, in the trash or out from under
+the source (and retires its document); or a complete full turn read it as not found or
+trashed and it holds no document. A failed or cut turn forgets no child it could not
+read, and a child found while syncing whose read fails (other than not found) leaves the
+turn failed, so it is read again next turn. A page with no text (`no_text`) and one past
+the request bound or `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` (`too_large`) are given
+up on until they change. A listed page or database the integration no longer sees, or a
+database in the trash, fails the turn and retires nothing, while the pages it still sees
+are written. A listed page or child page in the trash is left out of the listing, so the
+next full turn retires it. A refusal (`403`) is not evidence that a page is gone: a
+looked-up page the store refuses keeps its document, and a known child it refuses stays
+known and waits like a file's trouble, failing the turn for two passes and counted
+`unconverted` (`child_http_403`) from the third, so it no longer holds back the rest of
+the source; the pages under it are not taken for moved. A page is retired after a
+complete full listing lacks it and a lookup finds it gone, in the trash, or under none
+of the listed pages, the listed databases and the pages that listing had; a child moved
+out from under them, and its own children, are retired this way. A database query the
+store marks incomplete is an incomplete listing (`listing: incomplete result`).
+
 ### Mining decisions
 
 After every source's turn, the same pass mines for decisions each of the source's
@@ -317,22 +391,22 @@ since, is not mined.
 
 A source's `sync` in `list` and `inspect` shows what its last turn did:
 
-| Field                    | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `last_synced_at`         | When the last turn ended.                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                                                                                                                                                                                                                                                                                                                          |
-| `documents_seen`         | Files (or a project's documents, or recordings) the turn listed.                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `unconverted`, `skipped` | Files it did not write: the store gave no https link, no extractor, refused or too large, a recording with no transcript yet, or given up after three passes on the same revision; another writer's document at the address.                                                                                                                                                                                                                                                       |
-| `unconverted_reasons`    | Why, by count: `no_address` (the store gave no https link), `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`, `no_transcript` (a recording with no finished transcript), `transcript_off_host`; for a project's documents also `not_found`, `graphql_<type>` and `no_document` or `no_data` (the answer lacked the document, or any data). |
-| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text; for a turn that did not fail, why it is incomplete (`pass bound reached`, `listing: incomplete search`).                                                                                                                                                                                                                                                                                   |
-| `pending_extract`        | Documents whose stored revision is not yet mined for decisions, as of the last pass.                                                                                                                                                                                                                                                                                                                                                                                               |
-| `last_extracted_at`      | When the last mining turn ended.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `extracted`              | Documents that turn mined, each with or without a decision.                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `flagged_pinned`         | Decision rows it tagged `source-changed` rather than rewriting them: pinned, attested, or with a recorded outcome.                                                                                                                                                                                                                                                                                                                                                                 |
-| `unextracted`            | Documents it gave up on: three failed tries, or too large for a pass.                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `extract_error`          | Why an extraction failed in the last mining turn (`not_run`, `refused`, `out_of_time`, `too_large_for_pass`, `failed:<error>`), or why documents wait (`over_cap`, `switched_off`, `switch_unread`, `no_model`, `held`, `held:<code>`, `pass_bound`).                                                                                                                                                                                                                              |
+| Field                    | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `last_synced_at`         | When the last turn ended.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                                                                                                                                                                                                                                                                                                                                                       |
+| `documents_seen`         | Files (or a project's documents, pages, or recordings) the turn listed.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `unconverted`, `skipped` | Files it did not write: the store gave no https link, no extractor, refused or too large, a recording with no transcript yet, or given up after three passes on the same revision; another writer's document at the address.                                                                                                                                                                                                                                                                                    |
+| `unconverted_reasons`    | Why, by count: `no_address` (the store gave no https link), `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `no_text`, `child_http_403`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`, `no_transcript` (a recording with no finished transcript), `transcript_off_host`; for a project's documents also `not_found`, `graphql_<type>` and `no_document` or `no_data` (the answer lacked the document, or any data). |
+| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text; for a turn that did not fail, why it is incomplete (`pass bound reached`, `listing: incomplete search`).                                                                                                                                                                                                                                                                                                                |
+| `pending_extract`        | Documents whose stored revision is not yet mined for decisions, as of the last pass.                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `last_extracted_at`      | When the last mining turn ended.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `extracted`              | Documents that turn mined, each with or without a decision.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `flagged_pinned`         | Decision rows it tagged `source-changed` rather than rewriting them: pinned, attested, or with a recorded outcome.                                                                                                                                                                                                                                                                                                                                                                                              |
+| `unextracted`            | Documents it gave up on: three failed tries, or too large for a pass.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `extract_error`          | Why an extraction failed in the last mining turn (`not_run`, `refused`, `out_of_time`, `too_large_for_pass`, `failed:<error>`), or why documents wait (`over_cap`, `switched_off`, `switch_unread`, `no_model`, `held`, `held:<code>`, `pass_bound`).                                                                                                                                                                                                                                                           |
 
 ### A recording source
 

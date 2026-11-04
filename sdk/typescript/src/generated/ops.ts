@@ -3758,7 +3758,7 @@ export interface KnowledgeSourceAddInput {
   namespace: string;
   /** Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. */
   name: string;
-  /** The source kind: `gdrive` (a shared folder), `linear` (a project tracker's project documents) or `recording` (a meeting store's transcripts). */
+  /** The source kind: `gdrive` (a shared folder), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording` (a m */
   kind: string;
   /** The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: {project_ids: */
   config: Record<string, unknown>;

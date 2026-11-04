@@ -11,8 +11,9 @@ from pydantic import BaseModel, Field
 class KnowledgeSourceProbe(BaseModel):
     """What a probe that succeeded found; a probe that fails refuses the call."""
 
-    # Documents the source lists now: the first 1000 at most (gdrive), the first
-    # page of each project (linear).
+    # Documents the source lists now: at most 1000 (gdrive, recording), each
+    # project's first page (linear), the listed pages and the first 100 pages of each
+    # of up to three databases (notion).
     documents: int = 0
     # True when more documents match than were listed, so `documents` is a lower bound.
     more: bool = False
@@ -82,8 +83,8 @@ class KnowledgeSourceEntry(BaseModel):
     # The source's name, unique in the namespace.
     name: str
     # The source's kind (`gdrive`: a shared folder of docs, slides, decks and PDFs;
-    # `linear`: a project tracker's project documents; `recording`: the transcripts
-    # of a meeting store's recordings).
+    # `linear`: a project tracker's project documents; `notion`: a page store's pages
+    # and databases; `recording`: the transcripts of a meeting store's recordings).
     kind: str
     # The ids and filters the source reads; never a credential.
     config: dict[str, Any] = Field(default_factory=dict)
@@ -130,23 +131,26 @@ class KnowledgeSourceAddInput(BaseModel):
     kind: str = Field(
         ...,
         description="The source kind: `gdrive` (a shared folder), `linear` (a project "
-        "tracker's project documents) or `recording` (a meeting store's transcripts).",
+        "tracker's project documents), `notion` (a page store's pages and databases) or "
+        "`recording` (a meeting store's transcripts).",
     )
     config: dict[str, Any] = Field(
         ...,
         description="The ids and filters the source reads, per kind; gdrive: {folder_ids: "
         "[1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: "
-        "{project_ids: [1-20 project ids, UUIDs]}; recording: {provider: meet | zoom, ids: "
+        "{project_ids: [1-20 project ids, UUIDs]}; notion: {page_ids: [...], database_ids: "
+        "[...]} (1-20 ids in all); recording: {provider: meet | zoom, ids: "
         "[1-20 space ids (meet) or meeting ids (zoom)]}.",
     )
     credential: str = Field(
         ...,
         description="The source's read-only credential (gdrive: a service account's JSON key, "
         "with the folders shared to the account read-only; linear: a read-only API key of an "
-        "account that sees the projects; recording: for meet, an authorized_user JSON file "
-        "with the meetings.space.readonly scope only; for zoom, a server-to-server app's "
-        "{account_id, client_id, client_secret} with read-only scopes); stored encrypted, "
-        "never returned.",
+        "account that sees the projects; notion: an integration token with read content "
+        "access, the pages and databases shared to it; recording: for meet, an "
+        "authorized_user JSON file with the meetings.space.readonly scope only; for zoom, a "
+        "server-to-server app's {account_id, client_id, client_secret} with read-only "
+        "scopes); stored encrypted, never returned.",
     )
     dry_run: bool = Field(False, description="Probe and write nothing.")
 
@@ -219,8 +223,9 @@ class KnowledgeSourceCheckOutput(BaseModel):
     name: str
     # False when the probe failed; `summary` says why.
     reachable: bool = True
-    # Documents the source lists now: the first 1000 at most (gdrive), the first
-    # page of each project (linear).
+    # Documents the source lists now: at most 1000 (gdrive, recording), each
+    # project's first page (linear), the listed pages and the first 100 pages of each
+    # of up to three databases (notion).
     documents: int = 0
     # True when more documents match than were listed, so `documents` is a lower bound.
     more: bool = False

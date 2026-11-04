@@ -297,14 +297,17 @@ schema. These rules keep that safe. The operator procedure is in
     or of a saga it resumes. No gate holds the rollout: the cost is the actor named on
     those audit rows, nothing is lost or refused, and it ends once no N-1 replica serves.
     The mixed-version gate does not check this rule.
-28. **A new document-source kind** (`recording` in `loom.knowledge_sources.kind`): N-1
-    refuses to add one (`BAD_KIND`) and lists and inspects one like any source. Its
-    `check` and `rotate` of one fail with a server error, since it has no probe for the
-    kind. An N-1 sync worker that takes a recording source's turn reads it as a shared
-    folder: the credential is not a service account key, so the turn ends
-    `credential_invalid` before any request and retires nothing, and the next turn by N
-    writes the real status. No gate holds the rollout: the cost is that status, shown
-    until N's turn, and it ends once no N-1 replica serves.
+28. **A new document-source kind** (`recording` or `notion` in
+    `loom.knowledge_sources.kind`): N-1 refuses to add one (`BAD_KIND`) and lists and
+    inspects one like any source. Its `check` and `rotate` of one fail with a server
+    error, since it has no probe for the kind. An N-1 sync worker that takes such a
+    source's turn reads it as a shared folder: the credential is not a service account
+    key, so the turn ends `credential_invalid` before any request and retires nothing,
+    and the next turn by N writes the real status. An N-1 mining step keys a document by
+    its revision alone, while N keys a `notion` document by its revision and text hash,
+    so a hand-off between the builds mines a `notion` document again. No gate holds the
+    rollout: the cost is that status, shown until N's turn, and those extra mining
+    calls, and it ends once no N-1 replica serves.
 
 ## What checks them
 
