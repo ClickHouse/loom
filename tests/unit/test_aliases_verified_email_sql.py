@@ -591,3 +591,8 @@ async def test_a_link_away_from_a_verified_email_leaves_its_grants_and_caps_the_
         ("team-y", "carol@corp.example", 1),
         ("team-y", "mallory3", 0),
     ]
+    audited = await kept.query_all(
+        "SELECT JSONExtractBool(subject, 'elsewhere') AS elsewhere FROM loom.audit_log"
+        " WHERE event_type = 'auth.sso_linked'"
+    )
+    assert [int(r["elsewhere"]) for r in audited] == [1]

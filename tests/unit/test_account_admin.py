@@ -694,15 +694,16 @@ def test_a_link_leaves_an_old_address_another_account_holds_verified(
     assert [g["namespace"] for g in plan["revoked"]] == ["team"]
 
 
-_ELSEWHERE = "lee@home.io is another account's verified email: its grants stay theirs"
+_ELSEWHERE = "is another account's verified email: its grants stay theirs"
 
 
 @pytest.mark.parametrize(
     ("dry_run", "elsewhere", "line"),
     [
-        (True, True, _ELSEWHERE),
+        (True, True, f"lee@home.io {_ELSEWHERE}"),
         (True, False, "revoked under lee@home.io, so revoked for lee too: team"),
-        (False, True, _ELSEWHERE),
+        # The applied link names the address it read, not the plan's.
+        (False, True, f"lee@old.io {_ELSEWHERE}"),
         (False, False, "  revoked for lee too: team"),
     ],
 )
@@ -726,7 +727,7 @@ def test_the_link_names_whose_grants_it_caps(
 
     async def link(*a: Any, **k: Any) -> tuple[str, list[str], bool]:
         assert not dry_run, "a dry run links nothing"
-        return "lee@home.io", ["team"], elsewhere
+        return "lee@old.io", ["team"], elsewhere
 
     monkeypatch.setattr(account_admin, "link_plan", plan)
     monkeypatch.setattr(account_admin, "link_account", link)
