@@ -670,8 +670,8 @@ def test_a_link_leaves_an_old_address_another_account_holds_verified(
         async def query_one(self, *_a: Any, **_k: Any) -> None:
             return None  # no other account names the new address
 
-        async def query_all(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
-            return [grant]
+        async def query_all(self, sql: str, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
+            return [] if "DISTINCT namespace" in sql else [grant]  # lee has no row of its own
 
     async def _row(org: str, namespace: str) -> dict[str, Any]:
         return row
@@ -689,3 +689,6 @@ def test_a_link_leaves_an_old_address_another_account_holds_verified(
     monkeypatch.setattr(account_admin, "_verified_elsewhere", _held)
     plan = asyncio.run(account_admin.link_plan("lee@corp.io", "acme", "lee"))
     assert plan["was"] == "lee@home.io"
+    # The row capped lee's tokens at rank 0 while the tie held: it is carried to
+    # lee, revoked, so a token minted under the tie stays capped.
+    assert [g["namespace"] for g in plan["revoked"]] == ["team"]

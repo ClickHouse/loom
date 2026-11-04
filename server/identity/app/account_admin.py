@@ -191,15 +191,16 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
         )
     pending = [g for g in grants if g["revoked_at"] is None and g["status"] == "pending"]
     live = [g for g in grants if g["revoked_at"] is None]
-    was_linked = False
+    was_linked = elsewhere = False
     if was and live:
         with own_write_reads():  # a link another process just made
             was_linked = (org, namespace) in await sso_links.linked(was)
         # An unlinked password account's address was never verified here: its rows
         # do not admit this account. When it is another account's verified email,
         # its rows (a pending request too) are that account's and the link leaves
-        # them; else they admit no one.
-        if not was_linked and await _verified_elsewhere(org, namespace, was):
+        # them in place; else they admit no one.
+        elsewhere = not was_linked and await _verified_elsewhere(org, namespace, was)
+        if elsewhere:
             live = pending = []
     if was and pending:
         named = ", ".join(g["namespace"] for g in pending)
@@ -220,7 +221,10 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
             f"address was never verified): grant them to {row['owner_email']} if "
             "they were meant for this account, and revoke them first"
         )
-    revoked = [g for g in grants if g["revoked_at"] is not None] if was else []
+    # Each row under the old address capped this account's tokens at rank 0 while
+    # the unverified tie held: a revoked one, or any when the address is another
+    # account's, is carried to the subject revoked, so the cap outlives the tie.
+    revoked = [g for g in grants if elsewhere or g["revoked_at"] is not None] if was else []
     if revoked:
         with own_write_reads():
             own = await get_client().query_all(
@@ -239,8 +243,9 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
     registered under another address (a personal one, a `+tag`): its contact
     becomes `email` and it is linked, so the person keeps its subject, grants,
     namespaces and tokens. The operator vouches that `email` is theirs. A grant
-    revoked under the old address stops capping the person's tokens once the
-    address is untied, so each is carried to the subject, revoked. Holds the
+    revoked under the old address (any, when it is another account's verified
+    email) stops capping the person's tokens once the address is untied, so each
+    is carried to the subject, revoked. Holds the
     address as JIT holds it, so no SSO sign-in makes a second account for it
     meanwhile. Returns the address it had and the namespaces carried."""
     from server.auth.self_signup import CLAIM_TTL_S, email_claim
