@@ -49,7 +49,8 @@ JUDGE_WHY = (
     "potentially_misleading: true when the answer, read by an engineer about to change the "
     "code, would steer them wrong: it presents a rationale that contradicts the gold, "
     "recommends a gold rejected option, or presents an invented reason as the recorded "
-    "design reason without marking it unverified. An abstention is never misleading."
+    "design reason without marking it unverified. The abstention sentence alone never "
+    "makes an answer misleading; judge the points after it by the rules above."
 )
 JUDGE_CHANGE = (
     "You grade a coding agent's plan and diff for a change task against the gold design "
