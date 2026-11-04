@@ -360,10 +360,11 @@ function FindingGroups({
   );
 }
 
-/** A share under one percent with hits reads "<1%", never "0%". */
+/** A share with hits never reads "0%", nor one short of the whole "100%". */
 function percent(count: number, share: number): string {
   const p = Math.round(share * 100);
-  return count > 0 && p === 0 ? "<1%" : `${p}%`;
+  if (count > 0 && p === 0) return "<1%";
+  return share < 1 && p === 100 ? ">99%" : `${p}%`;
 }
 
 function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFinding; noun: string }) {

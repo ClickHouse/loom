@@ -1723,6 +1723,55 @@ describe("Assistant: documents", () => {
     expect(card).toHaveTextContent("1 source of 250 (<1%)");
   });
 
+  it("shows a share just under the whole as >99%, not 100%", async () => {
+    // 199 of 200 sources with a job have their first ingest queued; one was published. The
+    // server lists and samples the first 20 of the 199.
+    const queued = firstIngestQueued();
+    const uris = Array.from({ length: 20 }, (_, k) => `https://example.com/queued-${k + 1}.pdf`);
+    const jobs = uris.map((uri, k) => ({ uri, job: { ...PENDING, ingestion_id: `ing-q${k + 1}` } }));
+    inspectKnowledge.mockResolvedValueOnce({
+      ...queued,
+      documents: {
+        ...queued.documents,
+        live: 1,
+        by_format: [{ name: "markdown", live: 1, deleted: 0 }],
+        by_source_scheme: [{ name: "https", live: 1, deleted: 0 }],
+      },
+      listed_complete: false,
+      ingestions: {
+        ...queued.ingestions,
+        sources: 200,
+        without_document: 199,
+        pending: 199,
+        ready: 1,
+        without_document_listed: jobs.map((j) => sourceJobs(j.uri, j.job)),
+      },
+      ingest_findings: queued.ingest_findings.map((f) =>
+        f.code === "ingest_backlog"
+          ? {
+              ...ingestFinding(
+                f.code,
+                f.kind,
+                200,
+                jobs.map((j): [string, string] => [j.uri, j.job.ingestion_id]),
+                20,
+              ),
+              count: 199,
+              share: 199 / 200,
+              samples_complete: false,
+              without_document: 199,
+            }
+          : f.code === "extraction_incomplete"
+            ? f
+            : { ...f, population: 200 },
+      ),
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    const card = within(result).getByRole("listitem", { name: "Backlog" });
+    expect(card).toHaveTextContent("199 sources of 200 (>99%)");
+  });
+
   it("says there is no live document to list while a first ingest is queued", async () => {
     inspectKnowledge.mockResolvedValueOnce(firstIngestQueued());
     render(<Assistant />);
@@ -2034,17 +2083,18 @@ describe("Assistant: document drafts", () => {
   });
 
   it("shows the sample's own measures when the sample drafts no chunk size", async () => {
+    // 6 of 40 sections cut is at most a quarter, so no rule drafts a size and no line is skipped.
     tuneNamespace.mockResolvedValueOnce({
       ...TUNE,
       proposals: [],
-      chunking: SAMPLE,
+      chunking: { ...SAMPLE, current: STATS(1000, 800, 120, 6, 300) },
       skipped: [...TUNE.skipped, DECISIONS_SKIPPED],
     });
     const { container } = render(<Assistant />);
     await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
     const review = await screen.findByTestId("assistant-review");
     const stats = within(review).getByRole("table", { name: "The document sample at the current values" });
-    expect(within(stats).getByText("Sections cut by size").closest("tr")).toHaveTextContent("18 of 40");
+    expect(within(stats).getByText("Sections cut by size").closest("tr")).toHaveTextContent("6 of 40");
     expect(await axeViolations(container)).toEqual([]);
   });
 
