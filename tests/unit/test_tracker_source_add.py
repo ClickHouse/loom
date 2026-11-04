@@ -248,6 +248,8 @@ def test_grant_review_refuses_what_it_cannot_classify_as_read_only() -> None:
         "GRANT SELECT(`a) INSERT`) ON db.t TO `u",
         "GRANT INSERT",
         "GRANT INSERT TO u ON *.*",
+        "GRANT on TO u",
+        "GRANT to TO u",
     ]
     for line in refused:
         assert not ob.review_grants([line]).read_only, line
@@ -259,7 +261,9 @@ def test_grant_review_refuses_what_it_cannot_classify_as_read_only() -> None:
     )
     assert rev.read_only and rev.roles == ["`my, role`"]
     rev = ob.review_grants(["GRANT analyst TO u WITH ADMIN OPTION"])
-    assert rev.roles == ["analyst"] and rev.refused == ["WITH ADMIN OPTION"]
+    assert rev.roles == ["analyst"] and rev.refused == ["WITH ADMIN OPTION (analyst)"]
+    ob.review_roles(rev, [{"role_name": "analyst", "with_admin_option": 1}])
+    assert rev.refused == ["WITH ADMIN OPTION (analyst)"]
     # a line with two scopes is one the check does not parse
     assert not ob.review_grants(["GRANT SELECT ON db.t, INSERT ON db.x TO u"]).read_only
 
@@ -273,7 +277,8 @@ def test_role_review_refuses_a_role_chain_it_cannot_see_or_that_grants_on() -> N
     # a role that is not a default role is not enabled, so its chain is unseen
     rev = ob.review_grants(["GRANT analyst, other TO u"])
     ob.review_roles(rev, [{"role_name": "analyst", "with_admin_option": 0}])
-    assert rev.refused == ["other (not among the enabled roles)"]
+    assert rev.not_enabled == ["other"] and not rev.read_only
+    assert "SET DEFAULT ROLE ALL TO u" in rev.refusal("u")
     # an admin option on a nested role shows only in the enabled roles
     rev = ob.review_grants(["GRANT analyst TO u"])
     enabled = [{"role_name": "analyst"}, {"role_name": "nested", "with_admin_option": 1}]

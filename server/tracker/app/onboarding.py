@@ -54,8 +54,6 @@ _READ_ACCESS = frozenset(
     }
 )
 _ENABLED_ROLES = "SELECT role_name, with_admin_option FROM system.enabled_roles"
-# the suffixes that let the user pass a grant or a role on
-_GRANT_OPTIONS = (" WITH GRANT OPTION", " WITH ADMIN OPTION")
 # a quoted name (a column, role or user), which may hold `(`, `,` or ` ON `
 _QUOTED = re.compile(r"`(?:[^`\\]|\\.)*`|\"(?:[^\"\\]|\\.)*\"")
 # an access type with an optional column list: `SELECT`, `SELECT(a, b)`
@@ -88,10 +86,28 @@ async def _vet(host: str) -> tuple[str, str]:
 class GrantReview:
     roles: list[str] = field(default_factory=list)  # roles granted, reported back
     refused: list[str] = field(default_factory=list)  # what makes it not read-only
+    # granted roles missing from the enabled roles, whose grants go unseen
+    not_enabled: list[str] = field(default_factory=list)
 
     @property
     def read_only(self) -> bool:
-        return not self.refused
+        return not self.refused and not self.not_enabled
+
+    def refusal(self, user: str) -> str:
+        """The sentences that say why `user` is not read-only and what to do."""
+        why = []
+        if self.refused:
+            why.append(
+                f"{user!r} holds more than read access ({', '.join(self.refused[:4])}); loom "
+                "takes a read-only user — SELECT on the contract views and system.columns only."
+            )
+        if self.not_enabled:
+            why.append(
+                f"{user!r} holds roles that are not default roles "
+                f"({', '.join(self.not_enabled[:4])}), so loom cannot check what they grant. "
+                f"Run: SET DEFAULT ROLE ALL TO {user}"
+            )
+        return " ".join(why)
 
 
 def review_grants(lines: list[str]) -> GrantReview:
@@ -109,15 +125,20 @@ def review_grants(lines: list[str]) -> GrantReview:
         if not upper.startswith("GRANT ") or unparsed:
             rev.refused.append(line)
             continue
-        rev.refused.extend(p.strip() for p in _GRANT_OPTIONS if p in upper)
         on, to = upper.find(" ON "), upper.find(" TO ")
-        if on < 0:
-            if to < 0:
-                rev.refused.append(line)
-            else:
-                rev.roles.extend(_split(line[6:to], masked[6:to]))
+        end = on if on >= 0 else to
+        names = _split(line[6:end], masked[6:end]) if end >= 0 else []
+        if not names:
+            rev.refused.append(line)
             continue
-        for t in _split(line[6:on], masked[6:on]):
+        if on < 0:
+            rev.roles.extend(names)
+            if " WITH ADMIN OPTION" in upper:
+                rev.refused.extend(f"WITH ADMIN OPTION ({_unquote(r)})" for r in names)
+            continue
+        if " WITH GRANT OPTION" in upper:
+            rev.refused.append("WITH GRANT OPTION")
+        for t in names:
             name = _ACCESS_TYPE.fullmatch(_QUOTED.sub("_", t))
             if name is None or name.group(1).strip().upper() not in _READ_ACCESS:
                 rev.refused.append(t)
@@ -135,17 +156,16 @@ def _unquote(name: str) -> str:
 
 
 def review_roles(rev: GrantReview, enabled: list[dict[str, Any]]) -> None:
-    """Add to `rev.refused` what `system.enabled_roles` shows that `SHOW GRANTS`
-    cannot: a granted role that is not enabled (not a default role, so its
-    chain cannot be checked, or a name that does not read back), and an admin
-    option on any role in the chain, nested ones included."""
+    """Add what `system.enabled_roles` shows that `SHOW GRANTS` cannot: a
+    granted role that is not enabled (not a default role, so its chain cannot
+    be checked) and an admin option on any role in the chain, nested ones
+    included."""
     names = {str(r.get("role_name")) for r in enabled}
-    rev.refused.extend(
-        f"{r} (not among the enabled roles)" for r in rev.roles if _unquote(r) not in names
-    )
+    rev.not_enabled.extend(r for r in rev.roles if _unquote(r) not in names)
     rev.refused.extend(
         f"WITH ADMIN OPTION ({r.get('role_name')})" for r in enabled if r.get("with_admin_option")
     )
+    rev.refused = list(dict.fromkeys(rev.refused))  # a direct role's option shows twice
 
 
 class ProbeError(RuntimeError):
