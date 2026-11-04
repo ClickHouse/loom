@@ -1,12 +1,15 @@
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import {
+  inspectKnowledge,
   inspectMemories,
   namespaceInventory,
   tuneNamespace,
   type InspectSubject,
+  type KnowledgeInspection,
   type MemoryInspection,
   type NamespaceInventory,
   type NamespaceTune,
@@ -21,6 +24,7 @@ import { canCall } from "../lib/canCall";
 import { openGraphAt } from "../lib/graphLink";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { useStore } from "../lib/state";
+import { DocumentInspection } from "./assistant/DocumentInspection";
 import { Inspection } from "./assistant/Inspection";
 import { InventoryPopulations, InventoryScopeNote, InventorySections } from "./assistant/Inventory";
 import { ReviewChanges } from "./assistant/ReviewChanges";
@@ -28,16 +32,22 @@ import { tokenReadScope } from "./assistant/tokenScope";
 import { useScopedRead } from "./assistant/useScopedRead";
 
 /**
- * Assistant — inspect what a user, agent or session remembers, and draft changes to the
- * categories, instructions and guide that create those memories. Every read is
- * deterministic (no model) and read-only: namespace.inventory, memory.inspect and
- * namespace.tune, each on a click, never on mount. A draft is never applied here.
+ * Assistant — inspect what a user, agent or session remembers and what the namespace's
+ * documents are, and draft changes to the categories, instructions and guide that create
+ * those memories and to the settings that cut and extract the documents. Every read is
+ * deterministic (no model) and read-only: namespace.inventory, memory.inspect,
+ * knowledge.inspect and namespace.tune, each on a click, never on mount. A draft is never
+ * applied here.
  */
 
-const SUBJECTS: Array<{ value: InspectSubject; label: string }> = [
+// Documents are the namespace's, so that subject takes no id.
+type Subject = InspectSubject | "documents";
+
+const SUBJECTS: Array<{ value: Subject; label: string }> = [
   { value: "user", label: "User" },
   { value: "agent", label: "Agent" },
   { value: "session", label: "Session" },
+  { value: "documents", label: "Documents" },
 ];
 
 type Starter = "relationships" | "inventory" | "analyze" | "users" | "configure";
@@ -60,36 +70,39 @@ export function Assistant() {
   const scope = `${identity?.org}/${identity?.namespace}/${tokenScope?.readScope ?? "-"}/${tokenScope?.readUserId ?? "-"}`;
   const inventory = useScopedRead<NamespaceInventory>(scope);
   const inspection = useScopedRead<MemoryInspection>(scope);
+  const documents = useScopedRead<KnowledgeInspection>(scope);
   const tune = useScopedRead<NamespaceTune>(scope);
   // The open starter, with the scope it was opened in: another namespace or token shows none.
   const [opened, setOpened] = useState<{ scope: string; id: Starter } | null>(null);
   const starter = opened?.scope === scope ? opened.id : null;
-  const [subject, setSubject] = useState<InspectSubject>("user");
+  const [subject, setSubject] = useState<Subject>("user");
   const [subjectId, setSubjectId] = useState("");
   const [entity, setEntity] = useState("");
 
   if (!identity) return null;
   const where = { org: identity.org, namespace: identity.namespace };
-  // Each read is gated on its own op. All three are VIEWER, which every namespace role
+  // Each read is gated on its own op. All four are VIEWER, which every namespace role
   // reaches, so a canCall refusal means the role is unknown (list_mine not read, failed, or
   // with no row for the namespace). The server refuses memory.inspect and namespace.tune to a
-  // token pinned to one user or session (neither is a scoped op). The token's claims say so
-  // up front; for an end-user token, or behind a proxy (no token here), only the inventory's
-  // answer does.
+  // token pinned to one user or session (neither is a scoped op); namespace.inventory and
+  // knowledge.inspect are scoped and answer it. The token's claims say so up front; for an
+  // end-user token, or behind a proxy (no token here), only the inventory's answer does.
   const narrowed =
     tokenScope?.readScope != null || (inventory.data !== null && inventory.data.scope.read_scope !== "namespace");
   // A scoped read under `own_session`, or under `own_user` with no `read_user_id`, needs the
   // session or user id in the request, which this page does not send: the server refuses it.
   const incomplete =
     tokenScope?.readScope === "own_session" || (tokenScope?.readScope === "own_user" && !tokenScope.readUserId);
-  const gate = (op: "namespace.inventory" | "memory.inspect" | "namespace.tune") =>
-    !canCall(op, role, whoami)
+  const gate = (op: "namespace.inventory" | "knowledge.inspect" | "memory.inspect" | "namespace.tune") => {
+    const scoped = op === "namespace.inventory" || op === "knowledge.inspect";
+    return !canCall(op, role, whoami)
       ? "Your role on this namespace is not known."
-      : incomplete && op === "namespace.inventory"
+      : incomplete && scoped
         ? "Your token's read scope needs a user or session id this page does not send."
-        : narrowed && op !== "namespace.inventory"
+        : narrowed && !scoped
           ? "Your token is bound to one user or session; inspecting and drafting need a token for the whole namespace."
           : null;
+  };
   const starterGate: Record<Starter, string | null> = {
     relationships: null,
     inventory: gate("namespace.inventory"),
@@ -97,19 +110,27 @@ export function Assistant() {
     analyze: gate("memory.inspect"),
     configure: gate("namespace.tune"),
   };
-  const inspectBlocked = gate("memory.inspect") ?? (subjectId.trim() ? null : "Enter an id to inspect.");
+  const inspectBlocked =
+    subject === "documents"
+      ? gate("knowledge.inspect")
+      : (gate("memory.inspect") ?? (subjectId.trim() ? null : "Enter an id to inspect."));
 
   const start = (id: Starter) => {
     setOpened({ scope, id });
     // Each starter reads again on a click, so its answer is as fresh as the click.
     if (id === "inventory" || id === "users") inventory.run((signal) => namespaceInventory(where, { signal }));
     if (id === "analyze") {
-      setSubject("user");
+      // From Documents the id field is not mounted yet: render it before focusing it.
+      flushSync(() => setSubject("user"));
       document.getElementById("assistant-subject-id")?.focus();
     }
     if (id === "configure") tune.run((signal) => tuneNamespace(where, { signal }));
   };
   const runInspect = () => {
+    if (subject === "documents") {
+      documents.run((signal) => inspectKnowledge(where, { signal }));
+      return;
+    }
     const id = subjectId.trim();
     if (id) inspection.run((signal) => inspectMemories(where, subject, id, { signal }));
   };
@@ -120,9 +141,10 @@ export function Assistant() {
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
       <p className="text-sm text-text-muted mb-4 max-w-[72ch]">
-        Inspect what a user, agent or session remembers in this namespace, then draft changes to the categories,
-        extraction instructions and guide that create those memories. Everything here reads; nothing is changed, and a
-        draft is applied only by a person who runs its op.
+        Inspect what a user, agent or session remembers in this namespace, or what its documents are, then draft changes
+        to the categories, extraction instructions and guide that create those memories and to the settings that cut and
+        extract the documents. Everything here reads; nothing is changed, and a draft is applied only by a person who
+        makes its write.
       </p>
 
       <Panel as="section" aria-labelledby="assistant-scope" className="mb-5">
@@ -130,7 +152,7 @@ export function Assistant() {
           id="assistant-scope"
           level={2}
           label="Scope"
-          hint="A user, agent or session filters rows inside this namespace; it never reaches rows your token cannot read. Switch namespaces in the header."
+          hint="A user, agent or session filters rows inside this namespace; it never reaches rows your token cannot read. Documents are the namespace's. Switch namespaces in the header."
         />
         <form
           className="flex flex-wrap items-end gap-3"
@@ -143,16 +165,20 @@ export function Assistant() {
             aria-label="Subject"
             options={SUBJECTS}
             selected={subject}
-            onClick={(v) => setSubject(v as InspectSubject)}
+            onClick={(v) => setSubject(v as Subject)}
           />
-          <div className="w-64">
-            <TextField
-              id="assistant-subject-id"
-              label={`${SUBJECTS.find((s) => s.value === subject)?.label} id`}
-              value={subjectId}
-              onChange={(v) => setSubjectId(v)}
-            />
-          </div>
+          {subject === "documents" ? (
+            <p className="text-sm text-text-muted pb-2">Every document of this namespace.</p>
+          ) : (
+            <div className="w-64">
+              <TextField
+                id="assistant-subject-id"
+                label={`${SUBJECTS.find((s) => s.value === subject)?.label} id`}
+                value={subjectId}
+                onChange={(v) => setSubjectId(v)}
+              />
+            </div>
+          )}
           {inspectBlocked ? (
             <Unavailable reason={inspectBlocked}>
               <Button type="primary" htmlType="submit">
@@ -162,7 +188,11 @@ export function Assistant() {
           ) : (
             // BusyButton keeps the focus while the read runs; Unavailable needs a ref it
             // does not forward, so a blocked Inspect is the plain button.
-            <BusyButton type="primary" htmlType="submit" busy={inspection.busy}>
+            <BusyButton
+              type="primary"
+              htmlType="submit"
+              busy={subject === "documents" ? documents.busy : inspection.busy}
+            >
               Inspect
             </BusyButton>
           )}
@@ -251,13 +281,26 @@ export function Assistant() {
         </Panel>
       )}
 
+      {(documents.busy || documents.data || documents.error) && (
+        <Panel as="section" aria-labelledby="assistant-documents-heading" className="mb-5">
+          <SectionHeading id="assistant-documents-heading" level={2} label="Documents" />
+          <ReadState read={documents} label="the documents" />
+          {documents.data && (
+            <div aria-busy={documents.busy || undefined}>
+              <DocumentInspection result={documents.data} />
+              <ReadAt time={documents.data.computed_at} />
+            </div>
+          )}
+        </Panel>
+      )}
+
       <Panel as="section" aria-labelledby="assistant-review-heading" className="mb-5">
         <SectionHeading
           id="assistant-review-heading"
           level={2}
           label="Review changes"
           count={tune.data?.proposals.length}
-          hint="Drafts from namespace.tune, each naming its target, current value, evidence and the op that would apply it. Apply is not in this release."
+          hint="Drafts from namespace.tune, each naming its target, current value, evidence and the write that would apply it. Apply is not in this release."
         />
         <ReadState read={tune} label="the drafts" />
         {!(tune.busy && !tune.data) && (

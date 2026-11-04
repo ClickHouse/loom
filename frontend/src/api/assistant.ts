@@ -1,5 +1,6 @@
-// The Assistant page's reads: namespace.inventory, memory.inspect and namespace.tune. All
-// three are VIEWER, read-only and call no model; the types mirror their server models.
+// The Assistant page's reads: namespace.inventory, memory.inspect, knowledge.inspect and
+// namespace.tune. All four are VIEWER, read-only and call no model; the types mirror their
+// server models.
 import { post } from "../api";
 import type { RequestOpts } from "../api";
 
@@ -134,7 +135,12 @@ export async function inspectMemories(
 
 // ===== namespace.tune (server/identity/api/models_namespace_tune.py) =====
 
-export type TuneTarget = "extraction_instructions.request" | "namespace.category" | "namespace.guide";
+export type TuneTarget =
+  | "extraction_instructions.request"
+  | "namespace.category"
+  | "namespace.guide"
+  | "settings.knowledge_chunking"
+  | "settings.document_extractors_json";
 
 /** A cited row (server/identity/api/models_findings.py::FindingEvidence). */
 export interface TuneEvidenceRef {
@@ -166,24 +172,70 @@ export interface TuneProposal {
     supporting: TuneEvidenceRef[];
     /** Rows the change must keep working for: for extraction instructions at least this
      *  many rows the drafted checks did not flag, for a category the tagged rows another
-     *  category already holds; null when not read, or for a guide. */
+     *  category already holds; for a chunking draft the sampled documents it does not flag,
+     *  for an extractor route the documents of its formats extracted whole; null when not
+     *  read, or for a guide. */
     counter_count: number | null;
+    /** For a document draft, the source_uri of documents or sources that show the problem,
+     *  at most the sample limit; `supporting_count` counts them all. */
+    documents?: string[];
   };
   affected_agents: string[];
   /** null when the namespace's writers could not be read. */
   affected_agents_total: number | null;
   effect: "future";
   historical: string;
-  apply: {
-    op: string;
-    args: Record<string, unknown>;
-    /** False for the extraction-instructions draft: no single call applies it; each
-     *  writer merges `args` into its own memory.set_from_messages requests. */
-    args_complete: boolean;
-    required_role: string;
-    guard: string;
-  };
+  apply: TuneApply;
+  /** Further writes the change needs, in order after `apply`. */
+  apply_also?: TuneApply[];
+  /** The deterministic before/after a chunking draft rests on; null for other drafts. */
+  preview?: { before: ChunkStats; after: ChunkStats } | null;
   limits: string;
+}
+
+/** The ordinary write that would apply a proposal (server: TuneApply). */
+export interface TuneApply {
+  /** A Loom op; for `via` admin_route the admin endpoint (`settings.set` is
+   *  POST /v1/admin/settings.set); for `environment` the variable. */
+  op: string;
+  /** Absent from a server a release behind, which drafts only ops. */
+  via?: "op" | "admin_route" | "environment";
+  args: Record<string, unknown>;
+  /** False when `args` is not the whole call: for the extraction-instructions draft each
+   *  writer merges it into its own memory.set_from_messages requests; for an extractor
+   *  route each placeholder is filled in with the URL its setting names. */
+  args_complete: boolean;
+  required_role: string;
+  guard: string;
+}
+
+/** A document sample cut at one chunk size and stride (server: ChunkStats). */
+export interface ChunkStats {
+  size: number;
+  stride: number;
+  chunks: number;
+  min_chars: number;
+  median_chars: number;
+  p90_chars: number;
+  max_chars: number;
+  sections: number;
+  sections_cut: number;
+  max_input_tokens: number;
+  /** null when the embedder's input limit is not known. */
+  over_input_limit?: number | null;
+}
+
+/** The namespace's documents re-chunked in process at the current values (server:
+ *  ChunkingSample): no model, nothing written, no text returned. */
+export interface ChunkingSample {
+  cap: number;
+  population: number | null;
+  documents: number;
+  unread: number;
+  load_cap: number;
+  embedder_model: string;
+  input_token_limit?: number | null;
+  current: ChunkStats;
 }
 
 export interface NamespaceTune {
@@ -195,10 +247,196 @@ export interface NamespaceTune {
   categories_registered: number | null;
   extraction_policy: string | null;
   extraction_policy_unavailable: string;
+  /** null when the namespace has no live document or the sample could not be read;
+   *  absent from a server a release behind. */
+  chunking?: ChunkingSample | null;
   skipped: string[];
   model_used: boolean;
 }
 
 export async function tuneNamespace(scope: Scope, opts: RequestOpts = {}): Promise<NamespaceTune> {
   return post<NamespaceTune>("/v1/namespace.tune", { org: scope.org, namespace: scope.namespace }, opts.signal);
+}
+
+// ===== knowledge.inspect (server/knowledge/api/models_inspect.py) =====
+
+export type FindingKind = "contract_violation" | "usage_heuristic" | "system_state";
+
+export interface DocumentCount {
+  name: string;
+  live: number;
+  deleted: number;
+}
+
+export interface DocumentChunks {
+  live: number;
+  searchable: number;
+  unembedded: number;
+  other_model: number;
+  versions: number;
+  min_chars: number;
+  median_chars: number;
+  max_chars: number;
+  models: string[];
+}
+
+export interface DecisionStage {
+  total: number;
+  confirmed: number;
+  unconfirmed: number;
+  source_changed: number;
+  outcome_known: number;
+}
+
+export interface DocumentDecisions {
+  decided: DecisionStage;
+  proposed: DecisionStage;
+}
+
+export interface ExtractionCoverage {
+  unit: string;
+  total: number;
+  extracted: number;
+  failed: number;
+  lost: string[];
+  complete: boolean;
+}
+
+export interface IngestJob {
+  ingestion_id: string;
+  state: string;
+  stage: string;
+  attempts: number;
+  error_code: string;
+  failure_class: string;
+  queued_at: string;
+  updated_at: string;
+  ended_at: string | null;
+  next_attempt_at: string | null;
+  stalled: boolean;
+}
+
+export interface SourceJobs {
+  source_uri: string;
+  jobs: number;
+  open_jobs: number;
+  open_ingestion_id: string;
+  latest: IngestJob;
+  current: IngestJob;
+  replaced: boolean;
+}
+
+export interface InspectDocument {
+  source_uri: string;
+  title: string;
+  format: string;
+  source_scheme: string;
+  version: number;
+  revision: number;
+  ingestion_id: string;
+  ingested_at: string;
+  /** null when the read failed: not none. */
+  retired_versions: number | null;
+  chunks: DocumentChunks | null;
+  decisions: DocumentDecisions | null;
+  /** null for a text write, which no extractor read. */
+  extraction: ExtractionCoverage | null;
+  jobs: SourceJobs | null;
+}
+
+interface FindingFields {
+  code: string;
+  kind: FindingKind;
+  severity: "info" | "warning";
+  rule_version: number;
+  source_op: string;
+  count: number;
+  share: number;
+  population: number | null;
+  sample_limit: number;
+  samples: string[];
+  samples_complete: boolean;
+  detail: string;
+  remedy: string;
+  exceptions: string;
+  uncertainty: string;
+}
+
+export interface DocumentFinding extends FindingFields {
+  ingested: number;
+  ingested_samples: string[];
+}
+
+export interface IngestFinding extends FindingFields {
+  ingestion_ids: string[];
+  without_document: number;
+}
+
+export interface MemoryFindingRef {
+  code: string;
+  kind: string;
+  severity: string;
+  rule_version: number;
+  source_op: string;
+  count: number;
+  share: number;
+  detail: string;
+  remedy: string;
+}
+
+/** A section the server could not read is null (or empty) and named in `skipped`. */
+export interface KnowledgeInspection {
+  org: string;
+  namespace: string;
+  computed_at: string;
+  documents: {
+    live: number | null;
+    deleted: number | null;
+    newest_ingested_at: string | null;
+    by_format: DocumentCount[];
+    by_source_scheme: DocumentCount[];
+    earlier_revisions: number | null;
+    unnumbered: number | null;
+    retired_versions: number | null;
+  };
+  chunks: {
+    embedder_model: string;
+    live: number | null;
+    searchable: number | null;
+    unembedded: number | null;
+    by_model: Array<{ model: string; live: number; embedded: number }>;
+  };
+  decisions: { definition: string; all_documents: DocumentDecisions | null };
+  listed: InspectDocument[];
+  listed_complete: boolean;
+  findings: DocumentFinding[];
+  coverage: { rules_run: string[]; rules_skipped: string[]; complete: boolean };
+  ingestions: {
+    sources: number | null;
+    without_document: number | null;
+    replaced: number | null;
+    pending: number | null;
+    processing: number | null;
+    stalled: number | null;
+    ready: number | null;
+    partial: number | null;
+    failed: number | null;
+    cancelled: number | null;
+    oldest_open_queued_at: string | null;
+    worker_enabled: boolean;
+    extractor_configured: boolean | null;
+    without_document_listed: SourceJobs[];
+  };
+  extraction: { documents: number | null; incomplete: number | null; lost: DocumentCount[] };
+  ingest_findings: IngestFinding[];
+  memory_findings: MemoryFindingRef[];
+  skipped: string[];
+}
+
+export async function inspectKnowledge(scope: Scope, opts: RequestOpts = {}): Promise<KnowledgeInspection> {
+  return post<KnowledgeInspection>(
+    "/v1/knowledge.inspect",
+    { org: scope.org, namespace: scope.namespace },
+    opts.signal,
+  );
 }
