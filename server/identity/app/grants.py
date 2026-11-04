@@ -341,13 +341,13 @@ async def _live_grant_rows(
     address no verified account holds (`unheld`, returned beside the rows) and
     that never held a row here also takes the live rows of the unverified
     accounts naming it (`aliases.spellings`)."""
-    from server.auth.aliases import spellings, verified_holder, verified_spellings
+    from server.auth.aliases import spellings, verified_tie
 
-    verified = await verified_spellings(org, subject)
+    verified, held = await verified_tie(org, subject)
     # A verified account holding the address is the person (by its verified email,
     # or a handle that is the address): an unverified account naming it too is
     # someone else, whose rows and tokens stay.
-    unheld = "@" in subject and not await verified_holder(org, subject)
+    unheld = "@" in subject and not held
     found = await _rows_under(org, namespace, verified)
     if found or not unheld:
         return found, unheld

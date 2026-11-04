@@ -229,14 +229,52 @@ async def test_an_unlink_whose_reply_is_lost_still_drops_the_cached_ties(
 async def test_an_address_is_held_by_a_verified_account_or_a_handle_that_is_it(
     monkeypatch: pytest.MonkeyPatch, address: str, held: bool
 ) -> None:
-    client = _CH(
-        *SETUP,
-        "INSERT INTO loom.namespaces (org, namespace, owner_email, contact_email,"
-        " password_hash, active, created_at, updated_at) VALUES"
-        f" ('{ORG}', 'gina', 'gina@corp.example', 'gina@corp.example', '', 1, now(), now())",
-    )
+    client = _CH(*SETUP, _GINA)
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
-    assert await aliases.verified_holder(ORG, address) is held
+    assert (await aliases.verified_tie(ORG, address))[1] is held
+
+
+# An SSO account whose login handle is its address.
+_GINA = (
+    "INSERT INTO loom.namespaces (org, namespace, owner_email, contact_email,"
+    " password_hash, active, created_at, updated_at) VALUES"
+    f" ('{ORG}', 'gina', 'gina@corp.example', 'gina@corp.example', '', 1, now(), now())"
+)
+
+
+@pytest.mark.asyncio
+async def test_revoking_an_address_whose_handle_is_it_leaves_a_squatters_row_and_tokens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # gina's handle is her address; mallory4 typed it too and holds a row on
+    # team-g under her own handle. Revoking the address is revoking gina, who holds
+    # none there: mallory4's row and her token's grant stay.
+    from server.identity.api.models_grants import GrantsRevokeInput
+    from server.identity.app import grants as grants_app
+    from server.identity.store import grants as grants_repo
+
+    kept = KeptCH(
+        tmp_path,
+        *SETUP,
+        _GINA,
+        _account("mallory4", "gina@corp.example", "argon2-hash"),
+        _grant("team-g", "mallory4"),
+        ddl("service_accounts"),
+        ddl("acl_versions"),
+        "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
+        f" ('{ORG}', 'bot', 'sa:m4-bot', 'mallory4')",
+        _grant("team-g", "sa:m4-bot"),
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
+    monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
+    body = GrantsRevokeInput(org=ORG, namespace="team-g", subject="gina@corp.example")
+    assert (await grants_app.handle_grants_revoke(body)).revoked is False
+    live = await kept.query_all(
+        "SELECT subject FROM loom.namespace_grants FINAL WHERE org = {org:String}"
+        " AND namespace = 'team-g' AND revoked_at IS NULL ORDER BY subject",
+        {"org": ORG},
+    )
+    assert [r["subject"] for r in live] == ["mallory4", "sa:m4-bot"]
 
 
 @pytest.mark.asyncio

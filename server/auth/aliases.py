@@ -105,7 +105,10 @@ async def read_aliases(org: str, subject: str, ch: object | None) -> list[str]:
     """`subject` and the spellings a verified email ties to it, read uncached;
     raises when the directory cannot be read (`subject_aliases` caches, and
     answers the subject alone on a failed read)."""
-    rows = await _rows(org, subject, ch)
+    return _tied(subject, await _rows(org, subject, ch))
+
+
+def _tied(subject: str, rows: list[dict[str, Any]]) -> list[str]:
     out = [subject]
     for r in rows:
         for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
@@ -182,16 +185,19 @@ async def verified_spellings(org: str, subject: str, *, ch: object | None = None
         return await read_aliases(org, subject, ch)
 
 
-async def verified_holder(org: str, subject: str, *, ch: object | None = None) -> bool:
-    """Whether an active account is `subject` by its handle or its verified email,
-    read past a link another process just made: a login handle that is itself an
-    email counts. Raises when the directory cannot be read."""
+async def verified_tie(
+    org: str, subject: str, *, ch: object | None = None
+) -> tuple[list[str], bool]:
+    """`verified_spellings`, and whether an active account is `subject` by its
+    handle or its verified email (a login handle that is itself an email counts),
+    from one read. Raises when the directory cannot be read."""
     from server.core.ch import own_write_reads
 
     if not has_aliases(subject):
-        return False
+        return [subject], False
     with own_write_reads():
-        return bool(await _rows(org, subject, ch))
+        rows = await _rows(org, subject, ch)
+    return _tied(subject, rows), bool(rows)
 
 
 __all__ = [
@@ -201,6 +207,6 @@ __all__ = [
     "read_aliases",
     "spellings",
     "subject_aliases",
-    "verified_holder",
     "verified_spellings",
+    "verified_tie",
 ]
