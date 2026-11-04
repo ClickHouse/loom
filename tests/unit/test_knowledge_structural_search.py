@@ -311,12 +311,20 @@ def test_a_hybrid_query_of_short_identifiers_still_runs_the_keys_leg(
     assert "repo://retention.sql" in {r.source_uri for r in out.results}
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "db.ts",  # no BM25 token: the vector and exact-key legs
+        "where is orders_daily",  # all three legs; the public pass finds no word or key
+    ],
+)
 def test_a_private_passs_exact_key_hit_scores_on_the_public_passs_scale(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, query: str
 ) -> None:
     """Each pass of a private-first search fuses, so a pass whose keys matched and
-    one whose keys did not score on one scale: the keyed hit stands level with the
-    public pass's first hit, not under all of its raw similarities."""
+    one whose legs found nothing but vectors score on one scale: the keyed hit
+    stands level with the public pass's first hit, not under all of its raw
+    similarities."""
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
     from server.knowledge.app import knowledge_search as h
 
@@ -333,8 +341,12 @@ def test_a_private_passs_exact_key_hit_scores_on_the_public_passs_scale(
     async def _keyed(q: Any, **kw: Any) -> list[ChunkHit]:
         if "priv" not in q.namespaces:
             return []
-        hit = _hit("repo://schema.sql", distance=0.75, keys=("db.ts",))
+        hit = _hit("repo://schema.sql", distance=0.75, keys=tuple(q.keys[:1]))
         return [dataclasses.replace(hit, namespace="priv")]
+
+    async def _lex(q: Any, **kw: Any) -> list[ChunkHit]:
+        hit = dataclasses.replace(_hit("repo://schema.sql", distance=0.75), namespace="priv")
+        return [hit] if "priv" in q.namespaces else []
 
     async def _fanout(*a: Any, **kw: Any) -> tuple[list[str], list[str]]:
         return ["priv", "pub"], []
@@ -344,13 +356,12 @@ def test_a_private_passs_exact_key_hit_scores_on_the_public_passs_scale(
 
     monkeypatch.setattr("server.knowledge.app.search.hybrid_search", _sem)
     monkeypatch.setattr("server.knowledge.app.search.keys_search", _keyed)
+    monkeypatch.setattr("server.knowledge.app.search.lexical_search", _lex)
     monkeypatch.setattr(h, "namespaces_to_search", _fanout)
     monkeypatch.setattr(h.namespace_visibility, "visibility_map", _visibility)
     out = asyncio.run(
         h.handle_knowledge_search(
-            KnowledgeSearchInput(
-                org="o", namespace="priv", query="db.ts", namespace_scope="all_mine"
-            )
+            KnowledgeSearchInput(org="o", namespace="priv", query=query, namespace_scope="all_mine")
         )
     )
     order = [r.source_uri for r in out.results]

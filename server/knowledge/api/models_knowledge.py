@@ -212,7 +212,8 @@ class KnowledgeSearchInput(BaseModel):
     # Only chunks of documents in these formats: the `format` `knowledge.ingest` records
     # and `knowledge.get` returns (`sql`, `toml`, `markdown`, ...), or '' for a text write's
     # documents (a source sync's among them), for which `knowledge.get` returns null.
-    # A chunk written before formats were recorded is ''. Empty = every format.
+    # A chunk written before formats were recorded is ''; so is a synced document that
+    # `knowledge.inspect`'s `by_format` names `markdown` or `pdf`. Empty = every format.
     formats: list[Annotated[str, Field(max_length=32)]] = Field(default_factory=list, max_length=16)
     # Only chunks of these block types (`sql_statement`, `toml_table`, `toml_key`,
     # `heading`, `paragraph`, `code`, `mixed`, ...). Empty = every type; text a caller

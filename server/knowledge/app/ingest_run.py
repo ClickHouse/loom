@@ -11,12 +11,14 @@ it is:
 2. **embed**: cut structural chunks, reuse the stored vector of every chunk
    whose embedding input this namespace already embedded under the same model,
    embed the rest in one batch;
-3. **publish**: record the new chunk version (`doc_version`) on the job and
-   insert its chunks; then, under the source's claim (which other ingests of
-   the source take; text writes do not), check a cancel and the expected
-   revision, write the document row (the switch: revision, format, artifact,
-   parser, coverage) and retire the chunks of earlier versions. The claim
-   covers those few statements only, however many chunks the source has.
+3. **publish**: decide the revision (and check the expected one), record the
+   new chunk version (`doc_version`) on the job and insert its chunks, each
+   naming that revision; then, under the source's claim (which other ingests
+   of the source take; text writes do not), check a cancel and refuse the
+   publish when the source changed since the revision was decided, write the
+   document row (the switch: revision, format, artifact, parser, coverage) and
+   retire the chunks of earlier versions. The claim covers those few
+   statements only, however many chunks the source has.
 
 Every slow step runs before anything is published, so a job that fails leaves
 the earlier revision serving. Chunks a publish inserted for a document row it
