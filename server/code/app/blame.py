@@ -166,11 +166,9 @@ async def _resolve_ref(
             return "", ""
     if kind == "minor":
         branch_ns = next((c.namespace for c in siblings if c.git_branch == value), "")
-        readable: list[str] = []
         if branch_ns:
             readable, _skipped = await fanout.readable_subset(org, [branch_ns])
-        if readable:
-            head = await _namespace_head(repo, org, branch_ns)
+            head = await _namespace_head(repo, org, branch_ns) if readable else ""
             if head:
                 return head, "namespace_head"
         patterns = [f"refs/heads/{value}", f"refs/tags/v{value}.1.1-new"]
