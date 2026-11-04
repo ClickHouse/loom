@@ -167,12 +167,14 @@ async def test_backlog_a_missing_extractor_and_missing_access_are_kept_apart(
 
         # FINAL: a merge between the two reads collapses versions with no write.
         before = ch_client.query(
-            "SELECT count(), max(version) FROM loom.knowledge_ingestions FINAL WHERE org = {org:String}",
+            "SELECT count(), max(version) FROM loom.knowledge_ingestions FINAL"
+            " WHERE org = {org:String}",
             parameters={"org": org},
         ).result_rows
         out = await _op(c, "knowledge.inspect", org=org, namespace=ns, sample_limit=10)
         after = ch_client.query(
-            "SELECT count(), max(version) FROM loom.knowledge_ingestions FINAL WHERE org = {org:String}",
+            "SELECT count(), max(version) FROM loom.knowledge_ingestions FINAL"
+            " WHERE org = {org:String}",
             parameters={"org": org},
         ).result_rows
         await _end(c, org, ns, [queued_job, down_job, cancelled_job])
