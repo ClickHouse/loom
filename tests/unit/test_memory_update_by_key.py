@@ -445,17 +445,31 @@ def _audit_rows(ch: _StubCH) -> list[dict[str, Any]]:
     return [r for table, rows in ch.inserts if table == "loom.audit_log" for r in rows]
 
 
+@pytest.fixture
+def audited(wired, monkeypatch: pytest.MonkeyPatch):
+    """`wired`, with the audit log going to the same stub and a bound request id."""
+    from server.core.logging_config import request_id_var
+
+    def _wire(candidates: list[dict[str, Any]], row: MemoryRow | None) -> _StubCH:
+        ch = wired(candidates, row)
+        monkeypatch.setattr("server.observability.audit.get_client", lambda: ch)
+        return ch
+
+    token = request_id_var.set("req-1")
+    yield _wire
+    request_id_var.reset(token)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("op", ["memory.update", "memory.update_by_id"])
 async def test_a_revision_leaves_one_hash_only_audit_row_in_the_rows_namespace(
-    wired, monkeypatch: pytest.MonkeyPatch, op: str
+    audited, op: str
 ) -> None:
     import json
 
     from server.memory.api.models_crud import MemoryUpdateByIdInput
 
-    ch = wired([_cand(_ID_A)], _row())
-    monkeypatch.setattr("server.observability.audit.get_client", lambda: ch)
+    ch = audited([_cand(_ID_A)], _row(source_class="observed"))
     if op == "memory.update":
         out: Any = await update_mod.handle_memory_update(
             MemoryUpdateInput(
@@ -469,12 +483,12 @@ async def test_a_revision_leaves_one_hash_only_audit_row_in_the_rows_namespace(
     assert out.updated
     [row] = _audit_rows(ch)
     assert row["event_type"] == op and row["org"] == "test" and row["namespace"] == "personal"
-    subject = json.loads(row["subject"])
-    assert subject == {
+    assert row["request_id"] == "req-1"
+    assert json.loads(row["subject"]) == {
         "memory_key": "deploy_day",
         "memory_id": _ID_A,
         "content_sha256": out.content_sha256,
-        "source_class": "",
+        "source_class": "observed",
         "version": out.new_version,
         "verdict": "clear",
     }
@@ -482,13 +496,62 @@ async def test_a_revision_leaves_one_hash_only_audit_row_in_the_rows_namespace(
 
 
 @pytest.mark.asyncio
-async def test_an_update_that_finds_no_row_leaves_no_audit_row(
-    wired, monkeypatch: pytest.MonkeyPatch
+async def test_a_conditional_revision_audits_the_head_it_wrote_from(
+    audited, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Under if_match_sha256 the head is re-read under the key lock; the audit row
+    describes that head's version, not the row read before the lock."""
+    import json
+
+    from server.core.hashing import served_content_sha256
     from server.memory.api.models_crud import MemoryUpdateByIdInput
 
-    ch = wired([], None)
-    monkeypatch.setattr("server.observability.audit.get_client", lambda: ch)
+    stale, head = _row(source_class="observed"), _row(source_class="derived")
+    ch = audited([], stale)
+    reads = iter([stale, head])
+
+    async def _get_by_id(memory_id: str, **_: Any) -> MemoryRow:
+        return next(reads)
+
+    monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
+    out = await update_mod.handle_memory_update_by_id(
+        MemoryUpdateByIdInput(
+            org="test",
+            memory_id=_ID_A,
+            value="Thursday",
+            if_match_sha256=served_content_sha256(stale.value),
+        )
+    )
+    assert out.updated
+    [row] = _audit_rows(ch)
+    assert json.loads(row["subject"])["source_class"] == "derived"
+
+
+@pytest.mark.asyncio
+async def test_a_revision_that_fails_after_its_version_lands_is_still_audited(
+    audited, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import key_supersession as ks
+
+    ch = audited([_cand(_ID_A)], _row())
+
+    async def _supersede(**_: Any) -> int:
+        raise RuntimeError("supersession insert failed")
+
+    monkeypatch.setattr(ks, "supersede_same_key_rows", _supersede)
+    with pytest.raises(RuntimeError, match="supersession"):
+        await update_mod.handle_memory_update(
+            MemoryUpdateInput(org="test", namespace="personal", memory_key="deploy_day", value="x")
+        )
+    [row] = _audit_rows(ch)
+    assert row["event_type"] == "memory.update"
+
+
+@pytest.mark.asyncio
+async def test_an_update_that_finds_no_row_leaves_no_audit_row(audited) -> None:
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+
+    ch = audited([], None)
     out = await update_mod.handle_memory_update_by_id(
         MemoryUpdateByIdInput(org="test", memory_id=_ID_A, value="x")
     )

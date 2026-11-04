@@ -160,12 +160,12 @@ async def test_conditional_update_rereads_the_head_under_the_lock(
     monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
     monkeypatch.setattr(update_mod, "_write_revision", write_revision)
     conditional = SimpleNamespace(org="org", if_match_sha256="h")
-    assert await update_mod._revise_head(conditional, stale, None, op="memory.update") == "ok"
+    assert await update_mod._update_live_row(conditional, stale, None, op="memory.update") == "ok"
     assert held_during_read == [1] and written == [head]
 
     written.clear()
     plain = SimpleNamespace(org="org", if_match_sha256="")
-    assert await update_mod._revise_head(plain, stale, None, op="memory.update") == "ok"
+    assert await update_mod._update_live_row(plain, stale, None, op="memory.update") == "ok"
     assert held_during_read == [1] and written == [stale]
 
 

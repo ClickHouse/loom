@@ -594,33 +594,6 @@ async def _update_post_write(
 async def _update_live_row(
     input: Any, existing: MemoryRow, ch: Any, *, op: str
 ) -> MemoryUpdateByIdOutput:
-    """The revision, then its one hash-only audit row, named for the row's
-    namespace (update_by_id's request carries none)."""
-    out = await _revise_head(input, existing, ch, op=op)
-    if out.updated:
-        from server.observability import audit
-
-        await audit.emit(
-            event_type=op,
-            org=input.org,
-            namespace=existing.namespace,
-            actor=app_provenance.writer_actor(fallback=existing.actor),
-            # Hashes and ids, never the value.
-            subject={
-                "memory_key": existing.memory_key,
-                "memory_id": str(existing.memory_id),
-                "content_sha256": out.content_sha256,
-                "source_class": existing.source_class,
-                "version": out.new_version,
-                "verdict": out.conflict_verdict,
-            },
-        )
-    return out
-
-
-async def _revise_head(
-    input: Any, existing: MemoryRow, ch: Any, *, op: str
-) -> MemoryUpdateByIdOutput:
     """A conditional update re-reads the head under the key's write lock."""
     if not input.if_match_sha256:
         return await _write_revision(input, existing, ch, op=op)
@@ -643,9 +616,28 @@ async def _revise_head(
 
 
 # Its own function: _write_revision is at the function-length gate's 50 statements.
-async def _announce_revised(memory_row: dict[str, Any]) -> None:
-    """The `memory.revised` event, noted as the "webhook" budget shape when it sent
-    outbox rows."""
+async def _record_revision(memory_row: dict[str, Any], *, op: str, verdict: str) -> None:
+    """The version row is in: its one hash-only audit row, then the `memory.revised`
+    event, noted as the "webhook" budget shape when it sent outbox rows."""
+    from server.core.logging_config import request_id_var
+    from server.observability import audit
+
+    await audit.emit(
+        event_type=op,
+        org=memory_row["org"],
+        namespace=memory_row["namespace"],
+        actor=memory_row["actor"],
+        # Hashes and ids, never the value; the verdict the write was checked with.
+        subject={
+            "memory_key": memory_row["memory_key"],
+            "memory_id": str(memory_row["memory_id"]),
+            "content_sha256": memory_row["content_sha256"],
+            "source_class": memory_row["source_class"],
+            "version": memory_row["version"],
+            "verdict": verdict,
+        },
+        request_id=request_id_var.get() or "",
+    )
     if await webhooks.announce([("memory.revised", memory_row)]):
         note_budget_shape("webhook")
 
@@ -783,7 +775,11 @@ async def _write_revision(
         if not isinstance(memory_done, BaseException):
             # The row is in: announce it even when the rest of the write fails; a retry
             # writes and announces a new version.
-            await _announce_revised(memory_row)
+            await _record_revision(
+                memory_row,
+                op=op,
+                verdict=conflict_result.verdict if conflict_result is not None else "",
+            )
         for done in [memory_done, *others_done]:
             if isinstance(done, BaseException):
                 raise done
