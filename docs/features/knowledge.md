@@ -466,9 +466,9 @@ default 20) bounds the listed documents and every finding's samples.
 
 - **`documents`**: live and deleted (`knowledge.delete`) documents by format (the
   row's `format`, which `knowledge.ingest` sets, else the `ingested_format` a source sync
-  records in its metadata (`transcript`, `markdown`, `slides`, or the extractor's `pdf` or `pptx`), else the stored content
-  type, else the extension of the original filename or the `source_uri` path) and by `source_uri`
-  scheme, and the newest ingest. A document row holds only its current version, and its
+  records in its metadata (`transcript`, `markdown`, `slides`, or the extractor's `pdf`
+  or `pptx`), else the stored content type, else the extension of the original filename
+  or the `source_uri` path) and by `source_uri` scheme, and the newest ingest. A document row holds only its current version, and its
   `revision` numbers it (1, 2, ...): `earlier_revisions` sums the revisions before each
   current one, and `unnumbered` counts rows no write numbered (`revision` 0). An earlier
   revision's text is known only through its retired chunks. `retired_versions` counts
