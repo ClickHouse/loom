@@ -778,7 +778,7 @@ async def test_incomplete_extractions_go_to_the_service_that_extracts_the_rest_w
 
 
 @pytest.mark.asyncio
-async def test_failed_sources_go_to_the_service_that_extracts_most_of_the_format(
+async def test_failed_sources_go_to_a_service_that_extracts_the_format_whole(
     docs: Docs,
 ) -> None:
     # The default service extracts pdf whole; application/pdf sources fail on X, which a
@@ -800,6 +800,46 @@ async def test_failed_sources_go_to_the_service_that_extracts_most_of_the_format
     assert p.apply.args["LOOM_DOCUMENT_EXTRACTORS_JSON"]["pdf"] == (
         "<the URL LOOM_DOCUMENT_EXTRACTOR_URL names>"
     )
-    route = tune._judge_format("pdf", {x: ["files/a.pdf"]}, whole, services, docs.routes, [])
-    assert route is not None and route.url == DEFAULT and route.failed == ["files/a.pdf"]
-    assert not route.incomplete
+    # It answers the failed source; there is no incomplete extraction to answer.
+    assert p.evidence.finding_codes == ["extractor_unavailable"]
+    assert p.evidence.documents == ["files/a.pdf"]
+    assert "extracts whole now" not in p.rationale
+
+
+@pytest.mark.asyncio
+async def test_a_route_off_a_service_that_extracts_some_whole_names_what_it_moves(
+    docs: Docs,
+) -> None:
+    # The default service extracted some pdfs whole and the rest incomplete; only T, which
+    # made none of them, can answer the incomplete ones, so the whole ones move to T too.
+    t = "http://pdf-t:8080"
+    docs.services = [
+        Service("LOOM_DOCUMENT_EXTRACTOR_URL", DEFAULT, frozenset({"pdf"})),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["docx"]', t, frozenset({"pdf", "docx"})),
+    ]
+    docs.coverage = [_lossy_pdf(incomplete_types=("",), complete_types=("",))]
+    out, _ = await _drafts()
+    (p,) = _target(out, "settings.document_extractors_json")
+    assert p.apply.args["LOOM_DOCUMENT_EXTRACTORS_JSON"]["pdf"] == (
+        '<the URL LOOM_DOCUMENT_EXTRACTORS_JSON["docx"] names>'
+    )
+    assert (
+        "The route also sends there the pdf sources LOOM_DOCUMENT_EXTRACTOR_URL extracts "
+        "whole now." in p.rationale
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_format_no_extractor_is_configured_for_says_so(docs: Docs) -> None:
+    # No default URL and no route for pdf: its sources go to no service.
+    t = "http://pdf-t:8080"
+    docs.routed = {"pdf": ""}
+    docs.services = [
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["docx"]', t, frozenset({"pdf", "docx"})),
+    ]
+    docs.unavailable = [_pdf_job("files/a.pdf")]
+    docs.coverage = [_lossy_pdf(incomplete=0, complete_types=("",))]
+    out, _ = await _drafts()
+    (p,) = _target(out, "settings.document_extractors_json")
+    assert "no extractor is configured for it" in p.rationale
+    assert "no service" not in p.rationale

@@ -480,9 +480,8 @@ def _round_robin(lists: list[list[str]], limit: int) -> list[str]:
 class _Route:
     """The route drafted for one format."""
 
-    # The service the format would go to: the setting naming it, and its URL.
+    # The setting naming the service the format would go to, and why.
     setting: str
-    url: str
     why: str
     # The failed sources it answers, and whether it answers the format's incomplete
     # extractions too (its service is not the one that made them).
@@ -555,11 +554,13 @@ def _judge_format(
         key=lambda s: (0 if s.url in working else 1 if s.url in reached else 2, s.url in producers),
     )
     answers_lossy = lossy and pick.url not in producers
-    parts = (
-        [f"{failed}; they go to {_names(services, set(stuck))}, which does not declare it"]
-        if stuck
-        else []
+    # '' is no service: no default URL and no route for the format.
+    goes_to = (
+        "no extractor is configured for it"
+        if set(stuck) == {""}
+        else f"they go to {_names(services, set(stuck))}, which does not declare it"
     )
+    parts = [f"{failed}; {goes_to}"] if stuck else []
     if answers_lossy:
         parts.append(f"{_lost(row or {})} under {_names(services, producers)}")
     elif lossy:
@@ -568,14 +569,13 @@ def _judge_format(
             "service the route drafted for its failed sources goes to"
         )
     why = f"{fmt}: {'; '.join(parts)}; the service {pick.setting} names declares {fmt}."
-    if moved := whole - {pick.url}:
+    if moved := whole - {pick.url, ""}:
         why += (
             f" The route also sends there the {fmt} sources {_names(services, moved)} "
             "extracts whole now."
         )
     return _Route(
         pick.setting,
-        pick.url,
         why,
         failed=[uri for u in sorted(stuck) for uri in stuck[u]],
         incomplete=answers_lossy,
@@ -662,7 +662,7 @@ async def _routes(
             supporting_count=sum(len(x) for x in failed)
             + sum(int(lossy[f]["incomplete"]) for f in fmts if drafted[f].incomplete),
             documents=_round_robin(failed + incomplete, inp.sample_limit),
-            # The documents of these formats extracted whole, which the route must keep.
+            # The documents of these formats extracted whole.
             counter_count=sum(complete) if coverage is not None else None,
         ),
         affected_agents=agents,
