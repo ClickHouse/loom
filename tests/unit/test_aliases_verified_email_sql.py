@@ -321,8 +321,10 @@ async def test_revoking_an_address_takes_its_squatters_row_and_tokens(
         "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
         f" ('{ORG}', 'bot', 'sa:m-bot', 'mallory')",
         _grant("team-z", "sa:m-bot"),
+        ddl("audit_log"),
     )
     monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
+    monkeypatch.setattr("server.observability.audit.get_client", lambda: kept)
     monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
     body = GrantsRevokeInput(org=ORG, namespace="team-z", subject="bob@corp.example")
     assert (await grants_app.handle_grants_revoke(body)).revoked is True
@@ -332,6 +334,12 @@ async def test_revoking_an_address_takes_its_squatters_row_and_tokens(
         {"org": ORG},
     )
     assert live == []
+    # The audit log names whose row went, not only the address asked for.
+    audited = await kept.query_all(
+        "SELECT JSONExtractString(subject, 'subject') AS s FROM loom.audit_log"
+        " WHERE event_type = 'grants.revoke'"
+    )
+    assert "mallory" in {r["s"] for r in audited}
 
 
 @pytest.mark.asyncio

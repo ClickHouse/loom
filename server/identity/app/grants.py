@@ -398,9 +398,27 @@ async def revoke_grant(
     for subject, row in rows:
         now = await _revoke_row(input, subject, row, may_take)
         revoked_at = now or revoked_at
+        if now is not None and subject != input.subject:
+            await _audit_stored_row(input, subject)
     if revoked_at is None:
         return GrantsRevokeOutput(revoked=False)
     return GrantsRevokeOutput(revoked=True, revoked_at=revoked_at)
+
+
+async def _audit_stored_row(input: GrantsRevokeInput, subject: str) -> None:
+    """The op's own audit row names the subject asked for; a row it took under
+    another spelling gets one of its own, so the log shows whose grant went."""
+    from server.auth.context import current_auth
+    from server.observability import audit
+
+    auth = current_auth()
+    await audit.emit(
+        "grants.revoke",
+        org=input.org,
+        namespace=input.namespace,
+        actor=auth.subject if auth is not None and auth.subject else "admin",
+        subject={"subject": subject, "named": input.subject},
+    )
 
 
 async def _revoke_row(
