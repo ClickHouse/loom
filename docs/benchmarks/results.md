@@ -610,17 +610,18 @@ Percentages. A precision and recall are argument-level against the gold argument
 precision is over the answers that made a claim; A abstains is the share of A answers
 saying no recorded decision covers the question (in whole or in part); A misleading is the
 share of answers that would steer an engineer wrong. B avoids: no rejected option proposed
-(deterministic detectors first, the judge for the rest); B satisfies: no gold constraint
-broken, no rejected option detected, and the rubric passed where the task has one. C
-passes: a supersession answer does not present a reversed statement as the current design,
-an abstention answer says no decision is recorded and invents none. No arm served a
-reversed statement as current. C states current is averaged over the 5 supersession tasks.
-Abstention tasks failed (no abstention, or an invented rationale), averaged over the
-abstention tasks: 2% in arm 0, 32% in arm 1, 10% in arm 2, 3% in arm 3 and 12% in arm 4.
-Citation precision is the share of the answers' citations that resolve and that the judge
-says support what they are cited for. Citation recall is the share of A claims with at
-least one of their own citations resolving and supporting them. A answers with no claim,
-which A precision leaves out: none in arms 0 to 3, 16.7% in arm 4.
+(deterministic detectors first, the judge for the rest) and the rubric passed where the
+task has one; B satisfies: no gold constraint broken, no rejected option detected, and the
+rubric passed where the task has one. C passes: a supersession answer does not present a
+reversed statement as the current design, an abstention answer says no decision is
+recorded and invents none. No arm served a reversed statement as current. C states current
+is averaged over the 5 supersession tasks. Abstention tasks failed (no abstention, or an
+invented rationale), averaged over the abstention tasks: 1.7% in arm 0, 31.7% in arm 1,
+10.0% in arm 2, 3.3% in arm 3 and 11.7% in arm 4. Citation precision is the share of the
+answers' citations that resolve and that the judge says support what they are cited for.
+Citation recall is the share of A claims with at least one of their own citations
+resolving and supporting them. A answers with no claim, which A precision leaves out: none
+in arms 0 to 3, 16.7% in arm 4.
 
 Paired per task, bootstrap over documents, 95% interval, and the minimum detectable effect
 taken from that interval. With five clusters the bootstrap intervals and the MDEs taken
@@ -681,14 +682,14 @@ bound below it): the gold rows (arm 3) raise A precision and recall and B avoida
 satisfaction over no design knowledge. Extracted rows (arm 4) raise B avoidance and
 satisfaction over arm 0, and A precision over the answers that made a claim, and fall
 below the gold rows on A precision, A recall, B avoidance and C. Arm 4 states the current
-design on 20% of supersession judgements, arm 3 on 100%. The document read through search
-(arm 2) falls below the gold rows on A precision (-13.2), A recall (-13.3), B avoidance
-(-52.0) and B satisfaction (-46.5). The whole document in context (arm 1) raises A
-precision and recall over arm 0 and falls below the gold rows on A precision (-11.3); its
-B avoidance is not resolved against arm 0 (-8.9, -18.2 .. +6.7) and falls below the gold
-rows by 79 points; it also fails more C tasks than arm 0 and arm 3. A hypothesis, not
-tested here: a decision row names the rejected option as rejected, and a whole document
-does not.
+design on 20% (averaged over the supersession tasks), arm 3 on 100%. The document read
+through search (arm 2) falls below the gold rows on A precision (-13.2), A recall (-13.3),
+B avoidance (-52.0) and B satisfaction (-46.5). The whole document in context (arm 1)
+raises A precision and recall over arm 0 and falls below the gold rows on A precision
+(-11.3); its B avoidance is not resolved against arm 0 (-8.9, -18.2 .. +6.7) and falls
+below the gold rows by 79.3 points, with B satisfaction 73.7 points below; it also fails
+more C tasks than arm 0 and arm 3. A hypothesis, not tested here: a decision row names the
+rejected option as rejected, and a whole document does not.
 
 **Treatment check.** Of the 30 tasks with gold rows, arm 3's pre-edit block served 27 and
 search served 29 (a task counts when it served one of its own gold rows); arm 4's pre-edit

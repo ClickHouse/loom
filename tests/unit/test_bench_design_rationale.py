@@ -286,7 +286,12 @@ def test_the_no_claim_share_counts_a_answers_whose_passes_made_no_claim():
     tid = ts.tasks["A"][0]["id"]
 
     def entry(claims):
-        verdict = {"claims": claims, "gold_covered": [], "potentially_misleading": False}
+        verdict = {
+            "claims": claims,
+            "gold_covered": [],
+            "potentially_misleading": False,
+            "abstained": True,
+        }
         return {"citations": [], "detectors": [], "passes": [{"verdict": verdict}]}
 
     # An abstaining answer can still make a graded claim: only the claimless one counts.
@@ -319,6 +324,8 @@ def test_a_verdict_with_a_bool_where_a_list_goes_is_unreadable():
     assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": "none"})
     assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": [], "gold_covered": True})
     assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": [], "gold_covered": 0})
+    assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": False})
+    assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": 0})
     assert not score.readable("B", task, {**good, "cites": False})
     assert not score.readable("B", task, {**good, "cites_support": 0})
     assert score.readable("B", task, {**good, "cites": None})

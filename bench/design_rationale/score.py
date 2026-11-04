@@ -67,10 +67,10 @@ def readable(kind: str, task: dict[str, Any], verdict: Any) -> bool:
     if not isinstance(verdict, dict) or not all(k in verdict for k in need):
         return False
     # A judge that returns a bool where a list goes would otherwise break the scoring.
-    claims = verdict.get("claims") or []
-    if not isinstance(claims, list) or not all(isinstance(c, dict) for c in claims):
+    claims = verdict.get("claims")
+    if not _list_or_none(claims) or not all(isinstance(c, dict) for c in claims or []):
         return False
-    for part in (verdict, *claims):
+    for part in (verdict, *(claims or [])):
         if any(not _list_or_none(part.get(f)) for f in LIST_FIELDS):
             return False
     if any(not _list_or_none(verdict.get(f)) for f in TOP_LIST_FIELDS):
