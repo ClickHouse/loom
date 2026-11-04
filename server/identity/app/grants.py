@@ -211,8 +211,9 @@ async def _create_grant(
     input: GrantsCreateInput, may_replace: Callable[[GrantState], None] | None
 ) -> datetime:
     """`grants.create`'s write and what follows it; returns when it was granted."""
-    # A human's grant is written under the login handle, so one person keeps one row
-    # whichever spelling the granter typed; the downgrade guard reads that same row.
+    # A grant to a verified email is written under its account's login handle, so the
+    # person keeps one row; any other spelling is written as typed. The downgrade
+    # guard reads that same row.
     from server.auth.aliases import canonical_subject
 
     subject = await canonical_subject(input.org, input.subject)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from server.auth.login import platform_roles
 from server.core.ch import get_client
 from server.core.grant_sql import VERIFIED_EMAIL_SQL
 from server.identity.api.models_admin_users import (
@@ -125,11 +126,10 @@ async def handle_admin_users(input: AdminUsersInput) -> AdminUsersOutput:
         grants = by_subject[subj]
         info = contact_map.get(subj, {})
         contact = str(info.get("contact_email", ""))
-        # An email entry names only a verified address, as at login (`platform_roles`).
+        # The login rule: a handle entry matches the subject, an email entry a verified
+        # address only.
         verified = str(info.get("verified_email", ""))
-        is_admin = subj.lower() in admin_emails or (
-            verified.strip().lower() in admin_emails if verified else False
-        )
+        is_admin = platform_roles(subj, verified_email=verified) == ["platform_admin"]
         # Service-account filter: subjects without a contact_email AND
         # without password_hash are almost always service accounts.
         if not input.include_service_accounts:

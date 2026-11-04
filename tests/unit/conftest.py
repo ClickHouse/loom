@@ -910,3 +910,18 @@ def _no_revocations_left_behind() -> Iterator[None]:
     yield
     revocation._revoked_jtis, revocation._revoked_before, revocation._cut_off = saved
     revocation._recent.clear()
+
+
+@pytest.fixture
+def no_directory_ties(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A revoke reads the spellings the directory ties to its subject (none here),
+    and the rows stored under them (each as given)."""
+
+    async def _alone(org: str, subject: str, ch: Any) -> list[str]:
+        return [subject]
+
+    async def _as_given(org: str, ns: str, spellings: list[str], **_: Any) -> list[str]:
+        return list(dict.fromkeys(spellings))
+
+    monkeypatch.setattr("server.auth.aliases.read_aliases", _alone)
+    monkeypatch.setattr("server.identity.store.grants.stored_spellings", _as_given)
