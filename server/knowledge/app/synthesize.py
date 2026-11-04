@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING
 from server.knowledge.api.models_knowledge import (
     KnowledgeSynthesizeInput,
     KnowledgeSynthesizeOutput,
+    _CitedChunk,
 )
 from server.knowledge.app.document_reads import document_chunks
 from server.observability.genai import llm_stage
 
 if TYPE_CHECKING:
-    from server.memory.domain.corpus_synthesis import CorpusChunk
+    from server.memory.domain.corpus_synthesis import CorpusChunk, Window
 
 
 async def handle_knowledge_synthesize(
@@ -110,6 +111,7 @@ async def handle_knowledge_synthesize(
     # Punctuation or list markers left by the removed citations are no answer either.
     if not any(ch.isalnum() for ch in answer):
         answer = ""
+    located = await _located(input, wins, cs.cited_chunks(cited, read) if answer else [])
     return KnowledgeSynthesizeOutput(
         answer=answer,
         windows=len(wins),
@@ -117,12 +119,36 @@ async def handle_knowledge_synthesize(
         documents=docs,
         reduce_rounds=rounds,
         citations=cited,
+        cited_chunks=located,
         unsupported_citations=unsupported,
         truncated=truncated,
         abstain=not answer,
         abstain_reason="" if answer else "empty_answer",
         model=str(getattr(llm, "model", "") or synth_model or ""),
     )
+
+
+async def _located(
+    input: KnowledgeSynthesizeInput, wins: list[Window], chunks: list[tuple[str, int]]
+) -> list[_CitedChunk]:
+    """Each cited chunk with its document's revision and its locator."""
+    from server.knowledge.store import documents as documents_repo
+
+    if not chunks:
+        return []
+    by_key = {(c.source_uri, c.idx): c for w in wins for c in w.chunks}
+    revisions = await documents_repo.revisions_and_formats(
+        input.org, [input.namespace], sorted({uri for uri, _ in chunks})
+    )
+    return [
+        _CitedChunk(
+            source_uri=uri,
+            chunk_idx=idx,
+            revision=revisions.get((input.namespace, uri), (0, ""))[0],
+            locator=by_key[(uri, idx)].locator,
+        )
+        for uri, idx in chunks
+    ]
 
 
 async def _corpus_chunks(input: KnowledgeSynthesizeInput) -> tuple[list[CorpusChunk], int]:

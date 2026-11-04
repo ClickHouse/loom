@@ -3710,6 +3710,8 @@ export interface KnowledgeSearchInput {
   uri_prefix?: string[];
   session_ids?: string[];
   source_classes?: string[];
+  formats?: string[];
+  block_types?: string[];
   rerank?: string;
 }
 
@@ -3735,6 +3737,11 @@ export interface SearchHit {
   agent?: string;
   session_id?: string;
   source_class?: string;
+  revision?: number;
+  format?: string;
+  block_type?: string;
+  locator?: Record<string, unknown> | null;
+  keys_matched?: string[];
 }
 
 export interface KnowledgeSearchOutput {
@@ -3922,6 +3929,13 @@ export interface KnowledgeSynthesizeInput {
   max_windows?: number;
 }
 
+export interface CitedChunk {
+  source_uri: string;
+  chunk_idx: number;
+  revision?: number;
+  locator?: Record<string, unknown> | null;
+}
+
 export interface KnowledgeSynthesizeOutput {
   answer: string;
   windows: number;
@@ -3929,6 +3943,7 @@ export interface KnowledgeSynthesizeOutput {
   documents: number;
   reduce_rounds: number;
   citations?: string[];
+  cited_chunks?: CitedChunk[];
   unsupported_citations?: string[];
   truncated?: boolean;
   abstain?: boolean;

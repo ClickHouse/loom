@@ -426,24 +426,40 @@ pages are paced half a second apart.
 
 ## Searching
 
-`knowledge.search` runs two legs per namespace and fuses them by reciprocal rank:
+`knowledge.search` runs a vector leg and a BM25 leg per namespace, and in hybrid mode
+an exact-key leg, and fuses them by reciprocal rank:
 
-| Field               | Default    | Effect                                                                                                 |
-| ------------------- | ---------- | ------------------------------------------------------------------------------------------------------ |
-| `search_mode`       | `hybrid`   | `semantic` (vector only) or `lexical` (BM25 only) pins one leg.                                        |
-| `lexical_weight`    | `1.0`      | The BM25 leg's weight in fusion. Lower it when the query's tokens are everywhere (paths, boilerplate). |
-| `namespace_scope`   | `all_mine` | `this` searches only `namespace`; `all_mine` fans out over the caller's namespaces.                    |
-| `uri_prefix`        | `[]`       | Up to 8 prefixes (`docs/guides/`); a primary-key range on `loom.chunks`, not a post-filter.            |
-| `tags`              | `[]`       | Keep chunks carrying any of these tags.                                                                |
-| `since_seconds`     | unset      | Only chunks ingested in the window.                                                                    |
-| `collapse_sections` | `true`     | One hit per (document, section); the survivor reports `siblings_folded`.                               |
-| `narrow_spans`      | `false`    | Also return the two-sentence `span` nearest the query, with its offsets and similarity.                |
-| `top_k`             | `5`        | 1–100.                                                                                                 |
-| `rerank`            | `""`       | Reranker for the fused head; `""` = the deployment default, `"none"` = off.                            |
+| Field               | Default    | Effect                                                                                                        |
+| ------------------- | ---------- | ------------------------------------------------------------------------------------------------------------- |
+| `search_mode`       | `hybrid`   | `semantic` (vector only) or `lexical` (BM25 only) pins one leg.                                               |
+| `lexical_weight`    | `1.0`      | The BM25 leg's weight in fusion. Lower it when the query's tokens are everywhere (paths, boilerplate).        |
+| `namespace_scope`   | `all_mine` | `this` searches only `namespace`; `all_mine` fans out over the caller's namespaces.                           |
+| `uri_prefix`        | `[]`       | Up to 8 prefixes (`docs/guides/`); a primary-key range on `loom.chunks`, not a post-filter.                   |
+| `tags`              | `[]`       | Keep chunks carrying any of these tags.                                                                       |
+| `since_seconds`     | unset      | Only chunks ingested in the window.                                                                           |
+| `formats`           | `[]`       | Only chunks of documents in these formats (`sql`, `toml`, `markdown`, ...; `""` for text a caller extracted). |
+| `block_types`       | `[]`       | Only chunks of these block types (`sql_statement`, `toml_key`, `paragraph`, `mixed`, ...).                    |
+| `collapse_sections` | `true`     | One hit per (document, section); the survivor reports `siblings_folded`.                                      |
+| `narrow_spans`      | `false`    | Also return the two-sentence `span` nearest the query, with its offsets and similarity.                       |
+| `top_k`             | `5`        | 1–100.                                                                                                        |
+| `rerank`            | `""`       | Reranker for the fused head; `""` = the deployment default, `"none"` = off.                                   |
 
 Each hit carries `source_uri`, `chunk_idx`, `content`, `section` (the breadcrumb as
 text) and `section_path`, `similarity`, `lexical_score`, `score` (the fused rank in
-hybrid mode) and, on a fan-out, the `namespace` it came from.
+hybrid mode) and, on a fan-out, the `namespace` it came from. A citation names what
+it read: `revision` is the document's revision (0 for one written before revisions
+were numbered) and `format` its format. A chunk of an [ingested file](#ingesting-files)
+also carries its `block_type` and its `locator` (its lines, a key path), so a caller
+opens the passage in the source.
+
+**Exact keys.** An extracted file's chunks carry the names their blocks define or read
+(the tables a SQL statement creates and reads, a TOML key path). In hybrid mode the
+query's identifier-shaped terms (`events`, `server.port`), as written and lowercased,
+are looked up in them, and the chunks that name the most rank first in a third leg; a
+hit from it reports `keys_matched`. Identifiers that share their words (`orders_daily`,
+`daily_orders`) read the same to BM25, and the exact-key leg tells them apart. A
+block type filter leaves out text a caller extracted (it has none); a TOML table packs
+with its keys, so its chunk's type is `mixed`.
 
 **Reranking.** `rerank` names a reranker (`builtin:openai[:<model>]`,
 `builtin:cohere[:<model>]` or an endpoint in `LOOM_RERANK_ENDPOINTS_JSON`; a URL is
@@ -502,7 +518,9 @@ Search finds a passage; three other reads cover the rest of the work with a long
   (`[source#idx]`, `[source#a-b]`, or a list of them separated by `,` or `;`); a
   citation of anything else (a chunk past `max_windows`, an index that does not exist,
   another document) is removed from `answer` and listed in `unsupported_citations`,
-  since following it would read something the answer did not come from. A bracket
+  since following it would read something the answer did not come from.
+  `cited_chunks` lists each chunk the kept citations name, with its document's
+  `revision` and, for an ingested file, its `locator`. A bracket
   holding anything else, or naming a source with a blank, comma or semicolon, is prose
   and stays as written (of nested brackets, the innermost is read). An answer that is
   empty (no letter or digit) as written or once those citations are removed abstains

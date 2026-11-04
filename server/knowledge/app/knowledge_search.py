@@ -69,6 +69,7 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
         )
     results_per_ns = await _search_private_first(input, namespaces, search)
     all_hits = _as_search_hits(results_per_ns)
+    await _attach_revisions(input.org, all_hits)
     all_hits.sort(key=lambda x: (x.score, x.similarity), reverse=True)
     reranked_by = ""
     if endpoint and len(all_hits) > 1:
@@ -174,10 +175,14 @@ def _namespaces_search(
         HybridSearchQuery,
         fuse_rrf,
         hybrid_search,
+        keys_search,
         lexical_search,
     )
+    from server.knowledge.domain.exact_keys import query_keys
 
     tokens = knowledge_bm25.tokenize(input.query) if input.search_mode != "semantic" else []
+    # The exact-key leg runs in hybrid mode, fused with the other two.
+    keys = query_keys(input.query) if input.search_mode == "hybrid" else []
 
     # Collapsing sections folds sibling chunks after the statement: ask for more,
     # so the page still fills. `pool` is a reranker's head when one applies (0 when
@@ -196,6 +201,8 @@ def _namespaces_search(
             uri_prefixes=list(input.uri_prefix or []),
             session_ids=list(input.session_ids),
             source_classes=list(input.source_classes),
+            formats=list(input.formats),
+            block_types=list(input.block_types),
         )
         if input.search_mode == "semantic" or not tokens:
             return await hybrid_search(base)
@@ -215,11 +222,13 @@ def _namespaces_search(
             return await lexical_search(lex_q)
         # Fusion candidates: fetch a wider slice from each leg so the top_k of
         # the fused list is drawn from more than top_k on either side.
-        wide = dataclasses.replace(lex_q, top_k=max(top_k * 3, 20))
-        sem, lex = await asyncio.gather(hybrid_search(wide), lexical_search(wide))
-        if not lex:
+        wide = dataclasses.replace(lex_q, top_k=max(top_k * 3, 20), keys=keys)
+        sem, lex, keyed = await asyncio.gather(
+            hybrid_search(wide), lexical_search(wide), keys_search(wide)
+        )
+        if not lex and not keyed:
             return sem[:top_k]
-        return fuse_rrf(sem, lex, top_k=top_k, w_lex=input.lexical_weight)
+        return fuse_rrf(sem, lex, top_k=top_k, w_lex=input.lexical_weight, keyed=keyed)
 
     async def _search(namespaces: list[str]) -> list[tuple[str, list[ChunkHit]]]:
         by_ns: dict[str, list[ChunkHit]] = {}
@@ -301,9 +310,27 @@ def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_S
                     agent=h.agent,
                     session_id=h.session_id,
                     source_class=h.source_class,
+                    block_type=h.block_type,
+                    locator=h.locator,
+                    keys_matched=list(h.keys_matched),
                 )
             )
     return all_hits
+
+
+async def _attach_revisions(org: str, hits: list[_SearchHit]) -> None:
+    """Each hit's document revision and format, from one read of the hits' documents."""
+    from server.knowledge.store import documents as documents_repo
+
+    if not hits:
+        return
+    found = await documents_repo.revisions_and_formats(
+        org,
+        sorted({h.namespace for h in hits}),
+        sorted({h.source_uri for h in hits}),
+    )
+    for h in hits:
+        h.revision, h.format = found.get((h.namespace, h.source_uri), (0, ""))
 
 
 async def _narrow_spans(embedder: Embedder, query_vec: list[float], top: list[_SearchHit]) -> None:

@@ -227,6 +227,11 @@ async def document_chunks(org: str, namespace: str, source_uri: str) -> list[Cor
                 idx=int(r.chunk_idx),
                 text=str(r.content or ""),
                 section_path=tuple(str(p) for p in path) if isinstance(path, list) else (),
+                locator=(
+                    raw["locator"]
+                    if isinstance(raw, dict) and isinstance(raw.get("locator"), dict)
+                    else None
+                ),
             )
         )
     return out

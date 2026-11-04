@@ -365,6 +365,8 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 | `uri_prefix` | `list[str]` | *(computed)* | Directory scope: only chunks whose source_uri starts with one of these prefixes. |
 | `session_ids` | `list[str]` | *(computed)* | Only chunks of documents written in one of these sessions (a chat's own attachments, an agent run's output). |
 | `source_classes` | `list[str]` | *(computed)* | Only chunks of these classes, e.g. ["asserted"] for what people and their agents wrote as their own, without what an agent derived or fetched. |
+| `formats` | `list[str]` | *(computed)* | Only chunks of documents in these formats (`sql`, `toml`, `markdown`, ...; '' for text a caller extracted). |
+| `block_types` | `list[str]` | *(computed)* | Only chunks of these block types (`sql_statement`, `toml_table`, `toml_key`, `heading`, `paragraph`, `code`, `mixed`, ...). |
 | `rerank` | `str` | `''` | Reranker for the fused head: "" = the deployment default (LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT), "none" = off, "builtin:openai[:<model>]", "builtin:cohere[:<model>]" or an endpoint name in LOOM_RERANK_ENDPOINTS_JSON (no URL). |
 
 | Output field | Type | Meaning |
@@ -539,6 +541,7 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | `documents` | `int` | How many of the named documents had chunks to read. |
 | `reduce_rounds` | `int` | How many fold rounds merged the notes into the answer; 1 when they fit one call. |
 | `citations` | `list[str]` | Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning documents) citations in the answer, in the order found; each names chunks the passes read. |
+| `cited_chunks` | `list[_CitedChunk]` | Each chunk the kept `citations` name, once, in the order first cited: its revision and its locator, so a caller can open the passage the answer came from. |
 | `unsupported_citations` | `list[str]` | Citations the model wrote naming a chunk the passes did not read; removed from `answer`. |
 | `truncated` | `bool` | True when the documents needed more than `max_windows` windows and only the first were read. |
 | `abstain` | `bool` | True when there is no answer to give; `abstain_reason` says why. |

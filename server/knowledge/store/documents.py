@@ -133,6 +133,31 @@ async def get_one(
     return _hydrate(row) if row else None
 
 
+async def revisions_and_formats(
+    org: str,
+    namespaces: Sequence[str],
+    source_uris: Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> dict[tuple[str, str], tuple[int, str]]:
+    """(revision, format) of each live document among `source_uris` in `namespaces`,
+    keyed by (namespace, source_uri): what a search hit cites. One statement over the
+    sort key's prefix, however many hits."""
+    if not namespaces or not source_uris:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT namespace, source_uri, revision, toString(format) AS fmt FROM loom.documents FINAL"
+        " WHERE org = {org:String} AND namespace IN {nss:Array(String)}"
+        " AND source_uri IN {uris:Array(String)} AND superseded_at IS NULL",
+        params={"org": org, "nss": list(namespaces), "uris": list(source_uris)},
+    )
+    return {
+        (str(r["namespace"]), str(r["source_uri"])): (int(r["revision"]), str(r["fmt"]))
+        for r in rows
+    }
+
+
 async def revision_by_ingestion(
     org: str, namespace: str, source_uri: str, ingestion_id: str, *, ch: _CHClient | None = None
 ) -> int | None:

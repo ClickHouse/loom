@@ -43,6 +43,12 @@ class HybridSearchQuery:
     # Only chunks of documents written in these sessions / of these classes; empty = all.
     session_ids: list[str] = field(default_factory=list)
     source_classes: list[str] = field(default_factory=list)
+    # Only chunks of documents in these formats (`sql`, `markdown`, ...; '' for text a
+    # caller extracted) / of these block types (`sql_statement`, `toml_table`, ...).
+    formats: list[str] = field(default_factory=list)
+    block_types: list[str] = field(default_factory=list)
+    # Exact-key leg input: the query's candidate keys; empty = no exact-key leg.
+    keys: list[str] = field(default_factory=list)
     # Lexical leg inputs; empty tokens = no lexical leg.
     tokens: list[str] = field(default_factory=list)
     idfs: list[float] = field(default_factory=list)
@@ -72,6 +78,12 @@ class ChunkHit:
     source_class: str = ""
     # The chunk's stored context (title, description, breadcrumb), for a reranker.
     context: str = ""
+    # From an extracted document's structural chunk: its blocks' type and where in the
+    # source it sits (lines, a key path, ...). '' and None for text a caller extracted.
+    block_type: str = ""
+    locator: dict[str, Any] | None = None
+    # The query's keys this chunk defines or reads (the exact-key leg).
+    keys_matched: tuple[str, ...] = ()
 
     @property
     def section(self) -> str:
@@ -87,13 +99,15 @@ def fuse_rrf(
     *,
     top_k: int,
     w_lex: float = 1.0,
+    keyed: list[ChunkHit] | None = None,
 ) -> list[ChunkHit]:
     """Reciprocal-rank fusion of the legs: score = 1/(k + rank_sem) +
-    w_lex/(k + rank_lex), k = 60, over the union of candidates. A hit present in
-    one leg only takes that leg's term. Ties break on distance, then on the chunk
-    key, so the order is a function of the inputs."""
+    w_lex/(k + rank_lex) + 1/(k + rank_key), k = 60, over the union of candidates.
+    A hit present in one leg only takes that leg's term. Ties break on distance,
+    then on the chunk key, so the order is a function of the inputs."""
+    keyed = keyed or []
     by_key: dict[tuple[str, str, int], ChunkHit] = {}
-    for h in [*semantic, *lexical]:
+    for h in [*semantic, *lexical, *keyed]:
         key = (h.namespace, h.source_uri, h.chunk_idx)
         prev = by_key.get(key)
         if prev is None:
@@ -106,9 +120,11 @@ def fuse_rrf(
                 section_path=prev.section_path or h.section_path,
                 lexical_score=max(prev.lexical_score, h.lexical_score),
                 ingested_at=prev.ingested_at or h.ingested_at,
+                keys_matched=prev.keys_matched or h.keys_matched,
             )
     sem_rank = {(h.namespace, h.source_uri, h.chunk_idx): r + 1 for r, h in enumerate(semantic)}
     lex_rank = {(h.namespace, h.source_uri, h.chunk_idx): r + 1 for r, h in enumerate(lexical)}
+    key_rank = {(h.namespace, h.source_uri, h.chunk_idx): r + 1 for r, h in enumerate(keyed)}
     fused: list[ChunkHit] = []
     for key, h in by_key.items():
         score = 0.0
@@ -116,22 +132,37 @@ def fuse_rrf(
             score += 1.0 / (RRF_K + sem_rank[key])
         if key in lex_rank and h.lexical_score > 0:
             score += w_lex / (RRF_K + lex_rank[key])
+        if key in key_rank:
+            score += 1.0 / (RRF_K + key_rank[key])
         fused.append(dataclasses.replace(h, score=score))
     fused.sort(key=lambda h: (-h.score, h.distance, h.namespace, h.source_uri, h.chunk_idx))
     return fused[:top_k]
 
 
-def _section_path_of(chunk_metadata: object) -> tuple[str, ...]:
-    if not chunk_metadata or not isinstance(chunk_metadata, str):
-        return ()
-    try:
-        meta = json.loads(chunk_metadata)
-    except (TypeError, ValueError):
-        return ()
-    path = meta.get("section_path") if isinstance(meta, dict) else None
-    if not isinstance(path, list):
-        return ()
-    return tuple(str(p) for p in path if str(p))
+class _Structure(TypedDict):
+    section_path: tuple[str, ...]
+    block_type: str
+    locator: dict[str, Any] | None
+
+
+def _structure(chunk_metadata: object) -> _Structure:
+    """The section path, block type and locator a chunk's metadata records; empty for
+    text a caller extracted, or metadata that does not read."""
+    meta: object = None
+    if chunk_metadata and isinstance(chunk_metadata, str):
+        try:
+            meta = json.loads(chunk_metadata)
+        except (TypeError, ValueError):
+            meta = None
+    if not isinstance(meta, dict):
+        meta = {}
+    path = meta.get("section_path")
+    locator = meta.get("locator")
+    return {
+        "section_path": (tuple(str(p) for p in path if str(p)) if isinstance(path, list) else ()),
+        "block_type": str(meta.get("block_type") or ""),
+        "locator": locator if isinstance(locator, dict) else None,
+    }
 
 
 async def hybrid_search(
@@ -175,7 +206,7 @@ async def hybrid_search(
             context=r["context"],
             tags=list(r["tags"] or []),
             distance=float(r["distance"]),
-            section_path=_section_path_of(r.get("chunk_metadata")),
+            **_structure(r.get("chunk_metadata")),
             score=1.0 - float(r["distance"]),
             ingested_at=r.get("ingested_at"),
             **_provenance(r),
@@ -226,6 +257,19 @@ def _common_where(q: HybridSearchQuery) -> tuple[list[str], dict[str, Any]]:
     if q.source_classes:
         where.append("toString(source_class) IN {classes:Array(String)}")
         params["classes"] = list(q.source_classes)
+    if q.block_types:
+        where.append(
+            "JSONExtractString(chunk_metadata, 'block_type') IN {block_types:Array(String)}"
+        )
+        params["block_types"] = list(q.block_types)
+    if q.formats:
+        # The document row holds the format: a chunk counts when its live document does.
+        where.append(
+            "(namespace, source_uri) IN (SELECT namespace, source_uri FROM loom.documents FINAL"
+            " WHERE org = {org:String} AND namespace IN {nss:Array(String)}"
+            " AND superseded_at IS NULL AND format IN {formats:Array(String)})"
+        )
+        params["formats"] = list(q.formats)
     prefixes = [p for p in (q.uri_prefixes or []) if p]
     if prefixes:
         # One startsWith per prefix, OR-ed: the analyzer turns each into a
@@ -307,10 +351,65 @@ async def lexical_search(
             context=r["context"],
             tags=list(r["tags"] or []),
             distance=float(r["distance"]),
-            section_path=_section_path_of(r.get("chunk_metadata")),
+            **_structure(r.get("chunk_metadata")),
             lexical_score=float(r["lexical"] or 0.0),
             ingested_at=r.get("ingested_at"),
             score=float(r["lexical"] or 0.0),
+            **_provenance(r),
+        )
+        for r in rows
+    ]
+
+
+async def keys_search(
+    q: HybridSearchQuery,
+    *,
+    ch: _CHClient | None = None,
+) -> list[ChunkHit]:
+    """The exact-key leg: chunks whose `keys` (what their blocks define or read: a
+    SQL statement's objects, a TOML key path) include one of the query's candidate
+    keys, the most keys matched first, then by cosine distance. The `keys` bloom
+    index skips the parts with none. Returns [] when the query names no key."""
+    if not q.keys:
+        return []
+    ch = ch or _default_client()
+    where, params = _common_where(q)
+    params["keys"] = list(q.keys)
+    where.append("hasAny(keys, {keys:Array(String)})")
+    sql = f"""
+        SELECT
+            namespace,
+            source_uri,
+            chunk_idx,
+            content,
+            context,
+            tags,
+            chunk_metadata,
+            ingested_at,
+            agent,
+            session_id,
+            toString(source_class) AS source_class,
+            cosineDistance(embedding, {{q:Array(Float32)}}) AS distance,
+            arrayIntersect(keys, {{keys:Array(String)}}) AS matched
+        FROM loom.chunks
+        WHERE {" AND ".join(where)}
+        ORDER BY length(matched) DESC, distance ASC
+        LIMIT {{top_k:UInt32}}
+    """
+    rows = await ch.query_all(sql, params=params)
+    return [
+        ChunkHit(
+            namespace=r["namespace"],
+            source_uri=r["source_uri"],
+            chunk_idx=int(r["chunk_idx"]),
+            content=r["content"],
+            context=r["context"],
+            tags=list(r["tags"] or []),
+            distance=float(r["distance"]),
+            ingested_at=r.get("ingested_at"),
+            score=1.0 - float(r["distance"]),
+            keys_matched=tuple(str(k) for k in (r.get("matched") or [])),
+            **_structure(r.get("chunk_metadata")),
             **_provenance(r),
         )
         for r in rows

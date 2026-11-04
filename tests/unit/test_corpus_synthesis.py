@@ -11,6 +11,17 @@ import pytest
 from server.memory.domain import corpus_synthesis as cs
 
 
+@pytest.fixture(autouse=True)
+def _no_document_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hits' documents are not stored: every hit reads revision 0, no format."""
+    from server.knowledge.store import documents as documents_repo
+
+    async def _none(*a: Any, **k: Any) -> dict[Any, Any]:
+        return {}
+
+    monkeypatch.setattr(documents_repo, "revisions_and_formats", _none)
+
+
 def _c(idx: int, text: str, section: tuple[str, ...] = (), uri: str = "doc://a") -> cs.CorpusChunk:
     return cs.CorpusChunk(source_uri=uri, idx=idx, text=text, section_path=section)
 
