@@ -693,8 +693,7 @@ below the gold rows on A precision (-11.3); its B avoidance is not resolved agai
 (-8.9, -18.2 .. +6.7) and falls below the gold rows by 79.3 points, with B satisfaction
 73.7 points below; it also fails more C tasks than arm 0 and arm 3. A hypothesis, not
 tested here: a decision row names the rejected option as rejected, and a whole document
-does not. Unpaired, as per-arm rates: arm 4 states the current design on 20% of
-supersession judgements (averaged over the supersession tasks), arm 3 on 100%.
+does not. Unpaired, as per-arm rates: C states current is 20.0 in arm 4 and 100.0 in arm 3.
 
 **Treatment check.** Of the 30 tasks with gold rows, arm 3's pre-edit block served 27 and
 search served 29 (a task counts when it served one of its own gold rows); arm 4's pre-edit
