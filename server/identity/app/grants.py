@@ -437,7 +437,7 @@ async def _revoke_row(
     row: GrantState,
     may_take: Callable[[GrantState], None] | None,
     *,
-    audited: bool = False,
+    audited: bool,
 ) -> datetime | None:
     """Revoke the row stored under `subject`, under its claim, and the grants of the
     tokens it minted there; when it was revoked, or None when nothing was."""
@@ -542,7 +542,7 @@ async def _refuse_last_admin(
 
 
 async def _write_revoke(
-    input: GrantsRevokeInput, subject: str, row: GrantState, *, audited: bool = False
+    input: GrantsRevokeInput, subject: str, row: GrantState, *, audited: bool
 ) -> datetime:
     """`grants.revoke`'s write, under the grant's claim. Refuses to revoke a
     namespace's last active admin. An `audited` row gets its own audit row even
@@ -551,6 +551,7 @@ async def _write_revoke(
     if _active_admin(row):
         await _refuse_last_admin(input)
     now = datetime.now(UTC).replace(tzinfo=None)
+    landed = False
     try:
         await grants_repo.insert_row(
             {
@@ -565,12 +566,10 @@ async def _write_revoke(
                 "version": _version(),
             }
         )
-    except BaseException:
+        landed = True
+    finally:
         if audited:
-            await _audit_stored_row(input, subject, unconfirmed=True)
-        raise
-    if audited:
-        await _audit_stored_row(input, subject)
+            await _audit_stored_row(input, subject, unconfirmed=not landed)
     return now
 
 

@@ -128,8 +128,8 @@ class GrantsPendingForMeOutput(BaseModel):
 class GrantsRevokeInput(BaseModel):
     org: str
     namespace: str
-    # Whose grant to revoke (email, handle or `sub`): each verified spelling's row goes, an
-    # address that never held one here takes its unverified account's row, and a pending
+    # Whose grant to revoke: a login handle, an email or a service-account `sub`; the
+    # person's row under each of their verified spellings is revoked, and a pending
     # request is rejected.
     subject: str
 

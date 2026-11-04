@@ -206,8 +206,9 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
                 f"{row['owner_email']} and revoke them first"
             )
         # An unlinked password account's address was never verified here: its grants
-        # do not admit this account. When another account's verified email it is,
-        # they are that account's and the link leaves them; else they admit no one.
+        # do not admit this account. When it is another account's verified email,
+        # its grants are that account's and the link leaves them; else they admit
+        # no one.
         if not await _verified_elsewhere(org, namespace, was):
             raise ValueError(
                 f"{was} holds grants of its own: {named}; they admit no one (the "
