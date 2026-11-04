@@ -168,7 +168,7 @@ async def ensure_personal_namespace_cached(
 
         ch = get_client()
         # Any spelling of the person, in any case, counts, as it does at the
-        # gate: a person granted under their email already has a namespace.
+        # gate: a person granted under their verified email already has a namespace.
         subjects = [s.lower() for s in await subject_aliases(org, subject, ch=ch)]
         owned = await ch.query_one(
             """

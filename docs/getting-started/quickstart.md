@@ -456,13 +456,14 @@ In multi-user mode a listed repository has no maintainer, so without `"public":t
 reader's join request waits with nobody to approve it. After `loom code init`, give
 someone access as the operator with a token minted in the container: `admin` makes them
 the maintainer, who approves readers from then on, and `viewer` lets them read. The
-subject is the account's sign-in email:
+subject is the namespace the account signed up with (its login handle, the subject of
+its tokens); a self-signup email is never verified, so a grant to it admits no one:
 
 ```bash
 ADMIN_TOKEN=$(docker compose --project-directory "$HOME/.loom" exec -T loom loom mint-token --subject operator --org dev --namespaces code-myrepo --roles admin --ttl-days 1)
 curl -s http://localhost:7777/v1/grants.create -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"org":"dev","namespace":"code-myrepo","subject":"you@example.com","role":"admin"}'
+  -d '{"org":"dev","namespace":"code-myrepo","subject":"your-namespace","role":"admin"}'
 ```
 
 ## Optional: ask a question about a document
