@@ -214,7 +214,8 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
         if not await _verified_elsewhere(org, namespace, was):
             raise ValueError(
                 f"{was} holds grants of its own: {named}; they admit no one (the "
-                "address was never verified): revoke them first"
+                f"address was never verified): grant them to {row['owner_email']} if "
+                "they were meant for this account, and revoke them first"
             )
     revoked = [g for g in grants if g["revoked_at"] is not None] if was else []
     if revoked:

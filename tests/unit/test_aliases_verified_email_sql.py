@@ -291,12 +291,14 @@ async def test_revoking_a_verified_person_leaves_a_squatters_tokens(
         *SETUP,
         ddl("service_accounts"),
         ddl("acl_versions"),
+        ddl("audit_log"),
         _account("mallory2", "carol@corp.example", "argon2-hash"),
         "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
         f" ('{ORG}', 'bot', 'sa:m2-bot', 'mallory2')",
         _grant("team-y", "sa:m2-bot"),
     )
     monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
+    monkeypatch.setattr("server.observability.audit.get_client", lambda: kept)
     monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
     body = GrantsRevokeInput(org=ORG, namespace="team-y", subject=named)
     assert (await grants_app.handle_grants_revoke(body)).revoked is True
