@@ -113,13 +113,15 @@ each comparison reports its minimum detectable effect.
 
 A detector is one of:
 
-| `type`                    | Fires when                                                                                                                                                                                                                                               |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `file_touched`            | the diff modifies any of `paths`                                                                                                                                                                                                                         |
-| `diff_added_regex`        | an added line in a file matching `path_glob` matches `pattern`                                                                                                                                                                                           |
-| `diff_removed_regex`      | a removed line in a file matching `path_glob` matches `pattern`                                                                                                                                                                                          |
-| `setting_default_changed` | an added line declares `setting` with a literal other than `from` (`name = <literal>`, `name: <literal>`, a `DECLARE(...)` line or a `{"name", old, new}` entry), or holds `to` as a token after the setting name; `from` and `to` are one-token strings |
-| `judge`                   | never: its `rubric` goes to the judge                                                                                                                                                                                                                    |
+| `type`               | Fires when                                                      |
+| -------------------- | --------------------------------------------------------------- |
+| `file_touched`       | the diff modifies any of `paths`                                |
+| `diff_added_regex`   | an added line in a file matching `path_glob` matches `pattern`  |
+| `diff_removed_regex` | a removed line in a file matching `path_glob` matches `pattern` |
+| `judge`              | never: its `rubric` goes to the judge                           |
+
+A changed default is caught with a `diff_added_regex` whose `path_glob` names the file
+and whose `pattern` matches the declaration line with a value other than the old one.
 
 A detector that fires is a failure of the task. The paths detectors name are also the
 files whose pre-edit block arms 3 and 4 read. The harness applies no patch and runs no

@@ -12,15 +12,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from bench.design_rationale.detectors import TOKEN
-
 KINDS = ("A", "B", "C")
-# Each detector type and the keys it needs (`path_glob` and `to` are optional).
+# Each detector type and the keys it needs (`path_glob` is optional).
 DETECTOR_TYPES = {
     "file_touched": ("paths",),
     "diff_added_regex": ("pattern",),
     "diff_removed_regex": ("pattern",),
-    "setting_default_changed": ("setting", "from"),
     "judge": ("rubric",),
 }
 C_SUBTYPES = ("supersession", "abstention")
@@ -184,7 +181,7 @@ def _check_detector(tid: str, d: Any) -> None:
     paths = d.get("paths", [])
     if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
         raise TaskSetError(f"task {tid}: a detector's paths is a list of strings")
-    for key in ("pattern", "path_glob", "setting", "rubric"):
+    for key in ("pattern", "path_glob", "rubric"):
         if key in d and not isinstance(d[key], str):
             raise TaskSetError(f"task {tid}: a detector's {key} is a string")
     if "pattern" in d:
@@ -192,11 +189,6 @@ def _check_detector(tid: str, d: Any) -> None:
             re.compile(d["pattern"])
         except re.error as e:
             raise TaskSetError(f"task {tid}: a detector's pattern does not compile: {e}") from None
-    for key in ("from", "to"):
-        # Compared as one token after the setting name.
-        value = d.get(key)
-        if key in d and not (isinstance(value, str) and TOKEN.fullmatch(value)):
-            raise TaskSetError(f"task {tid}: a detector's {key} is a one-token string")
 
 
 def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:

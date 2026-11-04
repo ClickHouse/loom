@@ -116,24 +116,11 @@ def test_the_detectors_read_the_diff_in_the_answer():
     assert sorted(files) == ["src/cache/config.py", "src/cache/segmented_lru.py"]
     removed = {"type": "diff_removed_regex", "path_glob": "src/cache/*", "pattern": "probation"}
     added = {"type": "diff_added_regex", "path_glob": "src/upload/*", "pattern": "sleep"}
-    setting = {"type": "setting_default_changed", "setting": "thumb_cache_bytes", "from": "512"}
     touched = {"type": "file_touched", "paths": ["src/cache/config.py"]}
     assert detectors.run_detector(removed, files) is True
     assert detectors.run_detector(added, files) is False
-    assert detectors.run_detector(setting, files) is True
     assert detectors.run_detector(touched, files) is True
     assert detectors.run_detector({"type": "judge", "rubric": "r"}, files) is None
-
-
-def test_the_setting_detector_compares_the_value_as_a_token():
-    setting = {"type": "setting_default_changed", "setting": "thumb_cache_bytes", "from": "512"}
-    same = detectors.diff_files(
-        "--- a/a.py\n+++ b/a.py\n+thumb_cache_bytes = 512 * MiB  # documented\n"
-    )
-    assert detectors.run_detector(setting, same) is False
-    # 5120 contains 512 as text, not as a value.
-    bigger = detectors.diff_files("--- a/a.py\n+++ b/a.py\n+thumb_cache_bytes = 5120 * MiB\n")
-    assert detectors.run_detector(setting, bigger) is True
 
 
 def test_citations_of_each_kind_are_found_once():
@@ -1345,9 +1332,9 @@ def test_a_diff_is_read_file_by_file_without_trusting_hunk_counts():
 def test_a_detector_without_its_keys_is_refused(tmp_path):
     root = _copy_example(tmp_path)
     tasks = json.loads((root / "tasks.json").read_text())
-    tasks["B"][1]["detector"] = [{"type": "setting_default_changed", "setting": "s"}]
+    tasks["B"][1]["detector"] = [{"type": "diff_added_regex", "path_glob": "src/*"}]
     (root / "tasks.json").write_text(json.dumps(tasks))
-    with pytest.raises(TaskSetError, match="setting_default_changed detector without"):
+    with pytest.raises(TaskSetError, match="diff_added_regex detector without"):
         load(root)
 
 
@@ -1359,33 +1346,12 @@ def test_a_detector_of_the_wrong_shape_is_refused(tmp_path):
         ({"detector": [{"type": "file_touched", "paths": "src/a.py"}]}, "list of strings"),
         ({"detector": [{"type": "diff_added_regex", "pattern": 3}]}, "pattern is a string"),
         ({"detector": [{"type": "judge", "rubric": ["r"]}]}, "rubric is a string"),
-        (
-            {"detector": [{"type": "setting_default_changed", "setting": "s", "from": "5 MiB"}]},
-            "one-token string",
-        ),
     ):
         tasks = json.loads((EXAMPLE / "tasks.json").read_text())
         tasks["B"][0].update(broken)
         (root / "tasks.json").write_text(json.dumps(tasks))
         with pytest.raises(TaskSetError, match=message):
             load(root)
-
-
-def test_setting_values_are_tokens_signs_exponents_and_hyphens_included():
-    def fires(line, **d):
-        files = detectors.diff_files(f"--- a/c.py\n+++ b/c.py\n+{line}\n")
-        return detectors.run_detector(
-            {"type": "setting_default_changed", "setting": "s", **d}, files
-        )
-
-    assert not fires("s = -1", **{"from": "-1"})
-    assert fires("s = 1", **{"from": "-1"})
-    assert not fires("s = 1e-05", **{"from": "1e-05"})
-    assert not fires('s = "gpt-4o-mini"', **{"from": "gpt-4o-mini"})
-    assert fires('s = "gpt-4o"', **{"from": "gpt-4o-mini"})
-    # Not a declaration under the from rule, but it holds the `to` value.
-    assert fires('"s": 8,', **{"from": "4", "to": "8"})
-    assert not fires('"s": 8,', **{"from": "4"})
 
 
 def test_a_diff_fence_closes_only_at_a_line_start():
@@ -1399,12 +1365,6 @@ def test_the_loader_refuses_malformed_task_fields(tmp_path):
     root = _copy_example(tmp_path)
     for kind, index, broken, message in (
         ("B", 0, {"detector": [{"type": "diff_added_regex", "pattern": "("}]}, "compile"),
-        (
-            "B",
-            1,
-            {"detector": [{"type": "setting_default_changed", "setting": "s", "from": "a b"}]},
-            "one-token string",
-        ),
         ("A", 0, {"gold_arguments": "one argument"}, "gold_arguments is a list"),
         ("A", 0, {"rejected_options": [1]}, "rejected_options is a list"),
         ("B", 0, {"forbidden_options": None}, "forbidden_options is a list"),
@@ -1422,20 +1382,3 @@ def test_the_loader_refuses_malformed_task_fields(tmp_path):
     (root / "documents.json").write_text(json.dumps(docs))
     with pytest.raises(TaskSetError, match="without '/'"):
         load(root)
-
-
-def test_a_line_that_only_uses_the_setting_does_not_change_its_default():
-    def fires(line):
-        files = detectors.diff_files(f"--- a/c.py\n+++ b/c.py\n+{line}\n")
-        detector = {
-            "type": "setting_default_changed",
-            "setting": "thumb_cache_bytes",
-            "from": "512",
-        }
-        return detectors.run_detector(detector, files)
-
-    assert not fires("ThumbCache(thumb_cache_bytes=settings.thumb_cache_bytes)")
-    assert not fires("def __init__(self, thumb_cache_bytes: int):")
-    assert not fires("if thumb_cache_bytes == 0:")
-    assert fires("thumb_cache_bytes: int = 1_024")
-    assert not fires("thumb_cache_bytes = 512 * MiB")
