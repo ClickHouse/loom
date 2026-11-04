@@ -3,9 +3,9 @@ one pass over every active source, run by the `knowledge_source_sync` worker and
 by `loom knowledge sync`. A folder's turn is below; each other kind has its own
 turn module (`source_sync_linear`), chosen by `_turn_of`, which builds on the
 public helpers here: `Pass` and `TurnResult`, `start_waits`, `full_due` and
-`capped` for a turn's start and stamp, `sync_item` for one listed item (with
-`waiting`, `give_up`, `wait`, `may_write` and `require_current`),
-`write_document`, `retire_absent` and `retire`, and `client_error`.
+`capped` for a turn's start and stamp, `sync_item` for one listed item, with
+`give_up`, `wait` and `require_current` for its fetch, `write_document`,
+`retire_absent` and `retire`, and `client_error`.
 
 A pass reads the active sources and drops those whose namespace is inactive or no
 longer a repository's trunk. Sources a maintainer asked to sync (`sync_now`) go
@@ -28,7 +28,7 @@ up on their revision at once, so later passes skip them without a fetch; one
 with no https link or a format no extractor declares costs no fetch and is
 counted again each pass. A file whose fetch, extraction or write fails in a way
 that may pass (a 5xx or a timeout on that file, its extractor call, the write)
-waits: the turn stays incomplete for `WAIT_PASSES` passes on the same revision,
+waits: the turn stays incomplete for `_WAIT_PASSES` passes on the same revision,
 then the file is given up on. A given-up file is tried again when it changes,
 once after each completed full listing, and on a full sync request. What fails
 for every file stays the turn's: the token exchange, the listing, a 401, a rate
@@ -56,6 +56,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import dataclasses
+import functools
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -102,7 +103,7 @@ _LEASE_TTL_S = 120.0  # not a setting: the entry-lease shape
 # write) holds the turn before the file counts as unconverted: about 45 minutes at
 # the default interval, past a restart or a redeploy of the service it needs, and
 # short enough that one file cannot hold a source's stamp for good.
-WAIT_PASSES = 3  # not a setting: a bound on how long one file may stall a stamp
+_WAIT_PASSES = 3  # not a setting: a bound on how long one file may stall a stamp
 # How far behind the listing's start the stamp stays: a file the store stamps just
 # before the listing but indexes just after it is listed again next turn.
 _STAMP_SKEW_S = 60.0  # not a setting: a margin on the store's own indexing delay
@@ -401,8 +402,7 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
         # its document is kept only if the lookup finds the file still there.
         addresses = {str(f["id"]): source_uri_of(f) for f in files}
         listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
-        async def gone(file_id: str) -> bool | None:
-            return await _file_gone(token, file_id, set(folders), turn)
+        gone = functools.partial(_file_gone, token, folders=set(folders), turn=turn)
 
         await retire_absent(src, listed, gone, run, turn)
     return turn
@@ -427,8 +427,8 @@ def start_waits(turn: TurnResult, detail: dict[str, Any]) -> None:
     elif turn.full and detail.get("retry_granted_for") != listed:
         turn.retry_granted_for = listed
         for file_id, entry in waits.items():
-            if isinstance(entry, list) and len(entry) == 3 and int(entry[1]) >= WAIT_PASSES:
-                waits[file_id] = [entry[0], WAIT_PASSES - 1, entry[2]]
+            if isinstance(entry, list) and len(entry) == 3 and int(entry[1]) >= _WAIT_PASSES:
+                waits[file_id] = [entry[0], _WAIT_PASSES - 1, entry[2]]
     turn.waits = waits
     turn.waits_read = True
 
@@ -534,7 +534,7 @@ def source_uri_of(f: dict[str, Any]) -> str:
     return link.split("#", 1)[0].split("?", 1)[0]
 
 
-def waiting(turn: TurnResult, f: dict[str, Any]) -> list[Any] | None:
+def _waiting(turn: TurnResult, f: dict[str, Any]) -> list[Any] | None:
     """The file's wait entry, dropped when its revision changed since."""
     file_id = str(f["id"])
     entry = turn.waits.get(file_id)
@@ -573,13 +573,13 @@ async def sync_item(
     if prior and prior["source_revision"] == revision and prior["source_uri"] == uri:
         turn.waits.pop(file_id, None)
         return True  # unchanged: no fetch, no embedding
-    entry = waiting(turn, f)
-    if entry is not None and int(entry[1]) >= WAIT_PASSES:
+    entry = _waiting(turn, f)
+    if entry is not None and int(entry[1]) >= _WAIT_PASSES:
         # It waited its passes on this revision: unconverted until it changes.
         turn.unconverted_for(str(entry[2]))
         return True
     # Before any fetch: an address another writer holds costs nothing.
-    if not await may_write(src, uri):
+    if not await _may_write(src, uri):
         turn.waits.pop(file_id, None)
         turn.skipped += 1
         return True
@@ -643,7 +643,7 @@ async def _fetch_and_write(
     src: KnowledgeSource, token: str, f: dict[str, Any], uri: str, turn: TurnResult
 ) -> str:
     """Fetch, convert and write one file: `written`, `waiting` (a failure that may
-    pass holds the turn for `WAIT_PASSES` passes), `given_up` (a refusal gives the
+    pass holds the turn for `_WAIT_PASSES` passes), `given_up` (a refusal gives the
     file up at once; for both the wait entry is kept, and `start_waits` says when
     it is tried again) or `stop` (the turn's own failure: a rate limit, a refused
     credential)."""
@@ -699,7 +699,7 @@ def give_up(f: dict[str, Any], turn: TurnResult, reason: str) -> str:
     """A file refused for good: unconverted now, and recorded as given up on its
     revision, so later passes skip it without a fetch or any of the bound until it
     changes or `start_waits` grants a retry."""
-    turn.waits[str(f["id"])] = [str(f.get("modifiedTime") or ""), WAIT_PASSES, reason]
+    turn.waits[str(f["id"])] = [str(f.get("modifiedTime") or ""), _WAIT_PASSES, reason]
     turn.unconverted_for(reason)
     return "given_up"
 
@@ -717,14 +717,14 @@ def _over_size(f: dict[str, Any]) -> bool:
 
 def wait(f: dict[str, Any], turn: TurnResult, reason: str, error: str) -> str:
     """One more pass this file waited on its revision; unconverted once it waited
-    `WAIT_PASSES`, else the turn stays incomplete. Always `waiting`: the entry
+    `_WAIT_PASSES`, else the turn stays incomplete. Always `waiting`: the entry
     stays once exhausted too, so a given-up file is tried again only when it
     changes or `start_waits` grants a retry."""
     file_id, revision = str(f["id"]), str(f.get("modifiedTime") or "")
-    entry = waiting(turn, f)
+    entry = _waiting(turn, f)
     passes = int(entry[1]) + 1 if entry is not None else 1
     turn.waits[file_id] = [revision, passes, reason]
-    if passes >= WAIT_PASSES:
+    if passes >= _WAIT_PASSES:
         turn.unconverted_for(reason)
     else:
         turn.fail("failed", error[:200])
@@ -784,7 +784,7 @@ async def _fetch(token: str, f: dict[str, Any]) -> _Fetched:
     return _Fetched(convert.artifact_markdown(artifact), fmt, data, convert.coverage_of(artifact))
 
 
-async def may_write(src: KnowledgeSource, uri: str) -> bool:
+async def _may_write(src: KnowledgeSource, uri: str) -> bool:
     """Whether the live document at `uri`, if any, is this source's: a document
     another writer or another source holds is never overwritten or retired."""
     doc = await documents.get_one(src.org, src.namespace, uri, include_superseded=False)
@@ -853,7 +853,7 @@ async def write_document(
 async def retire(src: KnowledgeSource, uri: str) -> bool:
     """Retire one of the source's documents, with the audit row the transport would
     have written for `knowledge.delete`; False when it is no longer the source's."""
-    if not await may_write(src, uri):
+    if not await _may_write(src, uri):
         return False
     pass_context.check_stop()
     out = await writes.handle_knowledge_delete(
@@ -963,7 +963,6 @@ async def _retire_all(src: KnowledgeSource, run: Pass, result: PassResult) -> No
 
 
 __all__ = [
-    "WAIT_PASSES",
     "WORKER",
     "Pass",
     "PassResult",
@@ -973,7 +972,6 @@ __all__ = [
     "client_error",
     "full_due",
     "give_up",
-    "may_write",
     "require_current",
     "retire",
     "retire_absent",
@@ -982,6 +980,5 @@ __all__ = [
     "start_waits",
     "sync_item",
     "wait",
-    "waiting",
     "write_document",
 ]

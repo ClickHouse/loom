@@ -480,20 +480,28 @@ def test_the_key_and_the_tracker_s_text_never_reach_the_state(
     echo = f"bad key {KEY} for Roadmap"
     tracker.answers[_doc_id(1)] = _graphql_error(200, "FORBIDDEN", echo)
     tracker.answers[_doc_id(2)] = _graphql_error(502, "INTERNAL_ERROR", echo)
+    _sync()
+    assert tracker.fetches(_doc_id(1)) == 1 and tracker.fetches(_doc_id(2)) == 1
+    state = json.dumps(world.states["decks"])
+    assert KEY not in state and "Roadmap" not in state
+    # The list refused for the key, with the key in the tracker's text.
     tracker.answers[OTHER] = _graphql_error(400, "AUTHENTICATION_ERROR", echo)
     _sync()
+    assert _detail(world)["status"] == "credential_invalid"
     state = json.dumps(world.states["decks"])
     assert KEY not in state and "Roadmap" not in state
 
 
-def test_list_pages_are_paced(world: _World, tracker: _Tracker, monkeypatch) -> None:
+def test_list_pages_are_paced(
+    world: _World, tracker: _Tracker, monkeypatch: pytest.MonkeyPatch
+) -> None:
     slept: list[float] = []
 
     async def _sleep(seconds: float) -> None:
         slept.append(seconds)
 
     monkeypatch.setattr(linear, "PAGE_PACE_S", 0.5)
-    monkeypatch.setattr(linear.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(linear, "_sleep", _sleep)
     tracker.projects[PROJECT] = [_node(n, f"2026-01-0{n}T00:00:00.000Z") for n in (1, 2, 3, 4, 5)]
     _sync()
     assert slept == [0.5, 0.5]  # three pages of the first project, one of the other

@@ -34,6 +34,7 @@ PAGE_SIZE = 50  # not a setting: the API's page size, the same on every deployme
 # Seconds between listing pages, so a long list stays under the API's hourly
 # request limit per key.
 PAGE_PACE_S = 0.5  # not a setting: the API's limit, the same on every deployment
+_sleep = asyncio.sleep  # the pause between pages; a test replaces it here alone
 # A bound on one listing page's answer (50 nodes of ids, titles, stamps and links).
 _PAGE_MAX_BYTES = 4 * 1024 * 1024  # not a setting: far above any real page
 # The tracker's ids are UUIDs.
@@ -228,7 +229,7 @@ async def project_documents(api_key: str, project_id: str) -> list[dict[str, Any
         found.extend(nodes)
         if not cursor:
             return found
-        await asyncio.sleep(PAGE_PACE_S)
+        await _sleep(PAGE_PACE_S)
 
 
 def _checked(document_id: str) -> str:
