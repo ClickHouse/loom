@@ -5,9 +5,9 @@ second: a name that claims a format its bytes do not have is refused, never
 read as something else. `extract` decodes text strictly (UTF-8, UTF-16 or
 UTF-32 by its byte-order mark, or a declared encoding; no lossy replacement of
 undecodable bytes) and runs the format's parser; a PDF, DOCX or PPTX parser
-reads the bytes themselves. Every failure is an
-`ExtractionError` with a typed `code`, so an unsupported, corrupt or
-mislabelled file is reported as such rather than ingested as binary noise.
+reads the bytes themselves. Every failure is an `ExtractionError` with a typed
+`code`, so an unsupported, corrupt or mislabelled file is reported as such
+rather than ingested as binary noise.
 
 Pure and I/O-free.
 """
