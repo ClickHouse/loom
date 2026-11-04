@@ -60,6 +60,11 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
 - `tests/integration/test_document_object_store_live.py` also needs an S3-compatible store
   in `LOOM_TEST_S3_ENDPOINT` (CI runs a local one, see `.github/workflows/ci.yml`) and
   skips without it.
+- The publishing tests in `tests/integration/test_knowledge_ingest_live.py` run a worker
+  pass that sends originals to a document extractor: they need one reachable through
+  `LOOM_DOCUMENT_EXTRACTOR_URL` (or `LOOM_DOCUMENT_EXTRACTORS_JSON`) and
+  `LOOM_DOCUMENT_EXTRACTOR_TOKEN`, and skip without one. CI runs the reference
+  extractor (see `.github/workflows/ci.yml`; [running it](../../extractor/README.md)).
 - CI sets `LOOM_LATENCY_BUDGET_MULTIPLIER=10`: shared runners are noisy enough that the
   default per-op budgets fire violations.
 - Tests that depend on self-signup skip in CI, which has no `LOOM_SELF_SIGNUP=open`; prefer

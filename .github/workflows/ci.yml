@@ -551,13 +551,14 @@ jobs:
       - name: Start the reference extractor
         run: |
           token="$(openssl rand -hex 24)"
+          echo "::add-mask::$token"
           (cd extractor && LOOM_EXTRACTOR_TOKEN="$token" LOOM_EXTRACTOR_PORT=8790 \
-            nohup python -m loom_extractor > "$RUNNER_TEMP/extractor.log" 2>&1 &)
+            nohup python -m loom_extractor > "$GITHUB_WORKSPACE/extractor.log" 2>&1 &)
           for _ in $(seq 1 30); do
             curl -fsS http://127.0.0.1:8790/healthz >/dev/null && break
             sleep 1
           done
-          curl -fsS http://127.0.0.1:8790/healthz >/dev/null || { tail -50 "$RUNNER_TEMP/extractor.log"; exit 1; }
+          curl -fsS http://127.0.0.1:8790/healthz >/dev/null || { tail -50 extractor.log; exit 1; }
           echo "LOOM_DOCUMENT_EXTRACTOR_URL=http://127.0.0.1:8790" >> "$GITHUB_ENV"
           echo "LOOM_DOCUMENT_EXTRACTOR_TOKEN=$token" >> "$GITHUB_ENV"
       # The whole directory on every pull request; no test is slow enough to
@@ -613,6 +614,7 @@ jobs:
           path: |
             server.log
             server-auth.log
+            extractor.log
 
   mixed-version:
     name: builds N-1 and N on one ClickHouse
