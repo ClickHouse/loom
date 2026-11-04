@@ -242,8 +242,28 @@ const KNOWLEDGE = {
     },
   ],
   listed_complete: false,
-  findings: [finding("unembedded_chunks", "system_state", 1), finding("mixed_live_versions", "usage_heuristic", 0)],
-  coverage: { rules_run: [], rules_skipped: [], complete: false },
+  findings: [
+    finding("documents_without_chunks", "system_state", 0),
+    finding("unembedded_chunks", "system_state", 1),
+    finding("chunks_under_other_model", "system_state", 0),
+    finding("mixed_live_versions", "usage_heuristic", 0),
+  ],
+  coverage: {
+    rules_run: [
+      "documents_without_chunks",
+      "unembedded_chunks",
+      "chunks_under_other_model",
+      "mixed_live_versions",
+      "ingest_backlog",
+      "extractor_unavailable",
+      "ingest_missing_access",
+      "ingest_content_rejected",
+      "ingest_failed_on_server",
+      "extraction_incomplete",
+    ],
+    rules_skipped: [],
+    complete: true,
+  },
   ingestions: {
     sources: 4,
     without_document: 1,
@@ -276,6 +296,7 @@ const KNOWLEDGE = {
     finding("extractor_unavailable", "system_state", 3),
     finding("ingest_missing_access", "system_state", 1),
     finding("ingest_content_rejected", "contract_violation", 2),
+    finding("ingest_failed_on_server", "system_state", 0),
     finding("extraction_incomplete", "usage_heuristic", 1),
   ],
   memory_findings: [

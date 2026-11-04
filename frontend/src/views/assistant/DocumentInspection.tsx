@@ -72,7 +72,7 @@ export function DocumentInspection({ result }: { result: KnowledgeInspection }) 
         <SectionHeading id="docs-totals" level={3} label="What the namespace holds" />
         {empty ? (
           <p className="text-text-muted" role="status">
-            This namespace holds no live document, and no knowledge.ingest job is on record.
+            This namespace holds no live document.
           </p>
         ) : null}
         <p className="text-text tabular" data-testid="docs-totals-line">
