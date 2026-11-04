@@ -74,6 +74,9 @@ class Config:
     only: set[str] = field(default_factory=set)
     keep_namespaces: bool = False
     arm4_namespace: str = ""
+    # Arm 4's rows carry files (a code index linked them, or a sync's rows are served):
+    # it reads the pre-edit block. Without, arm 4 is served through loom_search only.
+    arm4_files: bool = True
     extract_model: str = ""
     extract_window_chars: int = 6000
 
@@ -94,21 +97,28 @@ def own_extraction(cfg: Config) -> bool:
     return 4 in cfg.arms and not cfg.arm4_namespace
 
 
+def pre_edit(cfg: Config, arm: int) -> bool:
+    """Whether the arm reads the pre-edit block."""
+    return arm == 3 or (arm == 4 and cfg.arm4_files)
+
+
 # ---------------------------------------------------------------- extraction bound
 
 
 def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:
     """(calls, input tokens, output tokens) one extraction run on `doc` may spend at most:
-    a call per window or per section, whichever is more, the windows counted at three per
-    window's length (a window is cut at section bounds, and a window can be read twice);
-    each call carries a window, the prompt and, on a re-run over a revision, the known
-    decisions it lists; each may write up to the extractor's output cap."""
+    a window per section or per third of a window's length, whichever is more (a window is
+    cut at section bounds), and two calls per window (a reply with no decision or a reason
+    that is not one span of the text is read again); each call carries a window, the
+    prompt and, on a re-run over a revision, the known decisions it lists; each may write
+    up to the extractor's output cap."""
     from server.memory.domain import decision_extract as dx
     from server.settings import settings
     from server.settings.budgets import llm_max_tokens
 
     sections = sum(1 for line in doc.content.splitlines() if line.startswith("#"))
-    calls = max(1, math.ceil(3 * len(doc.content) / window_chars), sections)
+    windows = max(1, math.ceil(3 * len(doc.content) / window_chars), sections)
+    calls = 2 * windows
     known = settings.memory_decision_extract_known_max if doc.revision_of else 0
     prompt = dx.system_prompt(3, [("", "", "x" * KNOWN_DECISION_CHARS)] * known)
     tin = (min(window_chars, len(doc.content)) + len(prompt)) // CHARS_PER_TOKEN_WORST
@@ -139,7 +149,8 @@ def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
             elif arm in (2, 5):
                 ctx = SEARCH_SECTION_TOKENS
             elif arm in (3, 4):
-                ctx = SEARCH_SECTION_TOKENS + PRE_EDIT_TOKENS * len(ts.task_paths(t))
+                blocks = len(ts.task_paths(t)) if pre_edit(cfg, arm) else 0
+                ctx = SEARCH_SECTION_TOKENS + PRE_EDIT_TOKENS * blocks
             else:
                 ctx = 0
             system, user, cap = prompts.answer_prompt(kind, t, "", ts.system)
@@ -238,10 +249,12 @@ def namespaces(state: dict[str, Any], cfg: Config) -> dict[str, str]:
     }
 
 
-def orgs(cfg: Config) -> dict[str, str]:
-    """The org of each role's namespace; arm 4 served from a sync's rows keeps the org
-    they were written in."""
-    out = {role: f"{cfg.org}-dr-{role}" for role in ("kb", "gold", "extract")}
+def orgs(state: dict[str, Any], cfg: Config) -> dict[str, str]:
+    """The org of each role's namespace, the run's own: a search and the cost readback
+    read a whole org, so a namespace another run left behind must not share one. Arm 4
+    served from a sync's rows keeps the org they were written in."""
+    prefix = state["prefix"]
+    out = {role: f"{cfg.org}-{prefix}-{role}" for role in ("kb", "gold", "extract")}
     if cfg.arm4_namespace:
         out["extract"] = cfg.org
     return out
@@ -249,7 +262,7 @@ def orgs(cfg: Config) -> dict[str, str]:
 
 def bind(loom: Loom, state: dict[str, Any], cfg: Config) -> dict[str, str]:
     ns = namespaces(state, cfg)
-    for role, org in orgs(cfg).items():
+    for role, org in orgs(state, cfg).items():
         loom.bind(ns[role], org)
     return ns
 
@@ -291,27 +304,41 @@ def setup(
 ) -> None:
     """Fill the arms' namespaces: documents into kb (and extract), gold rows into gold
     (never into extract), the extractor over extract; then each revision, the gold rows
-    written after it, and the extractor again over each revised document."""
+    written after it, and the extractor again over each revised document. Each step is
+    recorded in `state` as it completes, so a setup the spend cap stopped resumes at the
+    step it stopped on, in the same order."""
     if state.get("setup_done"):
         return
     ns = namespaces(state, cfg)
-    for name in owned(cfg, ns):
-        loom.register(name, "design-rationale bench", keep=cfg.keep_namespaces, cap_usd=cfg.max_usd)
-    record_server_spend(loom, ledger, state, cfg)
+    done: list[str] = state.setdefault("setup_steps", [])
+
+    def step(name: str) -> bool:
+        return name not in done
+
+    if step("register"):
+        for name in owned(cfg, ns):
+            loom.register(name, "design-rationale bench", cap_usd=cfg.max_usd)
+        record_server_spend(loom, ledger, state, cfg)
+        done.append("register")
     doc_targets = ["kb"] + (["extract"] if own_extraction(cfg) else [])
     reports: dict[str, Any] = state.setdefault("extraction", {})
     for revised in (False, True):
         docs = [d for d in ts.documents.values() if bool(d.revision_of) == revised]
         for d in docs:
-            for name in doc_targets:
-                loom.upsert_document(ns[name], d.source_uri, d.title, d.content)
-        if {3, 5} & set(cfg.arms):
+            if step(f"upsert:{d.id}"):
+                for name in doc_targets:
+                    loom.upsert_document(ns[name], d.source_uri, d.title, d.content)
+                done.append(f"upsert:{d.id}")
+        if {3, 5} & set(cfg.arms) and step(f"gold:{revised}"):
             for row in ts.gold_writes:
                 if row.after_revision == revised:
                     loom.write_gold(ns["gold"], row, gold_pointer(ts, row, ns["kb"]))
+            done.append(f"gold:{revised}")
         if own_extraction(cfg):
             for d in docs:
-                reports[d.id] = run_extraction(cfg, loom, ledger, ns["extract"], d, code)
+                if step(f"extract:{d.id}"):
+                    reports[d.id] = run_extraction(cfg, loom, ledger, ns["extract"], d, code)
+                    done.append(f"extract:{d.id}")
     if own_extraction(cfg):
         write_label_sheet(cfg, loom, ns["extract"], reports)
     record_server_spend(loom, ledger, state, cfg)
@@ -366,8 +393,9 @@ def run_extraction(
     if code is not None:
         for key, names in rows.items():
             files = link_files(code, names)
-            if files and loom.set_files(namespace, key, files):
-                linked[key] = files
+            written = loom.set_files(namespace, key, files) if files else None
+            if written:
+                linked[key] = written
     image_only = sum(
         1
         for line in report.splitlines()
@@ -436,7 +464,8 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
                 entry["context"] = section or "(none)"
                 entry["tokens"] = {"search_knowledge": tokens(section)}
             elif arm in (3, 4, 5):
-                blocks = [] if arm == 5 else [loom.for_file(home, p) for p in ts.task_paths(t)]
+                paths = ts.task_paths(t) if pre_edit(cfg, arm) else []
+                blocks = [loom.for_file(home, p) for p in paths]
                 section = memory_section(loom.search(home, query, session)["text"])
                 parts = [b["rendered"] for b in blocks if b["rendered"]]
                 if section:
@@ -611,10 +640,10 @@ def run(
     ledger: Ledger,
     code: CodeIndex | None = None,
 ) -> bool:
-    """One pass of every stage; True when every answer is judged. A run the cap stops
-    keeps its namespaces, so the next invocation on the same `--out` resumes it; a
-    finished run, or one whose setup failed, erases them (unless --keep-namespaces), and
-    is not resumed."""
+    """One pass of every stage; True when every answer is judged. A run the cap stops,
+    in its setup or after, keeps its namespaces, so the next invocation on the same
+    `--out` resumes it; a finished run, or one whose setup failed otherwise, erases them
+    (unless --keep-namespaces), and is not resumed."""
     cfg.out.mkdir(parents=True, exist_ok=True)
     state_path = cfg.out / "state.json"
     state = load_json(state_path)
@@ -625,6 +654,8 @@ def run(
     try:
         try:
             setup(ts, cfg, loom, ledger, state, code)
+        except CapReached:
+            raise  # its steps so far stay; the resume continues the setup
         except BaseException:
             # Half-filled namespaces never serve a resumed run.
             if not cfg.keep_namespaces:

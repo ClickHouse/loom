@@ -7,7 +7,8 @@ provider client that resends (a learned field, a raised cap for a starved reply)
 checked and recorded request by request. The extraction leg runs in the server's code, so
 its calls enter the ledger as an estimate charged before the run (`estimated: true`), and
 the server's own model and embedding spend in the run's orgs is read back from
-`cost.summary` (`stage: server`).
+`cost.summary` after each stage (`stage: server`): recorded after the fact, and kept from
+running past the cap by each namespace's daily cost cap, not by this ledger.
 """
 
 from __future__ import annotations

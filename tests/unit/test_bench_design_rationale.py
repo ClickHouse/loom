@@ -349,7 +349,9 @@ def test_the_extraction_bound_covers_every_section_and_the_output_cap():
     doc = ts.documents["thumbnail-cache"]
     calls, tin, tout = run.extraction_bound(doc, 6000)
     sections = sum(1 for line in doc.content.splitlines() if line.startswith("#"))
-    assert calls == max(sections, 1) and tout == calls * llm_max_tokens("decision_extract")
+    # Two calls per window (a window read again), a window per section here.
+    assert calls == 2 * max(sections, 1)
+    assert tout == calls * llm_max_tokens("decision_extract")
     # A re-run over a revision lists the known decisions: a longer prompt per call.
     _, revised_in, _ = run.extraction_bound(ts.documents["upload-retries-v2"], 6000)
     _, first_in, _ = run.extraction_bound(ts.documents["upload-retries"], 6000)
@@ -382,23 +384,29 @@ class FakeLoom:
         self.registered: list[tuple[str, float]] = []
         self.erased: list[str] = []
         self.fail_on_upsert = fail_on_upsert
+        self.orgs: dict[str, str] = {}
+        # USD the server spent per org: each document write costs `write_usd`.
+        self.spend: dict[str, float] = {}
+        self.write_usd = 0.01
 
     def bind(self, namespace, org):
-        pass
+        self.orgs[namespace] = org
 
-    def register(self, namespace, description, keep, cap_usd):
+    def register(self, namespace, description, cap_usd):
         self.registered.append((namespace, cap_usd))
 
     def erase(self, namespaces):
         self.erased += namespaces
 
     def server_spend(self, namespaces):
-        return 0.0
+        return sum(self.spend.get(org, 0.0) for org in {self.orgs[ns] for ns in namespaces})
 
     def upsert_document(self, namespace, source_uri, title, content):
         if self.fail_on_upsert:
             raise RuntimeError("upsert refused")
         self.docs.setdefault((namespace, source_uri), []).append(content)
+        org = self.orgs[namespace]
+        self.spend[org] = self.spend.get(org, 0.0) + self.write_usd
 
     def write_gold(self, namespace, row, source_resource_id):
         self.writes.append((row.memory_key, row.value))
@@ -414,7 +422,7 @@ class FakeLoom:
         name = next(n for word, n in CODE_NAMES.items() if word in source_uri)
         self.rows[(namespace, key)] = {
             "value": content.split("\n\n")[2][:200],
-            "files": [],
+            "files": list(getattr(self, "extract_files", [])),
             "source": f"knowledge:{namespace}/{source_uri}",
         }
         return 0, (
@@ -425,9 +433,9 @@ class FakeLoom:
     def set_files(self, namespace, key, files):
         row = self.rows.get((namespace, key))
         if row is None:
-            return False
-        row["files"] = files
-        return True
+            return None
+        row["files"] = sorted({*row["files"], *files})
+        return row["files"]
 
     def for_file(self, namespace, path, token_budget=300):
         hits = [k for (ns, k), r in self.rows.items() if ns == namespace and path in r["files"]]
@@ -523,6 +531,7 @@ def _config(out, **kw):
         judge_repeats=1,
         max_usd=1.0,
         extract_model="gpt-4o-mini",
+        arm4_files=True,
     )
     return run.Config(**{**base, **kw})
 
@@ -580,14 +589,17 @@ def test_the_example_set_runs_end_to_end_over_a_fake_loom(tmp_path):
 def test_without_a_code_index_arm_4_is_compared_with_gold_rows_served_alike(tmp_path):
     ts = load(EXAMPLE)
     out = tmp_path / "run"
-    cfg = _config(out, arms=[3, 4, 5], k=1, judge_orders=1)
+    cfg = _config(out, arms=[3, 4, 5], k=1, judge_orders=1, arm4_files=False)
     ledger = Ledger(out / "ledger.jsonl", cfg.max_usd)
     out.mkdir()
     model = _fake_model(ledger)
-    run.run(ts, cfg, FakeLoom(), model, [model], ledger)
+    loom = FakeLoom()
+    # A row whose text spells out a path would reach the pre-edit block: arm 4 reads none.
+    loom.extract_files = ["src/cache/segmented_lru.py", "src/upload/retry.py"]
+    run.run(ts, cfg, loom, model, [model], ledger)
     surf = json.loads((out / "surfaces.json").read_text())
-    assert all(not v["for_file_keys"] for k, v in surf.items() if k.endswith("/arm4"))
-    assert all(v["for_file"] == [] for k, v in surf.items() if k.endswith("/arm5"))
+    assert all(v["for_file"] == [] for k, v in surf.items() if k.endswith(("/arm4", "/arm5")))
+    assert any(v["for_file"] for k, v in surf.items() if k.endswith("/arm3"))
     m = score.score(ts, out)
     assert "arm5_search_served" in m["treatment"]
     assert (4, 5) in {(c["treatment"], c["reference"]) for c in m["comparisons"]}
@@ -598,6 +610,7 @@ def test_a_run_stopped_by_the_cap_resumes_without_spending_again(tmp_path):
     out = tmp_path / "run"
     out.mkdir()
     loom = FakeLoom()
+    loom.write_usd = 0.0
     # Room for the extraction estimates and a few answers, not for the whole run.
     probe = Ledger(tmp_path / "probe.jsonl", 100.0)
     for d in ts.documents.values():
@@ -633,3 +646,141 @@ def test_a_failed_setup_erases_what_it_wrote_and_is_not_resumed(tmp_path):
     assert len(loom.erased) == 3
     with pytest.raises(run.RunError):
         run.run(ts, _config(out), FakeLoom(), model, [model], ledger)
+
+
+def test_a_cap_below_the_first_extraction_stops_the_setup_and_the_resume_finishes_it(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    loom = FakeLoom()
+    bound = run.extraction_bound(ts.documents["thumbnail-cache"], 6000)
+    from bench.design_rationale.llm import cost_usd
+
+    cap = cost_usd("gpt-4o-mini", bound[1], bound[2]) / 2
+    cfg = _config(out, max_usd=cap)
+    ledger = Ledger(out / "ledger.jsonl", cap)
+    model = _fake_model(ledger)
+    assert run.run(ts, cfg, loom, model, [model], ledger, FakeCodeIndex()) is False
+    state = json.loads((out / "state.json").read_text())
+    assert not state.get("erased") and loom.erased == []
+    assert "register" in state["setup_steps"] and not state["extraction"]
+    writes = len(loom.writes)
+
+    cfg.max_usd = ledger.max_usd = 100.0
+    assert run.run(ts, cfg, loom, model, [model], ledger, FakeCodeIndex()) is True
+    # Steps done before the stop are not repeated: no second gold write, one registration.
+    assert len(loom.writes) == writes + 1  # only the row written after the revision
+    assert len(loom.registered) == 3
+    assert set(json.loads((out / "state.json").read_text())["extraction"]) == set(ts.documents)
+
+
+def test_two_runs_with_one_org_prefix_read_neither_rows_nor_spend_of_the_other(tmp_path):
+    ts = load(EXAMPLE)
+    loom = FakeLoom()
+    ledgers = []
+    for name in ("a", "b"):
+        out = tmp_path / name
+        out.mkdir()
+        ledger = Ledger(out / "ledger.jsonl", 100.0)
+        model = _fake_model(ledger)
+        run.run(
+            ts,
+            _config(out, arms=[0, 3], k=1, judge_orders=1, keep_namespaces=True),
+            loom,
+            model,
+            [model],
+            ledger,
+        )
+        ledgers.append(ledger)
+    a_orgs = {
+        o
+        for ns, o in loom.orgs.items()
+        if ns.startswith(json.loads((tmp_path / "a" / "state.json").read_text())["prefix"])
+    }
+    b_orgs = {
+        o
+        for ns, o in loom.orgs.items()
+        if ns.startswith(json.loads((tmp_path / "b" / "state.json").read_text())["prefix"])
+    }
+    assert a_orgs and b_orgs and not a_orgs & b_orgs
+    # Each ledger carries its own run's server spend (two documents written per run).
+    spent = [sum(r["usd"] for r in led.rows() if r["stage"] == "server") for led in ledgers]
+    assert spent[0] == pytest.approx(spent[1]) and spent[0] == pytest.approx(0.03)
+
+
+def test_set_files_keeps_every_field_and_the_paths_the_text_spells_out(monkeypatch):
+    from bench.design_rationale.loom import Loom
+
+    row = {
+        "found": True,
+        "agent": "loom-decisions",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_type": "decision",
+        "confidence": 0.5,
+        "tags": ["decision"],
+        "entities": ["segmented lru"],
+        "source_resource_id": "knowledge:kb/u#S",
+        "source_trace": "decision:abc",
+        "source_class": "derived",
+        "value": "Decided segmented LRU because scans churn probation. Applies to "
+        "src/cache/config.py.",
+    }
+    sent = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        sent.append((request.url.path, body))
+        return httpx.Response(200, json=row if request.url.path.endswith("memory.get") else {})
+
+    loom = Loom("http://loom.test")
+    loom.client = httpx.Client(transport=httpx.MockTransport(handler))
+    loom.bind("ns", "org")
+    written = loom.set_files("ns", "decision:abc", ["src/cache/segmented_lru.py"])
+    assert written == ["src/cache/config.py", "src/cache/segmented_lru.py"]
+    path, body = sent[-1]
+    assert path == "/v1/memory.set"
+    for field in (
+        "agent",
+        "user_id",
+        "session_id",
+        "memory_type",
+        "confidence",
+        "tags",
+        "entities",
+        "source_resource_id",
+        "source_trace",
+        "source_class",
+        "value",
+    ):
+        assert body[field] == row[field], field
+    assert sorted(body["files"]) == written
+
+
+def test_a_task_id_with_a_slash_is_refused(tmp_path):
+    root = _copy_example(tmp_path)
+    tasks = json.loads((root / "tasks.json").read_text())
+    tasks["A"][0]["id"] = "A/1"
+    (root / "tasks.json").write_text(json.dumps(tasks))
+    with pytest.raises(TaskSetError, match="without '/'"):
+        load(root)
+
+
+def test_a_supersession_verdict_needs_current_stated():
+    ts = load(EXAMPLE)
+    task = ts.tasks["C"][0]
+    verdict = {"stale_served": False, "abstained": False, "invented_rationale": False}
+    assert not score.readable("C", task, verdict)
+    assert score.readable("C", task, {**verdict, "current_stated": True})
+    assert score.readable("C", ts.tasks["C"][1], verdict)  # abstention needs no such key
+
+
+def test_a_cap_stop_exits_1_and_a_fallback_model_refuses_arm_4(tmp_path, monkeypatch, capsys):
+    import bench.design_rationale.__main__ as cli
+
+    monkeypatch.setattr(cli.runner, "run", lambda *a, **k: False)
+    base = ["run", str(EXAMPLE), "--out", str(tmp_path), "--base-url", "http://loom.test"]
+    assert main([*base, "--arms", "0", "--offline"]) == 1
+    monkeypatch.setattr(cli, "server_extract_model", lambda: ("openai", "gpt-4o-mini", "gpt-4o"))
+    assert main([*base, "--arms", "4", "--dry-run"]) == 2
+    assert "LOOM_LLM_FALLBACK_MODEL" in capsys.readouterr().err

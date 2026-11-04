@@ -26,10 +26,12 @@ repository, its org and namespace) each name is looked up with read-only `code.s
 calls and a name with one defining file that is not a test or a page links the row to
 that file, the rule `loom decisions extract --repo` applies. The harness's own Loom has
 no code index, and an arm's org must not hold one another arm reads. Without
-`--code-index` arm 4 is served through `loom_search` only, and arm 5 is added so that
-arm 4 is compared with gold rows served the same way.
+`--code-index` arm 4 reads no pre-edit block and is served through `loom_search` only,
+and arm 5 is added so that arm 4 is compared with gold rows served the same way. With
+`--arm4-namespace` the sync's rows keep the files it linked, arm 4 reads the pre-edit
+block and is compared with arm 3.
 
-Each arm's namespace lives in its own org, since a search reads every namespace of its
+Each arm's namespace lives in an org of its own run and role, since a search reads every namespace of its
 org. The gold rows are never written where arm 4 extracts.
 
 ## Task kinds
@@ -106,10 +108,13 @@ test, so a change's test pass rate is not measured.
 surface served), `answers.json`, `judged.json` (citations with their resolution,
 detector results, every judge pass), `ledger.jsonl` (every provider request and its
 price; the extraction leg as an estimate charged before it runs; the server's own spend
-in the run's orgs read back from `cost.summary`), `extract_<doc>.log` and
-`extraction_labels.todo.json`. A run the spend cap stops keeps its namespaces and
-resumes on the same `--out`; a finished run, or one whose setup failed, erases them
-(unless `--keep-namespaces`) and is not resumed. Fill each row's `verdict` (`correct`, `partly`, `wrong`
+in the run's orgs read back from `cost.summary` after each stage), `extract_<doc>.log`
+and `extraction_labels.todo.json`. The server's spend is recorded after the fact, not
+refused in advance: what stops the server itself is each namespace's daily cost cap,
+set to `--max-usd` at registration. A run the spend cap stops, in its setup or later,
+keeps its namespaces and resumes on the same `--out` (exit code 1); a finished run, or
+one whose setup failed otherwise, erases them (unless `--keep-namespaces`) and is not
+resumed. Fill each row's `verdict` (`correct`, `partly`, `wrong`
 or `misleading`) and pass the file to `score --extraction-labels` for extraction
 precision. `score --human-labels` takes a list of
 `{"answer": "<task>/arm<a>/s<k>", "field": "avoids", "value": true}` and reports judge

@@ -167,6 +167,9 @@ def _gold(root: Path, documents: dict[str, Document]) -> list[GoldRow]:
 
 def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
     tid = t.get("id", "?")
+    if not isinstance(tid, str) or not tid or "/" in tid:
+        # Answers are keyed <task>/arm<a>/s<k>.
+        raise TaskSetError(f"task id {tid!r}: a non-empty string without '/'")
     if t.get("document") not in ts.documents:
         raise TaskSetError(f"task {tid}: unknown document {t.get('document')!r}")
     for key in t.get("gold_rows", []):

@@ -18,8 +18,8 @@ mined from the documents (or, with --arm4-namespace, rows a document source's sy
 Arm 4's rows name code by its names; the files that give them a pre-edit block come from
 a code index of the repository (--code-index: read-only code.symbol calls on the Loom that
 indexes it, with the extractor's own rule: one defining file that is not a test or a page).
-Without one, arm 4 is served through loom_search only, and arm 5 is added so that arm 4 is
-compared with gold rows served the same way.
+Without one (and without --arm4-namespace), arm 4 is served through loom_search only,
+and arm 5 is added so that arm 4 is compared with gold rows served the same way.
 
 `run --dry-run` reads nothing but the task set and prints the calls, tokens and spend a
 run would take. A real run needs a Loom server and ClickHouse this run started, with the
@@ -172,13 +172,15 @@ def _config(a: argparse.Namespace) -> runner.Config:
     )
 
 
-def server_extract_model() -> tuple[str, str]:
-    """(provider, model) the extraction child will run on: the server settings this
-    environment resolves, as the CLI resolves them."""
+def server_extract_model() -> tuple[str, str, str]:
+    """(provider, model, fallback model) the extraction child will run on: the server
+    settings this environment resolves, as the CLI resolves them."""
     from server.llm.client import get_llm_client
+    from server.settings import settings
 
     client = get_llm_client()
-    return str(getattr(client, "provider", "")), str(getattr(client, "model", ""))
+    provider, model = str(getattr(client, "provider", "")), str(getattr(client, "model", ""))
+    return provider, model, settings.llm_fallback_model.strip()
 
 
 def _fail(message: str) -> int:
@@ -189,14 +191,21 @@ def _fail(message: str) -> int:
 def cmd_run(a: argparse.Namespace) -> int:
     ts = load(a.taskset)
     cfg = _config(a)
-    if 4 in cfg.arms and 3 in cfg.arms and not a.code_index and 5 not in cfg.arms:
-        cfg.arms = [*cfg.arms, 5]
-        print(
-            "arm 4 has no code index, so no pre-edit block: arm 5 (gold rows through "
-            "loom_search only) is added as its like-for-like reference"
-        )
+    # Rows a sync wrote carry the files it linked; rows this run extracts get theirs from
+    # the code index, or have none.
+    cfg.arm4_files = bool(a.code_index or a.arm4_namespace)
+    if 4 in cfg.arms and not cfg.arm4_files:
+        print("arm 4 has no code index: its rows reach loom_search only, no pre-edit block")
+        if 3 in cfg.arms and 5 not in cfg.arms:
+            cfg.arms = [*cfg.arms, 5]
+            print("arm 5 (gold rows through loom_search only) is added as its reference")
     if runner.own_extraction(cfg):
-        provider, model = server_extract_model()
+        provider, model, fallback = server_extract_model()
+        if fallback and fallback != model:
+            return _fail(
+                f"LOOM_LLM_FALLBACK_MODEL={fallback} would carry some extraction calls on "
+                "a model the estimate does not price; unset it for the run"
+            )
         if cfg.extract_model and cfg.extract_model != model:
             return _fail(
                 f"the extraction would run on {model!r} (this environment's server "
@@ -237,7 +246,6 @@ def cmd_run(a: argparse.Namespace) -> int:
         reader = Model("offline", _offline, ledger, priced=False)
         judges = [Model("offline", _offline, ledger, priced=False)]
         cfg.judges = ["offline"]
-        cfg.extract_model = cfg.extract_model or "fake-echo-1"
     else:
         reader = Model(cfg.reader, ProviderComplete(cfg.reader, ledger), ledger)
         judges = [Model(m, ProviderComplete(m, ledger), ledger) for m in cfg.judges]
@@ -248,7 +256,7 @@ def cmd_run(a: argparse.Namespace) -> int:
         else None
     )
     try:
-        runner.run(ts, cfg, loom, reader, judges, ledger, code)
+        finished = runner.run(ts, cfg, loom, reader, judges, ledger, code)
     except runner.RunError as e:
         return _fail(str(e))
     finally:
@@ -256,7 +264,8 @@ def cmd_run(a: argparse.Namespace) -> int:
         if code is not None:
             code.close()
     print(f"spent {ledger.spent():.4f} USD (ledger {ledger.path})")
-    return 0
+    # 1: the cap stopped the run; the same command with a higher cap resumes it.
+    return 0 if finished else 1
 
 
 def cmd_score(a: argparse.Namespace) -> int:

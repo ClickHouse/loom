@@ -597,8 +597,9 @@ read from a directory given on the command line, and only the synthetic set in
 | 5   | The gold rows through the `loom_search` memory section only                                                      |
 
 An extracted row's files come from the repository's code index (`--code-index`:
-read-only `code.symbol` lookups under the extractor's own linking rule). Without one,
-arm 4 has no pre-edit block and is compared with arm 5, gold rows served the same way.
+read-only `code.symbol` lookups under the extractor's own linking rule), or from the
+sync that wrote them (`--arm4-namespace`). Without either, arm 4 reads no pre-edit
+block and is compared with arm 5, gold rows served the same way.
 
 **Metrics.** Why questions (A): argument-level precision and recall against the gold
 arguments, and the share of answers a judge flags as potentially misleading. Change tasks
@@ -639,9 +640,10 @@ PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale score <taskset> --out
 The dry run prints the calls, tokens and spend a run would take, typical and at every
 output cap. A real run refuses to start without `--max-usd` or with an unpriced model,
 and refuses each provider request whose worst case would cross the cap. The extraction's
-worst case is charged before each document, the server's own model and embedding spend
-in the run's orgs is read back from `cost.summary`, and each namespace is registered with
-the cap as its daily cost cap. A run the cap stops resumes on the same `--out`. The run
+worst case is charged before each document. The server's own model and embedding spend
+in the run's orgs is read back from `cost.summary` after each stage, which records it
+rather than prevents it; each namespace is registered with the cap as its daily cost
+cap, which stops the server. A run the cap stops resumes on the same `--out`. The run
 directory holds the task set's text: keep it out of the repository.
 
 ## Reference computations

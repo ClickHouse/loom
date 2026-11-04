@@ -49,8 +49,11 @@ def planning_mde(n_tasks: int, sd: float = PLANNING_SD) -> float:
     return MDE_Z * sd / math.sqrt(n_tasks) if n_tasks else float("nan")
 
 
-def readable(kind: str, verdict: Any) -> bool:
-    return isinstance(verdict, dict) and all(k in verdict for k in REQUIRED[kind])
+def readable(kind: str, task: dict[str, Any], verdict: Any) -> bool:
+    need = REQUIRED[kind]
+    if kind == "C" and task.get("subtype") == "supersession":
+        need = (*need, "current_stated")
+    return isinstance(verdict, dict) and all(k in verdict for k in need)
 
 
 # ---------------------------------------------------------------- one judge pass
@@ -146,7 +149,7 @@ def answer_metrics(
     rows = [
         pass_metrics(kind, task, entry, p["verdict"])
         for p in entry.get("passes", [])
-        if readable(kind, p.get("verdict"))
+        if readable(kind, task, p.get("verdict"))
     ]
     return _avg(rows) if rows else {}
 
@@ -154,7 +157,7 @@ def answer_metrics(
 def unreadable(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, int]]:
     """arm -> {"passes", "unreadable", "answers_unscored"}: judge passes whose verdict
     lacks its kind's keys, and answers left with no readable pass."""
-    tasks = {t["id"]: kind for kind, t in ts.all_tasks()}
+    tasks = {t["id"]: (kind, t) for kind, t in ts.all_tasks()}
     out: dict[int, dict[str, int]] = defaultdict(
         lambda: {"passes": 0, "unreadable": 0, "answers_unscored": 0}
     )
@@ -164,7 +167,7 @@ def unreadable(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, int]]
             continue
         row = out[int(arm_s.removeprefix("arm"))]
         passes = entry.get("passes", [])
-        bad = sum(not readable(tasks[tid], p.get("verdict")) for p in passes)
+        bad = sum(not readable(*tasks[tid], p.get("verdict")) for p in passes)
         row["passes"] += len(passes)
         row["unreadable"] += bad
         row["answers_unscored"] += int(bool(passes) and bad == len(passes))
@@ -299,8 +302,10 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
         for surface in ("for_file_keys", "search_keys"):
             if arm == 5 and surface == "for_file_keys":
                 continue
+            # Tasks with gold rows only: an abstention task has nothing to serve. Arm 4's
+            # rows have keys of their own, so any row it served counts.
             if arm == 4:
-                hits = [bool(r.get(surface)) for _, r in rows]
+                hits = [bool(r.get(surface)) for t, r in rows if t.get("gold_rows")]
             else:
                 hits = [
                     bool(set(t["gold_rows"]) & set(r.get(surface, [])))
@@ -336,7 +341,7 @@ def judge_stability(ts: TaskSet, judged: dict[str, Any]) -> dict[str, Any]:
                 headline[kind]
             )
             for p in entry.get("passes", [])
-            if readable(kind, p.get("verdict"))
+            if readable(kind, t, p.get("verdict"))
         }
         models = sorted({m for m, _, _ in verdicts})
         for model in models:

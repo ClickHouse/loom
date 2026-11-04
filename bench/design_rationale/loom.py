@@ -8,6 +8,7 @@ process from this checkout, so it needs the server's ClickHouse and provider env
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -96,13 +97,15 @@ class Loom:
 
     # ---- namespaces
 
-    def register(self, namespace: str, description: str, keep: bool, cap_usd: float) -> None:
+    def register(self, namespace: str, description: str, cap_usd: float) -> None:
         """A bench namespace whose daily cost cap is the run's cap, so the server's own model
         calls on its writes and reads stop there too. A refusal stops the run: a namespace
-        without the cap would let the server spend past it."""
+        without the cap would let the server spend past it. Registered as kept (`keep`):
+        the idle gc would empty a namespace a resumed run still reads, and the harness
+        erases its own."""
         org = self.orgs[namespace]
         extra = {"daily_cost_cap_usd": cap_usd} if cap_usd > 0 else None
-        body = register_body(org, namespace, description=description, keep=keep, extra=extra)
+        body = register_body(org, namespace, description=description, keep=True, extra=extra)
         self._post("/v1/namespace.register", body)
         remember_bench_namespace(org, namespace)
 
@@ -171,29 +174,38 @@ class Loom:
         done = subprocess.run(cmd, capture_output=True, text=True, check=False)
         return done.returncode, done.stdout + done.stderr
 
-    def set_files(self, namespace: str, key: str, files: list[str]) -> bool:
-        """Write `files` on an extracted row: a new version under the extractor's identity
-        with every other field as read. False when the row is gone."""
+    def set_files(self, namespace: str, key: str, files: list[str]) -> list[str] | None:
+        """Add `files` to an extracted row: a new version under the extractor's identity
+        with every other field as read. The extractor also links the paths its text spells
+        out, which memory.get does not return, so they are found again in the value and
+        kept. The row's files as written, or None when the row is gone."""
+        from server.memory.domain.files import detect_value_files, normalize_files
+
         row = self.memory_get(namespace, key)
         if not row.get("found"):
-            return False
+            return None
+        value = row["value"]
+        text = value if isinstance(value, str) else json.dumps(value)
+        merged = normalize_files([*detect_value_files(text), *files])
         confidence = row.get("confidence")
-        self.op(
-            "memory.set",
-            {
-                "namespace": namespace,
-                "agent": row.get("agent") or "loom-decisions",
-                "memory_key": key,
-                "memory_type": row.get("memory_type") or "decision",
-                "value": row["value"],
-                "tags": row.get("tags") or [],
-                "files": files,
-                "confidence": 0.5 if confidence is None else confidence,
-                "source_resource_id": row.get("source_resource_id") or "",
-                "source_class": "derived",
-            },
-        )
-        return True
+        body = {
+            "namespace": namespace,
+            "agent": row.get("agent") or "loom-decisions",
+            "user_id": row.get("user_id") or "-",
+            "session_id": row.get("session_id") or "-",
+            "memory_key": key,
+            "memory_type": row.get("memory_type") or "decision",
+            "value": value,
+            "tags": row.get("tags") or [],
+            "entities": row.get("entities") or [],
+            "files": merged,
+            "confidence": 0.5 if confidence is None else confidence,
+            "source_resource_id": row.get("source_resource_id") or "",
+            "source_trace": row.get("source_trace") or "",
+            "source_class": "derived",
+        }
+        self.op("memory.set", body)
+        return merged
 
     # ---- reads
 
