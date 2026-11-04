@@ -119,6 +119,15 @@ def _cmd_adopt(args: argparse.Namespace) -> int:
     return run_connected(_run)
 
 
+def _carried_line(was: str, owner: str, names: list[str], elsewhere: bool, *, dry_run: bool) -> str:
+    """The line naming the grants a link carries to `owner`, revoked."""
+    if elsewhere:
+        lead = f"{was} is another account's verified email: its grants stay theirs, and are "
+    else:
+        lead = f"revoked under {was}, so " if dry_run else ""
+    return f"  {lead}revoked for {owner} too: {', '.join(names)}"
+
+
 def _cmd_link(args: argparse.Namespace) -> int:
     from server.core.errors import LoomServerError
     from server.identity.app import account_admin
@@ -132,24 +141,17 @@ def _cmd_link(args: argparse.Namespace) -> int:
                 f"{plan['was'] or '-'}) would sign in as {args.email.strip().lower()}"
             )
             owner = row["owner_email"]
-
-            def _carried(names: list[str], *, elsewhere: bool, lead: str) -> None:
-                if elsewhere:
-                    lead = f"{plan['was']} is another account's verified email: its grants "
-                    lead += "stay theirs, and are "
-                print(f"  {lead}revoked for {owner} too: {', '.join(names)}")
-
             if args.dry_run:
                 if plan["revoked"]:
                     names = sorted({g["namespace"] for g in plan["revoked"]})
-                    lead = f"revoked under {plan['was']}, so "
-                    _carried(names, elsewhere=plan["elsewhere"], lead=lead)
+                    print(_carried_line(plan["was"], owner, names, plan["elsewhere"], dry_run=True))
                 return 0
-            _, carried, elsewhere = await account_admin.link_account(
+            # What the link read under the account and email claims, not the plan above.
+            was, carried, elsewhere = await account_admin.link_account(
                 args.email, args.org, args.namespace, by=_by()
             )
-            if carried:  # what it carried and read under the grant claims, not the plan
-                _carried(carried, elsewhere=elsewhere, lead="")
+            if carried:
+                print(_carried_line(was, owner, carried, elsewhere, dry_run=False))
         except (ValueError, LoomServerError) as e:  # refused (fix what it names) or busy (rerun)
             print(f"  ✗ {e}", file=sys.stderr)
             return 2

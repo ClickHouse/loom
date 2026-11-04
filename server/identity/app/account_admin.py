@@ -251,7 +251,7 @@ async def link_account(
     is carried to the subject, revoked. Holds the address as JIT holds it, so no
     SSO sign-in makes a second account for it meanwhile. Returns the address it
     had, the namespaces carried, and whether that address is another account's
-    verified email, as read under the claims."""
+    verified email, as read under the account and email claims."""
     from server.auth.self_signup import CLAIM_TTL_S, email_claim
     from server.core import leases
     from server.core.ch import get_client
@@ -289,6 +289,7 @@ async def link_account(
             "by": by,
             "subject": row["owner_email"],
             "carried_revoked": carried,
+            "elsewhere": bool(plan["elsewhere"]),
         },
     )
     return was, carried, bool(plan["elsewhere"])
