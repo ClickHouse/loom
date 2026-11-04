@@ -391,8 +391,9 @@ def judge_vs_human(
     ts: TaskSet, judged: dict[str, Any], labels: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Judge accuracy and kappa against a human-labelled slice: a JSON list of
-    {"answer": "<task>/arm<a>/s<k>", "field": <metric>, "value": bool}. A change answer
-    whose detector fired is decided by the detector, not the judge: it is left out."""
+    {"answer": "<task>/arm<a>/s<k>", "field": <metric>, "value": bool}. On a change
+    answer whose detector fired, the fields the detector decides (avoids, satisfies,
+    detector_fired) say nothing about the judge: those labels are left out."""
     tasks = {t["id"]: (kind, t) for kind, t in ts.all_tasks()}
     human: list[bool] = []
     machine: list[bool] = []
@@ -401,7 +402,8 @@ def judge_vs_human(
         if entry is None:
             continue
         kind, t = tasks[parse_key(lab["answer"])[0]]
-        if kind == "B" and _detector_fired(entry):
+        decided = ("avoids", "satisfies", "detector_fired")
+        if kind == "B" and lab["field"] in decided and _detector_fired(entry):
             continue
         value = answer_metrics(kind, t, entry).get(lab["field"])
         if value is None:

@@ -1428,21 +1428,23 @@ def test_judge_agreement_leaves_out_change_answers_a_detector_decided():
     assert open_["orders"] == {"answers": 1, "agreement": 0.0}
 
 
-def test_judge_accuracy_against_humans_leaves_out_detector_decided_answers():
+def test_judge_accuracy_against_humans_leaves_out_what_a_detector_decided():
     ts = load(EXAMPLE)
 
-    def entry(fired, forbidden):
-        verdict = {"forbidden_proposed": [0] if forbidden else [], "constraints_violated": []}
+    def entry(fired):
+        verdict = {"forbidden_proposed": [], "constraints_violated": [], "pushed_back": True}
         return {
             "citations": [],
             "detectors": [{"type": "x", "fired": fired}],
             "passes": [{"model": "m", "order": 0, "repeat": 0, "verdict": verdict}],
         }
 
-    judged = {"B1/arm0/s1": entry(True, False), "B1/arm0/s2": entry(False, False)}
+    judged = {"B1/arm0/s1": entry(True), "B1/arm0/s2": entry(False)}
     labels = [
-        # The detector decided this one; the human agrees with it, the judge would not.
+        # The detector decided avoidance here; the label says nothing about the judge.
         {"answer": "B1/arm0/s1", "field": "avoids", "value": False},
+        # Push-back is the judge's call on that same answer: counted.
+        {"answer": "B1/arm0/s1", "field": "pushed_back", "value": True},
         {"answer": "B1/arm0/s2", "field": "avoids", "value": True},
     ]
-    assert score.judge_vs_human(ts, judged, labels) == {"items": 1, "accuracy": 1.0, "kappa": 1.0}
+    assert score.judge_vs_human(ts, judged, labels) == {"items": 2, "accuracy": 1.0, "kappa": 1.0}
