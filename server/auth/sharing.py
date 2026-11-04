@@ -346,7 +346,9 @@ async def check(auth: AuthInfo, required_role: Role, org: str, namespace: str) -
     grant = f"a grant of at least {role_name} on it or a collection above it"
     needs = claim_cap(auth, org, namespace, required_role)
     notes = (
-        [needs, f"{auth.subject!r} must hold {grant}"] if needs else [f"a collection needs {grant}"]
+        [needs, f"{auth.subject!r} must hold {grant} (directly, through a group or to everyone)"]
+        if needs
+        else [f"a collection needs {grant}"]
     )
     if auth.creator:
         notes.append(f"its creator must hold at least {role_name} there too")

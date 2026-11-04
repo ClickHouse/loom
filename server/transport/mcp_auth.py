@@ -77,7 +77,7 @@ def _not_accessible_result(
     if sharing.is_collection(ns):
         # A delegated token's creator needs the role too, as the gate says.
         if getattr(auth, "creator", None):
-            creator = " This token's creator must hold a grant on it too."
+            creator = " This token's creator must be active and hold a grant on it too."
         # A token its own claim caps is told both what it needs, from the token alone (what
         # its grants reach on a collection it cannot see would confirm the collection).
         needs = sharing.claim_cap(auth, auth.org, ns, Role.VIEWER)
@@ -85,7 +85,7 @@ def _not_accessible_result(
             return _refusal_body(
                 f"namespace {ns!r} is not in your accessible list: {needs}, and"
                 f" {getattr(auth, 'subject', '')!r} must hold a grant of at least viewer on it or"
-                f" a collection above it.{creator}",
+                f" a collection above it (directly, through a group or to everyone).{creator}",
                 ns,
             )
     msg = (

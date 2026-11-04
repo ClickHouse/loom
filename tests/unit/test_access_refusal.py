@@ -122,7 +122,7 @@ def test_a_scoped_token_refused_a_collection_is_told_its_claim_must_name_it() ->
     assert text == (
         "namespace 'col-research' is not in your accessible list: this token's claim must name"
         " it, and 'avery@example.com' must hold a grant of at least viewer on it or a collection"
-        " above it."
+        " above it (directly, through a group or to everyone)."
     )
     # Its claim already names the collection: the grant is what is missing.
     named = mcp_auth._not_accessible_result(
@@ -144,7 +144,7 @@ def test_a_delegated_token_refused_a_collection_is_told_its_creator_needs_a_gran
     text = mcp_auth._not_accessible_result("loom_memory_get", bot, "col-research")[
         "structuredContent"
     ]["error"]
-    assert "This token's creator must hold a grant on it too." in text
+    assert "This token's creator must be active and hold a grant on it too." in text
     assert "must mint" not in text
 
 
@@ -177,7 +177,7 @@ def test_a_claim_capped_delegated_token_is_told_its_creator_needs_a_grant_too() 
         "structuredContent"
     ]["error"]
     assert "this token's claim must name it" in text
-    assert text.endswith("This token's creator must hold a grant on it too.")
+    assert text.endswith("This token's creator must be active and hold a grant on it too.")
 
 
 def test_a_collection_refusal_never_says_to_omit_the_namespace() -> None:
