@@ -152,12 +152,11 @@ class Loom:
         """Erase each namespace; True when every erasure was accepted. The shared helper
         logs a refused one as a warning with the command that erases it: with no logging
         configured, Python's last-resort handler prints it on stderr."""
-        return all(
-            [
-                erase_bench_namespaces_sync(self._post, org=self.orgs[ns], namespaces=[ns])
-                for ns in namespaces
-            ]
-        )
+        accepted = True
+        for ns in namespaces:  # every namespace is tried, even after a refusal
+            if not erase_bench_namespaces_sync(self._post, org=self.orgs[ns], namespaces=[ns]):
+                accepted = False
+        return accepted
 
     def server_spend(self, namespaces: list[str], since: date) -> float:
         """USD the server spent on model and embedding calls in these namespaces' orgs

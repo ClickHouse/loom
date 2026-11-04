@@ -1527,6 +1527,11 @@ def test_a_task_set_entry_that_is_not_an_object_is_refused(tmp_path):
     (root / "documents.json").write_text(json.dumps([*docs, "thumbnail-cache.md"]))
     with pytest.raises(TaskSetError, match="an entry is an object"):
         load(root)
+    (root / "documents.json").write_text(json.dumps(docs))
+    gold = json.loads((root / "gold_rows.json").read_text())
+    (root / "gold_rows.json").write_text(json.dumps([*gold, "design/x"]))
+    with pytest.raises(TaskSetError, match="an entry is an object"):
+        load(root)
 
 
 def test_a_rerun_with_other_flags_is_refused_before_it_erases_anything(tmp_path):
