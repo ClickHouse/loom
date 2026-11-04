@@ -156,7 +156,7 @@ async def decisions_for_paths(
         return DecisionRows([], [], refused=True)
     # One pre-edit read per path. The read follows code links only into the trunk an
     # extra namespace names, so the trunk is named there too (it is not read twice).
-    reads = await asyncio.gather(
+    per_path = await asyncio.gather(
         *(
             listing_rows(
                 MemoryForFileInput(
@@ -173,7 +173,7 @@ async def decisions_for_paths(
         )
     )
     rows: dict[str, dict[str, Any]] = {}  # by memory_id: one row found on several paths
-    for hits, _skipped in reads:
+    for hits, _skipped in per_path:
         for hit in hits:
             row = rows.setdefault(hit["memory_id"], hit)
             row["code_state"] = worst([row["code_state"], hit["code_state"]])
@@ -189,8 +189,8 @@ async def decisions_for_paths(
     return DecisionRows(
         found[:limit],
         found[limit:],
-        paths_full=sum(1 for hits, _ in reads if len(hits) >= PER_PATH_ROWS),
-        links_skipped=sum(1 for _, skipped in reads if skipped),
+        paths_full=sum(1 for hits, _ in per_path if len(hits) >= PER_PATH_ROWS),
+        links_skipped=sum(1 for _, skipped in per_path if skipped),
     )
 
 

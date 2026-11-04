@@ -544,7 +544,6 @@ def blame_verdict(rows: list[dict[str, Any]], *, ranges: int) -> str:
 # ---------------------------------------------------------------------------
 
 _REJECTED = re.compile(r"\bRejected:(.*)", re.S)
-_APPLIES_TO = "Applies to "
 # decision.record's value closes its rejected options with the realized outcome
 _REALIZED = "Realized:"
 _SETTING_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+")
@@ -553,19 +552,17 @@ _SETTING_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+")
 def checked_names(text: str, *, constraint: bool) -> list[str]:
     """The names the token check looks for in a PR's diff: the code-shaped names of the
     row's `Rejected:` clause, up to a `Realized:` one (backticked, qualified like `A::b`,
-    or calls like `f()`) and, for a constraint, the snake_case names it states,
-    backticked or not. The closing `Applies to` clause names the code the row governs,
-    which a PR touching that code names anyway, so it is not read."""
-    head = text.split(_APPLIES_TO, 1)[0]
+    or calls like `f()`) and, for a constraint, the snake_case names anywhere in its
+    value, backticked or not."""
     names: list[str] = []
     # `mentions` caps how many it returns; no text holds more names than characters
-    cap = len(head)
-    rejected = _REJECTED.search(head)
+    cap = len(text)
+    rejected = _REJECTED.search(text)
     if rejected:
         options = rejected.group(1).split(_REALIZED, 1)[0]
         names += [m.name for m in mentions(options, cap=cap) if not m.in_prose]
     if constraint:
-        names += [m.name for m in mentions(head, cap=cap) if _SETTING_NAME.fullmatch(m.name)]
+        names += [m.name for m in mentions(text, cap=cap) if _SETTING_NAME.fullmatch(m.name)]
     return list(dict.fromkeys(names))
 
 

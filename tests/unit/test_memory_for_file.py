@@ -210,6 +210,46 @@ async def test_a_link_read_that_fails_leaves_the_file_match_standing(
     assert await mff._linked(request, "src/a.cpp", ["ns"]) is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("links_fail", [True, False])
+async def test_listing_rows_says_when_the_links_read_failed_and_keeps_the_file_match(
+    monkeypatch: pytest.MonkeyPatch, links_fail: bool
+) -> None:
+    from server.memory.app import code_link_reads as app_reads
+    from server.memory.store import code_links as store_links
+    from tests.unit.ch_fake import RecordingCH
+
+    row = _row("design/spill", '"Decided X."', memory_type="decision", tags=["decision"])
+    ch = RecordingCH().on("FROM loom.memory FINAL", [row])
+    ch.install(monkeypatch, "server.memory.app.for_file")
+
+    async def one_link(*a: Any, **k: Any) -> list[dict[str, Any]]:
+        return [{"memory_id": "id-design/spill", "code_namespace": "code-a", "state": "fresh"}]
+
+    async def current(org: str, links: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if links_fail:
+            raise ConnectionError("clickhouse")
+        return links
+
+    async def readable(org: str, nss: set[str]) -> set[str]:
+        return set(nss)
+
+    monkeypatch.setattr(store_links, "for_paths", one_link)
+    monkeypatch.setattr(app_reads, "current_links", current)
+    monkeypatch.setattr(app_reads, "readable_namespaces", readable)
+    monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda org, ns: "code-a")
+    request = MemoryForFileInput(
+        org="o", namespace="code-a", path="src/a.cpp", extra_namespaces=["code-a"]
+    )
+    rows, skipped = await mff.listing_rows(request)
+    assert skipped is links_fail
+    # the files match stands either way, with its memory_id; the link adds its state
+    assert [(r["memory_id"], r["memory_key"]) for r in rows] == [
+        ("id-design/spill", "design/spill")
+    ]
+    assert rows[0]["code_state"] == ("" if links_fail else "fresh")
+
+
 # --- decision rows ------------------------------------------------------------
 
 _NOW = datetime(2026, 9, 25, 12, 0)

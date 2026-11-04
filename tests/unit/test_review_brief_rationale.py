@@ -16,12 +16,10 @@ from server.memory.app import code_plane_reads
 
 DECISION = (
     "Decided spill into sorted runs because a set on disk costs a seek per row. "
-    "Rejected: a plain `DB::SpillingHashSet` — one seek per row. "
-    "Applies to `DB::ExternalDistinctTransform`, src/Processors/ExternalDistinctTransform.h."
+    "Rejected: a plain `DB::SpillingHashSet` — one seek per row."
 )
 CONSTRAINT = (
-    "Keep `distinct_spill_ratio` on by default: the fan-in relies on it. "
-    "Applies to `DB::ExternalDistinctTransform`."
+    "Keep `distinct_spill_ratio` on by default: `DB::ExternalDistinctTransform` relies on it."
 )
 DIFF = """diff --git a/src/Processors/ExternalDistinctTransform.cpp b/src/Processors/ExternalDistinctTransform.cpp
 --- a/src/Processors/ExternalDistinctTransform.cpp
@@ -74,9 +72,25 @@ def test_checked_names_stop_the_rejected_clause_at_the_realized_outcome() -> Non
     assert rb.checked_names(value, constraint=False) == ["DB::SpillingHashSet"]
 
 
+def test_a_scenario_that_starts_applies_to_still_checks_the_rejected_option() -> None:
+    from server.memory.domain.decision_statement import memory_value
+
+    value = memory_value(
+        {
+            "scenario": "Applies to how the final DISTINCT spills",
+            "outcome": "spill into sorted runs",
+            "reasoning": "a set on disk costs a seek per row",
+            "alternatives": ["a plain `DB::SpillingHashSet`"],
+        }
+    )
+    assert value.startswith("Applies to")
+    assert rb.checked_names(value, constraint=False) == ["DB::SpillingHashSet"]
+    assert rb.checked_names(value, constraint=True) == ["DB::SpillingHashSet"]
+
+
 def test_checked_names_read_rejected_options_and_a_constraints_settings() -> None:
     assert rb.checked_names(DECISION, constraint=False) == ["DB::SpillingHashSet"]
-    # the governed code (`Applies to`) is never a checked name
+    # a constraint's snake_case names are checked, its other code is not
     assert rb.checked_names(CONSTRAINT, constraint=True) == ["distinct_spill_ratio"]
     assert rb.checked_names(CONSTRAINT, constraint=False) == []
     assert rb.checked_names("Decided X because Y.", constraint=False) == []
@@ -318,7 +332,7 @@ async def test_a_row_to_check_is_kept_ahead_of_the_row_cap(
     async def _readable(org: str, nss: set[str]) -> set[str]:
         return nss
 
-    rule = "Never block the fan-in. Applies to `DB::ExternalDistinctTransform`."
+    rule = "Never block the fan-in of `DB::ExternalDistinctTransform`."
     hits = [
         _MemoryForFileHit(
             memory_key=f"design/rule{i}",
@@ -373,7 +387,7 @@ async def test_a_path_whose_read_reached_its_ceiling_is_never_clear(
     async def _readable(org: str, nss: set[str]) -> set[str]:
         return nss
 
-    rule = "Never block the fan-in. Applies to `DB::ExternalDistinctTransform`."
+    rule = "Never block the fan-in of `DB::ExternalDistinctTransform`."
     # 50 pinned constraints fill the read; the checkable decision may lie past them
     hits = [
         _MemoryForFileHit(

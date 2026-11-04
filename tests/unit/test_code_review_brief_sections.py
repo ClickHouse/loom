@@ -679,7 +679,7 @@ async def test_rationale_is_read_on_every_call_and_never_stored(
 
     reads: list[tuple[str, list[str]]] = []
     diffs: list[int] = []
-    rule = "Keep `new_flag` off in the history file: CI randomizes it. Applies to `DB::Settings`."
+    rule = "Keep `new_flag` off in the history file: CI randomizes it."
 
     async def _decisions(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
         reads.append((trunk, list(paths)))
