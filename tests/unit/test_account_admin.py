@@ -612,3 +612,42 @@ def test_the_maximum_floor_matches_the_physical_migration() -> None:
     )
     assert path.is_file()
     assert int(path.name.split("_", 1)[0]) == machines.ACCESS_TOKEN_MIGRATION
+
+
+@pytest.mark.parametrize(
+    ("linked", "advice"),
+    [
+        # A linked old address's grants admit the person: carry them to the subject.
+        ([("acme", "lee")], "grant them to lee and revoke them first"),
+        # An unlinked password account's address was never verified: they admit no one.
+        ([], "they admit no one"),
+    ],
+)
+def test_a_link_refuses_an_old_address_with_live_grants(
+    monkeypatch: pytest.MonkeyPatch, linked: list[tuple[str, str]], advice: str
+) -> None:
+    import server.core.ch as ch_mod
+
+    row = {"active": True, "password_hash": "h", "contact_email": "lee@home.io"}
+    row |= {"owner_email": "lee", "org": "acme", "namespace": "lee"}
+    grant = {"namespace": "team", "role": "writer", "status": "active", "revoked_at": None}
+
+    class _CH:
+        async def query_one(self, *_a: Any, **_k: Any) -> None:
+            return None  # no other account names the new address
+
+        async def query_all(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
+            return [grant]
+
+    async def _row(org: str, namespace: str) -> dict[str, Any]:
+        return row
+
+    async def _linked(email: str) -> list[tuple[str, str]]:
+        return linked
+
+    monkeypatch.setattr(account_admin.settings, "oauth_login_provider", "oidc")
+    monkeypatch.setattr(namespaces, "fetch_row", _row)
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
+    monkeypatch.setattr(account_admin.sso_links, "linked", _linked)
+    with pytest.raises(ValueError, match=advice):
+        asyncio.run(account_admin.link_plan("lee@corp.io", "acme", "lee"))

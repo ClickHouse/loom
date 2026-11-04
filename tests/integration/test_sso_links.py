@@ -169,8 +169,8 @@ async def test_link_points_an_account_from_another_address_at_the_provider_one(c
 
 
 async def test_link_refuses_an_address_that_still_holds_grants(ch: Any) -> None:
-    # Granted to the old address by name, they would reach no one once it is
-    # untied, or whoever registers it next.
+    # The old address was never verified (an unlinked password account's), so
+    # its grants admit no one; the link refuses until they are revoked.
     org = unique_org("sso")
     personal = f"kim@home-{org}.example"
     namespace = await _password_account(ch, org, personal, owner="kim")
@@ -193,6 +193,7 @@ async def test_link_refuses_an_address_that_still_holds_grants(ch: Any) -> None:
         "link", "--email", f"kim@corp-{org}.example", "--org", org, "--namespace", namespace
     )
     assert refused.returncode == 2 and "team (writer)" in refused.stderr
+    assert "admit no one" in refused.stderr
     assert await _resolve(f"kim@corp-{org}.example") is None
 
 

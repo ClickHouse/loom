@@ -159,7 +159,8 @@ forgotten.
   statement per (org, subject) into a per-process cache (`server/core/grant_cache.py`) kept
   for `grant_cache_ttl_seconds` (10 s). A grant write in this process drops at once the
   entries whose read covered the spelling it wrote, and any read in flight; a write to the
-  accounts that tie a person's spellings drops the org's.
+  accounts that tie a person's spellings, or to the links that verify an account's email
+  (`loom.sso_links`), drops the org's.
 - Every other process, on this server or another, drops the org's entries within
   `acl_watermark_poll_seconds` (1 s). The write adds one change for its org to
   `loom.acl_versions` (a `SummingMergeTree`, counted per org and kind of change), and each
