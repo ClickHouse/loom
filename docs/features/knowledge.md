@@ -573,19 +573,18 @@ bounds the listed documents and every finding's samples.
   days) by state, `stalled` for a processing job no worker has updated within its lease,
   when the oldest open job was queued, and the sources with a job and no live document (a
   first ingest, or one after a delete, queued or failed; not a source deleted after its
-  last job ended), listed
-  newest first in `without_document_listed`.
-  `worker_enabled` and `extractor_configured` are this server's settings
-  (`LOOM_KNOWLEDGE_INGEST_ENABLED`, `LOOM_DOCUMENT_EXTRACTOR_URL` or
-  `LOOM_DOCUMENT_EXTRACTORS_JSON`); the jobs show what the deployment did.
+  last job ended), listed newest first in `without_document_listed`. `worker_enabled` and
+  `extractor_configured` are this server's settings (`LOOM_KNOWLEDGE_INGEST_ENABLED`,
+  `LOOM_DOCUMENT_EXTRACTOR_URL` or `LOOM_DOCUMENT_EXTRACTORS_JSON`); the jobs show what
+  the deployment did.
 - **`extraction`**: the live documents an extraction published, how many are incomplete,
-  and per capability the artifact's `coverage.lost` names (`sql_structure`,
-  `exact_keys`, ...), the documents that lost it.
-- Each listed document also carries its **`extraction`** (the coverage's `unit`, `total`,
-  `extracted`, `failed` and `lost`; null for a text write) and its **`jobs`**: how many
-  its `source_uri` has, the `latest`, and the `current` one, the oldest open job when one
-  is (the one a worker runs next) else the latest. `open_ingestion_id` names that open
-  job, so a caller that did not start the ingest can pass it to
+  and per capability the artifact's `coverage.lost` names (`sql_structure`, `exact_keys`,
+  ...), the documents that lost it.
+- Each listed document also carries its **`extraction`** (the coverage's `unit`,
+  `total`, `extracted`, `failed` and `lost`; null for a text write) and its **`jobs`**:
+  how many its `source_uri` has, the `latest`, and the `current` one, the oldest open job
+  when one is (the one a worker runs next) else the latest. `open_ingestion_id` names
+  that open job, so a caller that did not start the ingest can pass it to
   `knowledge.ingest_status` or `knowledge.ingest_cancel`. A job carries its state, stage,
   attempts, `error_code`, its `failure_class`, and when it was queued, last changed,
   ended and is next due; its error message is not returned. The job rows hold no start
@@ -597,12 +596,12 @@ bounds the listed documents and every finding's samples.
   without `reindex` keeps the row's `ingested_at` and replaces nothing; a reindex
   rewrites the document and counts as a write.
 - **`ingest_findings`**: one per check, in the same shape, each sample a `source_uri`
-  with its job's id in `ingestion_ids`, and `without_document` counting the sources
-  with no live document. A source is judged by its current job, and a `replaced` one by
-  none (`ingestions.replaced` counts them):
-  - `ingest_backlog` (`system_state`): a job pending or processing whose last attempt did
-    not fail, that a store or embedder outage put back (`failure_class` `retrying`), or
-    that a worker is running again after any outage. A young backlog is the queue
+  with its job's id in `ingestion_ids`, and `without_document` counting the sources with
+  no live document. A source is judged by its current job, and a `replaced` one by none
+  (`ingestions.replaced` counts them):
+  - `ingest_backlog` (`system_state`): a job pending or processing whose last attempt
+    did not fail, that a store or embedder outage put back (`failure_class` `retrying`),
+    or that a worker is running again after any outage. A young backlog is the queue
     working: the worker runs one job per pass.
   - `extractor_unavailable` (`system_state`): no extractor takes the format
     (`format_unavailable`), or the one routed to it is unreachable, slow past its timeout
@@ -637,11 +636,10 @@ bounds the listed documents and every finding's samples.
 - **`skipped`**: each section that could not be read, as `section: reason`. Its fields
   are null or empty, not zero.
 
-Documents and their jobs are the namespace's under any read scope, as every
-`knowledge.*` read serves them (`knowledge.ingest_status` answers any job of the
-namespace by id). Under a token narrowed to one user or session, the decisions count only
-the rows inside that scope, and `memory_findings` is skipped, since the audit reads every
-user's rows.
+Documents and their jobs are the namespace's under any read scope, as every `knowledge.*`
+read serves them (`knowledge.ingest_status` answers any job of the namespace by id).
+Under a token narrowed to one user or session, the decisions count only the rows inside
+that scope, and `memory_findings` is skipped, since the audit reads every user's rows.
 
 ## Replacing, editing and deleting
 
