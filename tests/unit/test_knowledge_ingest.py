@@ -23,6 +23,7 @@ from server.core.errors import (
     BackendTimeoutError,
     BackendUnavailableError,
     NotFoundError,
+    OverloadedError,
     PreconditionFailedError,
 )
 from server.knowledge.api.models_knowledge import (
@@ -972,20 +973,24 @@ def test_a_pending_job_cancelled_after_a_publish_that_stopped_serves_none_of_its
     assert _run(world, job_id) == "cancelled" and world.job(job_id)["state"] == "cancelled"  # type: ignore[index]
 
 
+@pytest.mark.parametrize(
+    "error", [BackendUnavailableError("store down"), RuntimeError("a defect")], ids=str
+)
 @pytest.mark.parametrize("attempts", [1, 5])
 def test_a_failure_after_the_document_row_ends_the_job_published(
-    world: World, settings_override: Any, attempts: int
+    world: World, settings_override: Any, attempts: int, error: Exception
 ) -> None:
     """The document row landed and the retire of the earlier revision's chunks
     failed: on any attempt, last or not, the job ends published (the retire run
     again), not failed or back to pending."""
     settings_override(knowledge_ingest_max_attempts=attempts)
     _run(world, _ingest(world, _upload(world)))
-    world.fail_retire_older = BackendUnavailableError("store down")
+    world.fail_retire_older = error
     job_id = _ingest(world, _upload(world))
     assert _run(world, job_id) == "ready"
     job = world.job(job_id)
     assert job is not None and (job["revision"], job["error_code"]) == (2, "")
+    assert job["doc_version"] not in world.dead
     assert [d["revision"] for d in world.documents] == [1, 2]
     assert world.superseded[-1] == ("repo://retention.sql", world.documents[-1]["version"])
 
@@ -1290,3 +1295,12 @@ def test_a_republish_over_its_own_row_stamped_later_fails_rather_than_hide(world
     world.documents.extend({**d, "version": 2**62} for d in world.late_documents)
     assert _run(world, job_id) == "failed"
     assert world.job(job_id)["error_code"] == "revision_conflict"  # type: ignore[index]
+
+
+def test_a_store_out_of_slots_puts_the_job_back(world: World) -> None:
+    """A pool or bucket with no slot free now is a transient failure: the job
+    retries, it does not fail as a defect."""
+    world.fail_embed = OverloadedError("no slot")
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "pending"
+    assert world.job(job_id)["error_code"] == "retrying"  # type: ignore[index]

@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from server.core.errors import BackendTimeoutError, BackendUnavailableError, EmbedTimeoutError
+from server.core.errors import BACKEND_NOT_NOW, BackendUnavailableError, EmbedTimeoutError
 from server.core.leases import LeaseLost
 from server.knowledge.app.extractors import (
     ExtractionFailed,
@@ -65,12 +65,9 @@ _RETRY_BASE_S = 5  # not a setting: knowledge_ingest_max_attempts bounds the ret
 # The longest wait between attempts, far inside the job row's 30-day TTL.
 _RETRY_MAX_S = 3600  # not a setting: a longer outage is the attempts' to ride out
 
-_TRANSIENT = (
-    BackendUnavailableError,
-    BackendTimeoutError,
-    EmbedTimeoutError,
-    ExtractorUnavailable,
-)
+# A store that cannot answer now (down, past its deadline, out of slots), an
+# embedder past its deadline, an extractor that cannot take the source now.
+_TRANSIENT = (*BACKEND_NOT_NOW, EmbedTimeoutError, ExtractorUnavailable)
 
 
 class JobFailed(Exception):
@@ -95,9 +92,9 @@ class _InsertUncertain(Exception):
 
 
 class _AfterRow(Exception):
-    """This run's document row was written and a later step failed (the retire
-    of the earlier version's chunks, the claim's release): the publish stands,
-    so the job ends published. `cause` is the error."""
+    """This run's document row was written and a later step failed, for any
+    reason (the retire of the earlier version's chunks, the claim's release):
+    the publish stands, so the job ends published. `cause` is the error."""
 
     def __init__(self, revision: int, cause: Exception) -> None:
         super().__init__(str(cause))
@@ -175,9 +172,9 @@ async def _settled(job: dict[str, Any]) -> int | None:
 
 
 async def _own_publish(job: dict[str, Any]) -> int | None:
-    """The revision this job published (an earlier run that stopped before its
-    last save, or failed after its document row), whatever has been written to
-    the source since; None when it published nothing."""
+    """The revision this job published (an earlier run that stopped after its
+    document row), whatever has been written to the source since; None when it
+    published nothing."""
     from server.knowledge.store import documents as documents_repo
 
     return await documents_repo.revision_by_ingestion(
@@ -446,10 +443,10 @@ async def _publish(
             await documents_repo.insert_one(row)
             in_flight, published = False, True
             await chunks_repo.mark_doc_superseded(org, ns, uri, before_version=version, when=now)
-    except _TRANSIENT as e:
-        if in_flight:
+    except Exception as e:
+        if in_flight and isinstance(e, _TRANSIENT):
             raise _InsertUncertain(e) from e
-        if published:
+        if published:  # whatever failed after the row, the publish stands
             raise _AfterRow(revision, e) from e
         raise
     return job, revision
