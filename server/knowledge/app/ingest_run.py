@@ -59,13 +59,15 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 # The lease a job runs under, and the claim a publish of one source runs under.
-# A job a run left `processing` runs again once no worker has updated it for
-# JOB_LEASE_S. A run that gave up on an uncertain document insert saves the job
-# first (`_touch`), so the wait starts there and outlasts the insert's bound: its
-# send may start on the server up to `rmt_carry._TRANSIT_S` later, then run for a
-# claimed statement's server-side limit (`leases.holding`) plus
-# `rmt_carry._RELEASE_MARGIN_S`. By the rerun it has landed or been stopped, so
-# the rerun reads its outcome from the stored rows.
+# A run that gives up on a document insert whose outcome is unknown leaves the
+# job's lease to expire instead of releasing it (`Lease.let_expire`), so no
+# worker takes the job before the insert has landed or stopped. The lease was
+# held when the insert was sent (renewed within JOB_LEASE_S / 2) and the claimed
+# block before the send is bounded, so it expires at least JOB_LEASE_S / 2 minus
+# that block after the send, judged on the server's clock: past the insert's own
+# bound (its send may start on the server up to `rmt_carry._TRANSIT_S` later,
+# run for a claimed statement's server-side limit, and commit within
+# `rmt_carry._RELEASE_MARGIN_S`). The rerun reads its outcome from the stored rows.
 JOB_LEASE_S = 120.0  # not a setting: renewed while the job runs; it bounds a dead holder
 _SOURCE_CLAIM_S = 60.0  # not a setting: bounds one publish's few statements
 # The first retry waits this long, doubling per attempt.
@@ -89,10 +91,10 @@ class JobFailed(Exception):
 class _InsertUncertain(Exception):
     """The document row's insert failed transiently (a client-side timeout
     among them, or the source claim's deadline cutting it off): the row may
-    still land. The run stops as a crash would, writing nothing more, so the
-    job stays `processing` at its publish stage; once no worker has updated it
-    for its lease's TTL its next run settles it as it settles any publish that
-    stopped midway. `cause` is the transient error."""
+    still land. The run leaves the job's lease to expire and stops as a crash
+    would, writing nothing more, so the job stays `processing` at its publish
+    stage; once the lease has expired its next run settles it as it settles
+    any publish that stopped midway. `cause` is the transient error."""
 
     def __init__(self, cause: Exception) -> None:
         super().__init__(str(cause))
@@ -420,31 +422,16 @@ async def _publish(
             await chunks_repo.mark_doc_superseded(org, ns, uri, before_version=version, when=now)
     except asyncio.CancelledError:
         if in_flight:  # stopped (a pass deadline, a shutdown) with the insert in flight
-            await asyncio.shield(_touch(job))
+            lease.let_expire()
         raise
     except Exception as e:
         if in_flight and isinstance(e, _TRANSIENT):
-            await _touch(job)
+            lease.let_expire()
             raise _InsertUncertain(e) from e
         if published:  # whatever failed after the row, the publish stands
             raise _AfterRow(revision, e) from e
         raise
     return job, revision
-
-
-async def _touch(job: dict[str, Any]) -> None:
-    """Save the job again after its document insert's outcome became unknown:
-    the job is due again only once no worker has updated it for JOB_LEASE_S,
-    and that wait must start after the client gave up on the insert, not at the
-    publish stage's save before the chunk insert and the claim."""
-    try:
-        await _save(job)
-    except Exception:  # the run is stopping already; the job stays processing either way
-        log.warning(
-            "knowledge_ingest: job %s: could not save after an uncertain insert",
-            job["ingestion_id"],
-            exc_info=True,
-        )
 
 
 async def _retry_or_fail(job: dict[str, Any], e: Exception) -> str:

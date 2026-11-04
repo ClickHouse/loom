@@ -62,6 +62,8 @@ class World:
     claim_busy: bool = False  # another write holds the source's claim
     on_chunks: Any = None  # replaces the chunk insert, to act between it and the document row
     claim_cuts_insert: bool = False  # the claim's deadline cuts the document insert off
+    cancel_insert: bool = False  # the run is cancelled with the document insert in flight
+    left_to_expire: int = 0  # job leases a run left to expire rather than release
     fail_retire_older: Exception | None = None  # raised once, by the next older-chunks retire
     log: list[str] = field(default_factory=list)
     stored_vectors: dict[str, list[float]] = field(default_factory=dict)
@@ -149,6 +151,9 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
         if w.claim_cuts_insert:
             w.late_documents.append(dict(row))
             raise TimeoutError  # asyncio.timeout around the claimed block
+        if w.cancel_insert:
+            w.late_documents.append(dict(row))
+            raise asyncio.CancelledError
         w.documents.append(dict(row))
         w.log.append("document")
 
@@ -185,6 +190,9 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
 
     class _Lease:
         held = True
+
+        def let_expire(self) -> None:
+            w.left_to_expire += 1
 
         async def release(self) -> None:
             return None
@@ -1269,22 +1277,36 @@ def test_a_store_out_of_slots_puts_the_job_back(world: World) -> None:
 
 
 def test_a_rerun_comes_only_after_an_uncertain_insert_has_settled(world: World) -> None:
-    """A run that gave up on an uncertain document insert saves the job after
-    it, so the job is due again only JOB_LEASE_S later; by then the insert has
-    landed or been stopped: a carried send starts within `_TRANSIT_S`, runs
-    within a claimed statement's server-side limit, and commits within
-    `_RELEASE_MARGIN_S` more."""
+    """A run that gave up on an uncertain document insert leaves the job's lease
+    to expire. It was held when the insert was sent (renewed within half its
+    TTL) and the claimed block before the send is bounded, so no other worker
+    takes the job until the insert has landed or stopped: a carried send
+    starts within `_TRANSIT_S`, runs within a claimed statement's limit, and
+    commits within `_RELEASE_MARGIN_S` more."""
     from server.core import leases, rmt_carry
 
-    bound = (
+    earliest_takeover = ingest_run.JOB_LEASE_S / 2 - ingest_run._SOURCE_CLAIM_S * leases._WORK_SHARE
+    insert_bound = (
         rmt_carry._TRANSIT_S
         + ingest_run._SOURCE_CLAIM_S * leases._STATEMENT_SHARE
         + rmt_carry._RELEASE_MARGIN_S
     )
-    assert ingest_run.JOB_LEASE_S > bound
+    assert earliest_takeover > insert_bound
 
     world.fail_document = BackendTimeoutError("timed out")
     job_id = _ingest(world, _upload(world))
-    assert _run(world, job_id) == "processing"
-    assert world.log[-1] == "job:processing:publish", "the job is saved after the failed insert"
-    assert world.log.index("job:processing:publish") < len(world.log) - 1
+    assert _run(world, job_id) == "processing" and world.left_to_expire == 1
+
+
+def test_a_run_cancelled_with_its_insert_in_flight_leaves_the_lease_to_expire(
+    world: World,
+) -> None:
+    """A pass deadline or a shutdown that cancels the run mid-insert: the
+    cancel goes on, the job stays processing, and its lease is not released."""
+    world.cancel_insert = True
+    job_id = _ingest(world, _upload(world))
+    with pytest.raises(asyncio.CancelledError):
+        _run(world, job_id)
+    job = world.job(job_id)
+    assert job is not None and (job["state"], job["stage"]) == ("processing", "publish")
+    assert world.left_to_expire == 1
