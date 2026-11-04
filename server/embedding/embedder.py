@@ -277,3 +277,13 @@ def effective_embedding_dim() -> int:
     Use this everywhere the actual emitted vector length matters
     (coded column widths, sanity checks on insert)."""
     return _probed_dim if _probed_dim is not None else settings.embedding_dim
+
+
+def input_token_limit(embedder: Embedder) -> int | None:
+    """The most tokens one input to `embedder` may hold, which its provider refuses past;
+    None for a provider that states none Loom checks (local, compatible, fake). A prefix
+    or alias label is its base model's."""
+    while (base := getattr(embedder, "base", None)) is not None:
+        embedder = base
+    limit = getattr(embedder, "max_input_tokens", None)
+    return int(limit) if limit else None

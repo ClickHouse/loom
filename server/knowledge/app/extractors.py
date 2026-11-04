@@ -227,6 +227,42 @@ async def available_formats() -> dict[str, str]:
     return out
 
 
+@dataclass(frozen=True)
+class Service:
+    """One configured extractor service, as a report names it."""
+
+    # The setting that names it: LOOM_DOCUMENT_EXTRACTOR_URL, or a key of
+    # LOOM_DOCUMENT_EXTRACTORS_JSON (`LOOM_DOCUMENT_EXTRACTORS_JSON["pdf"]`), the first
+    # in that order when two name one URL.
+    setting: str
+    # Its base URL: a secret (it can carry a credential), never returned.
+    url: str
+    # The formats it declares; None when its capabilities could not be read.
+    formats: frozenset[str] | None
+
+
+async def configured_services(*, timeout_s: float) -> list[Service]:
+    """Every configured service with what it declares, each read once and all at once, so
+    the whole read takes at most `timeout_s` (a service slower than that reads as
+    unread)."""
+    named: dict[str, str] = {}
+    if settings.document_extractor_url:
+        named[settings.document_extractor_url.rstrip("/")] = "LOOM_DOCUMENT_EXTRACTOR_URL"
+    for key, url in sorted(settings.document_extractor_routes().items()):
+        named.setdefault(url.rstrip("/"), f"LOOM_DOCUMENT_EXTRACTORS_JSON[{json.dumps(key)}]")
+
+    async def read(url: str, setting: str) -> Service:
+        try:
+            async with asyncio.timeout(timeout_s):
+                formats: frozenset[str] | None = (await capabilities(url)).formats
+        except (ExtractorUnavailable, TimeoutError) as e:
+            logger.warning("document extractor %s: %s", _origin(url), e or "timed out")
+            formats = None
+        return Service(setting, url, formats)
+
+    return list(await asyncio.gather(*(read(u, s) for u, s in named.items())))
+
+
 def _refusal(status: int, data: bytes) -> ExtractionFailed | ExtractorUnavailable:
     try:
         err = json.loads(data)["error"]

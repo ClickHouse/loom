@@ -552,7 +552,7 @@ Fields for every `namespace` op: [operations/namespace.md](operations/namespace.
 | [`namespace.snapshot`](operations/namespace.md#namespacesnapshot) | Freeze a namespace's curated state as a portable JSON payload. | admin | idempotent | no | yes |
 | [`namespace.summary`](operations/namespace.md#namespacesummary) | Aggregated read-only metadata for one namespace, for a single-shot dashboard tile (category/memory counts, top entities, recent activity). | viewer | read | yes |  |
 | [`namespace.taxonomy`](operations/namespace.md#namespacetaxonomy) | The de-facto taxonomy of a namespace — tags + entities across its memories. | viewer | read | yes |  |
-| [`namespace.tune`](operations/namespace.md#namespacetune) | Draft changes to a namespace's extraction rules, categories and guide from what its rows and the audit show. | viewer | read | no |  |
+| [`namespace.tune`](operations/namespace.md#namespacetune) | Draft changes to a namespace's extraction rules, categories and guide from what its rows and the audit show, and to the chunking and extractor settings from what its documents show. | viewer | read | no |  |
 | [`namespace.validate`](operations/namespace.md#namespacevalidate) | Integrity report for one namespace, in one call, shaped for the agent that just wrote to it. | viewer | read | yes |  |
 
 ### observe

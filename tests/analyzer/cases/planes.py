@@ -985,6 +985,20 @@ async def _knowledge_inspect_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     await store.source_jobs(ORG, NS, ["docs/a.md"], lease_s=120.0, ch=ch)
     await store.sources_without_document(ORG, NS, limit=20, lease_s=120.0, ch=ch)
     await decisions_by_document(ORG, NS, ["docs/a.md"], scope=scope, ch=ch)
+    # The per-format reads namespace.tune's extractor drafts make.
+    await store.format_unavailable_sources(ORG, NS, lease_s=120.0, ch=ch)
+    await store.extraction_by_format(ORG, NS, ch=ch)
+
+
+async def _tune_document_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The document reads behind `namespace.tune`'s chunking draft."""
+    from server.knowledge.app.tune import MAX_DOCUMENT_CHARS, MAX_SAMPLE_CHARS
+    from server.knowledge.store import tune as store
+
+    await store.sample_documents(
+        ORG, NS, limit=50, max_chars=MAX_DOCUMENT_CHARS, total_chars=MAX_SAMPLE_CHARS, ch=ch
+    )
+    await store.document_writers(ORG, NS, limit=20, ch=ch)
 
 
 async def _tune_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -1095,6 +1109,15 @@ def cases() -> list[Case]:
             {"scope": ("namespace", "own_user")},
             # Each read answers one row with every column the reads return.
             rows=lambda sql, params: [{"n": 0, "source_uri": "docs/a.md"}],
+        )
+    )
+    out.append(
+        Case(
+            "namespace_tune_documents",
+            "server.knowledge.store.tune",
+            _tune_document_reads,
+            {},
+            rows=lambda sql, params: [{"agent": "a", "rows": 1, "total": 1}],
         )
     )
     out.append(
