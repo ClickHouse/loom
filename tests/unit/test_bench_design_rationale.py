@@ -298,6 +298,13 @@ def test_the_no_claim_share_counts_a_answers_whose_passes_made_no_claim():
     claim = {"verdict": "correct", "cites": [], "cites_support": []}
     judged = {f"{tid}/arm0/s1": entry([]), f"{tid}/arm0/s2": entry([claim])}
     assert score.a_answers_without_claims(ts, judged) == {0: 0.5}
+    # An unreadable pass is not a pass with no claim.
+    unreadable = {"citations": [], "detectors": [], "passes": [{"verdict": {"claims": False}}]}
+    judged[f"{tid}/arm0/s3"] = {
+        **unreadable,
+        "passes": [*unreadable["passes"], *entry([claim])["passes"]],
+    }
+    assert score.a_answers_without_claims(ts, judged) == {0: round(1 / 3, 4)}
 
 
 def test_a_verdict_without_its_keys_is_unreadable_not_a_pass():
@@ -1372,7 +1379,17 @@ def test_score_writes_the_summary_without_per_task_rows(tmp_path):
     summary = json.loads(first)
     assert "per_task" not in summary
     assert summary["run"]["reader"] == "gpt-4o-mini" and summary["run"]["k"] == 2
-    assert "org" not in summary["run"] and "arm4_namespace" not in summary["run"]
+    assert set(summary["run"]) == {
+        "arms",
+        "arm4_files",
+        "extract_window_chars",
+        "reader",
+        "judges",
+        "extract_model",
+        "k",
+        "judge_orders",
+        "judge_repeats",
+    }
     # Document ids can name private material: the extraction figures are a list.
     assert isinstance(summary["extraction"]["documents"], list)
     assert summary["extraction"]["documents"]

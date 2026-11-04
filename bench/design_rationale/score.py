@@ -19,7 +19,7 @@ from statistics import mean
 from typing import Any
 
 from bench.bootstrap import paired_bootstrap
-from bench.design_rationale.llm import cost_usd, price
+from bench.design_rationale.llm import Ledger, cost_usd, price
 from bench.design_rationale.taskset import TaskSet, parse_key, surface_key
 
 # z(0.975) + z(0.80): the effect a two-sided 5% test detects with 80% power is this many
@@ -37,6 +37,15 @@ REQUIRED = {
     "B": ("forbidden_proposed", "constraints_violated"),
     "C": ("stale_served", "abstained", "invented_rationale"),
 }
+# The run flags a summary publishes; the org and an --arm4-namespace name a deployment.
+SUMMARY_FLAGS = (
+    "arms",
+    "arm4_files",
+    "extract_window_chars",
+    "reader",
+    "judges",
+    "extract_model",
+)
 # The verdict fields read as lists, at the top level and in each claim.
 LIST_FIELDS = ("cites", "cites_support")
 # The verdict fields read as lists at the top level only.
@@ -568,12 +577,7 @@ def summary(ts: TaskSet, metrics: dict[str, Any], out_dir: Path) -> dict[str, An
         "tasks_with_gold_rows": sum(1 for _, t in ts.all_tasks() if t["gold_rows"]),
     }
     by_stage: dict[str, float] = defaultdict(float)
-    ledger = out_dir / "ledger.jsonl"
-    for line in ledger.read_text().splitlines() if ledger.exists() else []:
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue  # a row an interrupt cut short, as the ledger itself drops it
+    for row in Ledger(out_dir / "ledger.jsonl", math.inf).rows():
         by_stage[row["stage"]] += row["usd"]
     priced = price(flags["reader"]) is not None
     answer_usd: dict[int, float] = defaultdict(float)
@@ -590,7 +594,7 @@ def summary(ts: TaskSet, metrics: dict[str, Any], out_dir: Path) -> dict[str, An
         extraction = dict(aggregates["extraction"])
         extraction["documents"] = list(extraction["documents"].values())
         aggregates["extraction"] = extraction
-    run = {k: v for k, v in flags.items() if k not in ("org", "arm4_namespace")}
+    run = {k: flags[k] for k in SUMMARY_FLAGS}
     return {
         "task_set": task_set,
         "run": {

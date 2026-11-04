@@ -671,10 +671,10 @@ Arm 4's A precision has 9 tasks: on one task no answer made a claim to grade.
 | 4   |                             366, 849 |             71 |          272 |                            0.011 |
 
 Arm 1 injects 1.83 times arm 3's tokens. By ledger stage the run spent 0.099 USD on
-answers, 0.321 on 2,100 judge passes and 0.004 on the server's own model calls. For
-extraction the ledger charges an upper bound once per document before its extraction run,
-0.173 USD in all, so the extraction spent at most 0.173 and the run at most 0.597 USD. The
-ledger does not split judging by arm.
+answers, 0.321 on 2,100 judge passes and 0.004 on the server's own model and embedding
+calls. For extraction the ledger charges an upper bound once per document before its
+extraction run, 0.173 USD in all: the extraction's model calls cost at most 0.173, and its
+write embeddings are not recorded. The ledger does not split judging by arm.
 
 **Reading.** Resolved against zero (the interval's lower bound above it, or its upper
 bound below it): the gold rows (arm 3) raise A precision and recall and B avoidance and
@@ -696,8 +696,9 @@ block served 5 and search 30 (a task counts when it served any extracted row). E
 wrote 32 rows across the documents and their revisions, 14 with files, with no extraction
 failure and no failed code lookup.
 
-**Judge stability.** Verdicts agreed across the two orders on 93.4% of 498 answers and
-across repeats on 97.2% of 500. 70 of 2,100 judge passes were unreadable (3 answers
+**Judge stability.** The headline verdict (A misleading, B avoids, C passed) agreed across
+the two orders on 93.4% of 498 answers and across repeats on 97.2% of 500; a change answer
+a detector decided is left out. 70 of 2,100 judge passes were unreadable (3 answers
 unscored).
 
 **Limits.** One reader and one judge model; no second judge and no human-labelled slice,
