@@ -47,7 +47,6 @@ document's branch namespace.
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import functools
 import logging
 import time
@@ -330,14 +329,6 @@ def _refusal(e: BaseException) -> str:
     return f"refused: {code}" if code else f"failed: {type(e).__name__}"
 
 
-# The current run's write units: each decision's writes with their audit rows, run as
-# one unit a cancel does not cut short. Every unit is registered for shutdown to drain
-# (`server.core.background.drain_task_sets`).
-_run_writes: contextvars.ContextVar[TaskSet | None] = contextvars.ContextVar(
-    "decision_extract_writes", default=None
-)
-
-
 async def finish_writes(writes: TaskSet) -> None:
     """Wait for the units of one run (`writes`, as passed to `extract_document`) still
     running, such as the one a cancelled run left: a caller that bills the run's spend
@@ -348,12 +339,11 @@ async def finish_writes(writes: TaskSet) -> None:
         await asyncio.shield(asyncio.gather(*pending, return_exceptions=True))
 
 
-async def _whole[T](coro: Coroutine[Any, Any, T]) -> T:
-    """Run one candidate's or one row's writes to the end even when the caller is
-    cancelled, so no row is left without its audit row."""
-    writes = _run_writes.get()
-    if writes is None:  # an empty TaskSet is falsy: compare with None
-        writes = TaskSet()
+async def _whole[T](writes: TaskSet, coro: Coroutine[Any, Any, T]) -> T:
+    """Run one candidate's or one row's writes, with their audit rows, as one unit held in
+    the run's `writes`, to the end even when the caller is cancelled: no row is left
+    without its audit row. Every unit is registered for shutdown to drain
+    (`server.core.background.drain_task_sets`)."""
     return await asyncio.shield(writes.spawn(coro, name="decision-extract-write"))
 
 
@@ -466,38 +456,6 @@ async def extract_document(
     `may_write` is asked before each candidate's or row's writes (the sync worker: its
     pass is not stopped and it holds the source's lease); each such unit runs whole, held
     in `writes` (a fresh set when none is given) for `finish_writes`."""
-    token = _run_writes.set(TaskSet() if writes is None else writes)
-    try:
-        return await _extract(
-            org,
-            namespace,
-            source_uri,
-            dry_run=dry_run,
-            repo=repo,
-            into=into,
-            max_per_section=max_per_section,
-            window_chars=window_chars,
-            read_deadline=read_deadline,
-            may_write=may_write,
-        )
-    finally:
-        _run_writes.reset(token)
-
-
-async def _extract(
-    org: str,
-    namespace: str,
-    source_uri: str,
-    *,
-    dry_run: bool,
-    repo: str,
-    into: Into | None,
-    max_per_section: int,
-    window_chars: int,
-    read_deadline: float | None,
-    may_write: Callable[[], bool] | None,
-) -> ExtractReport:
-    """`extract_document`'s run, in the context that holds its write units."""
     from server.knowledge.api.models_knowledge import KnowledgeGetInput
     from server.knowledge.app.document_reads import document_chunks, handle_knowledge_get
 
@@ -549,9 +507,13 @@ async def _extract(
     if report.error:
         # Held, out of time or nothing read: such a run must not write or retire anything.
         return report
-    done = await _write_kept(org, t, source_uri, kept, dry_run, report, own_by_words, may_write)
+    # An empty TaskSet is falsy: the caller's is told apart from none by `is None`.
+    units = TaskSet() if writes is None else writes
+    done = await _write_kept(
+        org, t, source_uri, kept, dry_run, report, own_by_words, may_write, units
+    )
     if done is not None:
-        await _retire(report, own, live_texts, *done, t.row_tag, may_write)
+        await _retire(report, own, live_texts, *done, t.row_tag, may_write, units)
     return report
 
 
@@ -563,7 +525,8 @@ async def _write_kept(
     dry_run: bool,
     report: ExtractReport,
     own_by_words: dict[tuple[str, str], _PriorRow],
-    may_write: Callable[[], bool] | None = None,
+    may_write: Callable[[], bool] | None,
+    writes: TaskSet,
 ) -> tuple[set[str], dict[tuple[str, str], str]] | None:
     """Reconcile and write each kept candidate; the keys handled and the decisions held
     (`_held_key` -> key) for the retire step, or None when a hold on an embedding or
@@ -579,7 +542,7 @@ async def _write_kept(
             return None
         try:
             rec = await _whole(
-                _reconcile(org, t, source_uri, cand, section, texts, dry_run, own_by_words)
+                writes, _reconcile(org, t, source_uri, cand, section, texts, dry_run, own_by_words)
             )
         except customer.HOLDS as e:
             report.held = e
@@ -1572,7 +1535,8 @@ async def _retire(
     written: set[str],
     held: dict[tuple[str, str], str],
     repo_tag: str,
-    may_write: Callable[[], bool] | None = None,
+    may_write: Callable[[], bool] | None,
+    writes: TaskSet,
 ) -> None:
     """Contract the extractor's own rows on this document whose reasoning left its text:
     delete one that is not frozen; tag a frozen one (pinned or attested), or one with a
@@ -1590,7 +1554,7 @@ async def _retire(
         if not _may_go_on(report, may_write):
             return
         try:
-            await _whole(_retire_one(report, row, record, live_texts, held, repo_tag))
+            await _whole(writes, _retire_one(report, row, record, live_texts, held, repo_tag))
         except _REPORTED_ERRORS as e:
             report.refused.append(f"{row.memory_key}: {_refusal(e)}")
 

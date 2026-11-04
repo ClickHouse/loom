@@ -65,8 +65,8 @@ class KnowledgeSourceSync(BaseModel):
     # Decision rows it tagged source-changed rather than rewriting them (pinned,
     # attested, or with a recorded outcome): their document now says otherwise.
     flagged_pinned: int = 0
-    # Documents given up on after three failed extractions, until they are written
-    # again.
+    # Documents given up on: three failed tries, or too large for a pass; tried again
+    # once the sync writes them again.
     unextracted: int = 0
     # Why an extraction failed: not_run (it could not run on the document, such as one
     # with no chunks for the current embedding model), refused (a read or write it

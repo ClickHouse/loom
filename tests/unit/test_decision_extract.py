@@ -2464,16 +2464,31 @@ async def test_a_run_s_writes_are_its_own_and_finish_writes_waits_for_those_only
     import asyncio
 
     from server.core.background import TaskSet
+    from server.memory.app import decision
 
     world = _World(monkeypatch, [_candidate()])
     mine, other = TaskSet(), TaskSet()
     release = asyncio.Event()
-    # Another run's unit, still running.
-    other.spawn(release.wait(), name="another-run")
-    await _run(writes=mine)
-    assert len(list(mine)) <= 1 and len(world.recorded) == 1
-    # This run's units are done: the other run's does not hold the wait.
+    other.spawn(release.wait(), name="another-run")  # another run's unit, still running
+    record = decision.handle_decision_record
+    started = asyncio.Event()
+
+    async def slow(inp):
+        started.set()
+        await asyncio.sleep(0.05)
+        await record(inp)
+
+    monkeypatch.setattr(decision, "handle_decision_record", slow)
+    run = asyncio.create_task(_run(writes=mine))
+    await started.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    # The cancelled run's unit is held in its own set, still running.
+    assert [t for t in mine if not t.done()] and world.recorded == []
     await asyncio.wait_for(de.finish_writes(mine), timeout=1.0)
+    assert len(world.recorded) == 1 and [e for e, _, _ in world.audits] == ["decision.record"]
+    # The other run's unit did not hold the wait, and is still pending.
     assert not all(t.done() for t in other)
     release.set()
     await de.finish_writes(other)

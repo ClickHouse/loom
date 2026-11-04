@@ -217,8 +217,8 @@ class PassResult:
     flagged_pinned: int = 0
     unextracted: int = 0
     extract_deferred: int = 0
-    # Sources whose turn ended with a status other than ok, or failed outright, and
-    # those a document's extraction failed on.
+    # Sources whose turn ended with a status other than ok or failed outright, plus one
+    # for each document's failed extraction try.
     failed: int = 0
     # The pass bound stopped the pass before every source, or every file of one, was
     # handled.

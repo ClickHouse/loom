@@ -2093,8 +2093,7 @@ def test_a_write_unit_a_cancel_leaves_running_is_billed(
 
     async def _extract(*a: Any, **kw: Any) -> Any:
         # As extract_document holds its units in the run's own set.
-        decision_extract._run_writes.set(kw["writes"])
-        await decision_extract._whole(_unit())
+        await decision_extract._whole(kw["writes"], _unit())
 
     monkeypatch.setattr(decision_extract, "extract_document", _extract)
     world.files = [_file("doc1", DOCS, REV1)]
@@ -2129,5 +2128,39 @@ def test_a_failed_state_write_of_a_waiting_source_does_not_stop_the_leg(
     world.files = [_file("doc2", DOCS, REV2)]  # notes' file: decks lists it and skips it
     result = asyncio.run(source_sync.run_sync())
     assert result.errors == [f"{ORG}/{NS}/decks: extraction OverloadedError"]
+    assert result.failed == 1
     assert [uri for uri, _, _ in world.mined] == [DOC2]
     assert _detail(world, "notes")["mined"] == {DOC2: REV2}
+
+
+def test_a_failed_read_of_a_source_s_documents_is_that_source_s_error(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.workers import pass_context
+
+    _second_source(world)
+    world.files = [_file("doc2", DOCS, REV2)]
+    revisions = source_sync.store.source_revisions
+    noted: list[str] = []
+
+    async def _decks_down(org: str, ns: str, name: str, **kw: Any) -> Any:
+        if name == "decks" and kw.get("searchable_only", True) and noted == ["sync-done"]:
+            raise ConnectionError("store down")
+        return await revisions(org, ns, name, **kw)
+
+    write_state = source_sync._write_state
+
+    async def _then(*a: Any, **kw: Any) -> None:
+        await write_state(*a, **kw)
+        if a[0].name == "notes":
+            noted.append("sync-done")  # both turns done: the leg's read of decks fails
+
+    monkeypatch.setattr(source_sync.store, "source_revisions", _decks_down)
+    monkeypatch.setattr(source_sync, "_write_state", _then)
+    failures: list[str] = []
+    monkeypatch.setattr(pass_context, "note_failure", lambda e, what="": failures.append(what))
+    result = asyncio.run(source_sync.run_sync())
+    assert result.errors == [f"{ORG}/{NS}/decks: extraction ConnectionError"]
+    assert result.failed == 1 and failures == [f"{ORG}/{NS}/decks"]
+    # The leg goes on: the other source's document is mined.
+    assert [uri for uri, _, _ in world.mined] == [DOC2]
