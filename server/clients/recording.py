@@ -213,7 +213,7 @@ async def meet_records(
         token,
         {"filter": query, "pageSize": str(page_size)},
         "conferenceRecords",
-        "listing",
+        f"space {space_name.removeprefix('spaces/')}",
     )
     return [r for r in found if r.get("endTime")]
 

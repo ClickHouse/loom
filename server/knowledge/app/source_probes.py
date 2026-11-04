@@ -24,7 +24,8 @@ SAMPLE_TITLES = 5
 @dataclass(frozen=True)
 class Probe:
     # Documents the source lists now: the first 1000 at most (gdrive), the first
-    # page of each project (linear).
+    # page of each project (linear), the recordings listed, the first 1000 at most
+    # (recording).
     documents: int
     # Up to five of their titles, most recently changed first.
     sample: list[str] = field(default_factory=list)

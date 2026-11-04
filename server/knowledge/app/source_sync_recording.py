@@ -193,8 +193,12 @@ async def _meet_transcript(token: str, item: dict[str, Any], max_bytes: int) -> 
     speakers = await recording.meet_participants(token, record)
     zero = parse_time(str(item.get("started") or ""))
     entries: list[Entry] = []
+    # The bound is the recording's, across its transcripts.
+    left = max_bytes
     for t in sorted(found, key=lambda t: str(t.get("startTime") or "")):
-        for e in await recording.meet_entries(token, str(t.get("name") or ""), max_bytes=max_bytes):
+        read = await recording.meet_entries(token, str(t.get("name") or ""), max_bytes=left)
+        left -= sum(len(str(e.get("text") or "").encode()) for e in read)
+        for e in read:
             start, end = (
                 parse_time(str(e.get("startTime") or "")),
                 parse_time(str(e.get("endTime") or "")),

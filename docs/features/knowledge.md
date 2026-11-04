@@ -305,12 +305,14 @@ conference records for 30 days, so the old instances of a long recurring meeting
 no check; documents written from older instances stay. A space or meeting the
 account no longer sees, or may not read, ends the turn `failed` with its status
 (`space <id>: http_404` or `http_403`) and retires nothing, while the other ids'
-recordings are written; on `add` and `check` it is `SOURCE_UNREACHABLE` naming it.
+recordings are written. A probe of such an id fails: `add` and `rotate` answer
+`SOURCE_UNREACHABLE` naming it, and `check` answers `reachable: false` with that summary.
 
 A credential whose token answer holds any scope beyond reads (for `meet`, anything but
 `meetings.space.readonly`; for `zoom`, any scope that is not `<resource>:read…`), or
-names no scope, is refused (`CREDENTIAL_REFUSED` on `add`, `rotate` and `check`,
-`credential_invalid` on a turn), so a stored credential can never change the store.
+names no scope, is refused: `add` and `rotate` answer `CREDENTIAL_REFUSED`, `check`
+answers `reachable: false` with that summary, and a turn ends `credential_invalid`, so a
+stored credential can never change the store.
 
 A recording its store no longer lists retires nothing: both stores delete recordings
 and transcripts on their own retention schedule (a conference record after 30 days), so

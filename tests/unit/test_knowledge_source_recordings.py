@@ -60,6 +60,9 @@ class _Stores:
         self.entries: dict[str, list[dict[str, Any]]] = {}
         self.lost_spaces: set[str] = set()
         self.forbidden_spaces: set[str] = set()
+        # An HTTP status a space read or a transcript's entries answer instead.
+        self.space_status: dict[str, int] = {}
+        self.entry_status: dict[str, int] = {}
         # zoom: instances, and per uuid its recording (None: not recorded).
         self.instances: list[dict[str, Any]] = []
         self.recordings: dict[str, dict[str, Any] | None] = {}
@@ -95,6 +98,8 @@ class _Stores:
             space = path.removeprefix("spaces/")
             if space in self.lost_spaces:
                 return httpx.Response(404)
+            if space in self.space_status:
+                return httpx.Response(self.space_status[space])
             if space in self.forbidden_spaces:
                 return httpx.Response(403, json={"error": {"status": "PERMISSION_DENIED"}})
             return httpx.Response(200, json={"name": f"spaces/{space}"})
@@ -120,6 +125,8 @@ class _Stores:
             ]
             return httpx.Response(200, json={"participants": people})
         if parts[-1] == "entries":
+            if parts[3] in self.entry_status:
+                return httpx.Response(self.entry_status[parts[3]])
             return httpx.Response(200, json={"transcriptEntries": self.entries.get(parts[3], [])})
         return httpx.Response(404)
 
@@ -644,3 +651,74 @@ def test_a_space_the_account_may_not_read_is_lost_not_a_refused_credential(
     config = {"provider": "meet", "ids": ["closedSpace", SPACE]}
     with pytest.raises(source_probes.SourceUnreachable, match="space closedSpace: http_403"):
         asyncio.run(source_probes.probe("recording", config, MEET_KEY))
+
+
+def test_a_401_on_a_space_after_the_token_exchange_is_the_turn_s_credential(
+    world: _World,  # noqa: F811
+    stores: _Stores,
+) -> None:
+    world.sources = [_source("meet", ["revokedSpace", SPACE], MEET_KEY)]
+    stores.space_status = {"revokedSpace": 401}
+    stores.records = [_meet_record("r1", "2026-01-02T10:00:00Z", "2026-01-02T10:40:00Z")]
+    stores.transcripts["r1"] = _generated("r1", "t1")
+    asyncio.run(source_sync.run_sync())
+    detail = _detail(world, "calls")
+    assert (detail["status"], detail["error"]) == (
+        "credential_invalid",
+        "space revokedSpace: http_401",
+    )
+    assert world.docs == {} and world.upserts == []
+
+
+def test_a_401_on_a_transcript_s_entries_stops_the_turn(
+    world: _World,  # noqa: F811
+    stores: _Stores,
+) -> None:
+    world.sources = [_source("meet", [SPACE], MEET_KEY)]
+    stores.records = [
+        _meet_record("r1", "2026-01-02T10:00:00Z", "2026-01-02T10:40:00Z"),
+        _meet_record("r2", "2026-01-03T10:00:00Z", "2026-01-03T10:40:00Z"),
+    ]
+    stores.transcripts = {"r1": _generated("r1", "t1"), "r2": _generated("r2", "t2")}
+    stores.entry_status = {"t1": 401}
+    asyncio.run(source_sync.run_sync())
+    assert _detail(world, "calls")["status"] == "credential_invalid"
+    assert world.upserts == []
+    # The turn stopped at the first record: the second's transcripts were never read.
+    assert not any("/r2/" in r.url.path for r in stores.requests)
+    assert world.states["calls"]["state_value"] == ""
+
+
+def test_a_record_s_transcripts_are_merged_under_one_size_bound(
+    stores: _Stores,
+) -> None:
+    stores.transcripts["r1"] = [
+        {
+            "name": "conferenceRecords/r1/transcripts/ta",
+            "state": "FILE_GENERATED",
+            "startTime": "2026-01-02T10:00:00Z",
+        },
+        {
+            "name": "conferenceRecords/r1/transcripts/tb",
+            "state": "FILE_GENERATED",
+            "startTime": "2026-01-02T10:20:00Z",
+        },
+    ]
+    stores.entries["ta"] = [
+        _entry("r1", "p1", "a" * 600, "2026-01-02T10:01:00Z", "2026-01-02T10:01:30Z")
+    ]
+    stores.entries["tb"] = [
+        _entry("r1", "p2", "b" * 600, "2026-01-02T10:21:00Z", "2026-01-02T10:21:30Z")
+    ]
+    session = source_sync_recording.Session("meet", "tok")
+    item = {"id": "r1", "started": "2026-01-02T10:00:00Z"}
+    text = asyncio.run(source_sync_recording.transcript(session, item, max_bytes=1200))
+    assert [line[:12] for line in text.split("\n\n")] == [
+        "# 01:00–01:3",
+        "Ana Lima: aa",
+        "# 21:00–21:3",
+        "Ben Ode: bbb",
+    ]
+    # Each transcript fits 1000 bytes alone; together they do not.
+    with pytest.raises(recording.TooLarge):
+        asyncio.run(source_sync_recording.transcript(session, item, max_bytes=1000))

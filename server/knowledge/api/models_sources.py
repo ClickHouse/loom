@@ -122,9 +122,10 @@ class KnowledgeSourceAddInput(BaseModel):
         ...,
         description="The source's read-only credential (gdrive: a service account's JSON key, "
         "with the folders shared to the account read-only; linear: a read-only API key of an "
-        "account that sees the projects; recording: meet an authorized_user JSON file with "
-        "the meetings.space.readonly scope, zoom a server-to-server app's {account_id, "
-        "client_id, client_secret}); stored encrypted, never returned.",
+        "account that sees the projects; recording: for meet, an authorized_user JSON file "
+        "with the meetings.space.readonly scope only; for zoom, a server-to-server app's "
+        "{account_id, client_id, client_secret} with read-only scopes); stored encrypted, "
+        "never returned.",
     )
     dry_run: bool = Field(False, description="Probe and write nothing.")
 
