@@ -291,8 +291,8 @@ document the tracker no longer finds (`not_found`), one over the size bound and 
 refuses (a GraphQL error typed `FORBIDDEN`, `INVALID_INPUT`, `FEATURE_NOT_ACCESSIBLE` or
 `USER_ERROR`, or a `4xx` with no GraphQL error type: `http_<status>`, `graphql_<type>`)
 are given up on their revision at once; any other GraphQL error, whatever its status, a
-`5xx`, a timeout and an answer without the document (`no_document`) make it wait. List pages are paced half a second
-apart.
+`5xx`, a timeout and an answer without the document (`no_document`) make it wait. List
+pages are paced half a second apart.
 
 ## Searching
 

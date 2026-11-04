@@ -459,22 +459,23 @@ def test_a_fetch_answered_without_the_document_waits(
 def test_a_refused_fetch_is_given_up_at_once_and_an_internal_error_waits(
     world: _World, tracker: _Tracker
 ) -> None:
-    tracker.projects[PROJECT] = [_node(n, f"2026-01-0{n}T00:00:00.000Z") for n in (1, 2, 3)]
+    tracker.projects[PROJECT] = [_node(n, f"2026-01-0{n}T00:00:00.000Z") for n in (1, 2, 3, 4)]
     tracker.answers[_doc_id(1)] = _graphql_error(200, "FORBIDDEN")
+    tracker.answers[_doc_id(4)] = _graphql_error(400, "FORBIDDEN")
     tracker.answers[_doc_id(2)] = _graphql_error(200, "INTERNAL_ERROR")
     # The tracker answers its internal errors with a 400 too: the type decides.
     tracker.answers[_doc_id(3)] = _graphql_error(400, "INTERNAL_ERROR")
     result = _sync()
-    assert result.unconverted == 1
+    assert result.unconverted == 2
     detail = _detail(world)
-    assert detail["unconverted_reasons"] == {"graphql_forbidden": 1}
+    assert detail["unconverted_reasons"] == {"graphql_forbidden": 2}
     assert detail["status"] == "failed"
     assert detail["error"] == f"document {_doc_id(2)}: graphql_internal_error"
     tracker.requests.clear()
     _sync()
-    assert tracker.fetches(_doc_id(1)) == 0
+    assert tracker.fetches(_doc_id(1)) == 0 and tracker.fetches(_doc_id(4)) == 0
     assert tracker.fetches(_doc_id(2)) == 1 and tracker.fetches(_doc_id(3)) == 1
-    assert _detail(world)["file_waits"][_doc_id(3)][1:] == [2, "http_400"]
+    assert _detail(world)["file_waits"][_doc_id(3)][1:] == [2, "graphql_internal_error"]
 
 
 def test_the_key_and_the_tracker_s_text_never_reach_the_state(

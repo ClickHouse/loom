@@ -149,11 +149,13 @@ def _raise_for(status: int, body: Any, what: str) -> None:
         raise CredentialRefused(what, "credential_refused", status=401, kind=kind)
     if _not_found(errors):
         raise NotFound(what, "not_found", status=status, kind=kind)
+    if kind:
+        # The error's own type says more than the status, which is often a 400.
+        raise LinearError(what, f"graphql_{kind.replace(' ', '_')}", status=status, kind=kind)
     if status >= 400:
-        raise LinearError(what, f"http_{status}", status=status, kind=kind)
+        raise LinearError(what, f"http_{status}", status=status)
     if errors:
-        label = kind.replace(" ", "_") or "error"
-        raise LinearError(what, f"graphql_{label}", status=status, kind=kind)
+        raise LinearError(what, "graphql_error", status=status)
 
 
 async def _query(
