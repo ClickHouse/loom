@@ -12,6 +12,7 @@ from pypdf import PdfWriter
 # that draws it inline in its content stream, as some scanners write a page.
 FORM_IMAGE = "\x00form"
 INLINE_IMAGE = "\x00inline"
+FORM_INLINE_IMAGE = "\x00form-inline"  # a form whose own stream draws the image inline
 
 
 def pdf(
@@ -20,8 +21,8 @@ def pdf(
     *,
     broken_cmap: bool = False,
 ) -> bytes:
-    """A PDF of `pages` (each its lines, None for a page of one image, FORM_IMAGE or
-    INLINE_IMAGE) with `outline` entries `(title, page index, children)`. With
+    """A PDF of `pages` (each its lines, None for a page of one image, FORM_IMAGE,
+    INLINE_IMAGE or FORM_INLINE_IMAGE) with `outline` entries `(title, page index, children)`. With
     `broken_cmap`, the font's character map gives `A` a lone surrogate."""
     objs: list[bytes] = []
 
@@ -48,11 +49,18 @@ def pdf(
         b"<< /Type /XObject /Subtype /Form /BBox [0 0 1 1] /Resources << /XObject << /Im1 %d 0 R >> >>"
         b" /Length 7 >>\nstream\n/Im1 Do\nendstream" % image
     )
+    inline = b"BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI"
+    form_inline = add(
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 1 1] /Resources << >> /Length %d >>"
+        b"\nstream\n%s\nendstream" % (len(inline), inline)
+    )
     pages_id = len(objs) + 1 + 2 * len(pages)  # after every page and its contents
     page_ids = []
     for text in pages:
         if text == INLINE_IMAGE:
             stream, res = b"q 100 0 0 100 0 0 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q", b"<< >>"
+        elif text == FORM_INLINE_IMAGE:
+            stream, res = b"q 100 0 0 100 0 0 cm /Fm1 Do Q", b"<< /XObject << /Fm1 %d 0 R >> >>" % form_inline
         elif text is None or text == FORM_IMAGE:
             stream, res = (
                 b"q 100 0 0 100 0 0 cm /Im1 Do Q",

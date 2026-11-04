@@ -102,19 +102,6 @@ def _has_image(
         if _has_image(x, reader, depth + 1, seen):
             return True
     return False
-    for ref in xobjects.get_object().values():
-        x = ref.get_object()
-        if x.get("/Subtype") == "/Image":
-            return True
-        # An indirect object by its number; a direct one (no number) is its own.
-        idnum = getattr(ref, "idnum", None)
-        key = ("ref", idnum) if idnum is not None else ("obj", id(x))
-        if x.get("/Subtype") != "/Form" or depth >= _MAX_FORM_DEPTH or key in seen:
-            continue
-        seen.add(key)
-        if _has_image(x, depth + 1, seen):
-            return True
-    return False
 
 
 # A lone surrogate, which a font's broken character map can give and no UTF-8

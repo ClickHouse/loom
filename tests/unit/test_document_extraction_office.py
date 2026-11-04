@@ -14,7 +14,7 @@ from pypdf import PdfWriter
 from loom_extractor import ExtractionError, Options, extract
 from loom_extractor.artifact import Artifact
 from server.knowledge.domain.extract import InvalidArtifact, parse_artifact, structural
-from tests.fixtures.office_files import FORM_IMAGE, INLINE_IMAGE, pdf
+from tests.fixtures.office_files import FORM_IMAGE, FORM_INLINE_IMAGE, INLINE_IMAGE, pdf
 
 _W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 _P = (
@@ -228,7 +228,7 @@ def test_pdf_pages_are_cited_by_page_and_the_outline_gives_their_sections() -> N
     assert a.coverage.failed[0].unit == "page 3" and "OCR" in a.coverage.failed[0].reason
 
 
-@pytest.mark.parametrize("scan", [FORM_IMAGE, INLINE_IMAGE])
+@pytest.mark.parametrize("scan", [FORM_IMAGE, INLINE_IMAGE, FORM_INLINE_IMAGE])
 def test_a_pdf_page_drawing_its_image_through_a_form_or_inline_needs_ocr_too(scan: str) -> None:
     a = extract(pdf(["Text", scan], []), "scan.pdf")
     assert [f.unit for f in a.coverage.failed] == ["page 2"]
