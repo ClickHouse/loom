@@ -287,7 +287,7 @@ async def _rationale_section(
     rows = ((payload.get("sections") or {}).get("paths") or {}).get("rows") or []
     paths = [str(r["path"]) for r in sorted(rows, key=lambda r: r.get("class") != "src")]
     try:
-        found, left = await decisions_for_paths(
+        found, left, paths_full = await decisions_for_paths(
             org,
             trunk_namespace(org, ns) or ns,
             paths[:most],
@@ -308,6 +308,8 @@ async def _rationale_section(
         paths_left=len(paths) - most,
         rows_left=len(left),
         left_to_check=any(rb.has_check(d) for d in left),
+        paths_full=paths_full,
+        budget_tokens=settings.code_review_brief_rationale_tokens,
     )
 
 

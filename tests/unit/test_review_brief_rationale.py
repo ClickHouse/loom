@@ -13,7 +13,6 @@ import pytest
 from server.code.app.index import review_brief as rb
 from server.memory.api.models_for_file import MemoryForFileOutput, _MemoryForFileHit
 from server.memory.app import code_plane_reads
-from server.settings import settings
 
 DECISION = (
     "Decided spill into sorted runs because a set on disk costs a seek per row. "
@@ -32,6 +31,13 @@ DIFF = """diff --git a/src/Processors/ExternalDistinctTransform.cpp b/src/Proces
 +    SpillingHashSet set;
  x
 """
+
+
+BUDGET = 250
+
+
+def _section(*args: Any, **kw: Any) -> dict[str, Any]:
+    return rb.rationale_section(*args, budget_tokens=BUDGET, **kw)
 
 
 def _row(key: str, text: str, tags: list[str], **kw: Any) -> dict[str, Any]:
@@ -117,7 +123,7 @@ def test_a_plain_multi_file_diff_without_diff_lines_is_well_formed() -> None:
 def test_a_blank_line_after_a_hunk_makes_the_check_unknown() -> None:
     spill = _row("design/spill", DECISION, ["decision"])
     blank = HEAD + "@@ -1,0 +1,1 @@\n+one\n\n+SpillingHashSet s;\n"
-    sec = rb.rationale_section([spill], blank)
+    sec = _section([spill], blank)
     assert sec["verdict"] == "unknown" and sec["causes"] == ["diff_malformed"]
 
 
@@ -140,7 +146,7 @@ def test_parse_diff_reads_a_removed_sql_comment_as_a_removed_line() -> None:
 def test_a_malformed_diff_that_shows_no_name_is_unknown() -> None:
     spill = _row("design/spill", DECISION, ["decision"])
     under = HEAD + "@@ -1,0 +1,1 @@\n+first\n+SpillingHashSet second;\n"
-    sec = rb.rationale_section([spill], under)
+    sec = _section([spill], under)
     assert sec["verdict"] == "unknown" and sec["causes"] == ["diff_malformed"]
 
 
@@ -150,7 +156,7 @@ def test_section_says_check_for_a_row_whose_rejected_option_the_diff_adds() -> N
         _row("design/ratio", CONSTRAINT, ["decision", "constraint"]),
         _row("design/plain", "Decided Z because W.", ["decision"]),
     ]
-    sec = rb.rationale_section(rows, DIFF)
+    sec = _section(rows, DIFF)
     assert sec["verdict"] == "check" and sec["epistemic"] == "lower_bound"
     # `check` rows first, then constraints, then the rest
     assert [(r["memory_key"], r["kind"], r["verdict"]) for r in sec["rows"]] == [
@@ -165,14 +171,15 @@ def test_section_says_check_for_a_row_whose_rejected_option_the_diff_adds() -> N
 
 
 def test_section_without_a_diff_is_unknown_and_without_rows_none() -> None:
-    sec = rb.rationale_section([_row("design/spill", DECISION, ["decision"])], None)
+    sec = _section([_row("design/spill", DECISION, ["decision"])], None)
     assert sec["verdict"] == "unknown" and sec["causes"] == ["diff_unread"]
     # nothing to check needs no diff, and the section says there is nothing to check
-    sec = rb.rationale_section([_row("design/plain", "Decided Z.", ["decision"])], None)
+    sec = _section([_row("design/plain", "Decided Z.", ["decision"])], None)
     assert sec["verdict"] == "none" and sec["rows"][0]["verdict"] == ""
     assert sec["status"] == rb.SERVED and sec["causes"] == []
-    sec = rb.rationale_section([], "", paths_left=3)
-    assert sec["verdict"] == "none" and sec["status"] == rb.EMPTY
+    sec = _section([], "", paths_left=3)
+    # an unread path may hold a row to check: never `none` then
+    assert sec["verdict"] == "unknown" and sec["status"] == rb.EMPTY
     assert sec["causes"] == ["paths_not_read:3"]
 
 
@@ -180,14 +187,14 @@ def test_a_cut_diff_or_a_cut_value_that_shows_no_name_is_unknown() -> None:
     spill = _row("design/spill", DECISION, ["decision"])
     # the name lies past the cut: the part read adds nothing the row names
     cut = DIFF.split("+    SpillingHashSet")[0]
-    sec = rb.rationale_section([spill], cut, diff_cut=True)
+    sec = _section([spill], cut, diff_cut=True)
     assert sec["rows"][0]["verdict"] == "unknown" and sec["verdict"] == "unknown"
     assert sec["causes"] == ["diff_cut"]
     # a name found before the cut still says check
-    assert rb.rationale_section([spill], DIFF, diff_cut=True)["verdict"] == "check"
+    assert _section([spill], DIFF, diff_cut=True)["verdict"] == "check"
     # a value cut at the read may name code past the cut, even with no name before it
     cut_row = _row("design/long", "Decided Z because W. Rejected: a plain…", ["decision"])
-    sec = rb.rationale_section([{**cut_row, "value_truncated": True}], DIFF)
+    sec = _section([{**cut_row, "value_truncated": True}], DIFF)
     assert sec["rows"][0]["verdict"] == "unknown" and sec["causes"] == ["value_cut"]
 
 
@@ -197,7 +204,7 @@ def test_a_check_row_is_never_trimmed_behind_long_constraints() -> None:
         _row(f"design/c{i}", CONSTRAINT, ["decision", "constraint"], line=long) for i in range(3)
     ]
     rows.append(_row("design/spill", DECISION, ["decision"], line=long))
-    sec = rb.rationale_section(rows, DIFF)
+    sec = _section(rows, DIFF)
     assert sec["truncated"] and sec["rows"][0]["memory_key"] == "design/spill"
     assert sec["rows"][0]["verdict"] == "check"
 
@@ -206,9 +213,9 @@ def test_section_keeps_whole_rows_within_its_budget_and_the_verdict_reads_every_
     long = "- " + "x" * 300
     rows = [_row(f"design/d{i}", "Decided Z.", ["decision"], line=long) for i in range(6)]
     rows.append(_row("design/spill", DECISION, ["decision"]))
-    sec = rb.rationale_section(rows, DIFF, diff_cut=True)
+    sec = _section(rows, DIFF, diff_cut=True)
     assert sec["truncated"] and sec["rows_total"] == 7
-    assert rb.estimate_tokens(sec["rows"]) <= settings.code_review_brief_rationale_tokens
+    assert rb.estimate_tokens(sec["rows"]) <= BUDGET
     # the `check` row sorts first, so the trim keeps it
     assert sec["rows"][0]["memory_key"] == "design/spill"
     assert sec["verdict"] == "check" and sec["causes"] == ["diff_cut"]
@@ -249,10 +256,10 @@ async def test_decisions_for_paths_merges_paths_worst_state_and_orders_constrain
 
     monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
     monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
-    rows, left = await code_plane_reads.decisions_for_paths(
+    rows, left, full = await code_plane_reads.decisions_for_paths(
         "acme", "code-widgets", ["src/a.cpp", "src/b.cpp", "src/a.cpp"], limit=5
     )
-    assert left == []
+    assert left == [] and full == 0
     assert [r["memory_key"] for r in rows] == ["design/rule", "design/a"]
     assert rows[1]["code_state"] == "changed"  # worst over both paths
     assert rows[1]["text"] == "Decided design/a."
@@ -305,23 +312,81 @@ async def test_a_row_to_check_is_kept_ahead_of_the_row_cap(
 
     monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
     monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
-    rows, left = await code_plane_reads.decisions_for_paths(
+    rows, left, full = await code_plane_reads.decisions_for_paths(
         "acme", "code-widgets", ["src/a.cpp"], limit=8, first=rb.has_check
     )
     assert rows[0]["memory_key"] == "design/spill" and len(rows) == 8 and len(left) == 1
-    sec = rb.rationale_section(
+    assert full == 0
+    sec = _section(
         rows, DIFF, rows_left=len(left), left_to_check=any(rb.has_check(d) for d in left)
     )
     assert sec["verdict"] == "check" and sec["rows"][0]["memory_key"] == "design/spill"
     assert sec["causes"] == ["rows_not_read:1"]
 
 
+def test_the_per_path_row_ceiling_is_memory_for_files_own() -> None:
+    from server.memory.api.models_for_file import MemoryForFileInput
+
+    le = [m.le for m in MemoryForFileInput.model_fields["top_k"].metadata if hasattr(m, "le")]
+    assert le == [code_plane_reads.PER_PATH_ROWS]
+
+
+@pytest.mark.asyncio
+async def test_a_path_whose_read_reached_its_ceiling_is_never_clear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import code_link_reads, for_file
+
+    async def _readable(org: str, nss: set[str]) -> set[str]:
+        return nss
+
+    rule = "Never block the fan-in. Applies to `DB::ExternalDistinctTransform`."
+    # 50 pinned constraints fill the read; the checkable decision may lie past them
+    hits = [
+        _MemoryForFileHit(
+            memory_key=f"design/rule{i}",
+            memory_type="decision",
+            value=json.dumps(rule),
+            tags=["decision", "constraint"],
+            pinned=True,
+            namespace="code-widgets",
+        )
+        for i in range(code_plane_reads.PER_PATH_ROWS)
+    ]
+    other = [
+        _MemoryForFileHit(
+            memory_key="design/spill",
+            memory_type="decision",
+            value=json.dumps(DECISION),
+            tags=["decision"],
+            namespace="code-widgets",
+        )
+    ]
+
+    async def _for_file(inp: Any) -> MemoryForFileOutput:
+        got = hits if inp.path == "src/a.cpp" else other
+        return MemoryForFileOutput(path=inp.path, total=len(got), hits=got)
+
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
+    monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
+    rows, left, full = await code_plane_reads.decisions_for_paths(
+        "acme", "code-widgets", ["src/a.cpp", "src/b.cpp"], limit=8, first=rb.has_check
+    )
+    assert full == 1 and rows[0]["memory_key"] == "design/spill"
+    # the decision is checked and the diff does not add its rejected option: `clear` alone,
+    # but the full path may hold a matching row past its ceiling
+    assert _section(rows[:1], "")["verdict"] == "clear"
+    sec = _section(rows, "", rows_left=len(left), paths_full=full)
+    assert sec["verdict"] == "unknown"
+    assert sec["causes"] == [f"rows_not_read:{len(left)}", "paths_at_row_ceiling:1"]
+
+
 def test_a_left_out_row_with_something_to_check_keeps_the_section_from_clear() -> None:
     ratio = _row("design/ratio", CONSTRAINT, ["decision", "constraint"])
-    sec = rb.rationale_section([ratio], DIFF, rows_left=2, left_to_check=True)
+    sec = _section([ratio], DIFF, rows_left=2, left_to_check=True)
     assert sec["rows"][0]["verdict"] == "clear" and sec["verdict"] == "unknown"
     assert sec["causes"] == ["rows_not_read:2"]
-    assert rb.rationale_section([ratio], DIFF, rows_left=2)["verdict"] == "clear"
+    assert _section([ratio], DIFF, rows_left=2)["verdict"] == "clear"
 
 
 @pytest.mark.asyncio
@@ -338,7 +403,7 @@ async def test_decisions_for_paths_reads_nothing_from_a_trunk_the_caller_cannot_
 
     monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
     monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
-    nothing: Any = ([], [])
+    nothing: Any = ([], [], 0)
     assert (
         await code_plane_reads.decisions_for_paths("acme", "code-widgets", ["a"], limit=5)
         == nothing
@@ -450,7 +515,7 @@ async def test_decisions_for_paths_refuses_a_token_that_grants_the_branch_but_no
         got = await code_plane_reads.decisions_for_paths(
             "acme", "code-widgets", ["src/a.cpp"], limit=5
         )
-        assert got == ([], []) and reads == []
+        assert got == ([], [], 0) and reads == []
         set_current_auth(_token("code-widgets-release", "code-widgets"))
         await code_plane_reads.decisions_for_paths("acme", "code-widgets", ["src/a.cpp"], limit=5)
         assert reads == ["code-widgets"]

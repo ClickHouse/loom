@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 
 from server.code.domain.anchor import Definition, bare_name, local_name
 from server.code.domain.declaration import fingerprint_version
@@ -113,8 +113,17 @@ async def lessons_for_symbol(
 
 
 # Each path's read keeps this many rows.
-# not a setting: memory.for_file's own `top_k` ceiling (`le=50` on its input)
-_PER_PATH_ROWS = 50
+# not a setting: memory.for_file's own `top_k` ceiling (`le` on its input; a test pins it)
+PER_PATH_ROWS = 50
+
+
+class DecisionRows(NamedTuple):
+    """What `decisions_for_paths` read: the rows it serves, the rows the cap left out,
+    and how many paths' reads reached PER_PATH_ROWS (more rows may match there)."""
+
+    served: list[dict[str, Any]]
+    left_out: list[dict[str, Any]]
+    paths_full: int
 
 
 async def decisions_for_paths(
@@ -124,21 +133,22 @@ async def decisions_for_paths(
     *,
     limit: int,
     first: Callable[[dict[str, Any]], bool] | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """(served, left out): the active decision and constraint rows of the trunk code
+) -> DecisionRows:
+    """The active decision and constraint rows of the trunk code
     namespace `trunk_ns` whose `files[]` or code links touch `paths`, at most `limit`
     served and the rest left out. The rows `first` admits rank ahead, then constraints,
     then pinned rows, then by confidence. Each is a `memory.for_file` hit with
     `code_state` the worst over its links on every path, `line` (the pre-edit block's
     line, the value cut) and `text` (the value as that read holds it: cut at its ceiling
-    when `value_truncated`). Each path's read keeps its top _PER_PATH_ROWS rows. Nothing
-    when the caller may not read `trunk_ns`."""
+    when `value_truncated`). Each path's read keeps its top PER_PATH_ROWS rows; a read
+    that reached that many is counted in `paths_full`. Nothing when the caller may not
+    read `trunk_ns`."""
     from server.memory.api.models_for_file import MemoryForFileInput
     from server.memory.app.code_link_reads import readable_namespaces
     from server.memory.app.for_file import handle_memory_for_file, listing_line, value_text
 
     if not trunk_ns or not paths or trunk_ns not in await readable_namespaces(org, {trunk_ns}):
-        return [], []
+        return DecisionRows([], [], 0)
     # One pre-edit read per path. The read follows code links only into the trunk an
     # extra namespace names, so the trunk is named there too (it is not read twice).
     reads = await asyncio.gather(
@@ -149,7 +159,7 @@ async def decisions_for_paths(
                     namespace=trunk_ns,
                     path=p,
                     tags=[DECISION_TAG, "constraint"],
-                    top_k=_PER_PATH_ROWS,
+                    top_k=PER_PATH_ROWS,
                     include_conflicted=False,
                     extra_namespaces=[trunk_ns],
                 )
@@ -171,7 +181,8 @@ async def decisions_for_paths(
             -r["confidence"],
         )
     )
-    return found[:limit], found[limit:]
+    full = sum(1 for out in reads if len(out.hits) >= PER_PATH_ROWS)
+    return DecisionRows(found[:limit], found[limit:], full)
 
 
 async def _definitions_at(

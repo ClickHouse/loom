@@ -71,30 +71,36 @@ cover them, and what reviewers said.
 
 At the `standard` and `full` tiers the brief also has a `rationale` section: the design
 decisions and constraints in the repository's trunk code namespace whose `files` or code
-links touch the PR's files. It is read on every call and never stored with the brief, so a
-decision recorded or changed after the merge shows up on the next read. It reads the first
-`LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` (10) changed files, source files first, and at
-most `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` (8) rows, only when the caller may read the
-trunk namespace. It serves whole rows up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS`
+links touch the PR's files. It is read on every call, only when the caller may read the
+trunk namespace, and never stored with the brief, so a decision recorded or changed after
+the merge shows up on the next read. It reads the first
+`LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` (10) changed files, source files first, up to 50
+rows each, and serves at most `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` (8) rows, those with
+something to check first, in whole rows up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS`
 (250) tokens: rows that say `check` first, then constraints; the first row is always
-served. Rows with something to check are kept ahead of the row cap, and the rows it leaves
-out are counted (`rows_not_read`); when one of them had something to check, the section
-says `unknown`, never `clear`. Each row carries the line the pre-edit block prints for it
-(value, source, `(pinned)`, a code-change note), `pinned`, `code_state` and a `verdict`:
+served. Each row carries the line the pre-edit block prints for it (value, source,
+`(pinned)`, a code-change note), `pinned`, `code_state` and a `verdict`.
+
+The check looks for two kinds of name: the code-shaped names in a row's `Rejected:` clause
+(backticked, qualified like `A::b`, or calls like `f()`), and the snake_case names a
+constraint states, backticked or not. The closing `Applies to` clause, which names the
+code the row governs, is not checked. It is a whole-word match on the lines the diff adds,
+read up to 200,000 characters of a posted diff or 200,000 bytes of the mirror's, so
+`check` means "read this row against the diff", not a violation found.
 
 | Row verdict | Meaning                                                                                                                                                                                    |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `check`     | the diff adds a backticked name from the row's `Rejected:` options, or a setting name a constraint states (`names`)                                                                        |
-| `clear`     | the row names such code and the diff adds none of it                                                                                                                                       |
+| `check`     | the diff adds one of the row's checked names (`names`)                                                                                                                                     |
+| `clear`     | the row has checked names and the diff adds none of them                                                                                                                                   |
 | `unknown`   | no name found, but the diff could not be read here, was cut, or has a hunk that miscounts its lines, or the row's value was cut (`diff_unread`, `diff_cut`, `diff_malformed`, `value_cut`) |
 | `""`        | the row names nothing to check                                                                                                                                                             |
 
 The section's verdict is `check` when any row says so, then `unknown`, then `clear`, and
-`none` when no row has anything to check (or no decision touches the files). The check
-reads 200,000 characters of a posted diff, 200,000 bytes of the mirror's. It is a
-whole-word match on added lines, so `check` means "read this row against the diff", not a
-violation found. The `Applies to` clause, which names the code the row governs, is not
-checked.
+`none` when no row has anything to check. It says `clear` or `none` only when every
+changed path and every matching row was checked; otherwise it says `unknown`, and the
+causes say what was left: changed paths not read (`paths_not_read`), a path whose read
+reached its 50 rows (`paths_at_row_ceiling`), or rows the row cap left out
+(`rows_not_read`) when one of them had something to check.
 
 `code.conventions` states the repository's
 recurring maintainer checks as facts over one PR's diff (`pr_number`, `head_sha`,

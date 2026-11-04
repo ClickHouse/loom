@@ -65,7 +65,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.code.domain.anchor import bare_name, mentions
-from server.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -550,10 +549,11 @@ _SETTING_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+")
 
 
 def checked_names(text: str, *, constraint: bool) -> list[str]:
-    """The names the token check looks for in a PR's diff: the backticked names of a
-    row's rejected options and, for a constraint, the setting names it states. The
-    closing `Applies to` clause names the code the row governs, which a PR touching that
-    code names anyway, so it is not read."""
+    """The names the token check looks for in a PR's diff: the code-shaped names of the
+    row's `Rejected:` clause (backticked, qualified like `A::b`, or calls like `f()`) and,
+    for a constraint, the snake_case names it states, backticked or not. The closing
+    `Applies to` clause names the code the row governs, which a PR touching that code
+    names anyway, so it is not read."""
     head = text.split(_APPLIES_TO, 1)[0]
     names: list[str] = []
     rejected = _REJECTED.search(head)
@@ -598,6 +598,8 @@ def rationale_section(
     paths_left: int = 0,
     rows_left: int = 0,
     left_to_check: bool = False,
+    paths_full: int = 0,
+    budget_tokens: int,
 ) -> dict[str, Any]:
     """The `rationale` section over the rows `decisions_for_paths` read and the PR's diff
     (None: it could not be read). A row whose checked names the diff adds says `check`;
@@ -605,10 +607,11 @@ def rationale_section(
     cut or a hunk of it miscounted its lines, the row's value was cut at the read (a name
     may lie past any of these) or the diff could not be read; one with nothing to check
     says ''. `check` rows first, then constraints, then the rest, whole rows up to
-    `code_review_brief_rationale_tokens` (the first always); the verdict reads every row:
-    check | unknown | clear | none (no row has anything to check). `rows_left` rows were
-    read and not served; when one of them had something to check (`left_to_check`) the
-    section is never `clear`."""
+    `budget_tokens` (the first always). The verdict reads every row: check | unknown |
+    clear | none (no row has anything to check). It is `clear` or `none` only when every
+    path and every matching row was checked; otherwise `unknown`: `paths_left` changed
+    paths were not read, `paths_full` paths' reads reached their row ceiling, or one of
+    the `rows_left` rows the row cap left out had something to check (`left_to_check`)."""
     added, malformed = added_text(diff) if diff is not None else (None, False)
     malformed = malformed and not diff_cut  # a cut diff ends inside a hunk anyway
     rows = []
@@ -639,7 +642,7 @@ def rationale_section(
     rows.sort(key=lambda r: (r["verdict"] != "check", r["kind"] != "constraint"))
     verdicts = {r["verdict"] for r in rows}
     verdict = next((v for v in ("check", "unknown", "clear") if v in verdicts), "none")
-    if left_to_check and verdict in ("clear", "none"):
+    if (paths_left > 0 or paths_full > 0 or left_to_check) and verdict in ("clear", "none"):
         verdict = "unknown"
     causes = []
     if diff is None and "unknown" in verdicts:
@@ -654,9 +657,11 @@ def rationale_section(
         causes.append(f"paths_not_read:{paths_left}")
     if rows_left > 0:
         causes.append(f"rows_not_read:{rows_left}")
+    if paths_full > 0:
+        causes.append(f"paths_at_row_ceiling:{paths_full}")
     kept = rows[:1]
     for r in rows[1:]:
-        if estimate_tokens([*kept, r]) > settings.code_review_brief_rationale_tokens:
+        if estimate_tokens([*kept, r]) > budget_tokens:
             break
         kept.append(r)
     out = section(SERVED, verdict=verdict, epistemic="lower_bound", causes=causes, rows=kept)

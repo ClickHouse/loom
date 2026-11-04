@@ -691,7 +691,7 @@ async def test_rationale_is_read_on_every_call_and_never_stored(
             "line": "- design/new-flag [constraint, decision]: Keep `new_flag` off …",
             "text": rule,
         }
-        return [row], []
+        return [row], [], 0
 
     async def _diff(org: str, ns: str, payload: Any, **kw: Any) -> tuple[str, bool]:
         diffs.append(kw["pr_number"])
@@ -707,8 +707,8 @@ async def test_rationale_is_read_on_every_call_and_never_stored(
     out = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354))
     sec = out.sections["rationale"]
     assert sec["verdict"] == "check" and sec["rows"][0]["names"] == ["new_flag"]
-    # source paths first; the stored payload carries no rationale
-    assert reads == [(NS, [*PATHS[:3], PATHS[3]])] and diffs == [117354]
+    # the stored payload carries no rationale
+    assert reads == [(NS, PATHS)] and diffs == [117354]
     stored_row = repo.inserted[0][1][0]
     assert "rationale" not in json.loads(stored_row["payload"])["sections"]
     assert "rationale" not in stored_row["sections"]
@@ -734,9 +734,11 @@ async def test_rationale_reads_no_diff_when_no_row_names_anything_to_check(
 
     async def _decisions(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
         row = {"memory_key": "design/plain", "tags": ["decision"], "pinned": False}
-        return [
-            row | {"code_state": "", "line": "- design/plain: Decided Z.", "text": "Decided Z."}
-        ], []
+        return (
+            [row | {"code_state": "", "line": "- design/plain: Decided Z.", "text": "Decided Z."}],
+            [],
+            0,
+        )
 
     async def _diff(*a: Any, **kw: Any) -> tuple[str, bool]:
         raise AssertionError("read a diff with nothing to check")
@@ -762,7 +764,7 @@ async def test_rationale_reads_source_paths_first_and_the_rows_its_settings_allo
 
     async def _decisions(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
         calls.append((list(paths), limit))
-        return [], []
+        return [], [], 0
 
     monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
     monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _decisions)
@@ -782,7 +784,41 @@ async def test_rationale_reads_source_paths_first_and_the_rows_its_settings_allo
     # the source path is read; the test path is the one left out
     assert calls == [([src_path], 3)]
     sec = out.sections["rationale"]
-    assert sec["verdict"] == "none" and sec["causes"] == ["paths_not_read:1"]
+    # a changed path left unread keeps the section from `none` or `clear`
+    assert sec["verdict"] == "unknown" and sec["causes"] == ["paths_not_read:1"]
+
+
+@pytest.mark.asyncio
+async def test_rationale_serves_whole_rows_up_to_its_token_setting(
+    wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.app import memory_links
+    from server.memory.app import code_plane_reads
+    from server.settings import settings
+
+    rows = [
+        {
+            "memory_key": f"design/d{i}",
+            "tags": ["decision"],
+            "pinned": False,
+            "code_state": "",
+            "line": "- " + "x" * 300,
+            "text": "Decided Z.",
+        }
+        for i in range(3)
+    ]
+
+    async def _decisions(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
+        return rows, [], 0
+
+    monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
+    monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _decisions)
+    monkeypatch.setattr(settings, "code_review_brief_rationale_tokens", 50)
+    wired["repo"] = _HandlerRepo(stored=None)
+    out = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354))
+    sec = out.sections["rationale"]
+    # the first row always; the second would pass 50 tokens
+    assert len(sec["rows"]) == 1 and sec["rows_total"] == 3 and sec["truncated"]
 
 
 @pytest.mark.asyncio
@@ -791,7 +827,7 @@ async def test_rationale_fails_open_to_a_failed_section(
 ) -> None:
     from server.memory.app import code_plane_reads
 
-    async def _boom(*a: Any, **kw: Any) -> list[dict[str, Any]]:
+    async def _boom(*a: Any, **kw: Any) -> Any:
         raise RuntimeError("down")
 
     from server.code.app import memory_links
