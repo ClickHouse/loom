@@ -61,10 +61,11 @@ log = logging.getLogger(__name__)
 # The lease a job runs under, and the claim a publish of one source runs under.
 # A run that gives up on a document insert whose outcome is unknown leaves the
 # job's lease to expire instead of releasing it (`Lease.let_expire`), so no
-# worker takes the job before the insert has landed or stopped. The lease was
-# held when the insert was sent (renewed within JOB_LEASE_S / 2) and the claimed
-# block before the send is bounded, so it expires at least JOB_LEASE_S / 2 minus
-# that block after the send, judged on the server's clock: past the insert's own
+# worker takes the job before the insert has landed or stopped. The run's last
+# `lease.held` check is inside the claimed block (renewed within JOB_LEASE_S / 2
+# before it), and the send comes within that block's bound of the check, so the
+# lease expires at least JOB_LEASE_S / 2 minus the block's bound after the send,
+# judged on the server's clock: past the insert's own
 # bound (its send may start on the server up to `rmt_carry._TRANSIT_S` later,
 # run for a claimed statement's server-side limit, and commit within
 # `rmt_carry._RELEASE_MARGIN_S`). The rerun reads its outcome from the stored rows.

@@ -64,6 +64,8 @@ class World:
     claim_cuts_insert: bool = False  # the claim's deadline cuts the document insert off
     cancel_insert: bool = False  # the run is cancelled with the document insert in flight
     left_to_expire: int = 0  # job leases a run left to expire rather than release
+    lease_held: bool = True  # the job lease as `held` reads it
+    lose_lease_in_claim: bool = False  # the job lease is lost once the claim is taken
     fail_retire_older: Exception | None = None  # raised once, by the next older-chunks retire
     log: list[str] = field(default_factory=list)
     stored_vectors: dict[str, list[float]] = field(default_factory=dict)
@@ -189,7 +191,9 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
         return None
 
     class _Lease:
-        held = True
+        @property
+        def held(self) -> bool:
+            return w.lease_held
 
         def let_expire(self) -> None:
             w.left_to_expire += 1
@@ -209,6 +213,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
 
     @asynccontextmanager
     async def holding(name: str, **k: Any) -> Any:
+        if w.lose_lease_in_claim:
+            w.lease_held = False
         try:
             yield not w.claim_busy
         except TimeoutError as e:  # as leases.holding turns its deadline
@@ -1278,11 +1284,11 @@ def test_a_store_out_of_slots_puts_the_job_back(world: World) -> None:
 
 def test_a_rerun_comes_only_after_an_uncertain_insert_has_settled(world: World) -> None:
     """A run that gave up on an uncertain document insert leaves the job's lease
-    to expire. It was held when the insert was sent (renewed within half its
-    TTL) and the claimed block before the send is bounded, so no other worker
-    takes the job until the insert has landed or stopped: a carried send
-    starts within `_TRANSIT_S`, runs within a claimed statement's limit, and
-    commits within `_RELEASE_MARGIN_S` more."""
+    to expire. Its last `held` check is inside the claimed block (renewed
+    within half its TTL before it) and the send comes within the block's bound
+    of that check, so no other worker takes the job until the insert has landed
+    or stopped: a carried send starts within `_TRANSIT_S`, runs within a
+    claimed statement's limit, and commits within `_RELEASE_MARGIN_S` more."""
     from server.core import leases, rmt_carry
 
     earliest_takeover = ingest_run.JOB_LEASE_S / 2 - ingest_run._SOURCE_CLAIM_S * leases._WORK_SHARE
@@ -1310,3 +1316,12 @@ def test_a_run_cancelled_with_its_insert_in_flight_leaves_the_lease_to_expire(
     job = world.job(job_id)
     assert job is not None and (job["state"], job["stage"]) == ("processing", "publish")
     assert world.left_to_expire == 1
+
+
+def test_the_last_lease_check_is_inside_the_claimed_block(world: World) -> None:
+    """The timing bound counts from a `held` check inside the claimed block: a
+    lease lost once the claim is taken stops the publish before its document
+    row."""
+    world.lose_lease_in_claim = True
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) is None and world.documents == []
