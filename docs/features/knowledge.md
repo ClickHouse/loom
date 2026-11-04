@@ -88,8 +88,8 @@ On the dashboard, an opened repository on the Repositories page shows its source
 Docs: each source's kind, last sync and counts, to anyone who reads the repository. The
 namespace's admins also get Add a source (a dry-run check first; Add sends only the form
 that passed), Check, Sync now, Rotate credential and Retire. The page adds `gdrive`
-sources; a `linear` source is added with `knowledge.source.add` and then shows and is
-managed there like any other. The key is typed into a password field and is never shown
+sources; a `linear` or `recording` source is added with `knowledge.source.add` and then
+shows and is managed there like any other. The key is typed into a password field and is never shown
 again.
 
 | Operation                                                                                   | Role   | Does                                                                                                       |
