@@ -119,9 +119,7 @@ class Ledger:
         write_atomic(self.path, text + "\n")
 
     def rows(self) -> list[dict[str, Any]]:
-        if not self.path.exists():
-            return []
-        return [json.loads(line) for line in self.path.read_text().splitlines() if line]
+        return read_ledger(self.path)[0]
 
     def spent(self) -> float:
         return self._spent

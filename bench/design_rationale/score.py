@@ -563,7 +563,7 @@ def summary(ts: TaskSet, metrics: dict[str, Any], out_dir: Path) -> dict[str, An
     answers = json.loads((out_dir / "answers.json").read_text())
     judged = json.loads((out_dir / "judged.json").read_text())
     flags = state["flags"]
-    passes = [p for entry in judged.values() for p in entry.get("passes", [])]
+    passes = [p for entry in judged.values() for p in entry["passes"]]
     subtypes: dict[str, int] = defaultdict(int)
     for t in ts.tasks.get("C", []):
         subtypes[t["subtype"]] += 1
@@ -601,8 +601,8 @@ def summary(ts: TaskSet, metrics: dict[str, Any], out_dir: Path) -> dict[str, An
         "run": {
             **run,
             "k": len(samples),
-            "judge_orders": len({p.get("order") for p in passes}),
-            "judge_repeats": len({p.get("repeat") for p in passes}),
+            "judge_orders": len({p["order"] for p in passes}),
+            "judge_repeats": len({p["repeat"] for p in passes}),
         },
         "spend_usd": {
             "by_stage": {k: round(v, 4) for k, v in sorted(by_stage.items())},

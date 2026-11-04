@@ -1444,6 +1444,12 @@ def test_the_summary_reads_a_cut_ledger_without_rewriting_it(tmp_path):
             score.summary(ts, score.score(ts, out), out)
     path.write_text(whole + "\n")
     assert score.summary(ts, score.score(ts, out), out)["spend_usd"]["total"] == total
+    # A whole last row without its newline is kept.
+    last = '{"stage": "answer", "usd": 0.0}'
+    path.write_text(whole + last)
+    spend = score.summary(ts, score.score(ts, out), out)["spend_usd"]
+    assert path.read_text() == whole + last
+    assert spend["ledger_rows_dropped"] == 0 and spend["total"] == total
 
 
 def test_the_summary_of_an_unpriced_reader_has_no_answer_cost(tmp_path):
