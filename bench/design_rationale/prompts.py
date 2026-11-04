@@ -35,7 +35,7 @@ JUDGE_WHY = (
     "rationale. Return JSON only:\n"
     '{"claims": [{"text": str, "gold": [int], "verdict": "correct"|"unsupported"|"contradicts",'
     ' "cites": [str], "cites_support": [bool]}], "gold_covered": [int], "abstained": bool,'
-    ' "abstention_correct": bool, "potentially_misleading": bool, "misleading_why": str}\n'
+    ' "potentially_misleading": bool, "misleading_why": str}\n'
     "Rules: a claim is one stated reason ('because ...') or factual assertion offered as part "
     "of the rationale; ignore hedging and restating the question. verdict=correct when it "
     "states a gold argument (list its 0-based indices in gold) or a fact the gold rows state; "
@@ -45,9 +45,7 @@ JUDGE_WHY = (
     "cites_support: for each, whether the CITED SOURCE TEXT given to you entails the claim "
     "(an unresolved citation never supports). gold_covered: indices of gold arguments the "
     "answer states anywhere. abstained: the answer says no recorded decision covers this (or "
-    "part of it); the abstention sentence itself is not a claim. abstention_correct: when "
-    "abstained, whether the SURFACED KNOWLEDGE the agent was shown indeed does not record "
-    "the rationale asked (judge against what it was shown, not against the gold). "
+    "part of it); the abstention sentence itself is not a claim. "
     "potentially_misleading: true when the answer, read by an engineer about to change the "
     "code, would steer them wrong: it presents a rationale that contradicts the gold, "
     "recommends a gold rejected option, or presents an invented reason as the recorded "

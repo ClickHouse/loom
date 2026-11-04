@@ -148,6 +148,7 @@ def _documents(root: Path) -> dict[str, Document]:
 def _gold(root: Path, documents: dict[str, Document]) -> list[GoldRow]:
     gold: list[GoldRow] = []
     for r in _read_json(root / "gold_rows.json"):
+        _require(r, (), "gold_rows.json")
         place = ("source_resource_id",) if "source_resource_id" in r else ("document",)
         _require(r, ("memory_key", "value", *place), "gold_rows.json")
         if "source_resource_id" in r:
@@ -203,7 +204,8 @@ def _check_detector(tid: str, d: Any) -> None:
 
 
 def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
-    tid = t.get("id", "?")
+    _require(t, ("id",), "tasks.json")
+    tid = t["id"]
     if not isinstance(tid, str) or not tid or "/" in tid:
         # Answers are keyed <task>/arm<a>/s<k>.
         raise TaskSetError(f"task id {tid!r}: a non-empty string without '/'")
@@ -248,6 +250,8 @@ def load(root: Path) -> TaskSet:
     # A row written after the revisions is the current one for its key.
     gold = {r.memory_key: r for r in sorted(writes, key=lambda r: r.after_revision)}
     raw = _read_json(root / "tasks.json")
+    if not isinstance(raw, dict):
+        raise TaskSetError("tasks.json: an object of task lists by kind")
     tasks = {kind: list(raw.get(kind, [])) for kind in KINDS}
     ts = TaskSet(root, raw.get("system", "the system"), documents, gold, tasks, writes)
     seen: set[str] = set()

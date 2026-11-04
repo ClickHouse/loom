@@ -1532,6 +1532,14 @@ def test_a_task_set_entry_that_is_not_an_object_is_refused(tmp_path):
     (root / "gold_rows.json").write_text(json.dumps([*gold, "design/x"]))
     with pytest.raises(TaskSetError, match="an entry is an object"):
         load(root)
+    (root / "gold_rows.json").write_text(json.dumps(gold))
+    tasks = json.loads((root / "tasks.json").read_text())
+    (root / "tasks.json").write_text(json.dumps({**tasks, "A": [*tasks["A"], "A9"]}))
+    with pytest.raises(TaskSetError, match="an entry is an object"):
+        load(root)
+    (root / "tasks.json").write_text(json.dumps(tasks["A"]))
+    with pytest.raises(TaskSetError, match="an object of task lists"):
+        load(root)
 
 
 def test_a_rerun_with_other_flags_is_refused_before_it_erases_anything(tmp_path):
