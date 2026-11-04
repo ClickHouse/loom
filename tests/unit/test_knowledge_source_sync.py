@@ -928,7 +928,9 @@ def test_a_cut_pass_resumes_at_the_source_it_did_not_start(
 def test_a_pass_past_its_time_budget_starts_no_source(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_sync_max_pass_seconds", 0)
+    # The smallest pass the setting allows, with no share of it left to start a source.
+    monkeypatch.setattr(settings, "knowledge_source_sync_max_pass_seconds", 180)
+    monkeypatch.setattr(source_sync, "_BUDGET_FRACTION", 0.0)
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     result = asyncio.run(source_sync.run_sync())
     assert result.cut and result.synced == 0

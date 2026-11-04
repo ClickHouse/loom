@@ -1053,7 +1053,8 @@ class _Mined:
     unextracted: int = 0
     failures: int = 0
     error: str = ""
-    # Why the turn left documents for a later pass (`over_cap`, `held:<code>`).
+    # Why the turn left documents for a later pass (`over_cap`, `held:<code>`,
+    # `pass_bound`).
     deferred: str = ""
     # What stops the whole leg: `held:<code>` for a hold on every org's calls, or
     # `stopped` when the pass was stopped mid-write.
@@ -1082,8 +1083,10 @@ async def _extract_pending(order: list[KnowledgeSource], run: Pass, result: Pass
                 result.failed += 1
                 pass_context.note_failure(e, _cursor_of(src))
                 continue
-            queues.append((src, detail, docs, _unmined(docs, detail)))
-    queues = [q for q in queues if q[3] or q[1].get("pending_extract")]
+            todo = _unmined(docs, detail)
+            # A source with nothing to mine and no stale count to clear needs no write.
+            if todo or detail.get("pending_extract"):
+                queues.append((src, docs, todo))
     if not queues:
         return
     stop = ""
@@ -1097,7 +1100,7 @@ async def _extract_pending(order: list[KnowledgeSource], run: Pass, result: Pass
         # Fail closed: no org's documents are mined until the switch is read.
         log.info("knowledge_source_sync: no decisions mined: %s", e)
         stop = stop or "switch_unread"
-    for src, _detail, docs, todo in queues:
+    for src, docs, todo in queues:
         if stop == "stopped":
             return  # the pass was stopped: nothing more is written
         why = (stop if todo else "") or _not_now(src, todo, off, run)
@@ -1195,7 +1198,8 @@ async def _extract_source(
                 return ""  # the lease is lost: the copy that holds it now records the turn
             await _write_mined(src, mined, docs, pending=len(todo) - len(mined.settled))
     except (leases.LeaseBusy, leases.LeaseLost, SourceGone):
-        # The lease is lost or busy: the copy that holds it now records the turn.
+        # Busy or lost: the copy holding the lease records the turn; a removed source has
+        # none to record.
         return ""
     except Exception as e:  # noqa: BLE001 — one source's failure must not stop the others
         result.errors.append(f"{_cursor_of(src)}: extraction {type(e).__name__}")
