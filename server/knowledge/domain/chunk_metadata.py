@@ -1,6 +1,6 @@
 """What a `loom.chunks` row's `chunk_metadata` records about the chunk, read in one
-place: the section path the outline reads (and, for text, its depth, its section's
-index and where the chunk starts), the document revision and format the
+place: the section path the outline reads and its depth (and, for text, its
+section's index and where the chunk starts), the document revision and format the
 chunk was written as, and for a chunk of an extracted file its blocks' type and
 where it sits in the source (the locator a citation opens). Pure.
 
@@ -18,9 +18,9 @@ from typing import Any
 @dataclass(frozen=True)
 class ChunkStructure:
     section_path: tuple[str, ...] = ()
-    # For text a caller extracted: the heading depth, the section's index in the
-    # document and the chunk's first character in it; 0 when not recorded.
-    section_depth: int = 0
+    section_depth: int = 0  # recorded with the section path
+    # For text a caller extracted: the section's index in the document and the
+    # chunk's first character in it; 0 when not recorded.
     section_idx: int = 0
     char_start: int = 0
     # The document revision and format this chunk was written as; 0 and '' for a chunk
