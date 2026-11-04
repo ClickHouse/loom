@@ -9,11 +9,13 @@ guardrails are rules, not a person's approval:
   unless the deployment allows private hosts (a dev stack). The probe
   connects to the address it validated, so a second lookup cannot swap in
   another;
-- **the credential is read-only**: every access type `SHOW GRANTS FINAL`
-  names for the user, its roles' grants included, is one a read-only user
-  holds (SELECT, SHOW, dictGet, a temporary table), and none is granted WITH
-  GRANT OPTION or WITH ADMIN OPTION; a type the check does not know is
-  refused. The roles are reported back so the registrant can see them;
+- **the credential is read-only**: every access type `SHOW GRANTS` and
+  `SHOW GRANTS FINAL` name for the user, its roles' grants included, is one a
+  read-only user holds (SELECT, SHOW, dictGet, a temporary table), and none is
+  granted WITH GRANT OPTION or WITH ADMIN OPTION; a type the check does not
+  know is refused. Every granted role is a default role, so
+  `system.enabled_roles` shows the whole role chain and any admin option in
+  it. The roles are reported back so the registrant can see them;
 - **the schema meets the record contract**: the same `describe` + `diff`
   the boot gate runs, through the supplied credential, before anything is
   written — the report is the refusal.
@@ -51,6 +53,7 @@ _READ_ACCESS = frozenset(
         "CREATE TEMPORARY TABLE",  # a temp table for a JOIN
     }
 )
+_ENABLED_ROLES = "SELECT role_name, with_admin_option FROM system.enabled_roles"
 # the suffixes that let the user pass a grant or a role on
 _GRANT_OPTIONS = (" WITH GRANT OPTION", " WITH ADMIN OPTION")
 # a quoted name (a column, role or user), which may hold `(`, `,` or ` ON `
@@ -120,6 +123,24 @@ def review_grants(lines: list[str]) -> GrantReview:
                 rev.refused.append(t)
     rev.refused = list(dict.fromkeys(rev.refused))  # FINAL repeats the direct grants
     return rev
+
+
+def _unquote(name: str) -> str:
+    if len(name) > 1 and name[0] == name[-1] and name[0] in '`"':
+        return name[1:-1].replace("\\" + name[0], name[0]).replace("\\\\", "\\")
+    return name
+
+
+def review_roles(rev: GrantReview, enabled: list[dict[str, Any]]) -> None:
+    """Add to `rev.refused` what `system.enabled_roles` shows that `SHOW GRANTS`
+    cannot: a granted role that is not a default role (its chain is not
+    enabled, so neither it nor its roles can be checked), and an admin option
+    on any role in the chain, nested ones included."""
+    names = {str(r.get("role_name")) for r in enabled}
+    rev.refused.extend(f"{r} (not a default role)" for r in rev.roles if _unquote(r) not in names)
+    rev.refused.extend(
+        f"WITH ADMIN OPTION ({r.get('role_name')})" for r in enabled if r.get("with_admin_option")
+    )
 
 
 class ProbeError(RuntimeError):
@@ -215,11 +236,12 @@ async def probe_credential(
         return [dict(zip(res.column_names, r, strict=True)) for r in res.result_rows]
 
     try:
-        # The direct grants name the roles; FINAL adds what those roles grant
-        grant_rows: list[dict[str, Any]] = []
+        # The direct grants name the roles, FINAL adds what those roles grant
+        # and the enabled roles carry the admin options of the whole chain
+        answers: dict[str, list[dict[str, Any]]] = {}
         try:
-            for sql in ("SHOW GRANTS", "SHOW GRANTS FINAL"):
-                grant_rows += await asyncio.wait_for(query(sql), timeout=timeout_s)
+            for sql in ("SHOW GRANTS", "SHOW GRANTS FINAL", _ENABLED_ROLES):
+                answers[sql] = await asyncio.wait_for(query(sql), timeout=timeout_s)
         except Exception as e:
             if _is_readonly_mode(e):
                 raise ReadonlyModeError(
@@ -228,7 +250,9 @@ async def probe_credential(
                     f"Run: ALTER USER {user} SETTINGS readonly = 2 — it still allows SELECT only."
                 ) from e
             raise ProbeError(f"{sql} refused for {user!r}: {str(e) or type(e).__name__}") from e
-        lines = [str(next(iter(r.values()))) for r in grant_rows if r]
+        grant_rows = answers["SHOW GRANTS"] + answers["SHOW GRANTS FINAL"]
+        grants = review_grants([str(next(iter(r.values()))) for r in grant_rows if r])
+        review_roles(grants, answers[_ENABLED_ROLES])
         tables: list[dict[str, Any]] = []
         if inspect:
             tables = await _inspect_tables(query, database, timeout_s)
@@ -249,9 +273,7 @@ async def probe_credential(
             await client.close()
         except Exception:  # noqa: BLE001 — a failed close must not mask the probe's result
             pass
-    return ProbeResult(
-        grants=review_grants(lines), described=described, unreadable=unreadable, tables=tables
-    )
+    return ProbeResult(grants=grants, described=described, unreadable=unreadable, tables=tables)
 
 
 _INSPECT_MAX_TABLES = 200
@@ -345,4 +367,5 @@ __all__ = [
     "host_refusal",
     "probe_credential",
     "review_grants",
+    "review_roles",
 ]

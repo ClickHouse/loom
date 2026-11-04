@@ -50,10 +50,11 @@ mapping is `server/tracker/domain/mapping.py`, and the columns read per table ar
    address (`HOST_REFUSED`), that the credential is read-only (`CREDENTIAL_NOT_READONLY`,
    `CREDENTIAL_READONLY_MODE`), that it can connect (`SOURCE_UNREACHABLE`) and that the
    schema or mapping meets the contract (`CONTRACT_FAILED`). Read-only means every access
-   type `SHOW GRANTS FINAL` lists, the granted roles' types included, is `SELECT`, a
-   `SHOW` of databases, tables, columns or dictionaries, `dictGet` or
+   type `SHOW GRANTS` and `SHOW GRANTS FINAL` list, the granted roles' types included, is
+   `SELECT`, a `SHOW` of databases, tables, columns or dictionaries, `dictGet` or
    `CREATE TEMPORARY TABLE`, and nothing is granted `WITH GRANT OPTION` or
-   `WITH ADMIN OPTION`; any other type is refused. With `dry_run: true` a failing schema
+   `WITH ADMIN OPTION`, on a nested role either; any other type is refused. Every role
+   granted to the user must be a default role, so the check sees its whole chain. With `dry_run: true` a failing schema
    comes back as the report instead, with a `CREATE OR REPLACE VIEW` draft
    per failing table.
 

@@ -154,13 +154,20 @@ async def test_probe_reviews_the_grants_a_role_carries(monkeypatch) -> None:
     import clickhouse_connect
 
     # what a server answers for a user whose only write access comes from a role
+    # and `writer` was granted `auditor` WITH ADMIN OPTION, which only the
+    # enabled roles show
     answers = {
         "SHOW GRANTS": ["GRANT SELECT ON loom_qa.* TO u", "GRANT writer TO u"],
         "SHOW GRANTS FINAL": ["GRANT INSERT ON *.* TO u", "GRANT SELECT ON loom_qa.* TO u"],
     }
+    enabled = [("writer", 0), ("auditor", 1)]
 
     class _Client:
         async def query(self, sql: str, parameters: Any = None) -> Any:
+            if sql == ob._ENABLED_ROLES:
+                return SimpleNamespace(
+                    column_names=["role_name", "with_admin_option"], result_rows=enabled
+                )
             rows = [(line,) for line in answers.get(sql, [])]
             return SimpleNamespace(column_names=["grants"], result_rows=rows)
 
@@ -179,7 +186,8 @@ async def test_probe_reviews_the_grants_a_role_carries(monkeypatch) -> None:
     probe = await ob.probe_credential(
         host="ch.example", port=8443, secure=True, database="loom_qa", user="u", password="p"
     )
-    assert probe.grants.roles == ["writer"] and probe.grants.refused == ["INSERT"]
+    assert probe.grants.roles == ["writer"]
+    assert probe.grants.refused == ["INSERT", "WITH ADMIN OPTION (auditor)"]
 
 
 @pytest.mark.asyncio
