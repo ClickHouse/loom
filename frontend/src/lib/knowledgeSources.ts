@@ -182,6 +182,13 @@ export interface SourceForm {
   credential: string;
 }
 
+/** `include` with `kind` ticked or unticked, always in INCLUDE_OPTIONS order, so a box
+ *  unticked and ticked again gives the form the check passed. */
+export function toggleInclude(include: readonly string[], kind: string): string[] {
+  const next = include.includes(kind) ? include.filter((k) => k !== kind) : [...include, kind];
+  return INCLUDE_OPTIONS.map((o) => o.value).filter((v) => next.includes(v));
+}
+
 export function emptySourceForm(): SourceForm {
   return { name: "", kind: "gdrive", folders: "", include: INCLUDE_OPTIONS.map((o) => o.value), credential: "" };
 }
@@ -237,6 +244,17 @@ export function sourceAddBody(org: string, namespace: string, f: SourceForm, dry
  *  send is the one that passed. */
 export function sourceFormFingerprint(f: SourceForm): string {
   return JSON.stringify(sourceAddBody("", "", f, true));
+}
+
+/** The toast after Retire: whether the documents stay, how many go, and that the
+ *  retirement waits for the sync worker when it is off. */
+export function retiredMessage(name: string, deleteDocuments: boolean, pending: number, enabled: boolean): string {
+  if (!deleteDocuments) return `Retired ${name}; its documents stay`;
+  if (pending === 0) return `Retired ${name}; it has no documents left to retire`;
+  const docs = pending === 1 ? "1 document is" : `${pending} documents are`;
+  return enabled
+    ? `Retired ${name}; its ${docs} retired over the next sync passes`
+    : `Retired ${name}; its ${docs} retired once sync is on for this deployment`;
 }
 
 /** "40 documents" / "1000+ documents". */

@@ -3,11 +3,13 @@ import {
   emptySourceForm,
   folderIds,
   probeCount,
+  retiredMessage,
   sourceAddBody,
   sourceFormFingerprint,
   sourceFormProblems,
   syncBadge,
   syncCounts,
+  toggleInclude,
   unconvertedDetail,
   type KnowledgeSourceSync,
 } from "./knowledgeSources";
@@ -95,5 +97,26 @@ describe("the add form", () => {
   it("counts a probe, a lower bound when there are more", () => {
     expect(probeCount({ documents: 1, more: false, sample: [] })).toBe("1 document");
     expect(probeCount({ documents: 1000, more: true, sample: [] })).toBe("1000+ documents");
+  });
+});
+
+describe("toggleInclude", () => {
+  it("keeps the options' order, so unticking and ticking again gives the same list", () => {
+    const all = emptySourceForm().include;
+    const without = toggleInclude(all, "docs");
+    expect(without).toEqual(["slides", "pdf", "pptx"]);
+    expect(toggleInclude(without, "docs")).toEqual(all);
+    expect(toggleInclude(["pptx"], "pdf")).toEqual(["pdf", "pptx"]);
+  });
+});
+
+describe("retiredMessage", () => {
+  it("says whether the documents stay, how many go, and that they wait while sync is off", () => {
+    expect(retiredMessage("d", false, 5, true)).toBe("Retired d; its documents stay");
+    expect(retiredMessage("d", true, 0, true)).toBe("Retired d; it has no documents left to retire");
+    expect(retiredMessage("d", true, 1, true)).toBe("Retired d; its 1 document is retired over the next sync passes");
+    expect(retiredMessage("d", true, 3, false)).toBe(
+      "Retired d; its 3 documents are retired once sync is on for this deployment",
+    );
   });
 });

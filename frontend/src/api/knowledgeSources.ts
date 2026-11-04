@@ -28,8 +28,17 @@ export async function addKnowledgeSource(id: Ns, form: SourceForm, dryRun: boole
   return post<KnowledgeSourceAddResult>("/v1/knowledge.source.add", sourceAddBody(id.org, id.namespace, form, dryRun));
 }
 
-export async function checkKnowledgeSource(id: Ns, name: string): Promise<KnowledgeSourceCheckResult> {
-  return post<KnowledgeSourceCheckResult>("/v1/knowledge.source.check", { org: id.org, namespace: id.namespace, name });
+/** Closing the Check dialog aborts the probe through `opts.signal`. */
+export async function checkKnowledgeSource(
+  id: Ns,
+  name: string,
+  opts: RequestOpts = {},
+): Promise<KnowledgeSourceCheckResult> {
+  return post<KnowledgeSourceCheckResult>(
+    "/v1/knowledge.source.check",
+    { org: id.org, namespace: id.namespace, name },
+    opts.signal,
+  );
 }
 
 export async function rotateKnowledgeSource(

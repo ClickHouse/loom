@@ -27,8 +27,10 @@ import {
   INCLUDE_OPTIONS,
   normalisedName,
   probeCount,
+  retiredMessage,
   sourceFormFingerprint,
   sourceFormProblems,
+  toggleInclude,
   type KnowledgeSourceCheckResult,
   type KnowledgeSourceProbe,
   type SourceForm,
@@ -80,8 +82,7 @@ export function AddSourceDialog({
   const [busy, setBusy] = useState<"check" | "add" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const set = <K extends keyof SourceForm>(key: K, value: SourceForm[K]) => setForm((f) => ({ ...f, [key]: value }));
-  const toggle = (kind: string) =>
-    set("include", form.include.includes(kind) ? form.include.filter((k) => k !== kind) : [...form.include, kind]);
+  const toggle = (kind: string) => set("include", toggleInclude(form.include, kind));
   const problems = sourceFormProblems(form);
   const fingerprint = sourceFormFingerprint(form);
   const passed = checked !== null && checked.fingerprint === fingerprint;
@@ -191,11 +192,11 @@ export function CheckSourceDialog({ open, onOpenChange, org, namespace, name }: 
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   useAbortableEffect(
-    async (_signal, live) => {
+    async (signal, live) => {
       setResult(null);
       setError(null);
       try {
-        const r = await checkKnowledgeSource({ org, namespace }, name);
+        const r = await checkKnowledgeSource({ org, namespace }, name, { signal });
         if (live()) setResult(r);
       } catch (e) {
         if (live()) setError(humanizeError(e));
@@ -348,8 +349,9 @@ export function RetireSourceDialog({
   org,
   namespace,
   name,
+  enabled,
   onRetired,
-}: DialogProps & { name: string; onRetired: () => void }) {
+}: DialogProps & { name: string; enabled: boolean; onRetired: () => void }) {
   const [typed, setTyped] = useState("");
   const [deleteDocuments, setDeleteDocuments] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -359,14 +361,7 @@ export function RetireSourceDialog({
     setError(null);
     try {
       const out = await removeKnowledgeSource({ org, namespace }, name, typed.trim(), deleteDocuments);
-      toast(
-        !deleteDocuments
-          ? `Retired ${name}; its documents stay`
-          : out.documents_pending > 0
-            ? `Retired ${name}; its ${out.documents_pending} documents are retired over the next sync passes`
-            : `Retired ${name}; it has no documents left to retire`,
-        "ok",
-      );
+      toast(retiredMessage(name, deleteDocuments, out.documents_pending, enabled), "ok");
       onRetired();
       onOpenChange(false);
     } catch (e) {

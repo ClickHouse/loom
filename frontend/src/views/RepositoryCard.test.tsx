@@ -2,6 +2,8 @@ import { cleanup, render, screen, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { CodeRepoSummary } from "../api";
+import { listKnowledgeSources } from "../api/knowledgeSources";
+import { ApiError } from "../lib/errors";
 import { buildCards } from "../lib/repositoryCard";
 import type { TrackerSource, TrackerSourceNamespace } from "../lib/trackerSources";
 import { axeViolations, unlabeledControls } from "../test/axe";
@@ -17,10 +19,7 @@ import { must } from "../test/must";
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return {
-    ...actual,
-    listKnowledge: vi.fn(async () => ({ rows: [], next_cursor: null })),
-  };
+  return { ...actual, listKnowledge: vi.fn(async () => ({ rows: [], next_cursor: null })) };
 });
 vi.mock("../api/knowledgeSources", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/knowledgeSources")>();
@@ -812,6 +811,28 @@ describe("RepositoryCard — sources", () => {
     cleanup();
     mount([branch({ my_status: "member" })], []); // no docs namespace: no Sources facet
     expect(screen.queryByRole("group", { name: "Sources" })).toBeNull();
+  });
+
+  it("says so when the read is refused or fails, and shows a failed turn's error", async () => {
+    const reader = () =>
+      mount([branch({ my_status: "member", my_role: "viewer", docs_namespace: "code-clickhouse" })], []);
+    const group = () => screen.getByRole("group", { name: "Sources" });
+    vi.mocked(listKnowledgeSources).mockRejectedValueOnce(new ApiError({ status: 403, code: "AUTH_INSUFFICIENT" }));
+    reader();
+    expect(
+      await within(group()).findByText(/Join the repository to see where its documents come from/),
+    ).toBeInTheDocument();
+    cleanup();
+    vi.mocked(listKnowledgeSources).mockRejectedValueOnce(new ApiError({ status: 500, message: "boom" }));
+    reader();
+    expect(await within(group()).findByText(/Couldn't list the document sources/)).toHaveAttribute("role", "status");
+    cleanup();
+    const failed = { ...SOURCES[0], sync: { ...SOURCES[0].sync, status: "failed", error: "http_403" } };
+    vi.mocked(listKnowledgeSources).mockResolvedValueOnce({ sources: [failed], enabled: true });
+    reader();
+    expect(await within(group()).findByText("Sync failed")).toBeInTheDocument();
+    expect(within(group()).getByText("http_403")).toBeInTheDocument();
+    expect(within(group()).queryByText(/Sync is off/)).toBeNull();
   });
 
   it("gives the namespace's admin Add a source and each source's verbs", async () => {

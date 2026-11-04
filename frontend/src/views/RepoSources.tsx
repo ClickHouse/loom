@@ -245,6 +245,7 @@ export function RepoSourcesList({
               org={org}
               namespace={docsNamespace}
               name={acting.source.name}
+              enabled={state.kind === "ready" && state.enabled}
               onOpenChange={close}
               onRetired={reload}
             />
