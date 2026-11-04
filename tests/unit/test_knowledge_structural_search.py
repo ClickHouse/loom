@@ -162,7 +162,9 @@ def _handler_world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return [_hit("repo://a.md", distance=0.1)]
 
     async def _lex(q: Any, **kw: Any) -> list[ChunkHit]:
-        return []
+        # A lexical hit only with corpus statistics, as the real leg.
+        seen["avgdl"] = q.avgdl
+        return [_hit("repo://b.md", distance=0.4)] if q.avgdl > 0 else []
 
     async def _keyed(q: Any, **kw: Any) -> list[ChunkHit]:
         seen["keys"] = list(q.keys)
@@ -345,7 +347,7 @@ def test_a_cold_corpus_fuses_the_vector_and_exact_key_legs(
             )
         )
     )
-    assert "orders_daily" in seen["keys"]
+    assert "orders_daily" in seen["keys"] and seen["avgdl"] == 0
     by = {r.source_uri: r for r in out.results}
     assert by["repo://retention.sql"].keys_matched == ["events"]
-    assert "repo://a.md" in by
+    assert "repo://a.md" in by and "repo://b.md" not in by

@@ -111,7 +111,7 @@ async def handle_knowledge_synthesize(
     # Punctuation or list markers left by the removed citations are no answer either.
     if not any(ch.isalnum() for ch in answer):
         answer = ""
-    located = _located(wins, cs.cited_chunks(cited, read) if answer else [])
+    located = _located(wins, cs.cited_chunks(cited, read))
     return KnowledgeSynthesizeOutput(
         answer=answer,
         windows=len(wins),

@@ -13,6 +13,7 @@ at LOOM_DOCUMENT_EXTRACTOR_URL), then knowledge.search reads them back.
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
 from typing import Any
 
@@ -21,7 +22,14 @@ import pytest
 
 from tests.integration._resources import unique_org
 
-pytestmark = pytest.mark.usefixtures("ch_target_required")
+pytestmark = [
+    pytest.mark.usefixtures("ch_target_required"),
+    # Every test publishes an extracted file: the worker pass needs an extractor.
+    pytest.mark.skipif(
+        not os.environ.get("LOOM_DOCUMENT_EXTRACTOR_URL"),
+        reason="LOOM_DOCUMENT_EXTRACTOR_URL names no extractor for the worker pass",
+    ),
+]
 
 SQL = (
     b"-- Raw events are kept for 30 days.\n"
