@@ -54,6 +54,10 @@ _MAX_CHILD_PAGES = 200  # not a setting: a bound on one source's share of a pass
 # may be coarser than its edits, and its clock may differ from ours, so a page read
 # sooner is read again.
 _SETTLE_S = 90.0  # not a setting: a margin on the store's stamp resolution and clock skew
+# Recorded reads one source keeps (`unchanged_reads`), the newest first. A page past
+# it is read once more on its next listing and comes back unchanged, so no edit is
+# lost; the bound only keeps the sync state row small.
+_MAX_UNCHANGED_READS = 500  # not a setting: a bound on one sync state row
 
 
 def _now() -> datetime:
@@ -176,12 +180,16 @@ def _prune_reads(t: _Turn, *, whole: bool) -> None:
     """Drop the recorded reads that no longer apply: a page listed at another
     revision, and after a complete full turn (`whole`) a page it did not list. An
     incremental turn lists only the database pages edited after the stamp, so a page
-    it did not list keeps its read."""
+    it did not list keeps its read. Past `_MAX_UNCHANGED_READS` only the newest stay."""
     revisions = {f["id"]: f["modifiedTime"] for f in t.items}
     for page_id, (revision, _) in list(t.reads.items()):
         listed = revisions.get(page_id)
         if (listed is not None and listed != revision) or (listed is None and whole):
             del t.reads[page_id]
+    if len(t.reads) > _MAX_UNCHANGED_READS:
+        newest = sorted(t.reads.items(), key=lambda kv: kv[1][1], reverse=True)
+        t.reads.clear()
+        t.reads.update(newest[:_MAX_UNCHANGED_READS])
 
 
 def _item(page: dict[str, Any]) -> dict[str, Any]:

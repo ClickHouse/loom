@@ -282,7 +282,8 @@ the revision; one read sooner is read again, so an edit made just before or afte
 is not lost to an equal stamp or a clock skew. A page read again whose title, Markdown
 (whitespace included) and left-out blocks are exactly the stored copy's (a hash kept in
 its metadata, `text_sha256`) is not written again, so it is neither embedded nor mined
-again; the read is kept in the source's sync state, so the page settles. A changed
+again; the read is kept in the source's sync state, so the page settles (the newest 500
+reads per source; a page past them is read once more and found unchanged). A changed
 page's blocks are read, nested blocks included, at most 300 requests a page, and turned
 into Markdown one to one: headings, paragraphs, bulleted and numbered lists, to-dos
 (`- [x]`), quotes and callouts as `>` quotes, code fenced with its language, tables as

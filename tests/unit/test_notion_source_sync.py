@@ -1116,3 +1116,66 @@ def test_a_re_read_that_differs_only_in_detail_is_written_again(world: _Store, c
     world.now = datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
     _run()
     assert world.upserts == 2
+
+
+def _settling_database_page(world: _Store) -> None:
+    """A database page written 30 s after its revision, then read again unchanged,
+    so its read is recorded."""
+    world.sources[0] = _source(config={"page_ids": [PAGE], "database_ids": [DB]})
+    world.rows = [ROW1]
+    world.now = datetime(2026, 3, 1, 0, 0, 30, tzinfo=UTC)
+    world.pages[ROW1] = _page(ROW1, "2026-03-01T00:00:00.000Z", parent=DB)
+    _run(full=True)
+    world.now = datetime(2026, 3, 1, 0, 5, tzinfo=UTC)
+    _run()
+    assert ROW1 in _detail(world)["unchanged_reads"]
+
+
+@pytest.mark.parametrize("why", ["incomplete result", "lost listed page"])
+def test_a_full_turn_that_is_not_whole_keeps_an_unlisted_page_s_read(
+    world: _Store, why: str
+) -> None:
+    _settling_database_page(world)
+    world.rows = []
+    if why == "incomplete result":
+        world.incomplete = True
+    else:
+        world.answers[f"/pages/{PAGE}"] = httpx.Response(404)
+    _run(full=True)
+    assert ROW1 in _detail(world)["unchanged_reads"]
+
+
+def test_a_child_moved_out_of_scope_loses_its_read(world: _Store) -> None:
+    _only_the_page(world)
+    world.blocks[PAGE] = [_para("Parent."), _child_page(CHILD)]
+    world.pages[CHILD] = _page(
+        CHILD, "2026-03-01T00:00:00.000Z", title="Child", parent_of=_under(PAGE)
+    )
+    world.now = datetime(2026, 3, 1, 0, 0, 30, tzinfo=UTC)
+    _run()
+    world.now = datetime(2026, 3, 1, 0, 5, tzinfo=UTC)
+    _run()
+    assert CHILD in _detail(world)["unchanged_reads"]
+    world.pages[CHILD] = {**world.pages[CHILD], "parent": {"type": "workspace", "workspace": True}}
+    _run(full=True)
+    assert CHILD not in _detail(world)["unchanged_reads"]
+
+
+def test_recorded_reads_past_the_cap_keep_the_newest(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(source_sync_notion, "_MAX_UNCHANGED_READS", 2)
+    _settling_database_page(world)
+    detail = _detail(world)
+    unlisted = {
+        f"{n:08x}-0000-4000-8000-000000000000": [
+            "2026-01-01T00:00:00.000Z",
+            f"2026-02-0{n}T00:00:00.000Z",
+        ]
+        for n in range(1, 4)
+    }
+    detail["unchanged_reads"] = {**detail["unchanged_reads"], **unlisted}
+    world.states["wiki"]["detail"] = json.dumps(detail)
+    _run()  # incremental: the unlisted reads stay, then the cap keeps the newest two
+    reads = _detail(world)["unchanged_reads"]
+    assert set(reads) == {ROW1, "00000003-0000-4000-8000-000000000000"}
