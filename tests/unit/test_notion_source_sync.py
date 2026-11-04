@@ -992,10 +992,11 @@ def test_a_page_store_s_pages_are_mined_by_the_same_leg(
     result = _run()
     uri = _uri(world, PAGE)
     assert mined == [uri] and result.extracted == 1
-    revision = "2026-01-01T00:00:00.000Z@2026-03-01T00:00:00.000Z"  # revision@read_at
+    text = sha256_text("Design notes\nText of 1111.\n{}")
+    revision = f"2026-01-01T00:00:00.000Z@{text}"  # revision@text_sha256
     assert _detail(world)["mined"] == {uri: revision}
     _run()
-    assert mined == [uri]  # mined once per copy
+    assert mined == [uri]  # mined once per revision and text
 
 
 def test_a_page_read_again_at_the_same_revision_is_mined_again(
@@ -1039,168 +1040,6 @@ def test_the_pacer_forgets_only_integrations_no_longer_waiting(
     assert queue[waiting] == pytest.approx(now + 10.35, abs=0.05)
 
 
-def test_a_same_text_read_again_is_neither_written_nor_mined_and_still_settles(
-    world: _Store, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    mined = _mock_mining(monkeypatch)
-    _only_the_page(world)
-    world.now = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)  # 30 s after the revision
-    _run()
-    assert world.upserts == 1 and len(mined) == 1
-    # Read again before the revision settled, with the same text: no write, no mining.
-    world.now = datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
-    world.requests.clear()
-    _run()
-    assert [p for p in _paths(world) if p.startswith("/blocks/")] == [f"/blocks/{PAGE}/children"]
-    assert world.upserts == 1 and len(mined) == 1
-    assert _detail(world)["unchanged_reads"] == {
-        PAGE: ["2026-01-01T00:00:00.000Z", "2026-01-01T00:05:00.000Z"]
-    }
-    # That read settled the page: the next turn fetches nothing.
-    world.requests.clear()
-    _run()
-    assert not [p for p in _paths(world) if p.startswith("/blocks/")]
-    # A new revision drops the recorded read and writes the page.
-    world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
-    world.blocks[PAGE] = [_para("New text.")]
-    _run()
-    assert world.upserts == 2 and _detail(world)["unchanged_reads"] == {}
-
-
-def test_a_database_page_s_recorded_read_survives_incremental_turns(world: _Store) -> None:
-    world.sources[0] = _source(config={"page_ids": [], "database_ids": [DB]})
-    world.rows = [ROW1]
-    world.now = datetime(2026, 1, 2, 0, 0, 30, tzinfo=UTC)  # 30 s after its revision
-    _run(full=True)
-    world.now = datetime(2026, 1, 2, 0, 5, tzinfo=UTC)
-    _run()  # listed again (the stamp trails the revision), same text: the read is kept
-    assert ROW1 in _detail(world)["unchanged_reads"]
-    _run()  # not listed: edited before the stamp, and its read stays
-    assert ROW1 in _detail(world)["unchanged_reads"]
-    world.requests.clear()
-    _run(full=True)
-    assert not [p for p in _paths(world) if p.startswith("/blocks/")]
-    assert world.upserts == 1
-
-
-def test_a_full_turn_drops_the_read_of_a_page_it_did_not_list(world: _Store) -> None:
-    world.sources[0] = _source(config={"page_ids": [], "database_ids": [DB]})
-    world.rows = [ROW1]
-    world.now = datetime(2026, 1, 2, 0, 0, 30, tzinfo=UTC)
-    _run(full=True)
-    world.now = datetime(2026, 1, 2, 0, 5, tzinfo=UTC)
-    _run()
-    world.rows = []
-    _run(full=True)
-    assert _detail(world)["unchanged_reads"] == {}
-
-
-@pytest.mark.parametrize("change", ["whitespace", "left out blocks", "no stored hash"])
-def test_a_re_read_that_differs_only_in_detail_is_written_again(world: _Store, change: str) -> None:
-    _only_the_page(world)
-    code = {"type": "code", "code": {"rich_text": _rt("a b"), "language": "sql"}}
-    world.blocks[PAGE] = [code]
-    world.now = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
-    _run()
-    if change == "whitespace":
-        world.blocks[PAGE] = [
-            {"type": "code", "code": {"rich_text": _rt("a  b"), "language": "sql"}}
-        ]
-    elif change == "left out blocks":
-        world.blocks[PAGE] = [code, {"type": "pdf", "pdf": {}}]
-    else:
-        del world.docs[_uri(world, PAGE)]["metadata"]["text_sha256"]
-    world.now = datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
-    _run()
-    assert world.upserts == 2
-
-
-def _settling_database_page(world: _Store) -> None:
-    """A database page written 30 s after its revision, then read again unchanged,
-    so its read is recorded."""
-    world.sources[0] = _source(config={"page_ids": [PAGE], "database_ids": [DB]})
-    world.rows = [ROW1]
-    world.now = datetime(2026, 3, 1, 0, 0, 30, tzinfo=UTC)
-    world.pages[ROW1] = _page(ROW1, "2026-03-01T00:00:00.000Z", parent=DB)
-    _run(full=True)
-    world.now = datetime(2026, 3, 1, 0, 5, tzinfo=UTC)
-    _run()
-    assert ROW1 in _detail(world)["unchanged_reads"]
-
-
-@pytest.mark.parametrize("why", ["incomplete result", "lost listed page"])
-def test_a_full_turn_that_is_not_whole_keeps_an_unlisted_page_s_read(
-    world: _Store, why: str
-) -> None:
-    _settling_database_page(world)
-    world.rows = []
-    if why == "incomplete result":
-        world.incomplete = True
-    else:
-        world.answers[f"/pages/{PAGE}"] = httpx.Response(404)
-    _run(full=True)
-    assert ROW1 in _detail(world)["unchanged_reads"]
-
-
-def test_a_child_moved_out_of_scope_loses_its_read(world: _Store) -> None:
-    _only_the_page(world)
-    world.blocks[PAGE] = [_para("Parent."), _child_page(CHILD)]
-    world.pages[CHILD] = _page(
-        CHILD, "2026-03-01T00:00:00.000Z", title="Child", parent_of=_under(PAGE)
-    )
-    world.now = datetime(2026, 3, 1, 0, 0, 30, tzinfo=UTC)
-    _run()
-    world.now = datetime(2026, 3, 1, 0, 5, tzinfo=UTC)
-    _run()
-    assert CHILD in _detail(world)["unchanged_reads"]
-    world.pages[CHILD] = {**world.pages[CHILD], "parent": {"type": "workspace", "workspace": True}}
-    _run(full=True)
-    assert CHILD not in _detail(world)["unchanged_reads"]
-
-
-def test_recorded_reads_past_the_cap_keep_the_newest(
-    world: _Store, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(source_sync_notion, "_MAX_UNCHANGED_READS", 2)
-    _settling_database_page(world)
-    detail = _detail(world)
-    unlisted = {
-        f"{n:08x}-0000-4000-8000-000000000000": [
-            "2026-01-01T00:00:00.000Z",
-            f"2026-02-0{n}T00:00:00.000Z",
-        ]
-        for n in range(1, 4)
-    }
-    detail["unchanged_reads"] = {**detail["unchanged_reads"], **unlisted}
-    world.states["wiki"]["detail"] = json.dumps(detail)
-    _run()  # incremental: the unlisted reads stay, then the cap keeps the newest two
-    reads = _detail(world)["unchanged_reads"]
-    assert set(reads) == {ROW1, "00000003-0000-4000-8000-000000000000"}
-
-
-def test_a_read_evicted_past_the_cap_costs_one_block_read_and_is_recorded_again(
-    world: _Store, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(source_sync_notion, "_MAX_UNCHANGED_READS", 1)
-    world.sources[0] = _source(config={"page_ids": [PAGE, ROW1], "database_ids": []})
-    for page_id in (PAGE, ROW1):
-        world.pages[page_id] = _page(page_id, "2026-03-01T00:00:00.000Z")
-    world.now = datetime(2026, 3, 1, 0, 0, 30, tzinfo=UTC)
-    _run()  # both written 30 s after their revision: neither settled
-    world.now = datetime(2026, 3, 1, 0, 5, tzinfo=UTC)
-    _run()  # both read again unchanged; the cap keeps one read
-    reads = _detail(world)["unchanged_reads"]
-    assert len(reads) == 1
-    (kept,) = reads
-    evicted = ROW1 if kept == PAGE else PAGE
-    world.now = datetime(2026, 3, 1, 0, 10, tzinfo=UTC)
-    world.requests.clear()
-    _run()
-    assert [p for p in _paths(world) if p.startswith("/blocks/")] == [f"/blocks/{evicted}/children"]
-    assert world.upserts == 2
-    assert evicted in _detail(world)["unchanged_reads"]
-
-
 def test_an_edited_page_goes_before_re_reads_that_only_settle(
     world: _Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1212,7 +1051,6 @@ def test_an_edited_page_goes_before_re_reads_that_only_settle(
         )
     world.now = datetime(2026, 3, 1, 0, 0, 30, tzinfo=UTC)
     _run(full=True)  # all three written 30 s after their revision: none settled
-    monkeypatch.setattr(source_sync_notion, "_MAX_UNCHANGED_READS", 1)
     monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
     world.pages[ROW1] = _page(ROW1, "2026-03-01T00:04:00.000Z", parent=DB)
     world.blocks[ROW1] = [_para("Edited in the database.")]
@@ -1220,3 +1058,61 @@ def test_an_edited_page_goes_before_re_reads_that_only_settle(
     out = _run()
     assert out.cut
     assert world.docs[_uri(world, ROW1)]["input"].content == "Edited in the database."
+
+
+def test_a_same_text_read_before_the_margin_is_written_once_and_not_mined_again(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mined = _mock_mining(monkeypatch)
+    _only_the_page(world)
+    world.now = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)  # 30 s after the revision
+    _run()
+    assert world.upserts == 1 and len(mined) == 1
+    world.now = datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
+    _run()  # read again, same text: written once with the new read time, not mined
+    uri = _uri(world, PAGE)
+    assert world.upserts == 2 and len(mined) == 1
+    assert world.docs[uri]["metadata"]["read_at"] == "2026-01-01T00:05:00.000Z"
+    world.requests.clear()
+    _run()  # past the margin now: skipped with no fetch
+    assert not [p for p in _paths(world) if p.startswith("/blocks/")]
+    assert world.upserts == 2
+
+
+@pytest.mark.parametrize("text", ["Edited in the same minute.", "Text  of 1111."])
+def test_other_text_at_the_same_revision_is_written_and_mined(
+    world: _Store, monkeypatch: pytest.MonkeyPatch, text: str
+) -> None:
+    mined = _mock_mining(monkeypatch)
+    _only_the_page(world)
+    world.now = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
+    _run()
+    world.blocks[PAGE] = [_para(text)]  # another text, or only other whitespace
+    world.now = datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
+    _run()
+    assert world.upserts == 2 and len(mined) == 2
+
+
+def test_more_unsettled_pages_than_the_pass_bound_settle_and_the_turn_completes(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows = [f"{n:08x}-1111-4111-8111-111111111111" for n in range(1, 6)]
+    world.sources[0] = _source(config={"page_ids": [], "database_ids": [DB]})
+    world.rows = rows
+    for row in rows:
+        world.pages[row] = _page(row, "2026-03-01T00:00:00.000Z", parent=DB)
+    world.now = datetime(2026, 3, 1, 0, 0, 30, tzinfo=UTC)
+    _run(full=True)  # all five written 30 s after their revision: none settled
+    stamp = world.states["wiki"]["state_value"]
+    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 2)
+    world.now = datetime(2026, 3, 1, 0, 5, tzinfo=UTC)
+    for _ in range(2):  # ceil(5 / 2) = 3 passes: the first two are cut
+        assert _run().cut
+        assert world.states["wiki"]["state_value"] == stamp
+    out = _run()
+    assert not out.cut and _detail(world)["status"] == "ok"
+    assert world.states["wiki"]["state_value"] == "2026-03-01T00:00:00.000Z"
+    assert world.upserts == 10
+    world.requests.clear()
+    _run()
+    assert not [p for p in _paths(world) if p.startswith("/blocks/")]

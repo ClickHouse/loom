@@ -630,9 +630,8 @@ async def sync_item(
     address is skipped; one given up on this revision is unconverted; one at an
     address another writer holds is skipped; `before_fetch` (a kind's own checks)
     may settle it; then it costs one of the pass bound and `fetch_and_write` runs,
-    answering `written`, `unchanged` (fetched, but the stored copy already holds it:
-    nothing written), `waiting`, `given_up` or `stop`. A written item that moved to a
-    new address has its old one retired."""
+    answering `written`, `waiting`, `given_up` or `stop`. A written item that moved
+    to a new address has its old one retired."""
     file_id = str(f["id"])
     revision = str(f.get("modifiedTime") or "")
     if not uri.startswith("https://"):
@@ -1047,12 +1046,12 @@ def _extract_waits(detail: dict[str, Any]) -> dict[str, list[Any]]:
 
 
 def _mined_revision(doc: dict[str, str]) -> str:
-    """The revision a document is mined at: its source revision, with the time its copy
-    was read for a kind that records one (`read_at`), since such a copy can be written
-    again at the same revision with newer text. Every other kind keeps no `read_at`, so
-    its key is the source revision alone."""
-    read_at = doc.get("read_at") or ""
-    return f"{doc['source_revision']}@{read_at}" if read_at else doc["source_revision"]
+    """The revision a document is mined at: its source revision, with the hash of its
+    text for a kind that records one (`text_sha256`), since such a copy can be written
+    again at the same revision, with other text or the same. Every other kind keeps no
+    `text_sha256`, so its key is the source revision alone."""
+    text = doc.get("text_sha256") or ""
+    return f"{doc['source_revision']}@{text}" if text else doc["source_revision"]
 
 
 def _unmined(docs: list[dict[str, str]], detail: dict[str, Any]) -> list[dict[str, str]]:

@@ -2,16 +2,17 @@
 pages of its listed databases and the child pages found in them, each written as
 one document.
 
-The pass, its bounds, the waits and the state it records are `source_sync`'s;
-each listed page goes through `sync.sync_item`. A turn lists every page on its first
+The pass, its bounds, the waits and the state it records are `source_sync`'s; each
+listed page goes through `sync.sync_item`. A turn lists every page on its first
 turn, when asked and once a day; otherwise each listed page, each known child page
 and the database pages edited after the stored stamp. A page whose stored copy has
 the listed revision (its last edit time) and was read at least 90 s after it is
-skipped without a fetch; a changed page's blocks are read and turned into
-Markdown (`convert.page_markdown`). The child pages a read page holds are recorded
-in the sync state and listed on every later turn, so a child page is a document of
-its own; a child found during a turn is synced in the same turn. A known child the
-store reports gone is forgotten only by a complete full turn.
+skipped without a fetch; one read sooner is read and written again with its new read
+time, so it is skipped once that is past the margin. A changed page's blocks are
+read and turned into Markdown (`convert.page_markdown`). The child pages a read page
+holds are recorded in the sync state and listed on every later turn, so a child page
+is a document of its own; a child found during a turn is synced in the same turn. A
+known child the store reports gone is forgotten only by a complete full turn.
 
 A listed page or a known child that is in the trash is left out of the listing, so
 a full turn's lookup retires its document. A listed page, database or data source
@@ -54,11 +55,6 @@ _MAX_CHILD_PAGES = 200  # not a setting: a bound on one source's share of a pass
 # may be coarser than its edits, and its clock may differ from ours, so a page read
 # sooner is read again.
 _SETTLE_S = 90.0  # not a setting: a margin on the store's stamp resolution and clock skew
-# Recorded reads one source keeps (`unchanged_reads`), to keep the sync state row
-# small. Past this many recorded reads, the newest stay; each page beyond them is read
-# again on every listing and comes back unchanged. Changed pages are handled before
-# such re-reads, so the overflow delays only settling, never an edit.
-_MAX_UNCHANGED_READS = 500  # not a setting: a bound on one sync state row
 
 
 def _now() -> datetime:
@@ -88,10 +84,6 @@ class _Turn:
     # The pages this turn handles, in order; a child found during the turn is appended.
     items: list[dict[str, Any]] = field(default_factory=list)
     ids: set[str] = field(default_factory=set)
-    # Pages read again before their revision settled whose text was the stored one:
-    # page id -> [revision, read_at]. Kept in the sync state instead of rewriting the
-    # document, so such a page settles without a write, an embedding or a mining.
-    reads: dict[str, list[str]] = field(default_factory=dict)
     # Known children whose read this turn answered not found or trashed.
     unanswered: set[str] = field(default_factory=set)
 
@@ -121,15 +113,8 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         for k, v in (stored_children if isinstance(stored_children, dict) else {}).items()
         if notion.valid_id(str(k))
     }
-    stored_reads = detail.get("unchanged_reads")
-    reads = {
-        str(k): [str(v[0]), str(v[1])]
-        for k, v in (stored_reads if isinstance(stored_reads, dict) else {}).items()
-        if isinstance(v, list) and len(v) == 2
-    }
-    t = _Turn(src, token, result, known=known, reads=reads)
+    t = _Turn(src, token, result, known=known)
     result.kind_state["child_pages"] = t.known
-    result.kind_state["unchanged_reads"] = t.reads
     listed_at = _now()
     try:
         await _list(t, "" if result.full else stamp)
@@ -145,14 +130,12 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     stored = {
         d["file_id"]: d for d in await store.source_revisions(src.org, src.namespace, src.name)
     }
-    # Pages that changed first, then re-reads that only settle a page: a pass bound
-    # spent on re-reads can delay settling, never an edit.
+    # Changed pages first: a pass bound spent on settling re-reads delays no edit.
     t.items.sort(key=lambda f: not _changed(f, stored.get(f["id"])))
     for f in t.items:  # a child found while syncing is appended and handled too
         if not await _sync_page(t, f, stored.get(f["id"]), run):
             break
     result.documents_seen = len(t.items)
-    _prune_reads(t, whole=trusted and result.complete)
     if trusted and result.complete:
         addresses = {f["id"]: sync.source_uri_of(f) for f in t.items}
         listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
@@ -188,22 +171,6 @@ def _changed(f: dict[str, Any], stored: dict[str, str] | None) -> bool:
     return stored["source_revision"] != f["modifiedTime"] or stored["source_uri"] != (
         sync.source_uri_of(f)
     )
-
-
-def _prune_reads(t: _Turn, *, whole: bool) -> None:
-    """Drop the recorded reads that no longer apply: a page listed at another
-    revision, and after a complete full turn (`whole`) a page it did not list. An
-    incremental turn lists only the database pages edited after the stamp, so a page
-    it did not list keeps its read. Past `_MAX_UNCHANGED_READS` only the newest stay."""
-    revisions = {f["id"]: f["modifiedTime"] for f in t.items}
-    for page_id, (revision, _) in list(t.reads.items()):
-        listed = revisions.get(page_id)
-        if (listed is not None and listed != revision) or (listed is None and whole):
-            del t.reads[page_id]
-    if len(t.reads) > _MAX_UNCHANGED_READS:
-        newest = sorted(t.reads.items(), key=lambda kv: kv[1][1], reverse=True)
-        t.reads.clear()
-        t.reads.update(newest[:_MAX_UNCHANGED_READS])
 
 
 def _item(page: dict[str, Any]) -> dict[str, Any]:
@@ -371,29 +338,25 @@ async def _sync_page(
 ) -> bool:
     """Handle one listed page; False when the turn must stop listing."""
     uri = sync.source_uri_of(f)
-    stored = prior
-    read_at = prior.get("read_at", "") if prior else ""
-    entry = t.reads.get(f["id"])
-    if entry and entry[0] == f["modifiedTime"]:
-        read_at = max(read_at, entry[1])
-    if prior and prior["source_uri"] == uri and not _settled(f["modifiedTime"], read_at):
+    if (
+        prior
+        and prior["source_uri"] == uri
+        and not _settled(f["modifiedTime"], prior.get("read_at", ""))
+    ):
         # Read too soon after its revision: a later edit may share the stamp, so the
-        # stored copy does not let the page be skipped.
+        # page is read and written again, with the new read time; once that is past
+        # the margin, the stored copy lets the page be skipped.
         prior = None
-    fetch_and_write = functools.partial(_fetch_and_write, t, f, uri, stored)
+    fetch_and_write = functools.partial(_fetch_and_write, t, f, uri)
     if not await sync.sync_item(t.src, f, uri, prior, run, t.result, fetch_and_write):
         return False
     # A rate limit or a refused token while listing the page's new children.
     return t.result.status not in ("rate_limited", "credential_invalid")
 
 
-async def _fetch_and_write(
-    t: _Turn, f: dict[str, Any], uri: str, stored: dict[str, str] | None
-) -> str:
+async def _fetch_and_write(t: _Turn, f: dict[str, Any], uri: str) -> str:
     """Read one page's blocks, record its child pages, convert and write them:
-    `written`, `unchanged` (the stored copy at this revision has this text, so only
-    the read is recorded), `waiting`, `given_up` or `stop`, as `sync.sync_item`
-    expects."""
+    `written`, `waiting`, `given_up` or `stop`, as `sync.sync_item` expects."""
     result = t.result
     read_at = _now()
     try:
@@ -420,11 +383,7 @@ async def _fetch_and_write(
         outcome = sync.give_up(f, result, "no_text")
     elif len(content.encode()) > int(settings.knowledge_source_sync_max_file_bytes):
         outcome = sync.give_up(f, result, "too_large")
-    elif _same_copy(stored, f, uri, _exact_hash(f, content, skipped)):
-        t.reads[f["id"]] = [f["modifiedTime"], sync.stamp_of(read_at)]
-        outcome = "unchanged"
     else:
-        t.reads.pop(f["id"], None)
         outcome = await _write(t, f, uri, content, skipped, read_at)
     # A rate limit or a refused token here ends the turn after this page's outcome,
     # so a written page's old address is still retired (`_sync_page`).
@@ -434,19 +393,10 @@ async def _fetch_and_write(
 
 def _exact_hash(f: dict[str, Any], content: str, skipped: dict[str, int]) -> str:
     """A hash of exactly what a write stores for the page: its title, its Markdown as
-    written (whitespace included) and the blocks left out."""
+    written (whitespace included) and the blocks left out. The mining step keys the
+    document by it, so a copy written again with the same text is not mined again."""
     left_out = json.dumps(skipped, sort_keys=True)
     return sha256_text(f"{f['name']}\n{content}\n{left_out}")
-
-
-def _same_copy(stored: dict[str, str] | None, f: dict[str, Any], uri: str, exact: str) -> bool:
-    """Whether the stored copy is this page at this revision with exactly this title,
-    text and left-out blocks. A copy written without the hash is not the same."""
-    if not stored or stored["source_uri"] != uri:
-        return False
-    if stored["source_revision"] != f["modifiedTime"]:
-        return False
-    return bool(stored["text_sha256"]) and stored["text_sha256"] == exact
 
 
 async def _write(
