@@ -276,12 +276,13 @@ async def test_tombstone_shared_by_user_zero_count_short_circuits() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tombstone_shared_embeddings_by_user_reads_the_shared_keys_first() -> None:
+async def test_tombstone_shared_embeddings_by_user_names_each_namespace_with_its_key() -> None:
     """Shared embeddings don't carry user_id directly (sentinel
-    agent='_shared'); the cascade reads the keys of the shared rows promoted from
-    the user, then tombstones the shared embeddings of those keys."""
+    agent='_shared'); the cascade reads the (namespace, key) pairs of the shared rows
+    promoted from the user, then tombstones the shared embeddings of those pairs
+    (the rows on clickhouse-local: test_erasure_shared_embeddings_sql.py)."""
     ch = StubCH()
-    ch.reads.append(("FROM loom.shared FINAL", [{"memory_key": "k1"}]))
+    ch.reads.append(("FROM loom.shared FINAL", [{"namespace": "team-a", "memory_key": "k1"}]))
     ch.query_one_returns.append({"n": 2})
     await memory_steps.tombstone_shared_embeddings_by_user(
         "clickhouse",
@@ -289,12 +290,16 @@ async def test_tombstone_shared_embeddings_by_user_reads_the_shared_keys_first()
         ch=ch,
     )
     ((read_sql, read_params),) = ch.read_calls[:1]
+    assert "SELECT DISTINCT namespace, memory_key FROM loom.shared FINAL" in read_sql
     assert "splitByChar('/', x)[4]" in read_sql and read_params["uid"] == "alice"
     sel_sql, _ = ch.query_one_calls[0]
     assert "FROM loom.memory_embeddings FINAL" in sel_sql
-    assert "scope = 'shared' AND memory_key IN {keys:Array(String)}" in sel_sql
+    assert (
+        "scope = 'shared' AND (namespace, memory_key) IN {keys:Array(Tuple(String, String))}"
+        in sel_sql
+    )
     ((mut_sql, mut_params),) = ch.execute_calls
-    assert "SELECT" not in mut_sql and mut_params["keys"] == ["k1"]
+    assert "SELECT" not in mut_sql and mut_params["keys"] == [("team-a", "k1")]
 
 
 @pytest.mark.asyncio

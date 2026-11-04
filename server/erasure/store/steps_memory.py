@@ -27,6 +27,7 @@ from server.erasure.store.predicates import (
     NS_IN,
     ORG_NS,
     ORG_UID,
+    PARENT_KEYS_IN,
     UID,
 )
 from server.erasure.store.scope_reads import hashes, slices_or_one_empty, user_key_pairs
@@ -221,21 +222,23 @@ async def tombstone_shared_embeddings_by_user(
     memory whose source includes this user_id.
 
     Shared embeddings don't directly carry user_id (sentinel
-    agent='_shared'), so the keys of the loom.shared rows the same
-    promoted_from predicate matches are read first, then named.
+    agent='_shared'), so the (namespace, key) pairs of the loom.shared rows
+    the same promoted_from predicate matches are read first, then named. The
+    key alone would reach another namespace's shared row of the same spelling.
     """
     ch = ch or _default_client()
     rows = await ch.query_all(
-        "SELECT DISTINCT memory_key FROM loom.shared FINAL "
+        "SELECT DISTINCT namespace, memory_key FROM loom.shared FINAL "
         f"WHERE org = {{org:String}} AND {_PROMOTED_FROM_USER}",
         params={"org": org, "uid": user_id},
     )
+    pairs = sorted((str(r["namespace"]), str(r["memory_key"])) for r in rows)
     total = 0
-    for part in chunks(sorted(str(r["memory_key"]) for r in rows)):
+    for part in chunks(pairs):
         total += await tombstone_scoped(
             "loom.memory_embeddings",
             org=org,
-            scope_where="scope = 'shared' AND memory_key IN {keys:Array(String)}",
+            scope_where=f"scope = 'shared' AND {PARENT_KEYS_IN}",
             params={"keys": part},
             ch=ch,
         )
