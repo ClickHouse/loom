@@ -381,8 +381,10 @@ async def test_one_revoke_takes_the_persons_row_under_each_verified_spelling(
     async def _insert(row: dict[str, Any], **_: Any) -> None:
         inserted.append(row)
 
-    async def _cascade(*_a: Any, **_k: Any) -> None:
-        return None
+    cascaded: list[str] = []
+
+    async def _cascade(org: str, namespace: str, subject: str, **_k: Any) -> None:
+        cascaded.append(subject)
 
     monkeypatch.setattr("server.auth.aliases.read_aliases", _read_aliases)
     monkeypatch.setattr(grants_repo, "find_any_grant", _find_any)
@@ -393,6 +395,8 @@ async def test_one_revoke_takes_the_persons_row_under_each_verified_spelling(
     )
     assert out.revoked is True
     assert sorted(r["subject"] for r in inserted) == ["dave", "dave@x.io"]
+    # One cascade under the subject asked for, whose spellings reach both rows.
+    assert cascaded == [revoked_as]
 
 
 @pytest.mark.asyncio

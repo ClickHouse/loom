@@ -147,7 +147,13 @@ def _cmd_link(args: argparse.Namespace) -> int:
                 args.email, args.org, args.namespace, by=_by()
             )
             if carried:  # what it carried under the grant claims, not what the plan read
-                print(f"  revoked for {owner} too: {', '.join(carried)}")
+                if plan["elsewhere"]:
+                    print(
+                        f"  {plan['was']} is another account's verified email: its grants "
+                        f"stay theirs, and are revoked for {owner} too: {', '.join(carried)}"
+                    )
+                else:
+                    print(f"  revoked for {owner} too: {', '.join(carried)}")
         except (ValueError, LoomServerError) as e:  # refused (fix what it names) or busy (rerun)
             print(f"  ✗ {e}", file=sys.stderr)
             return 2

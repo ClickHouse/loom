@@ -149,9 +149,9 @@ async def revoke_token_grants(
 async def cascade_revoke_to_created_tokens(
     org: str, namespace: str, subject: str, *, unheld: bool, ch: Any = None
 ) -> int:
-    """A person's grant on ``namespace``, stored under `subject`, was revoked:
-    revoke the grants every live token they created holds there, under the
-    stored subject's spellings. When the revoke named an address no verified
+    """A revoke of `subject` on ``namespace`` took the person's rows there: revoke
+    the grants every live token they created holds there, under the subject's
+    spellings. When the revoke named an address no verified
     account holds (`unheld`), those are every spelling a revocation reaches
     (`aliases.spellings`), an unverified pair too (the tokens an unverified
     account made while the address's grant admitted it), less any account that

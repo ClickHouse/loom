@@ -397,13 +397,17 @@ async def revoke_grant(
     if admins:
         await _refuse_last_admin(input, also_going=admins - 1)
     revoked_at = None
-    for subject, row in rows:
-        # A row under another spelling, or one of several, is audited as its write
-        # lands: a later row refused fails the call, and the op's own audit row is
-        # written only for a call that succeeds.
-        audited = subject != input.subject or len(rows) > 1
-        now = await _revoke_row(input, subject, row, may_take, audited=audited, unheld=unheld)
-        revoked_at = now or revoked_at
+    try:
+        for subject, row in rows:
+            # A row under another spelling, or one of several, is audited as its
+            # write lands: a later row refused fails the call, and the op's own
+            # audit row is written only for a call that succeeds.
+            audited = subject != input.subject or len(rows) > 1
+            now = await _revoke_row(input, subject, row, may_take, audited=audited)
+            revoked_at = now or revoked_at
+    finally:
+        if revoked_at is not None:  # the rows that went, even when a later one refused
+            await _cascade(input, unheld=unheld)
     if revoked_at is None:
         return GrantsRevokeOutput(revoked=False)
     return GrantsRevokeOutput(revoked=True, revoked_at=revoked_at)
@@ -440,10 +444,9 @@ async def _revoke_row(
     may_take: Callable[[GrantState], None] | None,
     *,
     audited: bool,
-    unheld: bool,
 ) -> datetime | None:
-    """Revoke the row stored under `subject`, under its claim, and the grants of the
-    tokens it minted there; when it was revoked, or None when nothing was."""
+    """Revoke the row stored under `subject`, under its claim; when it was
+    revoked, or None when nothing was."""
 
     async def _write(row: GrantState | None) -> tuple[GrantState, datetime] | None:
         if row is None:
@@ -464,24 +467,28 @@ async def _revoke_row(
         done = await _taking_admin(input, subject, _write)
     if done is None:
         return None
-    row, now = done
-    # The tokens this person minted lose their own grants here. Best-effort: the
-    # person's revoke has landed; a failed cascade is logged, never a 500.
+    return done[1]
+
+
+async def _cascade(input: GrantsRevokeInput, *, unheld: bool) -> None:
+    """The tokens the person minted lose their own grants on the namespace, once
+    for every row taken: the cascade reads the spellings of the subject asked for,
+    which reach each of them. Best-effort: the person's revoke has landed; a
+    failed cascade is logged, never a 500."""
     from server.identity.app import token_grants
 
     try:
         await token_grants.cascade_revoke_to_created_tokens(
-            input.org, input.namespace, subject, unheld=unheld
+            input.org, input.namespace, input.subject, unheld=unheld
         )
     except Exception as e:  # noqa: BLE001 - the revoke itself succeeded
         log.warning(
             "token grant cascade failed for %s/%s %s: %s",
             input.org,
             input.namespace,
-            subject,
+            input.subject,
             e,
         )
-    return now
 
 
 async def _taking_admin[T](
