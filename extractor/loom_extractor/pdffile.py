@@ -6,9 +6,10 @@ text after it sits in its section.
 
 A PDF has no paragraphs of its own: a page's text is split at blank lines, and
 a page with none is one block. Tables are read as their text, row by row as
-the page lays them out. A page with no text that holds an image is a failed
-unit: its text needs OCR, which this parser does not run, so a page of images
-and no text is never reported as complete.
+the page lays them out. A page with no text that draws an image (an image
+object, one in a form, or one inline in its content) is a failed unit: its
+text needs OCR, which this parser does not run, so a page of images and no
+text is never reported as complete.
 
 Pure and I/O-free.
 """
@@ -22,6 +23,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import pypdf
+from pypdf.generic import ContentStream
 
 from loom_extractor.artifact import (
     MAX_SECTION_DEPTH,
@@ -68,14 +70,38 @@ def _outline(reader: pypdf.PdfReader) -> dict[int, list[tuple[int, str]]]:
 _MAX_FORM_DEPTH = 4  # not a setting: a bound on hostile input
 
 
-def _has_image(holder: Any, depth: int = 0, seen: set[tuple[str, int]] | None = None) -> bool:
-    """Whether a page, or a form XObject on it, draws an image; each form is
-    searched once, however many times it is named."""
+def _draws_inline_image(contents: Any, reader: pypdf.PdfReader) -> bool:
+    """Whether a content stream draws an image inline (`BI ... ID ... EI`, as some
+    scanners write a page): its operators are read, no image is decoded."""
+    return any(op == b"INLINE IMAGE" for _, op in ContentStream(contents, reader).operations)
+
+
+def _has_image(
+    holder: Any, reader: pypdf.PdfReader, depth: int = 0, seen: set[tuple[str, int]] | None = None
+) -> bool:
+    """Whether a page, or a form XObject on it, draws an image, as an image XObject
+    or inline; each form is searched once, however many times it is named."""
     seen = set() if seen is None else seen
+    contents = holder.get_contents() if isinstance(holder, pypdf.PageObject) else holder
+    if contents is not None and _draws_inline_image(contents, reader):
+        return True
     resources = holder.get("/Resources")
     xobjects = resources.get_object().get("/XObject") if resources else None
     if not xobjects:
         return False
+    for ref in xobjects.get_object().values():
+        x = ref.get_object()
+        if x.get("/Subtype") == "/Image":
+            return True
+        # An indirect object by its number; a direct one (no number) is its own.
+        idnum = getattr(ref, "idnum", None)
+        key = ("ref", idnum) if idnum is not None else ("obj", id(x))
+        if x.get("/Subtype") != "/Form" or depth >= _MAX_FORM_DEPTH or key in seen:
+            continue
+        seen.add(key)
+        if _has_image(x, reader, depth + 1, seen):
+            return True
+    return False
     for ref in xobjects.get_object().values():
         x = ref.get_object()
         if x.get("/Subtype") == "/Image":
@@ -168,7 +194,7 @@ def extract_pdf(data: bytes) -> Artifact:
         headings = [(d, _unicode(t)[0]) for d, t in outline.get(index, [])]
         try:
             text = page.extract_text() or ""
-            image_only = not text.strip() and _has_image(page)
+            image_only = not text.strip() and _has_image(page, reader)
         except MemoryError:
             raise  # the extraction's limit, not this page's defect
         except Exception as e:  # noqa: BLE001 — a page pypdf cannot read fails, not the file

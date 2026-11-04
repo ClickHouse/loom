@@ -8,8 +8,10 @@ import io
 
 from pypdf import PdfWriter
 
-# A page that draws its image through a form XObject, as many scans do.
+# A page that draws its image through a form XObject, as many scans do, and one
+# that draws it inline in its content stream, as some scanners write a page.
 FORM_IMAGE = "\x00form"
+INLINE_IMAGE = "\x00inline"
 
 
 def pdf(
@@ -18,8 +20,8 @@ def pdf(
     *,
     broken_cmap: bool = False,
 ) -> bytes:
-    """A PDF of `pages` (each its lines, None for a page of one image, or
-    FORM_IMAGE) with `outline` entries `(title, page index, children)`. With
+    """A PDF of `pages` (each its lines, None for a page of one image, FORM_IMAGE or
+    INLINE_IMAGE) with `outline` entries `(title, page index, children)`. With
     `broken_cmap`, the font's character map gives `A` a lone surrogate."""
     objs: list[bytes] = []
 
@@ -49,7 +51,9 @@ def pdf(
     pages_id = len(objs) + 1 + 2 * len(pages)  # after every page and its contents
     page_ids = []
     for text in pages:
-        if text is None or text == FORM_IMAGE:
+        if text == INLINE_IMAGE:
+            stream, res = b"q 100 0 0 100 0 0 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q", b"<< >>"
+        elif text is None or text == FORM_IMAGE:
             stream, res = (
                 b"q 100 0 0 100 0 0 cm /Im1 Do Q",
                 b"<< /XObject << /Im1 %d 0 R >> >>" % (image if text is None else form),

@@ -202,11 +202,12 @@ or time is its ISO text and an infinite or NaN float its text (`inf`, `nan`), wh
 none is one paragraph. The outline (the bookmarks) gives the headings: each entry, in outline order, is a heading block
 on the page it points to, at the first line after the previous heading's that holds its title, or right after that
 heading when no line does. A table is read as its text, row by row as the page lays it out. A page with no text that
-holds an image (directly or in a form) is a failed unit: its text needs OCR, which the reference extractor does not run,
-so a PDF with such a page is not complete and is published only with `allow_partial`; a scan whose pages carry some text
-(a stamped number) is read as that text. A page pypdf cannot read is a failed unit, not the file; a failed page's
-outline headings still open their sections. A character a font's map gives no Unicode character (a lone surrogate) is
-read as U+FFFD, with a warning naming its page. A PDF that opens only with a password is `unsupported_format`.
+draws an image (an image object, one in a form, or one inline in its content) is a failed unit: its text needs OCR,
+which the reference extractor does not run, so a PDF with such a page is not complete and is published only with
+`allow_partial`; a scan whose pages carry some text (a stamped number) is read as that text. A page pypdf cannot read is
+a failed unit, not the file; a failed page's outline headings still open their sections. A character a font's map gives
+no Unicode character (a lone surrogate) is read as U+FFFD, with a warning naming its page. A PDF that opens only with a
+password is `unsupported_format`.
 
 **DOCX and PPTX.** Both are zips of XML parts, read with the standard library: no third-party XML or image library runs
 on a hostile file. A part must be stored or deflated (the methods OOXML writes) and declare at most 256 MiB

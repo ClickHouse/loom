@@ -14,7 +14,7 @@ from pypdf import PdfWriter
 from loom_extractor import ExtractionError, Options, extract
 from loom_extractor.artifact import Artifact
 from server.knowledge.domain.extract import InvalidArtifact, parse_artifact, structural
-from tests.fixtures.office_files import FORM_IMAGE, pdf
+from tests.fixtures.office_files import FORM_IMAGE, INLINE_IMAGE, pdf
 
 _W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 _P = (
@@ -228,8 +228,9 @@ def test_pdf_pages_are_cited_by_page_and_the_outline_gives_their_sections() -> N
     assert a.coverage.failed[0].unit == "page 3" and "OCR" in a.coverage.failed[0].reason
 
 
-def test_a_pdf_page_drawing_its_image_through_a_form_needs_ocr_too() -> None:
-    a = extract(pdf(["Text", FORM_IMAGE], []), "scan.pdf")
+@pytest.mark.parametrize("scan", [FORM_IMAGE, INLINE_IMAGE])
+def test_a_pdf_page_drawing_its_image_through_a_form_or_inline_needs_ocr_too(scan: str) -> None:
+    a = extract(pdf(["Text", scan], []), "scan.pdf")
     assert [f.unit for f in a.coverage.failed] == ["page 2"]
 
 
@@ -320,8 +321,13 @@ def test_a_pdf_characters_lone_surrogate_reads_as_a_replacement_and_a_warning() 
     parse_artifact(a.to_json(), fmt="pdf", max_bytes=1 << 20)
 
 
-def test_a_form_named_many_times_is_searched_for_an_image_once() -> None:
+def test_a_form_named_many_times_is_searched_for_an_image_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from loom_extractor import pdffile
+
+    # These dictionaries hold no content stream to scan for an inline image.
+    monkeypatch.setattr(pdffile, "_draws_inline_image", lambda contents, reader: False)
 
     visits = 0
 
@@ -338,7 +344,7 @@ def test_a_form_named_many_times_is_searched_for_an_image_once() -> None:
     form = _Dict({"/Subtype": "/Form"})
     form["/Resources"] = _Dict({"/XObject": _Dict({f"/F{i}": form for i in range(50)})})
     page = _Dict({"/Resources": form["/Resources"]})
-    assert pdffile._has_image(page) is False
+    assert pdffile._has_image(page, None) is False
     assert visits <= 2  # the page and the form once, not 50 ** depth
 
 

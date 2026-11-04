@@ -275,7 +275,6 @@ async def test_a_mislabelled_upload_is_stored_and_the_extractor_refuses_it(
         )
         from server.knowledge.app.extractors import available_formats
 
-        # An extractor that takes pdf reads the bytes; with none, the format is unavailable.
         declared = await available_formats()
         refused = "format_mismatch" if "pdf" in declared else "format_unavailable"
         assert (status["state"], status["error_code"]) == ("failed", refused)
