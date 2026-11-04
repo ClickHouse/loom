@@ -19,7 +19,8 @@ from statistics import mean
 from typing import Any
 
 from bench.bootstrap import paired_bootstrap
-from bench.design_rationale.taskset import TaskSet, parse_key, surface_key
+from bench.design_rationale.llm import cost_usd, price, read_ledger
+from bench.design_rationale.taskset import TaskSet, parse_key, parse_sample, surface_key
 
 # z(0.975) + z(0.80): the effect a two-sided 5% test detects with 80% power is this many
 # standard errors.
@@ -29,13 +30,24 @@ MDE_Z = 1.96 + 0.84
 PLANNING_SD = 0.35
 # (treatment arm, reference arm) pairs reported when both ran. Arm 4 against arm 5 is
 # the like-for-like comparison when arm 4 had no code index (no pre-edit block).
-COMPARISONS = ((3, 0), (4, 0), (4, 3), (4, 5), (1, 3), (2, 3))
+COMPARISONS = ((3, 0), (4, 0), (4, 3), (4, 5), (1, 0), (1, 3), (2, 3))
 # The keys a verdict must carry to be read; one without them is unreadable, not a pass.
 REQUIRED = {
     "A": ("claims", "gold_covered", "potentially_misleading"),
     "B": ("forbidden_proposed", "constraints_violated"),
     "C": ("stale_served", "abstained", "invented_rationale"),
 }
+# The run flags a summary publishes; the org and an --arm4-namespace name a deployment.
+SUMMARY_FLAGS = (
+    "arms",
+    "arm4_files",
+    "extract_window_chars",
+    "reader",
+    "judges",
+    "extract_model",
+)
+# The verdict fields read as lists, at the top level and in each claim.
+LIST_FIELDS = ("cites", "cites_support")
 # The per-task metric each kind's comparison is made on, higher is better.
 HEADLINE = {
     "A": ("precision", "recall"),
@@ -51,11 +63,24 @@ def planning_mde(n_tasks: int) -> float:
     return MDE_Z * PLANNING_SD / math.sqrt(n_tasks) if n_tasks else float("nan")
 
 
+def _list_or_none(value: Any) -> bool:
+    return value is None or isinstance(value, list)
+
+
 def readable(kind: str, task: dict[str, Any], verdict: Any) -> bool:
     need = REQUIRED[kind]
     if kind == "C" and task.get("subtype") == "supersession":
         need = (*need, "current_stated")
     if not isinstance(verdict, dict) or not all(k in verdict for k in need):
+        return False
+    # Anything but a list or null where a list goes would otherwise break the scoring.
+    claims = verdict.get("claims")
+    if not _list_or_none(claims) or not all(isinstance(c, dict) for c in claims or []):
+        return False
+    for part in (verdict, *(claims or [])):
+        if any(not _list_or_none(part.get(f)) for f in LIST_FIELDS):
+            return False
+    if not _list_or_none(verdict.get("gold_covered")):
         return False
     # A rubric the judge left unanswered would pass the task.
     rubric = any(d["type"] == "judge" for d in task.get("detector", []))
@@ -145,7 +170,7 @@ def pass_metrics(
             m["current_stated"] = float(bool(verdict.get("current_stated")))
         else:
             passed = bool(verdict.get("abstained")) and not verdict.get("invented_rationale")
-            m["invented"] = float(not passed)
+            m["abstention_failed"] = float(not passed)
         m["passed"] = float(passed)
     return m
 
@@ -194,6 +219,21 @@ def unreadable(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, int]]
 # ---------------------------------------------------------------- per task and arm
 
 
+def a_answers_without_claims(ts: TaskSet, judged: dict[str, Any]) -> dict[int, float]:
+    """arm -> the share of scored A answers with no claim in any readable pass: the
+    answers A precision leaves out."""
+    tasks = {t["id"]: t for t in ts.tasks.get("A", [])}
+    counts: dict[int, list[bool]] = defaultdict(list)
+    for key, entry in judged.items():
+        tid, arm = parse_key(key)
+        if tid not in tasks:
+            continue
+        m = answer_metrics("A", tasks[tid], entry)
+        if m:
+            counts[arm].append(m.get("precision") is None)
+    return {arm: round(sum(v) / len(v), 4) for arm, v in sorted(counts.items())}
+
+
 def per_task(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, dict[str, Any]]]:
     """arm -> task id -> metrics averaged over the task's samples."""
     by: dict[tuple[int, str], list[dict[str, float | None]]] = defaultdict(list)
@@ -217,7 +257,7 @@ def arm_summary(rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
     for kind, metrics in (
         ("A", ("precision", "recall", "misleading", "abstained")),
         ("B", ("avoids", "satisfies", "pushed_back", "detector_fired")),
-        ("C", ("passed", "current_stated", "stale", "invented")),
+        ("C", ("passed", "current_stated", "stale", "abstention_failed")),
     ):
         mine = [r for r in rows.values() if r["kind"] == kind]
         if not mine:
@@ -501,6 +541,7 @@ def score(
         "treatment": treatment_check(ts, surf, state),
         "judge_stability": judge_stability(ts, judged),
         "unreadable": unreadable(ts, judged),
+        "a_answers_without_claims": a_answers_without_claims(ts, judged),
         "per_task": by_arm,
     }
     if human:
@@ -509,6 +550,69 @@ def score(
         metrics["extraction"] = extraction_precision(ts, extraction_labels, state)
     (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=1))
     return metrics
+
+
+def summary(ts: TaskSet, metrics: dict[str, Any], out_dir: Path) -> dict[str, Any]:
+    """The run's aggregates without the per-task rows (task and document ids can name
+    private material), with the task set's counts, the run's flags and its spend: by
+    ledger stage, and the answers' cost per arm (None for a reader the price table does
+    not list)."""
+    state = json.loads((out_dir / "state.json").read_text())
+    answers = json.loads((out_dir / "answers.json").read_text())
+    judged = json.loads((out_dir / "judged.json").read_text())
+    flags = state["flags"]
+    passes = [p for entry in judged.values() for p in entry["passes"]]
+    subtypes: dict[str, int] = defaultdict(int)
+    for t in ts.tasks.get("C", []):
+        subtypes[t["subtype"]] += 1
+    task_set = {
+        "documents": sum(1 for d in ts.documents.values() if not d.revision_of),
+        # A document can be revised more than once: entries and distinct bases.
+        "revisions": sum(1 for d in ts.documents.values() if d.revision_of),
+        "revised_documents": len({d.revision_of for d in ts.documents.values() if d.revision_of}),
+        "tasks": {kind: len(ts.tasks.get(kind, [])) for kind in ("A", "B", "C")},
+        "c_subtypes": dict(sorted(subtypes.items())),
+        "tasks_with_gold_rows": sum(1 for _, t in ts.all_tasks() if t["gold_rows"]),
+    }
+    by_stage: dict[str, float] = defaultdict(float)
+    rows, dropped = read_ledger(out_dir / "ledger.jsonl")
+    for row in rows:
+        by_stage[row["stage"]] += row["usd"]
+    priced = price(flags["reader"]) is not None
+    answer_usd: dict[int, float] = defaultdict(float)
+    answer_n: dict[int, int] = defaultdict(int)
+    for key, a in answers.items():
+        arm = parse_key(key)[1]
+        if priced:
+            answer_usd[arm] += cost_usd(flags["reader"], a["in"], a["out"])
+        answer_n[arm] += 1
+    samples = {parse_sample(key) for key in answers}
+    aggregates = {k: v for k, v in metrics.items() if k != "per_task"}
+    if "extraction" in aggregates:
+        # Documents in id order, as the report lists them, without their ids.
+        extraction = dict(aggregates["extraction"])
+        extraction["documents"] = list(extraction["documents"].values())
+        aggregates["extraction"] = extraction
+    run = {k: flags[k] for k in SUMMARY_FLAGS}
+    return {
+        "task_set": task_set,
+        "run": {
+            **run,
+            "k": len(samples),
+            "judge_orders": len({p["order"] for p in passes}),
+            "judge_repeats": len({p["repeat"] for p in passes}),
+        },
+        "spend_usd": {
+            "by_stage": {k: round(v, 4) for k, v in sorted(by_stage.items())},
+            "total": round(sum(by_stage.values()), 4),
+            "ledger_rows_dropped": dropped,
+            "answers_by_arm": {
+                arm: {"answers": n, "usd": round(answer_usd[arm], 4) if priced else None}
+                for arm, n in sorted(answer_n.items())
+            },
+        },
+        **aggregates,
+    }
 
 
 def _pct(v: float | None) -> str:

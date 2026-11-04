@@ -38,22 +38,23 @@ the conversations, documents or repository revisions searched to answer them. Fo
 benchmark link for models, category results, limitations, artifact paths and the exact
 reproduction command.
 
-| Benchmark                                                                             | Exact task                                                                                                                                                                                            | Corpus and evaluation size                                                                                                                                                                      | Loom path and search depth                                                                                                                                    | Success definition or comparison                                                                                                                        |
-| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [LoCoMo conversational QA](#locomo-conversational-qa)                                 | Answer questions about facts, events, relationships and time across long conversations; abstain on adversarial questions.                                                                             | All 10 conversations; 1,986 questions: 1,540 answerable and 446 adversarial.                                                                                                                    | Conversations ingested with `memory.set_from_messages`; `memory.ask`, or `memory.search` top 10 followed by fixed `gpt-4.1-mini`.                             | `gpt-4.1`-judged answer accuracy for categories 1–4; correct abstention for category 5, which published LoCoMo comparisons normally exclude.            |
-| [LongMemEval-S](#longmemeval-s)                                                       | Answer questions requiring information distributed across many earlier sessions and retrieve the supporting evidence.                                                                                 | All 500 questions; about 47 sessions in each question's history.                                                                                                                                | Histories ingested with `memory.set_from_messages`; `memory.ask`, or `memory.search` top 200 followed by `gpt-5`; supporting-session recall scored at 30.     | Official LongMemEval judge; `memory.ask` is Loom's product flow, not a standard leaderboard configuration; the fixed-reader arm is reported separately. |
-| [MemBench](#membench)                                                                 | Answer multiple-choice questions about events the agent observed or participated in.                                                                                                                  | Two scenarios; 140 questions per scenario, covering seven question types.                                                                                                                       | Scenario memories ingested, then answered with `memory.ask`.                                                                                                  | Exact multiple-choice accuracy; no LLM judge or external baseline.                                                                                      |
-| [MemoryAgentBench samples](#memoryagentbench)                                         | Answer fact questions, resolve conflicting facts, answer from a 197K-token context and learn labels supplied at test time.                                                                            | Selected slices: 15 contexts and 1,500 questions—retrieval 500, conflict 800, RULER 100 and test-time learning 100.                                                                             | Contexts chunked through `memory.set_from_messages`; generated answers produced by `memory.ask`.                                                              | SubEM and token F1 score answers, not raw retrieval; test-time learning uses label presence. No external reader or LLM judge.                           |
-| [MuSiQue-Ans development sample](#musique-ans)                                        | Retrieve multiple supporting paragraphs for a multi-step question, then answer from those passages.                                                                                                   | Seed-0 sample of 200 questions from the development set.                                                                                                                                        | Each question's paragraphs written with `memory.set`; semantic `memory.search` top 10; fixed `gpt-4o-mini` reader.                                            | Mean fraction of gold supporting paragraphs retrieved at 10; exact match and token F1 against gold answers; no LLM judge.                               |
-| [PerLTQA sample](#perltqa)                                                            | Answer personal long-term-memory questions about profiles, relationships, events and dialogues.                                                                                                       | 193-question slice: five fictional characters, at most 10 questions per section.                                                                                                                | Character histories ingested with `memory.set_from_messages`; answered by `memory.ask`.                                                                       | `gpt-4o-mini`-judged answer accuracy against reference answers, with two additional judges reported.                                                    |
-| [Tracker duplicate detection](#duplicate-check-on-public-clickhouse-issues)           | Given a new issue draft, find its recorded older duplicate while limiting duplicate verdicts on issues with no recorded duplicate/related link.                                                       | 104 recorded duplicate pairs and 100 negative-labelled issues from ClickHouse's public tracker.                                                                                                 | `tracker.duplicate_check` receives title and body as of creation time; the draft's issue number and recorded links are withheld.                              | Older linked issue ranked first and duplicate verdict correctness; a negative label means no recorded link, not proof that two issues are unrelated.    |
-| [ClickHouse code intelligence](#code-intelligence-on-the-clickhouse-repository)       | Find definitions, callers and implementation files for authored questions; abstain on authored out-of-repository probes.                                                                              | 60 authored questions: 10 definitions, 4 caller sets, 36 conceptual searches and 10 out-of-repository probes.                                                                                   | Public ClickHouse repository index; `code.symbol`, `code.callers` and `code.search` with their normal result limits.                                          | Exact first definition; F1 against expected callers; mean gold-file recall@5/@10, MRR and hit@5; abstention precision/recall.                           |
-| [SWE-bench Verified sample: file localization](#swe-bench-verified-file-localization) | Given a GitHub issue description, rank the pre-existing repository files that its accepted patch later modified. This is retrieval, not patch generation or issue resolution.                         | Stratified seed-7 sample of 200 eligible instances from the 500-instance dataset, covering all 12 repositories; eligibility requires at least one patch-modified file present at `base_commit`. | Each repository indexed at the issue's `base_commit`; issue text truncated at 2,000 characters; `code.search` first 10 results and a second page to 25 units. | File hit@1, hit@5 and hit@10 (at least one gold file); all-gold@10; MRR; paired against BM25 over the same live files and over Python files only.       |
-| [Memory versus full history](#with-and-without-loom)                                  | Answer the same long-conversation question from retrieved memories or from the complete conversation history.                                                                                         | Paired seed-13 sample of 100 LongMemEval-S questions.                                                                                                                                           | Same `gpt-5` reader sees either `memory.search` top 200 or the full history.                                                                                  | Official-judge accuracy and reader prompt tokens; memory construction is excluded from prompt-token totals and reported separately as break-even.       |
-| [Coding agents on ClickHouse: with Loom vs without Loom](#with-and-without-loom)      | Answer a ClickHouse developer's question: explain a mechanism, list the callers a change must update, find the change behind a behaviour, trace a bug to its fix, find the tests that cover a change. | 48 answer-graded questions × 3 paired runs and 36 conceptual questions × 10 paired runs; checkouts without git history at the verified commit.                                                  | Same headless `claude-sonnet-5` in a stock session; baseline has Bash, Read, Grep and Glob, the Loom arm adds the Loom plugin and its MCP `coding` toolset.   | Judged key points of a verified reference answer, right file in the three named; model cost, turns and wall time per run.                               |
-| [Definitions and callers versus grep](#with-and-without-loom)                         | Find a symbol's definition or all expected callers using Loom or repository text search.                                                                                                              | The same 10 definition and 4 caller questions from the ClickHouse code-intelligence set.                                                                                                        | Loom's code index versus `git grep` for the bare name and the qualified `Class::name`; grep output tokens estimated as characters divided by four.            | Correct file ranked first, expected callers found and context tokens returned.                                                                          |
-| [`code.ask` production cache](#with-and-without-loom)                                 | Measure how often repeated real questions reuse a cached answer and what one hit saves.                                                                                                               | 673 non-benchmark calls from one deployment over 30 days; 20 cache hits.                                                                                                                        | Normal `code.ask` traffic using the shipped cache guard and threshold.                                                                                        | Observed hit rate, answer tokens avoided and latency; this is an operational observation, not a controlled quality comparison.                          |
-| [`code.ask` cache threshold](#codeask-answer-cache-threshold)                         | Determine whether paraphrased questions can share an answer without sharing across materially different questions.                                                                                    | 42 paraphrase pairs, 43 different-question pairs, 22 one-identifier near-misses and 2 unlabelled pairs.                                                                                         | About 130 embedding calls for each tested embedding model; cosine sweep with and without the identifier guard.                                                | Paraphrase hits versus false hits at each threshold; the shipped threshold requires zero false hits on the 65 labelled different pairs.                 |
+| Benchmark                                                                             | Exact task                                                                                                                                                                                            | Corpus and evaluation size                                                                                                                                                                      | Loom path and search depth                                                                                                                                    | Success definition or comparison                                                                                                                                                    |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [LoCoMo conversational QA](#locomo-conversational-qa)                                 | Answer questions about facts, events, relationships and time across long conversations; abstain on adversarial questions.                                                                             | All 10 conversations; 1,986 questions: 1,540 answerable and 446 adversarial.                                                                                                                    | Conversations ingested with `memory.set_from_messages`; `memory.ask`, or `memory.search` top 10 followed by fixed `gpt-4.1-mini`.                             | `gpt-4.1`-judged answer accuracy for categories 1–4; correct abstention for category 5, which published LoCoMo comparisons normally exclude.                                        |
+| [LongMemEval-S](#longmemeval-s)                                                       | Answer questions requiring information distributed across many earlier sessions and retrieve the supporting evidence.                                                                                 | All 500 questions; about 47 sessions in each question's history.                                                                                                                                | Histories ingested with `memory.set_from_messages`; `memory.ask`, or `memory.search` top 200 followed by `gpt-5`; supporting-session recall scored at 30.     | Official LongMemEval judge; `memory.ask` is Loom's product flow, not a standard leaderboard configuration; the fixed-reader arm is reported separately.                             |
+| [MemBench](#membench)                                                                 | Answer multiple-choice questions about events the agent observed or participated in.                                                                                                                  | Two scenarios; 140 questions per scenario, covering seven question types.                                                                                                                       | Scenario memories ingested, then answered with `memory.ask`.                                                                                                  | Exact multiple-choice accuracy; no LLM judge or external baseline.                                                                                                                  |
+| [MemoryAgentBench samples](#memoryagentbench)                                         | Answer fact questions, resolve conflicting facts, answer from a 197K-token context and learn labels supplied at test time.                                                                            | Selected slices: 15 contexts and 1,500 questions—retrieval 500, conflict 800, RULER 100 and test-time learning 100.                                                                             | Contexts chunked through `memory.set_from_messages`; generated answers produced by `memory.ask`.                                                              | SubEM and token F1 score answers, not raw retrieval; test-time learning uses label presence. No external reader or LLM judge.                                                       |
+| [MuSiQue-Ans development sample](#musique-ans)                                        | Retrieve multiple supporting paragraphs for a multi-step question, then answer from those passages.                                                                                                   | Seed-0 sample of 200 questions from the development set.                                                                                                                                        | Each question's paragraphs written with `memory.set`; semantic `memory.search` top 10; fixed `gpt-4o-mini` reader.                                            | Mean fraction of gold supporting paragraphs retrieved at 10; exact match and token F1 against gold answers; no LLM judge.                                                           |
+| [PerLTQA sample](#perltqa)                                                            | Answer personal long-term-memory questions about profiles, relationships, events and dialogues.                                                                                                       | 193-question slice: five fictional characters, at most 10 questions per section.                                                                                                                | Character histories ingested with `memory.set_from_messages`; answered by `memory.ask`.                                                                       | `gpt-4o-mini`-judged answer accuracy against reference answers, with two additional judges reported.                                                                                |
+| [Tracker duplicate detection](#duplicate-check-on-public-clickhouse-issues)           | Given a new issue draft, find its recorded older duplicate while limiting duplicate verdicts on issues with no recorded duplicate/related link.                                                       | 104 recorded duplicate pairs and 100 negative-labelled issues from ClickHouse's public tracker.                                                                                                 | `tracker.duplicate_check` receives title and body as of creation time; the draft's issue number and recorded links are withheld.                              | Older linked issue ranked first and duplicate verdict correctness; a negative label means no recorded link, not proof that two issues are unrelated.                                |
+| [ClickHouse code intelligence](#code-intelligence-on-the-clickhouse-repository)       | Find definitions, callers and implementation files for authored questions; abstain on authored out-of-repository probes.                                                                              | 60 authored questions: 10 definitions, 4 caller sets, 36 conceptual searches and 10 out-of-repository probes.                                                                                   | Public ClickHouse repository index; `code.symbol`, `code.callers` and `code.search` with their normal result limits.                                          | Exact first definition; F1 against expected callers; mean gold-file recall@5/@10, MRR and hit@5; abstention precision/recall.                                                       |
+| [SWE-bench Verified sample: file localization](#swe-bench-verified-file-localization) | Given a GitHub issue description, rank the pre-existing repository files that its accepted patch later modified. This is retrieval, not patch generation or issue resolution.                         | Stratified seed-7 sample of 200 eligible instances from the 500-instance dataset, covering all 12 repositories; eligibility requires at least one patch-modified file present at `base_commit`. | Each repository indexed at the issue's `base_commit`; issue text truncated at 2,000 characters; `code.search` first 10 results and a second page to 25 units. | File hit@1, hit@5 and hit@10 (at least one gold file); all-gold@10; MRR; paired against BM25 over the same live files and over Python files only.                                   |
+| [Memory versus full history](#with-and-without-loom)                                  | Answer the same long-conversation question from retrieved memories or from the complete conversation history.                                                                                         | Paired seed-13 sample of 100 LongMemEval-S questions.                                                                                                                                           | Same `gpt-5` reader sees either `memory.search` top 200 or the full history.                                                                                  | Official-judge accuracy and reader prompt tokens; memory construction is excluded from prompt-token totals and reported separately as break-even.                                   |
+| [Coding agents on ClickHouse: with Loom vs without Loom](#with-and-without-loom)      | Answer a ClickHouse developer's question: explain a mechanism, list the callers a change must update, find the change behind a behaviour, trace a bug to its fix, find the tests that cover a change. | 48 answer-graded questions × 3 paired runs and 36 conceptual questions × 10 paired runs; checkouts without git history at the verified commit.                                                  | Same headless `claude-sonnet-5` in a stock session; baseline has Bash, Read, Grep and Glob, the Loom arm adds the Loom plugin and its MCP `coding` toolset.   | Judged key points of a verified reference answer, right file in the three named; model cost, turns and wall time per run.                                                           |
+| [Definitions and callers versus grep](#with-and-without-loom)                         | Find a symbol's definition or all expected callers using Loom or repository text search.                                                                                                              | The same 10 definition and 4 caller questions from the ClickHouse code-intelligence set.                                                                                                        | Loom's code index versus `git grep` for the bare name and the qualified `Class::name`; grep output tokens estimated as characters divided by four.            | Correct file ranked first, expected callers found and context tokens returned.                                                                                                      |
+| [`code.ask` production cache](#with-and-without-loom)                                 | Measure how often repeated real questions reuse a cached answer and what one hit saves.                                                                                                               | 673 non-benchmark calls from one deployment over 30 days; 20 cache hits.                                                                                                                        | Normal `code.ask` traffic using the shipped cache guard and threshold.                                                                                        | Observed hit rate, answer tokens avoided and latency; this is an operational observation, not a controlled quality comparison.                                                      |
+| [`code.ask` cache threshold](#codeask-answer-cache-threshold)                         | Determine whether paraphrased questions can share an answer without sharing across materially different questions.                                                                                    | 42 paraphrase pairs, 43 different-question pairs, 22 one-identifier near-misses and 2 unlabelled pairs.                                                                                         | About 130 embedding calls for each tested embedding model; cosine sweep with and without the identifier guard.                                                | Paraphrase hits versus false hits at each threshold; the shipped threshold requires zero false hits on the 65 labelled different pairs.                                             |
+| [Design decisions from design documents](#design-decisions-from-design-documents)     | Answer why questions, make change requests whose obvious move a design document rejected, and answer questions on reversed or unrecorded decisions, given different design knowledge per arm.         | Private set: 5 design documents (4 revised once), 10 why, 15 change and 10 supersession or abstention tasks, 3 samples each.                                                                    | Nothing, `knowledge.get`, knowledge hits of `loom_search`, gold rows or extracted rows through `memory.for_file` and `loom_search`.                           | `gpt-6-luna`-judged argument precision/recall, rejected-option avoidance, constraint satisfaction, stale statements and failed abstentions; paired against arm 0 and the gold rows. |
 
 These protocols cover the public measurements, not every runnable harness. The
 [coverage matrix](./coverage.md) marks surfaces that currently have only a harness or no
@@ -62,7 +63,8 @@ public measurement, so a product capability is never presented as a measured res
 ### Models
 
 Every benchmark server ran with the deployment's model settings, recorded field by field in
-`bench/results/models.json` (`python -m bench.models_used`).
+`bench/results/models.json` (`python -m bench.models_used`), except where a section says its
+run does not record them.
 
 | Job                                                             | Model                            |
 | --------------------------------------------------------------- | -------------------------------- |
@@ -80,7 +82,8 @@ Every benchmark server ran with the deployment's model settings, recorded field 
 The reader and the judge of each benchmark are the bench's own and are named in its
 section; they are pinned independently of the server's models. A reasoning model in the
 bench (reader or judge) runs at the lowest reasoning effort it accepts unless its section
-says otherwise. SWE-bench file localization names its own models.
+says otherwise. SWE-bench file localization and the design-rationale bench name their own
+models.
 
 ### LoCoMo conversational QA
 
@@ -576,6 +579,156 @@ above 0.84: 14 hits instead of 17, margin 0.0156 instead of 0.0056) and 0.87 for
 **Limits.** One pair moves a hit rate by more than two points. The pairs come from one
 deployment's cached questions over two repositories. Re-run the script for a new embedder
 before serving the cache on it.
+
+### Design decisions from design documents
+
+`bench/design_rationale/` asks a coding agent three kinds of task about code its team's
+design documents describe: why questions (A), change requests whose obvious move is an
+option the documents rejected or a constraint they set (B), and questions about a
+statement a later revision reversed or about code no document covers (C). Each arm shows
+the agent different design knowledge: nothing (0), the whole document through
+`knowledge.get` (1), the document as knowledge through the knowledge hits of `loom_search`
+(2), hand-written gold decision rows through the pre-edit block and the memory section of
+`loom_search` (3), and the rows `loom decisions extract --apply` mined from the same
+documents, through the same surfaces (4). Arm 4 approximates the sync leg: documents
+ingested as a document source's sync writes them, mined by the same extraction function.
+Extracted rows get files from a read-only code index of the ClickHouse repository, so arm
+4 reads the pre-edit block too.
+
+The task set is private: five design documents for the ClickHouse repository, four of them
+revised once for the supersession tasks; 10 A, 15 B and 10 C tasks (5 supersession, 5
+abstention). The C revisions and abstention questions are synthetic. Each task is answered
+3 times per arm; each answer is judged in both orders and twice per order.
+
+| Arm | A precision | A recall | A misleading | A abstains | B avoids | B satisfies | C passes | C states current | Citation precision | Citation recall |
+| --- | ----------: | -------: | -----------: | ---------: | -------: | ----------: | -------: | ---------------: | -----------------: | --------------: |
+| 0   |        34.0 |     38.2 |         70.8 |      100.0 |     15.6 |        12.2 |     99.2 |             16.7 |                  - |             0.0 |
+| 1   |        84.5 |     90.7 |         30.0 |       23.3 |      6.7 |         6.7 |     84.2 |             98.3 |               83.9 |            85.5 |
+| 2   |        82.6 |     75.9 |         35.8 |       40.0 |     33.9 |        33.9 |     95.0 |            100.0 |               86.2 |            76.7 |
+| 3   |        95.8 |     89.2 |          8.3 |        6.7 |     85.9 |        80.4 |     98.3 |            100.0 |               85.2 |            93.5 |
+| 4   |        66.7 |     45.6 |         18.3 |       73.3 |     60.0 |        57.8 |     94.2 |             20.0 |               83.2 |            69.3 |
+
+Percentages. A precision and recall are argument-level against the gold arguments, and A
+precision is over the answers that made a claim; A abstains is the share of A answers
+saying no recorded decision covers the question (in whole or in part); A misleading is the
+share of answers that would steer an engineer wrong. B avoids: no rejected option proposed
+(deterministic detectors first, the judge for the rest) and the rubric passed where the
+task has one; B satisfies: no gold constraint broken, no rejected option detected, and the
+rubric passed where the task has one. C passes: a supersession answer does not present a
+reversed statement as the current design, an abstention answer says no decision is
+recorded and invents none. No arm served a reversed statement as current. C states current
+is averaged over the 5 supersession tasks. Abstention tasks failed (no abstention, or an
+invented rationale), averaged over the abstention tasks: 1.7% in arm 0, 31.7% in arm 1,
+10.0% in arm 2, 3.3% in arm 3 and 11.7% in arm 4. Citation precision is the share of the
+answers' citations that resolve and that the judge says support what they are cited for.
+Citation recall is the share of A claims with at least one of their own citations
+resolving and supporting them. A answers with no claim, which A precision leaves out: none
+in arms 0 to 3, 16.7% in arm 4.
+
+Paired per task, bootstrap over documents, 95% interval, and the minimum detectable effect
+taken from that interval. With five clusters the bootstrap intervals and the MDEs taken
+from them understate the uncertainty:
+
+| Treatment vs reference | Kind | Metric    | n (clusters) | Delta | 95% interval   |  MDE |
+| ---------------------- | ---- | --------- | -----------: | ----: | -------------- | ---: |
+| 3 vs 0                 | A    | precision |       10 (5) | +61.8 | +48.4 .. +85.8 | 26.7 |
+| 3 vs 0                 | A    | recall    |       10 (5) | +51.0 | +42.3 .. +67.1 | 17.7 |
+| 3 vs 0                 | B    | avoids    |       15 (5) | +70.4 | +59.7 .. +88.9 | 20.9 |
+| 3 vs 0                 | B    | satisfies |       15 (5) | +68.2 | +44.0 .. +93.4 | 35.3 |
+| 3 vs 0                 | C    | passed    |       10 (5) |  -0.8 | -7.1 .. +1.9   |  6.5 |
+| 4 vs 0                 | A    | precision |        9 (5) | +32.1 | +2.4 .. +63.7  | 43.8 |
+| 4 vs 0                 | A    | recall    |       10 (5) |  +7.4 | -13.0 .. +30.1 | 30.8 |
+| 4 vs 0                 | B    | avoids    |       15 (5) | +44.4 | +40.6 .. +50.0 |  6.7 |
+| 4 vs 0                 | B    | satisfies |       15 (5) | +45.6 | +40.9 .. +50.0 |  6.5 |
+| 4 vs 0                 | C    | passed    |       10 (5) |  -5.0 | -16.7 .. +0.7  | 12.4 |
+| 4 vs 3                 | A    | precision |        9 (5) | -28.7 | -60.8 .. -12.1 | 34.8 |
+| 4 vs 3                 | A    | recall    |       10 (5) | -43.6 | -65.3 .. -33.3 | 22.8 |
+| 4 vs 3                 | B    | avoids    |       15 (5) | -25.9 | -40.4 .. -14.8 | 18.3 |
+| 4 vs 3                 | B    | satisfies |       15 (5) | -22.6 | -43.4 .. +4.5  | 34.3 |
+| 4 vs 3                 | C    | passed    |       10 (5) |  -4.2 | -9.5 .. -0.7   |  6.3 |
+| 1 vs 0                 | A    | precision |       10 (5) | +50.5 | +38.7 .. +72.4 | 24.1 |
+| 1 vs 0                 | A    | recall    |       10 (5) | +52.5 | +35.8 .. +82.9 | 33.7 |
+| 1 vs 0                 | B    | avoids    |       15 (5) |  -8.9 | -18.2 .. +6.7  | 17.8 |
+| 1 vs 0                 | B    | satisfies |       15 (5) |  -5.6 | -16.7 .. +10.0 | 19.1 |
+| 1 vs 0                 | C    | passed    |       10 (5) | -15.0 | -35.4 .. -5.0  | 21.7 |
+| 1 vs 3                 | A    | precision |       10 (5) | -11.3 | -18.0 .. -6.4  |  8.2 |
+| 1 vs 3                 | A    | recall    |       10 (5) |  +1.5 | -7.5 .. +16.0  | 16.8 |
+| 1 vs 3                 | B    | avoids    |       15 (5) | -79.3 | -87.0 .. -65.7 | 15.3 |
+| 1 vs 3                 | B    | satisfies |       15 (5) | -73.7 | -87.0 .. -42.9 | 31.5 |
+| 1 vs 3                 | C    | passed    |       10 (5) | -14.2 | -29.8 .. -5.0  | 17.7 |
+| 2 vs 3                 | A    | precision |       10 (5) | -13.2 | -17.1 .. -4.6  |  8.9 |
+| 2 vs 3                 | A    | recall    |       10 (5) | -13.3 | -20.0 .. -0.8  | 13.7 |
+| 2 vs 3                 | B    | avoids    |       15 (5) | -52.0 | -66.5 .. -45.0 | 15.4 |
+| 2 vs 3                 | B    | satisfies |       15 (5) | -46.5 | -61.6 .. -29.8 | 22.7 |
+| 2 vs 3                 | C    | passed    |       10 (5) |  -3.3 | -9.3 .. +0.0   |  6.6 |
+
+Arm 4's A precision has 9 tasks: on one task no answer made a claim to grade.
+
+| Arm | Injected tokens per task (mean, max) | Pre-edit calls | Pre-edit max | Answers' cost, 105 answers (USD) |
+| --- | -----------------------------------: | -------------: | -----------: | -------------------------------: |
+| 0   |                                 0, 0 |              0 |            0 |                            0.008 |
+| 1   |                         1,834, 3,432 |              0 |            0 |                            0.039 |
+| 2   |                           735, 1,015 |              0 |            0 |                            0.020 |
+| 3   |                         1,003, 2,201 |             71 |          663 |                            0.021 |
+| 4   |                             366, 849 |             71 |          272 |                            0.011 |
+
+Arm 1 injects 1.83 times arm 3's tokens. By ledger stage the run spent 0.099 USD on
+answers, 0.321 on 2,100 judge passes and 0.004 on the server's own model and embedding
+calls. For extraction the ledger charges an upper bound once per document before its
+extraction run, 0.173 USD in all: the extraction's model calls cost at most 0.173, and its
+write embeddings are not recorded. The ledger does not split spend by arm: the answers'
+cost per arm is their recorded tokens priced at the current price table, and judging is
+not split.
+
+**Reading.** Resolved against zero (the interval's lower bound above it, or its upper
+bound below it): the gold rows (arm 3) raise A precision and recall and B avoidance and
+satisfaction over no design knowledge. Extracted rows (arm 4) raise B avoidance and
+satisfaction over arm 0, and A precision over the answers that made a claim, and fall
+below the gold rows on A precision, A recall, B avoidance and C; arm 4's pre-edit block
+served 5 of the 30 tasks with gold rows against arm 3's 27, so the gap is not to be read
+as row quality alone. Unpaired, as per-arm rates: C states current is 20.0 in arm 4 and
+100.0 in arm 3. The document read through search (arm 2) falls below the gold rows
+on A precision (-13.2), A recall (-13.3), B avoidance (-52.0) and B satisfaction (-46.5).
+The whole document in context (arm 1) raises A precision and recall over arm 0 and falls
+below the gold rows on A precision (-11.3); its B avoidance is not resolved against arm 0
+(-8.9, -18.2 .. +6.7) and falls below the gold rows by 79.3 points, with B satisfaction
+73.7 points below; it also fails more C tasks than arm 0 and arm 3. A hypothesis, not
+tested here: a decision row names the rejected option as rejected, and a whole document
+does not.
+
+**Treatment check.** Of the 30 tasks with gold rows, arm 3's pre-edit block served 27 and
+search served 29 (a task counts when it served one of its own gold rows); arm 4's pre-edit
+block served 5 and search 30 (a task counts when it served any extracted row). Extraction
+wrote 32 rows across the documents and their revisions, 14 with files, with no extraction
+failure and no failed code lookup.
+
+**Judge stability.** The headline verdict (A misleading, B avoids, C passed) agreed across
+the two orders on 93.4% of 498 answers and across repeats on 97.2% of 500; an answer whose
+compared pass is unreadable, and a change answer a detector decided, are left out. 70 of
+2,100 judge passes were unreadable (3 answers unscored).
+
+**Limits.** One reader and one judge model; no second judge and no human-labelled slice,
+so judge accuracy and kappa are not measured. Extraction precision is not measured (no row
+was labelled). No patch is applied and no test runs, so change-task pass rate is not
+measured. The task set is private: the numbers are reproducible only by a holder of the
+set.
+
+- **Models:** reader, judge and extraction `gpt-6-luna`, in the summary's run flags; the
+  extraction model is the LLM model the server settings of the harness's environment
+  resolve (`LOOM_LLM_MODEL`), and `run` refuses an `--extract-model` that differs. The run
+  does not record the server's own models, nor the revision of the code index arm 4's code
+  names were looked up in. The server ran from source on its own ClickHouse, with auth and
+  background workers off.
+- **Artifacts:** `bench/results/design_rationale.summary.json`, written by
+  `score --summary`: the per-arm metrics, comparisons, injected tokens, treatment check,
+  judge agreement, unreadable passes and the A answers with no claim, the task set's
+  counts (documents, revisions, revised documents, tasks by kind and subtype, tasks with
+  gold rows), the run's flags (arms, whether arm 4 had files, models, window, K, judge
+  orders and repeats) and its spend by ledger stage and the answers' cost per arm; the
+  per-task rows, which name private tasks, are left out.
+- **Reproduce:**
+  `PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> --base-url <server> --reader-model gpt-6-luna --judge-model gpt-6-luna --code-index <url> --code-index-org <org> --code-index-namespace <code namespace> --extract-model gpt-6-luna --k 3 --max-usd 9`,
+  then `... score <taskset> --out <dir> --summary bench/results/design_rationale.summary.json`.
 
 ## Reference computations
 

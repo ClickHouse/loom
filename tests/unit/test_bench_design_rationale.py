@@ -27,7 +27,7 @@ from bench.design_rationale.llm import (
     cost_usd,
 )
 from bench.design_rationale.loom import EXTRACT_TIMEOUT_S, PRE_EDIT_BUDGET, Loom
-from bench.design_rationale.taskset import Document, TaskSetError, load
+from bench.design_rationale.taskset import Document, TaskSetError, load, parse_key, parse_sample
 from server.knowledge.app.writes import _chunk_text
 from server.memory.app.decision_extract import _windows
 from server.memory.app.for_file import render_block
@@ -281,6 +281,36 @@ def test_a_citation_counts_only_when_the_judge_names_it_exactly():
     assert score.pass_metrics("B", {}, entry, exact)["citations_good"] == 1
 
 
+def test_the_no_claim_share_counts_a_answers_whose_passes_made_no_claim():
+    ts = load(EXAMPLE)
+    tid = ts.tasks["A"][0]["id"]
+
+    def entry(claims):
+        verdict = {
+            "claims": claims,
+            "gold_covered": [],
+            "potentially_misleading": False,
+            "abstained": True,
+        }
+        return {"citations": [], "detectors": [], "passes": [{"verdict": verdict}]}
+
+    # An abstaining answer can still make a graded claim: only the claimless one counts.
+    claim = {"verdict": "correct", "cites": [], "cites_support": []}
+    judged = {f"{tid}/arm0/s1": entry([]), f"{tid}/arm0/s2": entry([claim])}
+    assert score.a_answers_without_claims(ts, judged) == {0: 0.5}
+    # An unreadable pass is not a pass with no claim.
+    unreadable = {"citations": [], "detectors": [], "passes": [{"verdict": {"claims": False}}]}
+    judged[f"{tid}/arm0/s3"] = {
+        **unreadable,
+        "passes": [*unreadable["passes"], *entry([claim])["passes"]],
+    }
+    assert score.a_answers_without_claims(ts, judged) == {0: round(1 / 3, 4)}
+    # An answer whose only pass is unreadable is not scored at all.
+    only = {**entry([])["passes"][0]["verdict"], "claims": False}
+    judged[f"{tid}/arm0/s4"] = {"citations": [], "detectors": [], "passes": [{"verdict": only}]}
+    assert score.a_answers_without_claims(ts, judged) == {0: round(1 / 3, 4)}
+
+
 def test_a_verdict_without_its_keys_is_unreadable_not_a_pass():
     ts = load(EXAMPLE)
     judged = {
@@ -292,6 +322,25 @@ def test_a_verdict_without_its_keys_is_unreadable_not_a_pass():
     }
     assert score.answer_metrics("B", ts.tasks["B"][0], judged["B1/arm0/s1"]) == {}
     assert score.unreadable(ts, judged)[0] == {"passes": 1, "unreadable": 1, "answers_unscored": 1}
+
+
+def test_a_verdict_with_a_bool_where_a_list_goes_is_unreadable():
+    ts = load(EXAMPLE)
+    task = ts.tasks["B"][0]
+    good = {"forbidden_proposed": [], "constraints_violated": [], "rubric_fail": False}
+    assert score.readable("B", task, {**good, "cites": [], "cites_support": []})
+    assert not score.readable("B", task, {**good, "cites": ["x"], "cites_support": True})
+    a = {"claims": [{"cites": "x"}], "gold_covered": [], "potentially_misleading": False}
+    assert not score.readable("A", ts.tasks["A"][0], a)
+    assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": "none"})
+    assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": [], "gold_covered": True})
+    assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": [], "gold_covered": 0})
+    assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": False})
+    assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": ["x"]})
+    assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": 0})
+    assert not score.readable("B", task, {**good, "cites": False})
+    assert not score.readable("B", task, {**good, "cites_support": 0})
+    assert score.readable("B", task, {**good, "cites": None})
 
 
 def test_one_document_gives_no_mde():
@@ -1003,6 +1052,12 @@ def test_an_interrupt_after_setup_keeps_the_namespaces_and_says_how_to_erase_the
     assert "loom namespaces-gc" in capsys.readouterr().err
 
 
+def test_an_answer_key_parses_into_task_arm_and_sample():
+    # A task id may hold "arm"; the arm and the sample follow it.
+    assert parse_key("A1-farm/arm3/s2") == ("A1-farm", 3)
+    assert parse_sample("A1-farm/arm3/s2") == 2
+
+
 def test_task_ids_holding_arm_are_scored(tmp_path):
     root = _copy_example(tmp_path)
     tasks = json.loads((root / "tasks.json").read_text())
@@ -1309,6 +1364,118 @@ def test_scoring_with_the_unfilled_label_sheet_fails_clearly(tmp_path, capsys):
     code = main(["score", str(EXAMPLE), "--out", str(out), "--extraction-labels", str(sheet)])
     assert code == 2
     assert "fill each row's verdict first" in capsys.readouterr().err
+
+
+def test_score_writes_the_summary_without_per_task_rows(tmp_path):
+    # A second revision of one document: two revisions, one revised document.
+    root = _copy_example(tmp_path)
+    docs = json.loads((root / "documents.json").read_text())
+    third = {**docs[2], "id": "upload-retries-v3", "path": "docs/upload-retries-v3.md"}
+    (root / third["path"]).write_text((root / docs[2]["path"]).read_text())
+    (root / "documents.json").write_text(json.dumps([*docs, third]))
+    ts = load(root)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    cfg = _config(out, arms=[0, 1, 3, 4], k=2)
+    run.run(ts, cfg, FakeLoom(), model, [model], ledger, FakeCodeIndex())
+    sheet = out / "extraction_labels.todo.json"
+    labels = [{**row, "verdict": "correct"} for row in json.loads(sheet.read_text())]
+    sheet.write_text(json.dumps(labels))
+    path = tmp_path / "summary.json"
+    argv = ["score", str(root), "--out", str(out), "--extraction-labels", str(sheet)]
+    assert main([*argv, "--summary", str(path)]) == 0
+    first = path.read_text()
+    summary = json.loads(first)
+    assert "per_task" not in summary
+    assert summary["run"]["reader"] == "gpt-4o-mini" and summary["run"]["k"] == 2
+    assert set(summary["run"]) == {
+        "arms",
+        "arm4_files",
+        "extract_window_chars",
+        "reader",
+        "judges",
+        "extract_model",
+        "k",
+        "judge_orders",
+        "judge_repeats",
+    }
+    # Document ids can name private material: the extraction figures are a list.
+    assert isinstance(summary["extraction"]["documents"], list)
+    assert summary["extraction"]["documents"]
+    for doc_id in ts.documents:
+        assert doc_id not in first
+    for _, task in ts.all_tasks():
+        assert task["id"] not in first
+    spend = summary["spend_usd"]
+    assert spend["total"] == round(sum(r["usd"] for r in ledger.rows()), 4)
+    assert spend["answers_by_arm"]["0"]["answers"] == 2 * len(list(ts.all_tasks()))
+    assert (1, 0) in {(c["treatment"], c["reference"]) for c in summary["comparisons"]}
+    assert summary["task_set"] == {
+        "documents": 2,
+        "revisions": 2,
+        "revised_documents": 1,
+        "tasks": {"A": 3, "B": 3, "C": 2},
+        "c_subtypes": {"abstention": 1, "supersession": 1},
+        "tasks_with_gold_rows": 7,
+    }
+    assert summary["run"]["judge_orders"] == 2
+    assert summary["run"]["judge_repeats"] == cfg.judge_repeats
+    assert set(summary["a_answers_without_claims"]) == {"0", "1", "3", "4"}
+    # Scoring again regenerates the same file.
+    assert main([*argv, "--summary", str(path)]) == 0
+    assert path.read_text() == first
+
+
+def test_the_summary_reads_a_cut_ledger_without_rewriting_it(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    run.run(ts, _config(out, arms=[0], k=1, judge_orders=1), FakeLoom(), model, [model], ledger)
+    total = round(sum(r["usd"] for r in ledger.rows()), 4)
+    path = out / "ledger.jsonl"
+    whole = path.read_text()
+    path.write_text(whole + '{"stage": "answer", "usd": 0.')  # an interrupt cut this row
+    before = path.read_text()
+    spend = score.summary(ts, score.score(ts, out), out)["spend_usd"]
+    assert path.read_text() == before
+    assert spend["ledger_rows_dropped"] == 1 and spend["total"] == total
+    # A broken row before the last, or a broken last row that ends in a newline, is
+    # not an interrupt mid-append: refused. A blank line is skipped.
+    for text in ('{"stage": "answer", "usd": 0.\n' + whole, whole + '{"usd": 0.\n'):
+        path.write_text(text)
+        with pytest.raises(json.JSONDecodeError):
+            score.summary(ts, score.score(ts, out), out)
+    path.write_text(whole + "\n")
+    assert score.summary(ts, score.score(ts, out), out)["spend_usd"]["total"] == total
+    # A whole last row without its newline is kept and counted.
+    path.write_text(whole)
+    answer = score.summary(ts, score.score(ts, out), out)["spend_usd"]["by_stage"]["answer"]
+    last = '{"stage": "answer", "usd": 0.5}'
+    path.write_text(whole + last)
+    spend = score.summary(ts, score.score(ts, out), out)["spend_usd"]
+    assert path.read_text() == whole + last
+    assert spend["ledger_rows_dropped"] == 0
+    assert spend["total"] == round(total + 0.5, 4)
+    assert spend["by_stage"]["answer"] == round(answer + 0.5, 4)
+
+
+def test_the_summary_of_an_unpriced_reader_has_no_answer_cost(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    run.run(ts, _config(out, arms=[0], k=1, judge_orders=1), FakeLoom(), model, [model], ledger)
+    state = json.loads((out / "state.json").read_text())
+    state["flags"]["reader"] = "a-model-with-no-price"
+    (out / "state.json").write_text(json.dumps(state))
+    summary = score.summary(ts, score.score(ts, out), out)
+    assert summary["spend_usd"]["answers_by_arm"][0]["usd"] is None
+    assert summary["spend_usd"]["answers_by_arm"][0]["answers"] == len(list(ts.all_tasks()))
 
 
 def test_a_ledger_line_cut_short_by_an_interrupt_is_dropped(tmp_path, capsys):

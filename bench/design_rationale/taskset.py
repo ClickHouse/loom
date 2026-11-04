@@ -278,3 +278,8 @@ def parse_key(key: str) -> tuple[str, int]:
     "/"."""
     tid, _, rest = key.rpartition("/arm")
     return tid, int(rest.split("/", 1)[0])
+
+
+def parse_sample(key: str) -> int:
+    """The sample number of an answer key `<task>/arm<a>/s<k>`."""
+    return int(key.rpartition("/s")[2])

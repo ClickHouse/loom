@@ -182,6 +182,13 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         help="Human-judged extracted rows (JSON list)",
     )
+    s.add_argument(
+        "--summary",
+        type=Path,
+        help="Also write the aggregates without the per-task rows or document ids, the "
+        "task set's counts, the run's flags with K and the judge orders and repeats, and "
+        "its spend to this file (the committed results artifact)",
+    )
     return p
 
 
@@ -318,6 +325,9 @@ def cmd_score(a: argparse.Namespace) -> int:
         metrics = scorer.score(ts, a.out, human=human, extraction_labels=labels)
     except scorer.LabelError as e:
         return _fail(f"{a.extraction_labels}: {e}; fill each row's verdict first")
+    if a.summary:
+        text = json.dumps(scorer.summary(ts, metrics, a.out), indent=2) + "\n"
+        a.summary.write_text(text)
     print(scorer.report(metrics))
     return 0
 

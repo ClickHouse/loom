@@ -82,11 +82,13 @@ reports its minimum detectable effect.
   arguments, a potentially-misleading flag, and citations.
 - **B, change tasks** where the obvious change is a rejected option or breaks a
   constraint. The agent writes a plan and a diff; deterministic detectors read the diff
-  first, a judge the rest. Scored on avoidance (no forbidden option proposed) and design
-  satisfaction (no constraint broken).
+  first, a judge the rest. Scored on avoidance (no forbidden option proposed, no detector
+  fired, and the rubric passed where the task has one) and design satisfaction (no
+  constraint broken, no detector fired, and the rubric passed where the task has one).
 - **C, supersession and abstention.** A supersession task asks about a statement a later
   revision of the document reversed: serving the stale statement as governing fails. An
-  abstention task asks about something no document records: an invented rationale fails.
+  abstention task asks about something no document records: an answer that does not
+  abstain, or that invents a rationale, fails.
 
 ## Directory layout
 
@@ -178,5 +180,11 @@ extraction precision. `score --human-labels` takes a list of
 `{"answer": "<task>/arm<a>/s<k>", "field": "avoids", "value": true}` and reports judge
 accuracy and kappa; labels on `avoids` or `satisfies` for a change answer a detector
 decided are left out, and `detector_fired` labels are never counted. `score` writes
-`metrics.json` and prints aggregate tables with no task text. The run directory holds
-the task set's content: keep it out of the repository.
+`metrics.json` and prints aggregate tables with no task text.
+`score --summary <file>` writes the file a published result commits: the aggregates
+without the per-task rows or document ids, the task set's counts (documents, revisions,
+revised documents, tasks by kind and subtype, tasks with gold rows), the run's flags with
+K and the judge orders and repeats, its spend by ledger stage (a last ledger row an
+interrupt cut short is left out and counted) and the answers' cost per arm (their tokens
+at the current price table). The run directory holds the task set's content: keep it out
+of the repository.
