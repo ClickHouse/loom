@@ -55,6 +55,9 @@ _MAX_CHILD_PAGES = 200  # not a setting: a bound on one source's share of a pass
 # may be coarser than its edits, and its clock may differ from ours, so a page read
 # sooner is read again.
 _SETTLE_S = 90.0  # not a setting: a margin on the store's stamp resolution and clock skew
+# Blocks a lookup walks up from a page under a block to the page that holds it, when the
+# source does not know that page: a column inside a toggle inside a page is three.
+_MAX_BLOCK_HOPS = 4  # not a setting: a bound on one lookup's requests
 
 
 def _now() -> datetime:
@@ -340,10 +343,11 @@ async def _page_gone(t: _Turn, page_id: str) -> bool | None:
 
 async def _lookup(t: _Turn, page_id: str) -> bool | None:
     """Whether the store says the page is gone: not found, in the trash, or under none
-    of the listed pages, listed databases, pages this turn listed, or children the
-    store refused this turn. A page under a block of a page the source does not hold it
-    for is kept, as is one the store refuses (403) or fails on; a rate limit or a 401
-    is the turn's, and None stops the retiring."""
+    of the listed pages, listed databases, pages this turn listed and children the
+    store refused this turn. For a page under a block whose holding page the source
+    does not know, the block's parents are walked up to that page (`_block_page`). A
+    page the store refuses (403) or fails on, or whose walk fails, is kept; a rate
+    limit or a 401 is the turn's, and None stops the retiring."""
     try:
         page = await notion.page(t.token, page_id)
     except notion.NotionError as e:
@@ -361,9 +365,14 @@ async def _lookup(t: _Turn, page_id: str) -> bool | None:
         return False
     holder = _holder(t, item)
     if item["parent_block"] and not holder:
-        # Under a block of a page this source does not hold it for: nothing says it
-        # left the source, so it is kept.
-        return False
+        try:
+            walked = await _block_page(t, item["parent_block"])
+        except notion.NotionError as e:
+            _fail_turn(t.result, e)  # a rate limit or a 401
+            return None
+        if walked is None:
+            return False  # the walk could not tell: kept
+        holder = walked
     if holder not in t.ids and holder not in t.refused:
         return True
     # Still under a page this turn listed, but not known (left out at the cap, or
@@ -371,6 +380,33 @@ async def _lookup(t: _Turn, page_id: str) -> bool | None:
     if page_id not in t.known and len(t.known) < _MAX_CHILD_PAGES:
         t.known[page_id] = holder
     return False
+
+
+async def _block_page(t: _Turn, block_id: str) -> str | None:
+    """The page a block sits in, walking its parents up (at most `_MAX_BLOCK_HOPS`
+    requests): its id, "" when the walk reaches no page (the workspace, or a block the
+    store reports not found), or None when it cannot tell (another failure, an
+    unexpected parent, the bound). A rate limit or a 401 is raised."""
+    for _ in range(_MAX_BLOCK_HOPS):
+        if not notion.valid_id(block_id):
+            return None
+        try:
+            block = await notion.block(t.token, block_id)
+        except notion.NotFound:
+            return ""
+        except notion.NotionError as e:
+            if _ends_turn(e):
+                raise
+            return None
+        parent = block.get("parent") or {}
+        if parent.get("type") == "page_id":
+            return str(parent.get("page_id") or "")
+        if parent.get("type") == "workspace":
+            return ""
+        if parent.get("type") != "block_id":
+            return None
+        block_id = str(parent.get("block_id") or "")
+    return None
 
 
 def _settled(revision: str, read_at: str) -> bool:

@@ -39,6 +39,8 @@ ROW1 = "44444444-4444-4444-8444-444444444444"
 ROW2 = "55555555-5555-4555-8555-555555555555"
 CHILD = "99999999-9999-4999-8999-999999999999"
 GRANDCHILD = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+# A block that holds children (a toggle) inside a page.
+TOGGLE = "abababab-abab-4bab-8bab-abababababab"
 
 
 @pytest.fixture(autouse=True)
@@ -101,6 +103,8 @@ class _Store:
         self.answers: dict[str, Any] = {}
         self.incomplete = False
         self.upserts = 0
+        # Each block's parent, for GET /blocks/{id}.
+        self.block_parents: dict[str, dict[str, Any]] = {}
         # The clock a turn reads; later than every revision here unless a test moves it.
         self.now = datetime(2026, 3, 1, tzinfo=UTC)
 
@@ -156,6 +160,13 @@ class _Store:
             return httpx.Response(
                 200, json={"results": found, "has_more": False, "request_status": status}
             )
+        if path.startswith("/blocks/") and not path.endswith("/children"):
+            # A block's own read: its parent, for a lookup's walk up to its page.
+            block_id = path.split("/")[2]
+            parent = self.block_parents.get(block_id)
+            if parent is None:
+                return httpx.Response(404)
+            return httpx.Response(200, json={"object": "block", "id": block_id, "parent": parent})
         if path.startswith("/blocks/"):
             block_id = path.split("/")[2]
             blocks = self.blocks.get(block_id, [_para(f"Text of {block_id[:4]}.")])
@@ -401,7 +412,7 @@ def test_a_page_past_its_request_bound_is_given_up_as_too_large(
     world: _Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(source_sync_notion, "_MAX_BLOCK_REQUESTS", 1)
-    world.blocks[PAGE] = [_para("Has children.", id=ROW1, has_children=True)]
+    world.blocks[PAGE] = [_para("Has children.", id=TOGGLE, has_children=True)]
     world.sources[0] = _source(config={"page_ids": [PAGE], "database_ids": []})
     _run()
     assert world.docs == {} and _detail(world)["unconverted_reasons"] == {"too_large": 1}
@@ -1264,8 +1275,14 @@ def test_a_child_inside_an_unreadable_synced_copy_stays_known(world: _Store) -> 
     assert _uri(world, CHILD) in world.docs and world.audits == []
 
 
-def test_an_unknown_child_under_a_block_of_a_listed_page_is_kept(world: _Store) -> None:
-    other_column = "12121212-1212-4212-8212-121212121212"
+OUTSIDE = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"  # a page the source does not list
+COLUMN_OF = "12121212-1212-4212-8212-121212121212"  # a column the child moves under
+
+
+def _moved_under_a_column(world: _Store, column_parent: dict[str, Any] | None) -> str:
+    """A child of the listed page moves under a column (whose parent the store answers
+    `column_parent`); the page is read again without it, so the source no longer knows
+    who holds it. Returns the child's address."""
     world.sources[0] = _source(config={"page_ids": [PAGE, ROW2], "database_ids": []})
     world.pages[ROW2] = _page(ROW2, "2026-01-02T00:00:00.000Z", title="Other")
     world.blocks[ROW2] = [_para("Other.")]
@@ -1274,15 +1291,46 @@ def test_an_unknown_child_under_a_block_of_a_listed_page_is_kept(world: _Store) 
         CHILD, "2026-01-04T00:00:00.000Z", title="Child", parent_of=_under(PAGE)
     )
     _run()
-    # The child moves under a column of the other listed page; that page is not read
-    # again, and the first one is read without it.
-    world.pages[CHILD] = {**world.pages[CHILD], "parent": _under_block(other_column)}
+    world.pages[CHILD] = {**world.pages[CHILD], "parent": _under_block(COLUMN_OF)}
+    if column_parent is not None:
+        world.block_parents[COLUMN_OF] = column_parent
     world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
     world.blocks[PAGE] = [_para("Parent.")]
     _run()
     assert CHILD not in _detail(world)["child_pages"]
+    return _uri(world, CHILD)
+
+
+@pytest.mark.parametrize("walk", ["one hop", "two hops", "block not found"])
+def test_a_child_moved_under_a_column_of_an_unlisted_page_is_retired(
+    world: _Store, walk: str
+) -> None:
+    if walk == "one hop":
+        uri = _moved_under_a_column(world, _under(OUTSIDE))
+    elif walk == "two hops":
+        uri = _moved_under_a_column(world, _under_block(TOGGLE))
+        world.block_parents[TOGGLE] = _under(OUTSIDE)
+    else:
+        uri = _moved_under_a_column(world, None)  # the column answers 404
     _run(full=True)
-    assert _uri(world, CHILD) in world.docs and world.audits == []
+    assert uri not in world.docs and [a["subject"]["source_uri"] for a in world.audits] == [uri]
+
+
+@pytest.mark.parametrize("status", [503, 403])
+def test_a_walk_that_cannot_tell_keeps_the_child(world: _Store, status: int) -> None:
+    uri = _moved_under_a_column(world, None)
+    world.answers[f"/blocks/{COLUMN_OF}"] = httpx.Response(status)
+    _run(full=True)
+    assert uri in world.docs and world.audits == []
+
+
+def test_a_child_moved_under_a_column_of_a_listed_page_is_kept_and_known_again(
+    world: _Store,
+) -> None:
+    uri = _moved_under_a_column(world, _under(ROW2))
+    _run(full=True)
+    assert uri in world.docs and world.audits == []
+    assert _detail(world)["child_pages"] == {CHILD: ROW2}
 
 
 def test_a_page_past_its_request_bound_keeps_the_children_it_held(
@@ -1291,7 +1339,7 @@ def test_a_page_past_its_request_bound_keeps_the_children_it_held(
     _with_children(world, CHILD)
     monkeypatch.setattr(source_sync_notion, "_MAX_BLOCK_REQUESTS", 1)
     world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
-    world.blocks[PAGE] = [_para("Has children.", id=ROW1, has_children=True), _child_page(CHILD)]
+    world.blocks[PAGE] = [_para("Has children.", id=TOGGLE, has_children=True), _child_page(CHILD)]
     _run(full=True)
     detail = _detail(world)
     assert detail["unconverted_reasons"] == {"too_large": 1}
@@ -1304,8 +1352,8 @@ def test_an_unreadable_block_of_a_re_read_page_keeps_its_children(
 ) -> None:
     _with_children(world, CHILD)
     world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
-    world.blocks[PAGE] = [_para("Toggle.", id=ROW1, has_children=True), _child_page(CHILD)]
-    world.answers[f"/blocks/{ROW1}/children"] = httpx.Response(status)
+    world.blocks[PAGE] = [_para("Toggle.", id=TOGGLE, has_children=True), _child_page(CHILD)]
+    world.answers[f"/blocks/{TOGGLE}/children"] = httpx.Response(status)
     _run(full=True)
     detail = _detail(world)
     assert detail["child_pages"] == {CHILD: PAGE}

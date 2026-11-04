@@ -325,11 +325,10 @@ def page_markdown(blocks: list[dict[str, Any]]) -> tuple[str, dict[str, int]]:
     to-dos, quotes, callouts, code fenced, tables, equations as `$$` blocks, dividers
     as `---`, bookmarks, embeds and link previews as links, and toggles, columns and
     synced blocks with their children inline. A run of pictures says so, since its
-    content is not in the text.
-    Also the block types left out, by count: child databases, files, links that are
-    not web addresses, synced copies whose original cannot be read and any type not
-    mapped here. A child page is left out without a count: it is a document of its
-    own (`child_page_ids`)."""
+    content is not in the text. Returns the Markdown and the block types left out, by
+    count: child databases, files, links that are not web addresses, synced copies
+    whose original cannot be read and any type not mapped here. A child page is left
+    out without a count: it is a document of its own (`child_page_ids`)."""
     skipped: dict[str, int] = {}
     return _blocks_markdown(blocks, skipped), skipped
 

@@ -149,6 +149,11 @@ async def page(token: str, page_id: str) -> dict[str, Any]:
     return await _call("GET", f"/pages/{_checked(page_id)}", token, f"page {page_id}")
 
 
+async def block(token: str, block_id: str) -> dict[str, Any]:
+    """A block, with its parent (a page, another block or the workspace)."""
+    return await _call("GET", f"/blocks/{_checked(block_id)}", token, f"block {block_id}")
+
+
 async def database(token: str, database_id: str) -> dict[str, Any]:
     """A database's title, trash flag and data sources."""
     return await _call(
@@ -290,6 +295,7 @@ __all__ = [
     "NotionError",
     "RateLimited",
     "TooLarge",
+    "block",
     "data_source_ids",
     "database",
     "first_pages",

@@ -307,29 +307,32 @@ source's sync state, at most 200 per source (more are counted in their parent's
 `skipped_blocks`), and each later turn reads every known child once for its revision; a
 child found while a turn syncs its parent, and a grandchild found while it syncs the
 child, are synced in that turn. A child page inside a column, a toggle, a list item or a
-synced block belongs to the page whose blocks held it; a page under a block that no page
-of the source is known to hold is kept, since nothing says it left the source. A page
-whose blocks could not all be read (a synced copy of an unshared original) keeps the
-child pages it held before. A known child is forgotten in three ways only: its page is
-read and no longer holds it; a complete full turn's lookup finds it gone, in the trash
-or out from under the source (and retires its document); or a complete full turn read it
-as not found or trashed and it holds no document. A failed or cut turn forgets no child
-it could not read, and a child found while syncing whose read fails (other than not
-found) leaves the turn failed, so it is read again next turn. A page with no text
-(`no_text`) and one past the request bound or
-`LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` (`too_large`) are given up on until they
-change. A listed page or database the integration no longer sees, or a database in the
-trash, fails the turn and retires nothing, while the pages it still sees are written. A
-listed page or child page in the trash is left out of the listing, so the next full turn
-retires it. A refusal (`403`) is not evidence that a page is gone: a looked-up page the
-store refuses keeps its document, and a known child it refuses stays known and waits
-like a file's trouble, failing the turn for two passes and counted `unconverted`
-(`child_http_403`) from the third, so it no longer holds back the rest of the source;
-the pages under it are not taken for moved. A page is retired after a complete full
-listing lacks it and a lookup finds it gone, in the trash, or under none of the listed
-pages, the listed databases and the pages that listing had; a child moved out from under
-them, and its own children, are retired this way. A database query the store marks
-incomplete is an incomplete listing (`listing: incomplete result`).
+synced block belongs to the page whose blocks held it. For a page under a block that no
+page of the source is known to hold, a full turn's lookup reads the block's parents up
+to the page that holds it, at most four requests (each paced like the others): that page
+is judged like any holder, a block the store reports not found or the workspace counts
+as gone, and a walk that cannot tell (another failure, the bound) keeps the document. A
+page found under a listed page this way is known again. A page whose blocks could not
+all be read (a synced copy of an unshared original) keeps the child pages it held
+before. A known child is forgotten in three ways only: its page is read and no longer
+holds it; a complete full turn's lookup finds it gone, in the trash or out from under
+the source (and retires its document); or a complete full turn read it as not found or
+trashed and it holds no document. A failed or cut turn forgets no child it could not
+read, and a child found while syncing whose read fails (other than not found) leaves the
+turn failed, so it is read again next turn. A page with no text (`no_text`) and one past
+the request bound or `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` (`too_large`) are given
+up on until they change. A listed page or database the integration no longer sees, or a
+database in the trash, fails the turn and retires nothing, while the pages it still sees
+are written. A listed page or child page in the trash is left out of the listing, so the
+next full turn retires it. A refusal (`403`) is not evidence that a page is gone: a
+looked-up page the store refuses keeps its document, and a known child it refuses stays
+known and waits like a file's trouble, failing the turn for two passes and counted
+`unconverted` (`child_http_403`) from the third, so it no longer holds back the rest of
+the source; the pages under it are not taken for moved. A page is retired after a
+complete full listing lacks it and a lookup finds it gone, in the trash, or under none
+of the listed pages, the listed databases and the pages that listing had; a child moved
+out from under them, and its own children, are retired this way. A database query the
+store marks incomplete is an incomplete listing (`listing: incomplete result`).
 
 ### Mining decisions
 
