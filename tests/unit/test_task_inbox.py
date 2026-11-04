@@ -971,7 +971,15 @@ async def test_a_reassign_into_an_inbox_the_caller_may_not_post_to_is_refused(
             )
         )
 
+    # Read but no write there: refused as a poster, and the task stays where it is.
+    readable.add("public")
+    with pytest.raises(HTTPException) as e:
+        await reassign()
+    assert e.value.status_code == 403
+    assert [r["task_id"] for r in fake.tasks.values()] == [t.task_id]
+    assert fake.tasks[t.task_id]["status"] == t.status
     # Not a poster there and no read on its namespace: the unregistered-name answer.
+    readable.discard("public")
     with pytest.raises(HTTPException) as e:
         await reassign()
     del fake.inboxes[(ORG, "public-bot")]
@@ -979,21 +987,6 @@ async def test_a_reassign_into_an_inbox_the_caller_may_not_post_to_is_refused(
         await reassign()
     assert e.value.status_code == unregistered.value.status_code == 404
     assert e.value.detail == unregistered.value.detail
-    await inboxes.handle_inbox_register(
-        wire.InboxRegisterInput(
-            **_caller("public", "admin"),
-            inbox="public-bot",
-            owner_agent="public-reviewer",
-            accept_disclosure=["public_ok", "internal", "confidential"],
-        )
-    )
-    # Read but no write there: refused as a poster.
-    readable.add("public")
-    with pytest.raises(HTTPException) as e:
-        await reassign()
-    assert e.value.status_code == 403
-    assert [r["task_id"] for r in fake.tasks.values()] == [t.task_id]
-    assert fake.tasks[t.task_id]["status"] == t.status
 
 
 @pytest.mark.asyncio
