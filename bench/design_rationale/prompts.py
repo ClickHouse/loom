@@ -1,4 +1,5 @@
-"""The answering and judging prompts. `{system}` is the task set's name for the code base."""
+"""The answering and judging prompts. `{system}` is the task set's name for the code
+base."""
 
 from __future__ import annotations
 

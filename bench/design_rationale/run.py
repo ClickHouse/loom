@@ -1,6 +1,6 @@
 """The `run` command: set up the arms in the harness's Loom, read the surfaces, answer
-each task K times per arm, and judge each answer. Every stage writes its JSON file in the
-output directory and skips what is already there, so a run stopped by the spend cap
+each task K times per arm, and judge each answer. Every stage writes its JSON file in
+the output directory and skips what is already there, so a run stopped by the spend cap
 resumes where it stopped; its namespaces are kept until every answer is judged.
 """
 
@@ -52,12 +52,15 @@ CITED_TEXT_TOKENS = 1200  # the cited source text a judge reads
 JUDGE_FRAME_TOKENS = 900  # the judge's instructions and gold lists
 TYPICAL_OUT = {"A": 400, "B": 900, "C": 400, "judge": 500, "extract": 800}
 JUDGE_OUT_CAP = 4000
-# A known decision as the extractor's prompt lists it on a re-run: category, scenario and
-# outcome, at most this many characters together (an assumed bound for the estimate).
+# A known decision as the extractor's prompt lists it on a re-run: category, scenario
+# and outcome, at most this many characters together (an assumed bound for the
+# estimate).
 KNOWN_DECISION_CHARS = 600
-# Decisions kept per section, which the extractor's prompt states: the default of
-# `loom decisions extract --max-per-section` (server/cli/decisions.py), which the run uses.
+# Decisions kept per section, which the extractor's prompt states: the run uses the
+# default of `loom decisions extract --max-per-section` (server/cli/decisions.py).
 EXTRACT_MAX_PER_SECTION = 3
+# Characters per extraction window, the CLI's `--window-chars` default.
+EXTRACT_WINDOW_CHARS = 6000
 
 
 class RunError(RuntimeError):
@@ -82,7 +85,7 @@ class Config:
     # it reads the pre-edit block. Without, arm 4 is served through loom_search only.
     arm4_files: bool = True
     extract_model: str = ""
-    extract_window_chars: int = 6000
+    extract_window_chars: int = EXTRACT_WINDOW_CHARS
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -117,13 +120,14 @@ def pre_edit(cfg: Config, arm: int) -> bool:
 
 
 def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:
-    """(calls, input tokens, output tokens) one extraction run on `doc` may spend at most.
-    Two calls per window: a reply with no decision, or with a reason that is not one span
-    of the text, is read again. Each call carries the system prompt (with the known
-    decisions a re-run over a revision lists) and the window as the extractor sends it,
-    its `[document: ...]` and `[section: ...]` lines included (`user_prompt`). The second
-    call may also carry the note listing the first reply's failed spans, which the first
-    reply wrote, so it is bounded by the output cap. Each call writes up to that cap."""
+    """(calls, input tokens, output tokens) one extraction run on `doc` may spend at
+    most. Two calls per window: a reply with no decision, or with a reason that is not
+    one span of the text, is read again. Each call carries the system prompt (with the
+    known decisions a re-run over a revision lists) and the window as the extractor
+    sends it, its `[document: ...]` and `[section: ...]` lines included (`user_prompt`).
+    The second call may also carry the note listing the first reply's failed spans,
+    which the first reply wrote, so it is bounded by the output cap. Each call writes up
+    to that cap."""
     from server.knowledge.app.writes import _chunk_text
     from server.memory.app.decision_extract import _windows
     from server.memory.domain import decision_extract as dx
@@ -161,9 +165,10 @@ def _priced(models: list[str], tin: int, tout: int) -> float | None:
 
 
 def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
-    """The calls and tokens a run would spend, at every output cap and typical (outputs at
-    `TYPICAL_OUT`). Inputs are estimates either way: the documents at three characters a
-    token, the surfaces at planning constants, as no surface has been read yet."""
+    """The calls and tokens a run would spend, at every output cap and typical (outputs
+    at `TYPICAL_OUT`). Inputs are estimates either way: the documents at three
+    characters a token, the surfaces at planning constants, as no surface has been read
+    yet."""
     tasks = ts.all_tasks(cfg.only)
     passes = max(1, len(cfg.judges)) * cfg.judge_orders * cfg.judge_repeats
     rows: list[dict[str, Any]] = []
@@ -242,20 +247,22 @@ def print_plan(p: dict[str, Any]) -> None:
         f"{p['documents']} document(s); K = {p['k']}; {p['judge_passes_per_answer']} judge "
         "pass(es) per answer"
     )
-    total_w = total_t = 0.0
+    total_caps = total_typical = 0.0
     for stage, u in p["usage"].items():
         usd = (
-            f"{u['usd_typical']:.2f} typical, {u['usd_at_caps']:.2f} at every output cap USD"
+            f"{u['usd_typical']:.2f} USD typical, {u['usd_at_caps']:.2f} USD at every output cap"
             if u["usd_at_caps"] is not None
             else "unpriced model"
         )
         print(
             f"{stage}: {u['calls']} call(s) on {u['model'] or '-'}, {u['in']:,} tokens in, "
-            f"{u['out_typical']:,} out typical ({u['out_at_caps']:,} at the caps); {usd}"
+            f"{u['out_typical']:,} out typical ({u['out_at_caps']:,} at every output cap); "
+            f"{usd}"
         )
-        total_w += u["usd_at_caps"] or 0.0
-        total_t += u["usd_typical"] or 0.0
-    print(f"total: {total_t:.2f} USD typical, {total_w:.2f} USD at every output cap")
+        # An unpriced stage adds nothing: its line says so.
+        total_caps += u["usd_at_caps"] or 0.0
+        total_typical += u["usd_typical"] or 0.0
+    print(f"total: {total_typical:.2f} USD typical, {total_caps:.2f} USD at every output cap")
     print(
         "planning MDE (paired, 80% power, two-sided 5%): "
         + ", ".join(f"{k} {v * 100:.0f} points" for k, v in p["planning_mde"].items())
@@ -300,16 +307,14 @@ def owned(cfg: Config, ns: dict[str, str]) -> list[str]:
 
 
 def record_server_spend(loom: Loom, ledger: Ledger, state: dict[str, Any], cfg: Config) -> None:
-    """Charge the ledger with what the server spent in the run's orgs since the last read:
-    embeddings and any model call its writes and reads made."""
+    """Charge the ledger with what the server spent in the run's orgs since the last
+    read: embeddings and any model call its writes and reads made."""
     # A sync's namespace (--arm4-namespace) is the deployment's own, not the run's.
     since = date.fromisoformat(state["started"])
     spent = loom.server_spend(owned(cfg, namespaces(state, cfg)), since)
-    if "server_usd_seen" not in state:
-        # The first read, before any write: what earlier runs spent in these orgs.
-        state["server_usd_seen"] = spent
-    elif spent > state["server_usd_seen"]:
-        ledger.record_usd("server", round(spent - state["server_usd_seen"], 6))
+    seen = state.get("server_usd_seen", 0.0)
+    if spent > seen:
+        ledger.record_usd("server", round(spent - seen, 6))
         state["server_usd_seen"] = spent
 
 
@@ -373,8 +378,9 @@ def setup(
 
 
 def parse_report(report: str) -> dict[str, list[str]]:
-    """Each kept row's key and the code names its signal lines list, from the extractor's
-    printed report (`- recorded <key>` followed by `    signal: <name>: <signal>, ...`)."""
+    """Each kept row's key and the code names its signal lines list, from the
+    extractor's printed report: `- recorded <key>`, then one indented line per name,
+    `signal: <name>: <signal>, ...`."""
     rows: dict[str, list[str]] = {}
     current = None
     for line in report.splitlines():
@@ -413,10 +419,10 @@ def run_extraction(
     cfg: Config, loom: Loom, ledger: Ledger, namespace: str, doc: Document, code: CodeIndex | None
 ) -> dict[str, Any]:
     """`loom decisions extract --apply` on one document, its worst-case spend charged to
-    the ledger first: the calls run in the server's code, out of the ledger's sight. With a
-    code index, each kept row's code names are resolved there and the files written on it,
-    so arm 4 reaches the pre-edit block as arm 3 does; a name the index did not answer for
-    is listed in `lookup_failures`."""
+    the ledger first: the calls run in the server's code, out of the ledger's sight.
+    With a code index, each kept row's code names are resolved there and the files
+    written on it, so arm 4 reaches the pre-edit block as arm 3 does; a name the index
+    did not answer for is listed in `lookup_failures`."""
     calls, tin, tout = extraction_bound(doc, cfg.extract_window_chars)
     ledger.check(cfg.extract_model, tin, tout)
     ledger.record("extract", cfg.extract_model, tin, tout, estimated=True)
@@ -449,19 +455,19 @@ def run_extraction(
 
 
 def write_label_sheet(cfg: Config, loom: Loom, namespace: str, reports: dict[str, Any]) -> None:
-    """`extraction_labels.todo.json`: each extracted row once, with an empty verdict, for
-    the human who judges extraction precision (`score --extraction-labels`)."""
+    """`extraction_labels.todo.json`: each extracted row once, with an empty verdict,
+    for the human who judges extraction precision (`score --extraction-labels`)."""
     sheet: dict[str, dict[str, Any]] = {}
     for doc_id, r in reports.items():
         for key in r["keys"]:
             got = loom.memory_get(namespace, key)
-            if not got.get("found"):
+            if not got["found"]:
                 continue  # retired by a later run over the revised document
             sheet[key] = {
                 "document": doc_id,
                 "memory_key": key,
-                "value": got.get("value"),
-                "source_resource_id": got.get("source_resource_id"),
+                "value": got["value"],
+                "source_resource_id": got["source_resource_id"],
                 "verdict": "",
             }
     save_json(cfg.out / "extraction_labels.todo.json", list(sheet.values()))
@@ -471,8 +477,8 @@ def write_label_sheet(cfg: Config, loom: Loom, namespace: str, reports: dict[str
 
 
 def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dict[str, Any]:
-    """What each arm injects for each task, and its size in tokens per surface. K samples
-    of a task share its surfaces: they are read once."""
+    """What each arm injects for each task, and its size in tokens per surface. K
+    samples of a task share its surfaces: they are read once."""
     path = cfg.out / "surfaces.json"
     out = load_json(path)
     ns = namespaces(state, cfg)
@@ -498,7 +504,7 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
             if arm == 1:
                 doc = ts.document_of(t)
                 got = loom.knowledge_get(ns["kb"], doc.source_uri)
-                text = got.get("content") or ""
+                text = got["content"] or ""
                 entry["context"] = (
                     f"Document knowledge:{ns['kb']}/{doc.source_uri} ({doc.title}):\n{text}"
                 )
@@ -553,7 +559,8 @@ def answers(ts: TaskSet, cfg: Config, reader: Model, surf: dict[str, Any]) -> di
 
 
 class Resolver:
-    """Resolves the citations of an answer against the run's own namespaces, once each."""
+    """Resolves the citations of an answer against the run's own namespaces, once
+    each."""
 
     def __init__(self, ts: TaskSet, loom: Loom, ns: dict[str, str]):
         self.ts = ts
@@ -574,9 +581,9 @@ class Resolver:
             if not rows_ns:
                 return False, "this arm served no memory rows"
             got = self.loom.memory_get(rows_ns, cite["cite"])
-            if not got.get("found"):
+            if not got["found"]:
                 return False, "memory key not found"
-            return True, json.dumps(got.get("value"), ensure_ascii=False)[:1500]
+            return True, json.dumps(got["value"], ensure_ascii=False)[: detectors.CITED_TEXT_CHARS]
         if cite["kind"] == "document":
             uri, _, section = cite["cite"].partition("#")
             ns = self.ns["kb"]
@@ -588,9 +595,10 @@ class Resolver:
             if ns not in self.ns.values():
                 return False, "a namespace this run did not write"
         got = self.loom.knowledge_get(ns, uri)
-        if not got.get("found") or got.get("superseded"):
+        # knowledge.get reads the live version only: a deleted document is not found.
+        if not got["found"]:
             return False, "document not found"
-        text = detectors.section_text(got.get("content") or "", section)
+        text = detectors.section_text(got["content"] or "", section)
         if text is None:
             return False, "section not in the document"
         return True, text
@@ -714,11 +722,11 @@ def run(
     code: CodeIndex | None = None,
 ) -> bool:
     """One pass of every stage; True when every answer is judged. A run the cap stops,
-    or that fails or is interrupted after its setup (a provider error, a server that went
-    away, Ctrl-C), keeps its namespaces: the next invocation on the same `--out`, with the
-    same flags, resumes it, and the error is followed by the command that erases them
-    otherwise. A finished run, or one whose setup failed for another reason than the cap,
-    erases them (unless --keep-namespaces) and is not resumed."""
+    or that fails or is interrupted after its setup (a provider error, a server that
+    went away, Ctrl-C), keeps its namespaces: the next invocation on the same `--out`,
+    with the same flags, resumes it, and the error is followed by the command that
+    erases them otherwise. A finished run, or one whose setup failed for another reason
+    than the cap, erases them (unless --keep-namespaces) and is not resumed."""
     cfg.out.mkdir(parents=True, exist_ok=True)
     state_path = cfg.out / "state.json"
     state = load_json(state_path)

@@ -1,7 +1,7 @@
 """The `score` command: metrics per task and arm from a run's JSON files, the paired
-comparisons between arms with a bootstrap over documents, the minimum detectable effects,
-judge stability, judge accuracy against a human-labelled slice, and extraction precision
-from a human-judged file. No model call and no Loom call: a re-score is free.
+comparisons between arms with a bootstrap over documents, the minimum detectable
+effects, judge stability, judge accuracy against a human-labelled slice, and extraction
+precision from a human-judged file. No model call and no Loom call: a re-score is free.
 
 Per answer, each judge pass yields its metrics and the passes are averaged; per task the
 K samples are averaged; an arm's figure is the mean over tasks. A comparison is paired
@@ -29,8 +29,8 @@ MDE_Z = 1.96 + 0.84
 # The standard deviation of a per-task paired delta assumed for a planning MDE, before a
 # run has a spread of its own: a pass/fail outcome averaged over K samples.
 PLANNING_SD = 0.35
-# (treatment arm, reference arm) pairs reported when both ran. Arm 4 against arm 5 is the
-# like-for-like comparison when arm 4 had no code index (no pre-edit block).
+# (treatment arm, reference arm) pairs reported when both ran. Arm 4 against arm 5 is
+# the like-for-like comparison when arm 4 had no code index (no pre-edit block).
 COMPARISONS = ((3, 0), (4, 0), (4, 3), (4, 5), (1, 3), (2, 3))
 # The keys a verdict must carry to be read; one without them is unreadable, not a pass.
 REQUIRED = {
@@ -294,9 +294,9 @@ def token_summary(surf: dict[str, Any], arms: list[int]) -> dict[int, dict[str, 
 
 
 def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
-    """Proof the arms did what they mean, per surface: the tasks whose pre-edit block, and
-    whose loom_search section, served a row (for arm 3 and 5, one of the task's own gold
-    rows); for arm 4 the rows extracted, the rows given files, the failed runs."""
+    """Proof the arms did what they mean, per surface: the tasks whose pre-edit block,
+    and whose loom_search section, served a row (for arm 3 and 5, one of the task's own
+    gold rows); for arm 4 the rows extracted, the rows given files, the failed runs."""
     out: dict[str, Any] = {}
     tasks = [t for _, t in ts.all_tasks()]
     arm4_files = (state.get("flags") or {}).get("arm4_files", True)
@@ -307,8 +307,8 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
         for surface in ("for_file_keys", "search_keys"):
             if surface == "for_file_keys" and (arm == 5 or (arm == 4 and not arm4_files)):
                 continue  # this arm reads no pre-edit block
-            # Tasks with gold rows only: an abstention task has nothing to serve. Arm 4's
-            # rows have keys of their own, so any row it served counts.
+            # Tasks with gold rows only: an abstention task has nothing to serve. Arm
+            # 4's rows have keys of their own, so any row it served counts.
             if arm == 4:
                 hits = [bool(r.get(surface)) for t, r in rows if t.get("gold_rows")]
             else:
@@ -415,9 +415,9 @@ def extraction_precision(
 ) -> dict[str, Any]:
     """From a human-judged file (a JSON list of {"document", "memory_key", "verdict"},
     verdict one of `VERDICTS`): per document the share judged correct, and the
-    misleading-rationale rate over every judged row. Beside it, per document, the share of
-    its gold rows whose source carries no extractable text and the change tasks resting
-    only on those rows."""
+    misleading-rationale rate over every judged row. Beside it, per document, the share
+    of its gold rows whose source carries no extractable text and the change tasks
+    resting only on those rows."""
     per: dict[str, list[str]] = defaultdict(list)
     for lab in labels:
         if lab["verdict"] not in VERDICTS:

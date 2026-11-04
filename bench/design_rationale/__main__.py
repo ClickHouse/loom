@@ -1,35 +1,38 @@
 """Design-rationale bench: does design knowledge served by Loom keep a coding agent from
 re-proposing rejected options, and does it answer "why" questions correctly and cited?
 
-    PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> --dry-run
-    PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> \\
-        --base-url http://127.0.0.1:<port> --org <org> --reader-model <m> --judge-model <m> \\
-        --code-index <url> --code-index-org <org> --code-index-namespace <ns> --max-usd 5
-    PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale score <taskset> --out <dir>
+    PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> \\
+        --out <dir> --dry-run
+    PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> \\
+        --out <dir> --base-url http://127.0.0.1:<port> --org <org> \\
+        --reader-model <m> --judge-model <m> --code-index <url> \\
+        --code-index-org <org> --code-index-namespace <ns> --max-usd 5
+    PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale score <taskset> \\
+        --out <dir>
 
 The task set is a directory (bench/design_rationale/README.md has its schema;
-`bench/design_rationale/example` is a synthetic one). Arms: 0 no design knowledge;
-1 the whole document through knowledge.get; 2 the document as knowledge through
-loom_search; 3 the gold rows through the pre-edit block (memory.for_file) and the
-loom_search memory section; 4 the same surfaces over the rows `loom decisions extract`
-mined from the documents (or, with --arm4-namespace, rows a document source's sync wrote);
-5 the gold rows through the loom_search memory section only, added whenever arm 4 has no
-files.
+`bench/design_rationale/example` is a synthetic one). Arms: 0 no design knowledge; 1 the
+whole document through knowledge.get; 2 the document as knowledge through loom_search; 3
+the gold rows through the pre-edit block (memory.for_file) and the loom_search memory
+section; 4 the same surfaces over the rows `loom decisions extract` mined from the
+documents (or, with --arm4-namespace, rows a document source's sync wrote); 5 the gold
+rows through the loom_search memory section only, added whenever arm 4 has no files.
 
 Arm 4's rows name code by its names; the files that give them a pre-edit block come from
-a code index of the repository (--code-index: read-only code.symbol calls on the Loom that
-indexes it, with the extractor's own rule: one defining file that is not a test or a page).
-Without one (and without --arm4-namespace), arm 4 is served through loom_search only,
-and arm 5 is added so that arm 4 is compared with gold rows served the same way.
+a code index of the repository (--code-index: read-only code.symbol calls on the Loom
+that indexes it, with the extractor's own rule: one defining file that is not a test or
+a page). Without one (and without --arm4-namespace), arm 4 is served through loom_search
+only, and arm 5 is added so that arm 4 is compared with gold rows served the same way.
 
 `run --dry-run` needs no server: it reads the task set and, with arm 4, this
 environment's server settings (the extraction's model), and prints the calls, tokens and
-spend a run would take. A real run needs a Loom server and ClickHouse this run started, with the
-server's environment in this shell (the extraction runs the CLI in a child process, whose
-model is read from that environment and must match --extract-model when given), and
---max-usd: every call is refused once its worst case would cross the cap. `--offline`
-answers and judges with a stub that costs nothing and measures nothing: it checks the
-plumbing against a server. `score` reads the run's files only.
+spend a run would take. A real run needs a Loom server and ClickHouse this run started,
+with the server's environment in this shell (the extraction runs the CLI in a child
+process, whose model is read from that environment and must match --extract-model when
+given), and --max-usd: every provider request the harness sends, and each extraction's
+bound, is refused once it would cross the cap; the server's own spend is recorded after
+the fact. `--offline` answers and judges with a stub that costs nothing and measures
+nothing: it checks the plumbing against a server. `score` reads the run's files only.
 """
 
 from __future__ import annotations
@@ -67,10 +70,17 @@ def parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = p.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("run", help="Set up the arms, read the surfaces, answer and judge.")
+    r = sub.add_parser(
+        "run",
+        help="Set up the arms, read the surfaces, answer and judge.",
+    )
     r.add_argument("taskset", type=Path)
     r.add_argument("--out", type=Path, required=True, help="Run directory (resumable)")
-    r.add_argument("--dry-run", action="store_true", help="Print the plan and its cost only")
+    r.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the plan and its cost only",
+    )
     r.add_argument(
         "--offline",
         action="store_true",
@@ -81,17 +91,23 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--org",
         default="bench",
-        help="Org prefix: each role's namespace goes in its own org <org>-<prefix>-<role>, "
-        "the prefix dr-<hex> fixed per run; --arm4-namespace is read in --org itself",
+        help="Org prefix: each role's namespace goes in its own org "
+        "<org>-<prefix>-<role>, the prefix dr-<hex> fixed per run; --arm4-namespace is "
+        "read in --org itself",
     )
     r.add_argument(
         "--arms",
         type=_arms,
         default=[0, 1, 2, 3, 4],
-        help="Comma list of arms (default 0,1,2,3,4; 5 is added when arm 4 has no files: "
-        "no --code-index or --arm4-namespace)",
+        help="Comma list of arms (default 0,1,2,3,4; 5 is added when arm 4 has no "
+        "files: no --code-index or --arm4-namespace)",
     )
-    r.add_argument("--k", type=int, default=4, help="Samples per task and arm (default 4)")
+    r.add_argument(
+        "--k",
+        type=int,
+        default=4,
+        help="Samples per task and arm (default 4)",
+    )
     r.add_argument("--tasks", default="", help="Comma list of task ids (default all)")
     r.add_argument("--reader-model", default=os.environ.get("BENCH_READER_MODEL", ""))
     r.add_argument(
@@ -122,8 +138,9 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--extract-window-chars",
         type=int,
-        default=6000,
-        help="Passed to `loom decisions extract --window-chars` (default 6000)",
+        default=runner.EXTRACT_WINDOW_CHARS,
+        help="Passed to `loom decisions extract --window-chars` "
+        f"(default {runner.EXTRACT_WINDOW_CHARS})",
     )
     r.add_argument(
         "--code-index",
@@ -140,7 +157,12 @@ def parser() -> argparse.ArgumentParser:
         "namespace of --org, beside the documents they cite (a citation into another "
         "namespace counts as unresolved)",
     )
-    r.add_argument("--max-usd", type=float, default=0.0, help="Spend cap for the run's ledger")
+    r.add_argument(
+        "--max-usd",
+        type=float,
+        default=0.0,
+        help="Spend cap for the run's ledger",
+    )
     r.add_argument(
         "--keep-namespaces",
         action="store_true",
@@ -149,8 +171,16 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("score", help="Metrics, paired comparisons and MDEs from a run.")
     s.add_argument("taskset", type=Path)
     s.add_argument("--out", type=Path, required=True)
-    s.add_argument("--human-labels", type=Path, help="Human-labelled answers (JSON list)")
-    s.add_argument("--extraction-labels", type=Path, help="Human-judged extracted rows (JSON list)")
+    s.add_argument(
+        "--human-labels",
+        type=Path,
+        help="Human-labelled answers (JSON list)",
+    )
+    s.add_argument(
+        "--extraction-labels",
+        type=Path,
+        help="Human-judged extracted rows (JSON list)",
+    )
     return p
 
 
@@ -195,8 +225,8 @@ def _fail(message: str) -> int:
 def cmd_run(a: argparse.Namespace) -> int:
     ts = load(a.taskset)
     cfg = _config(a)
-    # Rows a sync wrote carry the files it linked; rows this run extracts get theirs from
-    # the code index, or have none.
+    # Rows a sync wrote carry the files it linked; rows this run extracts get theirs
+    # from the code index, or have none.
     cfg.arm4_files = bool(a.code_index or a.arm4_namespace)
     if 4 in cfg.arms and not cfg.arm4_files:
         print("arm 4 has no code index: its rows reach loom_search only, no pre-edit block")
@@ -228,8 +258,8 @@ def cmd_run(a: argparse.Namespace) -> int:
     if runner.own_extraction(cfg) and not a.offline and provider == "fake":
         return _fail(
             "the server settings resolve to the fake model, whose decisions pass the "
-            "extractor's checks by construction: set LOOM_LLM_PROVIDER and its key, or use "
-            "--offline"
+            "extractor's checks by construction: set LOOM_LLM_PROVIDER and its key, or "
+            "use --offline"
         )
     if not a.base_url:
         return _fail("--base-url (or LOOM_BASE_URL) names the run's own Loom server")

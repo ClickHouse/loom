@@ -1,5 +1,5 @@
-"""Deterministic checks on an agent's output: the diff detectors of a change task and the
-citations an answer makes. No model call here."""
+"""Deterministic checks on an agent's output: the diff detectors of a change task and
+the citations an answer makes. No model call here."""
 
 from __future__ import annotations
 
@@ -47,15 +47,16 @@ def _norm(value: str) -> str:
 
 
 def _value_tokens(line: str, name: str) -> set[str]:
-    """The tokens of what a line assigns or declares for `name`: the text after the name,
-    split into words and numbers (`512` is not `5120`), normalised as `_norm` does."""
+    """The tokens of what a line assigns or declares for `name`: the text after the
+    name, split into words and numbers (`512` is not `5120`), normalised as `_norm`
+    does."""
     after = line.split(name, 1)[1]
     return {_norm(t) for t in re.findall(r"[A-Za-z0-9_.]+", after)}
 
 
 def run_detector(d: dict[str, Any], files: Diff) -> bool | None:
-    """True when the diff does what the detector looks for (a failure of the task), False
-    when it does not, None for a `judge` detector (no deterministic signal)."""
+    """True when the diff does what the detector looks for (a failure of the task),
+    False when it does not, None for a `judge` detector (no deterministic signal)."""
     kind = d["type"]
     if kind == "judge":
         return None
@@ -114,8 +115,8 @@ def parse_knowledge(cite: str, source_uris: list[str]) -> tuple[str, str, str] |
 
 def find_citations(text: str, source_uris: list[str]) -> list[dict[str, Any]]:
     """Each distinct citation in `text`, in order: {"cite", "kind"} with kind `memory`
-    (a bracketed key), `knowledge` (a `knowledge:` pointer) or `document` (a source_uri in
-    brackets, with `#<section>` or without, as knowledge hits print it)."""
+    (a bracketed key), `knowledge` (a `knowledge:` pointer) or `document` (a source_uri
+    in brackets, with `#<section>` or without, as knowledge hits print it)."""
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -137,7 +138,11 @@ def find_citations(text: str, source_uris: list[str]) -> list[dict[str, Any]]:
     return out
 
 
-def section_text(content: str, section: str, limit: int = 1500) -> str | None:
+# How much of a cited source a judge reads.
+CITED_TEXT_CHARS = 1500
+
+
+def section_text(content: str, section: str, limit: int = CITED_TEXT_CHARS) -> str | None:
     """A cited section's heading and text, found the way the chunker named it: the
     breadcrumb is the parser's cleaned heading path (code spans, emphasis and anchors
     stripped; Setext and HTML headings read). The document start when no section is
@@ -185,7 +190,7 @@ def _cited_section(cited: str, sections: list[Any]) -> Any:
             elif (
                 cited.startswith(tail)
                 # Words after the path, not a further segment: "T > Missing" is not T.
-                and not cited[len(tail) :].lstrip().startswith(">")
+                and not cited[len(tail) :].lstrip().startswith(SEPARATOR.strip())
                 and len(tail) > started_len.get(s.idx, 0)
             ):
                 started[s.idx] = s

@@ -778,7 +778,7 @@ def test_two_runs_with_one_org_prefix_read_neither_rows_nor_spend_of_the_other(t
     assert spent[0] == pytest.approx(spent[1]) and spent[0] == pytest.approx(0.03)
 
 
-def test_set_files_keeps_every_field_and_the_paths_the_text_spells_out(monkeypatch):
+def test_set_files_keeps_every_field_and_the_paths_the_text_spells_out():
     from bench.design_rationale.loom import Loom
 
     row = {
@@ -1009,3 +1009,20 @@ def test_a_citation_of_a_whole_path_names_that_section_though_another_ends_so():
     content = "# A\n\n## B\n\nfirst.\n\n# X\n\n## A\n\n### B\n\nsecond.\n"
     assert detectors.section_text(content, "A > B") == "B\n\nfirst.\n\n"
     assert detectors.section_text(content, "X > A > B").startswith("B\n\nsecond.")
+
+
+def test_a_citation_of_a_deleted_document_does_not_resolve():
+    ts = load(EXAMPLE)
+    loom = FakeLoom()
+    loom.bind("kb", "org")
+    ns = {"kb": "kb", "gold": "gold", "extract": "extract"}
+    uri = ts.documents["thumbnail-cache"].source_uri
+    loom.upsert_document("kb", uri, "t", ts.documents["thumbnail-cache"].content)
+    resolver = run.Resolver(ts, loom, ns)
+    cite = {
+        "kind": "knowledge",
+        "cite": f"knowledge:kb/{uri}#Thumbnail cache eviction > Cache size",
+    }
+    assert resolver.resolve(cite, 1)[0] is True
+    del loom.docs[("kb", uri)]  # knowledge.get answers found=false once it is deleted
+    assert run.Resolver(ts, loom, ns).resolve(cite, 1) == (False, "document not found")

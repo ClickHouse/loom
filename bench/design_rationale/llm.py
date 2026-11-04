@@ -1,14 +1,15 @@
 """Model calls under a spend cap.
 
-Every request is priced before it is sent, at its whole body (a character as a token, over
-three: tokenizers rarely do worse) plus its full output cap, and refused when that would
-take the ledger past `--max-usd`; after it the ledger records what the provider billed. A
-provider client that resends (a learned field, a raised cap for a starved reply) is
-checked and recorded request by request. The extraction leg runs in the server's code, so
-its calls enter the ledger as an estimate charged before the run (`estimated: true`), and
-the server's own model and embedding spend in the run's orgs is read back from
-`cost.summary` after each stage (`stage: server`): recorded after the fact, and kept from
-running past the cap by each namespace's daily cost cap, not by this ledger.
+Every request is priced before it is sent, at its whole body (a character as a token,
+over three: tokenizers rarely do worse) plus its full output cap, and refused when that
+would take the ledger past `--max-usd`; after it the ledger records what the provider
+billed. A provider client that resends (a learned field, a raised cap for a starved
+reply) is checked and recorded request by request. The extraction leg runs in the
+server's code, so its calls enter the ledger as an estimate charged before the run
+(`estimated: true`), and the server's own model and embedding spend in the run's orgs is
+read back from `cost.summary` after each stage (`stage: server`): recorded after the
+fact, and kept from running past the cap by each namespace's daily cost cap, not by this
+ledger.
 """
 
 from __future__ import annotations
@@ -27,6 +28,8 @@ from server.observability.cost_accumulator import PRICE_PER_1K_TOKENS
 
 # The input estimate of the cap check: one token per three characters, a padded count.
 CHARS_PER_TOKEN_WORST = 3
+# Seconds one provider request may take: a judge reads a whole document in arm 1.
+PROVIDER_TIMEOUT_S = 300.0
 
 
 class CapReached(RuntimeError):
@@ -34,7 +37,8 @@ class CapReached(RuntimeError):
 
 
 def price(model: str) -> tuple[float, float] | None:
-    """USD per 1K (input, output) tokens; None for a model the price table does not list."""
+    """USD per 1K (input, output) tokens; None for a model the price table does not
+    list."""
     return PRICE_PER_1K_TOKENS.get(model)
 
 
@@ -86,7 +90,8 @@ class Ledger:
         )
 
     def record_usd(self, stage: str, usd: float, **extra: Any) -> None:
-        """Spend the ledger did not price itself (the server's, read from cost.summary)."""
+        """Spend the ledger did not price itself: the server's, read from
+        cost.summary."""
         self._append({"stage": stage, "usd": usd, "estimated": False, **extra})
 
     def _append(self, row: dict[str, Any]) -> None:
@@ -148,7 +153,12 @@ class ProviderComplete:
             }
             async with httpx.AsyncClient(event_hooks=hooks) as client:
                 return await achat(
-                    client, self.model, user, max_tokens=max_tokens, system=system, timeout_s=300.0
+                    client,
+                    self.model,
+                    user,
+                    max_tokens=max_tokens,
+                    system=system,
+                    timeout_s=PROVIDER_TIMEOUT_S,
                 )
 
         text, usage = asyncio.run(call())
