@@ -24,7 +24,8 @@ primitive, not a compliance certification.
 | The server itself                                     | `budget.violated`, `ratelimit.exceeded`, `worker.failed`, `audit.tamper_detected`, …                                                                                                                              | what the event is about                                                                                                                                                                                                                                                                                                                                                                                      |
 
 The **Audit** column of the generated [operations reference](../../reference/operations.md)
-lists every audited op (the `audit` flag on each `Operation`). No read op is declared
+lists the ops the transport audits (the `audit` flag on each `Operation`); the memory writes in
+the table above write their own row and carry no mark there. No read op is declared
 `audit=True`; a read of a `high` row writes `memory.sensitive_read` (above). `audit.list` is
 `audit=False`, so reading the trail does not add to it.
 
@@ -49,7 +50,7 @@ writes use the hash-only shape. Grant `loom.audit_log` like the data it describe
 | `ts`                                         | UTC, millisecond precision                                                 |
 | `event_type`                                 | op name or server event                                                    |
 | `org`, `namespace`                           | the tenant the gate authorized                                             |
-| `actor`                                      | the token's subject (`anonymous` when auth is off)                         |
+| `actor`                                      | the token's subject (`anonymous` when auth is off); a memory write's own row (`memory.set`, `memory.update`, `memory.update_by_id`) names it `kind:subject`, `-` with no token |
 | `subject`                                    | JSON text; the caller decides whether to parse it                          |
 | `request_id`                                 | joins to `loom.agent_events` and the `X-Request-Id` response header        |
 | `row_hash`                                   | SHA-256 over the canonical row                                             |
