@@ -154,9 +154,9 @@ async def _resolve_ref(
     repo: CodeRepo, org: str, git_dir: str, siblings: list[Any], text: str
 ) -> tuple[str, str]:
     """(sha, source) for one window end. A release minor resolves to the
-    branch namespace's recorded head when one is configured and indexed,
-    else to the mirror's branch or `-new` tag; a build to its tag; a sha
-    through rev-parse."""
+    branch namespace's recorded head when one is configured, indexed and
+    readable by the caller, else to the mirror's branch or `-new` tag; a
+    build to its tag; a sha through rev-parse."""
     kind, value = br.classify_ref(text)
     if kind == "sha":
         try:
@@ -166,8 +166,10 @@ async def _resolve_ref(
             return "", ""
     if kind == "minor":
         branch_ns = next((c.namespace for c in siblings if c.git_branch == value), "")
-        # A sibling the caller cannot read resolves through the mirror's ref instead.
-        if branch_ns and (await fanout.readable_subset(org, [branch_ns]))[0]:
+        readable: list[str] = []
+        if branch_ns:
+            readable, _skipped = await fanout.readable_subset(org, [branch_ns])
+        if readable:
             head = await _namespace_head(repo, org, branch_ns)
             if head:
                 return head, "namespace_head"
@@ -377,7 +379,8 @@ async def _ledger_leg(
 ) -> tuple[list[dict[str, Any]], bool]:
     """Ledger rows from this namespace and from the mirror's trunk namespace (a
     release-branch namespace holds its own backports only; the trunk entry holds the
-    PR record), merged by PR number."""
+    PR record), merged by PR number. The transport gated only `ns`, so the trunk is
+    read only when the caller may read it, and left out otherwise."""
     from server.code.domain.index.repos import trunk_entry
 
     namespaces = [ns]
@@ -385,7 +388,6 @@ async def _ledger_leg(
     mine = next((c for c in siblings if c.namespace == ns), None)
     trunk = trunk_entry(mine, siblings) if mine is not None else None
     if trunk is not None:
-        # The transport gated `ns` only; the trunk is read only when the caller may read it.
         readable, _skipped = await fanout.readable_subset(org, [trunk.namespace])
         namespaces.extend(readable)
     since = datetime.fromtimestamp(w.from_time, tz=UTC).replace(tzinfo=None)
