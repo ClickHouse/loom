@@ -7,6 +7,7 @@ import {
   CODE_REPO,
   codeReposFixture,
   installApi,
+  knowledgeSourcesFixture,
   NAMESPACE,
   trackerSourcesFixture,
   TRACKER_PRIVATE_NS,
@@ -254,13 +255,85 @@ test.describe("desktop 1360", () => {
     await expect(card(page)).toBeVisible();
     await page.waitForTimeout(600);
     const unexpected = requested.filter((p) =>
-      /^\/v1\/(qa\.source\.(add|check|rotate|remove)|admin\/|namespace\.(join|leave|cancel_request))/.test(p),
+      /^\/v1\/(qa\.source\.(add|check|rotate|remove)|knowledge\.source\.(add|check|rotate|remove|sync_now)|admin\/|namespace\.(join|leave|cancel_request))/.test(
+        p,
+      ),
     );
     expect(unexpected).toEqual([]);
     expect(calls.join).toEqual([]);
     expect(calls.trackerSources).toBe(1);
     await expect(page.getByRole("button", { name: /rotate|retire|remove|check now/i })).toHaveCount(0);
     await expect(page.locator("#main").getByText("Settings", { exact: true })).toHaveCount(0);
+  });
+});
+
+// The Sources facet: an opened card reads `knowledge.source.list` once for the trunk's
+// docs namespace (a folded card reads nothing); a reader sees each source's last sync and
+// no verb, the namespace's admin gets the verbs, each a dialog loaded on first use.
+test.describe("document sources", () => {
+  const reposWith = (role: "viewer" | "admin") =>
+    codeReposFixture().map((r) => ({
+      ...r,
+      my_status: "member" as const,
+      my_role: role,
+      docs_namespace: "code-clickhouse",
+    }));
+
+  test("a reader sees each source's last sync and no verb, read once when the card opens", async ({ page }) => {
+    const calls = await installApi(page, {
+      codeRepos: reposWith("viewer"),
+      knowledgeSources: knowledgeSourcesFixture(),
+      viewer: true,
+    });
+    const requested: string[] = [];
+    page.on("request", (r) => {
+      const u = new URL(r.url());
+      if (u.pathname.startsWith("/v1/knowledge.source.")) requested.push(u.pathname);
+    });
+    await page.goto("/repositories");
+    await expect(card(page)).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(calls.knowledgeSources).toBe(0);
+    await unfold(card(page), CODE_REPO);
+    const sources = card(page).getByRole("group", { name: "Sources" });
+    await expect(sources).toContainText("design-docs");
+    await expect(sources).toContainText("Synced");
+    await expect(sources).toContainText("12 files listed · 3 written · 1 not converted");
+    await expect(sources.getByRole("button")).toHaveCount(0);
+    await page.waitForTimeout(300);
+    expect(requested).toEqual(["/v1/knowledge.source.list"]);
+    expect(calls.knowledgeSources).toBe(1);
+  });
+
+  test("a server without the op says so in the facet, no error banner", async ({ page }) => {
+    await installApi(page, { codeRepos: reposWith("viewer"), knowledgeSources: "absent" });
+    await page.goto("/repositories");
+    await unfold(card(page), CODE_REPO);
+    await expect(card(page).getByRole("group", { name: "Sources" })).toContainText(
+      "Document sources are not available on this deployment yet.",
+    );
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  });
+
+  test("the namespace's admin gets Add a source, off until a check, and each verb's dialog", async ({ page }) => {
+    const errors = collectErrors(page);
+    await installApi(page, { codeRepos: reposWith("admin"), knowledgeSources: knowledgeSourcesFixture() });
+    await page.goto("/repositories");
+    await unfold(card(page), CODE_REPO);
+    const sources = card(page).getByRole("group", { name: "Sources" });
+    await sources.getByRole("button", { name: "Add a source" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("button", { name: "Add source" })).toBeDisabled();
+    await expect(dialog.getByLabel(/^Service account key/)).toHaveAttribute("type", "password");
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    for (const verb of ["Check", "Sync now", "Rotate credential", "Retire"]) {
+      await sources.getByRole("button", { name: "Actions for design-docs" }).click();
+      await page.getByRole("menuitem", { name: verb }).click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+    }
+    expect(errors).toEqual([]);
   });
 });
 

@@ -80,6 +80,12 @@ that sees the projects. The
 documents ([syncing](#syncing-a-source)); `list` says whether this deployment runs it
 (`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
 
+On the dashboard, an opened repository on the Repositories page shows its sources under
+Docs: each source's kind, last sync and counts, to anyone who reads the repository. The
+namespace's admins also get Add a source (a dry-run check first; Add sends only the form
+that passed), Check, Sync now, Rotate credential and Retire. The key is typed into a
+password field and is never shown again.
+
 | Operation                                                                                   | Role   | Does                                                                                                       |
 | ------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------- |
 | [`knowledge.source.list`](../reference/operations/knowledge.md#knowledgesourcelist)         | viewer | The namespace's sources, each with its config and last sync request.                                       |

@@ -17,8 +17,38 @@ import { must } from "../test/must";
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, listKnowledge: vi.fn(async () => ({ rows: [], next_cursor: null })) };
+  return {
+    ...actual,
+    listKnowledge: vi.fn(async () => ({ rows: [], next_cursor: null })),
+  };
 });
+vi.mock("../api/knowledgeSources", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/knowledgeSources")>();
+  return { ...actual, listKnowledgeSources: vi.fn(async () => ({ sources: SOURCES, enabled: false })) };
+});
+
+// One synced document source, for the Sources facet (hoisted: the module mock reads it).
+const SOURCES = vi.hoisted(() => [
+  {
+    name: "design-docs",
+    kind: "gdrive",
+    config: { folder_ids: ["1AbCdEfGhIjKlMnOp"], include: ["docs"] },
+    created_by: "maintainer@example.com",
+    created_at: "2026-10-01T00:00:00Z",
+    sync: {
+      requested_at: "",
+      last_synced_at: "2026-10-02T00:00:00Z",
+      status: "ok",
+      documents_seen: 12,
+      changed: 3,
+      removed: 0,
+      unconverted: 1,
+      unconverted_reasons: { too_large: 1 },
+      skipped: 0,
+      error: "",
+    },
+  },
+]);
 
 // A repository is one list row: its name and the health of the worst branch the person
 // can see, a muted summary line, and one inline action (a split button). Opened, it shows
@@ -764,6 +794,38 @@ describe("RepositoryCard — docs", () => {
     mount([branch({ my_status: "member" })], []); // no docs namespace: no Docs facet
     expect(screen.queryByRole("group", { name: "Docs" })).toBeNull();
     cleanup();
+  });
+});
+
+// The Sources facet follows Docs on the same namespace: a reader sees each source and its
+// last sync, and only that namespace's admin gets the verbs.
+describe("RepositoryCard — sources", () => {
+  it("lists the sources and their last sync to a reader, with no verb", async () => {
+    mount([branch({ my_status: "member", my_role: "viewer", docs_namespace: "code-clickhouse" })], []);
+    const group = screen.getByRole("group", { name: "Sources" });
+    expect(await within(group).findByText("design-docs")).toBeInTheDocument();
+    expect(within(group).getByText("Synced")).toBeInTheDocument();
+    expect(within(group).getByText("12 files listed · 3 written · 1 not converted")).toBeInTheDocument();
+    expect(within(group).getByText(/Sync is off on this deployment/)).toBeInTheDocument();
+    expect(within(group).queryByRole("button", { name: "Add a source" })).toBeNull();
+    expect(within(group).queryByRole("button", { name: "Actions for design-docs" })).toBeNull();
+    cleanup();
+    mount([branch({ my_status: "member" })], []); // no docs namespace: no Sources facet
+    expect(screen.queryByRole("group", { name: "Sources" })).toBeNull();
+  });
+
+  it("gives the namespace's admin Add a source and each source's verbs", async () => {
+    const user = userEvent.setup();
+    mount([branch({ my_status: "member", my_role: "admin", docs_namespace: "code-clickhouse" })], []);
+    const group = screen.getByRole("group", { name: "Sources" });
+    expect(await within(group).findByRole("button", { name: "Add a source" })).toBeInTheDocument();
+    await user.click(within(group).getByRole("button", { name: "Actions for design-docs" }));
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((m) => m.textContent),
+    ).toEqual(["Check", "Sync now", "Rotate credential", "Retire"]);
   });
 });
 

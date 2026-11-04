@@ -15,7 +15,8 @@
  * symbols, your access, and a menu per branch: Open, Refresh, Leave, Join, Withdraw, a
  * maintainer's Remove branch) with Add branch at its foot, the tracker line (the tracker
  * scopes whose `repos` name the repository, and a maintainer's links), a folded Settings
- * for maintainers (access, join policy, the details), then the docs.
+ * for maintainers (access, join policy, the details), then the docs and the document
+ * sources they are pulled from.
  *
  * Five words on both facets: Open · Join · Request access · Withdraw request · Leave. A
  * branch name is never in a button's label; it is in a menu item or the table.
@@ -58,6 +59,7 @@ import {
 } from "../lib/repositoryCard";
 import { RecordSourceDetails } from "./TrackerSources";
 import { RepoDocsList } from "./RepoDocs";
+import { RepoSourcesList } from "./RepoSources";
 import { oneOf } from "../lib/oneOf";
 
 /** The reader-grant sentence, said once for the whole card: a token reads through its
@@ -829,6 +831,18 @@ export const RepositoryCard = memo(function RepositoryCard({
               // The documents agents read before changing this code
               <FacetRow icon="document" label="Docs">
                 <RepoDocsList
+                  org={docs.org}
+                  docsNamespace={docs.namespace}
+                  repo={card.repo}
+                  maintained={docs.my_role === "admin"}
+                  busy={anyBusy}
+                />
+              </FacetRow>
+            )}
+            {docs && (
+              // Where those documents are pulled from, and each source's last sync
+              <FacetRow icon="connect" label="Sources">
+                <RepoSourcesList
                   org={docs.org}
                   docsNamespace={docs.namespace}
                   repo={card.repo}
