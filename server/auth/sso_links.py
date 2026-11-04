@@ -14,6 +14,8 @@ from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from typing import Any
 
+from server.auth import aliases
+from server.core import grant_cache
 from server.core.ch import get_client
 from server.core.versions import next_version
 
@@ -150,9 +152,6 @@ async def _write(
     # FINAL a later unlink with a lower version would be lost.
     version = await next_version(ch, TABLE, {"email": email.strip().lower()})
     now = datetime.now(UTC)
-    from server.auth import aliases
-    from server.core import grant_cache
-
     # A link verifies the account's email, which ties it to the owner's grants
     # (`server.auth.aliases`): an unlink must not leave a cached tie admitting,
     # even when its reply is lost after the row landed.
