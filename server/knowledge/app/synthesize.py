@@ -14,7 +14,7 @@ from server.knowledge.app.document_reads import document_chunks
 from server.observability.genai import llm_stage
 
 if TYPE_CHECKING:
-    from server.memory.domain.corpus_synthesis import CorpusChunk, Window
+    from server.memory.domain.corpus_synthesis import CorpusChunk
 
 
 async def handle_knowledge_synthesize(
@@ -103,7 +103,8 @@ async def handle_knowledge_synthesize(
             break
     # Grounded before the cut, so removed citations take no room; a kept citation the
     # cut halves is no longer one, so `citations` is read again from what is returned.
-    read = {(c.source_uri, c.idx) for w in wins for c in w.chunks}
+    by_key = {(c.source_uri, c.idx): c for w in wins for c in w.chunks}
+    read = set(by_key)
     answer, cited, unsupported = cs.ground_citations(answer, read)
     if len(answer) > input.max_answer_chars:
         answer = answer[: input.max_answer_chars].rstrip() + "…"
@@ -111,7 +112,7 @@ async def handle_knowledge_synthesize(
     # Punctuation or list markers left by the removed citations are no answer either.
     if not any(ch.isalnum() for ch in answer):
         answer = ""
-    located = _located(wins, cs.cited_chunks(cited, read))
+    located = _located(by_key, cs.cited_chunks(cited, read))
     return KnowledgeSynthesizeOutput(
         answer=answer,
         windows=len(wins),
@@ -128,9 +129,10 @@ async def handle_knowledge_synthesize(
     )
 
 
-def _located(wins: list[Window], chunks: list[tuple[str, int]]) -> list[_CitedChunk]:
+def _located(
+    by_key: dict[tuple[str, int], CorpusChunk], chunks: list[tuple[str, int]]
+) -> list[_CitedChunk]:
     """Each cited chunk with the revision it was written as and its locator, as read."""
-    by_key = {(c.source_uri, c.idx): c for w in wins for c in w.chunks}
     return [
         _CitedChunk(
             source_uri=uri,

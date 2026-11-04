@@ -110,3 +110,48 @@ async def test_the_three_writers_write_the_same_rows(written: list[dict[str, Any
         await write()
         out.append(_stable(written))
     assert out[0] == out[1] == out[2]
+
+
+@pytest.mark.parametrize("write", [_add, _upsert, _bulk_add])
+async def test_every_chunk_records_its_document_rows_revision_and_no_format(
+    written: list[dict[str, Any]], write, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A text write's chunks record the revision its document row takes (one past the
+    source's latest, here 4) and the empty format of text a caller extracted, which
+    search and citations read off the chunk."""
+    import json
+
+    documents: list[dict[str, Any]] = []
+    prior = documents_repo.DocumentRow(
+        org="o",
+        namespace="n",
+        source_uri="doc://a",
+        doc_id="00000000-0000-0000-0000-000000000001",
+        content="earlier",
+        version=1,
+        ingested_at=datetime(2026, 1, 1),
+        revision=4,
+    )
+
+    async def _prior(*a: Any, **kw: Any) -> documents_repo.DocumentRow:
+        return prior
+
+    async def _priors(*a: Any, **kw: Any) -> list[documents_repo.DocumentRow]:
+        return [prior]
+
+    async def _one(row: dict[str, Any], **kw: Any) -> None:
+        documents.append(row)
+
+    async def _many(rows: list[dict[str, Any]], **kw: Any) -> None:
+        documents.extend(rows)
+
+    monkeypatch.setattr(documents_repo, "get_one", _prior)
+    monkeypatch.setattr(documents_repo, "get_many_by_uris", _priors)
+    monkeypatch.setattr(documents_repo, "insert_one", _one)
+    monkeypatch.setattr(documents_repo, "insert_many", _many)
+    await write()
+    assert [d["revision"] for d in documents] == [5]
+    assert written and {
+        (json.loads(r["chunk_metadata"])["revision"], json.loads(r["chunk_metadata"])["format"])
+        for r in written
+    } == {(5, "")}
