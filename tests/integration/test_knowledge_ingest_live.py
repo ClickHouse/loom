@@ -10,7 +10,7 @@ runs no workers); then status, get, outline, search and download read it back.
   fails `revision_conflict` and leaves revision 2 serving.
 - An upload whose bytes contradict its name is stored, typed by its name, and its
   job fails with the extractor's code; an ingest of an unknown upload is 404.
-- The queue a worker pass reads offers each namespace its oldest due job, one
+- The queue a worker pass reads offers each namespace the job due longest, one
   source's jobs one at a time.
 
 The job sends originals to the extractor the settings route SQL and TOML to
@@ -248,10 +248,10 @@ async def test_the_queue_offers_each_namespace_one_due_job_at_the_head_of_its_so
     control_plane_url: str,
 ) -> None:
     """What a worker pass reads (`ingestions.due`), for this test's org alone: one
-    candidate per namespace, the oldest due job of its sources; a later ingest of a
-    source waits behind the earlier one even while that one is not due (a retry's
-    delay). The jobs are cancelled and ended after, so none is left on the shared
-    queue."""
+    candidate per namespace, the job due longest of its sources' first open jobs;
+    a later ingest of a source waits behind the earlier one even while that one is
+    not due (a retry's delay). The jobs are cancelled and ended after, so none is
+    left on the shared queue."""
     from server.core.ch import get_client
     from server.knowledge.app import ingest_run
     from server.knowledge.store import ingestions
@@ -281,7 +281,7 @@ async def test_the_queue_offers_each_namespace_one_due_job_at_the_head_of_its_so
                 ingestions.ingestion_row(first, next_attempt_at=later)
             )
             # The whole queue's due jobs, then this org's: the limit is the queue's.
-            due = await ingestions.due(100_000, stale_after_s=60)
+            due = await ingestions.due(100_000, stale_after_s=ingest_run.JOB_LEASE_S)
             for ns, job_id in jobs:
                 await _op(c, "knowledge.ingest_cancel", org=org, namespace=ns, ingestion_id=job_id)
                 job = await ingestions.get_ingestion(org, ns, job_id)
