@@ -245,7 +245,10 @@ def _block_markdown(block: dict[str, Any], number: int, skipped: dict[str, int])
         if kind == "callout" and icon.get("type") == "emoji" and icon.get("emoji"):
             text = f"{icon['emoji']} {text}".strip()
         inner = "\n\n".join(p for p in (text, children) if p)
-        return _indent(inner, "> ").replace("\n\n", "\n>\n") if inner else ""
+        # Every line quoted, a blank one as a bare `>`, so the quote never ends early.
+        return (
+            "\n".join(f"> {line}" if line else ">" for line in inner.split("\n")) if inner else ""
+        )
     if kind == "code":
         code = _plain(body.get("rich_text")).strip("\n")
         lang = str(body.get("language") or "")

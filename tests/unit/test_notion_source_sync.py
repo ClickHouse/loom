@@ -1125,3 +1125,15 @@ def test_a_database_page_read_within_the_margin_is_listed_again_by_an_incrementa
     assert f"/blocks/{ROW1}/children" in _paths(world)
     assert world.docs[_uri(world, ROW1)]["input"].content == "Edited in the same minute."
     assert world.docs[_uri(world, ROW1)]["metadata"]["read_at"] == "2026-03-01T00:20:00.000Z"
+
+
+def test_a_callout_keeps_every_line_of_its_children_quoted() -> None:
+    code = {"type": "code", "code": {"rich_text": _rt("select 1\n\n\nfrom t"), "language": "sql"}}
+    callout = {
+        "type": "callout",
+        "callout": {"rich_text": _rt("Note")},
+        "children": [_para("First."), code],
+    }
+    md, _ = convert.page_markdown([callout])
+    assert md == "> Note\n>\n> First.\n>\n> ```sql\n> select 1\n>\n>\n> from t\n> ```"
+    assert all(line.startswith(">") for line in md.split("\n"))
