@@ -161,8 +161,9 @@ async def test_inspect_reports_formats_revisions_chunks_and_decisions(
             },
         )
 
+        # FINAL: a merge between the two reads collapses versions with no write.
         before = ch_client.query(
-            "SELECT count(), max(version) FROM loom.memory WHERE org = {org:String}",
+            "SELECT count(), max(version) FROM loom.memory FINAL WHERE org = {org:String}",
             parameters={"org": ORG},
         ).result_rows
         out = await post("knowledge.inspect", {"sample_limit": 3}, viewer)
@@ -240,7 +241,7 @@ async def test_inspect_reports_formats_revisions_chunks_and_decisions(
     assert listed["https://wiki.example/pages/plan.html?v=2"]["source_scheme"] == "https"
 
     after = ch_client.query(
-        "SELECT count(), max(version) FROM loom.memory WHERE org = {org:String}",
+        "SELECT count(), max(version) FROM loom.memory FINAL WHERE org = {org:String}",
         parameters={"org": ORG},
     ).result_rows
     assert after == before
