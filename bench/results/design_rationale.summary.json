@@ -1,0 +1,662 @@
+{
+ "bench": "design_rationale",
+ "reader": "gpt-6-luna",
+ "judges": [
+  "gpt-6-luna"
+ ],
+ "extraction_model": "gpt-6-luna",
+ "k": 3,
+ "judge_orders": 2,
+ "judge_repeats": 2,
+ "tasks": {
+  "A": 10,
+  "B": 15,
+  "C": 10
+ },
+ "documents": 5,
+ "revisions": 4,
+ "arms": {
+  "0": {
+   "A": {
+    "tasks": 10,
+    "precision": 0.3403,
+    "recall": 0.3819,
+    "misleading": 0.7083,
+    "abstained": 1.0
+   },
+   "B": {
+    "tasks": 15,
+    "avoids": 0.1556,
+    "satisfies": 0.1222,
+    "pushed_back": 0.0,
+    "detector_fired": 0.0
+   },
+   "C": {
+    "tasks": 10,
+    "passed": 0.9917,
+    "current_stated": 0.1667,
+    "stale": 0.0,
+    "invented": 0.0167
+   },
+   "citation_precision": null,
+   "citation_recall": 0.0
+  },
+  "1": {
+   "A": {
+    "tasks": 10,
+    "precision": 0.8454,
+    "recall": 0.9068,
+    "misleading": 0.3,
+    "abstained": 0.2333
+   },
+   "B": {
+    "tasks": 15,
+    "avoids": 0.0667,
+    "satisfies": 0.0667,
+    "pushed_back": 0.0222,
+    "detector_fired": 0.0222
+   },
+   "C": {
+    "tasks": 10,
+    "passed": 0.8417,
+    "current_stated": 0.9833,
+    "stale": 0.0,
+    "invented": 0.3167
+   },
+   "citation_precision": 0.839,
+   "citation_recall": 0.8553
+  },
+  "2": {
+   "A": {
+    "tasks": 10,
+    "precision": 0.8262,
+    "recall": 0.759,
+    "misleading": 0.3583,
+    "abstained": 0.4
+   },
+   "B": {
+    "tasks": 15,
+    "avoids": 0.3389,
+    "satisfies": 0.3389,
+    "pushed_back": 0.237,
+    "detector_fired": 0.0
+   },
+   "C": {
+    "tasks": 10,
+    "passed": 0.95,
+    "current_stated": 1.0,
+    "stale": 0.0,
+    "invented": 0.1
+   },
+   "citation_precision": 0.8625,
+   "citation_recall": 0.7668
+  },
+  "3": {
+   "A": {
+    "tasks": 10,
+    "precision": 0.9583,
+    "recall": 0.8917,
+    "misleading": 0.0833,
+    "abstained": 0.0667
+   },
+   "B": {
+    "tasks": 15,
+    "avoids": 0.8593,
+    "satisfies": 0.8037,
+    "pushed_back": 0.7667,
+    "detector_fired": 0.0
+   },
+   "C": {
+    "tasks": 10,
+    "passed": 0.9833,
+    "current_stated": 1.0,
+    "stale": 0.0,
+    "invented": 0.0333
+   },
+   "citation_precision": 0.8524,
+   "citation_recall": 0.9349
+  },
+  "4": {
+   "A": {
+    "tasks": 10,
+    "precision": 0.6667,
+    "recall": 0.4558,
+    "misleading": 0.1833,
+    "abstained": 0.7333
+   },
+   "B": {
+    "tasks": 15,
+    "avoids": 0.6,
+    "satisfies": 0.5778,
+    "pushed_back": 0.4167,
+    "detector_fired": 0.0
+   },
+   "C": {
+    "tasks": 10,
+    "passed": 0.9417,
+    "current_stated": 0.2,
+    "stale": 0.0,
+    "invented": 0.1167
+   },
+   "citation_precision": 0.8316,
+   "citation_recall": 0.6927
+  }
+ },
+ "comparisons": [
+  {
+   "treatment": 3,
+   "reference": 0,
+   "kind": "A",
+   "metric": "precision",
+   "n": 10,
+   "clusters": 5,
+   "delta": 0.6181,
+   "lb": 0.4845,
+   "ub": 0.8583,
+   "mde": 0.267,
+   "win_tie_loss": [
+    9,
+    0,
+    1
+   ]
+  },
+  {
+   "treatment": 3,
+   "reference": 0,
+   "kind": "A",
+   "metric": "recall",
+   "n": 10,
+   "clusters": 5,
+   "delta": 0.5097,
+   "lb": 0.4231,
+   "ub": 0.6706,
+   "mde": 0.1768,
+   "win_tie_loss": [
+    9,
+    1,
+    0
+   ]
+  },
+  {
+   "treatment": 3,
+   "reference": 0,
+   "kind": "B",
+   "metric": "avoids",
+   "n": 15,
+   "clusters": 5,
+   "delta": 0.7037,
+   "lb": 0.5965,
+   "ub": 0.8889,
+   "mde": 0.2089,
+   "win_tie_loss": [
+    11,
+    4,
+    0
+   ]
+  },
+  {
+   "treatment": 3,
+   "reference": 0,
+   "kind": "B",
+   "metric": "satisfies",
+   "n": 15,
+   "clusters": 5,
+   "delta": 0.6815,
+   "lb": 0.4405,
+   "ub": 0.9343,
+   "mde": 0.3528,
+   "win_tie_loss": [
+    12,
+    3,
+    0
+   ]
+  },
+  {
+   "treatment": 3,
+   "reference": 0,
+   "kind": "C",
+   "metric": "passed",
+   "n": 10,
+   "clusters": 5,
+   "delta": -0.0083,
+   "lb": -0.0714,
+   "ub": 0.0192,
+   "mde": 0.0648,
+   "win_tie_loss": [
+    1,
+    8,
+    1
+   ]
+  },
+  {
+   "treatment": 4,
+   "reference": 0,
+   "kind": "A",
+   "metric": "precision",
+   "n": 9,
+   "clusters": 5,
+   "delta": 0.321,
+   "lb": 0.0238,
+   "ub": 0.6372,
+   "mde": 0.4381,
+   "win_tie_loss": [
+    7,
+    1,
+    1
+   ]
+  },
+  {
+   "treatment": 4,
+   "reference": 0,
+   "kind": "A",
+   "metric": "recall",
+   "n": 10,
+   "clusters": 5,
+   "delta": 0.0739,
+   "lb": -0.1296,
+   "ub": 0.3014,
+   "mde": 0.3079,
+   "win_tie_loss": [
+    5,
+    3,
+    2
+   ]
+  },
+  {
+   "treatment": 4,
+   "reference": 0,
+   "kind": "B",
+   "metric": "avoids",
+   "n": 15,
+   "clusters": 5,
+   "delta": 0.4444,
+   "lb": 0.4058,
+   "ub": 0.5,
+   "mde": 0.0673,
+   "win_tie_loss": [
+    8,
+    7,
+    0
+   ]
+  },
+  {
+   "treatment": 4,
+   "reference": 0,
+   "kind": "B",
+   "metric": "satisfies",
+   "n": 15,
+   "clusters": 5,
+   "delta": 0.4556,
+   "lb": 0.4091,
+   "ub": 0.5,
+   "mde": 0.0649,
+   "win_tie_loss": [
+    8,
+    7,
+    0
+   ]
+  },
+  {
+   "treatment": 4,
+   "reference": 0,
+   "kind": "C",
+   "metric": "passed",
+   "n": 10,
+   "clusters": 5,
+   "delta": -0.05,
+   "lb": -0.1667,
+   "ub": 0.0069,
+   "mde": 0.124,
+   "win_tie_loss": [
+    1,
+    6,
+    3
+   ]
+  },
+  {
+   "treatment": 4,
+   "reference": 3,
+   "kind": "A",
+   "metric": "precision",
+   "n": 9,
+   "clusters": 5,
+   "delta": -0.287,
+   "lb": -0.6083,
+   "ub": -0.1212,
+   "mde": 0.3479,
+   "win_tie_loss": [
+    1,
+    4,
+    4
+   ]
+  },
+  {
+   "treatment": 4,
+   "reference": 3,
+   "kind": "A",
+   "metric": "recall",
+   "n": 10,
+   "clusters": 5,
+   "delta": -0.4358,
+   "lb": -0.6528,
+   "ub": -0.3333,
+   "mde": 0.2282,
+   "win_tie_loss": [
+    1,
+    1,
+    8
+   ]
+  },
+  {
+   "treatment": 4,
+   "reference": 3,
+   "kind": "B",
+   "metric": "avoids",
+   "n": 15,
+   "clusters": 5,
+   "delta": -0.2593,
+   "lb": -0.404,
+   "ub": -0.1481,
+   "mde": 0.1828,
+   "win_tie_loss": [
+    0,
+    10,
+    5
+   ]
+  },
+  {
+   "treatment": 4,
+   "reference": 3,
+   "kind": "B",
+   "metric": "satisfies",
+   "n": 15,
+   "clusters": 5,
+   "delta": -0.2259,
+   "lb": -0.4343,
+   "ub": 0.0455,
+   "mde": 0.3427,
+   "win_tie_loss": [
+    1,
+    9,
+    5
+   ]
+  },
+  {
+   "treatment": 4,
+   "reference": 3,
+   "kind": "C",
+   "metric": "passed",
+   "n": 10,
+   "clusters": 5,
+   "delta": -0.0417,
+   "lb": -0.0952,
+   "ub": -0.0069,
+   "mde": 0.0631,
+   "win_tie_loss": [
+    0,
+    7,
+    3
+   ]
+  },
+  {
+   "treatment": 1,
+   "reference": 3,
+   "kind": "A",
+   "metric": "precision",
+   "n": 10,
+   "clusters": 5,
+   "delta": -0.1129,
+   "lb": -0.1796,
+   "ub": -0.0641,
+   "mde": 0.0825,
+   "win_tie_loss": [
+    1,
+    3,
+    6
+   ]
+  },
+  {
+   "treatment": 1,
+   "reference": 3,
+   "kind": "A",
+   "metric": "recall",
+   "n": 10,
+   "clusters": 5,
+   "delta": 0.0151,
+   "lb": -0.0754,
+   "ub": 0.1603,
+   "mde": 0.1684,
+   "win_tie_loss": [
+    2,
+    3,
+    5
+   ]
+  },
+  {
+   "treatment": 1,
+   "reference": 3,
+   "kind": "B",
+   "metric": "avoids",
+   "n": 15,
+   "clusters": 5,
+   "delta": -0.7926,
+   "lb": -0.8704,
+   "ub": -0.6566,
+   "mde": 0.1527,
+   "win_tie_loss": [
+    0,
+    2,
+    13
+   ]
+  },
+  {
+   "treatment": 1,
+   "reference": 3,
+   "kind": "B",
+   "metric": "satisfies",
+   "n": 15,
+   "clusters": 5,
+   "delta": -0.737,
+   "lb": -0.8704,
+   "ub": -0.4293,
+   "mde": 0.3151,
+   "win_tie_loss": [
+    0,
+    2,
+    13
+   ]
+  },
+  {
+   "treatment": 1,
+   "reference": 3,
+   "kind": "C",
+   "metric": "passed",
+   "n": 10,
+   "clusters": 5,
+   "delta": -0.1417,
+   "lb": -0.2976,
+   "ub": -0.05,
+   "mde": 0.1769,
+   "win_tie_loss": [
+    0,
+    6,
+    4
+   ]
+  },
+  {
+   "treatment": 2,
+   "reference": 3,
+   "kind": "A",
+   "metric": "precision",
+   "n": 10,
+   "clusters": 5,
+   "delta": -0.1321,
+   "lb": -0.1708,
+   "ub": -0.0461,
+   "mde": 0.0891,
+   "win_tie_loss": [
+    1,
+    3,
+    6
+   ]
+  },
+  {
+   "treatment": 2,
+   "reference": 3,
+   "kind": "A",
+   "metric": "recall",
+   "n": 10,
+   "clusters": 5,
+   "delta": -0.1326,
+   "lb": -0.2002,
+   "ub": -0.0079,
+   "mde": 0.1374,
+   "win_tie_loss": [
+    1,
+    4,
+    5
+   ]
+  },
+  {
+   "treatment": 2,
+   "reference": 3,
+   "kind": "B",
+   "metric": "avoids",
+   "n": 15,
+   "clusters": 5,
+   "delta": -0.5204,
+   "lb": -0.6645,
+   "ub": -0.4495,
+   "mde": 0.1536,
+   "win_tie_loss": [
+    0,
+    5,
+    10
+   ]
+  },
+  {
+   "treatment": 2,
+   "reference": 3,
+   "kind": "B",
+   "metric": "satisfies",
+   "n": 15,
+   "clusters": 5,
+   "delta": -0.4648,
+   "lb": -0.6157,
+   "ub": -0.2976,
+   "mde": 0.2272,
+   "win_tie_loss": [
+    0,
+    5,
+    10
+   ]
+  },
+  {
+   "treatment": 2,
+   "reference": 3,
+   "kind": "C",
+   "metric": "passed",
+   "n": 10,
+   "clusters": 5,
+   "delta": -0.0333,
+   "lb": -0.0926,
+   "ub": 0.0,
+   "mde": 0.0661,
+   "win_tie_loss": [
+    0,
+    8,
+    2
+   ]
+  }
+ ],
+ "tokens": {
+  "0": {
+   "tasks": 35,
+   "injected_mean": 0,
+   "injected_max": 0,
+   "pre_edit_calls": 0,
+   "pre_edit_max": 0,
+   "with_context": 0
+  },
+  "1": {
+   "tasks": 35,
+   "injected_mean": 1833.8,
+   "injected_max": 3432,
+   "pre_edit_calls": 0,
+   "pre_edit_max": 0,
+   "with_context": 35,
+   "ratio_to_arm3": 1.83
+  },
+  "2": {
+   "tasks": 35,
+   "injected_mean": 735.4,
+   "injected_max": 1015,
+   "pre_edit_calls": 0,
+   "pre_edit_max": 0,
+   "with_context": 35
+  },
+  "3": {
+   "tasks": 35,
+   "injected_mean": 1002.6,
+   "injected_max": 2201,
+   "pre_edit_calls": 71,
+   "pre_edit_max": 663,
+   "with_context": 35
+  },
+  "4": {
+   "tasks": 35,
+   "injected_mean": 365.7,
+   "injected_max": 849,
+   "pre_edit_calls": 71,
+   "pre_edit_max": 272,
+   "with_context": 35
+  }
+ },
+ "treatment": {
+  "arm3_for_file_served": "27/30",
+  "arm3_search_served": "29/30",
+  "arm4_for_file_served": "5/30",
+  "arm4_search_served": "30/30",
+  "arm4_rows_extracted": 32,
+  "arm4_rows_with_files": 14,
+  "arm4_extract_failures": 0,
+  "arm4_code_lookups_failed": 0
+ },
+ "judge_stability": {
+  "orders": {
+   "answers": 498,
+   "agreement": 0.9337
+  },
+  "repeats": {
+   "answers": 500,
+   "agreement": 0.972
+  }
+ },
+ "unreadable": {
+  "0": {
+   "passes": 420,
+   "unreadable": 11,
+   "answers_unscored": 0
+  },
+  "1": {
+   "passes": 420,
+   "unreadable": 5,
+   "answers_unscored": 0
+  },
+  "2": {
+   "passes": 420,
+   "unreadable": 16,
+   "answers_unscored": 1
+  },
+  "3": {
+   "passes": 420,
+   "unreadable": 18,
+   "answers_unscored": 2
+  },
+  "4": {
+   "passes": 420,
+   "unreadable": 20,
+   "answers_unscored": 0
+  }
+ }
+}

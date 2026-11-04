@@ -294,6 +294,17 @@ def test_a_verdict_without_its_keys_is_unreadable_not_a_pass():
     assert score.unreadable(ts, judged)[0] == {"passes": 1, "unreadable": 1, "answers_unscored": 1}
 
 
+def test_a_verdict_with_a_bool_where_a_list_goes_is_unreadable():
+    ts = load(EXAMPLE)
+    task = ts.tasks["B"][0]
+    good = {"forbidden_proposed": [], "constraints_violated": [], "rubric_fail": False}
+    assert score.readable("B", task, {**good, "cites": [], "cites_support": []})
+    assert not score.readable("B", task, {**good, "cites": ["x"], "cites_support": True})
+    a = {"claims": [{"cites": "x"}], "gold_covered": [], "potentially_misleading": False}
+    assert not score.readable("A", ts.tasks["A"][0], a)
+    assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": "none"})
+
+
 def test_one_document_gives_no_mde():
     ts = load(EXAMPLE)
     by_arm = {

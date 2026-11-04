@@ -36,6 +36,8 @@ REQUIRED = {
     "B": ("forbidden_proposed", "constraints_violated"),
     "C": ("stale_served", "abstained", "invented_rationale"),
 }
+# The verdict fields read as lists, at the top level and in each claim.
+LIST_FIELDS = ("cites", "cites_support")
 # The per-task metric each kind's comparison is made on, higher is better.
 HEADLINE = {
     "A": ("precision", "recall"),
@@ -57,6 +59,13 @@ def readable(kind: str, task: dict[str, Any], verdict: Any) -> bool:
         need = (*need, "current_stated")
     if not isinstance(verdict, dict) or not all(k in verdict for k in need):
         return False
+    # A judge that returns a bool where a list goes would otherwise break the scoring.
+    claims = verdict.get("claims") or []
+    if not isinstance(claims, list) or not all(isinstance(c, dict) for c in claims):
+        return False
+    for part in (verdict, *claims):
+        if any(not isinstance(part.get(f) or [], list) for f in LIST_FIELDS):
+            return False
     # A rubric the judge left unanswered would pass the task.
     rubric = any(d["type"] == "judge" for d in task.get("detector", []))
     return not (kind == "B" and rubric and not isinstance(verdict.get("rubric_fail"), bool))
