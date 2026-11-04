@@ -47,6 +47,7 @@ document's branch namespace.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import functools
 import logging
 import time
@@ -329,16 +330,20 @@ def _refusal(e: BaseException) -> str:
     return f"refused: {code}" if code else f"failed: {type(e).__name__}"
 
 
-# Each decision's writes with their audit rows, as one unit a cancel does not cut short;
-# shutdown drains them (`server.core.background.drain_task_sets`).
-_WRITES = TaskSet()
+# The current run's write units: each decision's writes with their audit rows, run as
+# one unit a cancel does not cut short. Every unit is registered for shutdown to drain
+# (`server.core.background.drain_task_sets`).
+_run_writes: contextvars.ContextVar[TaskSet | None] = contextvars.ContextVar(
+    "decision_extract_writes", default=None
+)
 
 
-async def finish_writes() -> None:
-    """Wait for the write units still running, such as the one a cancelled run left: a
-    caller that bills a run's spend drains its accumulator after them. A cancel of this
-    wait leaves them running."""
-    pending = [t for t in _WRITES if not t.done()]
+async def finish_writes(writes: TaskSet) -> None:
+    """Wait for the units of one run (`writes`, as passed to `extract_document`) still
+    running, such as the one a cancelled run left: a caller that bills the run's spend
+    drains its accumulator after them. Another run's units are not waited for. A cancel
+    of this wait leaves them running."""
+    pending = [t for t in writes if not t.done()]
     if pending:
         await asyncio.shield(asyncio.gather(*pending, return_exceptions=True))
 
@@ -346,7 +351,10 @@ async def finish_writes() -> None:
 async def _whole[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run one candidate's or one row's writes to the end even when the caller is
     cancelled, so no row is left without its audit row."""
-    return await asyncio.shield(_WRITES.spawn(coro, name="decision-extract-write"))
+    writes = _run_writes.get()
+    if writes is None:  # an empty TaskSet is falsy: compare with None
+        writes = TaskSet()
+    return await asyncio.shield(writes.spawn(coro, name="decision-extract-write"))
 
 
 def _may_go_on(report: ExtractReport, may_write: Callable[[], bool] | None) -> bool:
@@ -448,6 +456,7 @@ async def extract_document(
     window_chars: int = 6000,
     read_deadline: float | None = None,
     may_write: Callable[[], bool] | None = None,
+    writes: TaskSet | None = None,
 ) -> ExtractReport:
     """Mine `source_uri`, a document in `namespace`, into decision records; `repo` names
     the repository its code names resolve in and `into` where the rows go (`_target`).
@@ -455,7 +464,40 @@ async def extract_document(
     `time.monotonic()` instant) bounds the model reads: a run still reading then stops
     with nothing written, so its writes and their audit rows are never cut short.
     `may_write` is asked before each candidate's or row's writes (the sync worker: its
-    pass is not stopped and it holds the source's lease); each such unit runs whole."""
+    pass is not stopped and it holds the source's lease); each such unit runs whole, held
+    in `writes` (a fresh set when none is given) for `finish_writes`."""
+    token = _run_writes.set(TaskSet() if writes is None else writes)
+    try:
+        return await _extract(
+            org,
+            namespace,
+            source_uri,
+            dry_run=dry_run,
+            repo=repo,
+            into=into,
+            max_per_section=max_per_section,
+            window_chars=window_chars,
+            read_deadline=read_deadline,
+            may_write=may_write,
+        )
+    finally:
+        _run_writes.reset(token)
+
+
+async def _extract(
+    org: str,
+    namespace: str,
+    source_uri: str,
+    *,
+    dry_run: bool,
+    repo: str,
+    into: Into | None,
+    max_per_section: int,
+    window_chars: int,
+    read_deadline: float | None,
+    may_write: Callable[[], bool] | None,
+) -> ExtractReport:
+    """`extract_document`'s run, in the context that holds its write units."""
     from server.knowledge.api.models_knowledge import KnowledgeGetInput
     from server.knowledge.app.document_reads import document_chunks, handle_knowledge_get
 

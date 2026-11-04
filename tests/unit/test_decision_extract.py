@@ -2458,6 +2458,28 @@ async def test_a_cancelled_run_finishes_its_current_write_and_shutdown_drains_it
 
 
 @pytest.mark.asyncio
+async def test_a_run_s_writes_are_its_own_and_finish_writes_waits_for_those_only(
+    monkeypatch,
+) -> None:
+    import asyncio
+
+    from server.core.background import TaskSet
+
+    world = _World(monkeypatch, [_candidate()])
+    mine, other = TaskSet(), TaskSet()
+    release = asyncio.Event()
+    # Another run's unit, still running.
+    other.spawn(release.wait(), name="another-run")
+    await _run(writes=mine)
+    assert len(list(mine)) <= 1 and len(world.recorded) == 1
+    # This run's units are done: the other run's does not hold the wait.
+    await asyncio.wait_for(de.finish_writes(mine), timeout=1.0)
+    assert not all(t.done() for t in other)
+    release.set()
+    await de.finish_writes(other)
+
+
+@pytest.mark.asyncio
 async def test_a_blacklisted_candidate_is_a_permanent_refusal(monkeypatch) -> None:
     from fastapi import HTTPException
 

@@ -136,7 +136,8 @@ _MINE_MARGIN_S = 30.0  # not a setting: time for the writes after the last read
 # on a run cut short. The pass counts as spent instead.
 _MIN_MINE_S = 60.0  # not a setting: a few windows' model calls
 # A document whose reads run out with at least this share of a pass's read time will not
-# finish in any pass: the sync before it rarely leaves less.
+# finish in any pass: the sync before the leg rarely takes more than a quarter of the
+# read time.
 _FULL_READ_SHARE = 0.75  # not a setting: a bound on how much of a pass one document may need
 _FORMAT_OF_MIME = {
     GDRIVE_MIME_TYPES["pdf"]: "pdf",
@@ -1079,6 +1080,7 @@ async def _extract_pending(order: list[KnowledgeSource], run: Pass, result: Pass
             except Exception as e:  # noqa: BLE001 — one source's failed read must not stop the others
                 result.errors.append(f"{_cursor_of(src)}: extraction {type(e).__name__}")
                 result.failed += 1
+                pass_context.note_failure(e, _cursor_of(src))
                 continue
             queues.append((src, detail, docs, _unmined(docs, detail)))
     queues = [q for q in queues if q[3] or q[1].get("pending_extract")]
@@ -1097,13 +1099,19 @@ async def _extract_pending(order: list[KnowledgeSource], run: Pass, result: Pass
         stop = stop or "switch_unread"
     for src, _detail, docs, todo in queues:
         if stop == "stopped":
-            return  # the pass or a lease ended: nothing more is written
+            return  # the pass was stopped: nothing more is written
         why = (stop if todo else "") or _not_now(src, todo, off, run)
         if why:
             if todo:
                 result.extract_deferred += 1
             result.cut |= why == "pass_bound"
-            await _write_mined(src, None, docs, pending=len(todo), waiting=why)
+            try:
+                await _write_mined(src, None, docs, pending=len(todo), waiting=why)
+            except Exception as e:  # noqa: BLE001 — one source's failed write must not stop the others
+                result.errors.append(f"{_cursor_of(src)}: extraction {type(e).__name__}")
+                result.failed += 1
+                log.warning("knowledge_source_sync: recording %s failed: %s", _cursor_of(src), e)
+                pass_context.note_failure(e, _cursor_of(src))
             continue
         stop = await _extract_source(src, docs, run, result)
 
@@ -1184,10 +1192,10 @@ async def _extract_source(
             if mined.stop == "stopped":
                 return mined.stop  # the pass was stopped: it writes nothing more
             if mined.lease_lost:
-                return ""  # as a lost lease ends the turn: the next copy records it
+                return ""  # the lease is lost: the copy that holds it now records the turn
             await _write_mined(src, mined, docs, pending=len(todo) - len(mined.settled))
     except (leases.LeaseBusy, leases.LeaseLost, SourceGone):
-        # Another copy may hold the source now: it records the source's turn.
+        # The lease is lost or busy: the copy that holds it now records the turn.
         return ""
     except Exception as e:  # noqa: BLE001 — one source's failure must not stop the others
         result.errors.append(f"{_cursor_of(src)}: extraction {type(e).__name__}")
@@ -1247,7 +1255,7 @@ async def _extract_one(
     """Mine one document; False when a hold or a lost lease stops the source's turn."""
     uri, revision = doc["source_uri"], doc["source_revision"]
     await require_current(src)
-    pass_context.check_stop()  # a stopped pass or a lost lease writes nothing
+    pass_context.check_stop()  # a stopped pass or a lost worker's lease writes nothing
     run.left -= 1
     read_s = _read_deadline(run) - time.monotonic()
     try:
@@ -1296,12 +1304,14 @@ async def _mine(
     """`extract_document` on one document, its spend billed to the source's namespace,
     which the cap reads. Run as its own task, so the cost accumulator it binds leaves
     the pass's own (the sync's embedding spend) as it was."""
+    from server.core.background import TaskSet
     from server.memory.app.decision_extract import extract_document, finish_writes
     from server.observability import cost_accumulator
     from server.workers.cost_event import emit_worker_cost_event_for
 
     started = time.monotonic()
     cost_accumulator.begin_op()
+    writes = TaskSet()
     try:
         return await extract_document(
             src.org,
@@ -1310,14 +1320,20 @@ async def _mine(
             dry_run=False,
             read_deadline=read_deadline,
             may_write=may_write,
+            writes=writes,
         )
     finally:
-        # A write unit a cancel left running bills to this accumulator (its task copied
-        # this context): wait for it, so its spend is in the row too.
-        await finish_writes()
-        emit_worker_cost_event_for(
-            org=src.org, namespace=src.namespace, operation=f"worker.{WORKER}", started=started
-        )
+        try:
+            # A write unit a cancel left running bills to this accumulator (its task
+            # copied this context): wait for this run's, so their spend is in the row.
+            await finish_writes(writes)
+        finally:
+            emit_worker_cost_event_for(
+                org=src.org,
+                namespace=src.namespace,
+                operation=f"worker.{WORKER}",
+                started=started,
+            )
 
 
 def _give_up_mining(mined: _Mined, uri: str, revision: str, reason: str) -> None:

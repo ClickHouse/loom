@@ -66,14 +66,14 @@ def register_decisions_cli(sub: Any) -> None:
         "extractor's own rows and tags a pinned or attested row source-changed instead: "
         "pinning or attesting freezes a row against re-extraction. Dry run by default (still "
         "calls the model); --apply writes. Exits 1 when it could not run on the document (no "
-        "document, no chunks, no usable model, model calls held for the org (switched off, or "
-        "refused or deferred by the inference gateway: nothing more is written and nothing "
-        "retired), an unknown --repo or a namespace it may not "
-        "use, --into without --repo or source on another repository's namespace, a --repo "
-        "with no remote to tag rows with, the dashboard's repositories unread, its own rows "
-        "unreadable, left in another namespace or linked to another repository, no window "
-        "read), 2 when a write, or a read it needed (a window included), was refused or "
-        "failed (a row changed since the run read it is reported, not counted).",
+        "document, no chunks, no usable model, model calls held for the org, which stops "
+        "the run with nothing more written and nothing retired, an unknown --repo or a "
+        "namespace it may not use, --into without --repo or source on another repository's "
+        "namespace, a --repo with no remote to tag rows with, the dashboard's repositories "
+        "unread, its own rows unreadable, left in another namespace or linked to another "
+        "repository, no window read), 2 when a write, or a read it needed (a window "
+        "included), was refused or failed (a row changed since the run read it is reported, "
+        "not counted).",
     )
     p_ext.add_argument("--org", required=True)
     p_ext.add_argument("--namespace", required=True, help="The namespace holding the document")

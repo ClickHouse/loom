@@ -322,7 +322,14 @@ def _mock_mining(monkeypatch: pytest.MonkeyPatch, w: _World) -> None:
     from server.workers import cost_event
 
     async def _extract_document(
-        org: str, ns: str, uri: str, *, dry_run: bool, read_deadline: float, may_write: Any
+        org: str,
+        ns: str,
+        uri: str,
+        *,
+        dry_run: bool,
+        read_deadline: float,
+        may_write: Any,
+        writes: Any,
     ) -> Any:
         assert (org, ns, dry_run) == (ORG, NS, False) and read_deadline > 0
         assert may_write()
@@ -2085,6 +2092,8 @@ def test_a_write_unit_a_cancel_leaves_running_is_billed(
         cost_accumulator.report_llm("m", 7, 1)  # the write's embedding, say
 
     async def _extract(*a: Any, **kw: Any) -> Any:
+        # As extract_document holds its units in the run's own set.
+        decision_extract._run_writes.set(kw["writes"])
         await decision_extract._whole(_unit())
 
     monkeypatch.setattr(decision_extract, "extract_document", _extract)
@@ -2099,3 +2108,26 @@ def test_a_write_unit_a_cancel_leaves_running_is_billed(
 
     asyncio.run(_run())
     assert [(r["org"], r["llm_input_tokens"]) for r in world.cost_rows] == [(ORG, 7)]
+
+
+def test_a_failed_state_write_of_a_waiting_source_does_not_stop_the_leg(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.errors import OverloadedError
+
+    _second_source(world)
+    # The first source has nothing left to mine but a stale count to clear.
+    world.states["decks"] = {"state_value": "", "detail": json.dumps({"pending_extract": 3})}
+    write_mined = source_sync._write_mined
+
+    async def _busy_once(src: Any, mined: Any, *a: Any, **kw: Any) -> None:
+        if mined is None and src.name == "decks":
+            raise OverloadedError("the sources lease is busy")
+        await write_mined(src, mined, *a, **kw)
+
+    monkeypatch.setattr(source_sync, "_write_mined", _busy_once)
+    world.files = [_file("doc2", DOCS, REV2)]  # notes' file: decks lists it and skips it
+    result = asyncio.run(source_sync.run_sync())
+    assert result.errors == [f"{ORG}/{NS}/decks: extraction OverloadedError"]
+    assert [uri for uri, _, _ in world.mined] == [DOC2]
+    assert _detail(world, "notes")["mined"] == {DOC2: REV2}
