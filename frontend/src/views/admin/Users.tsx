@@ -248,7 +248,7 @@ export function Users() {
           />
 
           <div className="mt-3 text-xs text-text-muted">
-            To promote someone to platform admin, add their email to{" "}
+            To promote someone to platform admin, add their login handle, or the email they sign in with over SSO, to{" "}
             <code className="code-inline text-xs">LOOM_PLATFORM_ADMINS</code> in{" "}
             <code className="code-inline text-xs">.env</code> and have them re-login.
           </div>
