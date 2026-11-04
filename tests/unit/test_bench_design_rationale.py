@@ -139,9 +139,24 @@ def test_citations_of_each_kind_are_found_once():
     assert detectors.parse_knowledge("knowledge:dr-kb/https://docs.example.com/up…", [uri]) is None
 
 
+def test_a_section_is_found_by_the_breadcrumb_the_chunker_writes():
+    # The chunker cleans a heading: a code span loses its backticks, a Setext heading
+    # counts. The citation names the cleaned path.
+    content = (
+        "# Doc\n\n## Why `max_rows` is 512\n\nBecause rows.\n\n"
+        "Setext head\n-----------\n\nUnder it.\n"
+    )
+    assert detectors.section_text(content, "Doc > Why max_rows is 512").startswith(
+        "Why max_rows is 512\n\nBecause rows."
+    )
+    assert detectors.section_text(content, "Doc > Setext head").startswith(
+        "Setext head\n\nUnder it."
+    )
+
+
 def test_a_section_is_found_by_its_last_breadcrumb():
     content = "# T\n\n## Backoff\n\nbody"
-    assert detectors.section_text(content, "T > Backoff").startswith("## Backoff")
+    assert detectors.section_text(content, "T > Backoff") == "Backoff\n\nbody"
     assert detectors.section_text(content, "T > Missing") is None
     # A heading is a heading line: the words in a sentence do not match.
     assert detectors.section_text("# T\n\nWe tune Backoff here.\n", "T > Backoff") is None
@@ -347,6 +362,7 @@ def test_the_dry_run_counts_every_call(capsys):
 def test_the_extraction_bound_covers_every_window_the_extractor_reads():
     from server.knowledge.app.writes import _chunk_text
     from server.memory.app.decision_extract import _windows
+    from server.memory.domain import decision_extract as dx
     from server.memory.domain.corpus_synthesis import CorpusChunk
     from server.settings.budgets import llm_max_tokens
 
@@ -359,7 +375,12 @@ def test_the_extraction_bound_covers_every_window_the_extractor_reads():
         calls, tin, tout = run.extraction_bound(doc, window_chars)
         # Two calls per window the extractor reads (a window read again).
         assert calls == 2 * read, window_chars
-        assert tout == calls * llm_max_tokens("decision_extract")
+        cap = llm_max_tokens("decision_extract")
+        assert tout == calls * cap
+        # Each window's text as sent, its [document]/[section] lines included, and a
+        # second-call note up to the output cap.
+        sent = sum(len(dx.user_prompt(w, doc.title)) for w in _windows(chunks, set(), window_chars))
+        assert tin >= 2 * sent // 3 + read * cap
     # A re-run over a revision lists the known decisions: a longer prompt per call.
     ts = load(EXAMPLE)
     _, revised_in, _ = run.extraction_bound(ts.documents["upload-retries-v2"], 6000)
@@ -430,7 +451,8 @@ class FakeLoom:
 
     def extract(self, namespace, source_uri, window_chars):
         content = self.docs[(namespace, source_uri)][-1]
-        key = "decision:" + str(abs(hash(content)) % 10**6)
+        # One key per document: the run over a revision reports the same row again.
+        key = "decision:" + str(abs(hash(source_uri)) % 10**6)
         name = next(n for word, n in CODE_NAMES.items() if word in source_uri)
         self.rows[(namespace, key)] = {
             "value": content.split("\n\n")[2][:200],
@@ -584,7 +606,9 @@ def test_the_example_set_runs_end_to_end_over_a_fake_loom(tmp_path):
     assert t["arm3_for_file_served"].split("/")[0] != "0"
     # Arm 4's rows got their files from the code index: its pre-edit block fires too.
     assert t["arm4_for_file_served"].split("/")[0] != "0"
-    assert t["arm4_rows_with_files"] == 3 and t["arm4_extract_failures"] == 0
+    # Three runs (one over the revision) reported two rows: each counted once.
+    assert t["arm4_rows_extracted"] == 2 and t["arm4_rows_with_files"] == 2
+    assert t["arm4_extract_failures"] == 0
     assert m["arms"][0]["B"]["avoids"] == 0.0  # arm 0 cites nothing: the fake proposes
     assert m["arms"][3]["B"]["avoids"] > 0
     assert m["judge_stability"]["orders"]["agreement"] == 1.0
@@ -883,3 +907,20 @@ def test_a_code_index_that_does_not_answer_is_reported(tmp_path):
     )
     t = score.score(ts, out)["treatment"]
     assert t["arm4_code_lookups_failed"] == 3 and t["arm4_rows_with_files"] == 0
+
+
+def test_an_interrupt_after_setup_keeps_the_namespaces_and_says_how_to_erase_them(tmp_path, capsys):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+
+    def interrupted(system, user, max_tokens):
+        raise KeyboardInterrupt
+
+    model = Model("gpt-4o-mini", interrupted, ledger)
+    loom = FakeLoom()
+    with pytest.raises(KeyboardInterrupt):
+        run.run(ts, _config(out, arms=[0, 3]), loom, model, [model], ledger)
+    assert loom.erased == []
+    assert "loom namespaces-gc" in capsys.readouterr().err

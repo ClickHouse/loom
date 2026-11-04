@@ -319,8 +319,11 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
             out[f"arm{arm}_{surface.removesuffix('_keys')}_served"] = f"{sum(hits)}/{len(hits)}"
     extraction = state.get("extraction") or {}
     if extraction:
-        out["arm4_rows_extracted"] = sum(len(r["keys"]) for r in extraction.values())
-        out["arm4_rows_with_files"] = sum(len(r.get("linked") or {}) for r in extraction.values())
+        # A key the run over a revision reported again is one row.
+        out["arm4_rows_extracted"] = len({k for r in extraction.values() for k in r["keys"]})
+        out["arm4_rows_with_files"] = len(
+            {k for r in extraction.values() for k in r.get("linked") or {}}
+        )
         out["arm4_extract_failures"] = sum(1 for r in extraction.values() if r["exit"] != 0)
         out["arm4_code_lookups_failed"] = sum(
             len(r.get("lookup_failures") or []) for r in extraction.values()

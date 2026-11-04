@@ -133,10 +133,19 @@ def find_citations(text: str, source_uris: list[str]) -> list[dict[str, Any]]:
 
 
 def section_text(content: str, section: str, limit: int = 1500) -> str | None:
-    """The text from a section's heading line on, found by the last breadcrumb segment;
-    the whole document start when no section is named; None when no heading line is it."""
+    """A cited section's heading and text, found the way the chunker named it: the
+    breadcrumb is the parser's cleaned heading path (code spans, emphasis and anchors
+    stripped; Setext and HTML headings read), matched whole, else by its last segment.
+    The document start when no section is named; None when no section is it."""
+    from server.knowledge.domain.chunking import SEPARATOR, detect_sections
+
     if not section:
         return content[:limit]
-    head = section.split(" > ")[-1].strip()
-    m = re.search(rf"^#+\s+{re.escape(head)}\s*$", content, re.M)
-    return None if m is None else content[m.start() : m.start() + limit]
+    sections = [s for s in detect_sections(content) if s.path]
+    found = next((s for s in sections if SEPARATOR.join(s.path) == section), None)
+    if found is None:
+        head = section.split(SEPARATOR)[-1].strip()
+        found = next((s for s in sections if s.path[-1] == head), None)
+    if found is None:
+        return None
+    return (found.path[-1] + "\n" + content[found.start : found.end])[:limit]

@@ -74,6 +74,12 @@ def section_keys(section: str) -> list[str]:
     return list(dict.fromkeys(keys))
 
 
+def _text(output: bytes | str | None) -> str:
+    if isinstance(output, bytes):
+        return output.decode(errors="replace")
+    return output or ""
+
+
 class Loom:
     """Each arm's namespace lives in its own org: a search fans out over every namespace
     of its org, so arms sharing one would read each other's rows."""
@@ -180,8 +186,9 @@ class Loom:
                 cmd, capture_output=True, text=True, check=False, timeout=EXTRACT_TIMEOUT_S
             )
         except subprocess.TimeoutExpired as e:
-            out = e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
-            return 1, out + f"\nerror: stopped after {EXTRACT_TIMEOUT_S} s"
+            # The partial output arrives as bytes even in text mode.
+            out = [_text(e.stdout), _text(e.stderr), f"error: stopped after {EXTRACT_TIMEOUT_S} s"]
+            return 1, "".join(out[:2]) + "\n" + out[2]
         return done.returncode, done.stdout + done.stderr
 
     def decision_reasoning(self, namespace: str) -> dict[str, str]:

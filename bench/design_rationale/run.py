@@ -106,39 +106,42 @@ def pre_edit(cfg: Config, arm: int) -> bool:
 # ---------------------------------------------------------------- extraction bound
 
 
-def extraction_windows(doc: Document, window_chars: int) -> list[int]:
-    """The character count of each window the extractor reads `doc` in: the document
-    chunked as knowledge.upsert chunks it (overlapping chunks included), then grouped
-    as `loom decisions extract` groups them. Sections it skips as image-only only make
-    the real count smaller."""
-    from server.knowledge.domain.chunking import chunk_document
-    from server.memory.domain.corpus_synthesis import CorpusChunk, windows
-    from server.settings import settings
+def extraction_windows(doc: Document, window_chars: int) -> list[Any]:
+    """The windows the extractor reads `doc` in: the document chunked by knowledge.upsert's
+    own chunker (overlapping chunks included) and grouped by the extractor's own
+    windowing. Sections it skips as image-only only make the real count smaller."""
+    from server.knowledge.app.writes import _chunk_text
+    from server.memory.app.decision_extract import _windows
+    from server.memory.domain.corpus_synthesis import CorpusChunk
 
-    size = settings.knowledge_chunk_size
-    chunks = chunk_document(
-        doc.content, size=size, stride=min(settings.knowledge_chunk_stride, size)
-    )
-    corpus = [CorpusChunk(doc.source_uri, c.idx, c.text, c.section_path) for c in chunks]
-    return [sum(len(c.text) for c in w.chunks) for w in windows(corpus, window_chars=window_chars)]
+    chunks = [
+        CorpusChunk(doc.source_uri, c.idx, c.text, c.section_path) for c in _chunk_text(doc.content)
+    ]
+    return _windows(chunks, set(), window_chars)
 
 
 def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:
-    """(calls, input tokens, output tokens) one extraction run on `doc` may spend at most:
-    two calls per window (a reply with no decision or a reason that is not one span of the
-    text is read again), each carrying its window, the prompt and, on a re-run over a
-    revision, the known decisions it lists, and each writing up to the extractor's output
-    cap."""
+    """(calls, input tokens, output tokens) one extraction run on `doc` may spend at most.
+    Two calls per window: a reply with no decision, or with a reason that is not one span
+    of the text, is read again. Each call carries the system prompt (with the known
+    decisions a re-run over a revision lists) and the window as the extractor sends it,
+    its `[document: ...]` and `[section: ...]` lines included (`user_prompt`). The second
+    call may also carry the note listing the first reply's failed spans, which the first
+    reply wrote, so it is bounded by the output cap. Each call writes up to that cap."""
     from server.memory.domain import decision_extract as dx
     from server.settings import settings
     from server.settings.budgets import llm_max_tokens
 
-    sizes = extraction_windows(doc, window_chars) or [0]
     known = settings.memory_decision_extract_known_max if doc.revision_of else 0
-    prompt = len(dx.system_prompt(3, [("", "", "x" * KNOWN_DECISION_CHARS)] * known))
-    calls = 2 * len(sizes)
-    tin = sum(2 * (n + prompt) // CHARS_PER_TOKEN_WORST for n in sizes)
-    return calls, tin, calls * llm_max_tokens("decision_extract")
+    system = len(dx.system_prompt(3, [("", "", "x" * KNOWN_DECISION_CHARS)] * known))
+    cap = llm_max_tokens("decision_extract")
+    windows = extraction_windows(doc, window_chars)
+    tin = 0
+    for w in windows:
+        one = (system + len(dx.user_prompt(w, doc.title))) // CHARS_PER_TOKEN_WORST
+        tin += 2 * one + cap
+    calls = 2 * len(windows)
+    return calls, tin, calls * cap
 
 
 # ---------------------------------------------------------------- plan (dry run)
@@ -739,9 +742,10 @@ def run(
         finished = True
     except CapReached as e:
         print(f"stopped: {e}; run again with the same --out (and a higher --max-usd) to resume")
-    except Exception:
+    except BaseException:
+        # An error or an interrupt: what the run wrote is kept for a resume.
         if not state.get("erased"):
-            print(f"stopped on an error; {cleanup_hint(cfg, loom, ns)}", file=sys.stderr)
+            print(f"stopped; {cleanup_hint(cfg, loom, ns)}", file=sys.stderr)
         raise
     finally:
         if finished and not cfg.keep_namespaces:
