@@ -617,6 +617,10 @@ an abstention answer says no decision is recorded and invents none. No arm serve
 reversed statement as current. C states current is averaged over the 5 supersession tasks.
 Abstention tasks failed (no abstention, or an invented rationale), averaged over the
 abstention tasks: 2% in arm 0, 32% in arm 1, 10% in arm 2, 3% in arm 3 and 12% in arm 4.
+Citation precision is the share of the answers' citations that resolve and that the judge
+says support what they are cited for. Citation recall is the share of A claims with at
+least one of their own citations resolving and supporting them. A answers with no claim,
+which A precision leaves out: none in arms 0 to 3, 16.7% in arm 4.
 
 Paired per task, bootstrap over documents, 95% interval, and the minimum detectable effect
 taken from that interval. With five clusters the bootstrap intervals and the MDEs taken
@@ -675,13 +679,16 @@ ledger does not split judging by arm.
 **Reading.** Resolved against zero (the interval's lower bound above it, or its upper
 bound below it): the gold rows (arm 3) raise A precision and recall and B avoidance and
 satisfaction over no design knowledge. Extracted rows (arm 4) raise B avoidance and
-satisfaction over arm 0, and A precision over the answers that made a claim (arm 4
-abstained on 73% of A answers), and fall below the gold rows on A precision, A recall, B
-avoidance and C. The whole document in context (arm 1) raises A precision and recall over
-arm 0, but its B avoidance is not resolved against arm 0 (-8.9, -18.2 .. +6.7) and falls
-below the gold rows by 79 points; it also fails more C tasks than arm 0 and arm 3. A
-hypothesis, not tested here: a decision row names the rejected option as rejected, and a
-whole document does not.
+satisfaction over arm 0, and A precision over the answers that made a claim, and fall
+below the gold rows on A precision, A recall, B avoidance and C. Arm 4 states the current
+design on 20% of supersession judgements, arm 3 on 100%. The document read through search
+(arm 2) falls below the gold rows on A precision (-13.2), A recall (-13.3), B avoidance
+(-52.0) and B satisfaction (-46.5). The whole document in context (arm 1) raises A
+precision and recall over arm 0 and falls below the gold rows on A precision (-11.3); its
+B avoidance is not resolved against arm 0 (-8.9, -18.2 .. +6.7) and falls below the gold
+rows by 79 points; it also fails more C tasks than arm 0 and arm 3. A hypothesis, not
+tested here: a decision row names the rejected option as rejected, and a whole document
+does not.
 
 **Treatment check.** Of the 30 tasks with gold rows, arm 3's pre-edit block served 27 and
 search served 29 (a task counts when it served one of its own gold rows); arm 4's pre-edit
@@ -703,9 +710,9 @@ set.
   `text-embedding-3-large` (the [models table](#models)).
 - **Artifacts:** `bench/results/design_rationale.summary.json`, written by
   `score --summary`: the per-arm metrics, comparisons, injected tokens, treatment check,
-  judge agreement and unreadable passes, the run's flags (arms, models, window, K) and its
-  spend by ledger stage and the answers' cost per arm; the per-task rows, which name
-  private tasks, are left out.
+  judge agreement, unreadable passes and the A answers with no claim, the run's flags
+  (arms, models, window, K) and its spend by ledger stage and the answers' cost per arm;
+  the per-task rows, which name private tasks, are left out.
 - **Reproduce:**
   `PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> --base-url <server> --reader-model gpt-6-luna --judge-model gpt-6-luna --code-index <url> --code-index-org <org> --code-index-namespace <code namespace> --extract-model gpt-6-luna --k 3 --max-usd 9`,
   then `... score <taskset> --out <dir> --summary bench/results/design_rationale.summary.json`.

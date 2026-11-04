@@ -56,6 +56,10 @@ def planning_mde(n_tasks: int) -> float:
     return MDE_Z * PLANNING_SD / math.sqrt(n_tasks) if n_tasks else float("nan")
 
 
+def _list_or_none(value: Any) -> bool:
+    return value is None or isinstance(value, list)
+
+
 def readable(kind: str, task: dict[str, Any], verdict: Any) -> bool:
     need = REQUIRED[kind]
     if kind == "C" and task.get("subtype") == "supersession":
@@ -67,9 +71,9 @@ def readable(kind: str, task: dict[str, Any], verdict: Any) -> bool:
     if not isinstance(claims, list) or not all(isinstance(c, dict) for c in claims):
         return False
     for part in (verdict, *claims):
-        if any(not isinstance(part.get(f) or [], list) for f in LIST_FIELDS):
+        if any(not _list_or_none(part.get(f)) for f in LIST_FIELDS):
             return False
-    if any(not isinstance(verdict.get(f) or [], list) for f in TOP_LIST_FIELDS):
+    if any(not _list_or_none(verdict.get(f)) for f in TOP_LIST_FIELDS):
         return False
     # A rubric the judge left unanswered would pass the task.
     rubric = any(d["type"] == "judge" for d in task.get("detector", []))
@@ -206,6 +210,21 @@ def unreadable(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, int]]
 
 
 # ---------------------------------------------------------------- per task and arm
+
+
+def a_answers_without_claims(ts: TaskSet, judged: dict[str, Any]) -> dict[int, float]:
+    """arm -> the share of scored A answers with no claim in any readable pass: the
+    answers A precision leaves out."""
+    tasks = {t["id"]: t for t in ts.tasks.get("A", [])}
+    counts: dict[int, list[bool]] = defaultdict(list)
+    for key, entry in judged.items():
+        tid, arm = parse_key(key)
+        if tid not in tasks:
+            continue
+        m = answer_metrics("A", tasks[tid], entry)
+        if m:
+            counts[arm].append(m.get("precision") is None)
+    return {arm: round(sum(v) / len(v), 4) for arm, v in sorted(counts.items())}
 
 
 def per_task(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, dict[str, Any]]]:
@@ -515,6 +534,7 @@ def score(
         "treatment": treatment_check(ts, surf, state),
         "judge_stability": judge_stability(ts, judged),
         "unreadable": unreadable(ts, judged),
+        "a_answers_without_claims": a_answers_without_claims(ts, judged),
         "per_task": by_arm,
     }
     if human:
@@ -546,7 +566,7 @@ def summary(metrics: dict[str, Any], out_dir: Path) -> dict[str, Any]:
     for key, a in answers.items():
         arm = parse_key(key)[1]
         if priced:
-            answer_usd[arm] += cost_usd(flags["reader"], a.get("in", 0), a.get("out", 0))
+            answer_usd[arm] += cost_usd(flags["reader"], a["in"], a["out"])
         answer_n[arm] += 1
     samples = {key.rsplit("/s", 1)[1] for key in answers}
     aggregates = {k: v for k, v in metrics.items() if k != "per_task"}

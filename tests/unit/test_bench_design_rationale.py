@@ -281,6 +281,20 @@ def test_a_citation_counts_only_when_the_judge_names_it_exactly():
     assert score.pass_metrics("B", {}, entry, exact)["citations_good"] == 1
 
 
+def test_the_no_claim_share_counts_a_answers_whose_passes_made_no_claim():
+    ts = load(EXAMPLE)
+    tid = ts.tasks["A"][0]["id"]
+
+    def entry(claims):
+        verdict = {"claims": claims, "gold_covered": [], "potentially_misleading": False}
+        return {"citations": [], "detectors": [], "passes": [{"verdict": verdict}]}
+
+    # An abstaining answer can still make a graded claim: only the claimless one counts.
+    claim = {"verdict": "correct", "cites": [], "cites_support": []}
+    judged = {f"{tid}/arm0/s1": entry([]), f"{tid}/arm0/s2": entry([claim])}
+    assert score.a_answers_without_claims(ts, judged) == {0: 0.5}
+
+
 def test_a_verdict_without_its_keys_is_unreadable_not_a_pass():
     ts = load(EXAMPLE)
     judged = {
@@ -304,6 +318,10 @@ def test_a_verdict_with_a_bool_where_a_list_goes_is_unreadable():
     assert not score.readable("A", ts.tasks["A"][0], a)
     assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": "none"})
     assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": [], "gold_covered": True})
+    assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": [], "gold_covered": 0})
+    assert not score.readable("B", task, {**good, "cites": False})
+    assert not score.readable("B", task, {**good, "cites_support": 0})
+    assert score.readable("B", task, {**good, "cites": None})
 
 
 def test_one_document_gives_no_mde():
@@ -1353,6 +1371,7 @@ def test_score_writes_the_summary_without_per_task_rows(tmp_path):
     assert spend["total"] == round(sum(r["usd"] for r in ledger.rows()), 4)
     assert spend["answers_by_arm"]["0"]["answers"] == 2 * len(list(ts.all_tasks()))
     assert {(c["treatment"], c["reference"]) for c in summary["comparisons"]} >= {(1, 0)}
+    assert set(summary["a_answers_without_claims"]) == {"0", "1", "3", "4"}
     # Scoring again regenerates the same file.
     assert main([*argv, "--summary", str(path)]) == 0
     assert path.read_text() == first
