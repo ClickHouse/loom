@@ -61,7 +61,8 @@ class KnowledgeSourceEntry(BaseModel):
     # The source's name, unique in the namespace.
     name: str
     # The source's kind (`gdrive`: a shared folder of docs, slides, decks and PDFs;
-    # `linear`: a project tracker's project documents).
+    # `linear`: a project tracker's project documents; `recording`: the transcripts
+    # of a meeting store's recordings).
     kind: str
     # The ids and filters the source reads; never a credential.
     config: dict[str, Any] = Field(default_factory=dict)
@@ -107,20 +108,23 @@ class KnowledgeSourceAddInput(BaseModel):
     )
     kind: str = Field(
         ...,
-        description="The source kind: `gdrive` (a shared folder) or `linear` (a project "
-        "tracker's project documents).",
+        description="The source kind: `gdrive` (a shared folder), `linear` (a project "
+        "tracker's project documents) or `recording` (a meeting store's transcripts).",
     )
     config: dict[str, Any] = Field(
         ...,
         description="The ids and filters the source reads, per kind; gdrive: {folder_ids: "
         "[1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: "
-        "{project_ids: [1-20 project ids, UUIDs]}.",
+        "{project_ids: [1-20 project ids, UUIDs]}; recording: {provider: meet | zoom, ids: "
+        "[1-20 space ids (meet) or meeting ids (zoom)]}.",
     )
     credential: str = Field(
         ...,
         description="The source's read-only credential (gdrive: a service account's JSON key, "
         "with the folders shared to the account read-only; linear: a read-only API key of an "
-        "account that sees the projects); stored encrypted, never returned.",
+        "account that sees the projects; recording: meet an authorized_user JSON file with "
+        "the meetings.space.readonly scope, zoom a server-to-server app's {account_id, "
+        "client_id, client_secret}); stored encrypted, never returned.",
     )
     dry_run: bool = Field(False, description="Probe and write nothing.")
 
@@ -215,9 +219,8 @@ class KnowledgeSourceRotateInput(BaseModel):
     name: str = Field(..., description="The source name.")
     credential: str = Field(
         ...,
-        description="The replacement credential (gdrive: a service account's JSON key; "
-        "linear: an API key); "
-        "stored encrypted, never returned.",
+        description="The replacement credential, of the same form as add's; stored "
+        "encrypted, never returned.",
     )
 
 

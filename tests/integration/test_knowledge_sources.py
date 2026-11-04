@@ -218,6 +218,23 @@ def test_add_refuses_a_namespace_that_is_not_a_repository(control_plane_url: str
     assert out.json()["detail"]["code"] == "BAD_KIND"
 
 
+def test_add_reads_a_recording_config_before_the_namespace(control_plane_url: str) -> None:
+    body = {
+        "org": unique_org("ksrc"),
+        "namespace": "notes",
+        "name": NAME,
+        "kind": "recording",
+        "config": {"provider": "zoom", "ids": ["not-digits"]},
+        "credential": "{}",
+    }
+    out = _post(control_plane_url, "knowledge.source.add", body)
+    assert out.status_code == 422, out.text
+    assert out.json()["detail"]["code"] == "BAD_CONFIG"
+    body["config"] = {"provider": "zoom", "ids": [85746065432]}
+    out = _post(control_plane_url, "knowledge.source.add", body)
+    assert out.json()["detail"]["code"] == "NOT_A_CODE_NAMESPACE"
+
+
 def _document(ch: Any, repo: Any, name: str, actor: str) -> str:
     """One live document tagged `source:<name>`, written as `actor`."""
     org, ns = repo.org, repo.ns
