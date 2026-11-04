@@ -213,7 +213,7 @@ def server_extract_model() -> tuple[str, str, str]:
     from server.settings import settings
 
     client = get_llm_client()
-    provider, model = str(getattr(client, "provider", "")), str(getattr(client, "model", ""))
+    provider, model = client.provider, client.model
     return provider, model, settings.llm_fallback_model.strip()
 
 

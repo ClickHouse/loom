@@ -89,8 +89,8 @@ each comparison reports its minimum detectable effect.
 | `path`        | The markdown file, relative to the directory (or absolute)                                                                                                             |
 | `revision_of` | Optional: the id of the document this one revises. It shares that document's `source_uri` and is ingested after every first version, so the earlier text is superseded |
 
-`gold_rows.json` is a list of decision rows, written with `memory.set` (and `memory.pin`
-when pinned) for arms 3 and 5:
+`gold_rows.json` is a list of decision rows, each written once for arms 3 and 5:
+`memory.pin` for a pinned row, `memory.set` otherwise.
 
 | Field                                                 | Meaning                                                                                                                                              |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -134,7 +134,9 @@ price; the extraction leg as an estimate charged before it runs; the server's ow
 in the run's orgs read back from `cost.summary` after each stage), `extract_<doc>.log`
 and `extraction_labels.todo.json`. The server's spend is recorded after the fact, not
 refused in advance: what stops the server itself is each namespace's daily cost cap,
-set to `--max-usd` at registration.
+set to `--max-usd` at registration. The extraction CLI binds no cost accumulator (only
+the transports and workers do), so its model calls never reach `cost.summary`: the
+ledger's estimate is their only record, and they are not counted twice.
 
 A run the spend cap stops, in its setup or later, keeps its namespaces and resumes on
 the same `--out` (exit code 1). A run that fails or is interrupted after its setup (a

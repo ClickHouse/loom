@@ -89,10 +89,10 @@ class Ledger:
             }
         )
 
-    def record_usd(self, stage: str, usd: float, **extra: Any) -> None:
+    def record_usd(self, stage: str, usd: float) -> None:
         """Spend the ledger did not price itself: the server's, read from
         cost.summary."""
-        self._append({"stage": stage, "usd": usd, "estimated": False, **extra})
+        self._append({"stage": stage, "usd": usd, "estimated": False})
 
     def _append(self, row: dict[str, Any]) -> None:
         with self.path.open("a") as f:

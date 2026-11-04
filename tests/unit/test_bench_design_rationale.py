@@ -411,10 +411,19 @@ def test_the_extraction_bound_covers_every_window_the_extractor_reads():
     first = ts.documents["upload-retries"]
     calls, revised_in, _ = run.extraction_bound(dataclasses.replace(first, revision_of="x"), 6000)
     _, first_in, _ = run.extraction_bound(first, 6000)
+    from server.memory.api.models_decision import DecisionRecordInput
+    from server.memory.domain import decision_extract as dx
+
     known = settings.memory_decision_extract_known_max
-    allowance = known * run.KNOWN_DECISION_CHARS // CHARS_PER_TOKEN_WORST
-    # Each call carries the whole allowance: the prompt keeps a scenario uncut.
-    assert revised_in - first_in >= allowance * calls
+    # The longest rows decision.record accepts, as the prompt lists them.
+    fields = DecisionRecordInput.model_fields
+    longest = tuple(
+        "x" * next(m.max_length for m in fields[f].metadata if hasattr(m, "max_length"))
+        for f in ("category", "scenario")
+    ) + ("x" * 5000,)
+    listed = len(dx.system_prompt(3, [longest] * known)) - len(dx.system_prompt(3))
+    # Each call carries the whole list.
+    assert revised_in - first_in >= listed // CHARS_PER_TOKEN_WORST * calls
 
 
 # ---------------------------------------------------------------- end to end
@@ -446,6 +455,8 @@ class FakeLoom:
         self.registered: list[tuple[str, float]] = []
         self.erased: list[str] = []
         self.fail_on_upsert = fail_on_upsert
+        # The files the fake extraction puts on its rows, as a spelled-out path would.
+        self.extract_files: list[str] = []
         self.orgs: dict[str, str] = {}
         # USD the server spent per org: each document write costs `write_usd`.
         self.spend: dict[str, float] = {}
@@ -485,7 +496,7 @@ class FakeLoom:
         name = next(n for word, n in CODE_NAMES.items() if word in source_uri)
         self.rows[(namespace, key)] = {
             "value": content.split("\n\n")[2][:200],
-            "files": list(getattr(self, "extract_files", [])),
+            "files": list(self.extract_files),
             "source": f"knowledge:{namespace}/{source_uri}",
         }
         return 0, (
@@ -1026,3 +1037,59 @@ def test_a_citation_of_a_deleted_document_does_not_resolve():
     assert resolver.resolve(cite, 1)[0] is True
     del loom.docs[("kb", uri)]  # knowledge.get answers found=false once it is deleted
     assert run.Resolver(ts, loom, ns).resolve(cite, 1) == (False, "document not found")
+
+
+def test_a_resume_with_another_reader_is_refused(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 0.001)
+    model = _fake_model(ledger, usage=2000)
+    assert (
+        run.run(ts, _config(out, arms=[0], max_usd=0.001), FakeLoom(), model, [model], ledger)
+        is False
+    )
+    other = _config(out, arms=[0], max_usd=1.0, reader="gpt-4.1-mini")
+    with pytest.raises(run.RunError, match="reader"):
+        run.run(ts, other, FakeLoom(), model, [model], ledger)
+
+
+def _mock_loom(handler):
+    from bench.design_rationale.loom import Loom
+
+    loom = Loom("http://loom.test")
+    loom.client = httpx.Client(transport=httpx.MockTransport(handler))
+    loom.bind("ns", "org")
+    return loom
+
+
+def test_a_truncated_pre_edit_block_counts_only_the_rows_it_shows():
+    out = {
+        "rendered": "- design/a [decision]: shown",
+        "tokens_estimate": 9,
+        "truncated": True,
+        "hits": [{"memory_key": "design/a"}, {"memory_key": "design/b"}],
+    }
+    loom = _mock_loom(lambda request: httpx.Response(200, json=out))
+    assert loom.for_file("ns", "src/x.py")["keys"] == ["design/a"]
+
+
+def test_a_search_error_is_raised_with_its_text():
+    replies = iter(
+        [
+            {"jsonrpc": "2.0", "id": 1, "error": {"code": -32602, "message": "bad arguments"}},
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "isError": True,
+                    "content": [{"type": "text", "text": "namespace refused"}],
+                },
+            },
+        ]
+    )
+    loom = _mock_loom(lambda request: httpx.Response(200, json=next(replies)))
+    with pytest.raises(RuntimeError, match="bad arguments"):
+        loom.search("ns", "q", "s")
+    with pytest.raises(RuntimeError, match="namespace refused"):
+        loom.search("ns", "q", "s")

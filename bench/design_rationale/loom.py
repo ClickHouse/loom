@@ -93,6 +93,7 @@ class Loom:
     def __init__(self, base_url: str, token: str = "", timeout_s: float = 180.0):
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self.timeout_s = timeout_s
         self.client = httpx.Client(timeout=timeout_s)
         self.orgs: dict[str, str] = {}
 
@@ -106,7 +107,14 @@ class Loom:
         return self._post(f"/v1/{name}", {"org": self.orgs[body["namespace"]], **body})
 
     def _post(self, path: str, body: dict[str, Any]) -> Any:
-        return post_json(self.client, self.base_url + path, body, token=self.token, attempts=3)
+        return post_json(
+            self.client,
+            self.base_url + path,
+            body,
+            token=self.token,
+            attempts=3,
+            timeout_s=self.timeout_s,
+        )
 
     # ---- namespaces
 
@@ -128,11 +136,12 @@ class Loom:
 
     def server_spend(self, namespaces: list[str], since: date) -> float:
         """USD the server spent on model and embedding calls in these namespaces' orgs
-        from `since` (the run's first day) to today, as its own cost ledger records it.
-        """
+        from the day before `since` (the run's first local day) to the day after today,
+        as its own cost ledger records it."""
         total = 0.0
         for org in sorted({self.orgs[ns] for ns in namespaces}):
             # traffic_class reads the events themselves: the daily rollup lags them.
+            # One day wider at each end: the ledger's days are UTC, ours local.
             body = {
                 "org": org,
                 "traffic_class": "bench",
@@ -249,12 +258,17 @@ class Loom:
             "memory.for_file",
             {"namespace": namespace, "path": path, "token_budget": token_budget},
         )
+        rendered = out["rendered"]
+        keys = [h["memory_key"] for h in out["hits"]]
+        if out["truncated"]:
+            # The budget left some hits out of the block: count only what the agent saw.
+            keys = [k for k in keys if k in rendered]
         return {
             "path": path,
-            "rendered": out["rendered"],
+            "rendered": rendered,
             "tokens": out["tokens_estimate"],
             "truncated": out["truncated"],
-            "keys": [h["memory_key"] for h in out["hits"]],
+            "keys": keys,
         }
 
     def search(self, namespace: str, query: str, session: str) -> dict[str, Any]:
@@ -272,7 +286,12 @@ class Loom:
             headers["Authorization"] = f"Bearer {self.token}"
         r = self.client.post(self.base_url + "/mcp", json=body, headers=headers)
         r.raise_for_status()
-        result = r.json()["result"]
+        reply = r.json()
+        if "error" in reply:
+            raise RuntimeError(f"loom_search failed: {reply['error']}")
+        result = reply["result"]
+        if result.get("isError"):
+            raise RuntimeError(f"loom_search failed: {result['content'][0]['text']}")
         # The lean structured result leaves out a section with no hits.
         knowledge = result["structuredContent"].get("knowledge") or {}
         return {
@@ -299,7 +318,8 @@ class CodeIndex:
         self.org = org
         self.namespace = namespace
         self.token = token
-        self.client = httpx.Client(timeout=120.0)
+        self.timeout_s = 120.0
+        self.client = httpx.Client(timeout=self.timeout_s)
 
     def close(self) -> None:
         self.client.close()
@@ -318,7 +338,12 @@ class CodeIndex:
         }
         try:
             out = post_json(
-                self.client, self.base_url + "/v1/code.symbol", body, token=self.token, attempts=3
+                self.client,
+                self.base_url + "/v1/code.symbol",
+                body,
+                token=self.token,
+                attempts=3,
+                timeout_s=self.timeout_s,
             )
         except httpx.HTTPError:
             return None

@@ -52,10 +52,6 @@ CITED_TEXT_TOKENS = 1200  # the cited source text a judge reads
 JUDGE_FRAME_TOKENS = 900  # the judge's instructions and gold lists
 TYPICAL_OUT = {"A": 400, "B": 900, "C": 400, "judge": 500, "extract": 800}
 JUDGE_OUT_CAP = 4000
-# A known decision as the extractor's prompt lists it on a re-run: category, scenario
-# and outcome, at most this many characters together (an assumed bound for the
-# estimate).
-KNOWN_DECISION_CHARS = 600
 # Decisions kept per section, which the extractor's prompt states: the run uses the
 # default of `loom decisions extract --max-per-section` (server/cli/decisions.py).
 EXTRACT_MAX_PER_SECTION = 3
@@ -119,6 +115,20 @@ def pre_edit(cfg: Config, arm: int) -> bool:
 # ---------------------------------------------------------------- extraction bound
 
 
+def longest_known_decision() -> tuple[str, str, str]:
+    """The longest (category, scenario, outcome) a re-run's prompt can list: the most
+    decision.record accepts for the category and the scenario, and the outcome at the
+    length the prompt cuts it to."""
+    from server.memory.api.models_decision import DecisionRecordInput
+    from server.memory.domain import decision_extract as dx
+
+    def most(field: str) -> int:
+        meta = DecisionRecordInput.model_fields[field].metadata
+        return next(int(m.max_length) for m in meta if getattr(m, "max_length", None))
+
+    return "x" * most("category"), "x" * most("scenario"), "x" * dx._KNOWN_OUTCOME_CHARS
+
+
 def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:
     """(calls, input tokens, output tokens) one extraction run on `doc` may spend at
     most. Two calls per window: a reply with no decision, or with a reason that is not
@@ -142,9 +152,7 @@ def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:
     ]
     windows = _windows(chunks, set(), window_chars)
     known = settings.memory_decision_extract_known_max if doc.revision_of else 0
-    # In the scenario, which the prompt keeps whole (it shortens an outcome).
-    known_rows = [("", "x" * KNOWN_DECISION_CHARS, "")] * known
-    system = len(dx.system_prompt(EXTRACT_MAX_PER_SECTION, known_rows))
+    system = len(dx.system_prompt(EXTRACT_MAX_PER_SECTION, [longest_known_decision()] * known))
     cap = llm_max_tokens("decision_extract")
     tin = 0
     for w in windows:
@@ -685,7 +693,15 @@ def judge(
 
 # The flags a resumed run must share with the run it resumes: they decide what the
 # namespaces hold and what the stored surfaces mean.
-RESUME_FLAGS = ("org", "arms", "arm4_namespace", "arm4_files", "extract_window_chars")
+RESUME_FLAGS = (
+    "org",
+    "arms",
+    "arm4_namespace",
+    "arm4_files",
+    "extract_window_chars",
+    "reader",
+    "judges",
+)
 
 
 def check_resume(state: dict[str, Any], cfg: Config) -> None:
