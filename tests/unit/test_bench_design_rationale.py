@@ -1446,5 +1446,7 @@ def test_judge_accuracy_against_humans_leaves_out_what_a_detector_decided():
         # Push-back is the judge's call on that same answer: counted.
         {"answer": "B1/arm0/s1", "field": "pushed_back", "value": True},
         {"answer": "B1/arm0/s2", "field": "avoids", "value": True},
+        # Whether a detector fired is never the judge's call, decided or not.
+        {"answer": "B1/arm0/s2", "field": "detector_fired", "value": True},
     ]
     assert score.judge_vs_human(ts, judged, labels) == {"items": 2, "accuracy": 1.0, "kappa": 1.0}

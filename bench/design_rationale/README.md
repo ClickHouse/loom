@@ -51,6 +51,12 @@ PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale score <taskset> --out
   --extraction-labels <dir>/extraction_labels.todo.json
 ```
 
+Each run creates its own orgs, so the server runs with auth off (as the dev setup starts
+it), or the token covers every org: `loom mint-token --org '*' --namespaces '*'` writes
+and reads them, and erasing them at the end needs an org-wide admin
+(`--platform-admin`); a writer token's erasure is refused and the logged
+`loom namespaces-gc` command finishes it.
+
 The server is one this run started, with real providers and the server's environment in
 the shell: arm 4 runs `loom decisions extract` in a child process, on the model those
 settings name. The dry run prints the calls, tokens and spend, typical and at every
@@ -158,6 +164,7 @@ Fill each row's `verdict` (`correct`, `partly`, `wrong` or `misleading`) in
 `extraction_labels.todo.json` and pass the file to `score --extraction-labels` for
 extraction precision. `score --human-labels` takes a list of
 `{"answer": "<task>/arm<a>/s<k>", "field": "avoids", "value": true}` and reports judge
-accuracy and kappa. `score` writes `metrics.json` and prints aggregate tables with no
-task text. The run directory holds the task set's content: keep it out of the
-repository.
+accuracy and kappa; labels on `avoids` or `satisfies` for a change answer a detector
+decided are left out, and `detector_fired` labels are never counted. `score` writes
+`metrics.json` and prints aggregate tables with no task text. The run directory holds
+the task set's content: keep it out of the repository.

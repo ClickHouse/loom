@@ -42,6 +42,9 @@ HEADLINE = {
     "B": ("avoids", "satisfies"),
     "C": ("passed",),
 }
+# The change-task fields a fired detector decides: a human label on them says nothing about
+# the judge. `detector_fired` is never the judge's at all.
+DETECTOR_DECIDED = ("avoids", "satisfies")
 
 
 def planning_mde(n_tasks: int) -> float:
@@ -391,9 +394,9 @@ def judge_vs_human(
     ts: TaskSet, judged: dict[str, Any], labels: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Judge accuracy and kappa against a human-labelled slice: a JSON list of
-    {"answer": "<task>/arm<a>/s<k>", "field": <metric>, "value": bool}. On a change
-    answer whose detector fired, the fields the detector decides (avoids, satisfies,
-    detector_fired) say nothing about the judge: those labels are left out."""
+    {"answer": "<task>/arm<a>/s<k>", "field": <metric>, "value": bool}. Labels on
+    `detector_fired` are never counted, nor labels on `DETECTOR_DECIDED` for a change
+    answer whose detector fired: they say nothing about the judge."""
     tasks = {t["id"]: (kind, t) for kind, t in ts.all_tasks()}
     human: list[bool] = []
     machine: list[bool] = []
@@ -402,8 +405,9 @@ def judge_vs_human(
         if entry is None:
             continue
         kind, t = tasks[parse_key(lab["answer"])[0]]
-        decided = ("avoids", "satisfies", "detector_fired")
-        if kind == "B" and lab["field"] in decided and _detector_fired(entry):
+        if lab["field"] == "detector_fired":
+            continue
+        if kind == "B" and lab["field"] in DETECTOR_DECIDED and _detector_fired(entry):
             continue
         value = answer_metrics(kind, t, entry).get(lab["field"])
         if value is None:
