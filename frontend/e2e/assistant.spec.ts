@@ -243,7 +243,7 @@ const KNOWLEDGE = {
   ],
   listed_complete: false,
   findings: [finding("unembedded_chunks", "system_state", 1), finding("mixed_live_versions", "usage_heuristic", 0)],
-  coverage: { rules_run: [], rules_skipped: ["ingest_backlog"], complete: false },
+  coverage: { rules_run: [], rules_skipped: [], complete: false },
   ingestions: {
     sources: 4,
     without_document: 1,

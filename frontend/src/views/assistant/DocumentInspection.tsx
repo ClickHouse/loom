@@ -255,7 +255,7 @@ function IngestionSection({ result, notes }: { result: KnowledgeInspection; note
         <p className="text-text-muted">No knowledge.ingest job in the last 30 days.</p>
       ) : (
         <p className="text-text tabular" data-testid="docs-jobs">
-          {plural(i.sources ?? 0, "source")} with a job · pending {n(i.pending)} · processing {n(i.processing)}
+          {plural(i.sources, "source")} with a job · pending {n(i.pending)} · processing {n(i.processing)}
           {i.stalled ? ` (${fmtInt(i.stalled)} stalled)` : ""} · ready {n(i.ready)} · partial {n(i.partial)} · failed{" "}
           {n(i.failed)} · cancelled {n(i.cancelled)}
           {i.oldest_open_queued_at && (
@@ -416,7 +416,7 @@ function ListedSection({ result }: { result: KnowledgeInspection }) {
         <p className="text-text-muted">The documents could not be listed.</p>
       ) : (
         <>
-          {!result.listed_complete && live !== null && result.listed.length < live && (
+          {!result.listed_complete && live !== null && (
             <p className="text-xs text-text-muted">
               Newest {fmtInt(result.listed.length)} of {fmtInt(live)} listed.
             </p>
