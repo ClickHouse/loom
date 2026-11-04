@@ -296,10 +296,10 @@ async def test_an_admin_revoked_meanwhile_stops_the_persons_later_row(
     async def _verified(org: str, subject: str, ch: Any) -> list[str]:
         return ["dave", "dave@x.io"]
 
-    counts = iter([3, 3, 3])  # before any write, then dave's first row twice
-
     async def _admins(*_a: Any, **_k: Any) -> int:
-        return next(counts, 1)  # the other admin is gone by dave's second row
+        # dave's two rows and eve's; eve is revoked as soon as dave's first row goes.
+        written = len(_handler_env["rows"])
+        return 3 - written - (1 if written else 0)
 
     async def _no_cascade(*_a: Any, **_k: Any) -> int:
         return 0

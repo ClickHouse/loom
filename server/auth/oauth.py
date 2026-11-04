@@ -991,9 +991,9 @@ async def _declined_password_account(
     provisions into, no second account is made beside it: a password sign-in
     with the address would still find that account, and a revocation of the
     address would reach both (`aliases.spellings`), so the person is sent to
-    the operator, who frees
-    the address by releasing that account. One in another org shares nothing
-    with the JIT org, and the person goes on to an account of their own."""
+    the operator, who frees the address by releasing that account. One in
+    another org shares nothing with the JIT org, and the person goes on to an
+    account of their own."""
     from server.auth import device, oidc
     from server.auth.jit import jit_provision_for_email
     from server.auth.login import SignInUnavailable

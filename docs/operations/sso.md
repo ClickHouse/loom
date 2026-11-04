@@ -104,9 +104,11 @@ link --email <their provider address> --org <org> --namespace <ns>` shows
   JIT account an earlier SSO sign-in made, `loom claim-release` it first: its
   memories stay behind in it (carry them over with `namespace.snapshot` and
   `namespace.restore`), and grants made to it must be made again.
-- `loom sso unlink --email <email> --apply` takes a link back: grants written
-  under the address stop admitting the account. Sessions already open are not
-  ended; revoke them with `loom revoke-token --subject`.
+- `loom sso unlink --email <email> --apply` takes a link back: grants stored
+  under the address (written before the link) stop admitting the account.
+  Grants made while it was linked are stored under the login handle and stay;
+  revoke those with `grants.revoke`. Sessions already open are not ended;
+  revoke them with `loom revoke-token --subject`.
 - Someone who says a password account naming their address is not theirs is
   denied when that account is in `LOOM_OIDC_JIT_ORG`, and
   `auth.sso_link_declined` is audited: beside that account, a password sign-in
