@@ -1699,6 +1699,30 @@ describe("Assistant: documents", () => {
     expect(card).toHaveTextContent("and 1 more not listed");
   });
 
+  it("shows a share under one percent as <1%, not 0%", async () => {
+    // One queued first ingest beside 249 sources whose published document was deleted after
+    // its job ended (replaced): the backlog check's share is 1 of 250.
+    const queued = firstIngestQueued();
+    inspectKnowledge.mockResolvedValueOnce({
+      ...queued,
+      documents: {
+        ...queued.documents,
+        deleted: 249,
+        by_format: [{ name: "markdown", live: 0, deleted: 249 }],
+        by_source_scheme: [{ name: "https", live: 0, deleted: 249 }],
+        retired_versions: 249,
+      },
+      ingestions: { ...queued.ingestions, sources: 250, ready: 249, replaced: 249 },
+      ingest_findings: queued.ingest_findings.map((f) =>
+        f.code === "extraction_incomplete" ? f : { ...f, population: 250, share: f.count / 250 },
+      ),
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    const card = within(result).getByRole("listitem", { name: "Backlog" });
+    expect(card).toHaveTextContent("1 source of 250 (<1%)");
+  });
+
   it("says there is no live document to list while a first ingest is queued", async () => {
     inspectKnowledge.mockResolvedValueOnce(firstIngestQueued());
     render(<Assistant />);
@@ -2005,6 +2029,22 @@ describe("Assistant: document drafts", () => {
     expect(apply).toHaveAccessibleDescription(/A platform_admin sends POST \/v1\/admin\/settings.set/);
     await userEvent.click(apply);
     expect(tuneNamespace).toHaveBeenCalledTimes(1);
+    expect(within(review).queryByRole("table", { name: "The document sample at the current values" })).toBeNull();
+    expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("shows the sample's own measures when the sample drafts no chunk size", async () => {
+    tuneNamespace.mockResolvedValueOnce({
+      ...TUNE,
+      proposals: [],
+      chunking: SAMPLE,
+      skipped: [...TUNE.skipped, DECISIONS_SKIPPED],
+    });
+    const { container } = render(<Assistant />);
+    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    const review = await screen.findByTestId("assistant-review");
+    const stats = within(review).getByRole("table", { name: "The document sample at the current values" });
+    expect(within(stats).getByText("Sections cut by size").closest("tr")).toHaveTextContent("18 of 40");
     expect(await axeViolations(container)).toEqual([]);
   });
 

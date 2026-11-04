@@ -360,6 +360,12 @@ function FindingGroups({
   );
 }
 
+/** A share under one percent with hits reads "<1%", never "0%". */
+function percent(count: number, share: number): string {
+  const p = Math.round(share * 100);
+  return count > 0 && p === 0 ? "<1%" : `${p}%`;
+}
+
 function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFinding; noun: string }) {
   const head = `finding-${f.code}`;
   const ids = "ingestion_ids" in f ? f.ingestion_ids : [];
@@ -378,7 +384,7 @@ function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFi
       </div>
       <p className="text-text tabular">
         {plural(f.count, noun)}
-        {f.population !== null && ` of ${fmtInt(f.population)}`} ({Math.round(f.share * 100)}%)
+        {f.population !== null && ` of ${fmtInt(f.population)}`} ({percent(f.count, f.share)})
         {"without_document" in f && f.without_document > 0 && ` · ${fmtInt(f.without_document)} with no live document`}
         {/* The remedy differs: a text document is written again, an ingested one ingested again. */}
         {"ingested" in f && f.ingested > 0 && ` · ${fmtInt(f.ingested)} published by knowledge.ingest`}

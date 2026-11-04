@@ -47,6 +47,8 @@ export function ReviewChanges({ tune }: { tune: NamespaceTune | null }) {
         </ul>
       )}
       {tune.chunking && <SampleNote sample={tune.chunking} />}
+      {/* With no chunking draft the sample's own measures are the evidence. */}
+      {tune.chunking && !tune.proposals.some((p) => p.preview) && <SampleStats stats={tune.chunking.current} />}
       {tune.extraction_policy === null && tune.extraction_policy_unavailable && (
         <p className="text-xs text-text-muted">
           Operator extraction policy not read: {tune.extraction_policy_unavailable}
@@ -147,6 +149,23 @@ const PREVIEW_ROWS: Array<[string, (s: ChunkStats) => string]> = [
     (s) => (s.over_input_limit == null ? "limit not known" : fmtInt(s.over_input_limit)),
   ],
 ];
+
+function SampleStats({ stats }: { stats: ChunkStats }) {
+  return (
+    <Table
+      aria-label="The document sample at the current values"
+      size="sm"
+      headers={[{ label: "On the sample" }, { label: "Now" }]}
+      rows={PREVIEW_ROWS.map(([label, value]) => ({
+        id: label,
+        items: [
+          { label: <span className="whitespace-normal">{label}</span> },
+          { label: <span className="tabular">{value(stats)}</span> },
+        ],
+      }))}
+    />
+  );
+}
 
 function ChunkPreview({ title, before, after }: { title: string; before: ChunkStats; after: ChunkStats }) {
   return (
