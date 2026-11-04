@@ -32,7 +32,9 @@ GrantStatusStr = Literal["active", "pending"]
 class GrantsCreateInput(BaseModel):
     org: str
     namespace: str
-    subject: str  # email or service-account 'sub' claim
+    # A login handle, an email (it admits an account once that email is verified: an SSO
+    # account's or a linked one's), or a service-account `sub` claim.
+    subject: str
     # `viewer`, `writer` or `admin`; a code namespace takes only `viewer` (reader) and
     # `admin` (maintainer).
     role: GrantRoleStr

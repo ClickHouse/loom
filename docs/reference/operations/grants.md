@@ -40,7 +40,7 @@ Grant another subject (user or service-account) viewer / writer / admin role on 
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `subject` | `str` | required | email or service-account 'sub' claim |
+| `subject` | `str` | required | A login handle, an email (it admits an account once that email is verified: an SSO account's or a linked one's), or a service-account `sub` claim. |
 | `role` | `Literal['viewer', 'writer', 'admin']` | required | `viewer`, `writer` or `admin`; a code namespace takes only `viewer` (reader) and `admin` (maintainer). |
 | `granted_by` | `str` | `'admin'` | Ignored under auth: the server stamps the authenticated caller. |
 | `replace` | `bool` | `False` | The table replaces on (org, namespace, subject), so a create below the subject's current active role would lower it silently. |
