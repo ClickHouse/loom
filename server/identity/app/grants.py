@@ -335,14 +335,9 @@ async def handle_grants_pending_for_me(
 
 async def _live_grant_rows(org: str, namespace: str, subject: str) -> list[tuple[str, GrantState]]:
     """The (stored subject, row) pairs a revoke of `subject` takes: the live row
-    under every spelling the gate admits the person by (the subject, its login
-    handle, its verified email), matched in any case as the gate matches them,
-    since one left live would keep admitting them. When the subject is an address
-    no verified account holds and that never held a row there, the rows under the
-    spellings a revocation reaches
-    (`aliases.spellings`): the live row of each unverified account naming the
-    address, however it was granted. A handle never falls back to its unverified
-    email, which may name someone else's grant."""
+    under each spelling the gate admits the person by, matched in any case. An
+    address no verified account holds and that never held a row here also takes
+    the live rows of the unverified accounts naming it (`aliases.spellings`)."""
     from server.auth.aliases import spellings, verified_spellings
 
     verified = await verified_spellings(org, subject)

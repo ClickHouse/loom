@@ -199,7 +199,9 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
     live = [g for g in grants if g["revoked_at"] is None]
     if was and live:
         named = ", ".join(f"{g['namespace']} ({g['role']})" for g in live)
-        if (org, namespace) in await sso_links.linked(was):
+        with own_write_reads():  # a link another process just made
+            was_linked = (org, namespace) in await sso_links.linked(was)
+        if was_linked:
             # A linked address's grants admit the person; untied, they would reach no one.
             raise ValueError(
                 f"{was} holds grants of its own: {named}; grant them to "

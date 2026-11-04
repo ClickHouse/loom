@@ -3438,7 +3438,7 @@ export function AccessTab({
                 <TextField
                   value={subject}
                   onChange={(v) => setSubject(v)}
-                  placeholder="sign-in namespace, SSO email or service-account subject"
+                  placeholder="login handle (sign-in namespace), verified email or service-account subject"
                   aria-label="Subject to add"
                 />
               </div>

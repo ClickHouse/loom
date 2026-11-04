@@ -414,10 +414,10 @@ export function MembersDialog({
           <div className="flex items-start gap-2">
             <div className="min-w-0 flex-1">
               <TextField
-                aria-label="Sign-in namespace, SSO email or subject of the member to add"
+                aria-label="Login handle, verified email or subject of the member to add"
                 value={newSubject}
                 onChange={(value) => setNewSubject(value)}
-                placeholder="sign-in namespace, SSO email or service-account subject"
+                placeholder="login handle (sign-in namespace), verified email or service-account subject"
                 autoFocus
                 onKeyDown={(e) => e.key === "Enter" && onAdd()}
                 {...fieldError("add-member-error", err)}
