@@ -341,18 +341,16 @@ async def check(auth: AuthInfo, required_role: Role, org: str, namespace: str) -
     role_name = required_role.name.lower()
     # Read from the token alone, never from the grants: what the caller's grants reach on a
     # collection it cannot see would confirm the collection exists. A token its claim caps is
-    # told both what it needs (a claim that names it, and a grant that a new token is
-    # capped to).
+    # told both what it needs: a claim that names it, and a grant for the principal the
+    # grants are read for (the token's own subject; a new token is capped to it).
     grant = f"a grant of at least {role_name} on it or a collection above it"
     needs = claim_cap(auth, org, namespace, required_role)
     notes = (
-        [needs, f"the token's owner must hold {grant}"]
-        if needs
-        else [f"a collection needs {grant}"]
+        [needs, f"{auth.subject!r} must hold {grant}"] if needs else [f"a collection needs {grant}"]
     )
     if auth.creator:
         notes.append(f"its creator must hold at least {role_name} there too")
     raise PermissionError(
-        f"{bare}: {', and '.join(notes)}; collection.list (or the dashboard's Library) "
-        "lists the ones you can read"
+        f"{bare}: {', and '.join(notes)}; collection.list (through loom_op over MCP, or the "
+        "dashboard's Library) lists the ones you can read"
     )

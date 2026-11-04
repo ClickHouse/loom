@@ -83,9 +83,9 @@ def _not_accessible_result(
         needs = sharing.claim_cap(auth, auth.org, ns, Role.VIEWER)
         if needs:
             return _refusal_body(
-                f"namespace {ns!r} is not in your accessible list: {needs}, and the token's"
-                " owner must hold a grant of at least viewer on it or a collection above it."
-                f"{creator}",
+                f"namespace {ns!r} is not in your accessible list: {needs}, and"
+                f" {getattr(auth, 'subject', '')!r} must hold a grant of at least viewer on it or"
+                f" a collection above it.{creator}",
                 ns,
             )
     msg = (

@@ -121,7 +121,7 @@ def test_a_scoped_token_refused_a_collection_is_told_its_claim_must_name_it() ->
     text = capped["structuredContent"]["error"]
     assert text == (
         "namespace 'col-research' is not in your accessible list: this token's claim must name"
-        " it, and the token's owner must hold a grant of at least viewer on it or a collection"
+        " it, and 'avery@example.com' must hold a grant of at least viewer on it or a collection"
         " above it."
     )
     # Its claim already names the collection: the grant is what is missing.
