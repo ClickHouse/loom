@@ -1,8 +1,8 @@
 """knowledge.inspect's ingestion and extraction sections against a live Loom + ClickHouse.
 
-Each source is ingested through the wire (knowledge.upload, knowledge.ingest) and run by
-a knowledge_ingest worker pass in this process (the server under test runs no workers),
-so each job reaches its state the way production reaches it:
+Each source is ingested through the wire (knowledge.upload, knowledge.ingest) and its job
+run in this process as a knowledge_ingest worker pass runs one (the server under test runs
+no workers), so each job reaches its state the way production reaches it:
 
 - backlog: a job queued and not yet run (and a job cancelled while pending, which is not);
 - extractor unavailable: a PDF no configured extractor takes (failed `format_unavailable`;
@@ -54,30 +54,31 @@ async def _work(job_id: str, c: httpx.AsyncClient, org: str, ns: str) -> dict[st
 
 
 async def _end(c: httpx.AsyncClient, org: str, ns: str, job_ids: list[str]) -> None:
-    """Cancel the jobs left open and run passes until each has ended, so no later test's
-    worker pass takes one (a retried job comes due after its delay)."""
+    """Cancel the jobs left open and run each, which ends it, so no open job of this
+    namespace is left on the shared queue (a retried one included: a run does not wait
+    for its next attempt)."""
     from server.core.ch import get_client
-    from server.knowledge.workers import ingest
+    from server.knowledge.app import ingest_run
+    from server.knowledge.store import ingestions
 
     for job_id in job_ids:
         await _op(c, "knowledge.ingest_cancel", org=org, namespace=ns, ingestion_id=job_id)
     ch = get_client()
     await ch.connect()
     try:
-        for _ in range(60):
-            # A cancelled pending job's row stays pending until a pass ends it.
-            row = await ch.query_one(
-                "SELECT count() AS n FROM loom.knowledge_ingestions FINAL WHERE org = {org:String}"
-                " AND namespace = {ns:String} AND state IN ('pending', 'processing')",
-                params={"org": org, "ns": ns},
-            )
-            if row is None or not int(row["n"]):
-                return
-            await ingest.run_pass()
-            await asyncio.sleep(0.5)
+        for job_id in job_ids:
+            job = await ingestions.get_ingestion(org, ns, job_id)
+            assert job is not None, job_id
+            await ingest_run.take_and_run(job)
+        # A cancelled pending job's row stays pending until a run ends it.
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.knowledge_ingestions FINAL WHERE org = {org:String}"
+            " AND namespace = {ns:String} AND state IN ('pending', 'processing')",
+            params={"org": org, "ns": ns},
+        )
     finally:
         await ch.disconnect()
-    raise AssertionError("the jobs left open did not end")
+    assert row is not None and not int(row["n"]), "the jobs left open did not end"
 
 
 async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:
@@ -158,7 +159,7 @@ async def test_backlog_a_missing_extractor_and_missing_access_are_kept_apart(
             status = await _work(down_job, c, org, ns)
         assert (status["state"], status["error_code"]) == ("pending", "retrying")
 
-        # Queued last, so no pass above ran it.
+        # Never run: the backlog.
         queued, queued_job = await _ingest(c, org, ns, SQL, "queued.sql")
         # Cancelled while pending: its row stays pending until a worker takes it.
         cancelled, cancelled_job = await _ingest(c, org, ns, SQL, "cancelled.sql")
