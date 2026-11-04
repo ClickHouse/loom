@@ -750,7 +750,19 @@ def run(
     state_path = cfg.out / "state.json"
     state = load_json(state_path)
     if state.get("setup_failed"):
-        raise RunError(f"{cfg.out}: this run's setup failed; start anew with another --out")
+        ns = bind(loom, state, cfg)
+        # An erasure refused when the setup failed is tried again.
+        if not state.get("erased") and not cfg.keep_namespaces and loom.erase(owned(cfg, ns)):
+            state["erased"] = True
+            save_json(state_path, state)
+        gone = (
+            "its namespaces are erased"
+            if state.get("erased")
+            else f"erase its namespaces with: {erase_command(cfg, loom, ns)}"
+        )
+        raise RunError(
+            f"{cfg.out}: this run's setup failed ({gone}); start anew with another --out"
+        )
     if state.get("erased"):
         raise RunError(f"{cfg.out}: this run's namespaces were erased; score it or start anew")
     check_resume(state, cfg)

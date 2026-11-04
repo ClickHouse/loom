@@ -107,9 +107,19 @@ def _section_of(source_resource_id: str, documents: dict[str, Document]) -> tupl
     raise TaskSetError(f"source_resource_id {source_resource_id!r} names no document of the set")
 
 
+def _require(entry: Any, keys: tuple[str, ...], where: str) -> None:
+    """Refuse an entry that is not an object holding every key."""
+    if not isinstance(entry, dict):
+        raise TaskSetError(f"{where}: an entry is an object, not {entry!r}")
+    missing = [k for k in keys if k not in entry]
+    if missing:
+        raise TaskSetError(f"{where}: an entry without {missing}")
+
+
 def _documents(root: Path) -> dict[str, Document]:
     docs: dict[str, Document] = {}
     for entry in _read_json(root / "documents.json"):
+        _require(entry, ("id", "path", "source_uri"), "documents.json")
         doc_id = entry["id"]
         if not isinstance(doc_id, str) or not doc_id or "/" in doc_id:
             # A document id names its extraction log file.
@@ -138,6 +148,8 @@ def _documents(root: Path) -> dict[str, Document]:
 def _gold(root: Path, documents: dict[str, Document]) -> list[GoldRow]:
     gold: list[GoldRow] = []
     for r in _read_json(root / "gold_rows.json"):
+        place = ("source_resource_id",) if "source_resource_id" in r else ("document",)
+        _require(r, ("memory_key", "value", *place), "gold_rows.json")
         if "source_resource_id" in r:
             doc_id, section = _section_of(r["source_resource_id"], documents)
         else:

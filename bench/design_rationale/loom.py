@@ -19,7 +19,7 @@ import httpx
 
 from bench._http import post_json
 from bench.bench_namespaces import (
-    erase_bench_namespaces_sync,
+    erasure_bodies,
     gc_command,
     register_body,
     remember_bench_namespace,
@@ -155,10 +155,13 @@ class Loom:
         accepted = True
         for ns in namespaces:
             org = self.orgs[ns]
-            if not erase_bench_namespaces_sync(self._post, org=org, namespaces=[ns]):
+            try:
+                for body in erasure_bodies(org, [ns]):
+                    self._post("/v1/erasure.request", body)
+            except httpx.HTTPError as e:
                 accepted = False
                 print(
-                    f"erasure of {org}/{ns} refused; erase it with: {gc_command(org, [ns])}",
+                    f"erasure of {org}/{ns} refused ({e}); erase it with: {gc_command(org, [ns])}",
                     file=sys.stderr,
                 )
         return accepted

@@ -64,8 +64,9 @@ Erasing the namespaces at the end needs an org-wide admin:
 loom mint-token --subject sa:<name> --org '*' --platform-admin --ttl-days 1
 ```
 
-With a writer token the erasure is refused, and the run prints the `loom namespaces-gc`
-command that finishes it.
+Pass the admin token as `--token` for the run to erase at the end. After a writer-token
+run, whose erasure is refused, rerun the same command with the admin token, or run the
+`loom namespaces-gc` command it printed.
 
 The server is one this run started, with real providers and the server's environment in
 the shell: arm 4 runs `loom decisions extract` in a child process, on the model those

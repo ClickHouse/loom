@@ -1476,4 +1476,41 @@ def test_a_refused_erasure_is_tried_again_on_the_next_run(tmp_path):
 def test_a_refused_erasure_prints_the_command_that_finishes_it(capsys):
     loom = _mock_loom(lambda request: httpx.Response(403, json={"detail": "not an admin"}))
     assert loom.erase(["ns"]) is False
-    assert "erasure of org/ns refused; erase it with: loom namespaces-gc" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "erasure of org/ns refused" in err and "erase it with: loom namespaces-gc" in err
+    assert len(err.strip().splitlines()) == 1  # one line per refused namespace
+
+
+def test_a_failed_setup_whose_erasure_was_refused_is_erased_on_the_next_try(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    loom = FakeLoom(fail_on_upsert=True)
+    loom.refuse_erase = True
+    with pytest.raises(RuntimeError, match="upsert refused"):
+        run.run(ts, _config(out), loom, model, [model], ledger)
+    assert loom.erased == []
+    loom.refuse_erase = False
+    with pytest.raises(run.RunError, match="setup failed .its namespaces are erased"):
+        run.run(ts, _config(out), loom, model, [model], ledger)
+    assert len(loom.erased) == 3
+    assert json.loads((out / "state.json").read_text())["erased"]
+
+
+def test_documents_and_gold_rows_missing_their_keys_are_refused(tmp_path):
+    root = _copy_example(tmp_path)
+    for name, index, key, message in (
+        ("documents.json", 0, "source_uri", "documents.json: an entry without"),
+        ("documents.json", 1, "path", "documents.json: an entry without"),
+        ("gold_rows.json", 0, "value", "gold_rows.json: an entry without"),
+        ("gold_rows.json", 1, "document", "gold_rows.json: an entry without"),
+    ):
+        for f in ("documents.json", "gold_rows.json"):
+            (root / f).write_text((EXAMPLE / f).read_text())
+        rows = json.loads((root / name).read_text())
+        del rows[index][key]
+        (root / name).write_text(json.dumps(rows))
+        with pytest.raises(TaskSetError, match=message):
+            load(root)
