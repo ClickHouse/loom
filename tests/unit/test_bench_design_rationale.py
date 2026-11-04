@@ -27,7 +27,7 @@ from bench.design_rationale.llm import (
     cost_usd,
 )
 from bench.design_rationale.loom import EXTRACT_TIMEOUT_S, PRE_EDIT_BUDGET, Loom
-from bench.design_rationale.taskset import Document, TaskSetError, load
+from bench.design_rationale.taskset import Document, TaskSetError, load, parse_key, parse_sample
 from server.knowledge.app.writes import _chunk_text
 from server.memory.app.decision_extract import _windows
 from server.memory.app.for_file import render_block
@@ -1051,6 +1051,12 @@ def test_an_interrupt_after_setup_keeps_the_namespaces_and_says_how_to_erase_the
     assert "loom namespaces-gc" in capsys.readouterr().err
 
 
+def test_an_answer_key_parses_into_task_arm_and_sample():
+    # A task id may hold "arm"; the arm and the sample follow it.
+    assert parse_key("A1-farm/arm3/s2") == ("A1-farm", 3)
+    assert parse_sample("A1-farm/arm3/s2") == 2
+
+
 def test_task_ids_holding_arm_are_scored(tmp_path):
     root = _copy_example(tmp_path)
     tasks = json.loads((root / "tasks.json").read_text())
@@ -1444,12 +1450,16 @@ def test_the_summary_reads_a_cut_ledger_without_rewriting_it(tmp_path):
             score.summary(ts, score.score(ts, out), out)
     path.write_text(whole + "\n")
     assert score.summary(ts, score.score(ts, out), out)["spend_usd"]["total"] == total
-    # A whole last row without its newline is kept.
-    last = '{"stage": "answer", "usd": 0.0}'
+    # A whole last row without its newline is kept and counted.
+    path.write_text(whole)
+    answer = score.summary(ts, score.score(ts, out), out)["spend_usd"]["by_stage"]["answer"]
+    last = '{"stage": "answer", "usd": 0.5}'
     path.write_text(whole + last)
     spend = score.summary(ts, score.score(ts, out), out)["spend_usd"]
     assert path.read_text() == whole + last
-    assert spend["ledger_rows_dropped"] == 0 and spend["total"] == total
+    assert spend["ledger_rows_dropped"] == 0
+    assert spend["total"] == round(total + 0.5, 4)
+    assert spend["by_stage"]["answer"] == round(answer + 0.5, 4)
 
 
 def test_the_summary_of_an_unpriced_reader_has_no_answer_cost(tmp_path):

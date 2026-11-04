@@ -682,15 +682,17 @@ not split.
 bound below it): the gold rows (arm 3) raise A precision and recall and B avoidance and
 satisfaction over no design knowledge. Extracted rows (arm 4) raise B avoidance and
 satisfaction over arm 0, and A precision over the answers that made a claim, and fall
-below the gold rows on A precision, A recall, B avoidance and C. Arm 4 states the current
-design on 20% (averaged over the supersession tasks), arm 3 on 100%. The document read
-through search (arm 2) falls below the gold rows on A precision (-13.2), A recall (-13.3),
-B avoidance (-52.0) and B satisfaction (-46.5). The whole document in context (arm 1)
-raises A precision and recall over arm 0 and falls below the gold rows on A precision
-(-11.3); its B avoidance is not resolved against arm 0 (-8.9, -18.2 .. +6.7) and falls
-below the gold rows by 79.3 points, with B satisfaction 73.7 points below; it also fails
-more C tasks than arm 0 and arm 3. A hypothesis, not tested here: a decision row names the
-rejected option as rejected, and a whole document does not.
+below the gold rows on A precision, A recall, B avoidance and C; arm 4's pre-edit block
+served 5 of the 30 tasks with gold rows against arm 3's 27, so the gap is not to be read
+as row quality alone. The document read through search (arm 2) falls below the gold rows
+on A precision (-13.2), A recall (-13.3), B avoidance (-52.0) and B satisfaction (-46.5).
+The whole document in context (arm 1) raises A precision and recall over arm 0 and falls
+below the gold rows on A precision (-11.3); its B avoidance is not resolved against arm 0
+(-8.9, -18.2 .. +6.7) and falls below the gold rows by 79.3 points, with B satisfaction
+73.7 points below; it also fails more C tasks than arm 0 and arm 3. A hypothesis, not
+tested here: a decision row names the rejected option as rejected, and a whole document
+does not. Unpaired, as per-arm rates: arm 4 states the current design on 20% of
+supersession judgements (averaged over the supersession tasks), arm 3 on 100%.
 
 **Treatment check.** Of the 30 tasks with gold rows, arm 3's pre-edit block served 27 and
 search served 29 (a task counts when it served one of its own gold rows); arm 4's pre-edit
@@ -709,9 +711,12 @@ was labelled). No patch is applied and no test runs, so change-task pass rate is
 measured. The task set is private: the numbers are reproducible only by a holder of the
 set.
 
-- **Models:** reader, judge and extraction `gpt-6-luna`; the server's embeddings
-  `text-embedding-3-large` (the [models table](#models)). The server ran from source on
-  its own ClickHouse, with auth and background workers off.
+- **Models:** reader, judge and extraction `gpt-6-luna`, in the summary's run flags; the
+  extraction model is the LLM model the server settings of the harness's environment
+  resolve (`LOOM_LLM_MODEL`), and `run` refuses an `--extract-model` that differs. The run
+  does not record the server's own models; the server was started with the [models
+  table](#models)'s embeddings (`text-embedding-3-large`). It ran from source on its own
+  ClickHouse, with auth and background workers off.
 - **Artifacts:** `bench/results/design_rationale.summary.json`, written by
   `score --summary`: the per-arm metrics, comparisons, injected tokens, treatment check,
   judge agreement, unreadable passes and the A answers with no claim, the task set's

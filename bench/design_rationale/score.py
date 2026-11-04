@@ -20,7 +20,7 @@ from typing import Any
 
 from bench.bootstrap import paired_bootstrap
 from bench.design_rationale.llm import cost_usd, price, read_ledger
-from bench.design_rationale.taskset import TaskSet, parse_key, surface_key
+from bench.design_rationale.taskset import TaskSet, parse_key, parse_sample, surface_key
 
 # z(0.975) + z(0.80): the effect a two-sided 5% test detects with 80% power is this many
 # standard errors.
@@ -48,8 +48,6 @@ SUMMARY_FLAGS = (
 )
 # The verdict fields read as lists, at the top level and in each claim.
 LIST_FIELDS = ("cites", "cites_support")
-# The verdict fields read as lists at the top level only.
-TOP_LIST_FIELDS = ("gold_covered",)
 # The per-task metric each kind's comparison is made on, higher is better.
 HEADLINE = {
     "A": ("precision", "recall"),
@@ -82,7 +80,7 @@ def readable(kind: str, task: dict[str, Any], verdict: Any) -> bool:
     for part in (verdict, *(claims or [])):
         if any(not _list_or_none(part.get(f)) for f in LIST_FIELDS):
             return False
-    if any(not _list_or_none(verdict.get(f)) for f in TOP_LIST_FIELDS):
+    if not _list_or_none(verdict.get("gold_covered")):
         return False
     # A rubric the judge left unanswered would pass the task.
     rubric = any(d["type"] == "judge" for d in task.get("detector", []))
@@ -588,7 +586,7 @@ def summary(ts: TaskSet, metrics: dict[str, Any], out_dir: Path) -> dict[str, An
         if priced:
             answer_usd[arm] += cost_usd(flags["reader"], a["in"], a["out"])
         answer_n[arm] += 1
-    samples = {key.rsplit("/s", 1)[1] for key in answers}
+    samples = {parse_sample(key) for key in answers}
     aggregates = {k: v for k, v in metrics.items() if k != "per_task"}
     if "extraction" in aggregates:
         # Documents in id order, as the report lists them, without their ids.
