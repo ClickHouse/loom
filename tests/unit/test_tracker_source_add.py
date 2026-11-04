@@ -246,6 +246,8 @@ def test_grant_review_refuses_what_it_cannot_classify_as_read_only() -> None:
         "GRANT SELECT(`a(`), INSERT ON db.t TO u",
         "GRANT SELECT(`x ON y`), INSERT ON db.t TO u",
         "GRANT SELECT(`a) INSERT`) ON db.t TO `u",
+        "GRANT INSERT",
+        "GRANT INSERT TO u ON *.*",
     ]
     for line in refused:
         assert not ob.review_grants([line]).read_only, line

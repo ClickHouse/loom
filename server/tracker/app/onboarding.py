@@ -108,9 +108,11 @@ def review_grants(lines: list[str]) -> GrantReview:
             continue
         rev.refused.extend(p.strip() for p in _GRANT_OPTIONS if p in upper)
         on, to = upper.find(" ON "), upper.find(" TO ")
-        if on < 0 or 0 <= to < on:
-            end = to if to >= 0 else len(line)
-            rev.roles.extend(_split(line[6:end], masked[6:end]))
+        if on < 0:
+            if to < 0:
+                rev.refused.append(line)
+            else:
+                rev.roles.extend(_split(line[6:to], masked[6:to]))
             continue
         for t in _split(line[6:on], masked[6:on]):
             name = _ACCESS_TYPE.fullmatch(_QUOTED.sub("_", t))
