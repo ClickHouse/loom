@@ -45,18 +45,18 @@ writes use the hash-only shape. Grant `loom.audit_log` like the data it describe
 `loom.audit_log` is a `MergeTree` partitioned by month and ordered by
 `(org, namespace, event_type, ts)`, with a bloom-filter index on `request_id`.
 
-| Column                                       | Meaning                                                                    |
-| -------------------------------------------- | -------------------------------------------------------------------------- |
-| `ts`                                         | UTC, millisecond precision                                                 |
-| `event_type`                                 | op name or server event                                                    |
-| `org`, `namespace`                           | the tenant the gate authorized                                             |
-| `actor`                                      | the token's subject (`anonymous` when auth is off); a memory write's own row (`memory.set`, `memory.update`, `memory.update_by_id`) names it `kind:subject`, `-` with no token |
-| `subject`                                    | JSON text; the caller decides whether to parse it                          |
-| `request_id`                                 | joins to `loom.agent_events` and the `X-Request-Id` response header        |
-| `row_hash`                                   | SHA-256 over the canonical row                                             |
-| `build_commit`, `instance`, `instance_label` | which build and process wrote the row                                      |
-| `consumer`                                   | the client the request spoke for                                           |
-| `token_id`                                   | the credential that made the request (its `jti`, else a token hash prefix) |
+| Column                                       | Meaning                                                                                                                                                                                           |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ts`                                         | UTC, millisecond precision                                                                                                                                                                        |
+| `event_type`                                 | op name or server event                                                                                                                                                                           |
+| `org`, `namespace`                           | the tenant the gate authorized                                                                                                                                                                    |
+| `actor`                                      | the token's subject (`anonymous` when auth is off); a memory write's own row (`memory.set`, `memory.bulk_set`, `memory.update`, `memory.update_by_id`) names it `kind:subject`, `-` with no token |
+| `subject`                                    | JSON text; the caller decides whether to parse it                                                                                                                                                 |
+| `request_id`                                 | joins to `loom.agent_events` and the `X-Request-Id` response header                                                                                                                               |
+| `row_hash`                                   | SHA-256 over the canonical row                                                                                                                                                                    |
+| `build_commit`, `instance`, `instance_label` | which build and process wrote the row                                                                                                                                                             |
+| `consumer`                                   | the client the request spoke for                                                                                                                                                                  |
+| `token_id`                                   | the credential that made the request (its `jti`, else a token hash prefix)                                                                                                                        |
 
 The hash covers `ts`, `event_type`, `org`, `namespace`, `actor`, `subject` and
 `request_id` as sorted-key ASCII JSON (`_canonical` in `server/observability/audit.py`).
