@@ -150,6 +150,13 @@ async def _namespace_head(repo: CodeRepo, org: str, ns: str) -> str:
     return state_value(state, "git_head")
 
 
+async def _readable(org: str, ns: str) -> bool:
+    """Whether the caller may read `ns`, a namespace LOOM adds on its own (the
+    transport gated only the addressed one)."""
+    readable, _skipped = await fanout.readable_subset(org, [ns])
+    return bool(readable)
+
+
 async def _resolve_ref(
     repo: CodeRepo, org: str, git_dir: str, siblings: list[Any], text: str
 ) -> tuple[str, str]:
@@ -166,10 +173,7 @@ async def _resolve_ref(
             return "", ""
     if kind == "minor":
         branch_ns = next((c.namespace for c in siblings if c.git_branch == value), "")
-        readable: list[str] = []
-        if branch_ns:
-            readable, _skipped = await fanout.readable_subset(org, [branch_ns])
-        if readable:
+        if branch_ns and await _readable(org, branch_ns):
             head = await _namespace_head(repo, org, branch_ns)
             if head:
                 return head, "namespace_head"
@@ -387,9 +391,8 @@ async def _ledger_leg(
     branch_of = {c.namespace: str(c.git_branch or "") for c in siblings}
     mine = next((c for c in siblings if c.namespace == ns), None)
     trunk = trunk_entry(mine, siblings) if mine is not None else None
-    if trunk is not None:
-        readable, _skipped = await fanout.readable_subset(org, [trunk.namespace])
-        namespaces.extend(readable)
+    if trunk is not None and await _readable(org, trunk.namespace):
+        namespaces.append(trunk.namespace)
     since = datetime.fromtimestamp(w.from_time, tz=UTC).replace(tzinfo=None)
     until = datetime.fromtimestamp(w.to_time, tz=UTC).replace(tzinfo=None)
     # Each namespace's rows must name its own branch (a backport filed under the master
