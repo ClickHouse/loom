@@ -320,13 +320,13 @@ trash, fails the turn and retires nothing, while the pages it still sees are wri
 listed page or child page in the trash is left out of the listing, so the next full turn
 retires it. A refusal (`403`) is not evidence that a page is gone: a looked-up page the
 store refuses keeps its document, and a known child it refuses stays known and waits
-like a file's trouble, failing the turn for three passes and then counted `unconverted`
-(`child_http_403`), so it no longer holds back the rest of the source. A page is retired
-after a complete full listing lacks it and a lookup finds it gone, in the trash, or
-under none of the listed pages, the listed databases and the pages that listing had; a
-child moved out from under them, and its own children, are retired this way. A database
-query the store marks incomplete is an incomplete listing
-(`listing: incomplete result`).
+like a file's trouble, failing the turn for two passes and counted `unconverted`
+(`child_http_403`) from the third, so it no longer holds back the rest of the source;
+the pages under it are not taken for moved. A page is retired after a complete full
+listing lacks it and a lookup finds it gone, in the trash, or under none of the listed
+pages, the listed databases and the pages that listing had; a child moved out from under
+them, and its own children, are retired this way. A database query the store marks
+incomplete is an incomplete listing (`listing: incomplete result`).
 
 ### Mining decisions
 

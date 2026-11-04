@@ -89,6 +89,9 @@ class _Turn:
     ids: set[str] = field(default_factory=set)
     # Known children this turn found gone: not found or trashed.
     absent: set[str] = field(default_factory=set)
+    # Known children the store refused (403) this turn: unread, but still in scope, so
+    # the pages under them are not taken for moved.
+    refused: set[str] = field(default_factory=set)
 
     def add(self, page: dict[str, Any]) -> None:
         item = _item(page)
@@ -155,9 +158,9 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
 
 
 async def _forget_unlisted_without_documents(t: _Turn) -> None:
-    """After a complete full turn: forget the known children this turn found out of
-    sight (not found, refused or trashed) that hold no document (never written, or
-    retired), so a child gone for good costs no read each turn."""
+    """After a complete full turn: forget the known children this turn found not found
+    or trashed that hold no document (never written, or retired), so a child gone for
+    good costs no read each turn."""
     src = t.src
     held = {
         d["file_id"]
@@ -211,6 +214,7 @@ def _child_refused(t: _Turn, child_id: str, e: notion.NotionError) -> None:
     It waits like a file's trouble, keyed by its stored revision: the turn fails for
     the passes a file may wait, then the child is counted unconverted and no longer
     holds the turn (or the source's retirements) back."""
+    t.refused.add(child_id)
     stored = t.stored.get(child_id)
     f = {"id": child_id, "modifiedTime": stored["source_revision"] if stored else ""}
     sync.wait(f, t.result, _CHILD_REFUSED, sync.client_error(e))
@@ -308,8 +312,9 @@ def _holder(t: _Turn, f: dict[str, Any]) -> str:
 def _drop_out_of_scope(t: _Turn) -> None:
     """After a complete full listing: leave out the known children no longer under a
     listed page, a listed database's page or another such child (a child moved
-    elsewhere), so their documents count as absent and the lookup decides."""
-    in_scope = {f["id"] for f in t.items if f["id"] not in t.known}
+    elsewhere), so their documents count as absent and the lookup decides. A child the
+    store refused this turn counts as in scope: nothing says it moved."""
+    in_scope = {f["id"] for f in t.items if f["id"] not in t.known} | t.refused
     children = [f for f in t.items if f["id"] in t.known]
     grew = True
     while grew:
@@ -319,7 +324,7 @@ def _drop_out_of_scope(t: _Turn) -> None:
                 in_scope.add(f["id"])
                 grew = True
     t.items = [f for f in t.items if f["id"] in in_scope]
-    t.ids = in_scope
+    t.ids = in_scope - t.refused
 
 
 async def _page_gone(t: _Turn, page_id: str) -> bool | None:
@@ -352,7 +357,7 @@ async def _lookup(t: _Turn, page_id: str) -> bool | None:
     ):
         return False
     holder = _holder(t, item)
-    if holder not in t.ids:
+    if holder not in t.ids and holder not in t.refused:
         return True
     # Still under a page this turn listed, but not known (left out at the cap, or
     # dropped when its page was read without it): known again, so it is synced.
@@ -483,7 +488,8 @@ def _record_children(
         t.known[child] = parent
     if over:
         skipped["child_page"] = skipped.get("child_page", 0) + over
-    return [c for c in children if c in t.known and c not in t.ids]
+    # A child refused this turn is not read again in it, so its wait moves once a turn.
+    return [c for c in children if c in t.known and c not in t.ids and c not in t.refused]
 
 
 async def _add_new_children(t: _Turn, children: list[str]) -> None:

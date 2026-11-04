@@ -1210,3 +1210,32 @@ def test_a_new_child_the_store_refuses_waits_and_stays_known(world: _Store) -> N
     assert detail["status"] == "failed" and "http_403" in detail["error"]
     assert detail["child_pages"] == {CHILD: PAGE}
     assert detail["file_waits"][CHILD][1:] == [1, "child_http_403"]
+
+
+def test_a_readable_page_under_a_refused_child_is_kept_and_known(world: _Store) -> None:
+    _only_the_page(world)
+    world.blocks[PAGE] = [_para("Parent."), _child_page(CHILD)]
+    world.pages[CHILD] = _page(
+        CHILD, "2026-01-04T00:00:00.000Z", title="Child", parent_of=_under(PAGE)
+    )
+    world.blocks[CHILD] = [_para("Child."), _child_page(GRANDCHILD)]
+    world.pages[GRANDCHILD] = _page(
+        GRANDCHILD, "2026-01-04T00:00:00.000Z", title="Grandchild", parent_of=_under(CHILD)
+    )
+    _run()
+    world.answers[f"/pages/{CHILD}"] = httpx.Response(403)  # the grandchild still answers
+    for _ in range(3):
+        _run(full=True)
+    assert _uri(world, GRANDCHILD) in world.docs and world.audits == []
+    assert _detail(world)["child_pages"] == {CHILD: PAGE, GRANDCHILD: CHILD}
+
+
+def test_a_refused_child_s_wait_moves_once_a_turn_when_its_parent_is_read_again(
+    world: _Store,
+) -> None:
+    _with_children(world, CHILD)
+    world.answers[f"/pages/{CHILD}"] = httpx.Response(403)
+    # The parent changed, so this turn reads it again and finds the child in its blocks.
+    world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
+    _run()
+    assert _detail(world)["file_waits"][CHILD][1:] == [1, "child_http_403"]
