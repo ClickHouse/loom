@@ -6,8 +6,8 @@ with an older published job, a stalled run and a later job queued behind it, job
 or retrying for the extractor, for access and on the file itself, a revision conflict, and
 a store outage retried, an outage that used up its attempts, a defect, a retried job
 running again, a pending job with a cancel, two failures a later write replaced (a text
-write, a delete), one a metadata edit did not and one a reindex did, and an artifact that
-broke the contract. A job row written twice collapses under FINAL. Another namespace's job
+write, a delete), one a metadata edit did not, one a reindex did and one a write in the
+job's last second did not, and an artifact that broke the contract. A job row written twice collapses under FINAL. Another namespace's job
 and cancel are not counted. Two ingested documents carry an extraction's coverage, one
 that lost structure, and a text document carries none.
 """
