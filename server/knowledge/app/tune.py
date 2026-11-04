@@ -43,7 +43,7 @@ from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass, field
 from typing import Any
 
-from server.core.document_formats import format_of
+from server.core.document_formats import format_of, format_of_media_type
 from server.embedding import count_tokens, get_embedder, input_token_limit
 from server.identity.api.models_namespace_tune import (
     ChunkingPreview,
@@ -317,6 +317,12 @@ async def _chunking(
             "chunk, an ingested one a chunk per block); no size is drafted"
         )
         return sample, None
+    if set_stride <= 0:
+        skipped.append(
+            f"chunking: knowledge_chunk_stride is {set_stride} (no window: a section or block "
+            "longer than the size is one chunk); no size is drafted"
+        )
+        return sample, None
     if limit is not None and cur.over_input_limit:
         flagged, shrink = before.over, True
         # Each smaller size once, nearest first.
@@ -358,7 +364,10 @@ async def _chunking(
     else:
         return sample, None
     if not sizes:
-        skipped.append(f"chunking: {why}; already at the smallest drafted size, {MIN_CHUNK_SIZE}")
+        skipped.append(
+            f"chunking: {why}; knowledge_chunk_size {size} is at or below the smallest "
+            f"drafted size, {MIN_CHUNK_SIZE}"
+        )
         return sample, None
     after = None
     for new in sizes:
@@ -467,80 +476,118 @@ def _round_robin(lists: list[list[str]], limit: int) -> list[str]:
     return out[:limit]
 
 
-def _judge(
-    failing: dict[str, dict[str, list[str]]],
-    lossy: dict[str, dict[str, Any]],
+@dataclass
+class _Route:
+    """The route drafted for one format."""
+
+    # The setting naming the service the format would go to, and why.
+    setting: str
+    why: str
+    # The failed sources it answers, and whether it answers the format's incomplete
+    # extractions too (its service is not the one that made them).
+    failed: list[str] = field(default_factory=list)
+    incomplete: bool = False
+
+
+def _pick(
+    fmt: str,
+    declaring: list[extractors.Service],
+    working: set[str],
+    routes: dict[str, str],
+    producers: set[str],
+) -> extractors.Service:
+    """The service to route `fmt` to, of those `declaring` it: one some of its sources
+    already work on (`working`), else one its media-type routes already reach, so a route
+    for the format moves no source that works; within that, one that did not make its
+    incomplete extractions (`producers`) if there is one."""
+    reached = {u.rstrip("/") for k, u in routes.items() if format_of_media_type(k) == fmt}
+    tiers = (
+        [s for s in declaring if s.url in working],
+        [s for s in declaring if s.url in reached],
+        declaring,
+    )
+    tier = next(t for t in tiers if t)
+    return next((s for s in tier if s.url not in producers), tier[0])
+
+
+def _lost(row: dict[str, Any]) -> str:
+    lost = ", ".join(str(x) for x in row["lost"]) or "units it could not extract"
+    noun = "document" if int(row["documents"]) == 1 else "documents"
+    return f"{row['incomplete']} of {row['documents']} {noun} extracted lost {lost}"
+
+
+def _sources(n: int) -> str:
+    return f"{n} {'source' if n == 1 else 'sources'} failed format_unavailable"
+
+
+def _judge_format(
+    fmt: str,
+    by_url: dict[str, list[str]],
+    row: dict[str, Any] | None,
     services: list[extractors.Service],
+    routes: dict[str, str],
     skipped: list[str],
-) -> tuple[dict[str, tuple[str, str]], dict[str, list[str]]]:
-    """Per format the evidence names: the route to draft (the setting naming the service
-    to route it to, and why) and the failed sources it answers; a format it cannot draft
-    is said in `skipped`."""
+) -> _Route | None:
+    """The route to draft for `fmt` from its failed sources (`by_url`: the URL each goes
+    to now) and its incomplete extractions (`row`), or None; what it cannot draft is said
+    in `skipped`. A format's own route wins over a media type's, so it takes every source
+    of the format."""
     unread = sum(1 for s in services if s.formats is None)
     unread_note = f" ({unread} configured could not be read)" if unread else ""
-
-    def declares(url: str, fmt: str) -> bool:
-        return any(s.url == url and s.formats and fmt in s.formats for s in services)
-
-    def sources(n: int) -> str:
-        return f"{n} {'source' if n == 1 else 'sources'} failed format_unavailable"
-
-    # format -> (the setting naming the service to route it to, why); a format's own route
-    # wins over a media type's, so it takes every source of the format.
-    drafted: dict[str, tuple[str, str]] = {}
-    # format -> the sources the drafted route answers.
-    answered: dict[str, list[str]] = {}
-    for fmt in sorted({*failing, *lossy}):
-        declaring = [s for s in services if s.formats and fmt in s.formats]
-        if fmt in failing:
-            by_url = failing[fmt]
-            now = [u for u in sorted(by_url) if declares(u, fmt)]
-            if now:
-                # The service these sources go to declares the format now: ingest again.
-                skipped.append(
-                    f"extractor.{fmt}: {sources(sum(len(by_url[u]) for u in now))}, and the "
-                    f"service they go to declares it now: upload each original again and "
-                    "knowledge.ingest it"
-                )
-            stuck = {u: by_url[u] for u in by_url if u not in now}
-            if not stuck:
-                continue
-            head = sources(sum(len(v) for v in stuck.values()))
-            if declaring:
-                answered[fmt] = [uri for u in sorted(stuck) for uri in stuck[u]]
-                drafted[fmt] = (
-                    declaring[0].setting,
-                    f"{fmt}: {head}; they go to {_names(services, set(stuck))}, which does "
-                    f"not declare it, and the service {declaring[0].setting} names does.",
-                )
-                continue
-            skipped.append(
-                f"extractor.{fmt}: {head}, and no configured extractor declares {fmt}"
-                f"{unread_note}: deploy one that does (the extractor contract) and route "
-                f"{fmt} to it in LOOM_DOCUMENT_EXTRACTORS_JSON"
-            )
-            continue
-        row = lossy[fmt]
-        routed = {extractors.endpoint_for(fmt, str(m)) for m in row["content_types"]}
-        other = [s for s in declaring if s.url not in routed]
-        now_name = _names(services, routed)
-        lost = ", ".join(str(x) for x in row["lost"]) or "units it could not extract"
-        head = (
-            f"{row['incomplete']} of {row['documents']} "
-            f"{'document' if int(row['documents']) == 1 else 'documents'} extracted lost {lost}"
+    declaring = [s for s in services if s.formats and fmt in s.formats]
+    declared = {s.url for s in declaring}
+    producers = (
+        {extractors.endpoint_for(fmt, str(m)) for m in row["content_types"]} if row else set()
+    )
+    now = sorted(u for u in by_url if u in declared)
+    if now:
+        skipped.append(
+            f"extractor.{fmt}: {_sources(sum(len(by_url[u]) for u in now))}, and the service "
+            "they go to declares it now: upload each original again and knowledge.ingest it"
         )
-        if other:
-            drafted[fmt] = (
-                other[0].setting,
-                f"{fmt}: {head} under {now_name}; the service {other[0].setting} names "
-                f"declares {fmt} too.",
+    stuck = {u: v for u, v in by_url.items() if u not in declared}
+    route = None
+    if stuck and declaring:
+        pick = _pick(fmt, declaring, set(now), routes, producers)
+        route = _Route(
+            pick.setting,
+            f"{fmt}: {_sources(sum(len(v) for v in stuck.values()))}; they go to "
+            f"{_names(services, set(stuck))}, which does not declare it, and the service "
+            f"{pick.setting} names does.",
+            failed=[uri for u in sorted(stuck) for uri in stuck[u]],
+        )
+    elif stuck:
+        skipped.append(
+            f"extractor.{fmt}: {_sources(sum(len(v) for v in stuck.values()))}, and no "
+            f"configured extractor declares {fmt}{unread_note}: deploy one that does (the "
+            f"extractor contract) and route {fmt} to it in LOOM_DOCUMENT_EXTRACTORS_JSON"
+        )
+    if row is None:
+        return route
+    made_by = _names(services, producers)
+    if route is not None:
+        if pick.url in producers:
+            skipped.append(
+                f"extractor.{fmt}: {_lost(row)} under {made_by}, the service the route "
+                "drafted for its failed sources goes to"
             )
         else:
-            skipped.append(
-                f"extractor.{fmt}: {head}, and no other configured extractor declares {fmt}"
-                f"{unread_note}"
-            )
-    return drafted, answered
+            route.incomplete = True
+            route.why += f" {_lost(row)} under {made_by}, which the route moves too."
+        return route
+    other = [s for s in declaring if s.url not in producers]
+    if other:
+        return _Route(
+            other[0].setting,
+            f"{fmt}: {_lost(row)} under {made_by}; the service {other[0].setting} names "
+            f"declares {fmt} too.",
+            incomplete=True,
+        )
+    skipped.append(
+        f"extractor.{fmt}: {_lost(row)}, and no other configured extractor declares {fmt}"
+        f"{unread_note}"
+    )
+    return None
 
 
 async def _routes(
@@ -584,15 +631,21 @@ async def _routes(
     routes = await guarded("extractor.routes", _current_routes, None)
     if services is None or routes is None:
         return None
-    drafted, answered = _judge(failing, lossy, services, skipped)
+    drafted: dict[str, _Route] = {}
+    for fmt in sorted({*failing, *lossy}):
+        route = _judge_format(fmt, failing.get(fmt, {}), lossy.get(fmt), services, routes, skipped)
+        if route is not None:
+            drafted[fmt] = route
     if not drafted:
         return None
     current = {k: "<as set>" for k in sorted(routes)}
-    proposed_map = {**current, **{f: f"<the URL {s} names>" for f, (s, _) in drafted.items()}}
+    proposed_map = {**current, **{f: f"<the URL {r.setting} names>" for f, r in drafted.items()}}
     proposed = json.dumps(dict(sorted(proposed_map.items())))
     fmts = sorted(drafted)
-    failed = [answered[f] for f in fmts if f in answered]
-    incomplete = [[str(u) for u in lossy[f]["incomplete_uris"]] for f in fmts if f not in answered]
+    failed = [drafted[f].failed for f in fmts if drafted[f].failed]
+    incomplete = [
+        [str(u) for u in lossy[f]["incomplete_uris"]] for f in fmts if drafted[f].incomplete
+    ]
     complete = [
         int(by_format[f]["documents"]) - int(by_format[f]["incomplete"])
         for f in fmts
@@ -607,13 +660,13 @@ async def _routes(
         scope=_SCOPE,
         title=f"Route {', '.join(fmts)} to an extractor that declares "
         + ("it" if len(fmts) == 1 else "them"),
-        rationale=" ".join(why for _, why in drafted.values()) + f" Counts are {org}/{ns}'s.",
+        rationale=" ".join(r.why for r in drafted.values()) + f" Counts are {org}/{ns}'s.",
         current=json.dumps(current),
         proposed=proposed,
         evidence=TuneEvidence(
             finding_codes=codes,
             supporting_count=sum(len(x) for x in failed)
-            + sum(int(lossy[f]["incomplete"]) for f in fmts if f not in answered),
+            + sum(int(lossy[f]["incomplete"]) for f in fmts if drafted[f].incomplete),
             documents=_round_robin(failed + incomplete, inp.sample_limit),
             # The documents of these formats extracted whole, which the route must keep.
             counter_count=sum(complete) if coverage is not None else None,

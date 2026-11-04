@@ -57,7 +57,8 @@ class Docs:
         self.coverage: list[dict[str, Any]] = []
         self.services = [Service("LOOM_DOCUMENT_EXTRACTOR_URL", DEFAULT, frozenset({"markdown"}))]
         self.routes: dict[str, str] = {}
-        self.routed: dict[str, str] = {}
+        # format, or (format, media type), -> the URL its sources go to; else the default.
+        self.routed: dict[Any, str] = {}
         self.artifacts: dict[str, bytes] = {}
         self.fail: set[str] = set()
 
@@ -94,7 +95,9 @@ class Docs:
         )
         monkeypatch.setattr(tune, "_current_routes", reader("routes", lambda: self.routes))
         monkeypatch.setattr(
-            tune.extractors, "endpoint_for", lambda fmt, media="": self.routed.get(fmt, DEFAULT)
+            tune.extractors,
+            "endpoint_for",
+            lambda fmt, media="": self.routed.get((fmt, media)) or self.routed.get(fmt, DEFAULT),
         )
         monkeypatch.setattr(
             tune, "_embedder", reader("embedder", lambda: ("text-embedding-3-small", self.limit))
@@ -535,7 +538,10 @@ async def test_inputs_over_the_limit_at_the_smallest_size_say_so(
     assert not out.proposals
     assert any(
         s.startswith("chunking: ")
-        and s.endswith(f"already at the smallest drafted size, {tune.MIN_CHUNK_SIZE}")
+        and s.endswith(
+            f"knowledge_chunk_size {tune.MIN_CHUNK_SIZE} is at or below the smallest drafted "
+            f"size, {tune.MIN_CHUNK_SIZE}"
+        )
         for s in skipped
     ), skipped
 
@@ -585,5 +591,154 @@ async def test_a_media_type_route_is_the_service_a_source_goes_to(
     # The source the default service takes now is ingested again, not rerouted.
     assert any(
         s.startswith("extractor.pdf: 1 source failed format_unavailable") and "declares it now" in s
+        for s in skipped
+    ), skipped
+
+
+@pytest.mark.asyncio
+async def test_inputs_over_the_limit_below_the_smallest_size_name_the_value_in_force(
+    docs: Docs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_chunk_size", 150)
+    monkeypatch.setattr(settings, "knowledge_chunk_stride", 120)
+    docs.limit = 10
+    out, skipped = await _drafts()
+    assert not out.proposals
+    assert any(
+        s.endswith(
+            f"knowledge_chunk_size 150 is at or below the smallest drafted size, "
+            f"{tune.MIN_CHUNK_SIZE}"
+        )
+        for s in skipped
+    ), skipped
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stride", [0, -3])
+async def test_a_stride_of_zero_or_less_drafts_nothing_and_names_it(
+    docs: Docs, monkeypatch: pytest.MonkeyPatch, stride: int
+) -> None:
+    # The chunkers window nothing at such a stride: a section longer than the size is one
+    # chunk. A draft would scale it to a stride of 1.
+    monkeypatch.setattr(settings, "knowledge_chunk_stride", stride)
+    out, skipped = await _drafts()
+    assert not out.proposals
+    assert out.chunking is not None and out.chunking.current.sections_cut == 0
+    assert any(
+        s.startswith(f"chunking: knowledge_chunk_stride is {stride} (no window") for s in skipped
+    ), skipped
+
+
+def _pdf_job(uri: str, media: str = "") -> dict[str, Any]:
+    return {
+        "source_uri": uri,
+        "filename": uri.rsplit("/", 1)[-1],
+        "content_type": media,
+        "declared_format": "",
+        "ingestion_id": "j",
+    }
+
+
+def _lossy_pdf(incomplete: int = 3) -> dict[str, Any]:
+    return {
+        "doc_format": "pdf",
+        "documents": 10,
+        "incomplete": incomplete,
+        "incomplete_uris": [f"files/lost{i}.pdf" for i in range(incomplete)],
+        "lost": ["page_text"],
+        "content_types": [""],
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_format_whose_failed_sources_work_now_is_still_judged_on_its_extractions(
+    docs: Docs,
+) -> None:
+    other = "http://pdf-b:8080"
+    docs.services = [
+        Service("LOOM_DOCUMENT_EXTRACTOR_URL", DEFAULT, frozenset({"pdf"})),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["pdf"]', other, frozenset({"pdf"})),
+    ]
+    docs.unavailable = [_pdf_job("files/a.pdf")]
+    docs.coverage = [_lossy_pdf()]
+    out, skipped = await _drafts()
+    assert any("declares it now" in s for s in skipped)
+    (p,) = _target(out, "settings.document_extractors_json")
+    assert p.evidence.finding_codes == ["extraction_incomplete"]
+    assert p.evidence.supporting_count == 3
+    assert p.apply.args["LOOM_DOCUMENT_EXTRACTORS_JSON"]["pdf"] == (
+        '<the URL LOOM_DOCUMENT_EXTRACTORS_JSON["pdf"] names>'
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_route_for_failed_sources_avoids_the_service_that_lost_structure(
+    docs: Docs,
+) -> None:
+    # Failed sources go to a service that does not declare pdf; the default one declares
+    # it but extracted the documents that lost page_text; a third declares it too.
+    down, third = "http://down:8080", "http://pdf-c:8080"
+    docs.routed = {("pdf", "application/pdf"): down}
+    docs.services = [
+        Service("LOOM_DOCUMENT_EXTRACTOR_URL", DEFAULT, frozenset({"pdf"})),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["pdf"]', down, frozenset()),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["docx"]', third, frozenset({"pdf", "docx"})),
+    ]
+    docs.unavailable = [_pdf_job("files/a.pdf", "application/pdf")]
+    # The lost extractions, of originals with no media type, were the default service's.
+    docs.coverage = [_lossy_pdf()]
+    out, _ = await _drafts()
+    (p,) = _target(out, "settings.document_extractors_json")
+    assert p.apply.args["LOOM_DOCUMENT_EXTRACTORS_JSON"]["pdf"] == (
+        '<the URL LOOM_DOCUMENT_EXTRACTORS_JSON["docx"] names>'
+    )
+    # The route answers both: the failed source and the incomplete extractions.
+    assert p.evidence.finding_codes == ["extractor_unavailable", "extraction_incomplete"]
+    assert p.evidence.supporting_count == 4
+
+
+@pytest.mark.asyncio
+async def test_a_route_for_failed_sources_keeps_the_service_a_media_type_route_reaches(
+    docs: Docs,
+) -> None:
+    # pdf named by its extension goes to the default service, which does not declare it;
+    # application/pdf sources go to A, which does; C, routed for csv, declares pdf too.
+    a, c = "http://pdf-a:8080", "http://csv-c:8080"
+    docs.routes = {"text/csv": c, "application/pdf": a}
+    docs.services = [
+        Service("LOOM_DOCUMENT_EXTRACTOR_URL", DEFAULT, frozenset({"markdown"})),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["text/csv"]', c, frozenset({"csv", "pdf"})),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["application/pdf"]', a, frozenset({"pdf"})),
+    ]
+    docs.unavailable = [_pdf_job("files/a.pdf")]
+    out, _ = await _drafts()
+    (p,) = _target(out, "settings.document_extractors_json")
+    # Routing pdf to C would move the application/pdf sources that work on A.
+    assert p.apply.args["LOOM_DOCUMENT_EXTRACTORS_JSON"]["pdf"] == (
+        '<the URL LOOM_DOCUMENT_EXTRACTORS_JSON["application/pdf"] names>'
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_route_to_the_service_that_lost_structure_says_it_answers_only_the_failures(
+    docs: Docs,
+) -> None:
+    down = "http://down:8080"
+    docs.routed = {("pdf", "application/pdf"): down}
+    docs.services = [
+        Service("LOOM_DOCUMENT_EXTRACTOR_URL", DEFAULT, frozenset({"pdf"})),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["pdf"]', down, frozenset()),
+    ]
+    docs.unavailable = [_pdf_job("files/a.pdf", "application/pdf")]
+    docs.coverage = [_lossy_pdf()]
+    out, skipped = await _drafts()
+    (p,) = _target(out, "settings.document_extractors_json")
+    # The only service that declares pdf made the incomplete extractions: the route
+    # answers the failed source alone, and says so.
+    assert p.evidence.finding_codes == ["extractor_unavailable"]
+    assert p.evidence.supporting_count == 1
+    assert any(
+        s.startswith("extractor.pdf: 3 of 10 documents extracted lost page_text")
+        and "the route drafted for its failed sources goes to" in s
         for s in skipped
     ), skipped

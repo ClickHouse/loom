@@ -294,18 +294,24 @@ this namespace's, and its `apply` names how the setting is changed (`via`).
   platform admin) with `expected`, and `apply_also` sets the stride. A sample that
   breaks neither rule drafts nothing, and stands as the evidence. So does a
   `knowledge_chunk_size` of 0 or less, which cuts no window (a text document is one
-  chunk, an ingested one a chunk per block): no size is drafted for it.
+  chunk, an ingested one a chunk per block), and a `knowledge_chunk_stride` of 0 or
+  less, which windows no section or block longer than the size: no size is drafted for
+  either.
 - **Extractor routes** (`settings.document_extractors_json`): a format whose sources'
   current job failed `format_unavailable`, or whose published extractions are
   incomplete, is routed to a configured extractor that declares it in its capabilities.
   The service a source goes to now is read as ingest reads it, from its format and media
   type; the draft adds a route for the format itself, which wins over a media-type
-  route, so it takes every source of the format. The draft names the service by the
-  setting holding its URL, never the URL, which can carry a credential, so
-  `args_complete` is false; `via` is `environment`, in force once each server and worker
-  restarts. A format no configured extractor declares drafts nothing and is named in
-  `skipped` (`extractor.<format>`), as are failed sources whose service declares the
-  format now, which are ingested again instead.
+  route, so it takes every source of the format. Of the services that declare the
+  format, the draft picks one some of its sources work on now, else one its media-type
+  routes already reach, so no working source moves; within that, one that did not make
+  its incomplete extractions. A format is judged on both its failed sources and its
+  incomplete extractions, and a route that cannot answer the extractions says so in
+  `skipped`. The draft names the service by the setting holding its URL, never the URL,
+  which can carry a credential, so `args_complete` is false; `via` is `environment`, in
+  force once each server and worker restarts. A format no configured extractor declares
+  drafts nothing and is named in `skipped` (`extractor.<format>`), as are failed sources
+  whose service declares the format now, which are ingested again instead.
 
 Decision extraction (`loom decisions extract` and the source sync's mining) builds its
 prompt from fixed text and takes no instructions from a request, a namespace or an org,
