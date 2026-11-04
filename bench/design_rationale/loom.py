@@ -32,6 +32,8 @@ CHARS_PER_TOKEN = 4  # the server's estimate (memory.for_file tokens_estimate)
 KNOWLEDGE_HITS_SHOWN = 5
 # Seconds one call to the harness's Loom may take: an extraction-sized upsert included.
 LOOM_TIMEOUT_S = 180.0
+# Seconds one code.symbol lookup on the code index may take.
+CODE_INDEX_TIMEOUT_S = 120.0
 # The pre-edit block's token budget per file, as the coding-agent hook asks for it.
 PRE_EDIT_BUDGET = 300
 # One document's extraction: a model call per window, each with its own provider
@@ -110,8 +112,7 @@ class Loom:
     def __init__(self, base_url: str, token: str = ""):
         self.base_url = base_url.rstrip("/")
         self.token = token
-        self.timeout_s = LOOM_TIMEOUT_S
-        self.client = httpx.Client(timeout=self.timeout_s)
+        self.client = httpx.Client(timeout=LOOM_TIMEOUT_S)
         self.orgs: dict[str, str] = {}
 
     def bind(self, namespace: str, org: str) -> None:
@@ -130,7 +131,7 @@ class Loom:
             body,
             token=self.token,
             attempts=3,
-            timeout_s=self.timeout_s,
+            timeout_s=LOOM_TIMEOUT_S,
         )
 
     # ---- namespaces
@@ -268,12 +269,10 @@ class Loom:
 
     # ---- reads
 
-    def for_file(
-        self, namespace: str, path: str, token_budget: int = PRE_EDIT_BUDGET
-    ) -> dict[str, Any]:
+    def for_file(self, namespace: str, path: str) -> dict[str, Any]:
         out = self.op(
             "memory.for_file",
-            {"namespace": namespace, "path": path, "token_budget": token_budget},
+            {"namespace": namespace, "path": path, "token_budget": PRE_EDIT_BUDGET},
         )
         rendered = out["rendered"]
         # Only the rows the block prints: the budget or the whole-row ceiling may leave
@@ -329,13 +328,12 @@ class CodeIndex:
     the files of extracted rows: the harness's own Loom has no code index, and an arm's
     org must not share one with another arm."""
 
-    def __init__(self, base_url: str, org: str, namespace: str, token: str = ""):
+    def __init__(self, base_url: str, org: str, namespace: str, token: str):
         self.base_url = base_url.rstrip("/")
         self.org = org
         self.namespace = namespace
         self.token = token
-        self.timeout_s = 120.0
-        self.client = httpx.Client(timeout=self.timeout_s)
+        self.client = httpx.Client(timeout=CODE_INDEX_TIMEOUT_S)
 
     def close(self) -> None:
         self.client.close()
@@ -359,7 +357,7 @@ class CodeIndex:
                 body,
                 token=self.token,
                 attempts=3,
-                timeout_s=self.timeout_s,
+                timeout_s=CODE_INDEX_TIMEOUT_S,
             )
         except httpx.HTTPError:
             return None

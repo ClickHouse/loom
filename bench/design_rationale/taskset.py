@@ -170,7 +170,7 @@ def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
         if key not in ts.gold:
             raise TaskSetError(f"task {tid}: unknown gold row {key!r}")
     need = {
-        "A": ("question", "gold_arguments"),
+        "A": ("question", "gold_arguments", "rejected_options"),
         "B": ("task", "gold_constraints", "forbidden_options", "detector"),
         "C": ("question", "subtype"),
     }[kind]

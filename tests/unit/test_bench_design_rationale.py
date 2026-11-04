@@ -291,7 +291,7 @@ def test_one_document_gives_no_mde():
         arm: {"A1": {"kind": "A", "precision": p}, "A2": {"kind": "A", "precision": p}}
         for arm, p in ((3, 1.0), (0, 0.5))
     }
-    rows = [c for c in score.compare(ts, by_arm) if c["metric"] == "precision"]
+    rows = [c for c in score.compare(ts, by_arm, True) if c["metric"] == "precision"]
     assert rows[0]["clusters"] == 1 and rows[0]["mde"] is None
     assert "| 3 vs 0 | A | precision | 2 (1) | +50.0 |" in score.report(
         {"arms": {}, "comparisons": rows, "tokens": {}, "treatment": {}, "judge_stability": {}}
@@ -522,7 +522,7 @@ class FakeLoom:
         row["files"] = sorted({*row["files"], *files})
         return row["files"]
 
-    def for_file(self, namespace, path, token_budget=300):
+    def for_file(self, namespace, path):
         hits = [k for (ns, k), r in self.rows.items() if ns == namespace and path in r["files"]]
         rendered = "\n".join(
             f"- Decision: {self.rows[(namespace, k)]['value']} [id: {k}]" for k in hits
@@ -710,7 +710,7 @@ def test_a_run_stopped_by_the_cap_resumes_without_spending_again(tmp_path, capsy
     model = _fake_model(ledger, usage=2000)
     assert run.run(ts, cfg, loom, model, [model], ledger, FakeCodeIndex()) is False
     assert loom.erased == []  # kept for the resume
-    stopped = capsys.readouterr().out
+    stopped = capsys.readouterr().err
     assert "to resume, or erase the namespaces with: loom namespaces-gc" in stopped
     first = ledger.rows()
     answered = len(json.loads((out / "answers.json").read_text()))
@@ -1253,3 +1253,27 @@ def test_a_finished_run_with_its_namespaces_kept_reruns_with_nothing_to_do(tmp_p
     rows = len(ledger.rows())
     assert run.run(ts, cfg, loom, model, [model], ledger) is True
     assert len(ledger.rows()) == rows and loom.erased == []
+
+
+def test_an_a_task_without_rejected_options_is_refused(tmp_path):
+    root = _copy_example(tmp_path)
+    tasks = json.loads((root / "tasks.json").read_text())
+    del tasks["A"][0]["rejected_options"]
+    (root / "tasks.json").write_text(json.dumps(tasks))
+    with pytest.raises(TaskSetError, match="rejected_options"):
+        load(root)
+
+
+def test_scoring_with_the_unfilled_label_sheet_fails_clearly(tmp_path, capsys):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    cfg = _config(out, arms=[4], k=1, judge_orders=1)
+    run.run(ts, cfg, FakeLoom(), model, [model], ledger, FakeCodeIndex())
+    sheet = out / "extraction_labels.todo.json"
+    assert json.loads(sheet.read_text())  # the run wrote rows, each verdict empty
+    code = main(["score", str(EXAMPLE), "--out", str(out), "--extraction-labels", str(sheet)])
+    assert code == 2
+    assert "fill each row's verdict first" in capsys.readouterr().err

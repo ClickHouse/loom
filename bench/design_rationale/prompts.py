@@ -123,7 +123,7 @@ def judge_prompt(
         gold = (
             f"Question: {task['question']}\n\nGold arguments:\n"
             f"{numbered(task['gold_arguments'])}\n\nGold rejected options: "
-            f"{task.get('rejected_options', [])}\n\nGold rows:\n{gold_rows}\n\nSurfaced "
+            f"{task['rejected_options']}\n\nGold rows:\n{gold_rows}\n\nSurfaced "
             f"knowledge the agent was shown:\n{context}"
         )
         shown = f"Answer:\n{answer}"

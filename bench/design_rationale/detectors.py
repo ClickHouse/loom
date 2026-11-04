@@ -39,7 +39,8 @@ def diff_files(diff: str) -> Diff:
 
 
 def _glob(path: str, pattern: str) -> bool:
-    return fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(path, pattern.replace("**", "*"))
+    # fnmatch's `*` crosses `/`, so `src/**` and `src/*` both match every path below.
+    return fnmatch.fnmatch(path, pattern)
 
 
 def _norm(value: str) -> str:

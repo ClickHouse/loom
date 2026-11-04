@@ -784,7 +784,8 @@ def run(
     except CapReached as e:
         print(
             f"stopped: {e}; run again with the same --out (and a higher --max-usd) to "
-            f"resume, or erase the namespaces with: {erase_command(cfg, loom, ns)}"
+            f"resume, or erase the namespaces with: {erase_command(cfg, loom, ns)}",
+            file=sys.stderr,
         )
     except BaseException:
         # An error or an interrupt after the setup: what the run wrote is kept.

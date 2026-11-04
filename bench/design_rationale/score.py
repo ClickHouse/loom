@@ -44,8 +44,8 @@ HEADLINE = {
 }
 
 
-def planning_mde(n_tasks: int, sd: float = PLANNING_SD) -> float:
-    return MDE_Z * sd / math.sqrt(n_tasks) if n_tasks else float("nan")
+def planning_mde(n_tasks: int) -> float:
+    return MDE_Z * PLANNING_SD / math.sqrt(n_tasks) if n_tasks else float("nan")
 
 
 def readable(kind: str, task: dict[str, Any], verdict: Any) -> bool:
@@ -218,7 +218,7 @@ def arm_summary(rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
 
 
 def compare(
-    ts: TaskSet, tasks_by_arm: dict[int, dict[str, dict[str, Any]]], arm4_files: bool = True
+    ts: TaskSet, tasks_by_arm: dict[int, dict[str, dict[str, Any]]], arm4_files: bool
 ) -> list[dict[str, Any]]:
     """Paired per-task deltas (treatment minus reference) with a bootstrap over
     documents and the MDE the run's own spread implies. Arm 4 without files is compared
