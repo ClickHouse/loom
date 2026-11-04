@@ -611,7 +611,7 @@ class TrackerSourceAddInput(BaseModel):
     credential, and the tracker namespaces that read it. Any signed-in person of
     the org may; they become the namespaces' first admin. Before anything is
     written the host must resolve to a public address, the credential must
-    hold no write access, and the schema must meet the contract — each
+    hold read access only, and the schema must meet the contract — each
     refusal names what to fix. The password is stored encrypted, never
     returned."""
 

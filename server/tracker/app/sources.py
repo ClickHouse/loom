@@ -470,8 +470,9 @@ async def _probe_or_refuse(
         raise ValidationError(str(e), code="SOURCE_UNREACHABLE") from None
     if not probe.grants.read_only:
         raise ValidationError(
-            f"{user!r} holds write access ({', '.join(probe.grants.write_types[:4])}); loom "
-            "takes a read-only user — SELECT on the contract views and system.columns only",
+            f"{user!r} holds more than read access "
+            f"({', '.join(probe.grants.write_types[:4])}); loom takes a read-only user — "
+            "SELECT on the contract views and system.columns only",
             code="CREDENTIAL_NOT_READONLY",
         )
     if mapping is not None:
@@ -752,7 +753,7 @@ async def handle_tracker_source_inspect(
         raise ValidationError(str(e), code="SOURCE_UNREACHABLE") from None
     if not probe.grants.read_only:
         raise ValidationError(
-            f"{user!r} holds write access ({', '.join(probe.grants.write_types[:4])}); "
+            f"{user!r} holds more than read access ({', '.join(probe.grants.write_types[:4])}); "
             "loom takes a read-only user",
             code="CREDENTIAL_NOT_READONLY",
         )

@@ -235,6 +235,21 @@ def test_grant_review_names_write_access_and_roles() -> None:
     assert ob.review_grants(["GRANT CREATE TEMPORARY TABLE ON *.* TO u"]).read_only
 
 
+def test_grant_review_refuses_what_it_cannot_classify_as_read_only() -> None:
+    refused = [
+        "GRANT displaySecretsInShowAndSelect ON *.* TO u",
+        "GRANT SELECT ON loom_qa.* TO u WITH GRANT OPTION",
+        "GRANT analyst TO u WITH ADMIN OPTION",
+        "GRANT SHOW NAMED COLLECTIONS ON *.* TO u",
+        "GRANT SOME FUTURE TYPE ON *.* TO u",
+    ]
+    for line in refused:
+        assert not ob.review_grants([line]).read_only, line
+    rev = ob.review_grants(["GRANT SELECT(id, title), SHOW TABLES ON loom_qa.t TO u"])
+    assert rev.read_only and rev.write_types == []
+    assert ob.review_grants(["GRANT analyst TO u", "REVOKE SELECT ON loom_qa.x FROM u"]).read_only
+
+
 @pytest.mark.asyncio
 async def test_host_refusal_rejects_private_and_local_addresses(monkeypatch) -> None:
     import socket

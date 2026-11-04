@@ -9,9 +9,11 @@ guardrails are rules, not a person's approval:
   unless the deployment allows private hosts (a dev stack). The probe
   connects to the address it validated, so a second lookup cannot swap in
   another;
-- **the credential is read-only**: `SHOW GRANTS` for the user names no write
-  access type (INSERT, ALTER, CREATE, DROP, …); roles are opaque and are
-  reported back so the registrant can see them;
+- **the credential is read-only**: every access type `SHOW GRANTS` names for
+  the user is one a read-only user holds (SELECT, SHOW, dictGet, a temporary
+  table), and none is granted WITH GRANT OPTION or WITH ADMIN OPTION; a type
+  the check does not know is refused. Roles are opaque and are reported back
+  so the registrant can see them;
 - **the schema meets the record contract**: the same `describe` + `diff`
   the boot gate runs, through the supplied credential, before anything is
   written — the report is the refusal.
@@ -34,47 +36,39 @@ from server.tracker.store.source import qa_intel
 
 log = logging.getLogger("loom.tracker.onboarding")
 
-# access types that write, manage access or run the server: never for loom
-_WRITE_ACCESS = frozenset(
+# The access types a read-only user may hold; any other type, or a grant it
+# may pass on, is refused (a type this list does not know is never read-only).
+# Compared upper-case: `SHOW GRANTS` spells some types in mixed case.
+_READ_ACCESS = frozenset(
     {
-        "INSERT",
-        "ALTER",
-        "CREATE",
-        "DROP",
-        "TRUNCATE",
-        "OPTIMIZE",
-        "KILL",
-        "SYSTEM",
-        "ALL",
-        "ACCESS MANAGEMENT",
-        "BACKUP",
-        "UNDROP",
-        "MOVE",
-        "SET DEFINER",
-        "NAMED COLLECTION",
-        "GRANT OPTION",
-        "ADMIN OPTION",
-        "displaySecretsInShowAndSelect",
-        "TABLE ENGINE",
-        "SOURCES",
-        "FILE",
-        "URL",
-        "REMOTE",
-        "MONGO",
-        "MYSQL",
-        "POSTGRES",
-        "SQLITE",
-        "ODBC",
-        "JDBC",
-        "HDFS",
-        "S3",
-        "AZURE",
-        "HIVE",
-        "REDIS",
+        "SELECT",
+        "SHOW",
+        "SHOW DATABASES",
+        "SHOW TABLES",
+        "SHOW COLUMNS",
+        "SHOW DICTIONARIES",
+        "DICTGET",
+        # a temp table for a JOIN
+        "CREATE TEMPORARY TABLE",
+        "CREATE ARBITRARY TEMPORARY TABLE",
     }
 )
-# the one CREATE a read-only user legitimately holds (a temp table for a JOIN)
-_ALLOWED_CREATE = frozenset({"CREATE TEMPORARY TABLE", "CREATE ARBITRARY TEMPORARY TABLE"})
+_PASSES_ON = (" WITH GRANT OPTION", " WITH ADMIN OPTION")
+
+
+def _access_types(types: str) -> list[str]:
+    """`SELECT(a, b), SHOW TABLES` -> ["SELECT(a, b)", "SHOW TABLES"]: split on
+    the commas outside a column list."""
+    out, depth, cur = [], 0, ""
+    for ch in types:
+        depth += (ch == "(") - (ch == ")")
+        if ch == "," and depth == 0:
+            out.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    out.append(cur.strip())
+    return [t for t in out if t]
 
 
 async def host_refusal(host: str) -> str:
@@ -103,25 +97,21 @@ def review_grants(lines: list[str]) -> GrantReview:
     rev = GrantReview(grants=[str(x) for x in lines])
     for raw in lines:
         line = " ".join(str(raw).split())
-        if not line.upper().startswith("GRANT "):
+        upper = line.upper()
+        if not line or upper.startswith("REVOKE "):
+            continue  # a partial revoke only narrows a grant
+        if not upper.startswith("GRANT "):
+            rev.write_types.append(line)
             continue
+        passes_on = [p.strip() for p in _PASSES_ON if p in upper]
+        rev.write_types.extend(passes_on)
         body = line[6:]
         if " ON " not in body:
             roles = body.split(" TO ", 1)[0]
             rev.roles.extend(r.strip() for r in roles.split(",") if r.strip())
             continue
-        types = body.split(" ON ", 1)[0]
-        for t in (x.strip() for x in types.split(",")):
-            tu = t.upper()
-            if not t or tu in _ALLOWED_CREATE:
-                continue
-            head = tu.split("(")[0].strip()
-            words = head.split()
-            if (
-                head in _WRITE_ACCESS
-                or words[0] in _WRITE_ACCESS
-                or (len(words) > 1 and " ".join(words[:2]) in _WRITE_ACCESS)
-            ):
+        for t in _access_types(body.split(" ON ", 1)[0]):
+            if t.upper().split("(")[0].strip() not in _READ_ACCESS:
                 rev.write_types.append(t)
     return rev
 
