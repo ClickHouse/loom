@@ -29,7 +29,6 @@ from bench.design_rationale.llm import (
 from bench.design_rationale.loom import EXTRACT_TIMEOUT_S, PRE_EDIT_BUDGET, Loom
 from bench.design_rationale.taskset import Document, TaskSetError, load
 from server.knowledge.app.writes import _chunk_text
-from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.app.decision_extract import _windows
 from server.memory.app.for_file import render_block
 from server.memory.domain import decision_extract as dx
@@ -423,12 +422,10 @@ def test_the_extraction_bound_covers_every_window_the_extractor_reads():
     calls, revised_in, _ = run.extraction_bound(dataclasses.replace(first, revision_of="x"), 6000)
     _, first_in, _ = run.extraction_bound(first, 6000)
     known = settings.memory_decision_extract_known_max
-    # The longest rows decision.record accepts, as the prompt lists them.
-    fields = DecisionRecordInput.model_fields
-    longest = tuple(
-        "x" * next(m.max_length for m in fields[f].metadata if hasattr(m, "max_length"))
-        for f in ("category", "scenario")
-    ) + ("x" * 5000,)
+    # The longest rows decision.record accepts (category 120, scenario 2000 characters),
+    # as the prompt lists them.
+    assert (run.DECISION_CATEGORY_MAX_CHARS, run.DECISION_SCENARIO_MAX_CHARS) == (120, 2000)
+    longest = ("x" * 120, "x" * 2000, "x" * 5000)
     listed = len(dx.system_prompt(3, [longest] * known)) - len(dx.system_prompt(3))
     # Each call carries the whole list.
     assert revised_in - first_in >= listed // CHARS_PER_TOKEN_WORST * calls
@@ -1160,20 +1157,23 @@ def test_a_resume_with_another_extraction_model_is_refused(tmp_path):
         run.run(ts, other, FakeLoom(), model, [model], ledger)
 
 
-def test_the_pre_edit_bound_covers_a_block_the_harness_reads():
-    # What the harness asks for: its own namespace, the default top_k, a task's path,
-    # and one decision past the whole-row ceiling.
-    hits = [
+def test_the_pre_edit_bound_covers_a_block_at_its_margin():
+    # Decisions filling the whole-row ceiling to within a few characters (each line is
+    # its 28-character head, the value and a newline), one past it (the left-out line
+    # prints), and facts past the budget (the "… more" line prints).
+    whole = settings.memory_for_file_whole_tokens
+    decisions = [
         {
             "memory_key": f"decision:{i:04d}",
             "memory_type": "decision",
-            "value": "Decided a segmented LRU because a scan must only churn probation. " * 8,
+            "value": "d" * 1170,
             "tags": ["decision"],
             "namespace": "ns",
         }
-        for i in range(7)
+        for i in range(5)
     ]
-    hits.append(
+    assert whole * 4 - 5 * (28 + 1170 + 1) < 28
+    decisions.append(
         {
             "memory_key": "decision:long",
             "memory_type": "decision",
@@ -1182,7 +1182,20 @@ def test_the_pre_edit_bound_covers_a_block_the_harness_reads():
             "namespace": "ns",
         }
     )
-    _, tokens, truncated = render_block(
-        "src/cache/segmented_lru.py", hits, PRE_EDIT_BUDGET, home="ns"
+    facts = [
+        {
+            "memory_key": f"fact:{i:03d}",
+            "memory_type": "semantic",
+            "value": "f" * 300,
+            "tags": [],
+            "namespace": "ns",
+        }
+        for i in range(40)
+    ]
+    rendered, tokens, _ = render_block(
+        "src/cache/segmented_lru.py", decisions + facts, PRE_EDIT_BUDGET, home="ns"
     )
-    assert truncated and tokens <= run.pre_edit_block_tokens()
+    assert "- decision:0004 [decision]" in rendered  # the ceiling holds all five
+    assert "more; memory.for_file" in rendered and "left out to keep" in rendered
+    # Past the rows' own budgets, inside the plan's.
+    assert whole + PRE_EDIT_BUDGET < tokens <= run.pre_edit_block_tokens()

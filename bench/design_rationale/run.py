@@ -55,6 +55,10 @@ JUDGE_OUT_CAP = 4000
 # The header, "… more" and left-out lines of a pre-edit block; the render test keeps it
 # honest.
 PRE_EDIT_FIXED_TOKENS = 300
+# The longest category and scenario decision.record accepts
+# (server/memory/api/models_decision.py, DecisionRecordInput).
+DECISION_CATEGORY_MAX_CHARS = 120
+DECISION_SCENARIO_MAX_CHARS = 2000
 # Decisions kept per section, which the extractor's prompt states: the run uses the
 # default of `loom decisions extract --max-per-section` (server/cli/decisions.py).
 EXTRACT_MAX_PER_SECTION = 3
@@ -131,14 +135,13 @@ def longest_known_decision() -> tuple[str, str, str]:
     """The longest (category, scenario, outcome) a re-run's prompt can list: the most
     decision.record accepts for the category and the scenario, and the outcome at the
     length the prompt cuts it to."""
-    from server.memory.api.models_decision import DecisionRecordInput
     from server.memory.domain import decision_extract as dx
 
-    def most(field: str) -> int:
-        meta = DecisionRecordInput.model_fields[field].metadata
-        return next(int(m.max_length) for m in meta if getattr(m, "max_length", None))
-
-    return "x" * most("category"), "x" * most("scenario"), "x" * dx._KNOWN_OUTCOME_CHARS
+    return (
+        "x" * DECISION_CATEGORY_MAX_CHARS,
+        "x" * DECISION_SCENARIO_MAX_CHARS,
+        "x" * dx._KNOWN_OUTCOME_CHARS,
+    )
 
 
 def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:

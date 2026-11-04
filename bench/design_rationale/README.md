@@ -3,7 +3,8 @@
 Measures whether the design decisions Loom serves from a repository's design documents
 keep a coding agent from re-proposing rejected options, and whether the agent answers
 "why" questions correctly, cited, and without stale or invented rationale. The manual is
-`python -m bench.design_rationale --help`; this page is the task-set schema.
+`python -m bench.design_rationale --help`; this page holds the arms, the task-set schema
+and the outputs.
 
 The real task set is private material and is never committed. The harness reads a task
 set from the directory given on the command line; `example/` is a small synthetic one
