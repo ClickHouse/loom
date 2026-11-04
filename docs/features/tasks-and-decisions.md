@@ -387,7 +387,10 @@ await agent.decision.outcome(rec["memory_key"], "no replay gaps in the quarter",
 `loom decisions extract` reads one [knowledge](knowledge.md) document and records the decisions it states. It runs
 in-process with no token, so it is an operator command, and it calls the configured LLM once per window of the
 document's sections, twice for a window read again (below), also in a dry run. Its model calls are not gated by the
-namespace's cost cap.
+namespace's cost cap. A model call held for the org (its model calls switched off, or refused or deferred by the
+inference gateway), for a model read or for an embedding a write needs, stops the run: nothing more is written,
+nothing is retired, and it exits 1. The document-source sync runs the same extraction on each document it writes,
+within a share of the namespace's cost cap ([mining decisions](knowledge.md#mining-decisions)).
 
 ```bash
 loom decisions extract --org O --namespace NS --source-uri URI            # dry run: prints what it would write

@@ -518,6 +518,7 @@
  "knowledge_search_rerank_timeout_s": 8.0,
  "knowledge_search_rerank_top": 30,
  "knowledge_source_probe_timeout_s": 20.0,
+ "knowledge_source_sync_cap_share": 0.25,
  "knowledge_source_sync_documents_per_pass": 40,
  "knowledge_source_sync_enabled": false,
  "knowledge_source_sync_full_interval_seconds": 86400,

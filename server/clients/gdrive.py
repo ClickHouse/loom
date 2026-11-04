@@ -121,7 +121,7 @@ def _error_reasons(resp: httpx.Response) -> set[str]:
     return {r.lower() for r in reasons if r}
 
 
-def _rate_limited(resp: httpx.Response) -> bool:
+def rate_limited(resp: httpx.Response) -> bool:
     """A 429, or a 403 whose error reason is a rate limit rather than a refusal."""
     return resp.status_code == 429 or (
         resp.status_code == 403 and bool(_error_reasons(resp) & _RATE_LIMIT_REASONS)
@@ -129,7 +129,7 @@ def _rate_limited(resp: httpx.Response) -> bool:
 
 
 def _raise_for(resp: httpx.Response, what: str) -> None:
-    if _rate_limited(resp):
+    if rate_limited(resp):
         raise RateLimited(f"{what}: rate_limited", status=resp.status_code)
     if resp.status_code in (401, 403):
         raise CredentialRefused(f"{what}: http_{resp.status_code}", status=resp.status_code)
@@ -178,7 +178,7 @@ async def access_token(account: ServiceAccount) -> str:
         raise DriveError(f"token exchange: {type(e).__name__}") from e
     # A rate limit first; otherwise the token endpoint answers a key it does not know
     # or a revoked one with 400, 401 or 403.
-    if _rate_limited(resp):
+    if rate_limited(resp):
         raise RateLimited("token exchange: rate_limited")
     if resp.status_code in (400, 401, 403):
         raise CredentialRefused(f"token exchange: http_{resp.status_code}")
@@ -385,6 +385,7 @@ __all__ = [
     "list_files",
     "parse_service_account",
     "presentation",
+    "rate_limited",
     "require_folder",
     "valid_file_id",
     "valid_stamp",

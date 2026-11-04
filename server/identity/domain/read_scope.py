@@ -272,6 +272,10 @@ SCOPED_OPS = frozenset(
         "conversation.list_saved_messages",
         "conversation.saved_status",
         "conversation.search_saved_messages",
+        # Documents are the namespace's under any scope, as `knowledge.*` reads them; the
+        # decision rows carry the scope, and the audit's memory findings are not read
+        # under a narrowed one.
+        "knowledge.inspect",
         "memory.aggregate",
         "memory.ask",
         # Each retired entry is kept only when its user and session lie inside the scope.

@@ -221,6 +221,7 @@ _CORE = {
     "facts.list",
     "facts.traverse",
     "knowledge.search",
+    "knowledge.inspect",
     "namespace.snapshot",
     "namespace.get",
     "namespace.summary",

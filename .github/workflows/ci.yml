@@ -545,6 +545,20 @@ jobs:
           done
           curl -sf http://127.0.0.1:5000/ >/dev/null
           echo "LOOM_TEST_S3_ENDPOINT=http://127.0.0.1:5000" >> "$GITHUB_ENV"
+      # The extractor the ingestion tests' in-process worker pass calls (tests/integration/test_knowledge_ingest_live.py).
+      - name: Start the reference extractor
+        run: |
+          token="$(openssl rand -hex 24)"
+          echo "::add-mask::$token"
+          (cd extractor && LOOM_EXTRACTOR_TOKEN="$token" LOOM_EXTRACTOR_PORT=8790 \
+            nohup python -m loom_extractor > "$GITHUB_WORKSPACE/extractor.log" 2>&1 &)
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8790/healthz >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8790/healthz >/dev/null || { tail -50 extractor.log; exit 1; }
+          echo "LOOM_DOCUMENT_EXTRACTOR_URL=http://127.0.0.1:8790" >> "$GITHUB_ENV"
+          echo "LOOM_DOCUMENT_EXTRACTOR_TOKEN=$token" >> "$GITHUB_ENV"
       # The whole directory on every pull request; no test is slow enough to
       # justify a separate merge-only tier.
       - name: pytest
@@ -598,6 +612,7 @@ jobs:
           path: |
             server.log
             server-auth.log
+            extractor.log
 
   mixed-version:
     name: builds N-1 and N on one ClickHouse

@@ -1,5 +1,5 @@
 """`loom knowledge sync`: one sync pass over a repository namespace's document
-sources, in-process with no token (operator only), the pass the
+sources and the decisions mined from them, in-process with no token (operator only), the pass the
 knowledge_source_sync worker runs (server/knowledge/app/source_sync.py)."""
 
 from __future__ import annotations
@@ -19,10 +19,12 @@ def register_knowledge_cli(sub: Any) -> None:
         "sync",
         help="Run one sync pass over a repository namespace's document sources now: list "
         "each source's changed files (every file with --full), write the changed ones as "
-        "documents and retire those a full listing no longer has, bounded like a worker "
-        "pass by LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS; run it again to go on. "
-        "Leaves a manual knowledge_source_sync row in loom.worker_status. Exits 1 when a "
-        "source's turn failed.",
+        "documents and retire those a full listing no longer has, then mine each document "
+        "written since it was last mined for decisions (model calls, within "
+        "LOOM_KNOWLEDGE_SOURCE_SYNC_CAP_SHARE of the namespace's cost cap), bounded like a "
+        "worker pass by LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS; run it again to go "
+        "on. Leaves a manual knowledge_source_sync row in loom.worker_status. Exits 1 when a "
+        "source's turn or a document's extraction failed.",
     )
     p_sync.add_argument("--org", required=True)
     p_sync.add_argument("--namespace", required=True, help="The repository's trunk code namespace")
@@ -52,7 +54,8 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         print(
             f"{args.namespace}: {result.synced} of {result.sources} source(s) synced, "
             f"{result.changed} written, {result.removed + result.retired} retired, "
-            f"{result.unconverted} unconverted, {result.skipped} skipped"
+            f"{result.unconverted} unconverted, {result.skipped} skipped, "
+            f"{result.extracted} mined for decisions"
             + ("; stopped at the pass bound, run again to go on" if result.cut else "")
         )
         for line in result.errors:
