@@ -52,8 +52,8 @@ ledger's file lists in the window (a floor) with `git blame -w -M -L` on the mir
 each blamed commit mapped to its PR. On a release-branch namespace it also reads the
 trunk namespace's ledger, and a release version resolves to its branch namespace's
 indexed head; either is used only when the caller may read that namespace. Otherwise
-the trunk's ledger candidates are left out and `legs.ledger.skipped` names the trunk, and the release version resolves through
-the mirror's branch or `-new` tag.
+the trunk's ledger candidates are left out and `legs.ledger.skipped` names the trunk.
+A release version then resolves through the mirror's branch or `-new` tag.
 
 - `stage: "introduced"` (default) demotes backports, reverts and whitespace- or
   rename-only touches, and promotes a PR that names the enclosing function, drew a

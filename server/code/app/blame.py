@@ -3,9 +3,9 @@ inside a release window.
 
 Addressed at a CODE namespace. The window's two ends are release versions
 (`26.3` → the release-branch namespace's recorded head when the caller may
-read it, else the mirror's branch or `v26.3.1.1-new` tag; `26.3.4.12` → its tag), commit shas, or
-empty (`to` defaults to the namespace's own head, `from` to the oldest
-release cut the mirror knows). Two legs run together: loom's PR ledger
+read it, else the mirror's branch or `v26.3.1.1-new` tag; `26.3.4.12` → its
+tag), commit shas, or empty (`to` defaults to the namespace's own head,
+`from` to the oldest release cut the mirror knows). Two legs run together: loom's PR ledger
 (`code_pr_history`, file lists — the floor) and `git blame -w -M -L` on the
 bare mirror at the upper commit, each blamed commit mapped to its pull
 request through the window's merge graph. The tracker namespace bound to this code namespace
@@ -150,13 +150,6 @@ async def _namespace_head(repo: CodeRepo, org: str, ns: str) -> str:
     return state_value(state, "git_head")
 
 
-async def _readable(org: str, ns: str) -> bool:
-    """Whether the caller may read `ns`, a namespace LOOM adds on its own (the
-    transport gated only the addressed one)."""
-    readable, _skipped = await fanout.readable_subset(org, [ns])
-    return bool(readable)
-
-
 async def _resolve_ref(
     repo: CodeRepo, org: str, git_dir: str, siblings: list[Any], text: str
 ) -> tuple[str, str]:
@@ -173,7 +166,10 @@ async def _resolve_ref(
             return "", ""
     if kind == "minor":
         branch_ns = next((c.namespace for c in siblings if c.git_branch == value), "")
-        if branch_ns and await _readable(org, branch_ns):
+        readable: list[str] = []
+        if branch_ns:
+            readable, _skipped = await fanout.readable_subset(org, [branch_ns])
+        if readable:
             head = await _namespace_head(repo, org, branch_ns)
             if head:
                 return head, "namespace_head"
