@@ -553,7 +553,8 @@ class CodeBlameRangeOutput(BaseModel):
     latest_pr: int = 0
     # {total, attributed, noise, outside_window, unmapped}
     lines: dict[str, Any] = Field(default_factory=dict)
-    # {blame{status, warm, ms, window_commits, graph_truncated}, ledger{status},
+    # {blame{status, warm, ms, window_commits, graph_truncated},
+    #  ledger{status, skipped: [{namespace, reason: not_readable}] when the trunk is unreadable},
     #  introduced{status ok|skipped, ms, git_calls, demoted, promoted, blameless}}
     legs: dict[str, Any] = Field(default_factory=dict)
     # How `first_release` was derived; "" when the mirror has no branch-cut tags.

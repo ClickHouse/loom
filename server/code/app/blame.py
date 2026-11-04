@@ -2,8 +2,8 @@
 inside a release window.
 
 Addressed at a CODE namespace. The window's two ends are release versions
-(`26.3` → the release-branch namespace's recorded head, else the mirror's
-branch or `v26.3.1.1-new` tag; `26.3.4.12` → its tag), commit shas, or
+(`26.3` → the release-branch namespace's recorded head when the caller may
+read it, else the mirror's branch or `v26.3.1.1-new` tag; `26.3.4.12` → its tag), commit shas, or
 empty (`to` defaults to the namespace's own head, `from` to the oldest
 release cut the mirror knows). Two legs run together: loom's PR ledger
 (`code_pr_history`, file lists — the floor) and `git blame -w -M -L` on the
@@ -380,19 +380,21 @@ async def _blame_leg(git_dir: str, path: str, w: Window, start: int, end: int) -
 
 async def _ledger_leg(
     repo: CodeRepo, org: str, ns: str, siblings: list[Any], path: str, w: Window
-) -> tuple[list[dict[str, Any]], bool]:
-    """Ledger rows from this namespace and from the mirror's trunk namespace (a
-    release-branch namespace holds its own backports only; the trunk entry holds the
-    PR record), merged by PR number. The transport gated only `ns`, so the trunk is
-    read only when the caller may read it, and left out otherwise."""
+) -> tuple[list[dict[str, Any]], bool, list[dict[str, str]]]:
+    """(rows, ok, skipped): ledger rows from this namespace and from the mirror's trunk
+    namespace (a release-branch namespace holds its own backports only; the trunk entry
+    holds the PR record), merged by PR number. The transport gated only `ns`, so the
+    trunk is read only when the caller may read it, and named in `skipped` otherwise."""
     from server.code.domain.index.repos import trunk_entry
 
     namespaces = [ns]
+    skipped: list[dict[str, str]] = []
     branch_of = {c.namespace: str(c.git_branch or "") for c in siblings}
     mine = next((c for c in siblings if c.namespace == ns), None)
     trunk = trunk_entry(mine, siblings) if mine is not None else None
-    if trunk is not None and await _readable(org, trunk.namespace):
-        namespaces.append(trunk.namespace)
+    if trunk is not None:
+        readable, skipped = await fanout.readable_subset(org, [trunk.namespace])
+        namespaces.extend(readable)
     since = datetime.fromtimestamp(w.from_time, tz=UTC).replace(tzinfo=None)
     until = datetime.fromtimestamp(w.to_time, tz=UTC).replace(tzinfo=None)
     # Each namespace's rows must name its own branch (a backport filed under the master
@@ -420,7 +422,7 @@ async def _ledger_leg(
             ok = False
             continue
         rows.extend(res)
-    return rows, ok
+    return rows, ok, skipped
 
 
 async def _tracker_side(
@@ -731,7 +733,13 @@ async def handle_code_blame_range(input: Any) -> Any:
             stage_leg=stage_leg,
         )
     with code_span("blame_range.legs", lines=end - start + 1):
-        (ledger_rows, ledger_ok), leg, indexed, points, (sym, comments) = await asyncio.gather(
+        (
+            (ledger_rows, ledger_ok, ledger_skipped),
+            leg,
+            indexed,
+            points,
+            (sym, comments),
+        ) = await asyncio.gather(
             _ledger_leg(repo, org, ns, siblings, path, w),
             _blame_leg(git_dir, path, w, start, end),
             _indexed(repo, org, ns, path),
@@ -805,6 +813,7 @@ async def handle_code_blame_range(input: Any) -> Any:
         att,
         leg,
         ledger_ok=ledger_ok,
+        ledger_skipped=ledger_skipped,
         path_indexed=indexed,
         qa=(tracker_ns, qa_ok),
         started=started,
@@ -873,6 +882,7 @@ def _finish(
     leg: BlameLeg,
     *,
     ledger_ok: bool,
+    ledger_skipped: list[dict[str, str]] | None = None,
     path_indexed: bool,
     qa: tuple[str, bool],
     started: float,
@@ -953,7 +963,10 @@ def _finish(
                 "window_commits": len(leg.graph.parents),
                 "graph_truncated": leg.graph.truncated,
             },
-            "ledger": {"status": "ok" if ledger_ok else "failed"},
+            "ledger": {
+                "status": "ok" if ledger_ok else "failed",
+                **({"skipped": ledger_skipped} if ledger_skipped else {}),
+            },
             "introduced": stage_leg.as_dict(),
         },
         first_release_basis=_RELEASE_BASIS if branch_points else "",

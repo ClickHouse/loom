@@ -557,6 +557,7 @@ async def test_trunk_and_sibling_namespaces_are_read_only_when_the_caller_may_re
     # the shared mirror's blame may still name the PR; the trunk ledger's row does not reach it
     assert "Trunk-only title" not in str(out.candidates)
     assert all(c.get("evidence") == "blame" for c in out.candidates if c["pr_number"] == 100)
+    assert out.legs["ledger"]["skipped"] == [{"namespace": NS, "reason": "not_readable"}]
 
     readable = {NS}
     head_reads.clear()
