@@ -268,6 +268,12 @@ Access patterns where vector-only memory falls down.
 - `code_ask_cache_threshold/` — re-measures the `code.ask` answer-cache
   threshold for the served embedder.
 
+## Design rationale
+
+- **`design_rationale/`** — whether decisions mined from design documents keep a coding
+  agent from re-proposing rejected options, over a private task set read from a
+  directory (`python -m bench.design_rationale --help`; synthetic set in `example/`).
+
 ## Tracker
 
 - **`tracker_similar_bench.py`** — `tracker.similar` per leg, paired per query.
