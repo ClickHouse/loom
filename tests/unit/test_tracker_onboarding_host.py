@@ -12,6 +12,7 @@ import pytest
 
 import server.tracker.app.onboarding as ob
 from server.settings import settings
+from tests.unit.clickhouse_local import CLICKHOUSE, run
 
 REFUSED = [
     "127.0.0.1",
@@ -149,27 +150,17 @@ async def test_private_hosts_allowed_connect_by_name(monkeypatch) -> None:
     assert seen["host"] == "ch.local" and seen["server_host_name"] is None
 
 
-@pytest.mark.asyncio
-async def test_probe_reviews_the_grants_a_role_carries(monkeypatch) -> None:
+def _serving(monkeypatch: pytest.MonkeyPatch, answer: Any) -> None:
+    """Connect the probe to a public host whose server answers each statement
+    with `answer(sql)`: (columns, rows), or an exception it raises."""
     import clickhouse_connect
-
-    # what a server answers for a user whose only write access comes from a role
-    # and `writer` was granted `auditor` WITH ADMIN OPTION, which only the
-    # enabled roles show
-    answers = {
-        "SHOW GRANTS": ["GRANT SELECT ON loom_qa.* TO u", "GRANT writer TO u"],
-        "SHOW GRANTS FINAL": ["GRANT INSERT ON *.* TO u", "GRANT SELECT ON loom_qa.* TO u"],
-    }
-    enabled = [("writer", 0), ("auditor", 1)]
 
     class _Client:
         async def query(self, sql: str, parameters: Any = None) -> Any:
-            if sql == ob._ENABLED_ROLES:
-                return SimpleNamespace(
-                    column_names=["role_name", "with_admin_option"], result_rows=enabled
-                )
-            rows = [(line,) for line in answers.get(sql, [])]
-            return SimpleNamespace(column_names=["grants"], result_rows=rows)
+            got = answer(sql)
+            if isinstance(got, Exception):
+                raise got
+            return SimpleNamespace(column_names=got[0], result_rows=got[1])
 
         async def close(self) -> None:
             pass
@@ -178,14 +169,31 @@ async def test_probe_reviews_the_grants_a_role_carries(monkeypatch) -> None:
         return _Client()
 
     monkeypatch.setattr(clickhouse_connect, "get_async_client", _connect)
+    _resolving(monkeypatch, {"ch.example": ["3.16.142.177"]})
 
-    async def _public(host: str) -> tuple[str, str]:
-        return "", "3.16.142.177"
 
-    monkeypatch.setattr(ob, "_vet", _public)
-    probe = await ob.probe_credential(
+async def _probe() -> ob.ProbeResult:
+    return await ob.probe_credential(
         host="ch.example", port=8443, secure=True, database="loom_qa", user="u", password="p"
     )
+
+
+@pytest.mark.asyncio
+async def test_probe_reviews_the_grants_a_role_carries(monkeypatch) -> None:
+    # A user whose only write access comes from the role `writer`, which was
+    # granted `auditor` WITH ADMIN OPTION: only the enabled roles show that
+    answers = {
+        "SHOW GRANTS": ["GRANT SELECT ON loom_qa.* TO u", "GRANT writer TO u"],
+        "SHOW GRANTS FINAL": ["GRANT INSERT ON *.* TO u", "GRANT SELECT ON loom_qa.* TO u"],
+    }
+
+    def answer(sql: str) -> Any:
+        if sql == ob._ENABLED_ROLES:
+            return ["role_name", "with_admin_option"], [("writer", 0), ("auditor", 1)]
+        return ["grants"], [(line,) for line in answers.get(sql, [])]
+
+    _serving(monkeypatch, answer)
+    probe = await _probe()
     assert probe.grants.roles == ["writer"]
     assert probe.grants.refused == ["INSERT", "WITH ADMIN OPTION (auditor)"]
 
@@ -198,26 +206,29 @@ async def test_probe_reviews_the_grants_a_role_carries(monkeypatch) -> None:
 async def test_probe_names_the_grant_statement_the_server_refused(
     monkeypatch, error: Exception, cause: str
 ) -> None:
-    import clickhouse_connect
-
-    class _Client:
-        async def query(self, sql: str, parameters: Any = None) -> Any:
-            if sql == "SHOW GRANTS FINAL":
-                raise error
-            return SimpleNamespace(column_names=["grants"], result_rows=[])
-
-        async def close(self) -> None:
-            pass
-
-    async def _connect(**_: Any) -> _Client:
-        return _Client()
-
-    async def _public(host: str) -> tuple[str, str]:
-        return "", "3.16.142.177"
-
-    monkeypatch.setattr(clickhouse_connect, "get_async_client", _connect)
-    monkeypatch.setattr(ob, "_vet", _public)
+    _serving(monkeypatch, lambda sql: error if sql == "SHOW GRANTS FINAL" else (["grants"], []))
     with pytest.raises(ob.ProbeError, match=f"SHOW GRANTS FINAL refused for 'u': {cause}"):
-        await ob.probe_credential(
-            host="ch.example", port=8443, secure=True, database="d", user="u", password="p"
-        )
+        await _probe()
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
+def test_show_grants_final_carries_what_a_role_chain_grants() -> None:
+    # INSERT two roles down, on roles that are not default roles: the review
+    # sees it only because FINAL merges the whole chain
+    setup = [
+        "CREATE ROLE b",
+        "GRANT INSERT ON *.* TO b",
+        "CREATE ROLE a",
+        "GRANT b TO a WITH ADMIN OPTION",
+        "CREATE USER u",
+        "GRANT SELECT ON loom_qa.* TO u",
+        "GRANT a TO u",
+        "SET DEFAULT ROLE NONE TO u",
+    ]
+    lines = []
+    for sql in ("SHOW GRANTS FOR u", "SHOW GRANTS FOR u FINAL"):
+        lines += [next(iter(r.values())) for r in run(setup, sql)]
+    rev = ob.review_grants(lines)
+    assert rev.roles == ["a"] and rev.refused == ["INSERT"]
+    # the nested admin option is in neither statement: the enabled roles carry it
+    assert not any("ADMIN OPTION" in line for line in lines)

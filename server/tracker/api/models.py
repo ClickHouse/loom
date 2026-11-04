@@ -728,7 +728,8 @@ class TrackerSourceInspectOutput(BaseModel):
     database: str
     # [{table, engine, rows, columns: [{name, type}]}]
     tables: list[dict[str, Any]] = Field(default_factory=list)
-    # Roles the credential holds, shown so the caller can judge them.
+    # roles the credential holds, shown so the caller can see them; the
+    # read-only check reads their grants too
     roles: list[str] = Field(default_factory=list)
     # {mode: views|mapping, roles: {logical: table}, fields: {logical: {column: {from,
     #  confidence}}}, mapping: mapping.SourceMapping JSON | None}

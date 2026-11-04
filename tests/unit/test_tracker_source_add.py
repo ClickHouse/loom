@@ -270,8 +270,8 @@ def test_grant_review_refuses_what_it_cannot_classify_as_read_only() -> None:
 
 def test_role_review_refuses_a_role_chain_it_cannot_see_or_that_grants_on() -> None:
     # SHOW GRANTS prints `a\\\`b` for a role named a\`b
-    rev = ob.review_grants([r"GRANT analyst, `my role`, `a\\\`b` TO u"])
-    enabled = [{"role_name": "analyst"}, {"role_name": "my role"}, {"role_name": r"a\`b"}]
+    rev = ob.review_grants([r"GRANT analyst, `my  role`, `a\\\`b` TO u"])
+    enabled = [{"role_name": "analyst"}, {"role_name": "my  role"}, {"role_name": r"a\`b"}]
     ob.review_roles(rev, enabled)
     assert rev.read_only
     # a role that is not a default role is not enabled, so its chain is unseen

@@ -56,6 +56,7 @@ _READ_ACCESS = frozenset(
 _ENABLED_ROLES = "SELECT role_name, with_admin_option FROM system.enabled_roles"
 # a quoted name (a column, role or user), which may hold `(`, `,` or ` ON `
 _QUOTED = re.compile(r"`(?:[^`\\]|\\.)*`|\"(?:[^\"\\]|\\.)*\"")
+_QUOTED_OR_SPACE = re.compile(_QUOTED.pattern + r"|\s+")
 # an access type with an optional column list: `SELECT`, `SELECT(a, b)`
 _ACCESS_TYPE = re.compile(r"([A-Za-z ]+?)\s*(?:\([^()]*\))?")
 
@@ -117,7 +118,8 @@ def review_grants(lines: list[str]) -> GrantReview:
     `REVOKE` lines only narrow a grant. Any other line is refused."""
     rev = GrantReview()
     for raw in lines:
-        line = " ".join(str(raw).split())
+        # whitespace collapses outside quoted names only, which keep theirs
+        line = _QUOTED_OR_SPACE.sub(lambda m: " " if m[0].isspace() else m[0], str(raw)).strip()
         masked = _QUOTED.sub(lambda m: "_" * len(m.group()), line)
         upper = masked.upper()
         if not line or upper.startswith("REVOKE "):
@@ -147,7 +149,7 @@ def review_grants(lines: list[str]) -> GrantReview:
     return rev
 
 
-_ESCAPES = {"t": "\t", "n": "\n", "r": "\r", "0": "\0"}
+_ESCAPES = {"t": "\t", "n": "\n", "r": "\r", "0": "\0", "b": "\b", "f": "\f"}
 
 
 def _sql_name(name: str) -> str:

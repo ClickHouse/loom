@@ -329,7 +329,7 @@ Connect with a read-only credential and say what the database holds — every ta
 | `host` | `str` | The host inspected (only the host part of a URL). |
 | `database` | `str` | The database inspected. |
 | `tables` | `list[dict[str, Any]]` | [{table, engine, rows, columns: [{name, type}]}] |
-| `roles` | `list[str]` | Roles the credential holds, shown so the caller can judge them. |
+| `roles` | `list[str]` | roles the credential holds, shown so the caller can see them; the read-only check reads their grants too |
 | `proposal` | `dict[str, Any]` | {mode: views\|mapping, roles: {logical: table}, fields: {logical: {column: {from, confidence}}}, mapping: mapping.SourceMapping JSON \| None} |
 
 ## `tracker.source.list`
