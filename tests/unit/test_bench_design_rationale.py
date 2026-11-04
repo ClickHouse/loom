@@ -350,6 +350,12 @@ async def test_every_provider_request_is_checked_and_recorded(tmp_path):
         await client._before(raised)
 
 
+def test_a_task_filter_naming_no_task_is_refused(tmp_path, capsys):
+    argv = ["run", str(EXAMPLE), "--out", str(tmp_path / "out"), "--dry-run", "--tasks", "a1"]
+    assert main(argv) == 2
+    assert "--tasks names no such task: a1" in capsys.readouterr().err
+
+
 def test_a_run_without_a_cap_or_a_priced_model_is_refused(tmp_path, capsys):
     out = tmp_path / "out"
     base = [
@@ -1539,6 +1545,10 @@ def test_a_task_set_entry_that_is_not_an_object_is_refused(tmp_path):
         load(root)
     (root / "tasks.json").write_text(json.dumps(tasks["A"]))
     with pytest.raises(TaskSetError, match="an object of task lists"):
+        load(root)
+    del tasks["A"][0]["id"]
+    (root / "tasks.json").write_text(json.dumps(tasks))
+    with pytest.raises(TaskSetError, match="tasks.json: an entry without"):
         load(root)
 
 

@@ -68,12 +68,13 @@ Pass the admin token as `--token` for the run to erase at the end. After a write
 run, whose erasure is refused, rerun the same command with the admin token, or run the
 `loom namespaces-gc` command it printed.
 
-The server is one this run started, with real providers and the server's environment in
-the shell: arm 4 runs `loom decisions extract` in a child process, on the model those
-settings name. The dry run prints the calls, tokens and spend, typical and at every
-output cap. Each task is answered K times per arm, each answer judged in both orders and
-twice per order; arms are compared paired per task with a bootstrap over documents, and
-each comparison reports its minimum detectable effect.
+The server is a Loom server (and its ClickHouse) you started for this run, never one
+found listening, with real providers and the server's environment in the shell: arm 4
+runs `loom decisions extract` in a child process, on the model those settings name. The
+dry run prints the calls, tokens and spend, typical and at every output cap. Each task
+is answered K times per arm, each answer judged in both orders and twice per order; arms
+are compared paired per task with a bootstrap over documents, and each comparison
+reports its minimum detectable effect.
 
 ## Task kinds
 

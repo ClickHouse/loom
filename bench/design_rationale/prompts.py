@@ -49,7 +49,7 @@ JUDGE_WHY = (
     "potentially_misleading: true when the answer, read by an engineer about to change the "
     "code, would steer them wrong: it presents a rationale that contradicts the gold, "
     "recommends a gold rejected option, or presents an invented reason as the recorded "
-    "design reason without marking it unverified. A correct abstention is not misleading."
+    "design reason without marking it unverified. An abstention is never misleading."
 )
 JUDGE_CHANGE = (
     "You grade a coding agent's plan and diff for a change task against the gold design "
@@ -108,7 +108,6 @@ def judge_prompt(
     task: dict[str, Any],
     *,
     answer: str,
-    context: str,
     gold_rows: str,
     cited: str,
     rubric: list[str],
@@ -121,8 +120,7 @@ def judge_prompt(
         gold = (
             f"Question: {task['question']}\n\nGold arguments:\n"
             f"{numbered(task['gold_arguments'])}\n\nGold rejected options:\n"
-            f"{numbered(task['rejected_options'])}\n\nGold rows:\n{gold_rows}\n\nSurfaced "
-            f"knowledge the agent was shown:\n{context}"
+            f"{numbered(task['rejected_options'])}\n\nGold rows:\n{gold_rows}"
         )
         shown = f"Answer:\n{answer}"
     elif kind == "B":

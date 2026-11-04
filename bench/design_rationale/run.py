@@ -201,7 +201,7 @@ def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
                 ctx = 0
             system, user, cap = prompts.answer_prompt(kind, t, "", ts.system)
             a_in = len(system + user) // CHARS_PER_TOKEN_WORST + ctx
-            j_in = JUDGE_FRAME_TOKENS + ctx + cap + CITED_TEXT_TOKENS
+            j_in = JUDGE_FRAME_TOKENS + cap + CITED_TEXT_TOKENS
             rows.append({"kind": kind, "answer_in": a_in, "answer_cap": cap, "judge_in": j_in})
     k = cfg.k
     answer_calls = len(rows) * k
@@ -624,7 +624,6 @@ def judge(
     judges: list[Model],
     loom: Loom,
     state: dict[str, Any],
-    surf: dict[str, Any],
     ans: dict[str, Any],
 ) -> dict[str, Any]:
     path = cfg.out / "judged.json"
@@ -661,7 +660,6 @@ def judge(
             "\n".join(f"- [{k}] {ts.gold[k].value}" for k in t.get("gold_rows", [])) or "(none)"
         )
         rubric = [d["rubric"] for d in t.get("detector", []) if d["type"] == "judge"]
-        context = surf[surface_key(tid, arm)]["context"]
         done = {(p["model"], p["order"], p["repeat"]) for p in entry["passes"]}
         for model in judges:
             for order in range(cfg.judge_orders):
@@ -672,7 +670,6 @@ def judge(
                         kind,
                         t,
                         answer=answer["text"],
-                        context=context,
                         gold_rows=gold_rows,
                         cited=cited,
                         rubric=rubric,
@@ -789,7 +786,7 @@ def run(
         surf = surfaces(ts, cfg, loom, state)
         record_server_spend(loom, ledger, state, cfg)
         ans = answers(ts, cfg, reader, surf)
-        judge(ts, cfg, judges, loom, state, surf, ans)
+        judge(ts, cfg, judges, loom, state, ans)
         record_server_spend(loom, ledger, state, cfg)
         finished = True
     except CapReached as e:

@@ -1,9 +1,9 @@
 """What the harness reads and writes in its own Loom: the arms' namespaces, the
 documents, the gold rows, the extraction run and the surfaces an agent would see.
 
-Every call goes to the server given on the command line, one the run started itself
-(never one found listening). `extract` runs `loom decisions extract --apply` in a child
-process from this checkout, so it needs the server's ClickHouse and provider
+Every call goes to the server given on the command line, a Loom server you started for
+this run (never one found listening). `extract` runs `loom decisions extract --apply` in
+a child process from this checkout, so it needs the server's ClickHouse and provider
 environment.
 """
 

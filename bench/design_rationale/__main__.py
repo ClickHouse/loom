@@ -26,13 +26,14 @@ only, and arm 5 is added so that arm 4 is compared with gold rows served the sam
 
 `run --dry-run` needs no server: it reads the task set and, with arm 4, this
 environment's server settings (the extraction's model), and prints the calls, tokens and
-spend a run would take. A real run needs a Loom server and ClickHouse this run started,
-with the server's environment in this shell (the extraction runs the CLI in a child
-process, whose model is read from that environment and must match --extract-model when
-given), and --max-usd: every provider request the harness sends, and each extraction's
-bound, is refused once it would cross the cap; the server's own spend is recorded after
-the fact. `--offline` answers and judges with a stub that costs nothing and measures
-nothing: it checks the plumbing against a server. `score` reads the run's files only.
+spend a run would take. A real run needs a Loom server (and its ClickHouse) you started
+for this run, with the server's environment in this shell (the extraction runs the CLI
+in a child process, whose model is read from that environment and must match
+--extract-model when given), and --max-usd: every provider request the harness sends,
+and each extraction's bound, is refused once it would cross the cap; the server's own
+spend is recorded after the fact. `--offline` answers and judges with a stub that costs
+nothing and measures nothing: it checks the plumbing against a server. `score` reads the
+run's files only.
 """
 
 from __future__ import annotations
@@ -225,6 +226,9 @@ def _fail(message: str) -> int:
 def cmd_run(a: argparse.Namespace) -> int:
     ts = load(a.taskset)
     cfg = _config(a)
+    unknown = sorted(cfg.only - {t["id"] for _, t in ts.all_tasks()})
+    if unknown:
+        return _fail(f"--tasks names no such task: {', '.join(unknown)}")
     # Rows a sync wrote carry the files it linked; rows this run extracts get theirs
     # from the code index, or have none.
     cfg.arm4_files = bool(a.code_index or a.arm4_namespace)
