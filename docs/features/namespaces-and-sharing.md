@@ -302,16 +302,18 @@ this namespace's, and its `apply` names how the setting is changed (`via`).
   incomplete, is routed to a configured extractor that declares it in its capabilities.
   The service a source goes to now is read as ingest reads it, from its format and media
   type; the draft adds a route for the format itself, which wins over a media-type
-  route, so it takes every source of the format. Of the services that declare the
-  format, the draft picks one some of its sources work on now, else one its media-type
-  routes already reach, so no working source moves; within that, one that did not make
-  its incomplete extractions. A format is judged on both its failed sources and its
-  incomplete extractions, and a route that cannot answer the extractions says so in
-  `skipped`. The draft names the service by the setting holding its URL, never the URL,
-  which can carry a credential, so `args_complete` is false; `via` is `environment`, in
-  force once each server and worker restarts. A format no configured extractor declares
-  drafts nothing and is named in `skipped` (`extractor.<format>`), as are failed sources
-  whose service declares the format now, which are ingested again instead.
+  route, so it takes every source of the format. Of the services that declare the format
+  (for incomplete extractions, those that did not make them), the route goes to one its
+  sources already work on (extracted whole, or failed sources whose service declares the
+  format now), else one its media-type routes reach, else any, a service that did not
+  make its incomplete extractions first within each. A route can still move sources that
+  extract whole on another service, and its rationale names them; a route that does not
+  answer the incomplete extractions says so in `skipped`. The draft names the service by
+  the setting holding its URL, never the URL, which can carry a credential, so
+  `args_complete` is false; `via` is `environment`, in force once each server and worker
+  restarts. A format no configured extractor declares drafts nothing and is named in
+  `skipped` (`extractor.<format>`), as are failed sources whose service declares the
+  format now, which are ingested again instead.
 
 Decision extraction (`loom decisions extract` and the source sync's mining) builds its
 prompt from fixed text and takes no instructions from a request, a namespace or an org,

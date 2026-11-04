@@ -195,13 +195,15 @@ def test_the_extractions_are_counted_per_format_with_what_they_lost() -> None:
             int(r["incomplete"]),
             r["incomplete_uris"],
             r["lost"],
-            r["content_types"],
+            r["incomplete_types"],
+            r["complete_types"],
         )
         for r in rows
     }
+    # The media types behind the incomplete extractions apart from the complete ones'.
     assert got == {
-        "sql": (1, 1, ["files/q.sql"], ["sql_structure"], ["application/sql"]),
-        "toml": (1, 0, [], [], [""]),
+        "sql": (1, 1, ["files/q.sql"], ["sql_structure"], ["application/sql"], []),
+        "toml": (1, 0, [], [], [], [""]),
     }
     # Most incomplete first.
     assert rows[0]["doc_format"] == "sql"

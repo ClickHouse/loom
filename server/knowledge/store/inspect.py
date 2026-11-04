@@ -540,8 +540,9 @@ async def extraction_by_format(
 ) -> list[dict[str, Any]]:
     """Per format of the live documents an extraction published (a coverage on the row):
     how many, how many are incomplete with up to MAX_SAMPLES URIs, and the capabilities
-    their coverage lost (`lost`, distinct, sorted) and the media types of their originals
-    (`content_types`, distinct, sorted: a media-type route may have sent them), most
+    their coverage lost (`lost`, distinct, sorted), and the media types of the originals
+    behind the incomplete extractions and behind the complete ones (`incomplete_types`,
+    `complete_types`, distinct, sorted: a media-type route may have sent them), most
     incomplete first, at most MAX_GROUPS + 1 formats (one more means cut)."""
     return await (ch or _default_client()).query_all(
         f"""
@@ -549,7 +550,10 @@ async def extraction_by_format(
                countIf({_INCOMPLETE}) AS incomplete,
                groupArrayIf({MAX_SAMPLES})(source_uri, {_INCOMPLETE}) AS incomplete_uris,
                arraySort(groupUniqArrayArray({_LOST})) AS lost,
-               arraySort(groupUniqArray(toString(blob_content_type))) AS content_types
+               arraySort(groupUniqArrayIf(toString(blob_content_type), {_INCOMPLETE}))
+                   AS incomplete_types,
+               arraySort(groupUniqArrayIf(toString(blob_content_type), NOT {_INCOMPLETE}))
+                   AS complete_types
         {_DOCS} AND superseded_at IS NULL AND coverage != ''
         GROUP BY doc_format
         ORDER BY incomplete DESC, doc_format

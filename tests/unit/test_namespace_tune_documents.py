@@ -325,7 +325,8 @@ async def test_lost_structure_drafts_another_declaring_service_or_says_none(docs
             "incomplete": 2,
             "incomplete_uris": ["files/a.sql", "files/b.sql"],
             "lost": ["sql_structure"],
-            "content_types": [""],
+            "incomplete_types": [""],
+            "complete_types": [""],
         },
         {
             "doc_format": "toml",
@@ -333,7 +334,8 @@ async def test_lost_structure_drafts_another_declaring_service_or_says_none(docs
             "incomplete": 0,
             "incomplete_uris": [],
             "lost": [],
-            "content_types": [""],
+            "incomplete_types": [],
+            "complete_types": [""],
         },
     ]
     out, skipped = await _drafts()
@@ -639,14 +641,22 @@ def _pdf_job(uri: str, media: str = "") -> dict[str, Any]:
     }
 
 
-def _lossy_pdf(incomplete: int = 3) -> dict[str, Any]:
+def _lossy_pdf(
+    incomplete: int = 3,
+    documents: int = 10,
+    incomplete_types: tuple[str, ...] = ("",),
+    complete_types: tuple[str, ...] = ("",),
+) -> dict[str, Any]:
+    """pdf extractions, `incomplete` of `documents` lost page_text, with the media types
+    of the originals behind the incomplete and the complete ones."""
     return {
         "doc_format": "pdf",
-        "documents": 10,
+        "documents": documents,
         "incomplete": incomplete,
         "incomplete_uris": [f"files/lost{i}.pdf" for i in range(incomplete)],
         "lost": ["page_text"],
-        "content_types": [""],
+        "incomplete_types": list(incomplete_types),
+        "complete_types": list(complete_types),
     }
 
 
@@ -685,8 +695,8 @@ async def test_a_route_for_failed_sources_avoids_the_service_that_lost_structure
         Service('LOOM_DOCUMENT_EXTRACTORS_JSON["docx"]', third, frozenset({"pdf", "docx"})),
     ]
     docs.unavailable = [_pdf_job("files/a.pdf", "application/pdf")]
-    # The lost extractions, of originals with no media type, were the default service's.
-    docs.coverage = [_lossy_pdf()]
+    # Every extraction lost page_text, each the default service's (no media type).
+    docs.coverage = [_lossy_pdf(documents=3, complete_types=())]
     out, _ = await _drafts()
     (p,) = _target(out, "settings.document_extractors_json")
     assert p.apply.args["LOOM_DOCUMENT_EXTRACTORS_JSON"]["pdf"] == (
@@ -742,3 +752,54 @@ async def test_a_route_to_the_service_that_lost_structure_says_it_answers_only_t
         and "the route drafted for its failed sources goes to" in s
         for s in skipped
     ), skipped
+
+
+@pytest.mark.asyncio
+async def test_incomplete_extractions_go_to_the_service_that_extracts_the_rest_whole(
+    docs: Docs,
+) -> None:
+    # application/pdf originals go to W, which extracted them whole; the rest go to the
+    # default service, which made the incomplete ones. Both declare pdf.
+    w = "http://pdf-w:8080"
+    docs.routed = {("pdf", "application/pdf"): w}
+    docs.services = [
+        Service("LOOM_DOCUMENT_EXTRACTOR_URL", DEFAULT, frozenset({"pdf"})),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["application/pdf"]', w, frozenset({"pdf"})),
+    ]
+    docs.coverage = [_lossy_pdf(incomplete_types=("",), complete_types=("application/pdf",))]
+    out, _ = await _drafts()
+    (p,) = _target(out, "settings.document_extractors_json")
+    assert p.apply.args["LOOM_DOCUMENT_EXTRACTORS_JSON"]["pdf"] == (
+        '<the URL LOOM_DOCUMENT_EXTRACTORS_JSON["application/pdf"] names>'
+    )
+    assert p.evidence.finding_codes == ["extraction_incomplete"]
+    # Nothing that extracts whole moves: W's sources stay on W.
+    assert "extracts whole now" not in p.rationale
+
+
+@pytest.mark.asyncio
+async def test_failed_sources_go_to_the_service_that_extracts_most_of_the_format(
+    docs: Docs,
+) -> None:
+    # The default service extracts pdf whole; application/pdf sources fail on X, which a
+    # media-type route sends them to and which does not declare pdf. T declares pdf too.
+    x, t = "http://x:8080", "http://pdf-t:8080"
+    docs.routed = {("pdf", "application/pdf"): x}
+    docs.routes = {"application/pdf": x}
+    services = [
+        Service("LOOM_DOCUMENT_EXTRACTOR_URL", DEFAULT, frozenset({"pdf"})),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["application/pdf"]', x, frozenset()),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["docx"]', t, frozenset({"pdf", "docx"})),
+    ]
+    docs.services = services
+    docs.unavailable = [_pdf_job("files/a.pdf", "application/pdf")]
+    whole = _lossy_pdf(incomplete=0, documents=7, complete_types=("",))
+    docs.coverage = [whole]
+    out, _ = await _drafts()
+    (p,) = _target(out, "settings.document_extractors_json")
+    assert p.apply.args["LOOM_DOCUMENT_EXTRACTORS_JSON"]["pdf"] == (
+        "<the URL LOOM_DOCUMENT_EXTRACTOR_URL names>"
+    )
+    route = tune._judge_format("pdf", {x: ["files/a.pdf"]}, whole, services, docs.routes, [])
+    assert route is not None and route.url == DEFAULT and route.failed == ["files/a.pdf"]
+    assert not route.incomplete
