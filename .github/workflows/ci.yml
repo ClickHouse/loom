@@ -545,9 +545,7 @@ jobs:
           done
           curl -sf http://127.0.0.1:5000/ >/dev/null
           echo "LOOM_TEST_S3_ENDPOINT=http://127.0.0.1:5000" >> "$GITHUB_ENV"
-      # The reference document extractor, which the ingestion tests' worker pass
-      # (run in the test process) sends originals to
-      # (tests/integration/test_knowledge_ingest_live.py).
+      # The extractor the ingestion tests' in-process worker pass calls (tests/integration/test_knowledge_ingest_live.py).
       - name: Start the reference extractor
         run: |
           token="$(openssl rand -hex 24)"
