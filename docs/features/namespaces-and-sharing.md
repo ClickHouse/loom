@@ -56,10 +56,10 @@ touch the data. To remove the data, run an erasure first
 
 ## Membership and grants
 
-A grant gives a subject (a person's login handle or verified email, the email of an SSO
-or linked account, or a service account `sa:<name>`) a role on one namespace: `viewer` reads, `writer` writes, `admin` manages grants and
-settings. The token carries the org and the namespaces it may reach; the grant table
-decides the role.
+A grant gives a subject (a person's login handle, the verified email of an SSO or linked
+account, or a service account `sa:<name>`) a role on one namespace: `viewer` reads,
+`writer` writes, `admin` manages grants and settings. The token carries the org and the
+namespaces it may reach; the grant table decides the role.
 
 | Operation                                                            | Role      | Does                                                                                                                                                   |
 | -------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |

@@ -339,9 +339,9 @@ async def _live_grant_rows(org: str, namespace: str, subject: str) -> list[tuple
     handle, its verified email), matched in any case as the gate matches them,
     since one left live would keep admitting them. When the subject is an address
     that never held a row there, the rows under the spellings a revocation reaches
-    (`aliases.spellings`): a grant for it stored under an unverified account's
-    handle. A handle never falls back to its unverified email, which may name
-    someone else's grant."""
+    (`aliases.spellings`): the live row of each unverified account naming the
+    address, however it was granted. A handle never falls back to its unverified
+    email, which may name someone else's grant."""
     from server.auth.aliases import spellings, verified_spellings
 
     verified = await verified_spellings(org, subject)

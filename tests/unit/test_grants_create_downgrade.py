@@ -283,7 +283,7 @@ async def test_revoke_by_email_reaches_a_row_under_an_unverified_accounts_handle
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The address is no verified spelling of `mallory`, and holds no row of its
-    # own; a grant for it stored under her handle is still what it revokes.
+    # own; the live row of the unverified account naming it is what it revokes.
     from server.identity.api.models_grants import GrantsRevokeInput
     from server.identity.app import token_grants
 
