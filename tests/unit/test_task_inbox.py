@@ -975,7 +975,7 @@ async def test_a_reassign_into_an_inbox_the_caller_may_not_post_to_is_refused(
     readable.add("public")
     with pytest.raises(HTTPException) as e:
         await reassign()
-    assert e.value.status_code == 403
+    assert e.value.status_code == 403 and e.value.detail["code"] == "AUTH_INSUFFICIENT"
     assert [r["task_id"] for r in fake.tasks.values()] == [t.task_id]
     assert fake.tasks[t.task_id]["status"] == t.status
     # Not a poster there and no read on its namespace: the unregistered-name answer.

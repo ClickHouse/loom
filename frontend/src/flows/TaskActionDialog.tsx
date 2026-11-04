@@ -219,7 +219,7 @@ export function TaskActionDialog({
       )}
       {action === "reassign" &&
         (targets.length === 0 ? (
-          <p className="text-xs text-text-muted">No other inbox you may read or post into.</p>
+          <p className="text-xs text-text-muted">No other inbox you may post into.</p>
         ) : (
           <Select label="To inbox" value={toInbox} onSelect={setToInbox}>
             {targets.map((i) => (
