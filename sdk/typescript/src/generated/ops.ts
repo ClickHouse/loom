@@ -3391,6 +3391,155 @@ export interface KnowledgeIngestStatusOutput {
   updated_at?: string | null;
 }
 
+export interface KnowledgeInspectInput {
+  org: string;
+  namespace: string;
+  sample_limit?: number;
+}
+
+export interface DocumentTotals {
+  live?: number | null;
+  deleted?: number | null;
+  newest_ingested_at?: string | null;
+  by_format?: DocumentCount[];
+  by_source_scheme?: DocumentCount[];
+  earlier_revisions?: number | null;
+  unnumbered?: number | null;
+  retired_versions?: number | null;
+}
+
+export interface DocumentCount {
+  name: string;
+  live: number;
+  deleted: number;
+}
+
+export interface ChunkTotals {
+  embedder_model?: string;
+  live?: number | null;
+  searchable?: number | null;
+  unembedded?: number | null;
+  by_model?: ChunkModelCount[];
+}
+
+export interface ChunkModelCount {
+  model: string;
+  live: number;
+  embedded: number;
+}
+
+export interface DecisionTotals {
+  definition: string;
+  all_documents?: DocumentDecisions | null;
+}
+
+export interface DocumentDecisions {
+  decided: DecisionStage;
+  proposed: DecisionStage;
+}
+
+export interface DecisionStage {
+  total: number;
+  confirmed: number;
+  unconfirmed: number;
+  source_changed: number;
+  outcome_known: number;
+}
+
+export interface InspectDocument {
+  source_uri: string;
+  title: string;
+  format: string;
+  source_scheme: string;
+  version: number;
+  revision: number;
+  ingestion_id?: string;
+  ingested_at: string; // date-time
+  retired_versions?: number | null;
+  chunks?: DocumentChunks | null;
+  decisions?: DocumentDecisions | null;
+}
+
+export interface DocumentChunks {
+  live: number;
+  searchable: number;
+  unembedded: number;
+  other_model: number;
+  versions: number;
+  min_chars: number;
+  median_chars: number;
+  max_chars: number;
+  models?: string[];
+}
+
+export interface DocumentFinding {
+  kind: "contract_violation" | "usage_heuristic" | "system_state";
+  rule_version: number;
+  source_op: string;
+  window_seconds?: number | null;
+  population?: number | null;
+  sample_limit: number;
+  samples_complete: boolean;
+  evidence?: FindingEvidence[];
+  exceptions?: string;
+  uncertainty?: string;
+  code: string;
+  severity: "info" | "warning";
+  count: number;
+  share: number;
+  samples?: string[];
+  ingested?: number;
+  ingested_samples?: string[];
+  detail: string;
+  remedy: string;
+}
+
+export interface FindingEvidence {
+  memory_key: string;
+  memory_id: string;
+  version: number;
+  content_sha256: string;
+  agent: string;
+  user_id: string;
+  session_id: string;
+  memory_type: string;
+  source_class: string;
+  updated_at: string; // date-time
+}
+
+export interface ReportCoverage {
+  rules_run?: string[];
+  rules_skipped?: string[];
+  complete: boolean;
+}
+
+export interface MemoryFindingRef {
+  code: string;
+  kind: string;
+  severity: string;
+  rule_version: number;
+  source_op: string;
+  count: number;
+  share: number;
+  detail: string;
+  remedy: string;
+}
+
+export interface KnowledgeInspectOutput {
+  org: string;
+  namespace: string;
+  computed_at: string; // date-time
+  documents: DocumentTotals;
+  chunks: ChunkTotals;
+  decisions: DecisionTotals;
+  listed?: InspectDocument[];
+  listed_complete?: boolean;
+  findings?: DocumentFinding[];
+  coverage: ReportCoverage;
+  memory_findings?: MemoryFindingRef[];
+  skipped?: string[];
+}
+
 export interface KnowledgeListInput {
   org: string;
   namespace: string;
@@ -3583,6 +3732,12 @@ export interface KnowledgeSourceSync {
   unconverted_reasons?: Record<string, number>;
   skipped?: number;
   error?: string;
+  pending_extract?: number;
+  last_extracted_at?: string;
+  extracted?: number;
+  flagged_pinned?: number;
+  unextracted?: number;
+  extract_error?: string;
 }
 
 export interface KnowledgeSourceDocument {
@@ -6766,25 +6921,6 @@ export interface NamespaceAuditFinding {
   remedy: string;
 }
 
-export interface FindingEvidence {
-  memory_key: string;
-  memory_id: string;
-  version: number;
-  content_sha256: string;
-  agent: string;
-  user_id: string;
-  session_id: string;
-  memory_type: string;
-  source_class: string;
-  updated_at: string; // date-time
-}
-
-export interface ReportCoverage {
-  rules_run?: string[];
-  rules_skipped?: string[];
-  complete: boolean;
-}
-
 export interface NamespaceAuditOutput {
   org: string;
   namespace: string;
@@ -9590,6 +9726,7 @@ export type OpName =
   | "knowledge.ingest"
   | "knowledge.ingest_cancel"
   | "knowledge.ingest_status"
+  | "knowledge.inspect"
   | "knowledge.list"
   | "knowledge.outline"
   | "knowledge.reads"
@@ -9943,6 +10080,7 @@ export interface OpMap {
   "knowledge.ingest": { input: KnowledgeIngestInput; output: KnowledgeIngestOutput };
   "knowledge.ingest_cancel": { input: KnowledgeIngestCancelInput; output: KnowledgeIngestCancelOutput };
   "knowledge.ingest_status": { input: KnowledgeIngestStatusInput; output: KnowledgeIngestStatusOutput };
+  "knowledge.inspect": { input: KnowledgeInspectInput; output: KnowledgeInspectOutput };
   "knowledge.list": { input: KnowledgeListInput; output: KnowledgeListOutput };
   "knowledge.outline": { input: KnowledgeOutlineInput; output: KnowledgeOutlineOutput };
   "knowledge.reads": { input: KnowledgeReadsInput; output: KnowledgeReadsOutput };
@@ -10296,6 +10434,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.ingest", group: "knowledge", method: "ingest", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: false },
   { name: "knowledge.ingest_cancel", group: "knowledge", method: "ingestCancel", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: false },
   { name: "knowledge.ingest_status", group: "knowledge", method: "ingestStatus", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: true },
+  { name: "knowledge.inspect", group: "knowledge", method: "inspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 4000, audit: false, readOnly: true },
   { name: "knowledge.list", group: "knowledge", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "knowledge.outline", group: "knowledge", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "knowledge.reads", group: "knowledge", method: "reads", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
@@ -10522,4 +10661,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 350;
+export const GENERATED_OP_COUNT = 351;

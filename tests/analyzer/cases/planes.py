@@ -959,6 +959,29 @@ async def _inspect_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
 _INSPECT_ID = "00000000-0000-0000-0000-000000000001"
 
 
+async def _knowledge_inspect_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """Every read `knowledge.inspect` makes: the documents, chunks and retired ingestions,
+    and the decision rows under the whole namespace or a narrowed scope."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+    from server.knowledge.store import inspect as store
+    from server.memory.store.document_decisions import decisions_by_document
+
+    scope = (
+        WHOLE_NAMESPACE
+        if c["scope"] == "namespace"
+        else ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    )
+    await store.document_groups(ORG, NS, ch=ch)
+    await store.retired_versions(ORG, NS, ch=ch)
+    await store.chunk_models(ORG, NS, ch=ch)
+    await store.chunk_health(ORG, NS, "fake-ngram-1024", ch=ch)
+    await store.newest_documents(ORG, NS, limit=20, ch=ch)
+    await store.document_chunks(ORG, NS, ["docs/a.md"], "fake-ngram-1024", ch=ch)
+    await store.document_retired_versions(ORG, NS, ["docs/a.md"], ch=ch)
+    await store.longer_document_uris(ORG, NS, ["docs/a.md"], ch=ch)
+    await decisions_by_document(ORG, NS, ["docs/a.md"], scope=scope, ch=ch)
+
+
 async def _tune_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     """Every read `namespace.tune` makes of the namespace's rows, under the whole
     namespace or a narrowed scope."""
@@ -1057,6 +1080,16 @@ def cases() -> list[Case]:
                     "cut": 0,
                 }
             ],
+        )
+    )
+    out.append(
+        Case(
+            "knowledge_inspect",
+            "server.knowledge.store.inspect",
+            _knowledge_inspect_reads,
+            {"scope": ("namespace", "own_user")},
+            # Each read answers one row with every column the reads return.
+            rows=lambda sql, params: [{"n": 0, "source_uri": "docs/a.md"}],
         )
     )
     out.append(

@@ -538,3 +538,13 @@ def test_an_untyped_403_on_a_fetch_is_given_up_at_once(world: _World, tracker: _
     tracker.requests.clear()
     _sync()
     assert tracker.fetches(_doc_id(1)) == 0
+
+
+def test_a_project_s_documents_are_mined_by_the_same_leg(world: _World, tracker: _Tracker) -> None:
+    tracker.projects[PROJECT] = [_node(1, "2026-01-01T00:00:00.000Z")]
+    result = _sync()
+    uri = "https://tracker.example.com/acme/document/design-1-1"
+    assert [u for u, actor, _ in world.mined] == [uri] and result.extracted == 1
+    assert _detail(world)["mined"] == {uri: "2026-01-01T00:00:00.000Z"}
+    _sync()
+    assert len(world.mined) == 1

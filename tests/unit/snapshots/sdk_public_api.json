@@ -831,6 +831,10 @@
               "body",
               "options"
             ],
+            "inspect": [
+              "body",
+              "options"
+            ],
             "list": [
               "body",
               "options"

@@ -246,6 +246,33 @@ A knowledge.ingest job's state, stage, coverage, failure and published revision.
 | `created_at` | `datetime \| None` |  |
 | `updated_at` | `datetime \| None` |  |
 
+## `knowledge.inspect`
+
+Report a namespace's documents, read-only.
+
+`POST /v1/knowledge.inspect` · MCP `loom_knowledge_inspect` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `sample_limit` | `int` | `20` | Newest live documents listed with their chunks and decisions, and the most sample URIs per finding, 0 to 100 (default 20). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `org` | `str` | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | The namespace the op reads or writes. |
+| `computed_at` | `datetime` | When the report started (UTC). |
+| `documents` | `DocumentTotals` | Live and deleted documents by format and source scheme, and retired versions. |
+| `chunks` | `ChunkTotals` | Live chunks by embedding model, and how many knowledge.search can return. |
+| `decisions` | `DecisionTotals` | Decision rows citing a document of the namespace, by stage. |
+| `listed` | `list[InspectDocument]` | The newest live documents, at most `sample_limit`, newest first. |
+| `listed_complete` | `bool` | True when `listed` holds every live document and the count was read. |
+| `findings` | `list[DocumentFinding]` | One per check that ran over the documents and chunks; a clean check is an `info` finding with count 0. |
+| `coverage` | `ReportCoverage` | Which document checks ran and which were skipped. |
+| `memory_findings` | `list[MemoryFindingRef]` | namespace.audit's `oversized_values` and `episodic_blobs`, the memory rows that may belong in documents; mentor.brief reports the same shape per agent as `documents_as_memories`. |
+| `skipped` | `list[str]` | Sections not read, as "section: reason"; their fields are null or empty, not zero. |
+
 ## `knowledge.list`
 
 Paginated listing of documents in a namespace, for curation tools.

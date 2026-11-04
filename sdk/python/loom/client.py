@@ -1286,6 +1286,15 @@ class KnowledgeOps:
             await self._agent.call("knowledge.ingest_status", body, **options),
         )
 
+    async def inspect(
+        self, body: _ops.KnowledgeInspectBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeInspectOutput:
+        """`knowledge.inspect`."""
+        return cast(
+            "_ops.KnowledgeInspectOutput",
+            await self._agent.call("knowledge.inspect", body, **options),
+        )
+
     async def list(
         self, body: _ops.KnowledgeListBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeListOutput:

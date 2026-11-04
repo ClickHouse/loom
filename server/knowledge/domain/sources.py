@@ -213,6 +213,12 @@ SYNC_FIELDS: dict[str, type] = {
     "unconverted_reasons": dict,
     "skipped": int,
     "error": str,
+    "pending_extract": int,
+    "last_extracted_at": str,
+    "extracted": int,
+    "flagged_pinned": int,
+    "unextracted": int,
+    "extract_error": str,
 }
 
 

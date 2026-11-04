@@ -33,7 +33,9 @@ def _post(url: str, op: str, body: dict[str, Any]) -> httpx.Response:
     return resp
 
 
-def _seed(ch: Any, org: str, ns: str, name: str = NAME) -> None:
+def _seed(
+    ch: Any, org: str, ns: str, name: str = NAME, credential: str = "not-a-sealed-value"
+) -> None:
     ch.insert(
         "loom.knowledge_sources",
         [
@@ -43,7 +45,7 @@ def _seed(ch: Any, org: str, ns: str, name: str = NAME) -> None:
                 name,
                 "gdrive",
                 json.dumps(CONFIG),
-                "not-a-sealed-value",
+                credential,
                 "alice",
                 True,
             ]
@@ -144,6 +146,12 @@ def test_sync_now_and_remove_write_state_and_registry_rows(
         "unconverted_reasons": {},
         "skipped": 0,
         "error": "",
+        "pending_extract": 0,
+        "last_extracted_at": "",
+        "extracted": 0,
+        "flagged_pinned": 0,
+        "unextracted": 0,
+        "extract_error": "",
     }
 
     wrong = {"org": org, "namespace": ns, "name": name, "confirm": "x"}
@@ -266,6 +274,8 @@ class _Repository:
         self.org, self.ns = org, ns
         self.names: list[str] = []
         self.uris: list[str] = []
+        # Decision rows a test's sync mined.
+        self.keys: list[str] = []
 
     def name(self) -> str:
         self.names.append(f"ksrc-{uuid.uuid4().hex[:8]}")
@@ -293,6 +303,9 @@ def repository(control_plane_url: str, ch_client: Any) -> Any:
                 "keys": [f"knowledge_source:{n}" for n in repo.names],
             },
         )
+    for key in repo.keys:
+        body = {"org": org, "namespace": ns, "agent": "loom-decisions", "memory_key": key}
+        assert _post(control_plane_url, "memory.delete", body).status_code == 200
     for uri in repo.uris:
         body = {"org": org, "namespace": ns, "source_uri": uri}
         assert _post(control_plane_url, "knowledge.delete", body).status_code == 200
@@ -370,3 +383,127 @@ def test_a_callers_tagged_document_never_holds_a_name(
     # placeholder credential fails.
     out = _add(control_plane_url, org, ns, name)
     assert out.json()["detail"]["code"] == "CREDENTIAL_REFUSED", out.text
+
+
+FOLDER = CONFIG["folder_ids"][0]
+DESIGN = (
+    "# {title}\n\n"
+    "We build the hash table on the smaller side of the join. "
+    "It keeps the table in memory for most queries and avoids a spill.\n"
+)
+
+
+def _drive(file_id: str, title: str) -> httpx.AsyncClient:
+    """A shared-folder store holding one native document, every answer written here."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        # Every listing gets the one file, whatever its query asks for.
+        path = request.url.path
+        if path == f"/drive/v3/files/{FOLDER}":
+            return httpx.Response(200, json={"mimeType": "application/vnd.google-apps.folder"})
+        if path == "/drive/v3/files":
+            listed = {
+                "id": file_id,
+                "name": "Join design",
+                "mimeType": "application/vnd.google-apps.document",
+                "modifiedTime": "2026-01-01T00:00:00.000Z",
+                "webViewLink": f"https://docs.example.com/document/d/{file_id}/edit",
+            }
+            return httpx.Response(200, json={"files": [listed]})
+        if path == f"/drive/v3/files/{file_id}/export":
+            return httpx.Response(200, text=DESIGN.format(title=title))
+        return httpx.Response(404)
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(answer))
+
+
+@pytest.fixture
+async def _ch_connected() -> Any:
+    from server.core.ch import get_client
+    from server.embedding import embedder
+
+    embedder.reset()
+    ch = get_client()
+    await ch.connect()
+    yield
+    await ch.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_a_synced_document_is_mined_into_decision_rows_in_the_same_pass(
+    control_plane_url: str,
+    repository: Any,
+    ch_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    _ch_connected: Any,
+) -> None:
+    from server.clients import gdrive
+    from server.core.secrets_at_rest import seal
+    from server.knowledge.app.source_sync import run_sync
+
+    org, ns, name = repository.org, repository.ns, repository.name()
+    file_id = f"1{uuid.uuid4().hex}"
+    uri = f"https://docs.example.com/document/d/{file_id}/edit"
+    repository.uris.append(uri)
+    key = '{"type": "service_account", "client_email": "a@b", "private_key": "k"}'
+    _seed(ch_client, org, ns, name, credential=seal("knowledge_sources.credential", key))
+
+    async def _token(account: Any) -> str:
+        return "tok"
+
+    # A heading of its own: the decision's key is built from it, and the namespace is shared.
+    title = f"Join order {file_id[:8]}"
+    client = _drive(file_id, title)
+    monkeypatch.setattr(gdrive, "access_token", _token)
+    monkeypatch.setattr(gdrive, "get_client", lambda: client)
+    try:
+        result = await run_sync(org=org, namespace=ns, only=name)
+        assert (result.changed, result.extracted, result.failed) == (1, 1, 0), result.errors
+        rows = _query(
+            ch_client,
+            "SELECT memory_key, memory_type, agent, user_id, session_id, actor, source_class, "
+            "source_resource_id, pinned, confidence, tags FROM loom.memory FINAL "
+            "WHERE org = {org:String} AND namespace = {ns:String} "
+            "AND startsWith(source_resource_id, {rid:String}) AND tombstoned_at IS NULL",
+            org=org,
+            ns=ns,
+            rid=f"knowledge:{ns}/{uri}#",
+        )
+        repository.keys += [r["memory_key"] for r in rows]
+        [row] = rows
+        assert row["memory_key"].startswith("decision:")
+        assert row["source_resource_id"] == f"knowledge:{ns}/{uri}#{title}"
+        assert {
+            k: row[k] for k in row if k not in ("memory_key", "source_resource_id", "tags")
+        } == {
+            "memory_type": "decision",
+            "agent": "loom-decisions",
+            "user_id": "-",
+            "session_id": "-",
+            "actor": "worker:knowledge-source-sync",
+            "source_class": "derived",
+            "pinned": 0,
+            "confidence": 0.5,
+        }
+        assert "decision" in row["tags"] and "source-kind:design_doc" in row["tags"]
+        audits = _query(
+            ch_client,
+            "SELECT actor, subject FROM loom.audit_log WHERE org = {org:String} "
+            "AND namespace = {ns:String} AND event_type = 'decision.record' "
+            "AND position(subject, {rid:String}) > 0",
+            org=org,
+            ns=ns,
+            rid=uri,
+        )
+        assert [a["actor"] for a in audits] == ["worker:knowledge-source-sync"]
+        body = {"org": org, "namespace": ns}
+        listed = _post(control_plane_url, "knowledge.source.list", body)
+        [entry] = [e for e in listed.json()["sources"] if e["name"] == name]
+        sync = entry["sync"]
+        assert (sync["pending_extract"], sync["extracted"], sync["extract_error"]) == (0, 1, "")
+        assert sync["last_extracted_at"]
+        # The document is unchanged on the next pass: nothing is mined again.
+        again = await run_sync(org=org, namespace=ns, only=name)
+        assert (again.changed, again.extracted) == (0, 0)
+    finally:
+        await client.aclose()
