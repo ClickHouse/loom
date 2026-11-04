@@ -72,7 +72,9 @@ async def _failed_pdf(c: httpx.AsyncClient, org: str, ns: str) -> str:
     await ch.connect()
     try:
         row = await ingestions.get_ingestion(org, ns, job["ingestion_id"])
-        assert row is not None and await ingest_run.take_and_run(row) is not None
+        assert row is not None, job["ingestion_id"]
+        ran = await ingest_run.take_and_run(row)
+        assert ran is not None, f"job {job['ingestion_id']} did not run"
     finally:
         await ch.disconnect()
     status = await _op(

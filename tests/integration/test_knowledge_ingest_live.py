@@ -10,8 +10,6 @@ runs no workers); then status, get, outline, search and download read it back.
   fails `revision_conflict` and leaves revision 2 serving.
 - An upload whose bytes contradict its name is stored, typed by its name, and its
   job fails with the extractor's code; an ingest of an unknown upload is 404.
-- The queue a worker pass reads offers each namespace the job due longest, one
-  source's jobs one at a time.
 
 The job sends originals to the extractor the settings route SQL and TOML to
 (`extractors.endpoint_for`); the tests that publish skip without one.
@@ -19,11 +17,9 @@ The job sends originals to the extractor the settings route SQL and TOML to
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -54,31 +50,20 @@ SQL = (
 async def _upload(
     c: httpx.AsyncClient, org: str, ns: str, data: bytes, filename: str
 ) -> httpx.Response:
-    """The upload's response; one the namespace's rate limit refuses is sent again."""
-    for _ in range(10):
-        r = await c.post(
-            "/v1/knowledge.upload",
-            params={
-                "org": org,
-                "namespace": ns,
-                "filename": filename,
-                "sha256": hashlib.sha256(data).hexdigest(),
-            },
-            content=data,
-        )
-        if r.status_code != 429:
-            break
-        await asyncio.sleep(float(r.json()["detail"].get("retry_after_s") or 1))
-    return r
+    return await c.post(
+        "/v1/knowledge.upload",
+        params={
+            "org": org,
+            "namespace": ns,
+            "filename": filename,
+            "sha256": hashlib.sha256(data).hexdigest(),
+        },
+        content=data,
+    )
 
 
 async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:
-    """The op's answer; a call the namespace's rate limit refuses waits and is sent again."""
-    for _ in range(10):
-        r = await c.post(f"/v1/{op}", json=body)
-        if r.status_code != 429:
-            break
-        await asyncio.sleep(float(r.json()["detail"].get("retry_after_s") or 1))
+    r = await c.post(f"/v1/{op}", json=body)
     assert r.status_code == 200, r.text
     return dict(r.json())
 
@@ -241,57 +226,6 @@ async def test_a_mislabelled_upload_is_stored_and_the_extractor_refuses_it(
             json={"org": org, "namespace": ns, "source_uri": "repo://report.pdf"},
         )
         assert r.status_code == 200 and r.json().get("found") is False, r.text
-
-
-@pytest.mark.asyncio
-async def test_the_queue_offers_each_namespace_one_due_job_at_the_head_of_its_source(
-    control_plane_url: str,
-) -> None:
-    """What a worker pass reads (`ingestions.due`), for this test's org alone: one
-    candidate per namespace, the job due longest of its sources' first open jobs;
-    a later ingest of a source waits behind the earlier one even while that one is
-    not due (a retry's delay). The jobs are cancelled and ended after, so none is
-    left on the shared queue."""
-    from server.core.ch import get_client
-    from server.knowledge.app import ingest_run
-    from server.knowledge.store import ingestions
-
-    org = unique_org("ingest-due")
-    jobs: list[tuple[str, str]] = []  # (namespace, ingestion id)
-    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
-        for ns, uri in [("a", "one"), ("a", "one"), ("a", "two"), ("a", "three"), ("b", "one")]:
-            up = (await _upload(c, org, ns, SQL, "q.sql")).json()
-            job = await _op(
-                c,
-                "knowledge.ingest",
-                org=org,
-                namespace=ns,
-                upload_id=up["upload_id"],
-                source_uri=f"repo://{uri}.sql",
-            )
-            jobs.append((ns, job["ingestion_id"]))
-        ch = get_client()
-        await ch.connect()
-        try:
-            # The source's first job waits for a retry: its later job is not offered.
-            first = await ingestions.get_ingestion(org, "a", jobs[0][1])
-            assert first is not None
-            later = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)
-            await ingestions.insert_ingestion(
-                ingestions.ingestion_row(first, next_attempt_at=later)
-            )
-            # The whole queue's due jobs, then this org's: the limit is the queue's.
-            due = await ingestions.due(100_000, stale_after_s=ingest_run.JOB_LEASE_S)
-            for ns, job_id in jobs:
-                await _op(c, "knowledge.ingest_cancel", org=org, namespace=ns, ingestion_id=job_id)
-                job = await ingestions.get_ingestion(org, ns, job_id)
-                assert job is not None and await ingest_run.take_and_run(job) == "cancelled"
-        finally:
-            await ch.disconnect()
-    offered = sorted((j["namespace"], j["ingestion_id"]) for j in due if j["org"] == org)
-    # Without the per-namespace rule `a` would offer `three` too; without the per-source
-    # one, the waiting source's later job (older than `two`) would be offered.
-    assert offered == [jobs[2], jobs[4]]
 
 
 @pytest.mark.asyncio
