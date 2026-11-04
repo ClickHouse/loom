@@ -56,7 +56,6 @@
       "gold_constraints": ["thumb_cache_bytes rises only together with the container memory limit"],
       "forbidden_options": ["raising thumb_cache_bytes alone"],
       "detector": [
-        {"type": "setting_default_changed", "setting": "thumb_cache_bytes", "from": "512"},
         {"type": "judge", "rubric": "fail if the cache default grows and the memory limit does not"}
       ]
     },

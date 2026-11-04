@@ -195,8 +195,8 @@ def _check_detector(tid: str, d: Any) -> None:
     for key in ("from", "to"):
         # Compared as one token after the setting name.
         value = d.get(key)
-        if key in d and not (isinstance(value, str | int | float) and TOKEN.fullmatch(str(value))):
-            raise TaskSetError(f"task {tid}: a detector's {key} is one word or number")
+        if key in d and not (isinstance(value, str) and TOKEN.fullmatch(value)):
+            raise TaskSetError(f"task {tid}: a detector's {key} is a one-token string")
 
 
 def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:

@@ -1345,7 +1345,7 @@ def test_a_diff_is_read_file_by_file_without_trusting_hunk_counts():
 def test_a_detector_without_its_keys_is_refused(tmp_path):
     root = _copy_example(tmp_path)
     tasks = json.loads((root / "tasks.json").read_text())
-    del tasks["B"][1]["detector"][0]["from"]  # a setting_default_changed detector
+    tasks["B"][1]["detector"] = [{"type": "setting_default_changed", "setting": "s"}]
     (root / "tasks.json").write_text(json.dumps(tasks))
     with pytest.raises(TaskSetError, match="setting_default_changed detector without"):
         load(root)
@@ -1361,7 +1361,7 @@ def test_a_detector_of_the_wrong_shape_is_refused(tmp_path):
         ({"detector": [{"type": "judge", "rubric": ["r"]}]}, "rubric is a string"),
         (
             {"detector": [{"type": "setting_default_changed", "setting": "s", "from": "5 MiB"}]},
-            "one word or number",
+            "one-token string",
         ),
     ):
         tasks = json.loads((EXAMPLE / "tasks.json").read_text())
@@ -1383,7 +1383,9 @@ def test_setting_values_are_tokens_signs_exponents_and_hyphens_included():
     assert not fires("s = 1e-05", **{"from": "1e-05"})
     assert not fires('s = "gpt-4o-mini"', **{"from": "gpt-4o-mini"})
     assert fires('s = "gpt-4o"', **{"from": "gpt-4o-mini"})
-    assert fires("s = 8", **{"from": "4", "to": "8"})
+    # Not a declaration under the from rule, but it holds the `to` value.
+    assert fires('"s": 8,', **{"from": "4", "to": "8"})
+    assert not fires('"s": 8,', **{"from": "4"})
 
 
 def test_a_diff_fence_closes_only_at_a_line_start():
@@ -1401,7 +1403,7 @@ def test_the_loader_refuses_malformed_task_fields(tmp_path):
             "B",
             1,
             {"detector": [{"type": "setting_default_changed", "setting": "s", "from": "a b"}]},
-            "one word or number",
+            "one-token string",
         ),
         ("A", 0, {"gold_arguments": "one argument"}, "gold_arguments is a list"),
         ("A", 0, {"rejected_options": [1]}, "rejected_options is a list"),
@@ -1420,3 +1422,20 @@ def test_the_loader_refuses_malformed_task_fields(tmp_path):
     (root / "documents.json").write_text(json.dumps(docs))
     with pytest.raises(TaskSetError, match="without '/'"):
         load(root)
+
+
+def test_a_line_that_only_uses_the_setting_does_not_change_its_default():
+    def fires(line):
+        files = detectors.diff_files(f"--- a/c.py\n+++ b/c.py\n+{line}\n")
+        detector = {
+            "type": "setting_default_changed",
+            "setting": "thumb_cache_bytes",
+            "from": "512",
+        }
+        return detectors.run_detector(detector, files)
+
+    assert not fires("ThumbCache(thumb_cache_bytes=settings.thumb_cache_bytes)")
+    assert not fires("def __init__(self, thumb_cache_bytes: int):")
+    assert not fires("if thumb_cache_bytes == 0:")
+    assert fires("thumb_cache_bytes: int = 1_024")
+    assert not fires("thumb_cache_bytes = 512 * MiB")

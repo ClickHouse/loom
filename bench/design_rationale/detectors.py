@@ -88,6 +88,35 @@ def _value_tokens(line: str, name: str) -> set[str]:
     return {_norm(t) for t in TOKEN.findall(after)}
 
 
+# A literal default: a number (sign, `_` separators, decimals, exponent), a quoted string
+# or a bool.
+_LITERAL = (
+    r"""(-?[0-9][0-9_]*(?:\.[0-9_]+)?(?:[eE][-+]?[0-9]+)?|"[^"]*"|'[^']*'|true|false|True|False)"""
+)
+
+
+def declared_default(line: str, name: str) -> str | None:
+    """The literal a line gives `name` as its value, normalised as `_norm` does; None
+    when the line only uses the setting (a call argument, a comparison, an annotation)
+    or gives it something other than a literal. A declaration is `name = <literal>`
+    (an annotation allowed, `==` not), `name: <literal>` (a mapping or YAML entry), a
+    `DECLARE(<type>, name, <literal>` line, or a `{"name", <old>, <new>` history entry,
+    whose new value is the one declared."""
+    n = re.escape(name)
+    patterns = (
+        rf"\b{n}\s*(?::\s*[^=]+?)?\s*=(?!=)\s*{_LITERAL}",
+        rf"(?<![\w\"']){n}\s*:\s*{_LITERAL}",
+        rf"DECLARE\w*\(\s*[^,]+,\s*{n}\s*,\s*{_LITERAL}",
+        rf"\{{\s*\"{n}\"\s*,\s*{_LITERAL}\s*,\s*{_LITERAL}",
+    )
+    for pattern in patterns:
+        m = re.search(pattern, line)
+        if m:
+            value = m.group(m.lastindex or 1)
+            return _norm(value.strip("\"'"))
+    return None
+
+
 def run_detector(d: dict[str, Any], files: Diff) -> bool | None:
     """True when the diff does what the detector looks for (a failure of the task),
     False when it does not, None for a `judge` detector (no deterministic signal)."""
@@ -111,15 +140,10 @@ def run_detector(d: dict[str, Any], files: Diff) -> bool | None:
             for line in f["+"]:
                 if name not in line:
                     continue
-                values = _value_tokens(line, name)
-                if "to" in d and _norm(str(d["to"])) in values:
+                if "to" in d and _norm(d["to"]) in _value_tokens(line, name):
                     return True
-                # A declaration naming the setting with some other default.
-                declared = re.search(
-                    r"DECLARE|\{\s*\"" + re.escape(name) + r"|\b" + re.escape(name) + r"\s*[:=]",
-                    line,
-                )
-                if declared and values and _norm(str(d["from"])) not in values:
+                declared = declared_default(line, name)
+                if declared is not None and declared != _norm(d["from"]):
                     return True
         return False
     raise ValueError(f"unknown detector type {kind!r}")
