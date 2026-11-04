@@ -20,7 +20,7 @@ over- and under-merges:
     Indic vowel signs, Thai tone marks, the Japanese voicing mark and
     Arabic and Hebrew points tell words apart. Only such values take that
     form, so every key with an a-z, 0-9 form stays as it was; a value of
-    punctuation or marks alone has neither and is empty.
+    punctuation, symbols or marks alone has neither and is empty.
 Lists sort. The key is blake2b over the schema name plus the sorted
 (field, canonical value) pairs, 16 hex characters, prefixed by the schema
 name so keys never collide across schemas and read as what they are.
