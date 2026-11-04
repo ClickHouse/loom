@@ -1724,8 +1724,9 @@ describe("Assistant: documents", () => {
   });
 
   it("shows a share just under the whole as >99%, not 100%", async () => {
-    // 199 of 200 sources with a job have their first ingest queued; one was published. The
-    // server lists and samples the first 20 of the 199.
+    // 199 of 200 sources with a job have their first ingest queued; the other published a
+    // document that was deleted after its job ended (replaced). The server lists and samples
+    // the first 20 of the 199.
     const queued = firstIngestQueued();
     const uris = Array.from({ length: 20 }, (_, k) => `https://example.com/queued-${k + 1}.pdf`);
     const jobs = uris.map((uri, k) => ({ uri, job: { ...PENDING, ingestion_id: `ing-q${k + 1}` } }));
@@ -1733,17 +1734,18 @@ describe("Assistant: documents", () => {
       ...queued,
       documents: {
         ...queued.documents,
-        live: 1,
-        by_format: [{ name: "markdown", live: 1, deleted: 0 }],
-        by_source_scheme: [{ name: "https", live: 1, deleted: 0 }],
+        deleted: 1,
+        by_format: [{ name: "markdown", live: 0, deleted: 1 }],
+        by_source_scheme: [{ name: "https", live: 0, deleted: 1 }],
+        retired_versions: 1,
       },
-      listed_complete: false,
       ingestions: {
         ...queued.ingestions,
         sources: 200,
         without_document: 199,
         pending: 199,
         ready: 1,
+        replaced: 1,
         without_document_listed: jobs.map((j) => sourceJobs(j.uri, j.job)),
       },
       ingest_findings: queued.ingest_findings.map((f) =>
@@ -1754,12 +1756,11 @@ describe("Assistant: documents", () => {
                 f.kind,
                 200,
                 jobs.map((j): [string, string] => [j.uri, j.job.ingestion_id]),
-                20,
+                199,
               ),
               count: 199,
               share: 199 / 200,
               samples_complete: false,
-              without_document: 199,
             }
           : f.code === "extraction_incomplete"
             ? f
