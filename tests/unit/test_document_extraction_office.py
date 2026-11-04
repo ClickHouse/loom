@@ -73,7 +73,10 @@ def _texts(a: Artifact) -> list[tuple[str, str, tuple[str, ...]]]:
 def test_docx_headings_lists_tables_and_notes_read_in_document_order() -> None:
     tracked = (
         "<w:p><w:r><w:t>Kept </w:t></w:r><w:ins><w:r><w:t>inserted</w:t></w:r></w:ins>"
-        "<w:del><w:r><w:delText>deleted</w:delText></w:r></w:del></w:p>"
+        "<w:del><w:r><w:delText>deleted</w:delText></w:r></w:del>"
+        # A tracked move keeps its text in ordinary runs at both places.
+        "<w:moveFrom><w:r><w:t> moved</w:t></w:r></w:moveFrom>"
+        "<w:moveTo><w:r><w:t> moved</w:t></w:r></w:moveTo></w:p>"
     )
     boxed = (
         "<w:p><w:r><mc:AlternateContent><mc:Choice><w:t>Box text</w:t></mc:Choice>"
@@ -113,7 +116,7 @@ def test_docx_headings_lists_tables_and_notes_read_in_document_order() -> None:
         ("paragraph", "Customer data stays in region.", policy),
         ("heading", "Retention", retention),
         ("list", "Export on request\nDelete on request", retention),
-        ("paragraph", "Kept inserted", retention),
+        ("paragraph", "Kept inserted moved", retention),
         ("paragraph", "Inside a control", retention),
         ("paragraph", "Box text", retention),
         ("heading", "Appendix", appendix),

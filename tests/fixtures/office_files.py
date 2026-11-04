@@ -1,7 +1,6 @@
 """Files of the binary formats the reference extractor parses, built byte by byte
 for the tests: a PDF of text pages and image pages, with an outline."""
 
-
 from __future__ import annotations
 
 import io
@@ -47,7 +46,8 @@ def pdf(
         b" /BitsPerComponent 8 /Length 1 >>\nstream\n\x00\nendstream"
     )
     form = add(
-        b"<< /Type /XObject /Subtype /Form /BBox [0 0 1 1] /Resources << /XObject << /Im1 %d 0 R >> >>"
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 1 1]"
+        b" /Resources << /XObject << /Im1 %d 0 R >> >>"
         b" /Length 7 >>\nstream\n/Im1 Do\nendstream" % image
     )
     inline = b"BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI"
@@ -82,7 +82,8 @@ def pdf(
         contents = add(b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream))
         page_ids.append(
             add(
-                b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] /Contents %d 0 R /Resources %s >>"
+                b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792]"
+                b" /Contents %d 0 R /Resources %s >>"
                 % (pages_id, contents, res)
             )
         )
