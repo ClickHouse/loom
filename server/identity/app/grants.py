@@ -498,8 +498,9 @@ async def _refuse_last_admin(
     input: GrantsRevokeInput | GrantsCreateInput, *, also_going: int = 0
 ) -> None:
     """Refuse a change that would leave the namespace without an admin, with
-    `also_going` more of its admin rows taken by the same change; it is counted
-    under `admins_change`."""
+    `also_going` more of its admin rows taken by the same change. The count is
+    authoritative under `admins_change`; `revoke_grant` also calls it before any
+    write, without the claim, to refuse early."""
     if await grants_repo.count_active_admins(input.org, input.namespace) <= 1 + also_going:
         from server.core.errors import PreconditionFailedError
 

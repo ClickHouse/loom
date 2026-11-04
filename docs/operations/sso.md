@@ -75,7 +75,8 @@ account keeps its subject, grants, namespaces and data; no new one is made.
   container, or with the same environment), or call `/v1/admin/sso.adopt`,
   which a running server answers. It vouches that the
   domain's addresses are the provider's people, so read the list: an address
-  someone else registered is linked too. It skips an email whose accounts are
+  someone else registered is linked too, and a link makes every grant written
+  under the address admit its account. It skips an email whose accounts are
   in several orgs or have several owners, or that SSO already reaches. It
   revokes every token the adopted subjects hold, so people sign in again, and
   that includes the service-account and MCP tokens they made from their
@@ -103,8 +104,9 @@ link --email <their provider address> --org <org> --namespace <ns>` shows
   JIT account an earlier SSO sign-in made, `loom claim-release` it first: its
   memories stay behind in it (carry them over with `namespace.snapshot` and
   `namespace.restore`), and grants made to it must be made again.
-- `loom sso unlink --email <email> --apply` takes a link back. Sessions already
-  open are not ended; revoke them with `loom revoke-token --subject`.
+- `loom sso unlink --email <email> --apply` takes a link back: grants written
+  under the address stop admitting the account. Sessions already open are not
+  ended; revoke them with `loom revoke-token --subject`.
 - Someone who says a password account naming their address is not theirs is
   denied when that account is in `LOOM_OIDC_JIT_ORG`, and
   `auth.sso_link_declined` is audited: beside that account, a password sign-in

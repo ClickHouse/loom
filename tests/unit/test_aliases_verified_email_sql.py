@@ -134,6 +134,7 @@ async def test_a_revocation_still_reaches_an_unverified_email(ch: _CH) -> None:
 async def test_a_grant_to_the_address_is_written_under_it_until_it_is_verified(ch: _CH) -> None:
     assert await aliases.canonical_subject(ORG, "bob@corp.example", ch=ch) == "bob@corp.example"
     assert await aliases.canonical_subject(ORG, "carol@corp.example", ch=ch) == "u-carol"
+    assert await aliases.canonical_subject(ORG, "dave@corp.example", ch=ch) == "dave"
 
 
 @pytest.mark.asyncio
