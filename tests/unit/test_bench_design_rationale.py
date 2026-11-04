@@ -453,13 +453,14 @@ class FakeLoom:
     """The ops the harness calls, over dicts. memory.for_file serves a row whose files
     hold the path; loom_search serves rows sharing a word with the query."""
 
-    def __init__(self, fail_on_upsert: bool = False):
+    def __init__(self, fail_on_upsert: bool = False, interrupt_upsert: bool = False):
         self.docs: dict[tuple[str, str], list[str]] = {}
         self.rows: dict[tuple[str, str], dict] = {}
         self.writes: list[tuple[str, str]] = []
         self.registered: list[tuple[str, float]] = []
         self.erased: list[str] = []
         self.fail_on_upsert = fail_on_upsert
+        self.interrupt_upsert = interrupt_upsert
         # The files the fake extraction puts on its rows, as a spelled-out path would.
         self.extract_files: list[str] = []
         self.orgs: dict[str, str] = {}
@@ -482,6 +483,8 @@ class FakeLoom:
     def upsert_document(self, namespace, source_uri, title, content):
         if self.fail_on_upsert:
             raise RuntimeError("upsert refused")
+        if self.interrupt_upsert:
+            raise KeyboardInterrupt
         self.docs.setdefault((namespace, source_uri), []).append(content)
         org = self.orgs[namespace]
         self.spend[org] = self.spend.get(org, 0.0) + self.write_usd
@@ -730,7 +733,7 @@ def test_a_failed_setup_erases_what_it_wrote_and_is_not_resumed(tmp_path):
     with pytest.raises(RuntimeError, match="upsert refused"):
         run.run(ts, _config(out), loom, model, [model], ledger)
     assert len(loom.erased) == 3
-    with pytest.raises(run.RunError):
+    with pytest.raises(run.RunError, match="setup failed"):
         run.run(ts, _config(out), FakeLoom(), model, [model], ledger)
 
 
@@ -1220,3 +1223,17 @@ def test_a_setup_that_failed_is_not_resumed_even_with_its_namespaces_kept(tmp_pa
     assert "loom namespaces-gc" in err and "resume" not in err
     with pytest.raises(run.RunError, match="setup failed"):
         run.run(ts, cfg, FakeLoom(), model, [model], ledger)
+
+
+def test_an_interrupted_setup_erases_its_namespaces_and_is_not_resumed(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    loom = FakeLoom(interrupt_upsert=True)
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    with pytest.raises(KeyboardInterrupt):
+        run.run(ts, _config(out), loom, model, [model], ledger)
+    assert len(loom.erased) == 3
+    with pytest.raises(run.RunError, match="setup failed"):
+        run.run(ts, _config(out), FakeLoom(), model, [model], ledger)

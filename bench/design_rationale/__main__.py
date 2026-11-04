@@ -166,7 +166,7 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--keep-namespaces",
         action="store_true",
-        help="Keep the namespaces (a resumed run then reuses them)",
+        help="Do not erase the namespaces when the run finishes or its setup fails",
     )
     s = sub.add_parser("score", help="Metrics, paired comparisons and MDEs from a run.")
     s.add_argument("taskset", type=Path)

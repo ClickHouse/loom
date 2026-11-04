@@ -1,7 +1,8 @@
 """The `run` command: set up the arms in the harness's Loom, read the surfaces, answer
 each task K times per arm, and judge each answer. Every stage writes its JSON file in
-the output directory and skips what is already there, so a run stopped by the spend cap
-resumes where it stopped; its namespaces are kept until every answer is judged.
+the output directory and skips what is already there, so a run stopped by the spend cap,
+or by an error after its setup, resumes where it stopped; its namespaces are kept until
+every answer is judged.
 """
 
 from __future__ import annotations
@@ -112,8 +113,8 @@ def parse_key(key: str) -> tuple[str, int]:
 
 def pre_edit_block_tokens() -> int:
     """The planned size of one pre-edit block: decisions and constraints print whole up
-    to `memory_for_file_whole_tokens`, the other rows up to the block's budget, and a few
-    lines around them (`PRE_EDIT_FIXED_TOKENS`)."""
+    to `memory_for_file_whole_tokens`, the other rows up to the block's budget, and the
+    left-out line naming the decisions past the ceiling (`PRE_EDIT_FIXED_TOKENS`)."""
     from server.settings import settings
 
     return settings.memory_for_file_whole_tokens + PRE_EDIT_BUDGET + PRE_EDIT_FIXED_TOKENS
@@ -752,17 +753,18 @@ def run(
     or that fails or is interrupted after its setup (a provider error, a server that
     went away, Ctrl-C), keeps its namespaces: the next invocation on the same `--out`,
     with the same flags, resumes it, and the error is followed by the command that
-    erases them otherwise. A setup that fails for another reason than the cap leaves
-    half-filled namespaces: they are erased (kept with --keep-namespaces, with the erase
-    command printed), and the run is never resumed. A finished run erases them (unless
-    --keep-namespaces) and is not resumed."""
+    erases them otherwise. A setup that fails or is interrupted other than by the cap
+    leaves half-filled namespaces: they are erased (kept with --keep-namespaces, with the
+    erase command printed), and the run is never resumed. A finished run erases them and
+    is not resumed; with --keep-namespaces it keeps them, and a rerun finds every stage
+    done."""
     cfg.out.mkdir(parents=True, exist_ok=True)
     state_path = cfg.out / "state.json"
     state = load_json(state_path)
-    if state.get("erased"):
-        raise RunError(f"{cfg.out}: this run's namespaces were erased; score it or start anew")
     if state.get("setup_failed"):
         raise RunError(f"{cfg.out}: this run's setup failed; start anew with another --out")
+    if state.get("erased"):
+        raise RunError(f"{cfg.out}: this run's namespaces were erased; score it or start anew")
     check_resume(state, cfg)
     state.setdefault("started", date.today().isoformat())
     ns = bind(loom, state, cfg)
