@@ -1634,32 +1634,51 @@ describe("Assistant: documents", () => {
   });
 
   it("names the ingested samples the server sampled apart from the first matches", async () => {
-    // Seven live documents miss a vector; the first five matches are text writes, so the
-    // ingested one is only in `ingested_samples` (the server samples the two lists apart).
-    const text = [1, 2, 3, 4, 5].map((k) => `files/note-${k}.md`);
+    // 22 live documents miss a vector: 21 text writes, then the spec. The server cuts the
+    // matches to the first 20 and samples the ingested ones apart, so the spec is only in
+    // `ingested_samples`, and one text write is left unlisted.
+    const text = Array.from({ length: 20 }, (_, k) => `files/note-${k + 1}.md`);
     inspectKnowledge.mockResolvedValueOnce({
       ...KNOWLEDGE,
-      documents: { ...KNOWLEDGE.documents, live: 7 },
+      documents: {
+        ...KNOWLEDGE.documents,
+        live: 22,
+        by_format: [
+          { name: "markdown", live: 21, deleted: 1 },
+          { name: "pdf", live: 1, deleted: 0 },
+        ],
+        by_source_scheme: [{ name: "https", live: 22, deleted: 1 }],
+      },
+      // The two base documents' 12 chunks (the spec's one unembedded now) plus one unembedded
+      // chunk for each of the 20 added text writes.
+      chunks: {
+        ...KNOWLEDGE.chunks,
+        live: 32,
+        searchable: 10,
+        unembedded: 22,
+        by_model: [{ model: "text-embedding-3-small", live: 32, embedded: 10 }],
+      },
+      listed_complete: false,
       findings: KNOWLEDGE.findings.map((f) =>
         f.code === "unembedded_chunks"
           ? {
               ...f,
-              count: 7,
+              count: 22,
               share: 1,
-              population: 7,
+              population: 22,
               samples: text,
               samples_complete: false,
               ingested: 1,
               ingested_samples: [SPEC],
             }
-          : { ...f, population: 7 },
+          : { ...f, population: 22, share: f.count / 22 },
       ),
     });
     render(<Assistant />);
     const result = await pickDocuments();
     const card = within(result).getByRole("listitem", { name: "Chunks with no vector" });
     expect(card).toHaveTextContent(`Also published by knowledge.ingest: ${SPEC}`);
-    expect(card).toHaveTextContent("and 2 more not listed");
+    expect(card).toHaveTextContent("and 1 more not listed");
   });
 
   it("says there is no live document to list while a first ingest is queued", async () => {

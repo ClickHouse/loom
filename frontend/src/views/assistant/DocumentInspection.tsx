@@ -366,7 +366,7 @@ function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFi
   const ingested = new Set("ingested_samples" in f ? f.ingested_samples : []);
   // The server samples the ingested documents apart, so some may not be in `samples`.
   const ingestedOnly = [...ingested].filter((uri) => !f.samples.includes(uri));
-  const more = f.count - f.samples.length;
+  const more = f.count - f.samples.length - ingestedOnly.length;
   return (
     <li className="pane-card space-y-1.5" aria-labelledby={head} data-code={f.code} data-kind={f.kind}>
       <div className="flex flex-wrap items-center gap-2">
