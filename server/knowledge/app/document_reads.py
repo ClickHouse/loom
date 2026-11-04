@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from server.core.cursors import decode_cursor as _decode_list_cursor
 from server.core.cursors import encode_cursor as _encode_list_cursor
@@ -120,20 +120,15 @@ async def handle_knowledge_outline(input: KnowledgeOutlineInput) -> KnowledgeOut
     )
     chunks: list[Chunk] = []
     for r in rows:
-        try:
-            raw = json.loads(r.chunk_metadata) if r.chunk_metadata else {}
-        except (TypeError, ValueError):
-            raw = {}
-        meta: dict[str, Any] = raw if isinstance(raw, dict) else {}
-        path = meta.get("section_path")
+        meta = read_structure(r.chunk_metadata)
         chunks.append(
             Chunk(
                 idx=r.chunk_idx,
                 text=r.content,
-                section_path=(tuple(str(p) for p in path) if isinstance(path, list) else ()),
-                section_depth=int(meta.get("section_depth", 0) or 0),
-                section_idx=int(meta.get("section_idx", 0) or 0),
-                char_start=int(meta.get("char_start", 0) or 0),
+                section_path=meta.section_path,
+                section_depth=meta.section_depth,
+                section_idx=meta.section_idx,
+                char_start=meta.char_start,
             )
         )
     by_idx = {c.idx: c for c in chunks}

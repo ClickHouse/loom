@@ -323,6 +323,17 @@ def test_a_chunks_metadata_reads_its_structure() -> None:
     empty = read_structure("not json")
     assert (empty.section_path, empty.revision, empty.format, empty.locator) == ((), 0, "", None)
     assert read_structure('{"revision": "7"}').revision == 0
+    # The outline's text fields, from the same reader; an empty heading is no segment.
+    text = read_structure(
+        '{"section_path": ["Ops", ""], "section_depth": 2, "section_idx": 3, "char_start": 40}'
+    )
+    assert (text.section_path, text.section_depth, text.section_idx, text.char_start) == (
+        ("Ops",),
+        2,
+        3,
+        40,
+    )
+    assert read_structure('{"section_depth": true}').section_depth == 0
 
 
 def test_a_cold_corpus_fuses_the_vector_and_exact_key_legs(

@@ -143,7 +143,14 @@ def fuse_rrf(
 
 def _structure(chunk_metadata: object) -> dict[str, Any]:
     """The ChunkHit fields a chunk's metadata records (`read_structure`)."""
-    return dataclasses.asdict(read_structure(chunk_metadata))
+    meta = read_structure(chunk_metadata)
+    return {
+        "section_path": meta.section_path,
+        "revision": meta.revision,
+        "format": meta.format,
+        "block_type": meta.block_type,
+        "locator": meta.locator,
+    }
 
 
 async def hybrid_search(

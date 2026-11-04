@@ -1,5 +1,6 @@
 """What a `loom.chunks` row's `chunk_metadata` records about the chunk, read in one
-place: the section path the outline reads, the document revision and format the
+place: the section path the outline reads (and, for text, its depth, its section's
+index and where the chunk starts), the document revision and format the
 chunk was written as, and for a chunk of an extracted file its blocks' type and
 where it sits in the source (the locator a citation opens). Pure.
 
@@ -17,6 +18,11 @@ from typing import Any
 @dataclass(frozen=True)
 class ChunkStructure:
     section_path: tuple[str, ...] = ()
+    # For text a caller extracted: the heading depth, the section's index in the
+    # document and the chunk's first character in it; 0 when not recorded.
+    section_depth: int = 0
+    section_idx: int = 0
+    char_start: int = 0
     # The document revision and format this chunk was written as; 0 and '' for a chunk
     # written before they were recorded ('' is also the format of text a caller extracted).
     revision: int = 0
@@ -37,11 +43,18 @@ def read_structure(chunk_metadata: object) -> ChunkStructure:
         return ChunkStructure()
     path = meta.get("section_path")
     locator = meta.get("locator")
-    revision = meta.get("revision")
     return ChunkStructure(
         section_path=tuple(str(p) for p in path if str(p)) if isinstance(path, list) else (),
-        revision=revision if isinstance(revision, int) and revision >= 0 else 0,
+        section_depth=_count(meta.get("section_depth")),
+        section_idx=_count(meta.get("section_idx")),
+        char_start=_count(meta.get("char_start")),
+        revision=_count(meta.get("revision")),
         format=str(meta.get("format") or ""),
         block_type=str(meta.get("block_type") or ""),
         locator=locator if isinstance(locator, dict) else None,
     )
+
+
+def _count(value: object) -> int:
+    """A non-negative integer field; 0 for anything else (a bool is not one)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
