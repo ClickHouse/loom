@@ -220,7 +220,7 @@ def _cfg(monkeypatch):
 # ---------------------------------------------------------------- the gates (pure)
 
 
-def test_grant_review_names_write_access_and_roles() -> None:
+def test_grant_review_names_what_it_refuses_and_the_roles() -> None:
     rev = ob.review_grants(RO_GRANTS)
     assert rev.read_only and rev.roles == ["analyst"] and rev.refused == []
     rev = ob.review_grants(["GRANT SELECT, INSERT ON loom_qa.* TO u", "GRANT ALL ON *.* TO u"])
@@ -268,7 +268,7 @@ def test_grant_review_refuses_what_it_cannot_classify_as_read_only() -> None:
     assert not ob.review_grants(["GRANT SELECT ON db.t, INSERT ON db.x TO u"]).read_only
 
 
-def test_role_review_refuses_a_role_chain_it_cannot_see_or_that_grants_on() -> None:
+def test_role_review_refuses_a_role_that_is_not_enabled_or_holds_an_admin_option() -> None:
     # SHOW GRANTS prints `a\\\`b` for a role named a\`b
     rev = ob.review_grants([r"GRANT analyst, `my  role`, `a\\\`b` TO u"])
     enabled = [{"role_name": "analyst"}, {"role_name": "my  role"}, {"role_name": r"a\`b"}]
