@@ -962,3 +962,42 @@ def test_another_integration_s_busy_pacer_does_not_slow_a_probe(
     _probe_world(monkeypatch, _probe_store)
     asyncio.run(source_probes.probe("notion", {"page_ids": [PAGE], "database_ids": [DB]}, TOKEN))
     assert waits == pytest.approx([0.35, 0.70], abs=0.05)
+
+
+def test_a_page_store_s_pages_are_mined_by_the_same_leg(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.llm import customer
+    from server.memory.app import decision_extract
+    from server.observability import budget, events
+    from server.workers import cost_event
+
+    mined: list[str] = []
+
+    async def _extract_document(org: str, ns: str, uri: str, *, dry_run: bool, **kw: Any) -> Any:
+        mined.append(uri)
+        return decision_extract.ExtractReport(uri, dry_run)
+
+    async def _none() -> frozenset[str]:
+        return frozenset()
+
+    async def _under_cap(*a: Any, **kw: Any) -> bool:
+        return False
+
+    class _Emitter:
+        async def flush_now(self) -> None:
+            return None
+
+    monkeypatch.setattr(decision_extract, "no_model_error", lambda: "")
+    monkeypatch.setattr(decision_extract, "extract_document", _extract_document)
+    monkeypatch.setattr(customer, "switched_off_orgs", _none)
+    monkeypatch.setattr(budget, "namespace_over_cap", _under_cap)
+    monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
+    monkeypatch.setattr(cost_event, "emit_worker_cost_event_for", lambda **kw: None)
+    _only_the_page(world)
+    result = _run()
+    uri = _uri(world, PAGE)
+    assert mined == [uri] and result.extracted == 1
+    assert _detail(world)["mined"] == {uri: "2026-01-01T00:00:00.000Z"}
+    _run()
+    assert mined == [uri]  # mined once per revision
