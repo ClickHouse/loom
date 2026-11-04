@@ -66,7 +66,7 @@ def readable(kind: str, task: dict[str, Any], verdict: Any) -> bool:
         need = (*need, "current_stated")
     if not isinstance(verdict, dict) or not all(k in verdict for k in need):
         return False
-    # A judge that returns a bool where a list goes would otherwise break the scoring.
+    # Anything but a list or null where a list goes would otherwise break the scoring.
     claims = verdict.get("claims")
     if not _list_or_none(claims) or not all(isinstance(c, dict) for c in claims or []):
         return False
@@ -545,13 +545,26 @@ def score(
     return metrics
 
 
-def summary(metrics: dict[str, Any], out_dir: Path) -> dict[str, Any]:
+def summary(ts: TaskSet, metrics: dict[str, Any], out_dir: Path) -> dict[str, Any]:
     """The run's aggregates without the per-task rows (task and document ids can name
-    private material), with the run's flags and its spend: by ledger stage, and the
-    answers' cost per arm (None for a reader the price table does not list)."""
+    private material), with the task set's counts, the run's flags and its spend: by
+    ledger stage, and the answers' cost per arm (None for a reader the price table does
+    not list)."""
     state = json.loads((out_dir / "state.json").read_text())
     answers = json.loads((out_dir / "answers.json").read_text())
+    judged = json.loads((out_dir / "judged.json").read_text())
     flags = state["flags"]
+    passes = [p for entry in judged.values() for p in entry.get("passes", [])]
+    subtypes: dict[str, int] = defaultdict(int)
+    for t in ts.tasks.get("C", []):
+        subtypes[t["subtype"]] += 1
+    task_set = {
+        "documents": sum(1 for d in ts.documents.values() if not d.revision_of),
+        "revised_documents": sum(1 for d in ts.documents.values() if d.revision_of),
+        "tasks": {kind: len(ts.tasks.get(kind, [])) for kind in ("A", "B", "C")},
+        "c_subtypes": dict(sorted(subtypes.items())),
+        "tasks_with_gold_rows": sum(1 for _, t in ts.all_tasks() if t["gold_rows"]),
+    }
     by_stage: dict[str, float] = defaultdict(float)
     ledger = out_dir / "ledger.jsonl"
     for line in ledger.read_text().splitlines() if ledger.exists() else []:
@@ -577,7 +590,13 @@ def summary(metrics: dict[str, Any], out_dir: Path) -> dict[str, Any]:
         aggregates["extraction"] = extraction
     run = {k: v for k, v in flags.items() if k not in ("org", "arm4_namespace")}
     return {
-        "run": {**run, "k": len(samples)},
+        "task_set": task_set,
+        "run": {
+            **run,
+            "k": len(samples),
+            "judge_orders": len({p.get("order") for p in passes}),
+            "judge_repeats": len({p.get("repeat") for p in passes}),
+        },
         "spend_usd": {
             "by_stage": {k: round(v, 4) for k, v in sorted(by_stage.items())},
             "total": round(sum(by_stage.values()), 4),

@@ -1,4 +1,18 @@
 {
+  "task_set": {
+    "documents": 5,
+    "revised_documents": 4,
+    "tasks": {
+      "A": 10,
+      "B": 15,
+      "C": 10
+    },
+    "c_subtypes": {
+      "abstention": 5,
+      "supersession": 5
+    },
+    "tasks_with_gold_rows": 30
+  },
   "run": {
     "arms": [
       0,
@@ -14,7 +28,9 @@
       "gpt-6-luna"
     ],
     "extract_model": "gpt-6-luna",
-    "k": 3
+    "k": 3,
+    "judge_orders": 2,
+    "judge_repeats": 2
   },
   "spend_usd": {
     "by_stage": {

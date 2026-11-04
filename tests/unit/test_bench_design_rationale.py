@@ -1377,7 +1377,10 @@ def test_score_writes_the_summary_without_per_task_rows(tmp_path):
     spend = summary["spend_usd"]
     assert spend["total"] == round(sum(r["usd"] for r in ledger.rows()), 4)
     assert spend["answers_by_arm"]["0"]["answers"] == 2 * len(list(ts.all_tasks()))
-    assert {(c["treatment"], c["reference"]) for c in summary["comparisons"]} >= {(1, 0)}
+    assert (1, 0) in {(c["treatment"], c["reference"]) for c in summary["comparisons"]}
+    assert summary["task_set"]["tasks"] == {k: len(ts.tasks.get(k, [])) for k in "ABC"}
+    assert summary["task_set"]["revised_documents"] == 1
+    assert summary["run"]["judge_orders"] == 1
     assert set(summary["a_answers_without_claims"]) == {"0", "1", "3", "4"}
     # Scoring again regenerates the same file.
     assert main([*argv, "--summary", str(path)]) == 0
@@ -1394,7 +1397,7 @@ def test_the_summary_of_an_unpriced_reader_has_no_answer_cost(tmp_path):
     state = json.loads((out / "state.json").read_text())
     state["flags"]["reader"] = "a-model-with-no-price"
     (out / "state.json").write_text(json.dumps(state))
-    summary = score.summary(score.score(ts, out), out)
+    summary = score.summary(ts, score.score(ts, out), out)
     assert summary["spend_usd"]["answers_by_arm"][0]["usd"] is None
     assert summary["spend_usd"]["answers_by_arm"][0]["answers"] == len(list(ts.all_tasks()))
 

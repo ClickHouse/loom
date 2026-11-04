@@ -325,7 +325,7 @@ def cmd_score(a: argparse.Namespace) -> int:
     except scorer.LabelError as e:
         return _fail(f"{a.extraction_labels}: {e}; fill each row's verdict first")
     if a.summary:
-        text = json.dumps(scorer.summary(metrics, a.out), indent=2) + "\n"
+        text = json.dumps(scorer.summary(ts, metrics, a.out), indent=2) + "\n"
         a.summary.write_text(text)
     print(scorer.report(metrics))
     return 0

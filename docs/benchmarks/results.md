@@ -660,8 +660,7 @@ from them understate the uncertainty:
 | 2 vs 3                 | B    | satisfies |       15 (5) | -46.5 | -61.6 .. -29.8 | 22.7 |
 | 2 vs 3                 | C    | passed    |       10 (5) |  -3.3 | -9.3 .. +0.0   |  6.6 |
 
-Arm 4's A precision has 9 tasks: on one task every answer abstained and made no claim to
-grade.
+Arm 4's A precision has 9 tasks: on one task no answer made a claim to grade.
 
 | Arm | Injected tokens per task (mean, max) | Pre-edit calls | Pre-edit max | Answers' cost, 105 answers (USD) |
 | --- | -----------------------------------: | -------------: | -----------: | -------------------------------: |
@@ -711,9 +710,11 @@ set.
   `text-embedding-3-large` (the [models table](#models)).
 - **Artifacts:** `bench/results/design_rationale.summary.json`, written by
   `score --summary`: the per-arm metrics, comparisons, injected tokens, treatment check,
-  judge agreement, unreadable passes and the A answers with no claim, the run's flags
-  (arms, models, window, K) and its spend by ledger stage and the answers' cost per arm;
-  the per-task rows, which name private tasks, are left out.
+  judge agreement, unreadable passes and the A answers with no claim, the task set's
+  counts (documents, revisions, tasks by kind and subtype, tasks with gold rows), the run's
+  flags (arms, models, window, K, judge orders and repeats) and its spend by ledger stage
+  and the answers' cost per arm; the per-task rows, which name private tasks, are left
+  out.
 - **Reproduce:**
   `PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> --base-url <server> --reader-model gpt-6-luna --judge-model gpt-6-luna --code-index <url> --code-index-org <org> --code-index-namespace <code namespace> --extract-model gpt-6-luna --k 3 --max-usd 9`,
   then `... score <taskset> --out <dir> --summary bench/results/design_rationale.summary.json`.
