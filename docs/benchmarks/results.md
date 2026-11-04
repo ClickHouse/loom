@@ -711,10 +711,10 @@ set.
 - **Artifacts:** `bench/results/design_rationale.summary.json`, written by
   `score --summary`: the per-arm metrics, comparisons, injected tokens, treatment check,
   judge agreement, unreadable passes and the A answers with no claim, the task set's
-  counts (documents, revisions, tasks by kind and subtype, tasks with gold rows), the run's
-  flags (arms, models, window, K, judge orders and repeats) and its spend by ledger stage
-  and the answers' cost per arm; the per-task rows, which name private tasks, are left
-  out.
+  counts (documents, revisions, revised documents, tasks by kind and subtype, tasks with
+  gold rows), the run's flags (arms, whether arm 4 had files, models, window, K, judge
+  orders and repeats) and its spend by ledger stage and the answers' cost per arm; the
+  per-task rows, which name private tasks, are left out.
 - **Reproduce:**
   `PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> --base-url <server> --reader-model gpt-6-luna --judge-model gpt-6-luna --code-index <url> --code-index-org <org> --code-index-namespace <code namespace> --extract-model gpt-6-luna --k 3 --max-usd 9`,
   then `... score <taskset> --out <dir> --summary bench/results/design_rationale.summary.json`.

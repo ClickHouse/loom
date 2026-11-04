@@ -6,9 +6,9 @@ keep a coding agent from re-proposing rejected options, and whether the agent an
 `python -m bench.design_rationale --help`; this page holds the arms, the task-set schema
 and the outputs.
 
-The real task set is private material and is never committed. The harness reads a task set
-from the directory given on the command line; `example/` is a small synthetic one (an
-invented thumbnail service) that the unit tests run end to end.
+The real task set is private material and is never committed. The harness reads a task
+set from the directory given on the command line; `example/` is a small synthetic one
+(an invented thumbnail service) that the unit tests run end to end.
 
 ## Arms
 
@@ -182,6 +182,7 @@ accuracy and kappa; labels on `avoids` or `satisfies` for a change answer a dete
 decided are left out, and `detector_fired` labels are never counted. `score` writes
 `metrics.json` and prints aggregate tables with no task text; `score --summary <file>`
 also writes the aggregates without the per-task rows or document ids, with the task set's
-counts (documents, revisions, tasks by kind and subtype, tasks with gold rows), the run's
-flags with K and the judge orders and repeats, and its spend by ledger stage and the
-answers' cost per arm, the file a published result commits. The run directory holds the task set's content: keep it out of the repository.
+counts (documents, revisions, revised documents, tasks by kind and subtype, tasks with
+gold rows), the run's flags with K and the judge orders and repeats, and its spend by
+ledger stage and the answers' cost per arm, the file a published result commits. The run
+directory holds the task set's content: keep it out of the repository.

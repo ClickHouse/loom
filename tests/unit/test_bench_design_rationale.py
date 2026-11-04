@@ -8,7 +8,6 @@ import dataclasses
 import json
 import re
 import subprocess
-from collections import Counter
 from datetime import date
 from pathlib import Path
 
@@ -1350,7 +1349,13 @@ def test_scoring_with_the_unfilled_label_sheet_fails_clearly(tmp_path, capsys):
 
 
 def test_score_writes_the_summary_without_per_task_rows(tmp_path):
-    ts = load(EXAMPLE)
+    # A second revision of one document: two revisions, one revised document.
+    root = _copy_example(tmp_path)
+    docs = json.loads((root / "documents.json").read_text())
+    third = {**docs[2], "id": "upload-retries-v3", "path": "docs/upload-retries-v3.md"}
+    (root / third["path"]).write_text((root / docs[2]["path"]).read_text())
+    (root / "documents.json").write_text(json.dumps([*docs, third]))
+    ts = load(root)
     out = tmp_path / "run"
     out.mkdir()
     ledger = Ledger(out / "ledger.jsonl", 1.0)
@@ -1361,7 +1366,7 @@ def test_score_writes_the_summary_without_per_task_rows(tmp_path):
     labels = [{**row, "verdict": "correct"} for row in json.loads(sheet.read_text())]
     sheet.write_text(json.dumps(labels))
     path = tmp_path / "summary.json"
-    argv = ["score", str(EXAMPLE), "--out", str(out), "--extraction-labels", str(sheet)]
+    argv = ["score", str(root), "--out", str(out), "--extraction-labels", str(sheet)]
     assert main([*argv, "--summary", str(path)]) == 0
     first = path.read_text()
     summary = json.loads(first)
@@ -1379,14 +1384,14 @@ def test_score_writes_the_summary_without_per_task_rows(tmp_path):
     assert spend["total"] == round(sum(r["usd"] for r in ledger.rows()), 4)
     assert spend["answers_by_arm"]["0"]["answers"] == 2 * len(list(ts.all_tasks()))
     assert (1, 0) in {(c["treatment"], c["reference"]) for c in summary["comparisons"]}
-    counts = summary["task_set"]
-    revisions = [d for d in ts.documents.values() if d.revision_of]
-    assert counts["tasks"] == {k: len(ts.tasks.get(k, [])) for k in "ABC"}
-    assert counts["c_subtypes"] == dict(Counter(t["subtype"] for t in ts.tasks["C"]))
-    assert counts["documents"] == len(ts.documents) - len(revisions)
-    assert counts["revisions"] == len(revisions)
-    assert counts["revised_documents"] == len({d.revision_of for d in revisions})
-    assert counts["tasks_with_gold_rows"] == sum(1 for _, t in ts.all_tasks() if t["gold_rows"])
+    assert summary["task_set"] == {
+        "documents": 2,
+        "revisions": 2,
+        "revised_documents": 1,
+        "tasks": {"A": 3, "B": 3, "C": 2},
+        "c_subtypes": {"abstention": 1, "supersession": 1},
+        "tasks_with_gold_rows": 7,
+    }
     assert summary["run"]["judge_orders"] == 2
     assert summary["run"]["judge_repeats"] == cfg.judge_repeats
     assert set(summary["a_answers_without_claims"]) == {"0", "1", "3", "4"}
