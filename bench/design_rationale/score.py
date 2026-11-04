@@ -339,7 +339,8 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
 
 def judge_stability(ts: TaskSet, judged: dict[str, Any]) -> dict[str, Any]:
     """Agreement on each answer's headline verdict between the two orders of one judge,
-    between its repeats, and between judge models."""
+    between its repeats, and between judge models. A change task whose detector fired
+    is decided by the detector, so its passes cannot disagree: it is left out."""
     tasks = {t["id"]: (kind, t) for kind, t in ts.all_tasks()}
     headline = {"A": "misleading", "B": "avoids", "C": "passed"}
     agree: dict[str, list[bool]] = defaultdict(list)
@@ -348,6 +349,8 @@ def judge_stability(ts: TaskSet, judged: dict[str, Any]) -> dict[str, Any]:
         if tid not in tasks:
             continue
         kind, t = tasks[tid]
+        if kind == "B" and any(d["fired"] for d in entry.get("detectors", [])):
+            continue
         verdicts = {
             (p["model"], p["order"], p["repeat"]): pass_metrics(kind, t, entry, p["verdict"]).get(
                 headline[kind]

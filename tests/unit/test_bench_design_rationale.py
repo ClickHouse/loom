@@ -121,9 +121,14 @@ def test_the_detectors_read_the_diff_in_the_answer():
     default = {
         "type": "diff_added_regex",
         "path_glob": "src/cache/config.py",
-        "pattern": r"thumb_cache_bytes\s*=\s*(?!512\b)",
+        "pattern": r"thumb_cache_bytes\s*=(?!\s*512\b)",
     }
     assert detectors.run_detector(default, files) is True
+    kept = detectors.diff_files(
+        "--- a/src/cache/config.py\n+++ b/src/cache/config.py\n"
+        "+thumb_cache_bytes = 512 * MiB  # unchanged, reworded comment\n"
+    )
+    assert detectors.run_detector(default, kept) is False
     assert detectors.run_detector(removed, files) is True
     assert detectors.run_detector(added, files) is False
     assert detectors.run_detector(touched, files) is True
@@ -1399,3 +1404,25 @@ def test_the_loader_refuses_malformed_task_fields(tmp_path):
     (root / "documents.json").write_text(json.dumps(docs))
     with pytest.raises(TaskSetError, match="without '/'"):
         load(root)
+
+
+def test_judge_agreement_leaves_out_change_answers_a_detector_decided():
+    ts = load(EXAMPLE)
+    base = {"forbidden_proposed": [], "constraints_violated": []}
+
+    def entry(fired):
+        passes = [
+            {
+                "model": "m",
+                "order": order,
+                "repeat": 0,
+                "verdict": {**base, "forbidden_proposed": [0] if order else []},
+            }
+            for order in (0, 1)
+        ]
+        return {"citations": [], "detectors": [{"type": "x", "fired": fired}], "passes": passes}
+
+    decided = score.judge_stability(ts, {"B1/arm0/s1": entry(True)})
+    assert decided == {}  # the detector fired: the passes could not disagree
+    open_ = score.judge_stability(ts, {"B1/arm0/s1": entry(False)})
+    assert open_["orders"] == {"answers": 1, "agreement": 0.0}
