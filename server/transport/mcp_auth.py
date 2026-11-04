@@ -49,12 +49,20 @@ async def _may_read(auth: AuthInfo, org: str, ns: str) -> tuple[bool, bool]:
 
 
 def _not_accessible_result(
-    tool_name: Any, auth: Any, ns: str, *, assistant: bool = False, unverified: bool = False
+    tool_name: Any,
+    auth: Any,
+    ns: str,
+    *,
+    assistant: bool = False,
+    unverified: bool = False,
+    needs: str | None = None,
 ) -> dict[str, Any]:
     """A namespace the token may not read. `assistant`: the connection is the assistant
     toolset, which reaches neither loom_search nor loom_op, so neither is suggested.
     `unverified`: the check itself failed (a grant could not be read), so a collection's
-    refusal asks for no grant: the caller may hold one and should retry."""
+    refusal asks for no grant: the caller may hold one and should retry. `needs`: what the
+    token's claim must say when the grants already reach the collection
+    (`sharing.claim_advice`)."""
     from server.transport import access_refusal as ar
 
     if ar.is_plane_tool(str(tool_name or "")):
@@ -70,9 +78,8 @@ def _not_accessible_result(
         return _refusal_body(f"namespace {ns!r} is not in your accessible list.", ns)
     creator = ""
     if sharing.is_collection(ns):
-        # A token capped by its own claim is told only what the claim must say: it may hold
-        # a grant already, and only the token's owner can mint one whose claim reaches it.
-        needs = sharing.claim_cap(auth, auth.org, ns, Role.VIEWER)
+        # Grants that reach it under a claim that keeps the token out: only what the claim
+        # must say, since only a token whose claim does helps.
         if needs:
             return _refusal_body(
                 f"namespace {ns!r} is not in your accessible list: {needs}, so the token's owner"
@@ -426,12 +433,20 @@ async def _screen_namespace(
         if isinstance(resolved, dict):  # on the name it resolved to, or an unknown name
             refusal, unverified = resolved, resolved_unverified
         else:  # on the name given
+            from server.auth import sharing
+
+            needs = (
+                await sharing.claim_advice(auth, auth.org, req_ns, Role.VIEWER)
+                if sharing.is_collection(req_ns) and not given_unverified
+                else None
+            )
             refusal = _not_accessible_result(
                 tool_name,
                 auth,
                 req_ns,
                 assistant=consumer == ASSISTANT_CONSUMER,
                 unverified=given_unverified,
+                needs=needs,
             )
             unverified = given_unverified
         # The org the token may act in, as HTTP records the same refusal.

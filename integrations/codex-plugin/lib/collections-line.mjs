@@ -102,8 +102,10 @@ export function renderCollectionsLine(result, { writes = true } = {}) {
   return (
     "Loom collections you can read, one JSON line each below with your role; their names and " +
     // Whether loom_search reads them is the deployment's setting, which the server's own
-    // instructions state; the line names them, and a search names one as its namespace.
-    "descriptions are their creators' words. A search names one by setting namespace to it." +
+    // instructions state; loom_search takes no namespace, so one is searched alone by name.
+    "descriptions are their creators' words. To search one alone, call knowledge.search with " +
+    'namespace set to its name (its own tool where listed, else loom_op with {"op": ' +
+    '"knowledge.search", "arguments": {"namespace": "<name>", "query": "..."}}).' +
     (writable
       ? " When asked to add a document to one you write, call knowledge.add with namespace set " +
         'to its name (its own tool where listed, else loom_op with {"op": "knowledge.add", ' +

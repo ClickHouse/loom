@@ -271,7 +271,9 @@ def test_a_token_is_named_in_the_refusal_only_when_its_claim_is_what_caps_it(
 ) -> None:
     org_state["tree"] = sharing.Tree(parent={"col-hr": ""})
 
-    def refusal(auth: AuthInfo, role: Role = Role.VIEWER) -> str:
+    def refusal(auth: AuthInfo, role: Role = Role.VIEWER, grant: int = 0) -> str:
+        """The refusal, with `grant` (a rank) held on col-hr by the token's own subject."""
+        org_state["grants"] = {auth.subject: {"col-hr": grant}} if grant else {}
         with pytest.raises(PermissionError) as refused:
             asyncio.run(sharing.check(auth, role, ORG, "col-hr"))
         return str(refused.value)
@@ -286,11 +288,15 @@ def test_a_token_is_named_in_the_refusal_only_when_its_claim_is_what_caps_it(
     )
     # The claim already names it with viewer: the missing piece is the grant.
     assert "claim must name it" not in refusal(scoped)
-    # A write the claim's viewer role caps: the claim is named, and no grant is asked for
-    # (the token may hold it already; only its owner can mint one that reaches it).
-    capped = refusal(scoped, Role.WRITER)
+    # A write the claim's viewer role caps, while the grant reaches writer: only the claim is
+    # named (only a token whose claim names it with writer helps).
+    capped = refusal(scoped, Role.WRITER, grant=2)
     assert "claim must name it" in capped and "must mint one" in capped
     assert "needs a grant" not in capped
+    # The same claim with no writer grant: the grant is asked for, since a new token is
+    # capped to the same grants.
+    ungranted = refusal(scoped, Role.WRITER, grant=1)
+    assert "needs a grant of at least writer" in ungranted and "must mint" not in ungranted
     delegated = AuthInfo(
         subject="sa:bot",
         org=ORG,
@@ -301,7 +307,7 @@ def test_a_token_is_named_in_the_refusal_only_when_its_claim_is_what_caps_it(
     )
     assert "its creator must hold at least viewer there too" in refusal(delegated)
     # A delegated claim of `*` does not name it: the claim is what caps it.
-    assert "claim must name it" in refusal(delegated)
+    assert "claim must name it" in refusal(delegated, grant=1)
     named = AuthInfo(
         subject="sa:bot",
         org=ORG,
@@ -320,7 +326,7 @@ def test_a_token_is_named_in_the_refusal_only_when_its_claim_is_what_caps_it(
         is_service_account=True,
         creator="alice",
     )
-    assert "this token's claim must carry at least writer" in refusal(viewer_bot, Role.WRITER)
+    assert "this token's claim must carry at least writer" in refusal(viewer_bot, Role.WRITER, 2)
     # A scoped writer whose ns_write leaves the collection out: its write set is the cap, and
     # its claim, which already names the collection as writer, is not blamed.
     scoped_writer = AuthInfo(
@@ -332,7 +338,7 @@ def test_a_token_is_named_in_the_refusal_only_when_its_claim_is_what_caps_it(
         ns_roles=(("col-hr", "writer"), ("n", "writer")),
         write_namespaces=("n",),
     )
-    text = refusal(scoped_writer, Role.WRITER)
+    text = refusal(scoped_writer, Role.WRITER, grant=2)
     assert "this token's write set (ns_write) must include it" in text
     assert "claim must name it" not in text
     # A claim that names the collection with a role no grant carries: the role is the fix.
@@ -344,7 +350,7 @@ def test_a_token_is_named_in_the_refusal_only_when_its_claim_is_what_caps_it(
         is_service_account=False,
         ns_roles=(("col-hr", "org_admin"),),
     )
-    assert "this token's claim must name it with at least viewer" in refusal(odd_role)
+    assert "this token's claim must name it with at least viewer" in refusal(odd_role, grant=1)
     # Blocked twice (a write set and a claim that leave it out): both are named at once.
     scoped_bot = AuthInfo(
         subject="sa:bot",
@@ -355,9 +361,33 @@ def test_a_token_is_named_in_the_refusal_only_when_its_claim_is_what_caps_it(
         ns_roles=(("ns1", "writer"),),
         write_namespaces=("ns1",),
     )
-    text = refusal(scoped_bot, Role.WRITER)
+    text = refusal(scoped_bot, Role.WRITER, grant=2)
     assert "this token's write set (ns_write) must include it" in text
     assert "this token's claim must name it" in text
+
+
+def test_claim_advice_names_the_claim_only_when_the_grants_already_reach_the_role(
+    org_state: dict[str, Any],
+) -> None:
+    """A new token is capped to the same grants: the claim is the fix only when they reach."""
+    org_state["tree"] = sharing.Tree(parent={"col-hr": ""})
+    scoped = AuthInfo(
+        subject="alice",
+        org=ORG,
+        namespaces=("n",),
+        roles=(Role.WRITER,),
+        is_service_account=False,
+        ns_roles=(("n", "writer"),),
+    )
+    org_state["grants"] = {"alice": {"col-hr": 1}}
+    assert asyncio.run(sharing.claim_advice(scoped, ORG, "col-hr", Role.VIEWER)) == (
+        "this token's claim must name it"
+    )
+    assert asyncio.run(sharing.claim_advice(scoped, ORG, "col-hr", Role.WRITER)) is None
+    org_state["grants"] = {}
+    assert asyncio.run(sharing.claim_advice(scoped, ORG, "col-hr", Role.VIEWER)) is None
+    # A name no collection holds has no grant either: the same answer as a missing grant.
+    assert asyncio.run(sharing.claim_advice(scoped, ORG, "col-missing", Role.VIEWER)) is None
 
 
 # ── rows ──────────────────────────────────────────────────────────────────

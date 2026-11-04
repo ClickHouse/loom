@@ -113,21 +113,25 @@ def test_a_scoped_token_refused_a_collection_is_told_its_claim_must_name_it() ->
             ns_roles=ns_roles,
         )
 
+    # The grants reach it and the claim does not (`sharing.claim_advice` says what the claim
+    # must say): the claim is the token owner's to change, and no grant is asked for.
     capped = mcp_auth._not_accessible_result(
-        "loom_memory_get", scoped((("n", "writer"),)), "col-research"
+        "loom_memory_get",
+        scoped((("n", "writer"),)),
+        "col-research",
+        needs="this token's claim must name it",
     )
     text = capped["structuredContent"]["error"]
-    # The claim is the token owner's to change, not the collection admin's, and the token
-    # may hold a grant already: no grant is asked for or denied.
     assert text == (
         "namespace 'col-research' is not in your accessible list: this token's claim must name"
         " it, so the token's owner must mint one whose claim does."
     )
-    # Its claim already names the collection: the grant is what is missing.
-    named = mcp_auth._not_accessible_result(
-        "loom_memory_get", scoped((("col-research", "viewer"),)), "col-research"
+    # No grant reaches it: the grant is what is missing, whatever the claim says.
+    ungranted = mcp_auth._not_accessible_result(
+        "loom_memory_get", scoped((("n", "writer"),)), "col-research"
     )
-    assert "must mint" not in named["structuredContent"]["error"]
+    assert "must mint" not in ungranted["structuredContent"]["error"]
+    assert "grant on it" in ungranted["structuredContent"]["error"]
 
 
 def test_a_delegated_token_refused_a_collection_is_told_its_creator_needs_a_grant() -> None:
