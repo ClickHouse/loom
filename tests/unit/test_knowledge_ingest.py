@@ -1186,28 +1186,6 @@ def test_a_document_insert_that_timed_out_and_landed_later_ends_the_job_publishe
     assert world.retired == [world.job(lost)["doc_version"]]  # type: ignore[index]
 
 
-def test_a_row_that_landed_after_its_chunks_were_retired_is_published_again(world: World) -> None:
-    """Its own row with no live chunks of its own is not finished: the run
-    publishes again at a fresh version over it, at the same revision."""
-    _run(world, _ingest(world, _upload(world)))
-    world.fail_document = BackendTimeoutError("timed out")
-    job_id = _ingest(world, _upload(world))
-    assert _run(world, job_id) == "processing"
-    stale = world.job(job_id)["doc_version"]  # type: ignore[index]
-    world.fail_document = None
-    world.dead.add(stale)  # retired before the row landed
-    world.documents.extend(world.late_documents)
-    assert _run(world, job_id) == "ready"
-    job = world.job(job_id)
-    assert job is not None and job["revision"] == 2 and job["doc_version"] != stale
-    latest = world.documents[-1]
-    assert (latest["ingestion_id"], latest["revision"], latest["version"]) == (
-        job_id,
-        2,
-        job["doc_version"],
-    )
-
-
 @pytest.mark.parametrize("merged", [False, True])
 def test_a_document_deleted_after_a_late_insert_stays_deleted(world: World, merged: bool) -> None:
     """The insert timed out and landed, the writer deleted the document, then
@@ -1281,22 +1259,6 @@ def test_a_document_insert_the_claims_deadline_cut_off_stops_the_run(
     assert _run(world, job_id) == "ready" and world.job(job_id)["revision"] == 2  # type: ignore[index]
 
 
-def test_a_republish_over_its_own_row_stamped_later_fails_rather_than_hide(world: World) -> None:
-    """Its own live row carries a version at or above this run's (written on a
-    worker whose clock ran ahead): a row at the lower version would lose in
-    FINAL, so the run fails `revision_conflict` rather than report it."""
-    _run(world, _ingest(world, _upload(world)))
-    world.fail_document = BackendTimeoutError("timed out")
-    job_id = _ingest(world, _upload(world))
-    assert _run(world, job_id) == "processing"
-    stale = world.job(job_id)["doc_version"]  # type: ignore[index]
-    world.fail_document = None
-    world.dead.add(stale)  # its chunks were retired before the row landed
-    world.documents.extend({**d, "version": 2**62} for d in world.late_documents)
-    assert _run(world, job_id) == "failed"
-    assert world.job(job_id)["error_code"] == "revision_conflict"  # type: ignore[index]
-
-
 def test_a_store_out_of_slots_puts_the_job_back(world: World) -> None:
     """A pool or bucket with no slot free now is a transient failure: the job
     retries, it does not fail as a defect."""
@@ -1304,3 +1266,15 @@ def test_a_store_out_of_slots_puts_the_job_back(world: World) -> None:
     job_id = _ingest(world, _upload(world))
     assert _run(world, job_id) == "pending"
     assert world.job(job_id)["error_code"] == "retrying"  # type: ignore[index]
+
+
+def test_a_rerun_comes_only_after_an_uncertain_insert_has_settled() -> None:
+    """A run stopped at an uncertain document insert runs again once no worker
+    has updated the job for JOB_LEASE_S; every statement under the source claim
+    has a server-side limit, the insert included, so by then its row has landed
+    or been stopped, and the rerun reads its outcome from the stored rows."""
+    from server.core import leases
+
+    claimed_statement_s = ingest_run._SOURCE_CLAIM_S * leases._STATEMENT_SHARE
+    claimed_block_s = ingest_run._SOURCE_CLAIM_S * leases._WORK_SHARE
+    assert ingest_run.JOB_LEASE_S > claimed_block_s + claimed_statement_s

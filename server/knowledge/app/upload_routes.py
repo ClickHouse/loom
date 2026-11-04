@@ -83,11 +83,7 @@ def _admit(auth: Any, org: str, namespace: str) -> None:
         return
     if not rl.allowed:
         wait = max(1, int(rl.retry_after_s + 0.99))
-        raise HTTPException(
-            status_code=429,
-            detail={"code": "RATE_LIMITED", "message": "rate limit exceeded; retry later"},
-            headers={"Retry-After": str(wait)},
-        )
+        raise RateLimitedError("rate limit exceeded; retry later", retry_after_s=wait)
 
 
 @upload_router.post("/v1/knowledge.upload")
@@ -120,15 +116,8 @@ async def knowledge_upload(
     if not name:
         raise _refuse(400, "VALIDATION_FAILED", "filename is required")
     _admit(auth, org, namespace)
-    try:
-        with tenant_slots.hold(_bucket_org(auth, org)):
-            return await _store(request, org, namespace, name, content_type, sha256)
-    except RateLimitedError as e:
-        raise HTTPException(
-            status_code=429,
-            detail={"code": e.code, "message": str(e)},
-            headers={"Retry-After": "1"},
-        ) from e
+    with tenant_slots.hold(_bucket_org(auth, org)):
+        return await _store(request, org, namespace, name, content_type, sha256)
 
 
 async def _store(

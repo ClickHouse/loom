@@ -58,6 +58,10 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 # The lease a job runs under, and the claim a publish of one source runs under.
+# A job a run left `processing` runs again once no worker has updated it for
+# JOB_LEASE_S, far past the server-side limit of a statement under the claim
+# (`leases.holding`): a document insert that run left uncertain has landed or
+# been stopped by then, so the rerun reads its outcome from the stored rows.
 JOB_LEASE_S = 120.0  # not a setting: renewed while the job runs; it bounds a dead holder
 _SOURCE_CLAIM_S = 60.0  # not a setting: bounds one publish's few statements
 # The first retry waits this long, doubling per attempt.
@@ -141,34 +145,6 @@ async def _save(job: dict[str, Any], **fields: Any) -> dict[str, Any]:
 
 async def _cancelled(job: dict[str, Any]) -> bool:
     return await ingestions.cancel_requested(job["org"], job["namespace"], job["ingestion_id"])
-
-
-async def _needs_republish(job: dict[str, Any]) -> bool:
-    """This job's own row is the source's live document but its own chunks are
-    not live: the row landed after the chunks were retired (an insert that
-    timed out and landed late). The run publishes again over it. A row of its
-    own a later write has replaced (a delete, a text write) is not: its chunks
-    went with that write, and the job stays published."""
-    from server.knowledge.store import chunks as chunks_repo
-    from server.knowledge.store import documents as documents_repo
-
-    org, ns, uri = job["org"], job["namespace"], job["source_uri"]
-    latest = await documents_repo.get_one(org, ns, uri, include_superseded=True)
-    if latest is None or latest.superseded_at is not None:
-        return False
-    if latest.ingestion_id != job["ingestion_id"]:
-        return False
-    version = int((await _current(job))["doc_version"])
-    return not await chunks_repo.count_version(org, ns, uri, version)
-
-
-async def _settled(job: dict[str, Any]) -> int | None:
-    """The revision this job published when that publish stands (see
-    `_needs_republish`); None when it published nothing, or must again."""
-    revision = await _own_publish(job)
-    if revision is None or await _needs_republish(job):
-        return None
-    return revision
 
 
 async def _own_publish(job: dict[str, Any]) -> int | None:
@@ -337,16 +313,11 @@ def _revision_for(job: dict[str, Any], prior: Any, version: int) -> int:
     from server.knowledge.app.writes import next_revision
 
     # A write of the source that took its version after this one (a text write,
-    # a metadata edit or a delete, which take no claim; or this job's own row,
-    # written on a worker whose clock ran ahead) would outrank this row in FINAL:
-    # this publish would report a revision no reader sees.
+    # a metadata edit or a delete, which take no claim) would outrank this row in
+    # FINAL: this publish would report a revision no reader sees.
     if prior is not None and prior.version >= version:
         raise JobFailed("revision_conflict", "a later write of this source landed first")
     current = prior if prior is not None and prior.superseded_at is None else None
-    # This job's own live row, landed late after its chunks were retired: this
-    # publish replaces it at the same revision, so it is no conflict.
-    if current is not None and current.ingestion_id == job["ingestion_id"]:
-        return int(current.revision)
     expected = int(job["expected_revision"])
     at = current.revision if current is not None else 0
     # 0 expects no live document; a live one written before revisions were
@@ -558,10 +529,9 @@ async def take_and_run(job: dict[str, Any]) -> str | None:
                 return None
             # Its own publish first: a published revision stays published, even
             # if a cancel came after it.
-            if (revision := await _settled(current)) is not None:
+            if (revision := await _own_publish(current)) is not None:
                 return await _finish_published(current, revision)
-            # A row of its own that must be published again is no later write.
-            if await _own_publish(current) is None and await _overtaken(current):
+            if await _overtaken(current):
                 return await _end(
                     current,
                     "failed",
