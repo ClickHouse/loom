@@ -180,3 +180,30 @@ async def test_probe_reviews_the_grants_a_role_carries(monkeypatch) -> None:
         host="ch.example", port=8443, secure=True, database="loom_qa", user="u", password="p"
     )
     assert probe.grants.roles == ["writer"] and probe.grants.refused == ["INSERT"]
+
+
+@pytest.mark.asyncio
+async def test_probe_names_the_grant_statement_the_server_refused(monkeypatch) -> None:
+    import clickhouse_connect
+
+    class _Client:
+        async def query(self, sql: str, parameters: Any = None) -> Any:
+            if sql == "SHOW GRANTS FINAL":
+                raise RuntimeError("Code: 62. Syntax error")
+            return SimpleNamespace(column_names=["grants"], result_rows=[])
+
+        async def close(self) -> None:
+            pass
+
+    async def _connect(**_: Any) -> _Client:
+        return _Client()
+
+    async def _public(host: str) -> tuple[str, str]:
+        return "", "3.16.142.177"
+
+    monkeypatch.setattr(clickhouse_connect, "get_async_client", _connect)
+    monkeypatch.setattr(ob, "_vet", _public)
+    with pytest.raises(ob.ProbeError, match="SHOW GRANTS FINAL refused for 'u': Code: 62"):
+        await ob.probe_credential(
+            host="ch.example", port=8443, secure=True, database="d", user="u", password="p"
+        )

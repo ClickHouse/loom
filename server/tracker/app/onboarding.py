@@ -225,8 +225,7 @@ async def probe_credential(
                     "(readonly = 2 and a timeout on every read), so nothing could be read. "
                     f"Run: ALTER USER {user} SETTINGS readonly = 2 — it still allows SELECT only."
                 ) from e
-            needs = " (loom needs a server that supports it)" if sql.endswith("FINAL") else ""
-            raise ProbeError(f"{sql} refused for {user!r}{needs}: {e}") from e
+            raise ProbeError(f"{sql} refused for {user!r}: {e or type(e).__name__}") from e
         lines = [str(next(iter(r.values()))) for r in grant_rows if r]
         tables: list[dict[str, Any]] = []
         if inspect:
