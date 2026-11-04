@@ -60,6 +60,7 @@ class World:
     late_documents: list[dict[str, Any]] = field(default_factory=list)  # timed out, land later
     claim_busy: bool = False  # another write holds the source's claim
     on_chunks: Any = None  # replaces the chunk insert, to act between it and the document row
+    claim_cuts_insert: bool = False  # the claim's deadline cuts the document insert off
     fail_retire_older: Exception | None = None  # raised once, by the next older-chunks retire
     log: list[str] = field(default_factory=list)
     stored_vectors: dict[str, list[float]] = field(default_factory=dict)
@@ -144,6 +145,9 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
         if w.fail_document is not None:
             w.late_documents.append(dict(row))
             raise w.fail_document
+        if w.claim_cuts_insert:
+            w.late_documents.append(dict(row))
+            raise TimeoutError  # asyncio.timeout around the claimed block
         w.documents.append(dict(row))
         w.log.append("document")
 
@@ -195,8 +199,11 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
         return None
 
     @asynccontextmanager
-    async def holding(*a: Any, **k: Any) -> Any:
-        yield not w.claim_busy
+    async def holding(name: str, **k: Any) -> Any:
+        try:
+            yield not w.claim_busy
+        except TimeoutError as e:  # as leases.holding turns its deadline
+            raise leases.ClaimExpired(f"{name} cut off", operation=name) from e
 
     async def insert_cancel(org: str, ns: str, ingestion_id: str, author: Any, **_: Any) -> None:
         w.cancels.append(ingestion_id)
@@ -1251,3 +1258,19 @@ def test_a_job_erased_after_its_chunks_writes_no_document_row(world: World) -> N
     world.on_chunks = erase_job
     assert _run(world, job_id) is None
     assert world.documents == [] and world.job(job_id) is None
+
+
+def test_a_document_insert_the_claims_deadline_cut_off_stops_the_run(
+    world: World, settings_override: Any
+) -> None:
+    """The source claim's deadline can cut the insert off after it was sent:
+    the row may still land, so the run stops as for a timeout, even on the
+    last attempt, rather than retire the chunks and fail the job."""
+    settings_override(knowledge_ingest_max_attempts=1)
+    _run(world, _ingest(world, _upload(world)))
+    world.claim_cuts_insert = True
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "processing" and world.retired == []
+    world.claim_cuts_insert = False
+    world.documents.extend(world.late_documents)  # the insert lands
+    assert _run(world, job_id) == "ready" and world.job(job_id)["revision"] == 2  # type: ignore[index]

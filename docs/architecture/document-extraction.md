@@ -233,18 +233,18 @@ any version row of the source that names it, so a text write since does not hide
 (still `processing` at the publish stage, which is saved with its chunk version), when a later write of the source (a
 text write, a metadata edit or a delete) has landed since and the job's row is not found (a merge may have folded it
 away), fails `revision_conflict` rather than perhaps publish its older file over that write; a job a retry put back to
-pending is not judged so. A document insert that failed transiently (a timeout among them) may still land, so the run
-stops there as a crash would and the job stays `processing` at its publish stage, its chunks live: once its lease lapses
-the next run finishes it published when its row landed (whatever was written after it: a delete or a text write stands),
-publishes again at a fresh version only when its own row is still the source's live document and its chunks were retired
-before the row landed, fails it as overtaken as above, or retires the chunks; a rerun of a job that published finishes
-without publishing again or retiring the chunks it published. A cancel is a row of its own
-(`loom.knowledge_ingest_cancels`), never a version of the job's, which only the worker holding the job's lease writes;
-the worker reads it before the publish and when it takes the job, and a job whose own publish is found ends published
-whatever cancel came after. A pass runs one job under `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS`, taking one source's jobs
-one at a time in the order they were asked (only the oldest open job of a source is offered, a stale one before any
-later one), and namespaces in turn (the one served longest ago first), and a run cut off at that deadline or by a
-stopped process counts toward the job's attempts.
+pending is not judged so. A document insert that failed transiently (its own timeout, or the source claim's deadline
+cutting it off) may still land, so the run stops there as a crash would and the job stays `processing` at its publish
+stage, its chunks live: once no worker has updated it for its lease's TTL the next run finishes it published when its
+row landed (whatever was written after it: a delete or a text write stands), publishes again at a fresh version only
+when its own row is still the source's live document and its chunks were retired before the row landed, fails it as
+overtaken as above, or retires the chunks; a rerun of a job that published finishes without publishing again or retiring
+the chunks it published. A cancel is a row of its own (`loom.knowledge_ingest_cancels`), never a version of the job's,
+which only the worker holding the job's lease writes; the worker reads it before the publish and when it takes the job,
+and a job whose own publish is found ends published whatever cancel came after. A pass runs one job under
+`LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS`, taking one source's jobs one at a time in the order they were asked (only the
+oldest open job of a source is offered, a stale one before any later one), and namespaces in turn (the one served
+longest ago first), and a run cut off at that deadline or by a stopped process counts toward the job's attempts.
 
 ## Dependencies
 

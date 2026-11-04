@@ -83,10 +83,11 @@ class JobFailed(Exception):
 
 class _InsertUncertain(Exception):
     """The document row's insert failed transiently (a client-side timeout
-    among them): the row may still land. The run stops as a crash would,
-    writing nothing more, so the job stays `processing` at its publish stage;
-    once its lease lapses its next run settles it as it settles any publish
-    that stopped midway. `cause` is the transient error."""
+    among them, or the source claim's deadline cutting it off): the row may
+    still land. The run stops as a crash would, writing nothing more, so the
+    job stays `processing` at its publish stage; once no worker has updated it
+    for its lease's TTL its next run settles it as it settles any publish that
+    stopped midway. `cause` is the transient error."""
 
     def __init__(self, cause: Exception) -> None:
         super().__init__(str(cause))
@@ -366,68 +367,76 @@ async def _publish(
     # stage goes with it, so the publish stage always names this version.
     job = await _save(job, stage=ingestions.PUBLISH, doc_version=version)
     await chunks_repo.insert_chunks(rows)
-    async with leases.holding(
-        f"knowledge-source:{org}:{ns}:{uri}", ttl_s=_SOURCE_CLAIM_S, wait_s=10
-    ) as held:
-        if not held:
-            raise BackendUnavailableError(
-                "another write of this source holds it", operation="knowledge.ingest"
+    # Set while the document row's insert has been sent and has not returned:
+    # a transient failure then (the statement's own timeout, or the claim's
+    # deadline cutting it off) may leave the row to land later.
+    in_flight = False
+    try:
+        async with leases.holding(
+            f"knowledge-source:{org}:{ns}:{uri}", ttl_s=_SOURCE_CLAIM_S, wait_s=10
+        ) as held:
+            if not held:
+                raise BackendUnavailableError(
+                    "another write of this source holds it", operation="knowledge.ingest"
+                )
+            if await _cancelled(job):
+                raise JobFailed("cancelled", "cancelled before it was published")
+            prior = await documents_repo.get_one(org, ns, uri, include_superseded=True)
+            live = prior is not None and prior.superseded_at is None
+            # This job's own live row, landed late after its chunks were retired:
+            # this publish replaces it at the same revision, so it is no conflict.
+            own = (
+                prior is not None
+                and prior.superseded_at is None
+                and prior.ingestion_id == job["ingestion_id"]
             )
-        if await _cancelled(job):
-            raise JobFailed("cancelled", "cancelled before it was published")
-        prior = await documents_repo.get_one(org, ns, uri, include_superseded=True)
-        live = prior is not None and prior.superseded_at is None
-        # This job's own live row, landed late after its chunks were retired:
-        # this publish replaces it at the same revision, so it is no conflict.
-        own = (
-            prior is not None
-            and prior.superseded_at is None
-            and prior.ingestion_id == job["ingestion_id"]
-        )
-        expected = int(job["expected_revision"])
-        at = prior.revision if live and prior is not None else 0
-        # 0 expects no live document; a live one written before revisions were
-        # numbered (or by an older build) also reads revision 0.
-        if not own and expected >= 0 and (at != expected or (expected == 0 and live)):
-            now_at = f"revision {at}" if live else "no live document"
-            raise JobFailed("revision_conflict", f"the source has {now_at}, not {expected}")
-        # A write of the source that took its version after this one (a text
-        # write, a metadata edit or a delete, which take no claim) would outrank
-        # this row in FINAL: this publish would report a revision no reader sees.
-        if prior is not None and prior.version >= version:
-            raise JobFailed("revision_conflict", "a later write of this source landed first")
-        if not lease.held:
-            raise LeaseLost(f"knowledge-ingest:{job['ingestion_id']}")
-        revision = prior.revision if own and prior is not None else next_revision(prior)
-        row = documents_repo.build_document_row(
-            **author,
-            org=org,
-            namespace=ns,
-            source_uri=uri,
-            title=job["title"],
-            description=job["description"],
-            content=render_text(parsed.artifact),
-            tags=tags,
-            metadata=job["metadata"],
-            version=version,
-            ingested_at=now,
-            blob_path=job["sha256"],
-            blob_size=parsed.original_size,
-            blob_content_type=job["content_type"],
-            original_filename=job["filename"],
-            revision=revision,
-            format=parsed.artifact.format,
-            artifact_sha256=parsed.artifact_sha256,
-            parser=f"{parsed.artifact.parser}/{parsed.artifact.parser_version}",
-            coverage=json.dumps(parsed.artifact.coverage.to_dict(), sort_keys=True),
-            ingestion_id=job["ingestion_id"],
-        )
-        await _current(job)  # an erased job writes no document row
-        try:
+            expected = int(job["expected_revision"])
+            at = prior.revision if live and prior is not None else 0
+            # 0 expects no live document; a live one written before revisions were
+            # numbered (or by an older build) also reads revision 0.
+            if not own and expected >= 0 and (at != expected or (expected == 0 and live)):
+                now_at = f"revision {at}" if live else "no live document"
+                raise JobFailed("revision_conflict", f"the source has {now_at}, not {expected}")
+            # A write of the source that took its version after this one (a text
+            # write, a metadata edit or a delete, which take no claim) would outrank
+            # this row in FINAL: this publish would report a revision no reader sees.
+            if prior is not None and prior.version >= version:
+                raise JobFailed("revision_conflict", "a later write of this source landed first")
+            if not lease.held:
+                raise LeaseLost(f"knowledge-ingest:{job['ingestion_id']}")
+            revision = prior.revision if own and prior is not None else next_revision(prior)
+            row = documents_repo.build_document_row(
+                **author,
+                org=org,
+                namespace=ns,
+                source_uri=uri,
+                title=job["title"],
+                description=job["description"],
+                content=render_text(parsed.artifact),
+                tags=tags,
+                metadata=job["metadata"],
+                version=version,
+                ingested_at=now,
+                blob_path=job["sha256"],
+                blob_size=parsed.original_size,
+                blob_content_type=job["content_type"],
+                original_filename=job["filename"],
+                revision=revision,
+                format=parsed.artifact.format,
+                artifact_sha256=parsed.artifact_sha256,
+                parser=f"{parsed.artifact.parser}/{parsed.artifact.parser_version}",
+                coverage=json.dumps(parsed.artifact.coverage.to_dict(), sort_keys=True),
+                ingestion_id=job["ingestion_id"],
+            )
+            await _current(job)  # an erased job writes no document row
+            in_flight = True
             await documents_repo.insert_one(row)
-        except _TRANSIENT as e:
+            in_flight = False
+            await chunks_repo.mark_doc_superseded(org, ns, uri, before_version=version, when=now)
+    except _TRANSIENT as e:
+        if in_flight:
             raise _InsertUncertain(e) from e
-        await chunks_repo.mark_doc_superseded(org, ns, uri, before_version=version, when=now)
+        raise
     return job, revision
 
 
