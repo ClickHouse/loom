@@ -442,7 +442,9 @@ async def _revoke_row(
     from server.identity.app import token_grants
 
     try:
-        await token_grants.cascade_revoke_to_created_tokens(input.org, input.namespace, subject)
+        await token_grants.cascade_revoke_to_created_tokens(
+            input.org, input.namespace, subject, named=input.subject
+        )
     except Exception as e:  # noqa: BLE001 - the revoke itself succeeded
         log.warning(
             "token grant cascade failed for %s/%s %s: %s",

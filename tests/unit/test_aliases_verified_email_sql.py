@@ -261,6 +261,40 @@ async def test_revoking_a_handle_leaves_the_tokens_its_unverified_email_names(
 
 
 @pytest.mark.asyncio
+async def test_revoking_a_handle_by_its_email_row_leaves_a_squatters_tokens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # u-carol's row on team-y is stored under her verified email, which a
+    # self-signup account also typed. Revoking u-carol takes that row; the tokens
+    # the other account made stay, since the revoke named a handle.
+    from server.identity.api.models_grants import GrantsRevokeInput
+    from server.identity.app import grants as grants_app
+    from server.identity.store import grants as grants_repo
+
+    kept = KeptCH(
+        tmp_path,
+        *SETUP,
+        ddl("service_accounts"),
+        ddl("acl_versions"),
+        _account("mallory2", "carol@corp.example", "argon2-hash"),
+        "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
+        f" ('{ORG}', 'bot', 'sa:m2-bot', 'mallory2')",
+        _grant("team-y", "sa:m2-bot"),
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
+    monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
+    body = GrantsRevokeInput(org=ORG, namespace="team-y", subject="u-carol")
+    assert (await grants_app.handle_grants_revoke(body)).revoked is True
+    live = await kept.query_all(
+        "SELECT subject FROM loom.namespace_grants FINAL WHERE org = {org:String}"
+        " AND namespace = 'team-y' AND revoked_at IS NULL",
+        {"org": ORG},
+    )
+    subjects = {r["subject"] for r in live}
+    assert "sa:m2-bot" in subjects and "carol@corp.example" not in subjects
+
+
+@pytest.mark.asyncio
 async def test_grants_list_folds_a_verified_email_only(ch: _CH) -> None:
     people = await grants.people_page(ORG, "team-x", after=None, limit=10, ch=ch)
     # One row per person, its spellings in any order.
