@@ -188,14 +188,14 @@ def test_an_org_at_its_in_flight_cap_is_refused_and_a_finished_call_frees_its_sl
     world: dict[str, Any], transport: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import server.transport.mcp_call as mcp_call
-    from server.transport import gates
+    from server.core import tenant_slots
 
     monkeypatch.setattr(settings, "tenant_max_concurrent_requests", 1)
     monkeypatch.setattr(settings, "replica_count", 1)
     monkeypatch.setattr(settings, "web_workers", 1)
     world[transport]()  # under the cap: admitted, and the slot is released after
-    assert ORG not in gates._IN_FLIGHT
-    monkeypatch.setitem(gates._IN_FLIGHT, ORG, 1)  # another call of the org is running
+    assert ORG not in tenant_slots._IN_FLIGHT
+    monkeypatch.setitem(tenant_slots._IN_FLIGHT, ORG, 1)  # another call of the org is running
     if transport == "http":
         r = world["client"].post(
             "/v1/search.query",
@@ -209,4 +209,4 @@ def test_an_org_at_its_in_flight_cap_is_refused_and_a_finished_call_frees_its_sl
         out = asyncio.run(mcp_call._call_tool(1, params, auth=_principal()))
         assert out["result"]["isError"] is True
         assert out["result"]["structuredContent"]["code"] == "RATE_LIMITED"
-    assert gates._IN_FLIGHT[ORG] == 1  # the refused call took no slot
+    assert tenant_slots._IN_FLIGHT[ORG] == 1  # the refused call took no slot

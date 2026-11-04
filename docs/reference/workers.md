@@ -227,6 +227,7 @@ adding its row.
 | `erasure_recovery` | Erasure Saga recovery worker. | `LOOM_ERASURE_RECOVERY_ENABLED` | True | `LOOM_ERASURE_RECOVERY_INTERVAL_SECONDS` | 60 |
 | `extraction_queue` | Replays deferred `memory.set_from_messages` requests. | `LOOM_EXTRACTION_QUEUE_ENABLED` | True | `LOOM_EXTRACTION_QUEUE_INTERVAL_SECONDS` | 15 |
 | `keeper_sweep` | Delete the KeeperMap keys a process died holding (`server.core.leases.DEAD_KEYS`): leases and claims an hour past their expiry, and graph projection slots a day old. | always on |  | `LOOM_KEEPER_SWEEP_INTERVAL_SECONDS` | 3600.0 |
+| `knowledge_ingest` | Runs ingestion jobs (`server/knowledge/app/ingest_run.py`). | `LOOM_KNOWLEDGE_INGEST_ENABLED` | True | `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | 2 |
 | `knowledge_source_sync` | Pulls each registered document source's changed files into its repository's documents (`server.knowledge.app.source_sync`). | `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | False | `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | 900 |
 | `mcp_session_run_sweep` | MCP session run sweeper. | always on |  | `LOOM_MCP_SESSION_RUN_SWEEP_INTERVAL_SECONDS` | 60 |
 | `memory_code_links` | Code link pass: link the memories written since the last pass to the code they name (and, on the first pass or after falling behind the queue, the ones written before), then follow every… | `LOOM_MEMORY_CODE_LINKS_ENABLED` | True | `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS` | 60 |

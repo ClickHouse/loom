@@ -273,6 +273,7 @@ server/core/ch.py::_POOL_WAITERS
 server/core/ch.py::_QUERY_TAG_MAX
 server/core/ch_schema_guard.py::_SCHEMA_GUARD_MAX_PENDING
 server/core/ch_schema_guard.py::_SCHEMA_GUARD_TTL_S
+server/core/fail_open.py::FAIL_OPEN_LOG_INTERVAL_S
 server/core/grant_cache.py::_MAX_ENTRIES
 server/core/idempotency.py::IN_PROGRESS_TTL_S
 server/core/instances.py::STOP_S
@@ -584,7 +585,6 @@ server/transport/arg_feedback.py::_MAX_ERRORS
 server/transport/arg_feedback.py::_MAX_EXAMPLE_CHARS
 server/transport/arg_feedback.py::_MAX_OPTIONAL
 server/transport/code_lean.py::_BODY_MAX_CHARS
-server/transport/gates.py::FAIL_OPEN_LOG_INTERVAL_S
 server/transport/mcp_config.py::LIST_TTL_MS
 server/transport/mcp_config.py::PRIMER_TTL_MS
 server/transport/mcp_config.py::_MCP_SESSION_AGENT_CAP

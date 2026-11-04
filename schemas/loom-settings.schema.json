@@ -2753,6 +2753,39 @@
           "type": "integer",
           "description": "Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks."
         },
+        "knowledge_ingest_enabled": {
+          "default": true,
+          "type": "boolean",
+          "description": "The worker that runs ingestion jobs: extract, chunk, embed, publish."
+        },
+        "knowledge_ingest_idle_interval_seconds": {
+          "default": 15,
+          "type": "integer",
+          "description": "Seconds between passes when the last one found nothing to do."
+        },
+        "knowledge_ingest_interval_seconds": {
+          "default": 2,
+          "type": "integer",
+          "description": "Seconds between ingestion passes while jobs wait."
+        },
+        "knowledge_ingest_max_attempts": {
+          "default": 5,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Attempts a job gets after a transient failure (a provider or store outage) before it fails for good."
+        },
+        "knowledge_ingest_max_chunks": {
+          "default": 20000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most chunks one source may publish; a larger extraction fails with `too_large` rather than flood the embedder."
+        },
+        "knowledge_ingest_max_pass_seconds": {
+          "default": 900,
+          "minimum": 60,
+          "type": "integer",
+          "description": "Seconds one pass, which runs one job, may take before it is cancelled: the extractor's timeout plus embedding the largest source. A job cut off runs again from its start and counts toward its attempts."
+        },
         "knowledge_repo_docs_list_ttl_s": {
           "default": 60.0,
           "exclusiveMinimum": 0,
@@ -2854,6 +2887,18 @@
           "minimum": 1,
           "type": "integer",
           "description": "Active document sources (knowledge.source.add) one repository namespace may register; an add past it is refused with SOURCE_QUOTA."
+        },
+        "knowledge_upload_max_bytes": {
+          "default": 67108864,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Largest file POST /v1/knowledge.upload accepts, in bytes; a larger body is refused with 413 before any of it is stored."
+        },
+        "knowledge_upload_ttl_seconds": {
+          "default": 86400,
+          "minimum": 60,
+          "type": "integer",
+          "description": "Seconds an upload stays ingestible; the originals sweep keeps its bytes until then, and knowledge.ingest refuses it after."
         },
         "langfuse_capture_io_level": {
           "default": "off",

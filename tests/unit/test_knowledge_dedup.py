@@ -55,7 +55,11 @@ def stub_writes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         captured["chunks"] = rows
         return len(rows)
 
+    async def no_prior(*a, **kw):
+        return None
+
     monkeypatch.setattr(documents_repo, "insert_one", fake_doc_insert)
+    monkeypatch.setattr(documents_repo, "get_one", no_prior)
     monkeypatch.setattr(knowledge_repo, "count_active_for_doc", fake_count)
     monkeypatch.setattr(knowledge_repo, "mark_doc_superseded", fake_supersede)
     monkeypatch.setattr(knowledge_repo, "insert_chunks", fake_chunks)

@@ -829,6 +829,19 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_CHUNK_SIZE` | `int` | `1500` | live | Sliding-window chunking on knowledge.add/upsert, in characters. chunk_size 0 = one chunk per doc (hurts long-form retrieval). Smaller chunks mean more embed calls; 1500/1230 stays well under the text-embedding-3 context. |
 | `LOOM_KNOWLEDGE_CHUNK_STRIDE` | `int` | `1230` | live | Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks. |
 
+### Server-side ingestion (knowledge.upload, knowledge.ingest)
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_UPLOAD_MAX_BYTES` | `int` | `67108864` | live | Largest file POST /v1/knowledge.upload accepts, in bytes; a larger body is refused with 413 before any of it is stored. |
+| `LOOM_KNOWLEDGE_UPLOAD_TTL_SECONDS` | `int` | `86400` |  | Seconds an upload stays ingestible; the originals sweep keeps its bytes until then, and knowledge.ingest refuses it after. |
+| `LOOM_KNOWLEDGE_INGEST_ENABLED` | `bool` | `True` |  | The worker that runs ingestion jobs: extract, chunk, embed, publish. |
+| `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | `int` | `2` |  | Seconds between ingestion passes while jobs wait. |
+| `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS` | `int` | `15` |  | Seconds between passes when the last one found nothing to do. |
+| `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS` | `int` | `900` |  | Seconds one pass, which runs one job, may take before it is cancelled: the extractor's timeout plus embedding the largest source. A job cut off runs again from its start and counts toward its attempts. |
+| `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS` | `int` | `5` |  | Attempts a job gets after a transient failure (a provider or store outage) before it fails for good. |
+| `LOOM_KNOWLEDGE_INGEST_MAX_CHUNKS` | `int` | `20000` | live | Most chunks one source may publish; a larger extraction fails with `too_large` rather than flood the embedder. |
+
 ### Timeouts, budgets and caches
 
 | Variable | Type | Default | Live | Meaning |

@@ -166,6 +166,9 @@ OpName = Literal[
     "knowledge.dedup_resolve",
     "knowledge.delete",
     "knowledge.get",
+    "knowledge.ingest",
+    "knowledge.ingest_cancel",
+    "knowledge.ingest_status",
     "knowledge.list",
     "knowledge.outline",
     "knowledge.reads",
@@ -516,6 +519,9 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.dedup_resolve",
     "knowledge.delete",
     "knowledge.get",
+    "knowledge.ingest",
+    "knowledge.ingest_cancel",
+    "knowledge.ingest_status",
     "knowledge.list",
     "knowledge.outline",
     "knowledge.reads",
@@ -2260,6 +2266,42 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "stable",
         30,
+        False,
+        True,
+    ),
+    "knowledge.ingest": OpSpec(
+        "knowledge.ingest",
+        "KnowledgeIngestInput",
+        "KnowledgeIngestBody",
+        "KnowledgeIngestOutput",
+        False,
+        "writer",
+        "experimental",
+        60,
+        False,
+        False,
+    ),
+    "knowledge.ingest_cancel": OpSpec(
+        "knowledge.ingest_cancel",
+        "KnowledgeIngestCancelInput",
+        "KnowledgeIngestCancelBody",
+        "KnowledgeIngestCancelOutput",
+        True,
+        "writer",
+        "experimental",
+        60,
+        False,
+        False,
+    ),
+    "knowledge.ingest_status": OpSpec(
+        "knowledge.ingest_status",
+        "KnowledgeIngestStatusInput",
+        "KnowledgeIngestStatusBody",
+        "KnowledgeIngestStatusOutput",
+        True,
+        "viewer",
+        "experimental",
+        40,
         False,
         True,
     ),
@@ -9983,6 +10025,117 @@ class KnowledgeGetOutput(TypedDict, total=False):
     ingested_at: NotRequired[Optional[str]]
     superseded: NotRequired[Optional[bool]]
     doc_id: NotRequired[Optional[str]]
+    revision: NotRequired[Optional[int]]
+    format: NotRequired[Optional[str]]
+    parser: NotRequired[Optional[str]]
+    coverage: NotRequired[Optional[dict[str, Any]]]
+
+
+class KnowledgeIngestInput(TypedDict, total=False):
+    "Extract an uploaded file (the extractor service parses it, the server"
+
+    org: Required[str]
+    namespace: Required[str]
+    upload_id: Required[str]
+    source_uri: Required[str]
+    title: NotRequired[str]
+    description: NotRequired[str]
+    tags: NotRequired[list[str]]
+    metadata: NotRequired[dict[str, Any]]
+    expected_revision: NotRequired[Optional[int]]
+    allow_partial: NotRequired[bool]
+    options: NotRequired["KnowledgeIngestOptions"]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
+
+
+class KnowledgeIngestOptions(TypedDict, total=False):
+    format: NotRequired[str]
+    encoding: NotRequired[str]
+    sql_dialect: NotRequired[str]
+
+
+class KnowledgeIngestBody(TypedDict, total=False):
+    "Extract an uploaded file (the extractor service parses it, the server"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    upload_id: Required[str]
+    source_uri: Required[str]
+    title: NotRequired[str]
+    description: NotRequired[str]
+    tags: NotRequired[list[str]]
+    metadata: NotRequired[dict[str, Any]]
+    expected_revision: NotRequired[Optional[int]]
+    allow_partial: NotRequired[bool]
+    options: NotRequired["KnowledgeIngestOptions"]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
+
+
+class KnowledgeIngestOutput(TypedDict, total=False):
+    ingestion_id: Required[str]
+    state: Required[str]
+    source_uri: Required[str]
+    namespace: NotRequired[str]
+
+
+class KnowledgeIngestCancelInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    ingestion_id: Required[str]
+
+
+class KnowledgeIngestCancelBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    ingestion_id: Required[str]
+
+
+class KnowledgeIngestCancelOutput(TypedDict, total=False):
+    found: Required[bool]
+    state: NotRequired[str]
+    cancelled: NotRequired[bool]
+
+
+class KnowledgeIngestStatusInput(TypedDict, total=False):
+    "A knowledge.ingest job's state, stage, coverage, failure and published"
+
+    org: Required[str]
+    namespace: Required[str]
+    ingestion_id: Required[str]
+
+
+class KnowledgeIngestStatusBody(TypedDict, total=False):
+    "A knowledge.ingest job's state, stage, coverage, failure and published"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    ingestion_id: Required[str]
+
+
+class KnowledgeIngestStatusOutput(TypedDict, total=False):
+    found: Required[bool]
+    ingestion_id: Required[str]
+    source_uri: NotRequired[str]
+    state: NotRequired[str]
+    stage: NotRequired[str]
+    attempts: NotRequired[int]
+    error_code: NotRequired[str]
+    error_message: NotRequired[str]
+    format: NotRequired[str]
+    coverage: NotRequired[Optional[dict[str, Any]]]
+    warnings: NotRequired[list[str]]
+    chunks: NotRequired[int]
+    revision: NotRequired[int]
+    expected_revision: NotRequired[Optional[int]]
+    filename: NotRequired[str]
+    retrieval: NotRequired[str]
+    cancel_requested: NotRequired[bool]
+    created_at: NotRequired[Optional[str]]
+    updated_at: NotRequired[Optional[str]]
 
 
 class KnowledgeListInput(TypedDict, total=False):

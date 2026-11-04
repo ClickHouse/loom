@@ -1259,6 +1259,33 @@ class KnowledgeOps:
             "_ops.KnowledgeGetOutput", await self._agent.call("knowledge.get", body, **options)
         )
 
+    async def ingest(
+        self, body: _ops.KnowledgeIngestBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeIngestOutput:
+        """`knowledge.ingest`."""
+        return cast(
+            "_ops.KnowledgeIngestOutput",
+            await self._agent.call("knowledge.ingest", body, **options),
+        )
+
+    async def ingest_cancel(
+        self, body: _ops.KnowledgeIngestCancelBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeIngestCancelOutput:
+        """`knowledge.ingest_cancel`."""
+        return cast(
+            "_ops.KnowledgeIngestCancelOutput",
+            await self._agent.call("knowledge.ingest_cancel", body, **options),
+        )
+
+    async def ingest_status(
+        self, body: _ops.KnowledgeIngestStatusBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeIngestStatusOutput:
+        """`knowledge.ingest_status`."""
+        return cast(
+            "_ops.KnowledgeIngestStatusOutput",
+            await self._agent.call("knowledge.ingest_status", body, **options),
+        )
+
     async def list(
         self, body: _ops.KnowledgeListBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeListOutput:

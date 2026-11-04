@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 from server.auth.jwt import AuthInfo
+from server.core import tenant_slots
 from server.core.errors import RateLimitedError
 from server.operations.base import Role
 from server.settings import settings
@@ -26,7 +27,7 @@ def _one_process(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "tenant_max_concurrent_requests", 2)
     monkeypatch.setattr(settings, "replica_count", 1)
     monkeypatch.setattr(settings, "web_workers", 1)
-    monkeypatch.setattr(gates, "_IN_FLIGHT", {})
+    monkeypatch.setattr(tenant_slots, "_IN_FLIGHT", {})
 
 
 def test_admits_the_cap_and_refuses_one_more() -> None:
@@ -39,29 +40,29 @@ def test_admits_the_cap_and_refuses_one_more() -> None:
         # another org has its own slots
         with gates.tenant_slot(_auth("other"), _TARGET):
             pass
-    assert gates._IN_FLIGHT == {}
+    assert tenant_slots._IN_FLIGHT == {}
 
 
 def test_a_failing_handler_releases_its_slot() -> None:
     for _ in range(3):
         with pytest.raises(ValueError), gates.tenant_slot(_auth(), _TARGET):
             raise ValueError("handler failed")
-    assert gates._IN_FLIGHT == {}
+    assert tenant_slots._IN_FLIGHT == {}
 
 
 def test_the_org_is_the_tokens_not_the_requests() -> None:
     foreign = gates.Target(org="victim", namespace="n", named_namespace="n", register_namespace="n")
     with gates.tenant_slot(_auth(), foreign):
-        assert gates._IN_FLIGHT == {"acme": 1}
+        assert tenant_slots._IN_FLIGHT == {"acme": 1}
 
 
 def test_the_cap_is_shared_across_replicas_and_workers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "tenant_max_concurrent_requests", 64)
     monkeypatch.setattr(settings, "replica_count", 2)
     monkeypatch.setattr(settings, "web_workers", 4)
-    assert gates.tenant_inflight_cap() == 8
+    assert tenant_slots.inflight_cap() == 8
     monkeypatch.setattr(settings, "tenant_max_concurrent_requests", 3)
-    assert gates.tenant_inflight_cap() == 1  # never below one
+    assert tenant_slots.inflight_cap() == 1  # never below one
 
 
 def test_zero_turns_the_cap_off(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -69,4 +70,4 @@ def test_zero_turns_the_cap_off(monkeypatch: pytest.MonkeyPatch) -> None:
     with gates.tenant_slot(_auth(), _TARGET), gates.tenant_slot(_auth(), _TARGET):
         with gates.tenant_slot(_auth(), _TARGET):
             pass
-    assert gates._IN_FLIGHT == {}
+    assert tenant_slots._IN_FLIGHT == {}
