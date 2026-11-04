@@ -258,6 +258,8 @@ def test_grant_review_refuses_what_it_cannot_classify_as_read_only() -> None:
     assert rev.read_only and rev.roles == ["`my, role`"]
     rev = ob.review_grants(["GRANT analyst TO u WITH ADMIN OPTION"])
     assert rev.roles == ["analyst"] and rev.refused == ["WITH ADMIN OPTION"]
+    # a line with two scopes is one the check does not parse
+    assert not ob.review_grants(["GRANT SELECT ON db.t, INSERT ON db.x TO u"]).read_only
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ unwrapped first, and the probe connects to the address it vetted."""
 from __future__ import annotations
 
 import socket
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -146,3 +147,36 @@ async def test_private_hosts_allowed_connect_by_name(monkeypatch) -> None:
             host="ch.local", port=8123, secure=False, database="d", user="u", password="p"
         )
     assert seen["host"] == "ch.local" and seen["server_host_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_probe_reviews_the_grants_a_role_carries(monkeypatch) -> None:
+    import clickhouse_connect
+
+    # what a server answers for a user whose only write access comes from a role
+    answers = {
+        "SHOW GRANTS": ["GRANT SELECT ON loom_qa.* TO u", "GRANT writer TO u"],
+        "SHOW GRANTS FINAL": ["GRANT INSERT ON *.* TO u", "GRANT SELECT ON loom_qa.* TO u"],
+    }
+
+    class _Client:
+        async def query(self, sql: str, parameters: Any = None) -> Any:
+            rows = [(line,) for line in answers.get(sql, [])]
+            return SimpleNamespace(column_names=["grants"], result_rows=rows)
+
+        async def close(self) -> None:
+            pass
+
+    async def _connect(**_: Any) -> _Client:
+        return _Client()
+
+    monkeypatch.setattr(clickhouse_connect, "get_async_client", _connect)
+
+    async def _public(host: str) -> tuple[str, str]:
+        return "", "3.16.142.177"
+
+    monkeypatch.setattr(ob, "_vet", _public)
+    probe = await ob.probe_credential(
+        host="ch.example", port=8443, secure=True, database="loom_qa", user="u", password="p"
+    )
+    assert probe.grants.roles == ["writer"] and probe.grants.refused == ["INSERT"]

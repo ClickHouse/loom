@@ -9,11 +9,11 @@ guardrails are rules, not a person's approval:
   unless the deployment allows private hosts (a dev stack). The probe
   connects to the address it validated, so a second lookup cannot swap in
   another;
-- **the credential is read-only**: every access type `SHOW GRANTS` names for
-  the user is one a read-only user holds (SELECT, SHOW, dictGet, a temporary
-  table), and none is granted WITH GRANT OPTION or WITH ADMIN OPTION; a type
-  the check does not know is refused. Roles are opaque and are reported back
-  so the registrant can see them;
+- **the credential is read-only**: every access type `SHOW GRANTS FINAL`
+  names for the user, its roles' grants included, is one a read-only user
+  holds (SELECT, SHOW, dictGet, a temporary table), and none is granted WITH
+  GRANT OPTION or WITH ADMIN OPTION; a type the check does not know is
+  refused. The roles are reported back so the registrant can see them;
 - **the schema meets the record contract**: the same `describe` + `diff`
   the boot gate runs, through the supplied credential, before anything is
   written — the report is the refusal.
@@ -37,9 +37,8 @@ from server.tracker.store.source import qa_intel
 
 log = logging.getLogger("loom.tracker.onboarding")
 
-# The access types a read-only user may hold; any other type, or a grant it
-# may pass on, is refused (a type this list does not know is never read-only).
-# Compared upper-case: `SHOW GRANTS` spells some types in mixed case.
+# The access types a read-only user may hold; any other type is refused.
+# Compared upper-case: `SHOW GRANTS` spells some in mixed case.
 _READ_ACCESS = frozenset(
     {
         "SELECT",
@@ -52,7 +51,8 @@ _READ_ACCESS = frozenset(
         "CREATE TEMPORARY TABLE",  # a temp table for a JOIN
     }
 )
-_PASSES_ON = (" WITH GRANT OPTION", " WITH ADMIN OPTION")
+# the suffixes that let the user pass a grant or a role on
+_GRANT_OPTIONS = (" WITH GRANT OPTION", " WITH ADMIN OPTION")
 # a quoted name (a column, role or user), which may hold `(`, `,` or ` ON `
 _QUOTED = re.compile(r"`(?:[^`\\]|\\.)*`|\"(?:[^\"\\]|\\.)*\"")
 # an access type with an optional column list: `SELECT`, `SELECT(a, b)`
@@ -103,10 +103,11 @@ def review_grants(lines: list[str]) -> GrantReview:
         upper = masked.upper()
         if not line or upper.startswith("REVOKE "):
             continue
-        if not upper.startswith("GRANT ") or "`" in masked or '"' in masked:
+        unparsed = "`" in masked or '"' in masked or upper.count(" ON ") > 1
+        if not upper.startswith("GRANT ") or unparsed:
             rev.refused.append(line)
             continue
-        rev.refused.extend(p.strip() for p in _PASSES_ON if p in upper)
+        rev.refused.extend(p.strip() for p in _GRANT_OPTIONS if p in upper)
         on, to = upper.find(" ON "), upper.find(" TO ")
         if on < 0 or 0 <= to < on:
             end = to if to >= 0 else len(line)
@@ -116,6 +117,7 @@ def review_grants(lines: list[str]) -> GrantReview:
             name = _ACCESS_TYPE.fullmatch(_QUOTED.sub("_", t))
             if name is None or name.group(1).strip().upper() not in _READ_ACCESS:
                 rev.refused.append(t)
+    rev.refused = list(dict.fromkeys(rev.refused))  # FINAL repeats the direct grants
     return rev
 
 
@@ -213,7 +215,9 @@ async def probe_credential(
 
     try:
         try:
+            # The direct grants name the roles; FINAL adds what those roles grant
             grant_rows = await asyncio.wait_for(query("SHOW GRANTS"), timeout=timeout_s)
+            grant_rows += await asyncio.wait_for(query("SHOW GRANTS FINAL"), timeout=timeout_s)
         except Exception as e:
             if _is_readonly_mode(e):
                 raise ReadonlyModeError(
