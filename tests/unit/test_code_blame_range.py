@@ -540,11 +540,23 @@ async def test_trunk_and_sibling_namespaces_are_read_only_when_the_caller_may_re
         return ns in readable
 
     monkeypatch.setattr(authz, "row_in_scope", _only)
+    repo.rows[NS] = [
+        {
+            "pr_number": 100,
+            "title": "Trunk-only title",
+            "author": "a",
+            "merged_at": datetime(2026, 2, 1),
+            "merge_commit_sha": M1.encode(),
+        }
+    ]
     base = {"stage": "last_touched", "org": ORG, "path": PATH, "start_line": 10, "end_line": 12}
-    await h.handle_code_blame_range(
+    out = await h.handle_code_blame_range(
         CodeBlameRangeInput(namespace="code-clickhouse-26-3", from_sha=BASE, **base)
     )
     assert [c[0] for c in repo.window_calls] == ["code-clickhouse-26-3"]
+    # the shared mirror's blame may still name the PR; the trunk ledger's row does not reach it
+    assert "Trunk-only title" not in str(out.candidates)
+    assert all(c.get("evidence") == "blame" for c in out.candidates if c["pr_number"] == 100)
 
     readable = {NS}
     head_reads.clear()
