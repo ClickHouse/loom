@@ -409,6 +409,7 @@ async def stored_spellings(
         f"""
         SELECT DISTINCT subject FROM loom.namespace_grants FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          -- both sides lowered by ClickHouse, as the grant map lowers them
           AND has(arrayMap(s -> lower(s), {{subs:Array(String)}}), lower(subject))
           {live_only}
         ORDER BY subject

@@ -164,10 +164,12 @@ async def cascade_revoke_to_created_tokens(
     from server.auth.aliases import spellings, verified_spellings
 
     try:
-        held = "@" in named and any(
+        # An address no verified account holds: what its grant admitted may have
+        # been an unverified account's.
+        unheld = "@" in named and not any(
             "@" not in s for s in await verified_spellings(org, named, ch=ch)
         )
-        if "@" in named and not held:
+        if unheld:
             creators = await spellings(org, subject, ch=ch)
         else:
             creators = await verified_spellings(org, subject, ch=ch)

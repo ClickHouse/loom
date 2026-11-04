@@ -173,6 +173,7 @@
 167fa87844b1	ALTER TABLE loom.entity_summaries DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 1683de848d27	SELECT count() AS n FROM loom.entity_edges WHERE org = {org:String} AND namespace = {ns:String} AND ?
 16856971c616	SELECT count() AS n FROM loom.entity_triples WHERE org = {org:String} AND cityHash64(namespace, subject, relation, object) IN {owned:Array(UInt64)}
+168996bf0400	SELECT DISTINCT subject FROM loom.namespace_grants FINAL WHERE org = {org:String} AND namespace = {ns:String} -- both sides lowered by ClickHouse, as the grant map lowers them AND has(arrayMap(s -> lo
 16a2b5def24b	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 16cf9f836a3a	SELECT count() AS n FROM loom.entity_vectors WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 16df003ef8b4	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
@@ -385,6 +386,7 @@
 33259268a673	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
 332c27610ba4	ALTER TABLE loom.chunks UPDATE doc_superseded_at = {now:DateTime} WHERE (org = {org:String} AND namespace = {ns:String} AND doc_superseded_at IS NULL) AND ({erasure_mutation_tag:String} = {erasure_mut
 33a09efa811f	DELETE FROM loom.entity_vectors WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS lightweight_deletes_sync = ?
+33bb6d3ee095	SELECT DISTINCT subject FROM loom.namespace_grants FINAL WHERE org = {org:String} AND namespace = {ns:String} -- both sides lowered by ClickHouse, as the grant map lowers them AND has(arrayMap(s -> lo
 33bdfb31c03a	SELECT count() AS n FROM loom.memory_record_versions WHERE org = {org:String} AND user_id = {uid:String}
 33db1f0050ff	SELECT path, uniqExact(facet_kind, name) AS matched, groupArray((facet_kind, name, ordinal, line, confidence)) AS hits, ? AS co_occurs FROM loom.code_test_facets FINAL WHERE org = {org:String} AND nam
 341b6eb8dac2	ALTER TABLE loom.operator_edges UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {era
@@ -941,7 +943,6 @@
 7ca425af7836	SELECT tag, count() AS rows FROM (SELECT arrayJoin(tags) AS tag FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND agent != {id:String}) GROUP BY
 7ca4cd496272	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 7cbb19795cf8	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
-7cbb799c4b25	SELECT DISTINCT subject FROM loom.namespace_grants FINAL WHERE org = {org:String} AND namespace = {ns:String} AND has(arrayMap(s -> lower(s), {subs:Array(String)}), lower(subject)) ORDER BY subject LI
 7cd33526cc9c	ALTER TABLE loom.memory_records DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 7ce46ce955fb	SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}
 7ce74001d489	SELECT count() AS n FROM loom.entity_edge_rows WHERE org = {org:String} AND namespace = {ns:String}
@@ -1663,7 +1664,6 @@ d3a1a1a7adba	SELECT count() AS c FROM loom.session_summaries FINAL WHERE org = {
 d3ac05d7eb95	SELECT count() AS n FROM loom.memory_chunk_sources FINAL WHERE org = {org:String} AND namespace = {ns:String}
 d3b283105ff7	SELECT scope_path AS path, summary, pagerank, cosineDistance(embedding, {q:Array(Float32)}) AS distance FROM loom.code_summaries FINAL WHERE org = {org:String} AND namespace = {ns:String} AND embeddin
 d3b6fdc3997e	SELECT if(s.user_id != ?, s.user_id, p.user_id) AS who, s.digest AS digest, if(h.user_id != ?, h.version, p.version) AS profile_version FROM ( SELECT user_id, leftPad(lower(hex(groupBitXor(sipHash64(m
-d3bace15585d	SELECT DISTINCT subject FROM loom.namespace_grants FINAL WHERE org = {org:String} AND namespace = {ns:String} AND has(arrayMap(s -> lower(s), {subs:Array(String)}), lower(subject)) AND revoked_at IS N
 d3e20e869a25	SELECT count() OVER () AS total, a.memory_key AS memory_key, toString(a.memory_id) AS memory_id, a.superseded_by AS superseded_by FROM (SELECT memory_key, memory_id, superseded_by FROM loom.memory FIN
 d3eb5e38ab39	ALTER TABLE loom.entity_degree DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 d455eae6762a	SELECT count() AS n FROM loom.procedure_runs WHERE org = {org:String} AND namespace = {ns:String}
