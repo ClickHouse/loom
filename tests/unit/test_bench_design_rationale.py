@@ -1159,7 +1159,7 @@ def test_a_resume_with_another_extraction_model_is_refused(tmp_path):
 
 def test_the_pre_edit_bound_covers_a_block_at_its_margin():
     # Decisions filling the whole-row ceiling to within a few characters (each line is
-    # its 28-character head, the value and a newline), one past it (the left-out line
+    # its 28-character head, the value and a newline), six past it (the left-out line
     # prints), and facts past the budget (the "… more" line prints).
     whole = settings.memory_for_file_whole_tokens
     decisions = [
@@ -1173,15 +1173,18 @@ def test_the_pre_edit_bound_covers_a_block_at_its_margin():
         for i in range(5)
     ]
     assert whole * 4 - 5 * (28 + 1170 + 1) < 28
-    decisions.append(
+    # Six left out, keys at the 120 characters the left-out line prints of each: the line
+    # names five and counts the sixth, at its longest.
+    decisions += [
         {
-            "memory_key": "decision:long",
+            "memory_key": f"decision:{i}" + "k" * (120 - len(f"decision:{i}")),
             "memory_type": "decision",
             "value": "x" * 7000,
             "tags": ["decision"],
             "namespace": "ns",
         }
-    )
+        for i in range(6)
+    ]
     facts = [
         {
             "memory_key": f"fact:{i:03d}",
@@ -1196,6 +1199,24 @@ def test_the_pre_edit_bound_covers_a_block_at_its_margin():
         "src/cache/segmented_lru.py", decisions + facts, PRE_EDIT_BUDGET, home="ns"
     )
     assert "- decision:0004 [decision]" in rendered  # the ceiling holds all five
-    assert "more; memory.for_file" in rendered and "left out to keep" in rendered
+    assert "more; memory.for_file" in rendered and "6 more decisions or constraints" in rendered
+    assert "and 1 more." in rendered
     # Past the rows' own budgets, inside the plan's.
     assert whole + PRE_EDIT_BUDGET < tokens <= run.pre_edit_block_tokens()
+
+
+def test_a_setup_that_failed_is_not_resumed_even_with_its_namespaces_kept(tmp_path, capsys):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    cfg = _config(out, keep_namespaces=True)
+    loom = FakeLoom(fail_on_upsert=True)
+    with pytest.raises(RuntimeError, match="upsert refused"):
+        run.run(ts, cfg, loom, model, [model], ledger)
+    assert loom.erased == []
+    err = capsys.readouterr().err
+    assert "loom namespaces-gc" in err and "resume" not in err
+    with pytest.raises(run.RunError, match="setup failed"):
+        run.run(ts, cfg, FakeLoom(), model, [model], ledger)

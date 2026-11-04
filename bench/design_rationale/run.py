@@ -52,8 +52,8 @@ CITED_TEXT_TOKENS = 1200  # the cited source text a judge reads
 JUDGE_FRAME_TOKENS = 900  # the judge's instructions and gold lists
 TYPICAL_OUT = {"A": 400, "B": 900, "C": 400, "judge": 500, "extract": 800}
 JUDGE_OUT_CAP = 4000
-# The header, "… more" and left-out lines of a pre-edit block; the render test keeps it
-# honest.
+# The left-out line of a pre-edit block, outside both of its budgets; the render test
+# keeps it honest.
 PRE_EDIT_FIXED_TOKENS = 300
 # The longest category and scenario decision.record accepts
 # (server/memory/api/models_decision.py, DecisionRecordInput).
@@ -729,19 +729,14 @@ def check_resume(state: dict[str, Any], cfg: Config) -> None:
         raise RunError(f"{cfg.out} was run with other {changed}; resume it with the same flags")
 
 
-def cleanup_hint(cfg: Config, loom: Loom, ns: dict[str, str]) -> str:
-    """How to finish a run that fails or is interrupted after its setup: resume it, or
-    erase what it keeps."""
+def erase_command(cfg: Config, loom: Loom, ns: dict[str, str]) -> str:
+    """The `loom namespaces-gc` commands that erase what the run keeps."""
     from bench.bench_namespaces import gc_command
 
     by_org: dict[str, list[str]] = {}
     for name in owned(cfg, ns):
         by_org.setdefault(loom.orgs[name], []).append(name)
-    erase = "; ".join(gc_command(org, names) for org, names in sorted(by_org.items()))
-    return (
-        f"the namespaces are kept: run the same command again to resume, or erase them "
-        f"with: {erase}"
-    )
+    return "; ".join(gc_command(org, names) for org, names in sorted(by_org.items()))
 
 
 def run(
@@ -757,13 +752,17 @@ def run(
     or that fails or is interrupted after its setup (a provider error, a server that
     went away, Ctrl-C), keeps its namespaces: the next invocation on the same `--out`,
     with the same flags, resumes it, and the error is followed by the command that
-    erases them otherwise. A finished run, or one whose setup failed for another reason
-    than the cap, erases them (unless --keep-namespaces) and is not resumed."""
+    erases them otherwise. A setup that fails for another reason than the cap leaves
+    half-filled namespaces: they are erased (kept with --keep-namespaces, with the erase
+    command printed), and the run is never resumed. A finished run erases them (unless
+    --keep-namespaces) and is not resumed."""
     cfg.out.mkdir(parents=True, exist_ok=True)
     state_path = cfg.out / "state.json"
     state = load_json(state_path)
     if state.get("erased"):
         raise RunError(f"{cfg.out}: this run's namespaces were erased; score it or start anew")
+    if state.get("setup_failed"):
+        raise RunError(f"{cfg.out}: this run's setup failed; start anew with another --out")
     check_resume(state, cfg)
     state.setdefault("started", date.today().isoformat())
     ns = bind(loom, state, cfg)
@@ -774,8 +773,14 @@ def run(
         except CapReached:
             raise  # its steps so far stay; the resume continues the setup
         except BaseException:
-            # Half-filled namespaces never serve a resumed run.
-            if not cfg.keep_namespaces:
+            # Half-filled namespaces never serve a resumed run, kept or not.
+            state["setup_failed"] = True
+            if cfg.keep_namespaces:
+                print(
+                    f"setup failed; erase what it wrote with: {erase_command(cfg, loom, ns)}",
+                    file=sys.stderr,
+                )
+            else:
                 loom.erase(owned(cfg, ns))
                 state["erased"] = True
             raise
@@ -789,9 +794,13 @@ def run(
     except CapReached as e:
         print(f"stopped: {e}; run again with the same --out (and a higher --max-usd) to resume")
     except BaseException:
-        # An error or an interrupt: what the run wrote is kept for a resume.
-        if not state.get("erased"):
-            print(f"stopped; {cleanup_hint(cfg, loom, ns)}", file=sys.stderr)
+        # An error or an interrupt after the setup: what the run wrote is kept.
+        if not state.get("erased") and not state.get("setup_failed"):
+            print(
+                "stopped; the namespaces are kept: run the same command again to resume, "
+                f"or erase them with: {erase_command(cfg, loom, ns)}",
+                file=sys.stderr,
+            )
         raise
     finally:
         if finished and not cfg.keep_namespaces:
