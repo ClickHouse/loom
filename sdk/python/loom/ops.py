@@ -3376,7 +3376,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "stable",
         120,
-        True,
+        False,
         False,
     ),
     "memory.update_by_id": OpSpec(

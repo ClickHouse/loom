@@ -594,6 +594,33 @@ async def _update_post_write(
 async def _update_live_row(
     input: Any, existing: MemoryRow, ch: Any, *, op: str
 ) -> MemoryUpdateByIdOutput:
+    """The revision, then its one hash-only audit row, named for the row's
+    namespace (update_by_id's request carries none)."""
+    out = await _revise_head(input, existing, ch, op=op)
+    if out.updated:
+        from server.observability import audit
+
+        await audit.emit(
+            event_type=op,
+            org=input.org,
+            namespace=existing.namespace,
+            actor=app_provenance.writer_actor(fallback=existing.actor),
+            # Hashes and ids, never the value.
+            subject={
+                "memory_key": existing.memory_key,
+                "memory_id": str(existing.memory_id),
+                "content_sha256": out.content_sha256,
+                "source_class": existing.source_class,
+                "version": out.new_version,
+                "verdict": out.conflict_verdict,
+            },
+        )
+    return out
+
+
+async def _revise_head(
+    input: Any, existing: MemoryRow, ch: Any, *, op: str
+) -> MemoryUpdateByIdOutput:
     """A conditional update re-reads the head under the key's write lock."""
     if not input.if_match_sha256:
         return await _write_revision(input, existing, ch, op=op)

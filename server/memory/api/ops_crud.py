@@ -228,7 +228,7 @@ memory_update_by_id = Operation(
     handler=handle_memory_update_by_id,
     idempotent=True,
     required_role=Role.WRITER,
-    audit=False,
+    audit=False,  # The handler writes the hash-only row, in the row's namespace
     row_scoped=True,  # The handler authorizes the row's namespace
 )
 
@@ -239,7 +239,7 @@ memory_update = Operation(
     handler=handle_memory_update,
     idempotent=False,
     required_role=Role.WRITER,
-    audit=True,
+    audit=False,  # The handler writes the hash-only row
 )
 
 memory_redact = Operation(

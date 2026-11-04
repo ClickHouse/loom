@@ -224,14 +224,16 @@ async def test_update_by_id_still_writes_through_the_shared_helper(wired) -> Non
     assert ch.inserts[0][1][0]["confidence"] == 0.8  # no confidence field → kept
 
 
-def test_op_is_registered_writer_audited_and_in_the_core_toolset() -> None:
+def test_op_is_registered_writer_and_in_the_core_toolset() -> None:
     from server.operations.base import Role
     from server.operations.registry import ALL_OPERATIONS
     from server.operations.toolsets import _MCP_CORE_OPS
     from server.transport.mcp_descriptions import TOOL_DESCRIPTIONS
 
     op = next(o for o in ALL_OPERATIONS if o.name == "memory.update")
-    assert op.required_role == Role.WRITER and op.audit and not op.idempotent
+    # The handler writes the audit row (the test below); a transport row would
+    # carry the value and fire on not_found too.
+    assert op.required_role == Role.WRITER and not op.audit and not op.idempotent
     assert "memory.update" in _MCP_CORE_OPS
     assert "changed or got more specific" in TOOL_DESCRIPTIONS["memory.update"]
 
@@ -437,3 +439,57 @@ async def test_update_fences_a_high_key_when_cancelled_during_the_write(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert len(fenced) == 1
+
+
+def _audit_rows(ch: _StubCH) -> list[dict[str, Any]]:
+    return [r for table, rows in ch.inserts if table == "loom.audit_log" for r in rows]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["memory.update", "memory.update_by_id"])
+async def test_a_revision_leaves_one_hash_only_audit_row_in_the_rows_namespace(
+    wired, monkeypatch: pytest.MonkeyPatch, op: str
+) -> None:
+    import json
+
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+
+    ch = wired([_cand(_ID_A)], _row())
+    monkeypatch.setattr("server.observability.audit.get_client", lambda: ch)
+    if op == "memory.update":
+        out: Any = await update_mod.handle_memory_update(
+            MemoryUpdateInput(
+                org="test", namespace="personal", memory_key="deploy_day", value="Thursday"
+            )
+        )
+    else:
+        out = await update_mod.handle_memory_update_by_id(
+            MemoryUpdateByIdInput(org="test", memory_id=_ID_A, value="Thursday")
+        )
+    assert out.updated
+    [row] = _audit_rows(ch)
+    assert row["event_type"] == op and row["org"] == "test" and row["namespace"] == "personal"
+    subject = json.loads(row["subject"])
+    assert subject == {
+        "memory_key": "deploy_day",
+        "memory_id": _ID_A,
+        "content_sha256": out.content_sha256,
+        "source_class": "",
+        "version": out.new_version,
+        "verdict": "clear",
+    }
+    assert "Thursday" not in row["subject"]
+
+
+@pytest.mark.asyncio
+async def test_an_update_that_finds_no_row_leaves_no_audit_row(
+    wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+
+    ch = wired([], None)
+    monkeypatch.setattr("server.observability.audit.get_client", lambda: ch)
+    out = await update_mod.handle_memory_update_by_id(
+        MemoryUpdateByIdInput(org="test", memory_id=_ID_A, value="x")
+    )
+    assert out.updated is False and _audit_rows(ch) == []
