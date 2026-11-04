@@ -160,8 +160,12 @@ async def test_revoking_the_person_cascades_to_the_tokens_they_minted_on_that_na
     async def _spellings(org: str, subject: str, *, ch: Any = None) -> list[str]:
         return [subject, "alice"]
 
+    async def _none_left(*_a: Any, **_k: Any) -> list[str]:
+        return []  # alice holds no grant of her own left on the namespace
+
     # Every spelling a revocation reaches, an unverified email too.
     monkeypatch.setattr(aliases, "spellings", _spellings)
+    monkeypatch.setattr(grants_repo, "stored_spellings", _none_left)
     touched = await tg.cascade_revoke_to_created_tokens(
         ORG, "code-private", "alice@x", unheld=True, ch=fake
     )
