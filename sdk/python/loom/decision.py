@@ -37,6 +37,7 @@ class DecisionClient:
         outcome: str,
         alternatives: Sequence[str] | None = None,
         confidence: float = 0.0,
+        stage: Literal["decided", "proposed"] = "decided",
         decision_maker: str = "",
         caused_by: Sequence[str] | None = None,
         influenced_by: Sequence[str] | None = None,
@@ -51,6 +52,8 @@ class DecisionClient:
     ) -> dict[str, Any]:
         """Returns {memory_key, record_id, superseded_prior, edges_written, next}.
 
+        `stage`: "proposed" for an option put forward and not yet chosen or built;
+        its statement reads "Proposed ..." instead of "Decided ...".
         `files`: the repo files this decision governs; `memory.for_file` serves it
         before an edit of them. `source_resource_id`: the document, file or URL the
         decision was taken from. `source_class`: "derived", "external" or
@@ -71,6 +74,8 @@ class DecisionClient:
             "influenced_by": list(influenced_by or []),
             "tags": list(tags or []),
         }
+        if stage != "decided":
+            payload["stage"] = stage
         if run_id or current_run_id():
             payload["run_id"] = run_id or current_run_id()
         if session_id is not None:

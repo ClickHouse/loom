@@ -23,6 +23,11 @@ identity, so a re-run revises the extractor's own rows instead of writing beside
 - no record under the key, but a pinned or attested decision row reads the same at or
   above the conflict threshold: skipped as already recorded.
 
+The same words keep a row's stage on every path (the stage is the model's reading and flips
+between runs), also under a key the model reworded when its outcome, reasoning and rejected
+options' reasons are those of one of the extractor's rows (`_carried_stage`). A changed text
+is written at the stage it reads as.
+
 After the writes, the extractor deletes its rows citing this document, unless pinned or
 attested, whose reasoning (a span of the document) is no longer in its text, read as in
 the verbatim check, or whose outcome and reasoning this run recorded under another key. A
@@ -42,7 +47,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 import httpx
 from fastapi import HTTPException
@@ -56,7 +61,7 @@ from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.app import decisions as svc
 from server.memory.domain import decision_extract as dx
 from server.memory.domain.corpus_synthesis import CorpusChunk, Window, windows
-from server.memory.domain.decision_schema import SOURCE_CHANGED_TAG
+from server.memory.domain.decision_schema import PROPOSED_TAG, SOURCE_CHANGED_TAG, Stage
 from server.memory.domain.decision_statement import alternatives, collapse_ws, memory_value
 from server.memory.domain.files import detect_value_files, normalize_files
 from server.memory.domain.trust import confirmed, row_content_sha256, verification_state
@@ -185,11 +190,6 @@ def _frozen(row: MemoryRow) -> bool:
     current = row_content_sha256(row)
     state = verification_state(row.verified_by, row.verified_sha256, current)
     return confirmed(row.pinned, state)
-
-
-def _has_outcome(record: dict[str, Any]) -> bool:
-    """decision.outcome recorded what happened: a re-record or a delete would lose it."""
-    return bool(str(record.get("realized_outcome") or "").strip())
 
 
 def _is_extractor(agent: str, user_id: str, session_id: str) -> bool:
@@ -426,7 +426,10 @@ async def extract_document(
     if report.error:
         return report
     known = _known_decisions(own)
-    kept, answered = await _candidates(org, t, source_uri, wins, max_per_section, report, known)
+    own_by_words = _prior_rows_by_words(own)
+    kept, answered = await _candidates(
+        org, t, source_uri, wins, max_per_section, report, known, doc.title or ""
+    )
     if wins and not answered:
         # A run that read nothing must not retire anything.
         report.error = (
@@ -441,7 +444,7 @@ async def extract_document(
     held: dict[tuple[str, str], str] = {}
     for cand, section, texts in kept:
         try:
-            rec = await _reconcile(org, t, source_uri, cand, section, texts, dry_run)
+            rec = await _reconcile(org, t, source_uri, cand, section, texts, dry_run, own_by_words)
         except _REPORTED_ERRORS as e:
             # A blacklisted or newly pinned decision, a busy key, a store that timed out:
             # the other candidates and the retire step still run, and a re-run does not
@@ -578,18 +581,20 @@ async def _read_window(
     report: ExtractReport,
     *,
     fake_chosen: bool,
+    title: str,
     note: str = "",
     answered_already: bool = False,
 ) -> list[dx.Candidate] | None:
     """The model's candidates for one window, or None when the read is lost: the call
     failed, the fake model answered for a real provider, or the reply is unreadable; each
     is a dropped line marked `refused`, a read the run needed, reported under `section`.
-    `note` goes before the window's text. When the window is `answered_already` (a second
-    read for what the first reply got wrong), a lost read is a `read again` line under
-    `section`, never refused."""
+    `note` goes before the window's text, which opens with the document's `title` when it
+    has one. When the window is `answered_already` (a second read for what the first reply
+    got wrong), a lost read is a `read again` line under `section`, never refused."""
     from server.llm.json_text import strip_code_fence
 
-    user = f"{note}\n\n{dx.user_prompt(w)}" if note else dx.user_prompt(w)
+    body = dx.user_prompt(w, title)
+    user = f"{note}\n\n{body}" if note else body
 
     def lost(reason: str) -> None:
         if answered_already:
@@ -645,6 +650,7 @@ async def _candidates(
     max_per_section: int,
     report: ExtractReport,
     known: list[tuple[str, str, str]],
+    title: str,
 ) -> tuple[list[tuple[dx.Candidate, str, list[str]]], int]:
     """(candidate, its section, the texts it was checked against) for every candidate
     that passes the checks of `_check_window` (verbatim spans, restatement with a
@@ -665,11 +671,15 @@ async def _candidates(
     # An operator command: its calls are not gated by the namespace's cost cap.
     for w in wins:
         first = dx.breadcrumb(w.chunks[0].section_path)
-        cands = await _read_window(llm, system, w, first, report, fake_chosen=fake_chosen)
+        cands = await _read_window(
+            llm, system, w, first, report, fake_chosen=fake_chosen, title=title
+        )
         retried = cands == [] and dx.more_than_a_caption("\n\n".join(c.text for c in w.chunks))
         if retried:
             report.retried.append(Retried(first, _EMPTY_REPLY))
-            cands = await _read_window(llm, system, w, first, report, fake_chosen=fake_chosen)
+            cands = await _read_window(
+                llm, system, w, first, report, fake_chosen=fake_chosen, title=title
+            )
         if cands is None:
             continue
         answered += 1
@@ -689,6 +699,7 @@ async def _candidates(
                 fake_chosen=fake_chosen,
                 note=note,
                 answered_already=True,
+                title=title,
             )
             repaired = _repairs(w, again or [], failed, state.kept[before:], report)
             _check_window(org, t, source_uri, w, repaired, state, report)
@@ -828,6 +839,7 @@ def _record_input(
         # MAX_ALTERNATIVES), but uncut, so a reason can be compared whole.
         alternatives=svc.clean_alternatives(cand.rejected(), cut=False),
         confidence=EXTRACTED_CONFIDENCE,
+        stage=cand.stage,
         tags=tags,
         files=files,
         source_class="derived",
@@ -925,8 +937,11 @@ async def _reconcile(
     section: str,
     texts: list[str],
     dry_run: bool,
+    own_by_words: dict[tuple[str, str], _PriorRow],
 ) -> RecordReport:
-    """Decide what the candidate does to the target namespace, and do it unless `dry_run`."""
+    """Decide what the candidate does to the target namespace, and do it unless `dry_run`.
+    `own_by_words` holds the extractor's rows on this document by outcome and reasoning, so
+    a decision whose key the model reworded keeps its stage."""
     namespace = t.rows_namespace
     files, signals, unresolved, complete = await resolve_mentions(
         org, t.code_namespace, cand, texts
@@ -939,6 +954,8 @@ async def _reconcile(
     rec = RecordReport(key, "written", record_body(inp), signals, unresolved)
     writer = await live_writer_record(org, namespace, key)
     if writer is None:
+        inp, rec.note = _carried_stage(inp, own_by_words)
+        rec.body["stage"] = inp.stage
         peer = await _frozen_restatement(org, namespace, key, inp)
         if peer is not None:
             rec.action = "already_recorded"
@@ -969,32 +986,17 @@ async def _reconcile(
         ours = this_doc and _is_extractor(writer.agent, writer.user_id, writer.session_id)
         record = svc.parse_record_json(writer.record_json)
         same = _same_decision(record, inp)
+        inp, rec.note = _stage_reading(inp, row, record, same)
+        rec.body["stage"] = inp.stage
         # Our own row is revised for its files, source, constraint or repository tag too: a
         # document extracted before its code was indexed gains its files on a later run.
         stale_row = row is not None and ours and not _frozen(row) and not _same_row(row, inp)
         if same and not stale_row:
-            rec.action = "unchanged"
-            rec.holds = ours
-            rec.held_outcome = str(record.get("outcome") or "").strip()
-            if row is not None and this_doc:
-                # Another writer's row that is not frozen gains no repository tag.
-                # (Our own such row reached here with its tags the same already.)
-                link = t.row_tag if _frozen(row) else ""
-                await _reconcile_tags(rec, row, dry_run, link)
-            return rec
-        if row is not None and _frozen(row) and this_doc:
-            # A pinned or attested row is frozen: whoever froze it decides; a pinned writer
-            # row refuses decision.record.
-            rec.body.update(agent=row.agent, user_id=row.user_id, session_id=row.session_id)
-            rec.note = (
-                "pinned; the document now says otherwise; to accept this body, unpin the row "
-                "with memory.unpin, then send it"
-                if row.pinned
-                else "attested; the document now says otherwise; to accept this body, send it "
-                "and attest the new decision again with memory.verify"
+            return await _unchanged(
+                rec, row, record, t, ours=ours, this_doc=this_doc, dry_run=dry_run
             )
-            rec.action = await _flag(rec, row, dry_run, t.row_tag)
-            return rec
+        if row is not None and _frozen(row) and this_doc:
+            return await _flag_frozen(rec, row, t, dry_run)
         if not ours:
             rec.body.update(
                 agent=writer.agent, user_id=writer.user_id, session_id=writer.session_id
@@ -1007,7 +1009,7 @@ async def _reconcile(
                 else f"recorded by {writer.agent}; the extractor revises only its own rows"
             )
             return rec
-        if row is not None and _has_outcome(record):
+        if row is not None and svc.has_outcome(record):
             # decision.record rebuilds the record from the body, so a re-record would drop
             # the outcome.
             rec.note = "its outcome is recorded; re-recording would lose it"
@@ -1026,6 +1028,104 @@ async def _reconcile(
         # read above and this write is replaced by the new record, outcome and all.
         await handle_decision_record(inp)
         await _audit("decision.record", inp)
+    return rec
+
+
+class _PriorRow(NamedTuple):
+    """One of the extractor's rows on this document, as a reworded key finds it."""
+
+    memory_key: str
+    stage: Stage
+    acted: bool
+    alternatives: list[str]
+
+
+def _prior_rows_by_words(
+    own: list[tuple[MemoryRow, dict[str, Any]]],
+) -> dict[tuple[str, str], _PriorRow]:
+    """The extractor's rows on this document by _held_key(outcome, reasoning), the identity
+    the retire step names an heir by: the model rewords a decision's scenario and category
+    between runs."""
+    out: dict[tuple[str, str], _PriorRow] = {}
+    for row, record in own:
+        key = _held_key(str(record.get("outcome") or ""), str(record.get("reasoning") or ""))
+        stage = svc.stage_of(PROPOSED_TAG in row.tags, record)
+        acted = svc.has_outcome(record)
+        out.setdefault(key, _PriorRow(row.memory_key, stage, acted, alternatives(record)))
+    return out
+
+
+def _carried_stage(
+    inp: DecisionRecordInput, own_by_words: dict[tuple[str, str], _PriorRow]
+) -> tuple[DecisionRecordInput, str]:
+    """(the input with the stage to write, a note): a new key on the same words as one of
+    the extractor's rows (outcome, reasoning and rejected options' reasons) takes that row's
+    stage, as the same words under the same key do."""
+    found = own_by_words.get(_held_key(inp.outcome, inp.reasoning))
+    if found is None or found.stage == inp.stage:
+        return inp, ""
+    if not _same_reasons(found.alternatives, inp.alternatives):
+        return inp, ""
+    note = (
+        ""
+        if found.acted
+        else (
+            f"the document reads as {inp.stage}; written at the stage {found.stage} of "
+            f"{found.memory_key}"
+        )
+    )
+    return inp.model_copy(update={"stage": found.stage}), note
+
+
+def _stage_reading(
+    inp: DecisionRecordInput, row: MemoryRow | None, record: dict[str, Any], same: bool
+) -> tuple[DecisionRecordInput, str]:
+    """(the input at the row's stage when the words are the same, a note when this run
+    reads otherwise); the module docstring has the rule."""
+    if row is None or not same:
+        return inp, ""
+    stage = svc.stage_of(PROPOSED_TAG in row.tags, record)
+    note = ""
+    if inp.stage != stage and not svc.has_outcome(record):
+        note = f"the document reads as {inp.stage}; the row keeps its stage {stage}"
+    return inp.model_copy(update={"stage": stage}), note
+
+
+async def _unchanged(
+    rec: RecordReport,
+    row: MemoryRow | None,
+    record: dict[str, Any],
+    t: Target,
+    *,
+    ours: bool,
+    this_doc: bool,
+    dry_run: bool,
+) -> RecordReport:
+    """The candidate says what the key's record says: nothing is written but tags."""
+    rec.action = "unchanged"
+    rec.holds = ours
+    rec.held_outcome = str(record.get("outcome") or "").strip()
+    if row is not None and this_doc:
+        # Another writer's row that is not frozen gains no repository tag.
+        # (Our own such row reached here with its tags the same already.)
+        link = t.row_tag if _frozen(row) else ""
+        await _reconcile_tags(rec, row, dry_run, link)
+    return rec
+
+
+async def _flag_frozen(rec: RecordReport, row: MemoryRow, t: Target, dry_run: bool) -> RecordReport:
+    """A pinned or attested (frozen) row of this document the document now contradicts:
+    flagged, and the new body printed in the run's report under the row's identity (a
+    pinned writer row refuses decision.record)."""
+    rec.body.update(agent=row.agent, user_id=row.user_id, session_id=row.session_id)
+    rec.note = (
+        "pinned; the document now says otherwise; to accept this body, unpin the row "
+        "with memory.unpin, then send it"
+        if row.pinned
+        else "attested; the document now says otherwise; to accept this body, send it "
+        "and attest the new decision again with memory.verify"
+    )
+    rec.action = await _flag(rec, row, dry_run, t.row_tag)
     return rec
 
 
@@ -1049,7 +1149,8 @@ async def _frozen_restatement(
             "outcome": inp.outcome,
             "reasoning": inp.reasoning,
             "alternatives": inp.alternatives,
-        }
+        },
+        proposed=inp.stage == "proposed",
     )
     res = await handle_memory_search(
         MemorySearchInput(
@@ -1348,7 +1449,7 @@ async def _retire_one(
     outcome = str(record.get("outcome") or "")
     restated = held.get(_held_key(outcome, reasoning))
     # A row with a recorded outcome is kept: deleting it would lose the outcome.
-    if not _frozen(row) and restated is not None and not _has_outcome(record):
+    if not _frozen(row) and restated is not None and not svc.has_outcome(record):
         if await _delete_row(report, row):
             report.replaced.append(f"{key} -> {restated}")
         return
@@ -1356,7 +1457,7 @@ async def _retire_one(
     # read across is the same text.
     if not dx.find_span(reasoning, live_texts):
         # A row with a recorded outcome is tagged, never deleted, like a pinned one.
-        keep = _frozen(row) or _has_outcome(record)
+        keep = _frozen(row) or svc.has_outcome(record)
         await _retire_row(report, row, keep=keep, repo_tag=repo_tag)
     elif repo_tag:
         # Its reasoning is still there though the model did not emit it: it stays, linked.

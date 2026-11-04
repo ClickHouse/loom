@@ -2575,6 +2575,7 @@ export interface DecisionRow {
   realized_outcome?: string;
   success?: boolean | null;
   made_at?: string;
+  stage?: "decided" | "proposed";
   similarity?: number;
 }
 
@@ -2636,6 +2637,7 @@ export interface DecisionRecordInput {
   outcome: string;
   alternatives?: string[];
   confidence?: number;
+  stage?: "decided" | "proposed";
   decision_maker?: string;
   caused_by?: string[];
   influenced_by?: string[];

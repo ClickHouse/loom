@@ -164,3 +164,17 @@ def test_a_part_keeps_a_trailing_ellipsis_and_no_other_ending(outcome: str, show
 def test_a_leading_because_is_dropped_on_a_word_boundary(reasoning: str, shown: str) -> None:
     value = stmt.memory_value({"outcome": "pin", "reasoning": reasoning})
     assert shown in value
+
+
+def test_a_proposed_decision_reads_as_proposed() -> None:
+    payload = {
+        "scenario": "Spill the join?",
+        "outcome": "spill by buckets",
+        "reasoning": "RAM caps",
+    }
+    assert stmt.memory_value(payload, proposed=True) == (
+        "Spill the join? Proposed spill by buckets because RAM caps."
+    )
+    assert (
+        stmt.memory_value(payload) == "Spill the join? Decided spill by buckets because RAM caps."
+    )

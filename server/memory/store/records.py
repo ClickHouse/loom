@@ -8,7 +8,7 @@ from typing import NamedTuple
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
-from server.memory.domain.decision_schema import SCHEMA_NAME
+from server.memory.domain.decision_schema import PROPOSED_TAG, SCHEMA_NAME
 from server.memory.store.sql import _SEQUENTIAL
 
 # The active records of a schema.
@@ -18,15 +18,24 @@ _ACTIVE = """org = {org:String}
   AND status = 'active'
   AND tombstoned_at IS NULL"""
 
-# Each key's identities with a live decision row under it.
-_LIVE_WRITERS = """
-    SELECT memory_key, agent, user_id, session_id
+# The FROM and WHERE both writer sets below share: each key's live decision rows.
+_LIVE_DECISION_ROWS = """
     FROM loom.memory FINAL
     WHERE org = {org:String}
       AND namespace = {ns:String}
       AND memory_key IN {keys:Array(String)}
       AND memory_type = 'decision'
-      AND tombstoned_at IS NULL
+      AND tombstoned_at IS NULL"""
+
+# Each key's identities with a live decision row under it.
+_LIVE_WRITERS = f"""
+    SELECT memory_key, agent, user_id, session_id{_LIVE_DECISION_ROWS}
+  """
+
+# Each key's identities whose live decision row is tagged decision:proposed.
+_PROPOSED_WRITERS = f"""
+    SELECT memory_key, agent, user_id, session_id{_LIVE_DECISION_ROWS}
+      AND has(tags, {{proposed:String}})
   """
 
 # Computed columns take new names: `AS status` would shadow the column in the WHERE.
@@ -76,9 +85,11 @@ WHERE {_ACTIVE}
 ORDER BY version DESC
 LIMIT 1"""
 
-# The active decision records of several keys.
+# The active decision records of several keys, each with whether its writer's live row
+# records it as proposed: the stage is on the row, not the record.
 _ACTIVE_DECISION_RECORDS = f"""
-SELECT memory_key, record_json, created_at
+SELECT memory_key, record_json, created_at,
+  (memory_key, identity_agent, user_id, session_id) IN ({_PROPOSED_WRITERS}) AS proposed
 FROM loom.memory_records FINAL
 WHERE {_ACTIVE}
   AND memory_key IN {{keys:Array(String)}}"""
@@ -93,11 +104,13 @@ class ActiveRecord(NamedTuple):
 
 
 class DecisionRecord(NamedTuple):
-    """An active decision record of one key."""
+    """An active decision record of one key; `proposed` when its writer's live row is
+    tagged decision:proposed."""
 
     memory_key: str
     record_json: str
     created_at: datetime
+    proposed: bool
 
 
 class WriterRecord(NamedTuple):
@@ -196,9 +209,18 @@ async def active_decision_records(
 ) -> list[DecisionRecord]:
     """The active decision records under `keys`."""
     ch = ch or _default_client()
-    params = {"org": org, "ns": namespace, "schema": SCHEMA_NAME, "keys": keys}
+    params = {
+        "org": org,
+        "ns": namespace,
+        "schema": SCHEMA_NAME,
+        "keys": keys,
+        "proposed": PROPOSED_TAG,
+    }
     rows = await ch.query_all(_ACTIVE_DECISION_RECORDS, params=params)
-    return [DecisionRecord(r["memory_key"], r["record_json"], r["created_at"]) for r in rows]
+    return [
+        DecisionRecord(r["memory_key"], r["record_json"], r["created_at"], bool(r["proposed"]))
+        for r in rows
+    ]
 
 
 async def live_writer_record(

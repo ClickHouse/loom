@@ -488,7 +488,8 @@ async def _pack_decisions_from_hits(
     """Decision-typed hits leave the memories block and render as their
     own tagged section with the structured record (scenario, outcome,
     realized outcome). One search, two planes on the wire: the reader
-    sees which plane each line came from."""
+    sees which plane each line came from. A decision recorded as proposed
+    reads "proposed" instead of "decided"."""
     from server.memory.app.search.scoring import one_per_key
 
     input = st.input
@@ -523,7 +524,7 @@ async def _pack_decisions_from_hits(
         line = f"- [{label_part(f'{ns}/{h.memory_key}')}{author}]"
         line += (f" {made}" if made else "") + f" {scenario}"
         if outcome:
-            line += f" → decided: {outcome}"
+            line += f" → {rec['stage']}: {outcome}"
         if states_reason(rec):
             line += f" (because {reasoning[:160]})"
         if realized:

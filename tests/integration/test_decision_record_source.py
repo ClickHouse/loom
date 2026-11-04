@@ -203,3 +203,63 @@ async def test_a_scenario_without_latin_letters_records_and_punctuation_is_refus
     with pytest.raises(LoomError) as excinfo:
         await agent.decision.record(category="хранение", scenario="?! …", **base)
     assert "MISSING_IDENTITY_FIELD" in str(excinfo.value), excinfo.value
+
+
+@pytest.mark.asyncio
+async def test_a_proposed_decision_is_tagged_worded_and_served_as_proposed(
+    agent, ch_client
+) -> None:
+    body = dict(
+        category="design:join",
+        scenario="how the hash join spills when the right side outgrows memory",
+        reasoning="partitions bound the memory a build holds",
+        outcome="spill the build side by hash partitions",
+    )
+    key = (await agent.decision.record(**body, stage="proposed"))["memory_key"]
+    said = (
+        "how the hash join spills when the right side outgrows memory. {} spill the build "
+        "side by hash partitions because partitions bound the memory a build holds."
+    )
+    tags = ["decision", "decision:category:design:join"]
+    expected = {
+        "value": json.dumps(said.format("Proposed")),
+        "files": [],
+        "source_resource_id": "",
+        "source_class": "asserted",
+        "memory_type": "decision",
+        "tags": sorted([*tags, "decision:proposed"]),
+        "sensitivity": "",
+        "confidence": 1.0,
+        "agent": agent.agent,
+        "user_id": "-",
+        "session_id": "-",
+    }
+    assert _memory_row(ch_client, agent, key) == expected
+    found = await agent.decision.precedents("hash join spills by partitions")
+    assert {p["memory_key"]: p["stage"] for p in found["precedents"]}.get(key) == "proposed"
+    assert (await agent.decision.chain(key))["seed_decision"]["stage"] == "proposed"
+    pack = await agent.transport.post(
+        "/v1/context.pack",
+        {
+            "org": agent.org,
+            "namespace": agent.namespace,
+            "agent": agent.agent,
+            "query": "how the hash join spills",
+        },
+    )
+    assert "→ proposed: spill the build side by hash partitions" in pack["sections"]["decisions"]
+
+    # Recorded again as decided: tag and wording go.
+    await agent.decision.record(**body)
+    decided = expected | {"value": json.dumps(said.format("Decided")), "tags": sorted(tags)}
+    assert _memory_row(ch_client, agent, key) == decided
+    assert (await agent.decision.chain(key))["seed_decision"]["stage"] == "decided"
+
+    # Proposed again, then an outcome: the decision was acted on, so the stage goes.
+    await agent.decision.record(**body, stage="proposed")
+    await agent.decision.outcome(key, "a partitioned build shipped", success=True)
+    realized = said.format("Decided") + " Realized: a partitioned build shipped (succeeded)."
+    assert _memory_row(ch_client, agent, key) == decided | {
+        "value": json.dumps(realized),
+        "tags": sorted([*tags, "decision:outcome-known", "decision:success"]),
+    }

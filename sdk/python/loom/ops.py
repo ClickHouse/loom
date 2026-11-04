@@ -8883,6 +8883,7 @@ class DecisionRow(TypedDict, total=False):
     realized_outcome: NotRequired[str]
     success: NotRequired[Optional[bool]]
     made_at: NotRequired[str]
+    stage: NotRequired[Literal["decided", "proposed"]]
     similarity: NotRequired[float]
 
 
@@ -8957,6 +8958,7 @@ class DecisionRecordInput(TypedDict, total=False):
     outcome: Required[str]
     alternatives: NotRequired[list[str]]
     confidence: NotRequired[float]
+    stage: NotRequired[Literal["decided", "proposed"]]
     decision_maker: NotRequired[str]
     caused_by: NotRequired[list[str]]
     influenced_by: NotRequired[list[str]]
@@ -8980,6 +8982,7 @@ class DecisionRecordBody(TypedDict, total=False):
     outcome: Required[str]
     alternatives: NotRequired[list[str]]
     confidence: NotRequired[float]
+    stage: NotRequired[Literal["decided", "proposed"]]
     decision_maker: NotRequired[str]
     caused_by: NotRequired[list[str]]
     influenced_by: NotRequired[list[str]]

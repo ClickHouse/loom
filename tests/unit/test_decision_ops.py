@@ -140,12 +140,19 @@ class _CH:
         self.edges: list[tuple[str, str, str]] = []
         self.run_used: list[str] = []
         self.queries: list[str] = []
+        # keys whose writer's live row is tagged decision:proposed
+        self.proposed: set[str] = set()
 
     async def query_all(self, sql, params=None):
         self.queries.append(sql)
         if "FROM loom.memory_records" in sql:
             return [
-                {"memory_key": k, "record_json": json.dumps(v), "created_at": datetime(2026, 1, 1)}
+                {
+                    "memory_key": k,
+                    "record_json": json.dumps(v),
+                    "created_at": datetime(2026, 1, 1),
+                    "proposed": k in self.proposed,
+                }
                 for k, v in self.records.items()
                 if k in (params or {}).get("keys", [])
             ]
@@ -163,6 +170,11 @@ class _CH:
         self.queries.append(sql)
         if "FROM loom.agent_runs" in sql:
             return {"memories_used": list(self.run_used)}
+        if "AS rid" in sql:  # the key's newest active record
+            key = (params or {}).get("key")
+            if key not in self.records:
+                return None
+            return {"rid": "rec-1", "mid": None, "record_json": json.dumps(self.records[key])}
         if "FROM loom.memory FINAL" in sql and "memory_type = 'decision'" in sql:
             (key,) = (params or {})["keys"]
             rec = self.records.get(key)
@@ -210,6 +222,10 @@ def env(monkeypatch):
 
     async def fake_set(inp):
         calls["set"].append(inp)
+        if "decision:proposed" in inp.tags:
+            ch.proposed.add(inp.memory_key)
+        else:
+            ch.proposed.discard(inp.memory_key)
         return SimpleNamespace(version=1)
 
     async def fake_link(inp):
@@ -1035,3 +1051,68 @@ def test_files_come_from_the_stored_alternatives_only() -> None:
     assert svc.decision_files(stored) == [path]
     stored = {"alternatives": svc.clean_alternatives([far])}
     assert svc.decision_files(stored) is None
+
+
+def test_a_decision_stays_proposed_until_its_outcome_or_a_decided_record(env) -> None:
+    from server.memory.api.models_decision import DecisionOutcomeInput
+    from server.memory.domain.decision_schema import PROPOSED_TAG
+
+    ch, calls, h = env
+    d = asyncio.run(h.handle_decision_record(record_input(stage="proposed")))
+    mem = calls["set"][-1]
+    assert PROPOSED_TAG in mem.tags
+    assert mem.value.startswith("Roll back or hotfix the 26.5 image? Proposed rollback because")
+    # The stage is the row's, not the record's: the schema is unchanged.
+    assert "stage" not in calls["record"][-1].fields
+    # An outcome records that the decision was acted on: it drops the stage.
+    asyncio.run(
+        h.handle_decision_outcome(
+            DecisionOutcomeInput(
+                org="o", namespace="n", memory_key=d.memory_key, realized_outcome="rolled back"
+            )
+        )
+    )
+    mem = calls["set"][-1]
+    assert PROPOSED_TAG not in mem.tags and " Decided rollback because" in mem.value
+    # Recorded again as proposed, then as decided: tag and wording follow the stage; a
+    # caller's tag never stands in.
+    asyncio.run(h.handle_decision_record(record_input(stage="proposed")))
+    assert PROPOSED_TAG in calls["set"][-1].tags
+    asyncio.run(h.handle_decision_record(record_input(tags=[PROPOSED_TAG, " Decision:Proposed"])))
+    mem = calls["set"][-1]
+    assert PROPOSED_TAG not in mem.tags and " Decided rollback because" in mem.value
+    assert not any(t.strip().lower() == PROPOSED_TAG for t in mem.tags)
+
+
+def test_precedents_and_chain_say_which_decisions_are_proposed(env) -> None:
+    from server.memory.api.models_decision import DecisionChainInput, DecisionPrecedentsInput
+
+    ch, calls, h = env
+    made = asyncio.run(h.handle_decision_record(record_input()))
+    plan = asyncio.run(
+        h.handle_decision_record(
+            record_input(scenario="Spill the join?", stage="proposed", caused_by=[made.memory_key])
+        )
+    )
+    out = asyncio.run(
+        h.handle_decision_precedents(DecisionPrecedentsInput(org="o", namespace="n", query="x"))
+    )
+    stages = {p.memory_key: p.stage for p in out.precedents}
+    assert stages == {made.memory_key: "decided", plan.memory_key: "proposed"}
+    chain = asyncio.run(
+        h.handle_decision_chain(
+            DecisionChainInput(
+                org="o", namespace="n", memory_key=plan.memory_key, direction="upstream"
+            )
+        )
+    )
+    assert chain.seed_decision is not None and chain.seed_decision.stage == "proposed"
+    assert [n.decision.stage for n in chain.nodes if n.decision] == ["decided"]
+    # A row still tagged proposed (an older server's outcome left the tag) whose outcome is
+    # recorded reads as decided: it was acted on.
+    ch.records[plan.memory_key]["realized_outcome"] = "shipped"
+    out = asyncio.run(
+        h.handle_decision_precedents(DecisionPrecedentsInput(org="o", namespace="n", query="x"))
+    )
+    assert plan.memory_key in ch.proposed
+    assert {p.memory_key: p.stage for p in out.precedents}[plan.memory_key] == "decided"
