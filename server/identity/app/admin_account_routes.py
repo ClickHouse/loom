@@ -104,7 +104,7 @@ async def sso_link(input: LinkInput, info: Admin) -> dict[str, Any]:
     """Point one password account at the address its owner signs in with (see `loom sso link`)."""
     _only_a_person(info, "an account is linked to an SSO address", "loom sso link")
     try:
-        was, carried = await account_admin.link_account(
+        was, carried, _ = await account_admin.link_account(
             input.email, input.org, input.namespace, by=_by(info)
         )
     except ValueError as e:

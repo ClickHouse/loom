@@ -397,6 +397,7 @@ async def revoke_grant(
     if admins:
         await _refuse_last_admin(input, also_going=admins - 1)
     revoked_at = None
+    taken: list[str] = []
     try:
         for subject, row in rows:
             # A row under another spelling, or one of several, is audited as its
@@ -404,10 +405,12 @@ async def revoke_grant(
             # audit row is written only for a call that succeeds.
             audited = subject != input.subject or len(rows) > 1
             now = await _revoke_row(input, subject, row, may_take, audited=audited)
-            revoked_at = now or revoked_at
+            if now is not None:
+                revoked_at = now
+                taken.append(subject)
     finally:
-        if revoked_at is not None:  # the rows that went, even when a later one refused
-            await _cascade(input, unheld=unheld)
+        if taken:  # the rows that went, even when a later one refused
+            await _cascade(input, tuple(taken), unheld=unheld)
     if revoked_at is None:
         return GrantsRevokeOutput(revoked=False)
     return GrantsRevokeOutput(revoked=True, revoked_at=revoked_at)
@@ -470,16 +473,16 @@ async def _revoke_row(
     return done[1]
 
 
-async def _cascade(input: GrantsRevokeInput, *, unheld: bool) -> None:
+async def _cascade(input: GrantsRevokeInput, taken: tuple[str, ...], *, unheld: bool) -> None:
     """The tokens the person minted lose their own grants on the namespace, once
-    for every row taken: the cascade reads the spellings of the subject asked for,
-    which reach each of them. Best-effort: the person's revoke has landed; a
+    for all the rows taken: under each stored subject that went and the spellings
+    of the subject asked for. Best-effort: the person's revoke has landed; a
     failed cascade is logged, never a 500."""
     from server.identity.app import token_grants
 
     try:
         await token_grants.cascade_revoke_to_created_tokens(
-            input.org, input.namespace, input.subject, unheld=unheld
+            input.org, input.namespace, input.subject, unheld=unheld, taken=taken
         )
     except Exception as e:  # noqa: BLE001 - the revoke itself succeeded
         log.warning(

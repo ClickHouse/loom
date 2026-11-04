@@ -301,13 +301,16 @@ async def test_an_admin_revoked_meanwhile_stops_the_persons_later_row(
         written = len(_handler_env["rows"])
         return 3 - written - (1 if written else 0)
 
-    async def _no_cascade(*_a: Any, **_k: Any) -> int:
+    cascaded: list[tuple[str, tuple[str, ...]]] = []
+
+    async def _cascade(org: str, namespace: str, subject: str, **kw: Any) -> int:
+        cascaded.append((subject, kw["taken"]))
         return 0
 
     monkeypatch.setattr(grants_repo, "find_any_grant", _any)
     monkeypatch.setattr("server.auth.aliases.read_aliases", _verified)
     monkeypatch.setattr(grants_repo, "count_active_admins", _admins)
-    monkeypatch.setattr(token_grants, "cascade_revoke_to_created_tokens", _no_cascade)
+    monkeypatch.setattr(token_grants, "cascade_revoke_to_created_tokens", _cascade)
     audited: list[Any] = []
 
     async def _emit(event_type: str, **kw: Any) -> str:
@@ -322,6 +325,8 @@ async def test_an_admin_revoked_meanwhile_stops_the_persons_later_row(
     assert [r["subject"] for r in _handler_env["rows"]] == ["dave"]
     # The call failed, so no op audit row: the row that went is audited on its own.
     assert ("grants.revoke", {"namespace": "code-x", "subject": "dave", "named": "dave"}) in audited
+    # The tokens dave made lose their grants for the row that went, once.
+    assert cascaded == [("dave", ("dave",))]
 
 
 @pytest.mark.parametrize(

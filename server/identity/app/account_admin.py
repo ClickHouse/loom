@@ -239,7 +239,9 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
     return {"row": row, "was": was, "revoked": revoked, "elsewhere": elsewhere}
 
 
-async def link_account(email: str, org: str, namespace: str, *, by: str) -> tuple[str, list[str]]:
+async def link_account(
+    email: str, org: str, namespace: str, *, by: str
+) -> tuple[str, list[str], bool]:
     """Let SSO sign-ins with `email` reach the password account (org, namespace)
     registered under another address (a personal one, a `+tag`): its contact
     becomes `email` and it is linked, so the person keeps its subject, grants,
@@ -248,7 +250,8 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
     email) stops capping the person's tokens once the address is untied, so each
     is carried to the subject, revoked. Holds the address as JIT holds it, so no
     SSO sign-in makes a second account for it meanwhile. Returns the address it
-    had and the namespaces carried."""
+    had, the namespaces carried, and whether that address is another account's
+    verified email, as read under the claims."""
     from server.auth.self_signup import CLAIM_TTL_S, email_claim
     from server.core import leases
     from server.core.ch import get_client
@@ -288,7 +291,7 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
             "carried_revoked": carried,
         },
     )
-    return was, carried
+    return was, carried, bool(plan["elsewhere"])
 
 
 async def _carry_revoked(revoked: list[dict[str, Any]], owner: str, by: str) -> list[str]:

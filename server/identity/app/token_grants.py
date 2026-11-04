@@ -147,28 +147,36 @@ async def revoke_token_grants(
 
 
 async def cascade_revoke_to_created_tokens(
-    org: str, namespace: str, subject: str, *, unheld: bool, ch: Any = None
+    org: str,
+    namespace: str,
+    subject: str,
+    *,
+    unheld: bool,
+    taken: tuple[str, ...] = (),
+    ch: Any = None,
 ) -> int:
-    """A revoke of `subject` on ``namespace`` took the person's rows there: revoke
-    the grants every live token they created holds there, under the subject's
-    spellings. When the revoke named an address no verified
-    account holds (`unheld`), those are every spelling a revocation reaches
-    (`aliases.spellings`), an unverified pair too (the tokens an unverified
-    account made while the address's grant admitted it), less any account that
-    still holds an active grant of its own there; otherwise the verified ones only,
-    since an unverified account naming the email may be someone else's. Returns
-    tokens touched."""
+    """A revoke of `subject` on ``namespace`` took the person's rows there, stored
+    under `taken`: revoke the grants every live token they created holds there,
+    under each stored subject as spelled and the subject's spellings. When the
+    revoke named an address no verified account holds (`unheld`), those are every
+    spelling a revocation reaches (`aliases.spellings`), an unverified pair too
+    (the tokens an unverified account made while the address's grant admitted it),
+    less any account that still holds an active grant of its own there; otherwise
+    the verified ones only, since an unverified account naming the email may be
+    someone else's. Returns tokens touched."""
     if ch is None:
         from server.core.ch import get_client
 
         ch = get_client()
     from server.auth.aliases import spellings, verified_spellings
 
+    # The rows this revoke took go unasked: a read of them now may still see them live.
+    gone = {s.lower() for s in taken} | {subject.lower()}
     try:
         if unheld:
             creators = []
             for c in await spellings(org, subject, ch=ch):
-                if c.lower() != subject.lower():
+                if c.lower() not in gone:
                     # An account naming the address that still holds an active grant
                     # of its own here keeps its tokens' grants: they may be what that
                     # grant gave. A pending request admits nothing, so it keeps none.
@@ -183,6 +191,7 @@ async def cascade_revoke_to_created_tokens(
     except Exception as e:  # noqa: BLE001 — the tokens made under the exact subject still go
         log.warning("token grant cascade: spellings of %r unread: %s", subject, e)
         creators = [subject]
+    creators = list(dict.fromkeys([*taken, *creators]))
     sa_rows = await ch.query_all(
         """
         SELECT DISTINCT sa_subject FROM loom.service_accounts FINAL

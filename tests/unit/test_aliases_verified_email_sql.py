@@ -507,14 +507,23 @@ async def test_revoking_an_address_again_takes_nothing_more(
     # to the row of the unverified account naming it, which is that account's own.
     from server.identity.api.models_grants import GrantsRevokeInput
     from server.identity.app import grants as grants_app
+    from server.identity.app import token_grants
     from server.identity.store import grants as grants_repo
 
     kept = KeptCH(tmp_path, *SETUP, ddl("service_accounts"), ddl("acl_versions"))
     monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
     monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
+    cascade, cascaded = token_grants.cascade_revoke_to_created_tokens, []
+
+    async def _counted(*a: Any, **k: Any) -> int:
+        cascaded.append(k["taken"])
+        return await cascade(*a, **k)
+
+    monkeypatch.setattr(token_grants, "cascade_revoke_to_created_tokens", _counted)
     body = GrantsRevokeInput(org=ORG, namespace="team-x", subject="bob@corp.example")
     assert (await grants_app.handle_grants_revoke(body)).revoked is True
     assert (await grants_app.handle_grants_revoke(body)).revoked is False
+    assert cascaded == [("bob@corp.example",)]  # none for the retry that took nothing
     live = await kept.query_all(
         "SELECT subject FROM loom.namespace_grants FINAL WHERE org = {org:String}"
         " AND namespace = 'team-x' AND revoked_at IS NULL",
@@ -567,10 +576,8 @@ async def test_a_link_away_from_a_verified_email_leaves_its_grants_and_caps_the_
     monkeypatch.setattr(grants, "_default_client", lambda: kept)
     monkeypatch.setattr(leases, "holding", _held)
     monkeypatch.setattr(account_admin.settings, "oauth_login_provider", "oidc")
-    was, carried = await account_admin.link_account(
-        "mallory3@corp.example", ORG, "mallory3", by="op"
-    )
-    assert (was, carried) == ("carol@corp.example", ["team-x", "team-y"])
+    linked = await account_admin.link_account("mallory3@corp.example", ORG, "mallory3", by="op")
+    assert linked == ("carol@corp.example", ["team-x", "team-y"], True)
     rows = await kept.query_all(
         "SELECT namespace, subject, revoked_at IS NULL AS live FROM loom.namespace_grants"
         " FINAL WHERE org = {org:String} AND subject IN ('mallory3', 'carol@corp.example')"

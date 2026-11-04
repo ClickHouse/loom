@@ -132,28 +132,24 @@ def _cmd_link(args: argparse.Namespace) -> int:
                 f"{plan['was'] or '-'}) would sign in as {args.email.strip().lower()}"
             )
             owner = row["owner_email"]
+
+            def _carried(names: list[str], *, elsewhere: bool, lead: str) -> None:
+                if elsewhere:
+                    lead = f"{plan['was']} is another account's verified email: its grants "
+                    lead += "stay theirs, and are "
+                print(f"  {lead}revoked for {owner} too: {', '.join(names)}")
+
             if args.dry_run:
                 if plan["revoked"]:
-                    names = ", ".join(sorted({g["namespace"] for g in plan["revoked"]}))
-                    if plan["elsewhere"]:
-                        print(
-                            f"  {plan['was']} is another account's verified email: its "
-                            f"grants stay theirs, and are revoked for {owner} too: {names}"
-                        )
-                    else:
-                        print(f"  revoked under {plan['was']}, so revoked for {owner} too: {names}")
+                    names = sorted({g["namespace"] for g in plan["revoked"]})
+                    lead = f"revoked under {plan['was']}, so "
+                    _carried(names, elsewhere=plan["elsewhere"], lead=lead)
                 return 0
-            _, carried = await account_admin.link_account(
+            _, carried, elsewhere = await account_admin.link_account(
                 args.email, args.org, args.namespace, by=_by()
             )
-            if carried:  # what it carried under the grant claims, not what the plan read
-                if plan["elsewhere"]:
-                    print(
-                        f"  {plan['was']} is another account's verified email: its grants "
-                        f"stay theirs, and are revoked for {owner} too: {', '.join(carried)}"
-                    )
-                else:
-                    print(f"  revoked for {owner} too: {', '.join(carried)}")
+            if carried:  # what it carried and read under the grant claims, not the plan
+                _carried(carried, elsewhere=elsewhere, lead="")
         except (ValueError, LoomServerError) as e:  # refused (fix what it names) or busy (rerun)
             print(f"  ✗ {e}", file=sys.stderr)
             return 2
