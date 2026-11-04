@@ -874,6 +874,7 @@
  "namespace_ontology_cardinality_ttl_s": 60.0,
  "namespace_report_hash_max_bytes": 65536,
  "namespace_taxonomy_ttl_s": 300.0,
+ "namespace_tune_document_sample": 50,
  "namespace_write_marks_flush_interval_s": 5.0,
  "oauth_access_token_ttl_seconds": 3600,
  "oauth_enabled": false,

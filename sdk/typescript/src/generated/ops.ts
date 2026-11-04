@@ -3458,6 +3458,8 @@ export interface InspectDocument {
   retired_versions?: number | null;
   chunks?: DocumentChunks | null;
   decisions?: DocumentDecisions | null;
+  extraction?: ExtractionCoverage | null;
+  jobs?: SourceJobs | null;
 }
 
 export interface DocumentChunks {
@@ -3470,6 +3472,39 @@ export interface DocumentChunks {
   median_chars: number;
   max_chars: number;
   models?: string[];
+}
+
+export interface ExtractionCoverage {
+  unit: string;
+  total: number;
+  extracted: number;
+  failed: number;
+  lost?: string[];
+  complete: boolean;
+}
+
+export interface SourceJobs {
+  source_uri: string;
+  jobs: number;
+  open_jobs: number;
+  open_ingestion_id?: string;
+  latest: IngestJob;
+  current: IngestJob;
+  replaced?: boolean;
+}
+
+export interface IngestJob {
+  ingestion_id: string;
+  state: string;
+  stage: string;
+  attempts: number;
+  error_code: string;
+  failure_class: "" | "extractor_unavailable" | "missing_access" | "bad_content" | "retrying" | "retries_exhausted" | "revision_conflict" | "cancelled" | "internal";
+  queued_at: string; // date-time
+  updated_at: string; // date-time
+  ended_at?: string | null;
+  next_attempt_at?: string | null;
+  stalled?: boolean;
 }
 
 export interface DocumentFinding {
@@ -3513,6 +3548,51 @@ export interface ReportCoverage {
   complete: boolean;
 }
 
+export interface IngestionTotals {
+  sources?: number | null;
+  without_document?: number | null;
+  replaced?: number | null;
+  pending?: number | null;
+  processing?: number | null;
+  stalled?: number | null;
+  ready?: number | null;
+  partial?: number | null;
+  failed?: number | null;
+  cancelled?: number | null;
+  oldest_open_queued_at?: string | null;
+  worker_enabled: boolean;
+  extractor_configured?: boolean | null;
+  without_document_listed?: SourceJobs[];
+}
+
+export interface ExtractionTotals {
+  documents?: number | null;
+  incomplete?: number | null;
+  lost?: DocumentCount[];
+}
+
+export interface IngestFinding {
+  kind: "contract_violation" | "usage_heuristic" | "system_state";
+  rule_version: number;
+  source_op: string;
+  window_seconds?: number | null;
+  population?: number | null;
+  sample_limit: number;
+  samples_complete: boolean;
+  evidence?: FindingEvidence[];
+  exceptions?: string;
+  uncertainty?: string;
+  code: string;
+  severity: "info" | "warning";
+  count: number;
+  share: number;
+  samples?: string[];
+  ingestion_ids?: string[];
+  without_document?: number;
+  detail: string;
+  remedy: string;
+}
+
 export interface MemoryFindingRef {
   code: string;
   kind: string;
@@ -3536,6 +3616,9 @@ export interface KnowledgeInspectOutput {
   listed_complete?: boolean;
   findings?: DocumentFinding[];
   coverage: ReportCoverage;
+  ingestions: IngestionTotals;
+  extraction: ExtractionTotals;
+  ingest_findings?: IngestFinding[];
   memory_findings?: MemoryFindingRef[];
   skipped?: string[];
 }
@@ -7585,7 +7668,7 @@ export interface NamespaceTuneInput {
 
 export interface TuneProposal {
   id: string;
-  target: "extraction_instructions.request" | "namespace.category" | "namespace.guide";
+  target: "extraction_instructions.request" | "namespace.category" | "namespace.guide" | "settings.knowledge_chunking" | "settings.document_extractors_json";
   scope: string;
   title: string;
   rationale: string;
@@ -7598,6 +7681,8 @@ export interface TuneProposal {
   effect?: "future";
   historical: string;
   apply: TuneApply;
+  apply_also?: TuneApply[];
+  preview?: ChunkingPreview | null;
   limits?: string;
 }
 
@@ -7606,14 +7691,46 @@ export interface TuneEvidence {
   supporting_count?: number;
   supporting?: FindingEvidence[];
   counter_count?: number | null;
+  documents?: string[];
 }
 
 export interface TuneApply {
   op: string;
+  via?: "op" | "admin_route" | "environment";
   args: Record<string, unknown>;
   args_complete?: boolean;
   required_role: string;
   guard: string;
+}
+
+export interface ChunkingPreview {
+  before: ChunkStats;
+  after: ChunkStats;
+}
+
+export interface ChunkStats {
+  size: number;
+  stride: number;
+  chunks: number;
+  min_chars: number;
+  median_chars: number;
+  p90_chars: number;
+  max_chars: number;
+  sections: number;
+  sections_cut: number;
+  max_input_tokens: number;
+  over_input_limit?: number | null;
+}
+
+export interface ChunkingSample {
+  cap: number;
+  population?: number | null;
+  documents: number;
+  unread: number;
+  load_cap: number;
+  embedder_model: string;
+  input_token_limit?: number | null;
+  current: ChunkStats;
 }
 
 export interface NamespaceTuneOutput {
@@ -7625,6 +7742,7 @@ export interface NamespaceTuneOutput {
   categories_registered?: number | null;
   extraction_policy?: string | null;
   extraction_policy_unavailable?: string;
+  chunking?: ChunkingSample | null;
   skipped?: string[];
   model_used?: boolean;
 }
@@ -10561,7 +10679,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "namespace.snapshot", group: "namespace", method: "snapshot", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
   { name: "namespace.summary", group: "namespace", method: "summary", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 300, audit: false, readOnly: true },
   { name: "namespace.taxonomy", group: "namespace", method: "taxonomy", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
-  { name: "namespace.tune", group: "namespace", method: "tune", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 5000, audit: false, readOnly: true },
+  { name: "namespace.tune", group: "namespace", method: "tune", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 8000, audit: false, readOnly: true },
   { name: "namespace.validate", group: "namespace", method: "validate", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "observe.crystallize", group: "observe", method: "crystallize", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 2000, audit: false, readOnly: false },
   { name: "observe.record", group: "observe", method: "record", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: false },

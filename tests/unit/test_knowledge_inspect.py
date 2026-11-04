@@ -3,10 +3,15 @@
 Each section is read through its store function (stubbed here; the statements run on
 clickhouse-local in test_knowledge_inspect_sql.py): the totals fold the format and scheme
 groups; the findings say which documents search cannot serve and carry the findings
-contract; the listed documents carry their chunks, retired versions and decisions;
-the audit is called in process and cited by code. A failed section is named in
-`skipped` with its fields null or empty, a store outage fails the call, and a narrowed scope
-runs no audit and reads decisions inside the scope.
+contract; the listed documents carry their chunks, retired versions and decisions; the job
+totals fold the states and carry the server's settings; each ingest state (a backlog, an
+extractor unavailable, missing access, rejected content, a job failed on the server's side,
+an extraction that lost structure) is its own finding with its kind and the job id of each
+sample; a listed document carries its extraction's coverage and its jobs (the newest, and
+the open one a caller passes to knowledge.ingest_status); the audit is called in process
+and cited by code. A failed section is named in `skipped` with its fields null or empty, a
+store outage fails the call, and a narrowed scope runs no audit and reads decisions inside
+the scope.
 """
 
 from __future__ import annotations
@@ -74,6 +79,14 @@ HEALTH = _health(
     other_model=(["a", "b", "c"], ["b", "c"]),
     mixed_versions=(["docs/b.md"], []),
 )
+_NO_COVERAGE = {
+    "has_coverage": 0,
+    "cov_unit": "",
+    "cov_total": 0,
+    "cov_extracted": 0,
+    "cov_failed": 0,
+    "cov_lost": [],
+}
 NEWEST = [
     {
         "source_uri": "docs/b.md",
@@ -84,6 +97,7 @@ NEWEST = [
         "ingested_at": T1,
         "doc_format": ".md",
         "source_scheme": "(none)",
+        **_NO_COVERAGE,
     },
     {
         "source_uri": "docs/b.md#v2",
@@ -94,8 +108,131 @@ NEWEST = [
         "ingested_at": T0,
         "doc_format": "pdf",
         "source_scheme": "(none)",
+        "has_coverage": 1,
+        "cov_unit": "statements",
+        "cov_total": 9,
+        "cov_extracted": 8,
+        "cov_failed": 1,
+        "cov_lost": ["sql_structure"],
     },
 ]
+
+
+def _job_fields(prefix: str, **over: Any) -> dict[str, Any]:
+    job = {
+        "ingestion_id": "",
+        "state": "",
+        "stage": "",
+        "attempts": 0,
+        "error_code": "",
+        "failure_class": "",
+        "queued_at": datetime(1970, 1, 1),
+        "updated_at": datetime(1970, 1, 1),
+        "next_attempt_at": datetime(1970, 1, 1),
+        "stalled": 0,
+    } | over
+    return {f"{prefix}{k}": v for k, v in job.items()}
+
+
+def _source(
+    uri: str,
+    jobs: int,
+    latest: dict[str, Any],
+    open_: dict[str, Any] | None = None,
+    replaced: int = 0,
+):
+    """A source_jobs row: its newest job, and its oldest open one when `open_` is given."""
+    return {
+        "source_uri": uri,
+        "jobs": jobs,
+        "open_jobs": 1 if open_ else 0,
+        "has_document": 0,
+        "replaced": replaced,
+        **_job_fields("latest_", **latest),
+        **_job_fields("open_", **(open_ or {})),
+    }
+
+
+# docs/b.md#v2: published by job-1; job-2 stalled at embed past its lease, job-3 queued
+# behind it.
+SOURCE_JOBS = [
+    _source(
+        "docs/b.md#v2",
+        3,
+        {
+            "ingestion_id": "job-3",
+            "state": "pending",
+            "queued_at": T1,
+            "updated_at": T1,
+            "next_attempt_at": T1,
+        },
+        {
+            "ingestion_id": "job-2",
+            "state": "processing",
+            "stage": "embed",
+            "attempts": 1,
+            "queued_at": T0,
+            "updated_at": T0,
+            "stalled": 1,
+        },
+    )
+]
+WITHOUT_DOCUMENT = [
+    _source(
+        "files/bad.sql",
+        1,
+        {
+            "ingestion_id": "job-9",
+            "state": "failed",
+            "error_code": "encoding",
+            "failure_class": "bad_content",
+            "queued_at": T0,
+            "updated_at": T1,
+            "attempts": 1,
+        },
+    )
+]
+
+
+def _ingest_health(**hits: list[tuple[str, str]]) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "sources": 8,
+        "without_document": 3,
+        "replaced": 2,
+        "pending": 2,
+        "processing": 1,
+        "stalled": 1,
+        "ready": 4,
+        "partial": 1,
+        "failed": 3,
+        "cancelled": 0,
+        "open_jobs": 3,
+        "oldest_open_queued_at": T0,
+    }
+    for code in store.INGEST_CHECKS:
+        samples = hits.get(code, [])
+        out |= {
+            code: len(samples),
+            f"{code}_samples": samples,
+            f"{code}_without_document": sum(1 for u, _ in samples if u.startswith("new/")),
+        }
+    return out
+
+
+INGEST_HEALTH = _ingest_health(
+    ingest_backlog=[("docs/b.md#v2", "job-2"), ("new/q.md", "job-5")],
+    extractor_unavailable=[("new/x.pdf", "job-6")],
+    ingest_missing_access=[("docs/c.md", "job-7")],
+    ingest_content_rejected=[("files/bad.sql", "job-9"), ("new/y.sql", "job-8")],
+    ingest_failed_on_server=[("new/z.md", "job-10")],
+)
+EXTRACTION = {
+    "documents": 4,
+    "incomplete": 2,
+    "incomplete_uris": ["docs/b.md#v2", "files/c.toml"],
+    "lost_names": ["sql_structure", "exact_keys"],
+    "lost_counts": [2, 1],
+}
 CHUNKS = [
     {
         "source_uri": "docs/b.md",
@@ -182,6 +319,10 @@ class Stubs:
             "document_retired_versions": {"docs/b.md": 2},
             # docs/b.md#v3 extends a listed document and is not listed itself.
             "longer_document_uris": ["docs/b.md#v2", "docs/b.md#v3"],
+            "ingestion_health": INGEST_HEALTH,
+            "sources_without_document": WITHOUT_DOCUMENT,
+            "source_jobs": SOURCE_JOBS,
+            "extraction_health": EXTRACTION,
         }
         for name in self.answers:
             monkeypatch.setattr(store, name, self._stub(name))
@@ -273,7 +414,8 @@ async def test_each_check_is_a_finding_with_its_kind_and_clean_ones_are_info(
     out = await ki.handle_knowledge_inspect(_inp(sample_limit=2))
     by_code = {f.code: f for f in out.findings}
     assert list(by_code) == list(ki._CHECKS)
-    assert out.coverage.rules_run == list(ki._CHECKS) and out.coverage.complete
+    assert out.coverage.rules_run[: len(ki._CHECKS)] == list(ki._CHECKS)
+    assert out.coverage.complete
     missing = by_code["documents_without_chunks"]
     assert (missing.kind, missing.severity, missing.count, missing.population) == (
         "system_state",
@@ -423,6 +565,10 @@ async def test_a_narrowed_scope_runs_no_audit(stubs: Stubs) -> None:
         ("document_chunks", "listed.chunks"),
         ("document_retired_versions", "listed.retired_versions"),
         ("longer_document_uris", "decisions.longer_documents"),
+        ("ingestion_health", "ingestions"),
+        ("sources_without_document", "ingestions.without_document"),
+        ("source_jobs", "listed.jobs"),
+        ("extraction_health", "extraction"),
     ],
 )
 @pytest.mark.asyncio
@@ -448,6 +594,24 @@ async def test_a_failed_store_read_is_skipped_and_its_fields_are_null(
         assert out.decisions.all_documents is None and "decisions" not in stubs.calls
     elif read == "document_chunks":
         assert all(d.chunks is None for d in out.listed)
+    elif read == "ingestion_health":
+        i = out.ingestions
+        assert i.sources is None and i.pending is None and i.without_document is None
+        assert {f.code for f in out.ingest_findings} == {"extraction_incomplete"}
+        assert set(out.coverage.rules_skipped) == set(store.INGEST_CHECKS)
+        # Without the count, nothing says a source has no document: none is listed.
+        assert i.without_document_listed == [] and "sources_without_document" not in stubs.calls
+    elif read == "sources_without_document":
+        assert out.ingestions.without_document_listed == []
+        assert out.ingestions.without_document == 3
+    elif read == "source_jobs":
+        assert all(d.jobs is None for d in out.listed)
+    elif read == "extraction_health":
+        assert out.extraction.documents is None and out.extraction.lost == []
+        assert "extraction_incomplete" in out.coverage.rules_skipped
+        assert "extraction_incomplete" not in {f.code for f in out.ingest_findings}
+        # The listed documents' own coverage comes from their rows.
+        assert out.listed[1].extraction is not None
     else:
         assert all(d.retired_versions is None for d in out.listed)
 
@@ -547,3 +711,220 @@ async def test_exactly_the_cap_of_longer_documents_is_a_full_read(stubs: Stubs) 
     stubs.answers["longer_document_uris"] = [f"docs/b.md#{n}" for n in range(store.MAX_LONGER)]
     out = await ki.handle_knowledge_inspect(_inp())
     assert not any(s.startswith("decisions: more than") for s in out.skipped)
+
+
+@pytest.mark.asyncio
+async def test_the_jobs_are_counted_by_state_with_the_servers_settings(
+    stubs: Stubs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ki.settings, "knowledge_ingest_enabled", False)
+    monkeypatch.setattr(ki.settings, "document_extractor_url", "")
+    monkeypatch.setattr(ki.settings, "document_extractors_json", '{"sql": "http://x:1"}')
+    i = (await ki.handle_knowledge_inspect(_inp())).ingestions
+    assert (i.sources, i.without_document, i.replaced) == (8, 3, 2)
+    assert (i.pending, i.processing, i.stalled, i.ready, i.partial, i.failed, i.cancelled) == (
+        2,
+        1,
+        1,
+        4,
+        1,
+        3,
+        0,
+    )
+    assert i.oldest_open_queued_at == T0
+    assert (i.worker_enabled, i.extractor_configured) == (False, True)
+    (bad,) = i.without_document_listed
+    assert (bad.source_uri, bad.open_ingestion_id, bad.current.ingestion_id) == (
+        "files/bad.sql",
+        "",
+        "job-9",
+    )
+    assert bad.current.failure_class == "bad_content" and bad.current.ended_at == T1
+    assert bad.current.next_attempt_at is None
+    monkeypatch.setattr(ki.settings, "document_extractors_json", "{}")
+    i = (await ki.handle_knowledge_inspect(_inp())).ingestions
+    assert i.extractor_configured is False
+
+
+@pytest.mark.asyncio
+async def test_no_open_job_leaves_the_oldest_queued_at_unknown(stubs: Stubs) -> None:
+    stubs.answers["ingestion_health"] = INGEST_HEALTH | {"open_jobs": 0}
+    i = (await ki.handle_knowledge_inspect(_inp())).ingestions
+    assert i.oldest_open_queued_at is None
+
+
+@pytest.mark.asyncio
+async def test_each_ingest_state_is_its_own_finding_with_its_kind(stubs: Stubs) -> None:
+    out = await ki.handle_knowledge_inspect(_inp(sample_limit=1))
+    by = {f.code: f for f in out.ingest_findings}
+    assert list(by) == [*store.INGEST_CHECKS, "extraction_incomplete"]
+    assert out.coverage.rules_run[-len(by) :] == list(by) and out.coverage.complete
+    kinds = {code: f.kind for code, f in by.items()}
+    assert kinds == {
+        "ingest_backlog": "system_state",
+        "extractor_unavailable": "system_state",
+        "ingest_missing_access": "system_state",
+        "ingest_content_rejected": "contract_violation",
+        "ingest_failed_on_server": "system_state",
+        "extraction_incomplete": "usage_heuristic",
+    }
+    backlog = by["ingest_backlog"]
+    assert (backlog.count, backlog.population, backlog.without_document) == (2, 8, 1)
+    # Cut to the limit, the job ids follow their samples.
+    assert (backlog.samples, backlog.ingestion_ids) == (["docs/b.md#v2"], ["job-2"])
+    assert not backlog.samples_complete and backlog.share == pytest.approx(0.25)
+    assert backlog.uncertainty and backlog.severity == "warning"
+    access = by["ingest_missing_access"]
+    assert (access.samples, access.ingestion_ids, access.samples_complete) == (
+        ["docs/c.md"],
+        ["job-7"],
+        True,
+    )
+    incomplete = by["extraction_incomplete"]
+    assert (incomplete.count, incomplete.population, incomplete.ingestion_ids) == (2, 4, [])
+    # Each remedy names the real op or setting it takes.
+    assert "knowledge.ingest_cancel" in backlog.remedy
+    assert "LOOM_KNOWLEDGE_INGEST_ENABLED" in backlog.remedy
+    assert "LOOM_DOCUMENT_EXTRACTORS_JSON" in by["extractor_unavailable"].remedy
+    assert "LOOM_DOCUMENT_EXTRACTOR_TOKEN" in access.remedy
+    assert "allow_partial" in by["ingest_content_rejected"].remedy
+    server = by["ingest_failed_on_server"]
+    assert (server.samples, server.ingestion_ids, server.without_document) == (
+        ["new/z.md"],
+        ["job-10"],
+        1,
+    )
+    assert "knowledge_ingest_max_attempts" in server.detail and "internal" in server.detail
+    assert all("knowledge.ingest" in f.remedy for f in by.values())
+    assert all(f.source_op == "knowledge.inspect" for f in by.values())
+
+
+@pytest.mark.asyncio
+async def test_a_clean_namespace_has_info_ingest_findings(stubs: Stubs) -> None:
+    stubs.answers["ingestion_health"] = _ingest_health() | {"sources": 0, "without_document": 0}
+    stubs.answers["extraction_health"] = EXTRACTION | {"incomplete": 0, "incomplete_uris": []}
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert all(f.severity == "info" and f.count == 0 for f in out.ingest_findings)
+    assert all(f.share == 0.0 and f.samples_complete for f in out.ingest_findings)
+    # No source lacks a document: none is read.
+    assert "sources_without_document" not in stubs.calls
+
+
+@pytest.mark.asyncio
+async def test_the_extraction_totals_count_lost_capabilities(stubs: Stubs) -> None:
+    e = (await ki.handle_knowledge_inspect(_inp())).extraction
+    assert (e.documents, e.incomplete) == (4, 2)
+    assert [(c.name, c.live) for c in e.lost] == [("sql_structure", 2), ("exact_keys", 1)]
+
+
+@pytest.mark.asyncio
+async def test_too_many_lost_capabilities_are_cut_and_say_so(stubs: Stubs) -> None:
+    n = store.MAX_GROUPS + 1
+    stubs.answers["extraction_health"] = EXTRACTION | {
+        "lost_names": [f"c{k}" for k in range(n)],
+        "lost_counts": [1] * n,
+    }
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert len(out.extraction.lost) == store.MAX_GROUPS
+    assert any(s.startswith("extraction: more than") for s in out.skipped)
+
+
+@pytest.mark.asyncio
+async def test_a_listed_document_carries_its_extraction_and_jobs(stubs: Stubs) -> None:
+    b, v2 = (await ki.handle_knowledge_inspect(_inp())).listed
+    # A text write has no extraction and no job.
+    assert b.extraction is None and b.jobs is None
+    e = v2.extraction
+    assert e is not None
+    assert (e.unit, e.total, e.extracted, e.failed, e.lost, e.complete) == (
+        "statements",
+        9,
+        8,
+        1,
+        ["sql_structure"],
+        False,
+    )
+    j = v2.jobs
+    assert j is not None and (j.jobs, j.open_jobs, j.open_ingestion_id) == (3, 1, "job-2")
+    # The source waits on its oldest open job; the newest is queued behind it.
+    assert (j.current.ingestion_id, j.current.stage, j.current.stalled) == ("job-2", "embed", True)
+    assert j.current.ended_at is None and j.current.next_attempt_at is None
+    assert (j.latest.ingestion_id, j.latest.state, j.latest.next_attempt_at) == (
+        "job-3",
+        "pending",
+        T1,
+    )
+    ((_, _, uris, kw),) = stubs.calls["source_jobs"]
+    assert uris == ["docs/b.md", "docs/b.md#v2"] and kw["lease_s"] == ki.JOB_LEASE_S
+
+
+def test_the_extractor_client_messages_fall_in_their_failure_class() -> None:
+    """Every ExtractorUnavailable the extractor client raises starts as the job
+    classifier expects, and only the refused-credential answers read as access."""
+    import re
+    from pathlib import Path
+
+    from server.knowledge.app import extractors
+
+    source = Path(extractors.__file__).read_text()
+    raised = re.findall(r'(?:ExtractorUnavailable|FormatUnavailable)\(\s*f?"([^"]*)"', source)
+    assert len(raised) >= 8
+    for message in raised:
+        assert re.match(store.EXTRACTOR_MESSAGE_RE, message), message
+    access = re.compile(store.REFUSED_CREDENTIAL_RE)
+    for status in (401, 403, 407):
+        assert access.match(f"the extractor answered {status}")
+        assert access.match(f"the extractor's capabilities answered {status}")
+    assert not access.match("the extractor answered 503")
+    assert not access.match("the extractor answered 4031")
+
+
+@pytest.mark.asyncio
+async def test_a_job_whose_retries_ran_out_reads_its_own_class(stubs: Stubs) -> None:
+    """A failed job whose outage was not the extractor's is `retries_exhausted`, not
+    `retrying`, which only an open job carries."""
+    stubs.answers["sources_without_document"] = [
+        _source(
+            "files/exhausted.md",
+            1,
+            {
+                "ingestion_id": "job-14",
+                "state": "failed",
+                "error_code": "retries_exhausted",
+                "failure_class": "retries_exhausted",
+                "queued_at": T0,
+                "updated_at": T1,
+                "attempts": 5,
+            },
+        )
+    ]
+    (row,) = (await ki.handle_knowledge_inspect(_inp())).ingestions.without_document_listed
+    assert (row.current.failure_class, row.current.state, row.current.ended_at) == (
+        "retries_exhausted",
+        "failed",
+        T1,
+    )
+    assert row.open_ingestion_id == ""
+
+
+@pytest.mark.asyncio
+async def test_malformed_extractor_routes_skip_only_that_field(
+    stubs: Stubs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ki.settings, "document_extractor_url", "")
+    monkeypatch.setattr(ki.settings, "document_extractors_json", "[1, 2]")
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert out.ingestions.extractor_configured is None
+    assert "ingestions.extractor_configured: ValueError" in out.skipped
+    # The jobs are still read.
+    assert out.ingestions.sources == 8 and out.ingest_findings
+
+
+@pytest.mark.asyncio
+async def test_a_source_a_later_write_replaced_says_so(stubs: Stubs) -> None:
+    stubs.answers["source_jobs"] = [
+        {**SOURCE_JOBS[0], "open_jobs": 0, "replaced": 1},
+    ]
+    (_, v2) = (await ki.handle_knowledge_inspect(_inp())).listed
+    assert v2.jobs is not None and v2.jobs.replaced
+    assert v2.jobs.open_ingestion_id == "" and v2.jobs.current.ingestion_id == "job-3"

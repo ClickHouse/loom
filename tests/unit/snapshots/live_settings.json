@@ -309,6 +309,7 @@
  "namespace_ontology_cardinality_ttl_s",
  "namespace_report_hash_max_bytes",
  "namespace_taxonomy_ttl_s",
+ "namespace_tune_document_sample",
  "observe_extract_buffer_chars",
  "observe_extract_buffer_min_observations",
  "observe_extract_max_events_per_session",

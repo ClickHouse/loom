@@ -469,11 +469,7 @@ async def _probe_or_refuse(
     except onboarding.ProbeError as e:
         raise ValidationError(str(e), code="SOURCE_UNREACHABLE") from None
     if not probe.grants.read_only:
-        raise ValidationError(
-            f"{user!r} holds write access ({', '.join(probe.grants.write_types[:4])}); loom "
-            "takes a read-only user — SELECT on the contract views and system.columns only",
-            code="CREDENTIAL_NOT_READONLY",
-        )
+        raise ValidationError(probe.grants.refusal(user), code="CREDENTIAL_NOT_READONLY")
     if mapping is not None:
         mapped = _mapped_report_or_refuse(name, database, user, mapping, probe, refuse_contract)
         return probe, mapped
@@ -751,11 +747,7 @@ async def handle_tracker_source_inspect(
     except onboarding.ProbeError as e:
         raise ValidationError(str(e), code="SOURCE_UNREACHABLE") from None
     if not probe.grants.read_only:
-        raise ValidationError(
-            f"{user!r} holds write access ({', '.join(probe.grants.write_types[:4])}); "
-            "loom takes a read-only user",
-            code="CREDENTIAL_NOT_READONLY",
-        )
+        raise ValidationError(probe.grants.refusal(user), code="CREDENTIAL_NOT_READONLY")
     repos = sorted({str(r).strip() for r in (input.repos or []) if str(r).strip()})
     proposal = automap.propose(probe.tables, database=database, repos=repos)
     return TrackerSourceInspectOutput(

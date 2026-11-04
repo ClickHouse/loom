@@ -518,6 +518,65 @@ async def test_release_namespace_reads_the_master_ledger_too_and_tracker_folds(w
 
 
 @pytest.mark.asyncio
+async def test_trunk_and_sibling_namespaces_are_read_only_when_the_caller_may_read_them(
+    wired, monkeypatch
+) -> None:
+    """The transport gates the addressed namespace only: the trunk ledger and a sibling
+    branch's head that LOOM adds on its own are left out when the caller cannot read them."""
+    import server.auth.authz as authz
+
+    repo, _git, _state = wired
+    head_reads: list[str] = []
+    all_state = repo.all_state
+
+    async def _recorded_state(org: str, ns: str) -> dict[str, dict[str, Any]]:
+        head_reads.append(ns)
+        return await all_state(org, ns)
+
+    repo.all_state = _recorded_state
+    readable = {"code-clickhouse-26-3"}
+
+    async def _only(org: str, ns: str, role: Any, *, hides_answer: bool = True) -> bool:
+        return ns in readable
+
+    monkeypatch.setattr(authz, "row_in_scope", _only)
+    repo.rows[NS] = [
+        {
+            "pr_number": 100,
+            "title": "Trunk-only title",
+            "author": "a",
+            "merged_at": datetime(2026, 2, 1),
+            "merge_commit_sha": M1.encode(),
+        }
+    ]
+    base = {"stage": "last_touched", "org": ORG, "path": PATH, "start_line": 10, "end_line": 12}
+    out = await h.handle_code_blame_range(
+        CodeBlameRangeInput(namespace="code-clickhouse-26-3", from_sha=BASE, **base)
+    )
+    assert [c[0] for c in repo.window_calls] == ["code-clickhouse-26-3"]
+    # the shared mirror's blame may still name the PR; the trunk ledger's row does not reach it
+    assert "Trunk-only title" not in str(out.candidates)
+    assert all(c.get("evidence") == "blame" for c in out.candidates if c["pr_number"] == 100)
+    assert out.legs["ledger"]["skipped"] == [{"namespace": NS, "reason": "not_readable"}]
+
+    readable = {NS}
+    head_reads.clear()
+    out = await h.handle_code_blame_range(
+        CodeBlameRangeInput(namespace=NS, from_sha=BASE, to_version="26.3", **base)
+    )
+    assert "code-clickhouse-26-3" not in head_reads
+    assert out.window["sources"]["to"] == "mirror_ref"
+
+    readable = {NS, "code-clickhouse-26-3"}
+    repo.window_calls.clear()
+    out = await h.handle_code_blame_range(
+        CodeBlameRangeInput(namespace="code-clickhouse-26-3", from_sha=BASE, **base)
+    )
+    assert sorted(c[0] for c in repo.window_calls) == [NS, "code-clickhouse-26-3"]
+    assert "skipped" not in out.legs["ledger"]
+
+
+@pytest.mark.asyncio
 async def test_blame_failure_falls_back_to_the_ledger_floor_and_names_the_cause(wired) -> None:
     repo, git, state = wired
     git.blame_error = "git blame rc=128: fatal: no such path 'x' in " + TO

@@ -944,6 +944,54 @@ async def test_reassign_cancels_here_and_posts_a_child_there(fake: FakeRepo) -> 
 
 
 @pytest.mark.asyncio
+async def test_a_reassign_into_an_inbox_the_caller_may_not_post_to_is_refused(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _register(fake)
+    await inboxes.handle_inbox_register(
+        wire.InboxRegisterInput(
+            **_caller("public", "admin"),
+            inbox="public-bot",
+            owner_agent="public-reviewer",
+            accept_disclosure=["public_ok", "internal", "confidential"],
+        )
+    )
+    t = (await _post(fake)).task
+    readable = {"private"}
+
+    async def scoped(org, ns, *, write, hides_answer=True):
+        return ns in readable and (not write or ns == "private")
+
+    patch_handlers(monkeypatch, "_in_scope", scoped)
+
+    async def reassign() -> None:
+        await transitions.handle_task_reassign(
+            wire.TaskReassignInput(
+                **_caller("private", "alice"), task_id=t.task_id, to_inbox="public-bot", reason="r"
+            )
+        )
+
+    # Read but no write there: refused as a poster, and the task stays where it is.
+    readable.add("public")
+    with pytest.raises(HTTPException) as e:
+        await reassign()
+    assert e.value.status_code == 403 and e.value.detail["code"] == "AUTH_INSUFFICIENT"
+    assert [r["task_id"] for r in fake.tasks.values()] == [t.task_id]
+    assert fake.tasks[t.task_id]["status"] == t.status
+    # Not a poster there and no read on its namespace: the unregistered-name answer.
+    readable.discard("public")
+    with pytest.raises(HTTPException) as e:
+        await reassign()
+    del fake.inboxes[(ORG, "public-bot")]
+    with pytest.raises(HTTPException) as unregistered:
+        await reassign()
+    assert e.value.status_code == unregistered.value.status_code == 404
+    assert e.value.detail == unregistered.value.detail
+    assert [r["task_id"] for r in fake.tasks.values()] == [t.task_id]
+    assert fake.tasks[t.task_id]["status"] == t.status
+
+
+@pytest.mark.asyncio
 async def test_a_reassign_the_destination_refuses_leaves_the_task_in_place(
     fake: FakeRepo,
 ) -> None:

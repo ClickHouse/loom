@@ -38,6 +38,8 @@ _HEALTH = "gemini:embeddings"
 
 
 class GeminiEmbedder:
+    # The most tokens one input may hold; a longer one is refused before the call.
+    max_input_tokens: ClassVar[int] = _MAX_INPUT_TOKENS
     DEFAULT_DIMS: ClassVar[dict[str, int]] = {
         "gemini-embedding-001": 3072,
     }

@@ -63,8 +63,8 @@ def test_blame_ledger_reads_the_trunk_of_a_main_repository(
             return []
 
     siblings = _entries()[:2]
-    rows, ok = asyncio.run(
+    rows, ok, skipped = asyncio.run(
         blame._ledger_leg(_Repo(), "o", "code-app-2-1", siblings, "src/a.py", blame.Window())  # type: ignore[arg-type]
     )
-    assert ok and rows == []
+    assert ok and rows == [] and skipped == []
     assert asked == [("code-app-2-1", "2.1"), ("code-app", "main")]

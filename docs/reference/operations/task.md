@@ -340,7 +340,7 @@ Owner side: cancel here, re-post into another inbox as a child task (the destina
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `task_id` | `str` | required | The unfinished task to move; it is cancelled in its current inbox. |
-| `to_inbox` | `str` | required | The destination; it must accept the task's disclosure, and its policy for the original poster decides `todo` or `triage`. |
+| `to_inbox` | `str` | required | The destination; the caller must be able to post to it (as for task.create), it must accept the task's disclosure, and its policy for the original poster decides `todo` or `triage`. |
 | `reason` | `str` | required | Why; stored on both the cancelled task and the replacement. |
 
 | Output field | Type | Meaning |

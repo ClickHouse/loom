@@ -1,6 +1,6 @@
 """Server-side ingestion end to end, against a running server and its ClickHouse:
-a file is uploaded over HTTP, ingested with knowledge.ingest, and published by a
-pass of the knowledge_ingest worker run in this process (the server under test
+a file is uploaded over HTTP, ingested with knowledge.ingest, and its job run in
+this process as a knowledge_ingest worker pass runs one (the server under test
 runs no workers); then status, get, outline, search and download read it back.
 
 - The SQL file publishes revision 1 with its format, parser and coverage, chunks
@@ -11,7 +11,7 @@ runs no workers); then status, get, outline, search and download read it back.
 - An upload whose bytes contradict its name is stored, typed by its name, and its
   job fails with the extractor's code; an ingest of an unknown upload is 404.
 
-The worker pass sends originals to the extractor the settings route SQL and TOML to
+The job sends originals to the extractor the settings route SQL and TOML to
 (`extractors.endpoint_for`); the tests that publish skip without one.
 """
 
@@ -68,15 +68,20 @@ async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:
     return dict(r.json())
 
 
-async def _work() -> None:
-    """One worker pass in this process, on the same ClickHouse."""
+async def _work(org: str, ns: str, ingestion_id: str) -> None:
+    """Run the job in this process, on the same ClickHouse, as a worker pass that
+    took it does. A pass takes one job of the whole queue, which other tests'
+    jobs share, so it may not be this one."""
     from server.core.ch import get_client
-    from server.knowledge.workers import ingest
+    from server.knowledge.app import ingest_run
+    from server.knowledge.store import ingestions
 
     ch = get_client()
     await ch.connect()
     try:
-        await ingest.run_pass()
+        job = await ingestions.get_ingestion(org, ns, ingestion_id)
+        assert job is not None, ingestion_id
+        assert await ingest_run.take_and_run(job) is not None, f"job {ingestion_id} did not run"
     finally:
         await ch.disconnect()
 
@@ -102,7 +107,7 @@ async def test_an_uploaded_sql_file_is_parsed_published_and_cited(control_plane_
             options={"sql_dialect": "clickhouse"},
         )
         assert job["state"] == "pending"
-        await _work()
+        await _work(org, ns, job["ingestion_id"])
 
         status = await _op(
             c, "knowledge.ingest_status", org=org, namespace=ns, ingestion_id=job["ingestion_id"]
@@ -149,7 +154,7 @@ async def test_revisions_count_up_and_an_expected_revision_guards_the_publish(
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
         for _ in range(2):
             up = (await _upload(c, org, ns, toml, "config.toml")).json()
-            await _op(
+            job = await _op(
                 c,
                 "knowledge.ingest",
                 org=org,
@@ -157,7 +162,7 @@ async def test_revisions_count_up_and_an_expected_revision_guards_the_publish(
                 upload_id=up["upload_id"],
                 source_uri=uri,
             )
-            await _work()
+            await _work(org, ns, job["ingestion_id"])
         doc = await _op(c, "knowledge.get", org=org, namespace=ns, source_uri=uri)
         assert doc["revision"] == 2 and doc["format"] == "toml"
 
@@ -171,7 +176,7 @@ async def test_revisions_count_up_and_an_expected_revision_guards_the_publish(
             source_uri=uri,
             expected_revision=0,
         )
-        await _work()
+        await _work(org, ns, stale["ingestion_id"])
         status = await _op(
             c, "knowledge.ingest_status", org=org, namespace=ns, ingestion_id=stale["ingestion_id"]
         )
@@ -211,7 +216,7 @@ async def test_a_mislabelled_upload_is_stored_and_the_extractor_refuses_it(
             upload_id=up.json()["upload_id"],
             source_uri="repo://report.pdf",
         )
-        await _work()
+        await _work(org, ns, job["ingestion_id"])
         status = await _op(
             c, "knowledge.ingest_status", org=org, namespace=ns, ingestion_id=job["ingestion_id"]
         )
@@ -259,7 +264,7 @@ async def test_a_cancelled_pending_job_reads_cancelled_and_the_worker_ends_it(
             c, "knowledge.ingest_status", org=org, namespace=ns, ingestion_id=job["ingestion_id"]
         )
         assert (status["state"], status["cancel_requested"]) == ("cancelled", True)
-        await _work()
+        await _work(org, ns, job["ingestion_id"])
         status = await _op(
             c, "knowledge.ingest_status", org=org, namespace=ns, ingestion_id=job["ingestion_id"]
         )

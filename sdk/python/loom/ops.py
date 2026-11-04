@@ -3839,7 +3839,7 @@ OPS: dict[str, OpSpec] = {
         True,
         "viewer",
         "experimental",
-        5000,
+        8000,
         False,
         True,
     ),
@@ -10179,6 +10179,9 @@ class KnowledgeInspectOutput(TypedDict, total=False):
     listed_complete: NotRequired[bool]
     findings: NotRequired[list["DocumentFinding"]]
     coverage: Required["ReportCoverage"]
+    ingestions: Required["IngestionTotals"]
+    extraction: Required["ExtractionTotals"]
+    ingest_findings: NotRequired[list["IngestFinding"]]
     memory_findings: NotRequired[list["MemoryFindingRef"]]
     skipped: NotRequired[list[str]]
 
@@ -10256,6 +10259,8 @@ class InspectDocument(TypedDict, total=False):
     retired_versions: NotRequired[Optional[int]]
     chunks: NotRequired[Optional["DocumentChunks"]]
     decisions: NotRequired[Optional["DocumentDecisions"]]
+    extraction: NotRequired[Optional["ExtractionCoverage"]]
+    jobs: NotRequired[Optional["SourceJobs"]]
 
 
 class DocumentChunks(TypedDict, total=False):
@@ -10270,6 +10275,57 @@ class DocumentChunks(TypedDict, total=False):
     median_chars: Required[int]
     max_chars: Required[int]
     models: NotRequired[list[str]]
+
+
+class ExtractionCoverage(TypedDict, total=False):
+    "What the extractor reported for a published revision, from its artifact's coverage."
+
+    unit: Required[str]
+    total: Required[int]
+    extracted: Required[int]
+    failed: Required[int]
+    lost: NotRequired[list[str]]
+    complete: Required[bool]
+
+
+class SourceJobs(TypedDict, total=False):
+    "The knowledge.ingest jobs of one source_uri the job rows still hold (30 days)."
+
+    source_uri: Required[str]
+    jobs: Required[int]
+    open_jobs: Required[int]
+    open_ingestion_id: NotRequired[str]
+    latest: Required["IngestJob"]
+    current: Required["IngestJob"]
+    replaced: NotRequired[bool]
+
+
+class IngestJob(TypedDict, total=False):
+    "One knowledge.ingest job, as knowledge.ingest_status reads it, without its message."
+
+    ingestion_id: Required[str]
+    state: Required[str]
+    stage: Required[str]
+    attempts: Required[int]
+    error_code: Required[str]
+    failure_class: Required[
+        Literal[
+            "",
+            "extractor_unavailable",
+            "missing_access",
+            "bad_content",
+            "retrying",
+            "retries_exhausted",
+            "revision_conflict",
+            "cancelled",
+            "internal",
+        ]
+    ]
+    queued_at: Required[str]  # date-time as ISO-8601 text
+    updated_at: Required[str]  # date-time as ISO-8601 text
+    ended_at: NotRequired[Optional[str]]
+    next_attempt_at: NotRequired[Optional[str]]
+    stalled: NotRequired[bool]
 
 
 class DocumentFinding(TypedDict, total=False):
@@ -10317,6 +10373,57 @@ class ReportCoverage(TypedDict, total=False):
     rules_run: NotRequired[list[str]]
     rules_skipped: NotRequired[list[str]]
     complete: Required[bool]
+
+
+class IngestionTotals(TypedDict, total=False):
+    "The namespace's knowledge.ingest jobs the job rows still hold (30 days)."
+
+    sources: NotRequired[Optional[int]]
+    without_document: NotRequired[Optional[int]]
+    replaced: NotRequired[Optional[int]]
+    pending: NotRequired[Optional[int]]
+    processing: NotRequired[Optional[int]]
+    stalled: NotRequired[Optional[int]]
+    ready: NotRequired[Optional[int]]
+    partial: NotRequired[Optional[int]]
+    failed: NotRequired[Optional[int]]
+    cancelled: NotRequired[Optional[int]]
+    oldest_open_queued_at: NotRequired[Optional[str]]
+    worker_enabled: Required[bool]
+    extractor_configured: NotRequired[Optional[bool]]
+    without_document_listed: NotRequired[list["SourceJobs"]]
+
+
+class ExtractionTotals(TypedDict, total=False):
+    "What the extractor kept of the live documents knowledge.ingest published."
+
+    documents: NotRequired[Optional[int]]
+    incomplete: NotRequired[Optional[int]]
+    lost: NotRequired[list["DocumentCount"]]
+
+
+class IngestFinding(TypedDict, total=False):
+    "A finding on the namespace's knowledge.ingest jobs or on what its extractions kept."
+
+    kind: Required[Literal["contract_violation", "usage_heuristic", "system_state"]]
+    rule_version: Required[int]
+    source_op: Required[str]
+    window_seconds: NotRequired[Optional[int]]
+    population: NotRequired[Optional[int]]
+    sample_limit: Required[int]
+    samples_complete: Required[bool]
+    evidence: NotRequired[list["FindingEvidence"]]
+    exceptions: NotRequired[str]
+    uncertainty: NotRequired[str]
+    code: Required[str]
+    severity: Required[Literal["info", "warning"]]
+    count: Required[int]
+    share: Required[float]
+    samples: NotRequired[list[str]]
+    ingestion_ids: NotRequired[list[str]]
+    without_document: NotRequired[int]
+    detail: Required[str]
+    remedy: Required[str]
 
 
 class MemoryFindingRef(TypedDict, total=False):
@@ -16303,6 +16410,7 @@ class NamespaceTuneOutput(TypedDict, total=False):
     categories_registered: NotRequired[Optional[int]]
     extraction_policy: NotRequired[Optional[str]]
     extraction_policy_unavailable: NotRequired[str]
+    chunking: NotRequired[Optional["ChunkingSample"]]
     skipped: NotRequired[list[str]]
     model_used: NotRequired[bool]
 
@@ -16310,7 +16418,13 @@ class NamespaceTuneOutput(TypedDict, total=False):
 class TuneProposal(TypedDict, total=False):
     id: Required[str]
     target: Required[
-        Literal["extraction_instructions.request", "namespace.category", "namespace.guide"]
+        Literal[
+            "extraction_instructions.request",
+            "namespace.category",
+            "namespace.guide",
+            "settings.knowledge_chunking",
+            "settings.document_extractors_json",
+        ]
     ]
     scope: Required[str]
     title: Required[str]
@@ -16324,6 +16438,8 @@ class TuneProposal(TypedDict, total=False):
     effect: NotRequired[Literal["future"]]
     historical: Required[str]
     apply: Required["TuneApply"]
+    apply_also: NotRequired[list["TuneApply"]]
+    preview: NotRequired[Optional["ChunkingPreview"]]
     limits: NotRequired[str]
 
 
@@ -16334,16 +16450,54 @@ class TuneEvidence(TypedDict, total=False):
     supporting_count: NotRequired[int]
     supporting: NotRequired[list["FindingEvidence"]]
     counter_count: NotRequired[Optional[int]]
+    documents: NotRequired[list[str]]
 
 
 class TuneApply(TypedDict, total=False):
     "The ordinary write that would apply a proposal, for a person to approve."
 
     op: Required[str]
+    via: NotRequired[Literal["op", "admin_route", "environment"]]
     args: Required[dict[str, Any]]
     args_complete: NotRequired[bool]
     required_role: Required[str]
     guard: Required[str]
+
+
+class ChunkingPreview(TypedDict, total=False):
+    "The same document sample cut at the current values and at the proposed ones."
+
+    before: Required["ChunkStats"]
+    after: Required["ChunkStats"]
+
+
+class ChunkStats(TypedDict, total=False):
+    "What a document sample is cut into at one chunk size and stride, by the chunker each"
+
+    size: Required[int]
+    stride: Required[int]
+    chunks: Required[int]
+    min_chars: Required[int]
+    median_chars: Required[int]
+    p90_chars: Required[int]
+    max_chars: Required[int]
+    sections: Required[int]
+    sections_cut: Required[int]
+    max_input_tokens: Required[int]
+    over_input_limit: NotRequired[Optional[int]]
+
+
+class ChunkingSample(TypedDict, total=False):
+    "The namespace's documents re-chunked in process at the current values: no model is"
+
+    cap: Required[int]
+    population: NotRequired[Optional[int]]
+    documents: Required[int]
+    unread: Required[int]
+    load_cap: Required[int]
+    embedder_model: Required[str]
+    input_token_limit: NotRequired[Optional[int]]
+    current: Required["ChunkStats"]
 
 
 class NamespaceValidateInput(TypedDict, total=False):
