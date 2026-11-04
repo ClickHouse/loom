@@ -694,7 +694,7 @@ def test_without_a_code_index_arm_4_is_compared_with_gold_rows_served_alike(tmp_
     assert (4, 5) in pairs and (4, 3) not in pairs
 
 
-def test_a_run_stopped_by_the_cap_resumes_without_spending_again(tmp_path):
+def test_a_run_stopped_by_the_cap_resumes_without_spending_again(tmp_path, capsys):
     ts = load(EXAMPLE)
     out = tmp_path / "run"
     out.mkdir()
@@ -710,6 +710,8 @@ def test_a_run_stopped_by_the_cap_resumes_without_spending_again(tmp_path):
     model = _fake_model(ledger, usage=2000)
     assert run.run(ts, cfg, loom, model, [model], ledger, FakeCodeIndex()) is False
     assert loom.erased == []  # kept for the resume
+    stopped = capsys.readouterr().out
+    assert "to resume, or erase the namespaces with: loom namespaces-gc" in stopped
     first = ledger.rows()
     answered = len(json.loads((out / "answers.json").read_text()))
     assert 0 < answered < 8 * 5 * 2

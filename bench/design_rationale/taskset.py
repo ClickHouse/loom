@@ -205,3 +205,20 @@ def load(root: Path) -> TaskSet:
             raise TaskSetError(f"task id {t['id']} appears twice")
         seen.add(t["id"])
     return ts
+
+
+def answer_key(tid: str, arm: int, sample: int) -> str:
+    """An answer's key: `<task>/arm<a>/s<k>`."""
+    return f"{tid}/arm{arm}/s{sample}"
+
+
+def surface_key(tid: str, arm: int) -> str:
+    """A surface's key: `<task>/arm<a>`, shared by the task's samples in that arm."""
+    return f"{tid}/arm{arm}"
+
+
+def parse_key(key: str) -> tuple[str, int]:
+    """(task id, arm) of an answer or surface key; a task id may hold "arm" but never
+    "/"."""
+    tid, _, rest = key.rpartition("/arm")
+    return tid, int(rest.split("/", 1)[0])

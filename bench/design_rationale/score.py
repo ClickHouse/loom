@@ -19,8 +19,7 @@ from statistics import mean
 from typing import Any
 
 from bench.bootstrap import paired_bootstrap
-from bench.design_rationale.run import parse_key
-from bench.design_rationale.taskset import TaskSet
+from bench.design_rationale.taskset import TaskSet, parse_key, surface_key
 
 # z(0.975) + z(0.80): the effect a two-sided 5% test detects with 80% power is this many
 # standard errors.
@@ -299,7 +298,9 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
     tasks = [t for _, t in ts.all_tasks()]
     arm4_files = (state.get("flags") or {}).get("arm4_files", True)
     for arm in (3, 4, 5):
-        rows = [(t, surf[f"{t['id']}/arm{arm}"]) for t in tasks if f"{t['id']}/arm{arm}" in surf]
+        rows = [
+            (t, surf[surface_key(t["id"], arm)]) for t in tasks if surface_key(t["id"], arm) in surf
+        ]
         if not rows:
             continue
         for surface in ("for_file_keys", "search_keys"):

@@ -34,7 +34,8 @@ from bench.design_rationale.loom import (
     section_keys,
     tokens,
 )
-from bench.design_rationale.taskset import Document, TaskSet
+from bench.design_rationale.score import planning_mde
+from bench.design_rationale.taskset import Document, TaskSet, answer_key, parse_key, surface_key
 
 ARMS = (0, 1, 2, 3, 4, 5)
 ARM_NAMES = {
@@ -98,17 +99,6 @@ def load_json(path: Path) -> dict[str, Any]:
 
 def save_json(path: Path, obj: Any) -> None:
     path.write_text(json.dumps(obj, indent=1, ensure_ascii=False))
-
-
-def answer_key(tid: str, arm: int, sample: int) -> str:
-    return f"{tid}/arm{arm}/s{sample}"
-
-
-def parse_key(key: str) -> tuple[str, int]:
-    """(task id, arm) of an answer key (`<task>/arm<a>/s<k>`) or a surface key
-    (`<task>/arm<a>`); a task id may hold "arm" but never "/"."""
-    tid, _, rest = key.rpartition("/arm")
-    return tid, int(rest.split("/", 1)[0])
 
 
 def pre_edit_block_tokens() -> int:
@@ -250,8 +240,6 @@ def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
             continue
         u["usd_at_caps"] = _priced(models[stage], u["in"], u["out_at_caps"])
         u["usd_typical"] = _priced(models[stage], u["in"], u["out_typical"])
-    from bench.design_rationale.score import planning_mde
-
     counts = {kind: sum(1 for kk, _ in tasks if kk == kind) for kind in "ABC"}
     return {
         "arms": {a: ARM_NAMES[a] for a in cfg.arms},
@@ -510,7 +498,7 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
     for arm in cfg.arms:
         session = f"{state['prefix']}-arm{arm}"
         home = ns[ARM_HOME[arm]] if arm in ARM_HOME else ""
-        missing = any(f"{t['id']}/arm{arm}" not in out for _, t in tasks)
+        missing = any(surface_key(t["id"], arm) not in out for _, t in tasks)
         if arm in (3, 4, 5) and missing:
             # The reading rule rides on a session's first search with memory hits: warm
             # the session so every task sees what a mid-session search shows.
@@ -520,7 +508,7 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
                 ):
                     break
         for _kind, t in tasks:
-            key = f"{t['id']}/arm{arm}"
+            key = surface_key(t["id"], arm)
             if key in out:
                 continue
             query = t.get("question") or t["task"]
@@ -571,7 +559,7 @@ def answers(ts: TaskSet, cfg: Config, reader: Model, surf: dict[str, Any]) -> di
                 key = answer_key(t["id"], arm, sample)
                 if key in out:
                     continue
-                context = surf[f"{t['id']}/arm{arm}"]["context"]
+                context = surf[surface_key(t["id"], arm)]["context"]
                 system, user, cap = prompts.answer_prompt(kind, t, context, ts.system)
                 reply = reader("answer", system, user, cap)
                 out[key] = {"text": reply.text, "in": reply.tokens_in, "out": reply.tokens_out}
@@ -672,7 +660,7 @@ def judge(
         )
         rubric = [d["rubric"] for d in t.get("detector", []) if d["type"] == "judge"]
         rubric += t.get("judge_rubric", [])
-        context = surf[f"{tid}/arm{arm}"]["context"]
+        context = surf[surface_key(tid, arm)]["context"]
         done = {(p["model"], p["order"], p["repeat"]) for p in entry["passes"]}
         for model in judges:
             for order in range(cfg.judge_orders):
@@ -794,7 +782,10 @@ def run(
         record_server_spend(loom, ledger, state, cfg)
         finished = True
     except CapReached as e:
-        print(f"stopped: {e}; run again with the same --out (and a higher --max-usd) to resume")
+        print(
+            f"stopped: {e}; run again with the same --out (and a higher --max-usd) to "
+            f"resume, or erase the namespaces with: {erase_command(cfg, loom, ns)}"
+        )
     except BaseException:
         # An error or an interrupt after the setup: what the run wrote is kept.
         if not state.get("erased") and not state.get("setup_failed"):

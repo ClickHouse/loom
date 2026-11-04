@@ -28,6 +28,10 @@ AGENT = "bench-design-rationale"
 # The agent identity a gold row is written under: one author for every row.
 GOLD_AGENT = "design-author"
 CHARS_PER_TOKEN = 4  # the server's estimate (memory.for_file tokens_estimate)
+# The knowledge hits an agent reads in a loom_search answer: the tool's default top_k.
+KNOWLEDGE_HITS_SHOWN = 5
+# Seconds one call to the harness's Loom may take: an extraction-sized upsert included.
+LOOM_TIMEOUT_S = 180.0
 # The pre-edit block's token budget per file, as the coding-agent hook asks for it.
 PRE_EDIT_BUDGET = 300
 # One document's extraction: a model call per window, each with its own provider
@@ -54,7 +58,7 @@ def memory_section(text: str) -> str:
     return text.split("\n", 1)[0] + "\n" + body
 
 
-def knowledge_section(text: str, results: list[dict[str, Any]], top_k: int = 5) -> str:
+def knowledge_section(text: str, results: list[dict[str, Any]]) -> str:
     """The knowledge hits of a loom_search, with the count line. Rendered from the
     structured result (source, section, chunk text): the text summary prints a knowledge
     hit's `content_excerpt`, which knowledge hits do not carry, so it lists bare
@@ -62,7 +66,7 @@ def knowledge_section(text: str, results: list[dict[str, Any]], top_k: int = 5) 
     if not results:
         return ""
     lines = [text.split("\n", 1)[0], "Knowledge hits:"]
-    for h in results[:top_k]:
+    for h in results[:KNOWLEDGE_HITS_SHOWN]:
         where = h["source_uri"]
         # A chunk above the first heading has no section.
         if h.get("section"):
@@ -103,11 +107,11 @@ class Loom:
     """Each arm's namespace lives in its own org: a search fans out over every namespace
     of its org, so arms sharing one would read each other's rows."""
 
-    def __init__(self, base_url: str, token: str = "", timeout_s: float = 180.0):
+    def __init__(self, base_url: str, token: str = ""):
         self.base_url = base_url.rstrip("/")
         self.token = token
-        self.timeout_s = timeout_s
-        self.client = httpx.Client(timeout=timeout_s)
+        self.timeout_s = LOOM_TIMEOUT_S
+        self.client = httpx.Client(timeout=self.timeout_s)
         self.orgs: dict[str, str] = {}
 
     def bind(self, namespace: str, org: str) -> None:

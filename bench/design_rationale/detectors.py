@@ -142,13 +142,13 @@ def find_citations(text: str, source_uris: list[str]) -> list[dict[str, Any]]:
 CITED_TEXT_CHARS = 1500
 
 
-def section_text(content: str, section: str, limit: int = CITED_TEXT_CHARS) -> str | None:
+def section_text(content: str, section: str) -> str | None:
     """A cited section's heading and text, found the way the chunker named it: the
     breadcrumb is the parser's cleaned heading path (code spans, emphasis and anchors
     stripped; Setext and HTML headings read). The document start when no section is
     named; None when no section, or more than one, fits the citation."""
     if not section:
-        return content[:limit]
+        return content[:CITED_TEXT_CHARS]
     from server.knowledge.domain.chunking import detect_sections
 
     sections = [s for s in detect_sections(content) if s.path]
@@ -158,7 +158,7 @@ def section_text(content: str, section: str, limit: int = CITED_TEXT_CHARS) -> s
         found = _cited_section(cited, sections)
         if found is not None:
             title: str = found.path[-1]
-            return (title + "\n" + content[found.start : found.end])[:limit]
+            return (title + "\n" + content[found.start : found.end])[:CITED_TEXT_CHARS]
     return None
 
 
