@@ -217,6 +217,8 @@ export interface RecordedCalls {
   join: Record<string, unknown>[];
   /** How many times `tracker.source.list` was read. */
   trackerSources: number;
+  /** How many times `knowledge.source.list` was read. */
+  knowledgeSources: number;
   /** Every `/v1/memory.*` path the page requested — a code/QA-only token must see none. */
   memory: string[];
   /** Every `memory.list` body — the page asks for the fields it renders and the preview
@@ -397,6 +399,32 @@ export function codeReposFixture(now = Date.now()): CodeRepoFixture[] {
     row("code-clickhouse", "master"),
     row("code-clickhouse-25-8", "25.8"),
     row("code-clickhouse-25-7", "25.7", "approval"),
+  ];
+}
+
+/** One document source on the trunk's namespace, as `knowledge.source.list` writes it:
+ *  its last turn synced and left one file unconverted. */
+export function knowledgeSourcesFixture(): Record<string, unknown>[] {
+  return [
+    {
+      name: "design-docs",
+      kind: "gdrive",
+      config: { folder_ids: ["1AbCdEfGhIjKlMnOp"], include: ["docs", "slides", "pdf", "pptx"] },
+      created_by: "maintainer@example.com",
+      created_at: "2026-10-01T00:00:00Z",
+      sync: {
+        requested_at: "",
+        last_synced_at: "2026-10-02T00:00:00Z",
+        status: "ok",
+        documents_seen: 12,
+        changed: 3,
+        removed: 0,
+        unconverted: 1,
+        unconverted_reasons: { too_large: 1 },
+        skipped: 0,
+        error: "",
+      },
+    },
   ];
 }
 
@@ -771,6 +799,9 @@ export interface InstallOptions {
   /** Answer `tracker.source.list` with these sources (joins flip their standing), or 404
    *  it ("absent": a server without the operation). Default: absent. */
   trackerSources?: "absent" | TrackerSourceFixture[];
+  /** Answer `knowledge.source.list` with these sources and `enabled: true`, or 404 it
+   *  ("absent"). Default: none, sync off. */
+  knowledgeSources?: "absent" | Record<string, unknown>[];
   /** Sign in as a flat VIEWER instead of a platform admin. */
   viewer?: boolean;
   /** The token's `namespaces` claim (default: `[NAMESPACE]`). */
@@ -858,6 +889,7 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
     qa: [],
     join: [],
     trackerSources: 0,
+    knowledgeSources: 0,
     memory: [],
     list: [],
     knowledge: [],
@@ -1076,6 +1108,16 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
           });
         }
         return json({ sources: trackerSources, self_service: true });
+      case "/v1/knowledge.source.list":
+        calls.knowledgeSources++;
+        if (options.knowledgeSources === "absent") {
+          return route.fulfill({
+            status: 404,
+            contentType: "application/json",
+            body: JSON.stringify({ detail: "Not Found" }),
+          });
+        }
+        return json({ sources: options.knowledgeSources ?? [], enabled: options.knowledgeSources !== undefined });
       case "/v1/namespace.join": {
         calls.join.push({ op: "join", ...body });
         const code = codeRow(ns);
