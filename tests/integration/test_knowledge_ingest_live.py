@@ -11,8 +11,8 @@ runs no workers); then status, get, outline, search and download read it back.
 - An upload whose bytes contradict its name is stored, typed by its name, and its
   job fails with the extractor's code; an ingest of an unknown upload is 404.
 
-The worker pass reaches the extractor at LOOM_DOCUMENT_EXTRACTOR_URL with
-LOOM_DOCUMENT_EXTRACTOR_TOKEN from this process's environment.
+The worker pass sends originals to the extractor the settings route SQL and TOML to
+(`extractors.endpoint_for`); the tests that publish skip without one.
 """
 
 from __future__ import annotations
@@ -28,6 +28,16 @@ import pytest
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
+
+
+@pytest.fixture
+def extractor_routed() -> None:
+    """Skips unless an extractor is routed for SQL and TOML, as the worker asks."""
+    from server.knowledge.app.extractors import endpoint_for
+
+    if not (endpoint_for("sql", "") and endpoint_for("toml", "")):
+        pytest.skip("no document extractor is routed for sql and toml")
+
 
 SQL = (
     b"-- Raw events are kept for 30 days.\n"
@@ -71,6 +81,7 @@ async def _work() -> None:
         await ch.disconnect()
 
 
+@pytest.mark.usefixtures("extractor_routed")
 @pytest.mark.asyncio
 async def test_an_uploaded_sql_file_is_parsed_published_and_cited(control_plane_url: str) -> None:
     org, ns, uri = unique_org("ingest"), "docs", f"repo://retention-{uuid.uuid4().hex[:6]}.sql"
@@ -128,6 +139,7 @@ async def test_an_uploaded_sql_file_is_parsed_published_and_cited(control_plane_
         assert r.status_code == 200 and r.content == SQL
 
 
+@pytest.mark.usefixtures("extractor_routed")
 @pytest.mark.asyncio
 async def test_revisions_count_up_and_an_expected_revision_guards_the_publish(
     control_plane_url: str, ch_client: Any
