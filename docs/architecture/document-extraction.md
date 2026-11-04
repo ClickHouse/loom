@@ -210,7 +210,8 @@ characters. A block it cut is marked (`attrs.keys_truncated`, `attrs.section_tru
   subsection under it is a chunk of its own.
 
 Each chunk carries the ids of the blocks it was cut from, their type (`mixed` when they differ), the merged locator of
-their span (a field such as `key_path` survives only when every block agrees) and the union of their keys.
+their span (a field such as `key_path` survives only when every block agrees) and the union of their keys, and records
+the document revision and format it was written as.
 
 ## Ingestion
 
@@ -219,12 +220,13 @@ their span (a field such as `key_path` survives only when every block agrees) an
 bytes; the job reads the original and sends it to the extractor through the client above, checks the artifact, stores it
 as an original of its own (content-addressed), cuts structural chunks with each chunk's context (`chunk_context`: the
 title, description and section breadcrumb), embeds them, reusing the vector of an input this namespace already embedded
-under the same model, and publishes the next revision of the source: the chunks, then, under the source's claim, the
-revision check, the document row and the earlier version's chunks retired. The claim covers those few statements, not
-the chunk insert, so its time limits hold for a source of any size. A source the extractor refuses fails the job with
-its code; a format no configured extractor takes fails it with `format_unavailable`; an artifact that breaks the
-contract fails it with `invalid_artifact`; an extractor that cannot be reached, times out or answers a status that is
-neither a result nor a refusal puts the job back with a growing delay (at most an hour) until
+under the same model, and publishes the next revision of the source: it decides the revision (and checks an expected
+one), inserts the chunks written as it, then, under the source's claim, refuses the publish when the source changed
+since the revision was decided, writes the document row and retires the earlier version's chunks. The claim covers those
+few statements, not the chunk insert, so its time limits hold for a source of any size. A source the extractor refuses
+fails the job with its code; a format no configured extractor takes fails it with `format_unavailable`; an artifact that
+breaks the contract fails it with `invalid_artifact`; an extractor that cannot be reached, times out or answers a status
+that is neither a result nor a refusal puts the job back with a growing delay (at most an hour) until
 `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS`. Nothing is published before every slow step has run, so a failed or cancelled job
 leaves the earlier revision serving. The job row records the chunk version a publish inserts before it writes the
 document row; when a run stops between the two, its retry, its failure or its next run retires those chunks. The
