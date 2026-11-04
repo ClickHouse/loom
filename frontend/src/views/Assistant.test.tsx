@@ -1198,6 +1198,77 @@ describe("Assistant: documents", () => {
     },
   );
 
+  it("does not call a namespace empty when its job count could not be read", async () => {
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      documents: { ...KNOWLEDGE.documents, live: 0, deleted: 0, by_format: [], by_source_scheme: [] },
+      listed: [],
+      ingestions: { ...KNOWLEDGE.ingestions, sources: null, ready: null, failed: null },
+      ingest_findings: [ingestFinding("extraction_incomplete", "usage_heuristic")],
+      skipped: ["ingestions: TimeoutError"],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).queryByRole("status")).toBeNull();
+    expect(within(result).getByText("The knowledge.ingest jobs could not be read.")).toBeInTheDocument();
+    expect(within(result).queryByText("The job checks did not run.")).toBeNull();
+  });
+
+  it("shows the documents a cut read counted, with the server's note, not as unread", async () => {
+    const note = "more than 200 format and scheme pairs; the counts cover the first";
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      documents: { ...KNOWLEDGE.documents, live: null, deleted: null, earlier_revisions: null, unnumbered: null },
+      skipped: [`documents: ${note}`],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(
+      within(within(result).getByRole("table", { name: "Documents by format" })).getByText("pdf"),
+    ).toBeInTheDocument();
+    expect(within(result).getByTestId("docs-documents-note")).toHaveTextContent(`Note: ${note}`);
+    expect(within(result).getByTestId("docs-totals-line")).toHaveTextContent("Live documents: not totalled");
+    expect(within(result).queryByText("The documents could not be counted by format and source.")).toBeNull();
+  });
+
+  it("shows the extraction coverage a cut read counted, with the server's note", async () => {
+    const note = "more than 200 lost capabilities; the counts cover the first";
+    inspectKnowledge.mockResolvedValueOnce({ ...KNOWLEDGE, skipped: [`extraction: ${note}`] });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).getByTestId("docs-extraction")).toHaveTextContent("lost: section_path 1");
+    expect(within(result).getByTestId("docs-extraction-note")).toHaveTextContent(`Note: ${note}`);
+    expect(within(result).queryByText("The extraction coverage could not be read.")).toBeNull();
+  });
+
+  it("says the checks did not run only when the reads they run on failed", async () => {
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      findings: [],
+      coverage: {
+        rules_run: [],
+        rules_skipped: [
+          "documents_without_chunks",
+          "unembedded_chunks",
+          "chunks_under_other_model",
+          "mixed_live_versions",
+          ...INGEST_CODES.map(([c]) => c),
+        ],
+        complete: false,
+      },
+      ingestions: { ...KNOWLEDGE.ingestions, sources: null },
+      extraction: { documents: null, incomplete: null, lost: [] },
+      ingest_findings: [],
+      skipped: ["findings: TimeoutError", "ingestions: TimeoutError", "extraction: TimeoutError"],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).getByText("The chunk checks did not run.")).toBeInTheDocument();
+    expect(within(result).getByText("The job checks did not run.")).toBeInTheDocument();
+    expect(within(result).getByText("The extraction coverage could not be read.")).toBeInTheDocument();
+    expect(within(result).queryByTestId("docs-extraction-note")).toBeNull();
+  });
+
   it("offers documents to a token pinned to one user, which the server answers in scope", async () => {
     const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
     localStorage.setItem("loom_token_v1", `${b64({ alg: "HS256" })}.${b64({ sub: "ada", read_user_id: "ada" })}.sig`);

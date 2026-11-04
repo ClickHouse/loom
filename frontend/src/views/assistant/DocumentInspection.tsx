@@ -38,9 +38,10 @@ const KIND_GROUP: Array<{ kind: FindingKind; label: string }> = [
   { kind: "usage_heuristic", label: "What was written or kept" },
 ];
 
-/** A count the server could not read is null: said so, never shown as zero. */
-function n(v: number | null | undefined): string {
-  return v === null || v === undefined ? "not read" : fmtInt(v);
+/** A count the server could not read (or, `missing`, did not total) is null: said so, never
+ *  shown as zero. */
+function n(v: number | null | undefined, missing = "not read"): string {
+  return v === null || v === undefined ? missing : fmtInt(v);
 }
 
 function plural(count: number, one: string, many = `${one}s`): string {
@@ -49,11 +50,22 @@ function plural(count: number, one: string, many = `${one}s`): string {
 
 /** Documents as an Inspect subject: knowledge.inspect's report on the namespace's
  *  documents, what search serves of them, their ingestion and extraction, and the decisions
- *  recorded from them. A section named in `skipped` is said to be not read. */
+ *  recorded from them.
+ *
+ *  Whether a section was read comes from the fields the server leaves null on a failed read,
+ *  not from `skipped`: a `skipped` line under a section's name is also how the server says a
+ *  section it read was cut ("documents: more than ... the counts cover the first"), so that
+ *  line is shown beside the section's data as a note. */
 export function DocumentInspection({ result }: { result: KnowledgeInspection }) {
-  const unread = (section: string) => result.skipped.some((s) => s.startsWith(`${section}:`));
+  const notes = (section: string) =>
+    result.skipped.filter((s) => s.startsWith(`${section}: `)).map((s) => s.slice(section.length + 2));
   const docs = result.documents;
-  const empty = docs.live === 0 && (result.ingestions.sources ?? 0) === 0;
+  // A failed read leaves both lists empty; a cut one keeps them and only the totals null.
+  const docsRead = docs.live !== null || docs.by_format.length > 0 || docs.by_source_scheme.length > 0;
+  // A cut read lists the groups it read and totals none of them.
+  const total = docsRead ? "not totalled" : "not read";
+  // An unread job count (null) is not "no job": a first ingest queued or failed has one.
+  const empty = docs.live === 0 && result.ingestions.sources === 0;
   return (
     <div className="space-y-5" data-testid="assistant-documents">
       <section aria-labelledby="docs-totals" className="space-y-2 text-sm">
@@ -64,8 +76,8 @@ export function DocumentInspection({ result }: { result: KnowledgeInspection }) 
           </p>
         ) : null}
         <p className="text-text tabular" data-testid="docs-totals-line">
-          Live documents: {n(docs.live)} · deleted: {n(docs.deleted)} · earlier revisions: {n(docs.earlier_revisions)} ·
-          retired chunk versions: {n(docs.retired_versions)}
+          Live documents: {n(docs.live, total)} · deleted: {n(docs.deleted, total)} · earlier revisions:{" "}
+          {n(docs.earlier_revisions, total)} · retired chunk versions: {n(docs.retired_versions)}
           {docs.unnumbered ? ` · ${plural(docs.unnumbered, "document")} with unnumbered revisions` : ""}
         </p>
         {docs.newest_ingested_at && (
@@ -73,7 +85,7 @@ export function DocumentInspection({ result }: { result: KnowledgeInspection }) 
             Newest written <ListTime time={docs.newest_ingested_at} />
           </p>
         )}
-        {unread("documents") ? (
+        {!docsRead ? (
           <p className="text-text-muted">The documents could not be counted by format and source.</p>
         ) : (
           !empty && (
@@ -83,28 +95,32 @@ export function DocumentInspection({ result }: { result: KnowledgeInspection }) 
             </div>
           )
         )}
+        <Notes lines={docsRead ? notes("documents") : []} testId="docs-documents-note" />
       </section>
 
-      {!empty && <ChunkSection result={result} unread={unread} />}
+      {!empty && <ChunkSection result={result} />}
 
-      <IngestionSection result={result} unread={unread} />
+      <IngestionSection result={result} notes={notes} />
 
       {!empty && (
         <section aria-labelledby="docs-decisions" className="space-y-1 text-sm">
           <SectionHeading id="docs-decisions" level={3} label="Decisions recorded from documents" />
           <p className="text-xs text-text-muted">{result.decisions.definition}</p>
           {result.decisions.all_documents ? (
-            <p className="text-text tabular" data-testid="docs-decisions-total">
-              {stageText("Decided", result.decisions.all_documents.decided)} ·{" "}
-              {stageText("Proposed", result.decisions.all_documents.proposed)}
-            </p>
+            <>
+              <p className="text-text tabular" data-testid="docs-decisions-total">
+                {stageText("Decided", result.decisions.all_documents.decided)} ·{" "}
+                {stageText("Proposed", result.decisions.all_documents.proposed)}
+              </p>
+              <Notes lines={notes("decisions")} testId="docs-decisions-note" />
+            </>
           ) : (
             <p className="text-text-muted">The decisions could not be read.</p>
           )}
         </section>
       )}
 
-      {!empty && <ListedSection result={result} unread={unread} />}
+      {!empty && <ListedSection result={result} />}
 
       <section aria-labelledby="docs-memories" className="space-y-1 text-sm">
         <SectionHeading id="docs-memories" level={3} label="Memories shaped like documents" />
@@ -160,9 +176,30 @@ function CountTable({ label, head, rows }: { label: string; head: string; rows: 
   );
 }
 
-type Unread = (section: string) => boolean;
+/** What the server said about a section it read and cut short. */
+function Notes({ lines, testId }: { lines: string[]; testId: string }) {
+  if (lines.length === 0) return null;
+  return (
+    <p className="text-xs text-text-muted" data-testid={testId}>
+      Note: {lines.join("; ")}
+    </p>
+  );
+}
 
-function ChunkSection({ result, unread }: { result: KnowledgeInspection; unread: Unread }) {
+/** The server skips a rule when the read it runs on failed (`coverage.rules_skipped`). */
+function checksSkipped(result: KnowledgeInspection, codes: string[]): boolean {
+  return codes.some((c) => result.coverage.rules_skipped.includes(c));
+}
+
+// server/knowledge/app/inspect.py _CHECKS, skipped together when the chunk read fails.
+const CHUNK_CHECKS = [
+  "documents_without_chunks",
+  "unembedded_chunks",
+  "chunks_under_other_model",
+  "mixed_live_versions",
+];
+
+function ChunkSection({ result }: { result: KnowledgeInspection }) {
   const c = result.chunks;
   return (
     <section aria-labelledby="docs-chunks" className="space-y-2 text-sm">
@@ -171,7 +208,7 @@ function ChunkSection({ result, unread }: { result: KnowledgeInspection; unread:
         <p className="text-text-muted">
           The server's embedder could not be built, so nothing says which chunks search serves.
         </p>
-      ) : unread("chunks") ? (
+      ) : c.live === null ? (
         <p className="text-text-muted">The chunks could not be counted.</p>
       ) : (
         <>
@@ -187,12 +224,17 @@ function ChunkSection({ result, unread }: { result: KnowledgeInspection; unread:
           )}
         </>
       )}
-      <FindingGroups findings={result.findings} noun="document" readFailed={unread("findings")} what="chunk" />
+      <FindingGroups
+        findings={result.findings}
+        noun="document"
+        readFailed={checksSkipped(result, CHUNK_CHECKS)}
+        what="chunk"
+      />
     </section>
   );
 }
 
-function IngestionSection({ result, unread }: { result: KnowledgeInspection; unread: Unread }) {
+function IngestionSection({ result, notes }: { result: KnowledgeInspection; notes: (section: string) => string[] }) {
   const i = result.ingestions;
   const x = result.extraction;
   return (
@@ -207,7 +249,7 @@ function IngestionSection({ result, unread }: { result: KnowledgeInspection; unr
             : "not configured"}
         . Another replica may be set otherwise; the jobs say what happened.
       </p>
-      {unread("ingestions") ? (
+      {i.sources === null ? (
         <p className="text-text-muted">The knowledge.ingest jobs could not be read.</p>
       ) : i.sources === 0 ? (
         <p className="text-text-muted">No knowledge.ingest job in the last 30 days.</p>
@@ -236,21 +278,23 @@ function IngestionSection({ result, unread }: { result: KnowledgeInspection; unr
           </ul>
         </div>
       )}
-      {unread("extraction") ? (
+      {x.documents === null ? (
         <p className="text-text-muted">The extraction coverage could not be read.</p>
       ) : (
-        x.documents !== null &&
         x.documents > 0 && (
-          <p className="text-text tabular" data-testid="docs-extraction">
-            Extraction coverage: {n(x.incomplete)} of {plural(x.documents, "ingested document")} not complete
-            {x.lost.length > 0 && ` · lost: ${x.lost.map((l) => `${l.name} ${fmtInt(l.live)}`).join(", ")}`}
-          </p>
+          <>
+            <p className="text-text tabular" data-testid="docs-extraction">
+              Extraction coverage: {n(x.incomplete)} of {plural(x.documents, "ingested document")} not complete
+              {x.lost.length > 0 && ` · lost: ${x.lost.map((l) => `${l.name} ${fmtInt(l.live)}`).join(", ")}`}
+            </p>
+            <Notes lines={notes("extraction")} testId="docs-extraction-note" />
+          </>
         )
       )}
       <FindingGroups
         findings={result.ingest_findings}
         noun="source"
-        readFailed={unread("ingestions") && unread("extraction")}
+        readFailed={i.sources === null && x.documents === null}
         what="job"
       />
     </section>
@@ -357,12 +401,18 @@ function JobLine({ jobs }: { jobs: SourceJobs }) {
   );
 }
 
-function ListedSection({ result, unread }: { result: KnowledgeInspection; unread: Unread }) {
+/** The listing and its jobs have no field a failed read leaves null, and the server writes
+ *  nothing but a failed read under their names in `skipped` ("listed: TimeoutError"). */
+function readFailed(result: KnowledgeInspection, section: "listed" | "listed.jobs"): boolean {
+  return result.skipped.some((s) => s.startsWith(`${section}: `));
+}
+
+function ListedSection({ result }: { result: KnowledgeInspection }) {
   const live = result.documents.live;
   return (
     <section aria-labelledby="docs-listed" className="space-y-2 text-sm">
       <SectionHeading id="docs-listed" level={3} label="Newest documents" count={result.listed.length || undefined} />
-      {unread("listed") ? (
+      {readFailed(result, "listed") ? (
         <p className="text-text-muted">The documents could not be listed.</p>
       ) : (
         <>
@@ -373,7 +423,7 @@ function ListedSection({ result, unread }: { result: KnowledgeInspection; unread
           )}
           <ul className="space-y-2" aria-label="Newest documents">
             {result.listed.map((d) => (
-              <DocumentRow key={d.source_uri} doc={d} unread={unread} />
+              <DocumentRow key={d.source_uri} doc={d} jobsUnread={readFailed(result, "listed.jobs")} />
             ))}
           </ul>
         </>
@@ -382,7 +432,7 @@ function ListedSection({ result, unread }: { result: KnowledgeInspection; unread
   );
 }
 
-function DocumentRow({ doc: d, unread }: { doc: InspectDocument; unread: Unread }) {
+function DocumentRow({ doc: d, jobsUnread }: { doc: InspectDocument; jobsUnread: boolean }) {
   const c = d.chunks;
   const x = d.extraction;
   return (
@@ -428,7 +478,7 @@ function DocumentRow({ doc: d, unread }: { doc: InspectDocument; unread: Unread 
           <JobLine jobs={d.jobs} />
         </p>
       ) : (
-        unread("listed.jobs") && <p className="text-xs text-text-muted">Jobs: not read</p>
+        jobsUnread && <p className="text-xs text-text-muted">Jobs: not read</p>
       )}
     </li>
   );
