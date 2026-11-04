@@ -45,7 +45,7 @@ async def test_bulk_gates_match_when_the_hash_comes_back_as_bytes(
             if "content_sha256 IN" in sql:  # identity lookup
                 return [
                     {
-                        "content_sha256": sha_bytes,
+                        "head_sha": sha_bytes,
                         "memory_key": "user_task_branch",
                         "memory_id": "mid-1",
                     }

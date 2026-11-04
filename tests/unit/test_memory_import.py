@@ -81,8 +81,8 @@ class _StoreCH(StubCH):
     first one's rows), versions merged as ReplacingMergeTree merges them:
 
     - the live-row lookup: each asked identity key's newest version, unless a tombstone;
-    - identity dedup: per (content hash, key) of the identity's rows holding an asked hash,
-      the newest version, kept when it is live and holds its fact;
+    - identity dedup: each identity key's newest version, kept when it holds an asked
+      hash and is live;
     - the import's own read (`key_heads`): each asked key's newest version across
       sessions, a tombstone or a superseded row included.
 
@@ -129,12 +129,17 @@ class _StoreCH(StubCH):
             asked = [r for r in self._stored() if _identity(r) in wanted]
             return [r for r in _newest(asked, _identity) if r["tombstoned_at"] is None]
         if "content_sha256 IN" in sql:
-            holding = [r for r in self._stored(params) if r["content_sha256"] in params["shas"]]
-            heads = _newest(holding, lambda r: (r["content_sha256"], r["memory_key"]))
+            heads = _newest(self._stored(params), _identity)
             return [
-                {k: r[k] for k in ("content_sha256", "memory_key", "memory_id")}
+                {
+                    "head_sha": r["content_sha256"],
+                    "memory_key": r["memory_key"],
+                    "memory_id": r["memory_id"],
+                }
                 for r in heads
-                if r["tombstoned_at"] is None and r["status"] in LIVE_STATUSES
+                if r["content_sha256"] in params["shas"]
+                and r["tombstoned_at"] is None
+                and r["status"] in LIVE_STATUSES
             ]
         return []
 
