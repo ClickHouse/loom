@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.auth.context import OrgScopeFilter
+
 _ROWS_SQL = """
 SELECT namespace, memory_type, count() AS n
 FROM loom.memory FINAL
@@ -25,13 +27,15 @@ GROUP BY namespace, memory_type
 ORDER BY namespace, memory_type
 """
 
+# `namespace` in the outer WHERE is `e.namespace`, by the SELECT alias, so one
+# scope predicate serves the ledger and the `loom.memory` subquery alike.
 _READS_SQL = """
 SELECT e.namespace AS namespace, e.agent AS agent, e.actor AS actor,
        count() AS calls, uniq(k) AS distinct_keys, max(e.ts) AS last_read
 FROM loom.memory_exposures AS e
 ARRAY JOIN e.returned_keys AS k
 WHERE e.org = {org:String}
-  AND e.ts > now() - INTERVAL {hours:UInt32} HOUR__NS_E__
+  AND e.ts > now() - INTERVAL {hours:UInt32} HOUR__NS__
   AND (e.namespace, k) IN (
       SELECT namespace, memory_key FROM loom.memory FINAL
       WHERE org = {org:String} AND user_id = {uid:String}
@@ -57,32 +61,32 @@ ORDER BY m.namespace
 """
 
 
-def _scope(namespaces: list[str] | None, alias: str = "") -> tuple[str, dict[str, Any]]:
-    """The namespace predicate, or nothing when the caller may read every
-    namespace of the org ('*' in the token's claim)."""
-    if not namespaces or "*" in namespaces:
-        return "", {}
-    col = f"{alias}namespace" if alias else "namespace"
-    return f" AND {col} IN {{nss:Array(String)}}", {"nss": sorted(set(namespaces))}
+def namespace_scope(namespaces: list[str]) -> OrgScopeFilter:
+    """The predicate bounding the report to `namespaces`; an empty list is an
+    inaccessible scope, never an unbounded one."""
+    return OrgScopeFilter(
+        accessible=bool(namespaces),
+        where=" AND namespace IN {nss:Array(String)}",
+        params={"nss": sorted(set(namespaces))},
+    )
 
 
 def build_queries(
-    *, org: str, user_id: str, namespaces: list[str] | None, since_hours: int, limit: int
+    *, org: str, user_id: str, scope: OrgScopeFilter, since_hours: int, limit: int
 ) -> tuple[list[tuple[str, dict[str, Any]]], dict[str, Any]]:
     """The three statements and their shared parameters. Pure."""
-    ns, ns_params = _scope(namespaces)
-    ns_e, _ = _scope(namespaces, alias="e.")
     params: dict[str, Any] = {
         "org": org,
         "uid": user_id,
         "hours": max(1, int(since_hours)),
         "lim": max(1, int(limit)),
-        **ns_params,
+        **scope.params,
     }
+    ns = scope.where
     return (
         [
             (_ROWS_SQL.replace("__NS__", ns), params),
-            (_READS_SQL.replace("__NS__", ns).replace("__NS_E__", ns_e), params),
+            (_READS_SQL.replace("__NS__", ns), params),
             (_USAGE_SQL.replace("__NS__", ns), params),
         ],
         params,
@@ -93,18 +97,21 @@ async def owner_report(
     *,
     org: str,
     user_id: str,
-    namespaces: list[str] | None,
+    scope: OrgScopeFilter,
     since_hours: int = 720,
     limit: int = 50,
     ch: Any | None = None,
 ) -> dict[str, Any]:
     """{rows: [...], reads: [...], usage: [...]} for one owner. Each list is a
-    list of plain dicts; empty lists when the user owns nothing."""
+    list of plain dicts; empty lists when the user owns nothing, and no
+    statement runs when `scope` reaches no namespace."""
     from server.core.ch import get_client
 
+    if not scope.accessible:
+        return {"rows": [], "reads": [], "usage": []}
     ch = ch or get_client()
     (rows_q, reads_q, usage_q), _ = build_queries(
-        org=org, user_id=user_id, namespaces=namespaces, since_hours=since_hours, limit=limit
+        org=org, user_id=user_id, scope=scope, since_hours=since_hours, limit=limit
     )
     rows = [dict(r) for r in await ch.query_all(rows_q[0], rows_q[1])]
     reads = [dict(r) for r in await ch.query_all(reads_q[0], reads_q[1])]
@@ -112,4 +119,4 @@ async def owner_report(
     return {"rows": rows, "reads": reads, "usage": usage}
 
 
-__all__ = ["build_queries", "owner_report"]
+__all__ = ["build_queries", "namespace_scope", "owner_report"]

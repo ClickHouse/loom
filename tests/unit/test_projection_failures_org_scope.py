@@ -38,10 +38,16 @@ def org_admin_with_hidden(monkeypatch: pytest.MonkeyPatch) -> RecordingCH:
     ) -> tuple[str, dict[str, Any]]:
         return " AND (NOT startsWith(namespace, {col_prefix:String}))", {"col_prefix": "col-"}
 
+    async def plain(org: str, ns: str) -> bool:
+        return ns == "restricted-ns"
+
     monkeypatch.setattr(ctx, "restricted_namespaces_hidden_from", hidden)
     monkeypatch.setattr(ctx, "collection_clause", readable_collections)
+    monkeypatch.setattr("server.auth.authz.may_be_restricted", plain)
     return (
         RecordingCH()
+        # the gate reads the admin's grants for the namespace its claim names
+        .on("FROM loom.namespace_grants", [])
         .on("FROM loom.memory_projection_failures", [])
         .install(monkeypatch, "server.memory.app.projection_failures")
     )
@@ -66,7 +72,9 @@ async def test_list_leaves_out_a_restricted_namespace(org_admin_with_hidden: Rec
     await handle_projection_failures_list(
         ProjectionFailureListInput(org="dev", namespace="restricted-ns")
     )
-    ((sql, params),) = [(c.sql, c.params) for c in org_admin_with_hidden.calls]
+    ((sql, params),) = [
+        (c.sql, c.params) for c in org_admin_with_hidden.statements("memory_projection_failures")
+    ]
     assert _excludes_restricted(sql, params)
     assert params["ns"] == "restricted-ns"
 
@@ -78,7 +86,9 @@ async def test_retry_reads_only_the_scope(org_admin_with_hidden: RecordingCH) ->
 
     out = await handle_projection_failures_retry(ProjectionFailureRetryInput(org="dev"))
     assert out.results == []
-    ((sql, params),) = [(c.sql, c.params) for c in org_admin_with_hidden.calls]
+    ((sql, params),) = [
+        (c.sql, c.params) for c in org_admin_with_hidden.statements("memory_projection_failures")
+    ]
     assert _excludes_restricted(sql, params)
 
 
@@ -92,7 +102,9 @@ async def test_resolve_changes_only_the_scope(org_admin_with_hidden: RecordingCH
             org="dev", failure_ids=["7d1b0c52-0000-4000-8000-000000000001"]
         )
     )
-    ((sql, params),) = [(c.sql, c.params) for c in org_admin_with_hidden.calls]
+    ((sql, params),) = [
+        (c.sql, c.params) for c in org_admin_with_hidden.statements("memory_projection_failures")
+    ]
     assert sql.lstrip().startswith("ALTER TABLE loom.memory_projection_failures")
     assert _excludes_restricted(sql, params)
 
@@ -125,7 +137,7 @@ async def test_an_unreadable_classification_reads_and_changes_nothing(
             )
         )
         assert resolved.resolved == 0
-    assert org_admin_with_hidden.calls == []
+    assert org_admin_with_hidden.statements("memory_projection_failures") == []
 
 
 @pytest.mark.asyncio
@@ -181,6 +193,8 @@ async def test_a_platform_admin_is_held_to_the_restricted_rule_too(
     monkeypatch.setattr(ctx, "restricted_namespaces_hidden_from", hidden)
     ch = (
         RecordingCH()
+        # the gate reads the admin's grants for the namespace its claim names
+        .on("FROM loom.namespace_grants", [])
         .on("FROM loom.memory_projection_failures", [])
         .install(monkeypatch, "server.memory.app.projection_failures")
     )
