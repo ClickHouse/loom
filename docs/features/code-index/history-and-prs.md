@@ -67,7 +67,32 @@ so.
 
 `code.review_brief` reads the brief the ingest built when the PR merged: the class of
 every changed file, the touched functions with their callers and fan-in, the tests that
-cover them, and what reviewers said. `code.conventions` states the repository's
+cover them, and what reviewers said.
+
+At the `standard` and `full` tiers the brief also has a `rationale` section: the design
+decisions and constraints in the repository's trunk code namespace whose `files` or code
+links touch the PR's files. It is read on every call and never stored with the brief, so a
+decision recorded or changed after the merge shows up on the next read. It reads the first
+`LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` (10) changed files, source files first, and at
+most `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` (8) rows, only when the caller may read the
+trunk namespace. It serves whole rows up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS`
+(250) tokens, constraints first; the first row is always served. Each row carries the line
+the pre-edit block prints for it (value, source, `(pinned)`, a code-change note),
+`pinned`, `code_state` and a `verdict`:
+
+| Row verdict | Meaning                                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------------------------- |
+| `check`     | the diff adds a backticked name from the row's `Rejected:` options, or a setting name a constraint states (`names`) |
+| `clear`     | the row names such code and the diff adds none of it                                                                |
+| `unknown`   | the row names such code and the diff could not be read here                                                         |
+| `""`        | the row names nothing to check                                                                                      |
+
+The section's verdict is `check` when any row says so, then `unknown`, `clear`, or `none`
+when no decision touches the files. The check is a whole-word match on added lines, so
+`check` means "read this row against the diff", not a violation found. The `Applies to`
+clause, which names the code the row governs, is not checked.
+
+`code.conventions` states the repository's
 recurring maintainer checks as facts over one PR's diff (`pr_number`, `head_sha`,
 `files` or `diff`), never as opinions; `rules` narrows which checks run. The diff it
 reads is capped at `LOOM_CODE_CONVENTIONS_DIFF_MAX_BYTES`.

@@ -31,6 +31,7 @@ from server.code.domain.index.blame_range import sha_text
 from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
 from server.memory.app.recall_credit import is_measurement_label
+from server.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +112,18 @@ async def handle_code_review_brief(input: Any) -> Any:
     tokens_used, budget = 0, rb.TIER_BUDGET_TOKENS.get(tier, rb.TIER_BUDGET_TOKENS[rb.DEFAULT_TIER])
     decisions: dict[str, bool] = {}
     if payload is not None:
+        served = payload
+        if rb.RATIONALE in rb.tier_sections(tier, list(input.sections)):
+            # Read now and served beside the stored sections, never written into them.
+            with code_span("review_brief.rationale") as sp:
+                rationale = await _rationale_section(
+                    org, ns, payload, pr_number=pr_number, is_open=is_open
+                )
+                span_attrs(sp, results=int(rationale["rows_total"]))
+            stored = dict(payload.get("sections") or {})
+            served = {**payload, "sections": {**stored, rb.RATIONALE: rationale}}
         sections, tokens_used, budget = rb.serve(
-            payload,
+            served,
             tier=tier,
             requested=list(input.sections),
             budget=int(input.token_budget or 0),
@@ -259,6 +270,65 @@ async def _payload_for(
             )
         span_attrs(sp, results=int(payload is not None))
     return payload, source
+
+
+async def _rationale_section(
+    org: str, ns: str, payload: dict[str, Any], *, pr_number: int, is_open: bool
+) -> dict[str, Any]:
+    """The decisions and constraints the PR's files touch, from the repository's trunk
+    code namespace as they are now, with the token check against the PR's diff (read only
+    when a row has a name to check). Source paths are read first, at most
+    `code_review_brief_rationale_paths` of them."""
+    from server.code.app.memory_links import trunk_namespace
+    from server.memory.app.code_plane_reads import decisions_for_paths
+
+    most = settings.code_review_brief_rationale_paths
+    rows = ((payload.get("sections") or {}).get("paths") or {}).get("rows") or []
+    paths = [str(r["path"]) for r in sorted(rows, key=lambda r: r.get("class") != "src")]
+    try:
+        found = await decisions_for_paths(
+            org,
+            trunk_namespace(org, ns) or ns,
+            paths[:most],
+            limit=settings.code_review_brief_rationale_rows,
+        )
+        diff: str | None = ""
+        cut = False
+        if any(rb.checked_names(d["text"], constraint="constraint" in d["tags"]) for d in found):
+            diff, cut = await _pr_diff(org, ns, payload, pr_number=pr_number, is_open=is_open)
+    except Exception as e:  # noqa: BLE001 — the stored sections serve without this one
+        logger.warning("code.review_brief: rationale read failed: %s", e)
+        return rb.failed_section("decisions_for_paths", e)
+    return rb.rationale_section(found, diff, diff_cut=cut, paths_left=len(paths) - most)
+
+
+async def _pr_diff(
+    org: str, ns: str, payload: dict[str, Any], *, pr_number: int, is_open: bool
+) -> tuple[str | None, bool]:
+    """(diff, cut) of the briefed PR: the diff the caller posted, else the mirror's diff
+    of the open head against its merge-base or of the merge commit against its first
+    parent, cut at MAX_DIFF_CHARS bytes; (None, False) when it cannot be read here."""
+    from server.code.app.index import gitrepo
+    from server.code.domain.index.repos import repo_for_namespace
+
+    img = po.posted(pr_number) if is_open else None
+    if img is not None:
+        return (img.diff or None), False
+    git_dir, _gap = await history_dir(repo_for_namespace(org, ns))
+    if payload.get("overlay"):
+        base, head = str(payload.get("base_sha") or ""), str(payload.get("head_sha") or "")
+    else:
+        head = str(payload.get("merge_sha") or "")
+        base = f"{head}^1" if head else ""
+    if not (git_dir and base and head):
+        return None, False
+    try:
+        return await gitrepo.run_bounded(
+            git_dir, "diff", "--no-renames", base, head, max_bytes=rb.MAX_DIFF_CHARS
+        )
+    except Exception as e:  # noqa: BLE001 — a diff that cannot be read leaves the check unknown
+        logger.info("code.review_brief: diff for the rationale check of PR %s: %s", pr_number, e)
+        return None, False
 
 
 def _overlay_added(payload: dict[str, Any] | None) -> int:

@@ -1393,7 +1393,7 @@ export interface CodeReviewBriefInput {
   consumer?: string;
   pr_number?: number;
   merge_sha?: string;
-  sections?: Array<"paths" | "symbols" | "tests" | "settings" | "history" | "blame" | "qa" | "risk" | "do_not_flag">;
+  sections?: Array<"paths" | "symbols" | "tests" | "settings" | "history" | "blame" | "qa" | "risk" | "do_not_flag" | "rationale">;
   tier?: "trivial" | "standard" | "full";
   token_budget?: number;
   store?: boolean;

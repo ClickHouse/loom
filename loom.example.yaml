@@ -2103,6 +2103,17 @@ settings:
   # (the mirror may have fetched it); a hit is kept. [live]
   # code_review_brief_mirror_miss_ttl_s: 600.0
 
+  # Changed paths the review brief's `rationale` section reads decisions for, source
+  # paths first: one memory.for_file read each. [live]
+  # code_review_brief_rationale_paths: 10
+
+  # Decision and constraint rows the `rationale` section reads. [live]
+  # code_review_brief_rationale_rows: 8
+
+  # Tokens of whole rows the `rationale` section serves; its first row is always served.
+  # [live]
+  # code_review_brief_rationale_tokens: 250
+
   # ===== context.pack, context offload, session briefs and the mentor's hints =====
 
   # context.offload: largest single parked tool result, in bytes. [live]

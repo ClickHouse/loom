@@ -35,10 +35,14 @@ tokens, truncated}`:
                 author's revert prior, and `author_revert_prior` itself, both
                 scored from the fit the weekly pass stored; ranking signals,
                 never a gate, so no `decisions` bit reads them;
-- `do_not_flag` — reserved; always `not_built`.
+- `do_not_flag` — reserved; always `not_built`;
+- `rationale` — the design decisions and constraints of the repository's trunk code
+                namespace whose files or code links touch the PR's files, each with a
+                token check against the diff; read on every call and never stored
+                (`rationale_section`).
 
 Tiers select sections and a token budget — trivial 700 (paths + symbols),
-standard 2,500 (+ tests, settings, history, risk), full 4,000 (+ blame,
+standard 2,500 (+ tests, settings, history, risk, rationale), full 4,000 (+ blame,
 qa) — and
 the budget is applied across the tier's sections by WHOLE rows, largest
 section first; a trimmed section keeps its verdict and says `truncated`.
@@ -60,6 +64,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.code.domain.anchor import bare_name, mentions
+from server.settings import settings
+
 logger = logging.getLogger(__name__)
 
 PAYLOAD_VERSION = 1
@@ -75,14 +82,27 @@ SECTION_ORDER: tuple[str, ...] = (
     "risk",
     "do_not_flag",
 )
+# A section each read computes and no build stores: the decisions it lists change after
+# the merge, and a stored copy would serve them as they were.
+RATIONALE = "rationale"
+SERVED_ORDER: tuple[str, ...] = (*SECTION_ORDER, RATIONALE)
 TIERS: dict[str, tuple[str, ...]] = {
     "trivial": ("paths", "symbols", "do_not_flag"),
-    "standard": ("paths", "symbols", "tests", "settings", "history", "risk", "do_not_flag"),
-    "full": SECTION_ORDER,
+    "standard": (
+        "paths",
+        "symbols",
+        "tests",
+        "settings",
+        "history",
+        "risk",
+        "do_not_flag",
+        RATIONALE,
+    ),
+    "full": SERVED_ORDER,
 }
-# Sections a stored payload may lack (built before the section existed): a read serves
-# them only from a payload that has them, or when asked for by name.
-OPTIONAL_SECTIONS: tuple[str, ...] = ("risk",)
+# Sections a stored payload may lack (built before the section existed, or never stored):
+# a read serves them only from a payload that has them, or when asked for by name.
+OPTIONAL_SECTIONS: tuple[str, ...] = ("risk", RATIONALE)
 TIER_BUDGET_TOKENS: dict[str, int] = {"trivial": 700, "standard": 2500, "full": 4000}
 DEFAULT_TIER = "standard"
 
@@ -306,17 +326,17 @@ def tier_sections(
     present: set[str] | None = None,
 ) -> list[str]:
     """The sections a read serves: the tier's set, narrowed to `requested`
-    when given (unknown names ignored), in SECTION_ORDER. An optional
-    section (`risk`) is served from a payload that has it, or when asked for
-    by name — never as a placeholder on a brief built before it existed."""
+    when given (unknown names ignored), in SERVED_ORDER. An optional
+    section (`risk`, `rationale`) is served from a payload that has it, or when
+    asked for by name — never as a placeholder on a brief built before it existed."""
     allowed = set(TIERS.get(tier, TIERS[DEFAULT_TIER]))
     if requested:
-        allowed &= {s for s in requested if s in SECTION_ORDER}
+        allowed &= {s for s in requested if s in SERVED_ORDER}
     else:
         for opt in OPTIONAL_SECTIONS:
             if present is not None and opt not in present:
                 allowed.discard(opt)
-    return [s for s in SECTION_ORDER if s in allowed]
+    return [s for s in SERVED_ORDER if s in allowed]
 
 
 def apply_budget(
@@ -444,6 +464,116 @@ def blame_verdict(rows: list[dict[str, Any]], *, ranges: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Pure: the rationale section
+# ---------------------------------------------------------------------------
+
+_REJECTED = re.compile(r"\bRejected:(.*)", re.S)
+_APPLIES_TO = "Applies to "
+_SETTING_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+")
+
+
+def checked_names(text: str, *, constraint: bool) -> list[str]:
+    """The names the token check looks for in a PR's diff: the backticked names of a
+    row's rejected options and, for a constraint, the setting names it states. The
+    closing `Applies to` clause names the code the row governs, which a PR touching that
+    code names anyway, so it is not read."""
+    head = text.split(_APPLIES_TO, 1)[0]
+    names: list[str] = []
+    rejected = _REJECTED.search(head)
+    if rejected:
+        names += [m.name for m in mentions(rejected.group(1)) if not m.in_prose]
+    if constraint:
+        names += [m.name for m in mentions(head) if _SETTING_NAME.fullmatch(m.name)]
+    return list(dict.fromkeys(names))
+
+
+def added_text(diff: str) -> str:
+    """The lines a unified diff adds, without their `+`."""
+    return "\n".join(
+        line[1:]
+        for line in diff.splitlines()
+        if line.startswith("+") and not line.startswith(("+++ b/", "+++ /dev/null"))
+    )
+
+
+def names_in(added: str, names: list[str]) -> list[str]:
+    """The `names` the added text spells as a whole word: the name itself, or its last
+    part when that is four characters or more (`DB::HashSet` written as `HashSet`)."""
+    found = []
+    for name in names:
+        forms = {name}
+        if len(bare_name(name)) >= 4:
+            forms.add(bare_name(name))
+        if any(re.search(rf"(?<!\w){re.escape(f)}(?!\w)", added) for f in forms):
+            found.append(name)
+    return found
+
+
+def rationale_section(
+    decisions: list[dict[str, Any]],
+    diff: str | None,
+    *,
+    diff_cut: bool = False,
+    paths_left: int = 0,
+) -> dict[str, Any]:
+    """The `rationale` section over the rows `decisions_for_paths` read and the PR's diff
+    (None: it could not be read). A row whose checked names the diff adds says `check`;
+    one with checked names none of which it adds says `clear`; one with nothing to check
+    says ''. Constraints first, `check` rows first among them, whole rows up to
+    `code_review_brief_rationale_tokens` (the first always); the verdict reads every row:
+    check | unknown (a diff that could not be read) | clear | none."""
+    added = added_text(diff) if diff is not None else None
+    rows = []
+    for d in decisions:
+        constraint = "constraint" in d["tags"]
+        names = checked_names(d["text"], constraint=constraint)
+        found = names_in(added, names) if names and added is not None else []
+        if not names:
+            verdict = ""
+        elif added is None:
+            verdict = "unknown"
+        else:
+            verdict = "check" if found else "clear"
+        row = {
+            "memory_key": d["memory_key"],
+            "kind": "constraint" if constraint else "decision",
+            "pinned": bool(d["pinned"]),
+            "code_state": d["code_state"],
+            "verdict": verdict,
+            "line": d["line"],
+        }
+        if found:
+            row["names"] = found
+        rows.append(row)
+    rows.sort(key=lambda r: (r["kind"] != "constraint", r["verdict"] != "check"))
+    verdicts = {r["verdict"] for r in rows}
+    if not rows:
+        verdict = "none"
+    elif "check" in verdicts:
+        verdict = "check"
+    elif "unknown" in verdicts:
+        verdict = "unknown"
+    else:
+        verdict = "clear"
+    causes = []
+    if "unknown" in verdicts:
+        causes.append("diff_unread")
+    if diff_cut:
+        causes.append("diff_cut")
+    if paths_left > 0:
+        causes.append(f"paths_not_read:{paths_left}")
+    kept = rows[:1]
+    for r in rows[1:]:
+        if estimate_tokens([*kept, r]) > settings.code_review_brief_rationale_tokens:
+            break
+        kept.append(r)
+    out = section(SERVED, verdict=verdict, epistemic="lower_bound", causes=causes, rows=kept)
+    out["rows_total"] = len(rows)
+    out["truncated"] = len(kept) < len(rows)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Assembly
 # ---------------------------------------------------------------------------
 
@@ -491,18 +621,24 @@ __all__ = [
     "NOT_BOUND",
     "NOT_BUILT",
     "OPTIONAL_SECTIONS",
+    "RATIONALE",
     "RESTRICTED",
     "SECTION_ORDER",
+    "SERVED_ORDER",
     "SERVED",
     "TIERS",
     "TIER_BUDGET_TOKENS",
     "BriefInputs",
     "DiffFacts",
+    "added_text",
     "apply_budget",
     "canonical",
+    "checked_names",
     "decisions_of",
     "deleted_ranges",
+    "names_in",
     "parse_diff",
+    "rationale_section",
     "serve",
     "source_stems",
     "tier_sections",

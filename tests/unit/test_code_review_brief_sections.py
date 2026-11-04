@@ -142,7 +142,7 @@ def test_section_verdicts_are_decisions_not_lists() -> None:
 
 def test_tiers_select_sections_and_budget_trims_whole_rows_largest_first() -> None:
     assert rb.tier_sections("trivial", []) == ["paths", "symbols", "do_not_flag"]
-    # `risk` rides the standard tier when the payload has it
+    # `risk` and `rationale` ride the standard tier when the payload has them
     assert rb.tier_sections("standard", []) == [
         "paths",
         "symbols",
@@ -151,6 +151,7 @@ def test_tiers_select_sections_and_budget_trims_whole_rows_largest_first() -> No
         "history",
         "risk",
         "do_not_flag",
+        "rationale",
     ]
     assert rb.tier_sections("standard", [], present={"paths", "symbols"}) == [
         "paths",
@@ -160,7 +161,7 @@ def test_tiers_select_sections_and_budget_trims_whole_rows_largest_first() -> No
         "history",
         "do_not_flag",
     ]
-    assert rb.tier_sections("full", []) == list(rb.SECTION_ORDER)
+    assert rb.tier_sections("full", []) == list(rb.SERVED_ORDER)
     assert rb.tier_sections("standard", ["blame", "tests", "nonsense"]) == ["tests"]
     assert rb.tier_sections("bogus", []) == rb.tier_sections("standard", [])
 
@@ -653,7 +654,7 @@ async def test_miss_builds_once_and_stores_then_the_next_read_is_a_point(
     assert wired["built"][0]["changed_paths"] == PATHS
     assert [t for t, _ in repo.inserted] == ["code_review_briefs"]
     assert out.decisions["randomized_setting"] is True and out.token_budget == 4000
-    assert set(out.sections) == set(rb.SECTION_ORDER) and out.tokens_used <= 4000
+    assert set(out.sections) == set(rb.SERVED_ORDER) and out.tokens_used <= 4000
     assert wired["traces"][-1]["route"] == "brief_built" and wired["traces"][-1]["abstain"] is False
     # the row it stored is what the next read serves, without a build
     stored_row = repo.inserted[0][1][0]
@@ -668,6 +669,106 @@ async def test_miss_builds_once_and_stores_then_the_next_read_is_a_point(
     # a merge_sha-only read passes the sha through, lower-cased
     await h.handle_code_review_brief(CodeReviewBriefInput(merge_sha=SHA.upper()))
     assert repo2.reads[-1] == (0, SHA)
+
+
+@pytest.mark.asyncio
+async def test_rationale_is_read_on_every_call_and_never_stored(
+    wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import code_plane_reads
+
+    reads: list[tuple[str, list[str]]] = []
+    diffs: list[int] = []
+    rule = "Keep `new_flag` off in the history file: CI randomizes it. Applies to `DB::Settings`."
+
+    async def _decisions(org: str, trunk: str, paths: Any, *, limit: int) -> list[dict[str, Any]]:
+        reads.append((trunk, list(paths)))
+        return [
+            {
+                "memory_key": "design/new-flag",
+                "tags": ["decision", "constraint"],
+                "pinned": False,
+                "code_state": "fresh",
+                "line": "- design/new-flag [constraint, decision]: Keep `new_flag` off …",
+                "text": rule,
+            }
+        ]
+
+    async def _diff(org: str, ns: str, payload: Any, **kw: Any) -> tuple[str, bool]:
+        diffs.append(kw["pr_number"])
+        return DIFF, False
+
+    from server.code.app import memory_links
+
+    monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
+    monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _decisions)
+    monkeypatch.setattr(h, "_pr_diff", _diff)
+    repo = _HandlerRepo(stored=None)
+    wired["repo"] = repo
+    out = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354))
+    sec = out.sections["rationale"]
+    assert sec["verdict"] == "check" and sec["rows"][0]["names"] == ["new_flag"]
+    # source paths first; the stored payload carries no rationale
+    assert reads == [(NS, [*PATHS[:3], PATHS[3]])] and diffs == [117354]
+    stored_row = repo.inserted[0][1][0]
+    assert "rationale" not in json.loads(stored_row["payload"])["sections"]
+    assert "rationale" not in stored_row["sections"]
+    # the next read is a point read that reads the decisions again
+    wired["repo"] = _HandlerRepo(stored={**stored_row})
+    out2 = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354))
+    assert out2.source == "precomputed" and out2.sections["rationale"]["verdict"] == "check"
+    assert len(reads) == 2
+    # a tier without the section reads nothing for it
+    await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354, tier="trivial"))
+    await h.handle_code_review_brief(
+        CodeReviewBriefInput(pr_number=117354, sections=["paths"], tier="full")
+    )
+    assert len(reads) == 2
+
+
+@pytest.mark.asyncio
+async def test_rationale_reads_the_paths_and_rows_its_settings_allow(
+    wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.app import memory_links
+    from server.memory.app import code_plane_reads
+    from server.settings import settings
+
+    calls: list[tuple[list[str], int]] = []
+
+    async def _decisions(org: str, trunk: str, paths: Any, *, limit: int) -> list[dict[str, Any]]:
+        calls.append((list(paths), limit))
+        return []
+
+    monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
+    monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _decisions)
+    monkeypatch.setattr(settings, "code_review_brief_rationale_paths", 2)
+    monkeypatch.setattr(settings, "code_review_brief_rationale_rows", 3)
+    wired["repo"] = _HandlerRepo(stored=None)
+    out = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354))
+    assert calls == [(PATHS[:2], 3)]
+    sec = out.sections["rationale"]
+    assert sec["verdict"] == "none" and sec["causes"] == ["paths_not_read:2"]
+
+
+@pytest.mark.asyncio
+async def test_rationale_fails_open_to_a_failed_section(
+    wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import code_plane_reads
+
+    async def _boom(*a: Any, **kw: Any) -> list[dict[str, Any]]:
+        raise RuntimeError("down")
+
+    from server.code.app import memory_links
+
+    monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
+    monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _boom)
+    wired["repo"] = _HandlerRepo(stored=None)
+    out = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354))
+    assert out.sections["rationale"]["status"] == rb.FAILED
+    assert out.sections["rationale"]["causes"] == ["decisions_for_paths:RuntimeError"]
+    assert out.sections["paths"]["status"] == rb.SERVED
 
 
 @pytest.mark.asyncio

@@ -1356,6 +1356,26 @@
           "type": "number",
           "description": "Seconds before the review brief reads a mirror again for an object it did not have (the mirror may have fetched it); a hit is kept."
         },
+        "code_review_brief_rationale_paths": {
+          "default": 10,
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Changed paths the review brief's `rationale` section reads decisions for, source paths first: one memory.for_file read each."
+        },
+        "code_review_brief_rationale_rows": {
+          "default": 8,
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Decision and constraint rows the `rationale` section reads."
+        },
+        "code_review_brief_rationale_tokens": {
+          "default": 250,
+          "minimum": 50,
+          "type": "integer",
+          "description": "Tokens of whole rows the `rationale` section serves; its first row is always served."
+        },
         "code_risk_annotations": {
           "default": true,
           "type": "boolean",

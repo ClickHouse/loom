@@ -1,6 +1,7 @@
-"""Memory reads the code plane serves from: the memories linked to a symbol card and
-the directories a user's memories name. The statements are
-`server.memory.store.code_plane_reads` and `server.memory.store.code_links`."""
+"""Memory reads the code plane serves from: the memories linked to a symbol card, the
+decisions that govern a set of files, and the directories a user's memories name. The
+statements are `server.memory.store.code_plane_reads`, `server.memory.store.code_links`
+and those of `memory.for_file`."""
 
 from __future__ import annotations
 
@@ -11,6 +12,8 @@ from typing import Any
 from server.code.domain.anchor import Definition, bare_name, local_name
 from server.code.domain.declaration import fingerprint_version
 from server.identity.domain.read_scope import ReadFilters
+from server.memory.domain.code_change import worst
+from server.memory.domain.decision_schema import DECISION_TAG
 from server.memory.store import code_links as links_store
 from server.memory.store import code_plane_reads as reads
 from server.memory.store.code_links import LinkRow
@@ -107,6 +110,50 @@ async def lessons_for_symbol(
             },
         )
     return [lesson for _, lesson in sorted(out.values(), key=lambda x: x[0])][:limit]
+
+
+async def decisions_for_paths(
+    org: str, trunk_ns: str, paths: Sequence[str], *, limit: int
+) -> list[dict[str, Any]]:
+    """The active decision and constraint rows of the trunk code namespace `trunk_ns`
+    whose `files[]` or code links touch `paths`: constraints first, then pinned, then by
+    confidence, at most `limit`. Each is a `memory.for_file` hit with `code_state` the
+    worst over its links on every path, `line` (the pre-edit block's line, the value cut)
+    and `text` (the whole value). Empty when the caller may not read `trunk_ns`."""
+    from server.memory.api.models_for_file import MemoryForFileInput
+    from server.memory.app.code_link_reads import readable_namespaces
+    from server.memory.app.for_file import handle_memory_for_file, listing_line, value_text
+
+    if not trunk_ns or not paths or trunk_ns not in await readable_namespaces(org, {trunk_ns}):
+        return []
+    # One pre-edit read per path. The read follows code links only into the trunk an
+    # extra namespace names, so the trunk is named there too (it is not read twice).
+    reads = await asyncio.gather(
+        *(
+            handle_memory_for_file(
+                MemoryForFileInput(
+                    org=org,
+                    namespace=trunk_ns,
+                    path=p,
+                    tags=[DECISION_TAG, "constraint"],
+                    top_k=limit,
+                    include_conflicted=False,
+                    extra_namespaces=[trunk_ns],
+                )
+            )
+            for p in dict.fromkeys(paths)
+        )
+    )
+    rows: dict[str, dict[str, Any]] = {}  # by writer and key: one row found on several paths
+    for out in reads:
+        for hit in out.hits:
+            row = rows.setdefault(f"{hit.agent}/{hit.memory_key}", hit.model_dump())
+            row["code_state"] = worst([row["code_state"], hit.code_state])
+    ranked = sorted(
+        rows.values(),
+        key=lambda r: ("constraint" not in r["tags"], not r["pinned"], -r["confidence"]),
+    )
+    return [r | {"line": listing_line(r), "text": value_text(r)} for r in ranked[:limit]]
 
 
 async def _definitions_at(

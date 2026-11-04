@@ -92,7 +92,7 @@ def _whole_bytes() -> int:
     return settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN * _PAIR_ESCAPE_CHARS
 
 
-def _readable(hit: dict[str, Any]) -> str:
+def value_text(hit: dict[str, Any]) -> str:
     """The value as text: the stored JSON decoded (a string as written, anything else on one
     line), and a cut string value from its opening quote, its escapes undone up to the cut."""
     raw = str(hit.get("value") or "")
@@ -166,13 +166,14 @@ def _is_whole(hit: dict[str, Any]) -> bool:
     return _is_decision(hit) or "constraint" in (hit.get("tags") or [])
 
 
-def _body(hit: dict[str, Any], *, decision: bool) -> str:
-    """The value on one line, capped unless the row prints whole; a decision's source
-    follows it whole, so the citation still resolves through knowledge.get."""
-    if _is_whole(hit):
-        text = " ".join(_readable(hit).split())
+def _body(hit: dict[str, Any], *, decision: bool, whole: bool = True) -> str:
+    """The value on one line, capped unless the row prints whole (`whole` lets a decision
+    or constraint do so); a decision's source follows it whole, so the citation still
+    resolves through knowledge.get."""
+    if whole and _is_whole(hit):
+        text = " ".join(value_text(hit).split())
     else:
-        text = _one_line(_readable(hit), _LINE_CHARS)
+        text = _one_line(value_text(hit), _LINE_CHARS)
     # Only a line break would break the one-line-per-row layout; spaces stay as cited.
     source = " ".join(str(hit.get("source_resource_id") or "").splitlines())
     if decision and source:
@@ -272,12 +273,18 @@ def _whole_left_out_line(left: list[dict[str, Any]], home: str) -> str:
     )
 
 
-def _row_line(h: dict[str, Any], now: datetime, home: str) -> str:
+def _row_line(h: dict[str, Any], now: datetime, home: str, *, whole: bool = True) -> str:
     decision = _is_decision(h)
     if _is_team(h, home):
         return _team_line(h, now, decision=decision)
     marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
-    return f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}"
+    return f"- {h['memory_key']}{marks}: {_body(h, decision=decision, whole=whole)}"
+
+
+def listing_line(hit: dict[str, Any]) -> str:
+    """A row as the block prints it, its value cut at the line length even for a decision
+    or constraint: for a listing over several files that keeps its own budget."""
+    return _row_line(hit, naive_utc_now(), str(hit.get("namespace") or ""), whole=False)
 
 
 def _ceiling_hides(hits: list[dict[str, Any]], rows: list[str], whole_chars: int) -> bool:
