@@ -97,6 +97,9 @@ async def _rows(
 
 
 async def read_aliases(org: str, subject: str, ch: object | None) -> list[str]:
+    """`subject` and the spellings a verified email ties to it, read uncached;
+    raises when the directory cannot be read (`subject_aliases` caches, and
+    answers the subject alone on a failed read)."""
     rows = await _rows(org, subject, ch)
     out = [subject]
     for r in rows:

@@ -77,6 +77,11 @@ SETUP = (
     _grant("team-z", "mallory"),
     # Granted under the address as typed, before the account was linked.
     _grant("team-w", "Dave@Corp.example"),
+    # On team-v the address's own row was revoked, and mallory holds one of her own.
+    "INSERT INTO loom.namespace_grants (org, namespace, subject, role, status, granted_at,"
+    f" granted_by, revoked_at, version) VALUES ('{ORG}', 'team-v', 'bob@corp.example',"
+    " 'writer', 'active', now(), 'admin', now(), 1)",
+    _grant("team-v", "mallory"),
 )
 
 
@@ -137,9 +142,9 @@ async def test_a_grant_to_the_address_is_written_under_it_until_it_is_verified(c
     [
         # The address's grants cap a claim there (one in a token minted
         # before this read), never admit one.
-        ("mallory", {"team-x": 2, "team-y": 0, "team-z": 2}),
+        ("mallory", {"team-x": 2, "team-y": 0, "team-z": 2, "team-v": 2}),
         # Nor does the squatter's own grant admit the address.
-        ("bob@corp.example", {"team-x": 2, "team-y": 2, "team-z": 0}),
+        ("bob@corp.example", {"team-x": 2, "team-y": 2, "team-z": 0, "team-v": 0}),
         ("u-carol", {"team-x": 2, "team-y": 2}),
         ("dave", {"team-x": 2, "team-y": 2, "team-w": 2}),  # team-w: in any case
         ("erin", {"team-y": 0}),  # unlinked
@@ -226,7 +231,7 @@ async def test_revoking_the_address_reaches_the_tokens_its_squatter_made(
     monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
     monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
     touched = await token_grants.cascade_revoke_to_created_tokens(
-        ORG, "team-y", "bob@corp.example", ch=kept
+        ORG, "team-y", "bob@corp.example", named="bob@corp.example", ch=kept
     )
     assert touched == 1
     live = await kept.query_all(
@@ -256,7 +261,10 @@ async def test_revoking_a_handle_leaves_the_tokens_its_unverified_email_names(
     monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
     monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
     assert (
-        await token_grants.cascade_revoke_to_created_tokens(ORG, "team-x", "mallory", ch=kept) == 0
+        await token_grants.cascade_revoke_to_created_tokens(
+            ORG, "team-x", "mallory", named="mallory", ch=kept
+        )
+        == 0
     )
 
 
@@ -389,6 +397,9 @@ async def test_the_user_list_marks_a_platform_admin_by_a_verified_email_only(
         ("team-z", "bob@corp.example", ["mallory"]),
         # A handle never reaches its unverified email's row.
         ("team-y", "mallory", []),
+        # An address whose own row was revoked there takes nothing more: revoke the
+        # handle's row by the handle.
+        ("team-v", "bob@corp.example", []),
         # An address typed in another case still reaches the row kept in lower case.
         ("team-x", "Carol@Corp.example", ["carol@corp.example", "u-carol"]),
         # And a row stored in another case is reached by the handle or the address.

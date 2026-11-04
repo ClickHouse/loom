@@ -147,15 +147,16 @@ async def revoke_token_grants(
 
 
 async def cascade_revoke_to_created_tokens(
-    org: str, namespace: str, subject: str, *, named: str | None = None, ch: Any = None
+    org: str, namespace: str, subject: str, *, named: str, ch: Any = None
 ) -> int:
-    """A person's grant on ``namespace``, stored under `subject`, was revoked:
-    revoke the grants every live token they created holds there, under each of
-    their spellings. When the revoke named an address (`named`, the subject by
-    default), that is every account naming it, verified or not (the tokens an
-    unverified account made while the address's grant admitted it); when it
-    named a handle, the verified spellings only, since an unverified account
-    naming the email may be someone else's. Returns tokens touched."""
+    """A person's grant on ``namespace``, stored under `subject`, was revoked by
+    a revoke that named `named`: revoke the grants every live token they created
+    holds there, under the stored subject's spellings. When the revoke named an
+    address, those are every spelling a revocation reaches (`aliases.spellings`),
+    an unverified pair too (the tokens an unverified account made while the
+    address's grant admitted it); when it named a handle, the verified ones only,
+    since an unverified account naming the email may be someone else's. Returns
+    tokens touched."""
     if ch is None:
         from server.core.ch import get_client
 
@@ -165,7 +166,7 @@ async def cascade_revoke_to_created_tokens(
     from server.core.principals import has_aliases
 
     try:
-        if "@" in (named or subject):
+        if "@" in named:
             creators = await spellings(org, subject, ch=ch)
         elif has_aliases(subject):
             with own_write_reads():  # a link another process just made

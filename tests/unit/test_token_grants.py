@@ -162,7 +162,9 @@ async def test_revoking_the_person_cascades_to_the_tokens_they_minted_on_that_na
 
     # Every spelling a revocation reaches, an unverified email too.
     monkeypatch.setattr(aliases, "spellings", _spellings)
-    touched = await tg.cascade_revoke_to_created_tokens(ORG, "code-private", "alice@x", ch=fake)
+    touched = await tg.cascade_revoke_to_created_tokens(
+        ORG, "code-private", "alice@x", named="alice@x", ch=fake
+    )
     assert touched == 2
     # only the revoked namespace's grants go; the token keeps secret-notes
     assert [(r["subject"], r["namespace"]) for r in inserted] == [
@@ -184,7 +186,9 @@ async def test_an_unread_directory_still_cascades_under_the_exact_subject(
         raise RuntimeError("directory down")
 
     monkeypatch.setattr(aliases, "spellings", _unread)
-    await tg.cascade_revoke_to_created_tokens(ORG, "code-private", "alice@x", ch=fake)
+    await tg.cascade_revoke_to_created_tokens(
+        ORG, "code-private", "alice@x", named="alice@x", ch=fake
+    )
     _, sa_params = next(x for x in fake.sql if "service_accounts" in x[0])
     assert sa_params["subs"] == ["alice@x"]
 
