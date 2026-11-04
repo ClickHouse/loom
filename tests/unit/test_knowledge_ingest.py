@@ -1268,13 +1268,23 @@ def test_a_store_out_of_slots_puts_the_job_back(world: World) -> None:
     assert world.job(job_id)["error_code"] == "retrying"  # type: ignore[index]
 
 
-def test_a_rerun_comes_only_after_an_uncertain_insert_has_settled() -> None:
-    """A run stopped at an uncertain document insert runs again once no worker
-    has updated the job for JOB_LEASE_S; every statement under the source claim
-    has a server-side limit, the insert included, so by then its row has landed
-    or been stopped, and the rerun reads its outcome from the stored rows."""
-    from server.core import leases
+def test_a_rerun_comes_only_after_an_uncertain_insert_has_settled(world: World) -> None:
+    """A run that gave up on an uncertain document insert saves the job after
+    it, so the job is due again only JOB_LEASE_S later; by then the insert has
+    landed or been stopped: a carried send starts within `_TRANSIT_S`, runs
+    within a claimed statement's server-side limit, and commits within
+    `_RELEASE_MARGIN_S` more."""
+    from server.core import leases, rmt_carry
 
-    claimed_statement_s = ingest_run._SOURCE_CLAIM_S * leases._STATEMENT_SHARE
-    claimed_block_s = ingest_run._SOURCE_CLAIM_S * leases._WORK_SHARE
-    assert ingest_run.JOB_LEASE_S > claimed_block_s + claimed_statement_s
+    bound = (
+        rmt_carry._TRANSIT_S
+        + ingest_run._SOURCE_CLAIM_S * leases._STATEMENT_SHARE
+        + rmt_carry._RELEASE_MARGIN_S
+    )
+    assert ingest_run.JOB_LEASE_S > bound
+
+    world.fail_document = BackendTimeoutError("timed out")
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "processing"
+    assert world.log[-1] == "job:processing:publish", "the job is saved after the failed insert"
+    assert world.log.index("job:processing:publish") < len(world.log) - 1

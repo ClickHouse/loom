@@ -33,6 +33,7 @@ included, fails the job with a typed code.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -59,9 +60,12 @@ log = logging.getLogger(__name__)
 
 # The lease a job runs under, and the claim a publish of one source runs under.
 # A job a run left `processing` runs again once no worker has updated it for
-# JOB_LEASE_S, far past the server-side limit of a statement under the claim
-# (`leases.holding`): a document insert that run left uncertain has landed or
-# been stopped by then, so the rerun reads its outcome from the stored rows.
+# JOB_LEASE_S. A run that gave up on an uncertain document insert saves the job
+# first (`_touch`), so the wait starts there and outlasts the insert's bound: its
+# send may start on the server up to `rmt_carry._TRANSIT_S` later, then run for a
+# claimed statement's server-side limit (`leases.holding`) plus
+# `rmt_carry._RELEASE_MARGIN_S`. By the rerun it has landed or been stopped, so
+# the rerun reads its outcome from the stored rows.
 JOB_LEASE_S = 120.0  # not a setting: renewed while the job runs; it bounds a dead holder
 _SOURCE_CLAIM_S = 60.0  # not a setting: bounds one publish's few statements
 # The first retry waits this long, doubling per attempt.
@@ -414,13 +418,33 @@ async def _publish(
             await documents_repo.insert_one(row)
             in_flight, published = False, True
             await chunks_repo.mark_doc_superseded(org, ns, uri, before_version=version, when=now)
+    except asyncio.CancelledError:
+        if in_flight:  # stopped (a pass deadline, a shutdown) with the insert in flight
+            await asyncio.shield(_touch(job))
+        raise
     except Exception as e:
         if in_flight and isinstance(e, _TRANSIENT):
+            await _touch(job)
             raise _InsertUncertain(e) from e
         if published:  # whatever failed after the row, the publish stands
             raise _AfterRow(revision, e) from e
         raise
     return job, revision
+
+
+async def _touch(job: dict[str, Any]) -> None:
+    """Save the job again after its document insert's outcome became unknown:
+    the job is due again only once no worker has updated it for JOB_LEASE_S,
+    and that wait must start after the client gave up on the insert, not at the
+    publish stage's save before the chunk insert and the claim."""
+    try:
+        await _save(job)
+    except Exception:  # the run is stopping already; the job stays processing either way
+        log.warning(
+            "knowledge_ingest: job %s: could not save after an uncertain insert",
+            job["ingestion_id"],
+            exc_info=True,
+        )
 
 
 async def _retry_or_fail(job: dict[str, Any], e: Exception) -> str:
