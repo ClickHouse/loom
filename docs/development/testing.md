@@ -66,7 +66,9 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
   job, which sends originals to a document extractor: they need one routed for SQL and TOML
   (`LOOM_DOCUMENT_EXTRACTOR_URL` or `LOOM_DOCUMENT_EXTRACTORS_JSON`, with its token; see
   the [configuration reference](../reference/configuration.md)), and skip without one.
-  CI runs the reference extractor (`.github/workflows/ci.yml`;
+  `tests/integration/test_knowledge_inspect_ingest.py` reads, through `knowledge.inspect`,
+  that the server has one configured, so the server takes the same settings. CI starts the
+  reference extractor before the servers (`.github/workflows/ci.yml`;
   [running it](../../extractor/README.md)).
 - CI sets `LOOM_LATENCY_BUDGET_MULTIPLIER=10`: shared runners are noisy enough that the
   default per-op budgets fire violations.
