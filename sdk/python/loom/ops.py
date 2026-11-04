@@ -10618,6 +10618,12 @@ class KnowledgeSourceSync(TypedDict, total=False):
     unconverted_reasons: NotRequired[dict[str, int]]
     skipped: NotRequired[int]
     error: NotRequired[str]
+    pending_extract: NotRequired[int]
+    last_extracted_at: NotRequired[str]
+    extracted: NotRequired[int]
+    flagged_pinned: NotRequired[int]
+    unextracted: NotRequired[int]
+    extract_error: NotRequired[str]
 
 
 class KnowledgeSourceDocument(TypedDict, total=False):

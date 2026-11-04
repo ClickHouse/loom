@@ -2299,6 +2299,226 @@ async def test_a_failed_model_call_loses_its_window_only(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_held_model_call_stops_the_run_before_any_write(monkeypatch) -> None:
+    from server.core.errors import ModelCallRefused
+    from server.knowledge.app import document_reads
+    from server.llm import client as llm_client
+
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+    calls: list[int] = []
+
+    class _Held:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            calls.append(1)
+            if len(calls) > 1:
+                raise ModelCallRefused("over budget", hold_s=60.0)
+            return SimpleNamespace(text=json.dumps({"decisions": [_candidate()]}), stop_reason="")
+
+    async def chunks(org, ns, uri):
+        return [
+            CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT")),
+            CorpusChunk(uri, 1, BODY, ("Spilling", "Other")),
+            CorpusChunk(uri, 2, BODY, ("Spilling", "Third")),
+        ]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Held())
+    report = await _run(window_chars=len(BODY) + 1)
+    # The first window's decision is not written and nothing is retired; no third call.
+    assert isinstance(report.held, ModelCallRefused) and len(calls) == 2
+    assert report.error == "model calls for o are held (MODEL_CALL_REFUSED); try again later"
+    assert world.recorded == [] and world.deletes == [] and world.audits == []
+    assert cli.exit_code(report) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hold", ["disabled", "refused"])
+async def test_a_hold_on_a_write_s_embedding_stops_the_run_as_a_hold(monkeypatch, hold) -> None:
+    from server.core.errors import ModelCallRefused
+    from server.llm.customer import ModelCallsDisabled
+    from server.memory.app import search
+
+    world = _World(monkeypatch, [_candidate()])
+    world.record("decision:gone", {"reasoning": "gone"})
+
+    async def held_search(inp):
+        # The restatement search embeds the candidate: the embedding call is held.
+        raise ModelCallsDisabled("off") if hold == "disabled" else ModelCallRefused("budget")
+
+    monkeypatch.setattr(search, "handle_memory_search", held_search)
+    report = await _run()
+    # A hold, not a refused write: nothing is counted refused and nothing is retired.
+    assert report.held is not None and report.error.startswith("model calls for o are held")
+    assert report.dropped == [] and report.refused == []
+    assert world.recorded == [] and world.deletes == [] and report.retired == []
+    assert cli.exit_code(report) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_read_deadline_that_passes_while_reading_writes_nothing(monkeypatch) -> None:
+    import asyncio
+    import time
+
+    from server.knowledge.app import document_reads
+    from server.llm import client as llm_client
+
+    world = _World(monkeypatch, [])
+    world.record("decision:gone", {"reasoning": "gone"})
+
+    class _Slow:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            await asyncio.sleep(5)
+
+    async def chunks(org, ns, uri):
+        return [CorpusChunk(uri, 0, BODY, ("Spilling", "Final DISTINCT"))]
+
+    monkeypatch.setattr(document_reads, "document_chunks", chunks)
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Slow())
+    started = time.monotonic()
+    report = await _run(read_deadline=time.monotonic() + 0.05)
+    assert time.monotonic() - started < 2
+    assert report.out_of_time and report.error.startswith("the run's time to read")
+    # Neither a write nor its audit row, and nothing retired.
+    assert world.recorded == [] and world.audits == [] and world.deletes == []
+    assert report.dropped == []
+
+
+def _two(monkeypatch) -> _World:
+    other = _candidate(scenario="how the merge reads its runs", outcome="merge runs by key")
+    world = _World(monkeypatch, [_candidate(), other])
+    world.record("decision:gone", {"reasoning": "gone"})
+    return world
+
+
+@pytest.mark.asyncio
+async def test_a_write_permission_lost_mid_run_stops_after_the_current_record(
+    monkeypatch,
+) -> None:
+    world = _two(monkeypatch)
+    answers = [True, False]
+    report = await _run(may_write=lambda: answers.pop(0) if answers else False)
+    # The first record landed with its audit row; the second was not started.
+    assert len(world.recorded) == 1
+    assert [e for e, _, _ in world.audits] == ["decision.record"]
+    assert report.write_stopped and report.error.startswith("stopped before every write")
+    assert world.deletes == [] and report.retired == [] and cli.exit_code(report) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_hold_on_a_later_write_keeps_what_was_written_and_retires_nothing(
+    monkeypatch,
+) -> None:
+    from server.llm.customer import ModelCallsDisabled
+    from server.memory.app import decision
+
+    world = _two(monkeypatch)
+    record = decision.handle_decision_record
+
+    async def held_second(inp):
+        if world.recorded:
+            raise ModelCallsDisabled("off")
+        await record(inp)
+
+    monkeypatch.setattr(decision, "handle_decision_record", held_second)
+    report = await _run()
+    assert len(world.recorded) == 1
+    assert [e for e, _, _ in world.audits] == ["decision.record"]
+    assert report.held is not None and world.deletes == [] and report.retired == []
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_run_finishes_its_current_write_and_shutdown_drains_it(
+    monkeypatch,
+) -> None:
+    import asyncio
+
+    from server.core.background import drain_task_sets
+    from server.memory.app import decision
+
+    world = _World(monkeypatch, [_candidate()])
+    record = decision.handle_decision_record
+    started = asyncio.Event()
+
+    async def slow(inp):
+        started.set()
+        await asyncio.sleep(0.05)
+        await record(inp)
+
+    monkeypatch.setattr(decision, "handle_decision_record", slow)
+    run = asyncio.create_task(_run())
+    await started.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert await drain_task_sets(timeout_s=2.0)
+    # The record and its audit row both landed: no row without its audit.
+    assert len(world.recorded) == 1
+    assert [e for e, _, _ in world.audits] == ["decision.record"]
+
+
+@pytest.mark.asyncio
+async def test_a_run_s_writes_are_its_own_and_finish_writes_waits_for_those_only(
+    monkeypatch,
+) -> None:
+    import asyncio
+
+    from server.core.background import TaskSet
+    from server.memory.app import decision
+
+    world = _World(monkeypatch, [_candidate()])
+    mine, other = TaskSet(), TaskSet()
+    release = asyncio.Event()
+    other.spawn(release.wait(), name="another-run")  # another run's unit, still running
+    record = decision.handle_decision_record
+    started = asyncio.Event()
+
+    async def slow(inp):
+        started.set()
+        await asyncio.sleep(0.05)
+        await record(inp)
+
+    monkeypatch.setattr(decision, "handle_decision_record", slow)
+    run = asyncio.create_task(_run(writes=mine))
+    await started.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    # The cancelled run's unit is held in its own set, still running.
+    assert [t for t in mine if not t.done()] and world.recorded == []
+    await asyncio.wait_for(de.finish_writes(mine), timeout=1.0)
+    assert len(world.recorded) == 1 and [e for e, _, _ in world.audits] == ["decision.record"]
+    # The other run's unit did not hold the wait, and is still pending.
+    assert not all(t.done() for t in other)
+    release.set()
+    await de.finish_writes(other)
+
+
+@pytest.mark.asyncio
+async def test_a_blacklisted_candidate_is_a_permanent_refusal(monkeypatch) -> None:
+    from fastapi import HTTPException
+
+    world = _World(monkeypatch, [_candidate()])
+    # As the blacklist guard refuses a write that matches a pattern.
+    world.refuse_record = HTTPException(422, detail={"code": "BLACKLISTED"})
+    report = await _run()
+    [dropped] = report.dropped
+    assert dropped.refused and dropped.permanent
+    assert dropped.reason.endswith("refused: BLACKLISTED")
+
+
+@pytest.mark.asyncio
+async def test_the_sync_worker_s_writes_are_audited_as_the_worker(monkeypatch) -> None:
+    from server.knowledge.domain.sources import SYNC_WORKER_ACTOR
+    from server.memory.domain.provenance import pipeline_actor
+
+    world = _World(monkeypatch, [_candidate()])
+    with pipeline_actor(SYNC_WORKER_ACTOR):
+        await _run()
+    assert [(e, a) for e, a, _ in world.audits] == [("decision.record", SYNC_WORKER_ACTOR)]
+
+
+@pytest.mark.asyncio
 async def test_an_inferred_fake_provider_refuses_before_any_model_call(monkeypatch) -> None:
     from server.settings import Settings
 

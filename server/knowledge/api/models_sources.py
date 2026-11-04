@@ -55,6 +55,27 @@ class KnowledgeSourceSync(BaseModel):
     # source's response text), or why a turn that did not fail is incomplete (the
     # pass bound, an incomplete listing); '' when neither.
     error: str = ""
+    # Documents whose stored revision is not yet mined for decisions, as of the last pass.
+    pending_extract: int = 0
+    # When the worker last mined the source's written documents for decisions, ISO
+    # UTC; '' = never.
+    last_extracted_at: str = ""
+    # Documents that last mining turn read through, each with or without a decision.
+    extracted: int = 0
+    # Decision rows it tagged source-changed rather than rewriting them (pinned,
+    # attested, or with a recorded outcome): their document now says otherwise.
+    flagged_pinned: int = 0
+    # Documents given up on: three failed tries, or too large for a pass; tried again
+    # once the sync writes them again.
+    unextracted: int = 0
+    # Why an extraction failed: not_run (it could not run on the document, such as one
+    # with no chunks for the current embedding model), refused (a read or write it
+    # needed was refused for a reason of the moment, or failed), out_of_time (its model
+    # reads ran past the pass's read deadline), too_large_for_pass (it ran out of a
+    # whole pass's read time) or failed:<error>; or why documents wait: over_cap,
+    # switched_off, switch_unread, no_model, held, held:<code> or pass_bound. '' when
+    # none.
+    extract_error: str = ""
 
 
 class KnowledgeSourceEntry(BaseModel):
