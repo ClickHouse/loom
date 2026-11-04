@@ -19,8 +19,7 @@ import httpx
 
 from bench._http import post_json
 from bench.bench_namespaces import (
-    erasure_bodies,
-    gc_command,
+    erase_bench_namespaces_sync,
     register_body,
     remember_bench_namespace,
 )
@@ -150,21 +149,15 @@ class Loom:
         remember_bench_namespace(org, namespace)
 
     def erase(self, namespaces: list[str]) -> bool:
-        """Erase each namespace; True when every erasure was accepted. A refused one is
-        reported on stderr with the command that erases it."""
-        accepted = True
-        for ns in namespaces:
-            org = self.orgs[ns]
-            try:
-                for body in erasure_bodies(org, [ns]):
-                    self._post("/v1/erasure.request", body)
-            except httpx.HTTPError as e:
-                accepted = False
-                print(
-                    f"erasure of {org}/{ns} refused ({e}); erase it with: {gc_command(org, [ns])}",
-                    file=sys.stderr,
-                )
-        return accepted
+        """Erase each namespace; True when every erasure was accepted. The shared helper
+        logs a refused one as a warning with the command that erases it: with no logging
+        configured, Python's last-resort handler prints it on stderr."""
+        return all(
+            [
+                erase_bench_namespaces_sync(self._post, org=self.orgs[ns], namespaces=[ns])
+                for ns in namespaces
+            ]
+        )
 
     def server_spend(self, namespaces: list[str], since: date) -> float:
         """USD the server spent on model and embedding calls in these namespaces' orgs

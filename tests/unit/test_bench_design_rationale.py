@@ -1239,8 +1239,10 @@ def test_a_setup_that_failed_is_not_resumed_even_with_its_namespaces_kept(tmp_pa
     assert loom.erased == []
     err = capsys.readouterr().err
     assert "loom namespaces-gc" in err and "resume" not in err
-    with pytest.raises(run.RunError, match="setup failed"):
-        run.run(ts, cfg, FakeLoom(), model, [model], ledger)
+    again = FakeLoom()
+    with pytest.raises(run.RunError, match="setup failed .erase its namespaces with: loom"):
+        run.run(ts, cfg, again, model, [model], ledger)
+    assert again.erased == []  # kept, as asked: only the command is shown
 
 
 def test_an_interrupted_setup_erases_its_namespaces_and_is_not_resumed(tmp_path):
@@ -1473,12 +1475,15 @@ def test_a_refused_erasure_is_tried_again_on_the_next_run(tmp_path):
     assert json.loads((out / "state.json").read_text())["erased"] and len(loom.erased) == 2
 
 
-def test_a_refused_erasure_prints_the_command_that_finishes_it(capsys):
+def test_a_refused_erasure_logs_the_command_that_finishes_it(caplog):
     loom = _mock_loom(lambda request: httpx.Response(403, json={"detail": "not an admin"}))
-    assert loom.erase(["ns"]) is False
-    err = capsys.readouterr().err
-    assert "erasure of org/ns refused" in err and "erase it with: loom namespaces-gc" in err
-    assert len(err.strip().splitlines()) == 1  # one line per refused namespace
+    loom.bind("ns2", "org")
+    with caplog.at_level("WARNING"):
+        assert loom.erase(["ns", "ns2"]) is False
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    # One warning per refused namespace, each with the command that erases it.
+    assert len(warnings) == 2
+    assert all("clean up with: loom namespaces-gc --org org" in w for w in warnings)
 
 
 def test_a_failed_setup_whose_erasure_was_refused_is_erased_on_the_next_try(tmp_path):
@@ -1514,3 +1519,27 @@ def test_documents_and_gold_rows_missing_their_keys_are_refused(tmp_path):
         (root / name).write_text(json.dumps(rows))
         with pytest.raises(TaskSetError, match=message):
             load(root)
+
+
+def test_a_task_set_entry_that_is_not_an_object_is_refused(tmp_path):
+    root = _copy_example(tmp_path)
+    docs = json.loads((root / "documents.json").read_text())
+    (root / "documents.json").write_text(json.dumps([*docs, "thumbnail-cache.md"]))
+    with pytest.raises(TaskSetError, match="an entry is an object"):
+        load(root)
+
+
+def test_a_rerun_with_other_flags_is_refused_before_it_erases_anything(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    loom = FakeLoom(fail_on_upsert=True)
+    loom.refuse_erase = True
+    with pytest.raises(RuntimeError, match="upsert refused"):
+        run.run(ts, _config(out), loom, model, [model], ledger)
+    loom.refuse_erase = False
+    with pytest.raises(run.RunError, match="other arms"):
+        run.run(ts, _config(out, arms=[0]), loom, model, [model], ledger)
+    assert loom.erased == []

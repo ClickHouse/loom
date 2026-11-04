@@ -15,6 +15,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from bench.bench_namespaces import gc_command
 from bench.design_rationale import detectors, prompts
 from bench.design_rationale.llm import (
     CHARS_PER_TOKEN_WORST,
@@ -720,8 +721,6 @@ def check_resume(state: dict[str, Any], cfg: Config) -> None:
 
 def erase_command(cfg: Config, loom: Loom, ns: dict[str, str]) -> str:
     """The `loom namespaces-gc` commands that erase what the run keeps."""
-    from bench.bench_namespaces import gc_command
-
     by_org: dict[str, list[str]] = {}
     for name in owned(cfg, ns):
         by_org.setdefault(loom.orgs[name], []).append(name)
@@ -749,6 +748,8 @@ def run(
     cfg.out.mkdir(parents=True, exist_ok=True)
     state_path = cfg.out / "state.json"
     state = load_json(state_path)
+    # Refuse other flags before anything else acts on the namespaces, erasure included.
+    check_resume(state, cfg)
     if state.get("setup_failed"):
         ns = bind(loom, state, cfg)
         # An erasure refused when the setup failed is tried again.
@@ -765,7 +766,6 @@ def run(
         )
     if state.get("erased"):
         raise RunError(f"{cfg.out}: this run's namespaces were erased; score it or start anew")
-    check_resume(state, cfg)
     state.setdefault("started", date.today().isoformat())
     ns = bind(loom, state, cfg)
     finished = False
