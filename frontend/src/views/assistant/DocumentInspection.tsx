@@ -148,7 +148,7 @@ export function DocumentInspection({ result }: { result: KnowledgeInspection }) 
       )}
       {result.skipped.length > 0 && (
         <p className="text-xs text-text-muted" data-testid="docs-skipped">
-          Not read: {result.skipped.join("; ")}
+          Skipped: {result.skipped.join("; ")}
         </p>
       )}
     </div>

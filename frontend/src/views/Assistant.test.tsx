@@ -1522,7 +1522,7 @@ describe("Assistant: documents", () => {
     expect(within(result).getByText("The decisions could not be read.")).toBeInTheDocument();
     expect(within(result).getByText("The documents could not be listed.")).toBeInTheDocument();
     expect(within(result).getByText(/extractor settings not read/)).toBeInTheDocument();
-    expect(within(result).getByTestId("docs-skipped")).toHaveTextContent("Not read: documents: TimeoutError; chunks");
+    expect(within(result).getByTestId("docs-skipped")).toHaveTextContent("Skipped: documents: TimeoutError; chunks");
     expect(within(result).queryByRole("status")).toBeNull();
   });
 
@@ -1589,6 +1589,7 @@ describe("Assistant: documents", () => {
     expect(within(result).getByTestId("docs-totals-line")).toHaveTextContent("Live documents: not totalled");
     expect(within(result).getByText(/listed; the total was not counted\./)).toBeInTheDocument();
     expect(within(result).queryByText("The documents could not be counted by format and source.")).toBeNull();
+    expect(within(result).getByTestId("docs-skipped")).not.toHaveTextContent("Not read");
   });
 
   it("shows the extraction coverage a cut read counted, with the server's note", async () => {
