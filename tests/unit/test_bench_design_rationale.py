@@ -7,15 +7,35 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+import subprocess
+from datetime import date
 from pathlib import Path
 
 import httpx
 import pytest
 
+import bench.design_rationale.__main__ as cli
 from bench.design_rationale import detectors, run, score
 from bench.design_rationale.__main__ import main
-from bench.design_rationale.llm import CapReached, Ledger, Model, ProviderComplete, Reply
+from bench.design_rationale.llm import (
+    CHARS_PER_TOKEN_WORST,
+    CapReached,
+    Ledger,
+    Model,
+    ProviderComplete,
+    Reply,
+    cost_usd,
+)
+from bench.design_rationale.loom import EXTRACT_TIMEOUT_S, Loom
 from bench.design_rationale.taskset import Document, TaskSetError, load
+from server.knowledge.app.writes import _chunk_text
+from server.memory.api.models_decision import DecisionRecordInput
+from server.memory.app.decision_extract import _windows
+from server.memory.app.for_file import render_block
+from server.memory.domain import decision_extract as dx
+from server.memory.domain.corpus_synthesis import CorpusChunk
+from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "bench" / "design_rationale" / "example"
 
@@ -382,11 +402,6 @@ def test_the_dry_run_counts_every_call(capsys):
 
 
 def test_the_extraction_bound_covers_every_window_the_extractor_reads():
-    from server.knowledge.app.writes import _chunk_text
-    from server.memory.app.decision_extract import _windows
-    from server.memory.domain import decision_extract as dx
-    from server.memory.domain.corpus_synthesis import CorpusChunk
-    from server.settings.budgets import llm_max_tokens
 
     # A long document with few headings: overlapping chunks, windows cut by size.
     body = "\n\n".join(f"Paragraph {i} " + "word " * 60 for i in range(80))
@@ -405,14 +420,10 @@ def test_the_extraction_bound_covers_every_window_the_extractor_reads():
         assert tin >= 2 * sent // 3 + read * cap
     # A re-run over a revision lists the known decisions: a longer prompt per call.
     ts = load(EXAMPLE)
-    from bench.design_rationale.llm import CHARS_PER_TOKEN_WORST
-    from server.settings import settings
 
     first = ts.documents["upload-retries"]
     calls, revised_in, _ = run.extraction_bound(dataclasses.replace(first, revision_of="x"), 6000)
     _, first_in, _ = run.extraction_bound(first, 6000)
-    from server.memory.api.models_decision import DecisionRecordInput
-    from server.memory.domain import decision_extract as dx
 
     known = settings.memory_decision_extract_known_max
     # The longest rows decision.record accepts, as the prompt lists them.
@@ -735,7 +746,6 @@ def test_a_cap_below_the_first_extraction_stops_the_setup_and_the_resume_finishe
     out.mkdir()
     loom = FakeLoom()
     bound = run.extraction_bound(ts.documents["thumbnail-cache"], 6000)
-    from bench.design_rationale.llm import cost_usd
 
     cap = cost_usd("gpt-4o-mini", bound[1], bound[2]) / 2
     cfg = _config(out, max_usd=cap)
@@ -790,7 +800,6 @@ def test_two_runs_with_one_org_prefix_read_neither_rows_nor_spend_of_the_other(t
 
 
 def test_set_files_keeps_every_field_and_the_paths_the_text_spells_out():
-    from bench.design_rationale.loom import Loom
 
     row = {
         "found": True,
@@ -860,7 +869,6 @@ def test_a_supersession_verdict_needs_current_stated():
 
 
 def test_a_cap_stop_exits_1_and_a_fallback_model_refuses_arm_4(tmp_path, monkeypatch, capsys):
-    import bench.design_rationale.__main__ as cli
 
     monkeypatch.setattr(cli.runner, "run", lambda *a, **k: False)
     base = ["run", str(EXAMPLE), "--out", str(tmp_path), "--base-url", "http://loom.test"]
@@ -985,9 +993,6 @@ def test_task_ids_holding_arm_are_scored(tmp_path):
 
 
 def test_a_timed_out_extraction_keeps_both_output_streams(monkeypatch):
-    import subprocess
-
-    from bench.design_rationale.loom import EXTRACT_TIMEOUT_S, Loom
 
     def slow(cmd, **kw):
         raise subprocess.TimeoutExpired(cmd, 1, output=b"\xff out", stderr=b"err")
@@ -1055,7 +1060,6 @@ def test_a_resume_with_another_reader_is_refused(tmp_path):
 
 
 def _mock_loom(handler):
-    from bench.design_rationale.loom import Loom
 
     loom = Loom("http://loom.test")
     loom.client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -1063,15 +1067,55 @@ def _mock_loom(handler):
     return loom
 
 
-def test_a_truncated_pre_edit_block_counts_only_the_rows_it_shows():
+def test_a_pre_edit_block_counts_only_the_rows_it_prints():
+    hits = [
+        {
+            "memory_key": "design/a",
+            "memory_type": "decision",
+            "value": "short",
+            "tags": ["decision"],
+            "namespace": "ns",
+        },
+        # Past the whole-row ceiling: left out, and named on the closing line.
+        {
+            "memory_key": "design/a-v2",
+            "memory_type": "decision",
+            "value": "x" * 7000,
+            "tags": ["decision"],
+            "namespace": "ns",
+        },
+        {
+            "memory_key": "design/team",
+            "memory_type": "decision",
+            "value": "a team one",
+            "tags": ["decision"],
+            "namespace": "other",
+            "actor": "bob",
+        },
+    ]
+    rendered, tokens, truncated = render_block("src/x.py", hits, 300, home="ns")
+    assert truncated and "design/a-v2" in rendered  # the closing line names it
     out = {
-        "rendered": "- design/a [decision]: shown",
-        "tokens_estimate": 9,
-        "truncated": True,
-        "hits": [{"memory_key": "design/a"}, {"memory_key": "design/b"}],
+        "rendered": rendered,
+        "tokens_estimate": tokens,
+        "truncated": truncated,
+        "hits": [{"memory_key": h["memory_key"]} for h in hits],
     }
     loom = _mock_loom(lambda request: httpx.Response(200, json=out))
-    assert loom.for_file("ns", "src/x.py")["keys"] == ["design/a"]
+    assert loom.for_file("ns", "src/x.py")["keys"] == ["design/a", "design/team"]
+
+
+def test_server_spend_counts_every_traffic_class_in_the_run_orgs():
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content))
+        # A worker's cost row on the run's rows carries no traffic class.
+        return httpx.Response(200, json={"total_cost_usd": 0.25})
+
+    loom = _mock_loom(handler)
+    assert loom.server_spend(["ns"], date.today()) == 0.25
+    assert "traffic_class" not in sent[0] and sent[0]["org"] == "org"
 
 
 def test_a_search_error_is_raised_with_its_text():
@@ -1093,3 +1137,16 @@ def test_a_search_error_is_raised_with_its_text():
         loom.search("ns", "q", "s")
     with pytest.raises(RuntimeError, match="namespace refused"):
         loom.search("ns", "q", "s")
+
+
+def test_a_resume_with_another_judge_is_refused(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 0.001)
+    model = _fake_model(ledger, usage=2000)
+    cfg = _config(out, arms=[0], max_usd=0.001)
+    assert run.run(ts, cfg, FakeLoom(), model, [model], ledger) is False
+    other = _config(out, arms=[0], max_usd=1.0, judges=["gpt-4.1-mini"])
+    with pytest.raises(run.RunError, match="judges"):
+        run.run(ts, other, FakeLoom(), model, [model], ledger)

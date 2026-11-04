@@ -103,6 +103,14 @@ def parse_key(key: str) -> tuple[str, int]:
     return tid, int(rest.split("/", 1)[0])
 
 
+def pre_edit_block_tokens() -> int:
+    """The most one pre-edit block injects: decisions and constraints print whole up to
+    `memory_for_file_whole_tokens`, the other rows up to the block's budget."""
+    from server.settings import settings
+
+    return settings.memory_for_file_whole_tokens + PRE_EDIT_BUDGET
+
+
 def own_extraction(cfg: Config) -> bool:
     return 4 in cfg.arms and not cfg.arm4_namespace
 
@@ -188,7 +196,7 @@ def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
                 ctx = SEARCH_SECTION_TOKENS
             elif arm in (3, 4):
                 blocks = len(ts.task_paths(t)) if pre_edit(cfg, arm) else 0
-                ctx = SEARCH_SECTION_TOKENS + PRE_EDIT_BUDGET * blocks
+                ctx = SEARCH_SECTION_TOKENS + pre_edit_block_tokens() * blocks
             else:
                 ctx = 0
             system, user, cap = prompts.answer_prompt(kind, t, "", ts.system)

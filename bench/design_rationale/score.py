@@ -19,7 +19,6 @@ from statistics import mean
 from typing import Any
 
 from bench.bootstrap import paired_bootstrap
-from bench.design_rationale.loom import PRE_EDIT_BUDGET
 from bench.design_rationale.run import parse_key
 from bench.design_rationale.taskset import TaskSet
 
@@ -285,7 +284,6 @@ def token_summary(surf: dict[str, Any], arms: list[int]) -> dict[int, dict[str, 
             "injected_max": max(injected, default=0),
             "pre_edit_calls": len(calls),
             "pre_edit_max": max(calls, default=0),
-            "pre_edit_over_budget": sum(n > PRE_EDIT_BUDGET for n in calls),
             "with_context": sum(r["context"] != "(none)" for r in rows),
         }
     if 1 in out and 3 in out and out[3]["injected_mean"]:
@@ -517,14 +515,13 @@ def report(m: dict[str, Any]) -> str:
         )
     lines += [
         "",
-        "| Arm | Injected tokens per task (mean, max) | Pre-edit calls | Pre-edit max | "
-        f"Over {PRE_EDIT_BUDGET} |",
-        "| --- | --- | --- | --- | --- |",
+        "| Arm | Injected tokens per task (mean, max) | Pre-edit calls | Pre-edit max |",
+        "| --- | --- | --- | --- |",
     ]
     for arm, t in m["tokens"].items():
         lines.append(
             f"| {arm} | {t['injected_mean']}, {t['injected_max']} | "
-            f"{t['pre_edit_calls']} | {t['pre_edit_max']} | {t['pre_edit_over_budget']} |"
+            f"{t['pre_edit_calls']} | {t['pre_edit_max']} |"
         )
     if ratio := m["tokens"].get(1, {}).get("ratio_to_arm3"):
         lines.append(f"\nArm 1 injects {ratio}x the tokens of arm 3.")

@@ -126,25 +126,25 @@ test, so a change's test pass rate is not measured.
 
 ## Outputs
 
-`run --out <dir>` writes: `state.json` (namespaces, extraction reports),
-`surfaces.json` (what each arm injected per task, with token counts and the keys each
-surface served), `answers.json`, `judged.json` (citations with their resolution,
-detector results, every judge pass), `ledger.jsonl` (every provider request and its
-price; the extraction leg as an estimate charged before it runs; the server's own spend
-in the run's orgs read back from `cost.summary` after each stage), `extract_<doc>.log`
-and `extraction_labels.todo.json`. The server's spend is recorded after the fact, not
-refused in advance: what stops the server itself is each namespace's daily cost cap,
-set to `--max-usd` at registration. The extraction CLI binds no cost accumulator (only
-the transports and workers do), so its model calls never reach `cost.summary`: the
-ledger's estimate is their only record, and they are not counted twice.
+`run --out <dir>` writes: `state.json` (namespaces, extraction reports), `surfaces.json`
+(what each arm injected per task, with token counts and the keys each surface served),
+`answers.json`, `judged.json` (citations with their resolution, detector results, every
+judge pass), `ledger.jsonl` (every provider request and its price; the extraction leg as
+an estimate charged before it runs; the server's own spend in the run's orgs read back
+from `cost.summary` after each stage), `extract_<doc>.log` and
+`extraction_labels.todo.json`. The server's spend is recorded after the fact, not
+refused in advance: what stops the server itself is each namespace's daily cost cap, set
+to `--max-usd` at registration. The extraction CLI binds no cost accumulator, so neither
+its model calls nor the embeddings of its writes reach `cost.summary`; the ledger's
+estimate, model calls only, is their only record.
 
 A run the spend cap stops, in its setup or later, keeps its namespaces and resumes on
 the same `--out` (exit code 1). A run that fails or is interrupted after its setup (a
-provider error, a server that went away, Ctrl-C) keeps them too, and prints the `loom
-namespaces-gc` command that erases them if it is not resumed. A resume must use the same
-`--org`, arms, `--arm4-namespace`, code index use and window size, or it is refused. A
-finished run, or one whose setup failed other than on the cap, erases its namespaces
-(unless `--keep-namespaces`) and is not resumed.
+provider error, a server that went away, Ctrl-C) keeps them too, and prints the
+`loom namespaces-gc` command that erases them if it is not resumed. A resume must use
+the same `--org`, arms, `--arm4-namespace`, code index use, window size, and reader and
+judge models, or it is refused. A finished run, or one whose setup failed other than on
+the cap, erases its namespaces (unless `--keep-namespaces`) and is not resumed.
 
 Fill each row's `verdict` (`correct`, `partly`, `wrong` or `misleading`) in
 `extraction_labels.todo.json` and pass the file to `score --extraction-labels` for

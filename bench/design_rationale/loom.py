@@ -72,6 +72,19 @@ def knowledge_section(text: str, results: list[dict[str, Any]], top_k: int = 5) 
     return "\n".join(lines)
 
 
+def row_shown(rendered: str, key: str) -> bool:
+    """Whether a memory.for_file block prints the row of `key`: a row of the caller's
+    namespace opens `- <key>` then its marks or `:`, a team row ends `[id: <key>]`
+    (server/memory/app/for_file.py)."""
+    own = f"- {key}"
+    for line in rendered.splitlines():
+        if line.startswith(own) and line[len(own) : len(own) + 1] in (":", " "):
+            return True
+        if line.endswith(f"[id: {key}]"):
+            return True
+    return False
+
+
 def section_keys(section: str) -> list[str]:
     """The memory keys a memory section served: reader-block paragraphs
     (`[date] [key] (type) ...`) or plain hit lines (`- [key] (ns=...)`)."""
@@ -140,11 +153,11 @@ class Loom:
         as its own cost ledger records it."""
         total = 0.0
         for org in sorted({self.orgs[ns] for ns in namespaces}):
-            # traffic_class reads the events themselves: the daily rollup lags them.
-            # One day wider at each end: the ledger's days are UTC, ours local.
+            # Every class: a worker's cost row on the run's rows has none, and the orgs
+            # are the run's alone. One day wider at each end: the ledger's days are UTC,
+            # ours local.
             body = {
                 "org": org,
-                "traffic_class": "bench",
                 "from_date": str(since - timedelta(days=1)),
                 "to_date": str(date.today() + timedelta(days=1)),
             }
@@ -259,10 +272,9 @@ class Loom:
             {"namespace": namespace, "path": path, "token_budget": token_budget},
         )
         rendered = out["rendered"]
-        keys = [h["memory_key"] for h in out["hits"]]
-        if out["truncated"]:
-            # The budget left some hits out of the block: count only what the agent saw.
-            keys = [k for k in keys if k in rendered]
+        # Only the rows the block prints: the budget or the whole-row ceiling may leave
+        # some hits out, and a left-out key is still named on the closing line.
+        keys = [h["memory_key"] for h in out["hits"] if row_shown(rendered, h["memory_key"])]
         return {
             "path": path,
             "rendered": rendered,
