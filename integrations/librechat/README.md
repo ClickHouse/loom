@@ -96,7 +96,9 @@ Run it from the repository root, against a local Loom whose `.env` holds
 with LibreChat started on a fresh database. The published run used a Loom with
 `LOOM_AUTH_REQUIRED=true`, `LOOM_EMBEDDING_MODEL=fake-ngram-1024`,
 `LOOM_LLM_PROVIDER=fake` and `LOOM_BACKGROUND_WORKERS=off`, so the direct-path numbers
-involve no model.
+involve no model. The document cases ran with `LOOM_EMBEDDING_MODEL=text-embedding-3-large`
+instead, since their recall measures the embedder too; run them alone with
+`run --only` and their ids (the `doc-` and `abstain-doc-` cases).
 
 ```bash
 Q=integrations/librechat/qualification/qualify.py
@@ -116,9 +118,11 @@ export QUALIFY_CH_DATABASE=loom  # the Loom server's LOOM_CH_DATABASE
 - `revoke` waits 30 s afterwards, one `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`, so the
   server has the revocation before the revoked case runs; pass `--settle` if yours differs.
 - `run` uses the Loom URL `seed` stored and writes `qualification/results.json`;
-  `rescore` scores a saved run again against the current `cases.json` without a model, and
+  `rescore` scores a saved run again against the current `cases.json` without a model
+  (with `--citations`, it also checks every citation again against the seeded server), and
   `run --native-only` answers the direct path again into the saved run, with no model and
   no LibreChat.
-- `seed` writes into orgs `acme` and `globex`, so use a scratch deployment. Tokens,
+- `seed` writes memories and documents into orgs `acme` and `globex`, so use a scratch
+  deployment. Tokens,
   LibreChat passwords and API keys of the run are kept in `qualification/.state.json`
   (mode 0600); it and `results.json` are ignored by git.

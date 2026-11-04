@@ -205,5 +205,158 @@
         "top_k": 1
       }
     }
+  },
+  {
+    "id": "doc-release-reviews",
+    "kind": "document",
+    "person": "dave",
+    "question": "How many approving reviews does a release need before it joins the release train?",
+    "expect": ["\\b(2|two)\\b"],
+    "cite_doc": {
+      "source_uri": "handbook/deploy-runbook.md",
+      "section": "Deploy runbook > Release train"
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "How many approving reviews does a release need before it joins the release train?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "doc-migration-rollback",
+    "kind": "document",
+    "person": "dave",
+    "question": "How is a bad database schema migration handled: is it rolled back?",
+    "expect": ["forward fix"],
+    "cite_doc": {
+      "source_uri": "handbook/deploy-runbook.md",
+      "section": "Deploy runbook > Rollback > Database migrations"
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "How is a bad database schema migration handled: is it rolled back?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "doc-canary",
+    "kind": "document",
+    "person": "dave",
+    "question": "What share of production traffic does a canary receive, and for how long?",
+    "expect": ["\\b5\\s*(%|percent)", "\\b30\\s*min"],
+    "cite_doc": {
+      "source_uri": "handbook/deploy-runbook.md",
+      "section": "Deploy runbook > Canary"
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "What share of production traffic does a canary receive, and for how long?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "doc-contract-notice",
+    "kind": "document",
+    "person": "dave",
+    "question": "How much notice stops the hosting agreement from renewing?",
+    "expect": ["\\b60\\s*days?\\b|\\bsixty days\\b"],
+    "cite_doc": {
+      "source_uri": "contracts/hosting-agreement.txt",
+      "section": ""
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "How much notice stops the hosting agreement from renewing?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "doc-orders-ttl",
+    "kind": "document",
+    "person": "dave",
+    "question": "How long are rows kept in the orders table?",
+    "expect": ["\\b400\\s*days?\\b"],
+    "cite_doc": {
+      "source_uri": "schema/orders.sql",
+      "section": ""
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "How long are rows kept in the orders table?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "doc-cache-entries",
+    "kind": "document",
+    "person": "dave",
+    "question": "What is the maximum number of entries in the session cache?",
+    "expect": ["\\b50,?000\\b"],
+    "cite_doc": {
+      "source_uri": "config/cache.toml",
+      "section": "Session cache"
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "What is the maximum number of entries in the session cache?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "doc-revised-ack",
+    "kind": "document",
+    "person": "dave",
+    "question": "Within how many minutes must an on-call page be acknowledged?",
+    "expect": ["\\b(10|ten)\\s*min"],
+    "cite_doc": {
+      "source_uri": "handbook/oncall-policy.md",
+      "section": "On-call policy > Paging"
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "Within how many minutes must an on-call page be acknowledged?",
+        "top_k": 5
+      }
+    },
+    "forbid": ["\\b(15|fifteen)\\s*min"]
+  },
+  {
+    "id": "abstain-doc-credit",
+    "kind": "abstain",
+    "person": "dave",
+    "question": "What service credit does Acme get when the hosting provider misses its uptime guarantee?",
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "What service credit does Acme get when the hosting provider misses its uptime guarantee?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "abstain-doc-phone",
+    "kind": "abstain",
+    "person": "dave",
+    "question": "What is the hosting provider's escalation phone number?",
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "What is the hosting provider's escalation phone number?",
+        "top_k": 5
+      }
+    }
   }
 ]

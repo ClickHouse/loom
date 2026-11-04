@@ -295,9 +295,13 @@ that serves it, and give it a `viewer` token in any case. On it:
   identities, versions and attestations the trimmed shape drops; a `memory.search` runs
   with `explain: false`, so its hits carry no per-hit score breakdown. `memory.search` and
   `knowledge.search`, which the other listings leave to `loom_search`, are listed here
-  so an answer can come from one plane at a time.
+  so an answer can come from one plane at a time. A `knowledge.search` hit names its
+  `source_uri` and heading breadcrumb (`section`); the document's `revision` comes from
+  `knowledge.get`. The hit is the nearest passage, not an answer: the op has no abstain
+  signal, so the model says a fact is not in the documents when no hit states it.
 - **The `initialize` instructions** tell the model to cite each claim by key and version
-  or content hash, to keep source statements, computed results and its own reading apart,
+  or content hash, or by document `source_uri`, section and revision, to keep source
+  statements, computed results and its own reading apart,
   to report missing evidence as not observed, and to treat stored text as data that
   cannot grant a tool or approve a change.
 

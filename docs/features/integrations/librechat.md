@@ -147,11 +147,62 @@ orgs, mints a token per person, revokes one, and scores each answer:
 | Tool calls per question                                 | at most 3     | at most 3, 16 in all                                                      |
 | Model cost per answer, every prompt token at list price | at most $0.05 | mean $0.029; max $0.064 (`abstain-cfo`, three searches) misses the target |
 
-The LibreChat numbers are from one run of the case set, scored against the current
-`cases.json` with `qualify.py rescore`; the direct-path numbers are from a later run of
-that path alone (`qualify.py run --native-only`) on a fresh seed.
+The LibreChat numbers are from one run of the 14 memory, inventory, inspect, tune, refusal
+and abstention cases, scored against the current `cases.json` with `qualify.py rescore`;
+the direct-path numbers are from a later run of that path alone
+(`qualify.py run --native-only`) on a fresh seed. The document cases below were run
+separately.
 
 The direct path answered the same 14 cases correctly at p50 0.08 s and p95 0.24 s with one
 read each. The model adds natural-language questions and a written answer; it costs seconds
 and money per question, and every listed tool's schema is sent on each model call: about
 11,000 prompt tokens for the assistant roster, about 25,000 for a two-call answer.
+
+### Document questions
+
+The document cases ask over a third namespace, `acme-library`, whose person holds a
+`viewer` token on it alone. Its documents are written through `knowledge.upsert`, the text
+path: a Markdown runbook with nested headings, a plain-text contract with none, a SQL
+table definition and a TOML file, and a policy written twice so that its live revision
+states a value the earlier one did not. The labels name each answer's value and the
+section that states it; two questions ask for a fact no document holds.
+
+An answer cites a document passage as `[source_uri § Section > Subsection, revision N]`,
+the breadcrumb a `knowledge.search` hit carries in `section` and the revision
+`knowledge.get` returns, since a hit carries no revision. A document with no headings
+(the contract, the SQL file) is cited by its `source_uri` alone. On the text path a TOML
+`# comment` line is a Markdown heading, so the TOML file's sections are its comments.
+
+- **recall@k:** the rank of the labeled `(source_uri, section)` among the hits of the
+  direct path's `knowledge.search`, with the question as the query and the case's
+  `top_k`. The model's own searches are not scored: their results stay in LibreChat.
+- **citation valid:** checked against the seeded server with the scorer's viewer token,
+  no model: the document is live in the person's namespace, a named section is one of
+  its headings (`knowledge.outline`), a named revision is its live one (`knowledge.get`),
+  and the cited text (the section with its subsections, or the whole document) holds one
+  of the labeled values. A revision that is not a number (`revision unknown`) names none.
+  A locator, once hits carry one, is one more field each citation is checked on.
+- **labeled section cited:** a valid citation names the labeled section exactly; a parent
+  section that also holds the value is valid but does not count.
+- **abstention:** the answer says the fact is not in the documents. `knowledge.search`
+  returns the nearest passages and has no abstain signal, so the direct path abstains
+  only when nothing is found at all.
+
+| Measured on v0.8.8, `claude-haiku-4-5-20251001`, `text-embedding-3-large` | LibreChat                                                                                 | Direct path                                             |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Answerable questions answered correctly                                   | 7 of 7                                                                                    | 7 of 7, from the top hit                                |
+| Labeled section at rank 1 / within the top 5                              | -                                                                                         | 7 of 7 / 7 of 7                                         |
+| Document citations valid                                                  | 7 of 8; the invalid one names revision 0, which the model wrote with no tool returning it | -                                                       |
+| Labeled section cited                                                     | 6 of 7                                                                                    | 7 of 7 (the top hit)                                    |
+| Citations naming a revision                                               | 2 of 8                                                                                    | -                                                       |
+| Unanswerable questions abstained                                          | 2 of 2, no false abstention                                                               | 0 of 2                                                  |
+| End-to-end latency p50 / p95                                              | 5.1 s / 11.3 s                                                                            | 0.05 s / 0.22 s; 0.11 s / 0.42 s on the first, cold run |
+| Tool calls                                                                | 26 for 9 questions; 5 on each unanswerable one                                            | one read each                                           |
+| Model cost, every prompt token at list price                              | $0.388, mean $0.043 per answer, max $0.090                                                | none                                                    |
+
+The five documents make a small corpus, so rank 1 for every labeled section says the
+breadcrumbs reach the hits, not that retrieval holds up at scale. Without a revision on
+the hit, the model wrote `revision N` or `revision unknown` in most citations and once
+made one up. Each unanswerable question took five calls, over the 3-call target, and one
+took 11.3 s, over the 10 s target: the model kept searching before it said the fact was
+not there.

@@ -91,13 +91,13 @@ def test_cases_are_labeled_against_the_fixture():
     people = {p["name"] for p in fixture["people"]}
     keys = {key for t in fixture["tenants"] for rows in t["writers"].values() for key, _ in rows}
     kinds = {c["kind"] for c in cases}
-    assert {"memory", "inventory", "inspect", "tune", "refusal", "abstain"} <= kinds
+    assert {"memory", "inventory", "inspect", "tune", "refusal", "abstain", "document"} <= kinds
     assert len({c["id"] for c in cases}) == len(cases)
     assert any(p["revoked"] for p in fixture["people"])
     for case in cases:
         assert case["person"] in people, case["id"]
         assert case["baseline"]["op"], case["id"]
-        if case["kind"] in ("memory", "inventory", "inspect", "tune"):
+        if case["kind"] in ("memory", "inventory", "inspect", "tune", "document"):
             assert case["expect"], case["id"]
         if case["kind"] == "memory":
             assert case["cite"] in keys, case["id"]
@@ -256,3 +256,267 @@ def test_direct_path_reads_with_the_assistant_toolsets_forced_arguments(monkeypa
     st = {"loom_url": "http://loom", "tokens": {"alice": "t"}}
     q.baseline(st, _case("abstain-wifi"), {"name": "alice", "org": "acme", "namespace": "n"})
     assert sent["auto_touch"] is False and sent["explain"] is False
+
+
+def _documents() -> dict[tuple[str, str], str]:
+    """The live text of every fixture document by (namespace, source_uri): the last
+    revision written."""
+    fixture = json.loads((QUAL / "fixture.json").read_text())
+    out: dict[tuple[str, str], str] = {}
+    for tenant in fixture["tenants"]:
+        rows = [d for docs in tenant.get("documents", {}).values() for d in docs]
+        for doc in rows + tenant.get("document_revisions", []):
+            out[(tenant["namespace"], doc["source_uri"])] = doc["content"]
+    return out
+
+
+def _sections(content: str) -> dict[str, str]:
+    """Each heading breadcrumb of a document, as the server's chunker reads it, with the
+    text under it and its subsections; '' is the whole document."""
+    from server.knowledge.domain.chunking import SEPARATOR, detect_sections
+
+    out = {"": content}
+    for sec in detect_sections(content):
+        text = "\n".join(sec.lines)
+        for depth in range(1, len(sec.path) + 1):
+            crumb = SEPARATOR.join(sec.path[:depth])
+            out[crumb] = out.get(crumb, "") + text
+    return out
+
+
+def test_document_labels_name_a_section_that_states_the_answer():
+    fixture = json.loads((QUAL / "fixture.json").read_text())
+    people = {p["name"]: p for p in fixture["people"]}
+    docs = _documents()
+    formats = {
+        d["format"]
+        for t in fixture["tenants"]
+        for rows in t.get("documents", {}).values()
+        for d in rows
+    }
+    assert {"markdown", "text", "sql", "toml"} <= formats
+    cases = json.loads((QUAL / "cases.json").read_text())
+    document_cases = [c for c in cases if c["baseline"]["op"] == "knowledge.search"]
+    assert any(c["kind"] == "abstain" for c in document_cases)
+    for case in document_cases:
+        ns = people[case["person"]]["namespace"]
+        if case["kind"] == "abstain":
+            continue
+        label = case["cite_doc"]
+        sections = _sections(docs[(ns, label["source_uri"])])
+        assert label["section"] in sections, (case["id"], sorted(sections))
+        text = sections[label["section"]]
+        for pattern in case["expect"]:
+            assert re.search(pattern, text, re.IGNORECASE), (case["id"], pattern)
+        for pattern in case.get("forbid", []):
+            assert not re.search(pattern, text, re.IGNORECASE), (case["id"], pattern)
+    # A revised document: its earlier revision states what the case forbids.
+    revised = next(c for c in document_cases if c.get("forbid"))
+    earlier = next(
+        d
+        for t in fixture["tenants"]
+        for rows in t.get("documents", {}).values()
+        for d in rows
+        if d["source_uri"] == revised["cite_doc"]["source_uri"]
+    )
+    assert any(re.search(p, earlier["content"], re.IGNORECASE) for p in revised["forbid"])
+
+
+def test_no_document_uri_reads_as_a_memory_key():
+    for _, uri in _documents():
+        assert not _qualify().KEY_RE.search(uri), uri
+
+
+@pytest.mark.parametrize(
+    ("text", "parsed"),
+    [
+        (
+            "Two [handbook/deploy-runbook.md § Deploy runbook > Release train, revision 1].",
+            [("handbook/deploy-runbook.md", "Deploy runbook > Release train", 1)],
+        ),
+        ("400 days [schema/orders.sql].", [("schema/orders.sql", "", None)]),
+        (
+            "See [config/cache.toml § Session cache, rev 2]",
+            [("config/cache.toml", "Session cache", 2)],
+        ),
+        # A revision the model could not read is no revision.
+        (
+            "[schema/orders.sql, revision unknown] [config/cache.toml § Session cache, revision N]",
+            [("schema/orders.sql", "", None), ("config/cache.toml", "Session cache", None)],
+        ),
+        ("Footnote [1] and [a link](http://x) are no citations.", []),
+    ],
+)
+def test_parse_doc_citations(text, parsed):
+    got = _qualify().parse_doc_citations(text)
+    assert [(c["source_uri"], c["section"], c["revision"]) for c in got] == parsed
+
+
+def _fake_documents(monkeypatch, q):
+    docs = {
+        "handbook/oncall-policy.md": {
+            "revision": 2,
+            "content": "# On-call policy\n\n## Paging\n\nAck within 10 minutes.\n",
+            "sections": {
+                ("On-call policy",): "Ack within 10 minutes.",
+                ("On-call policy", "Paging"): "Ack within 10 minutes.",
+            },
+        },
+        "schema/orders.sql": {
+            "revision": 1,
+            "content": "TTL placed_at + INTERVAL 400 DAY",
+            "sections": {},
+        },
+    }
+    calls = []
+
+    def fake_call(base, token, op, body):
+        assert token == "viewer-token"
+        calls.append(op)
+        doc = docs.get(body["source_uri"])
+        if op == "knowledge.get":
+            if doc is None:
+                return 200, {"found": False}, 0.0
+            return 200, {"found": True, "revision": doc["revision"], "content": doc["content"]}, 0.0
+        assert op == "knowledge.outline"
+        path = tuple(body.get("section_path", []))
+        if path:
+            return 200, {"found": True, "section_content": doc["sections"].get(path)}, 0.0
+        return 200, {"found": True, "sections": [{"path": list(p)} for p in doc["sections"]]}, 0.0
+
+    monkeypatch.setattr(q, "loom_call", fake_call)
+    return calls
+
+
+def test_check_doc_citations_reads_the_document_section_and_revision(monkeypatch):
+    q = _qualify()
+    calls = _fake_documents(monkeypatch, q)
+    st = {"loom_url": "http://loom", "tokens": {"scorer:acme-library": "viewer-token"}}
+    person = {"org": "acme", "namespace": "acme-library"}
+    case = _case("doc-revised-ack")
+    good = "10 minutes [handbook/oncall-policy.md § on-call policy >  paging, revision 2]."
+    assert q.check_doc_citations(st, person, case, good) == (
+        ["handbook/oncall-policy.md § on-call policy >  paging @r2"],
+        [],
+        True,
+    )
+    assert calls == ["knowledge.get", "knowledge.outline", "knowledge.outline"]
+    # A parent section that states the answer is valid but not the labeled one.
+    parent = "10 minutes [handbook/oncall-policy.md § On-call policy]."
+    assert q.check_doc_citations(st, person, case, parent)[1:] == ([], False)
+    stale = "[handbook/oncall-policy.md § On-call policy > Paging, revision 1]"
+    assert q.check_doc_citations(st, person, case, stale)[1] == [
+        "handbook/oncall-policy.md § On-call policy > Paging @r1: live revision is 2"
+    ]
+    missing = "[handbook/oncall-policy.md § On-call policy > Escalation]"
+    assert q.check_doc_citations(st, person, case, missing)[1] == [
+        "handbook/oncall-policy.md § On-call policy > Escalation: no such section"
+    ]
+    unknown = "[handbook/pager.md § Paging]"
+    assert q.check_doc_citations(st, person, case, unknown)[1] == [
+        "handbook/pager.md § Paging: no such document"
+    ]
+    # A live document that does not state the labeled value does not support the answer.
+    wrong = "[schema/orders.sql]"
+    assert q.check_doc_citations(st, person, case, wrong)[1] == [
+        "schema/orders.sql: does not state the answer"
+    ]
+    # Without a section the whole document is the cited text.
+    ttl = q.check_doc_citations(st, person, _case("doc-orders-ttl"), "[schema/orders.sql]")
+    assert ttl == (["schema/orders.sql"], [], True)
+
+
+def test_native_document_score_ranks_the_labeled_section():
+    q = _qualify()
+    case = _case("doc-migration-rollback")
+
+    def hit(section, content):
+        return {"source_uri": "handbook/deploy-runbook.md", "section": section, "content": content}
+
+    out = {
+        "results": [
+            hit("Deploy runbook > Rollback > Application rollback", "deployctl rollback"),
+            hit("Deploy runbook > Rollback > Database migrations", "Ship a forward fix instead"),
+        ]
+    }
+    got = q.native_score(case, 200, out)
+    assert (got["rank"], got["correct"], got["cited_expected"]) == (2, False, False)
+    out["results"].reverse()
+    got = q.native_score(case, 200, out)
+    assert (got["rank"], got["correct"], got["cited_expected"]) == (1, True, True)
+    assert q.native_score(case, 200, {"results": []})["rank"] is None
+    # knowledge.search has no abstain signal: a hit is never an abstention.
+    abstain = _case("abstain-doc-phone")
+    assert q.native_score(abstain, 200, out)["correct"] is False
+    assert q.native_score(abstain, 200, {"results": []})["correct"] is True
+
+
+@pytest.mark.parametrize(
+    ("answer", "abstained"),
+    [
+        ("The hosting agreement does not specify a service credit.", True),
+        ("That is not in the documents.", True),
+        ("A credit is not stated in the agreement.", True),
+        ("The credit is 10 percent of the monthly fee.", False),
+    ],
+)
+def test_score_reads_a_document_abstention(answer, abstained):
+    assert _qualify().score(_case("abstain-doc-credit"), answer)["correct"] is abstained
+
+
+def test_report_counts_the_document_cases():
+    q = _qualify()
+
+    def side(correct, rank=None, cited=(), invalid=(), expected=None, abstained=False):
+        return {
+            "correct": correct,
+            "abstained": abstained,
+            "cited": list(cited),
+            "invalid_citations": list(invalid),
+            "cited_expected": expected,
+            "tool_calls": 1,
+            "latency_s": 1.0,
+            "ttft_s": 0.5,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "rank": rank,
+            "k": 5,
+        }
+
+    rows = [
+        {
+            "id": "doc-a",
+            "kind": "document",
+            "documents": True,
+            "librechat": side(True, cited=["a"], expected=True),
+            "native": side(True, rank=1, cited=["a"], expected=True),
+        },
+        {
+            "id": "doc-b",
+            "kind": "document",
+            "documents": True,
+            "librechat": side(
+                True, cited=["b", "c"], invalid=["c: no such section"], expected=False
+            ),
+            "native": side(False, rank=3, cited=["d"], expected=False),
+        },
+        {
+            "id": "doc-none",
+            "kind": "abstain",
+            "documents": True,
+            "librechat": side(True, abstained=True),
+            "native": side(False, cited=["e"]),
+        },
+    ]
+    text = q.report(rows, "m")
+    assert "2 answerable and 1 unanswerable cases; labeled section at rank 1 1/2" in text
+    assert "within the top 5 2/2" in text
+    assert (
+        "librechat documents: correct 2/2; citations 2/3 valid, 0 naming a revision, labeled section cited 1/2; "
+        in text
+    )
+    assert "abstained 1/1 where it should, 0 false abstentions" in text
+    assert (
+        "native documents: correct 1/2; citations -, labeled section cited 1/2; abstained 0/1"
+        in text
+    )

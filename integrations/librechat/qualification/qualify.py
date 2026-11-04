@@ -3,9 +3,11 @@
 Runs the labeled cases in cases.json twice: through LibreChat's agents API (a model
 calling Loom's MCP tools with each person's own token) and through the same reads over
 HTTP with no model, with the arguments the assistant toolset forces. The inventory,
-inspect and tune cases are the reads the dashboard's Assistant page makes.
-Each answer is scored against its label for correctness, citation validity and
-abstention, and timed end to end and to the first streamed token.
+inspect and tune cases are the reads the dashboard's Assistant page makes; the document
+cases ask over a namespace of documents. Each answer is scored against its label for
+correctness, citation validity and abstention, a document case also for the rank of its
+labeled section among the search hits, and each is timed end to end and to the first
+streamed token.
 
 It spends provider money (one model answer per case) and needs a local Loom server
 with auth on, a LibreChat started from ../docker-compose.yml, and LOOM_JWT_SECRET to
@@ -42,7 +44,9 @@ PRICE_PER_MTOK = {"claude-haiku-4-5-20251001": (1.0, 5.0)}
 
 ABSTAIN_PATTERNS = (
     r"\bno (stored |recorded )?(memor|record|information|evidence|entr)",
-    r"\bnot (found|observed|stored|recorded|in (loom|the namespace|the stored))",
+    r"\bnot (found|observed|stored|recorded|in (loom|the namespace|the stored|the documents))",
+    r"\b(does|do) ?n[o']t (specify|state|say|mention)\b",
+    r"\bnot (specified|stated|mentioned)\b",
     r"\b(could ?n[o']t|can ?not|unable to|did ?n[o']t) find\b",
     r"\bdoes ?n[o']t (contain|hold|have)\b",
     r"\bnothing (about|on|in)\b",
@@ -54,6 +58,13 @@ REFUSAL_PATTERNS = (
     r"\b(can ?not|unable to|could ?n[o']t) (access|read|reach|connect)",
 )
 KEY_RE = re.compile(r"\b[a-z][a-z0-9-]*/[a-z][a-z0-9-]*/[a-z0-9][a-z0-9-]*\b")
+# A document citation as INSTRUCTIONS asks for it: `[source_uri § A > B, revision N]`, the
+# section and the revision optional. A source_uri here holds a `/`, so `[1]` is no citation;
+# a revision that is no number (`revision unknown`) names none.
+DOC_CITE_RE = re.compile(
+    r"\[(?P<uri>[^\[\]\s§,]*/[^\[\]\s§,]*)\s*(?:§\s*(?P<section>[^\[\],]*?))?\s*"
+    r"(?:,\s*rev(?:ision)?\.?\s*(?P<revision>[^\[\],]*?))?\s*\]"
+)
 
 
 def load(name: str) -> Any:
@@ -114,21 +125,43 @@ def write(base: str, token: str, org: str, ns: str, writer: str, key: str, text:
     return int(out["version"])
 
 
+def write_document(
+    base: str, token: str, org: str, ns: str, writer: str, doc: dict[str, Any]
+) -> None:
+    """One revision of a fixture document, through the text path: a second write of the
+    same source_uri publishes its next revision."""
+    body = {
+        "org": org,
+        "namespace": ns,
+        "agent": writer,
+        "source_uri": doc["source_uri"],
+        "title": doc["title"],
+        "content": doc["content"],
+    }
+    code, out, _ = loom_call(base, token, "knowledge.upsert", body)
+    if code != 200:
+        sys.exit(f"knowledge.upsert {doc['source_uri']}: {code} {out}")
+
+
 def cmd_seed(args: argparse.Namespace) -> None:
     fixture = load("fixture.json")
     st: dict[str, Any] = {"loom_url": args.loom_url, "tokens": {}, "versions": {}}
     for tenant in fixture["tenants"]:
         org, ns = tenant["org"], tenant["namespace"]
+        documents = tenant.get("documents", {})
         tokens = {
             writer: mint(args.loom_bin, subject=writer, org=org, namespace=ns, role="writer")[
                 "token"
             ]
-            for writer in tenant["writers"]
+            for writer in [*tenant["writers"], *documents]
         }
         edits = [(w, k, t) for w, rows in tenant["writers"].items() for k, t in rows]
         for writer, key, text in edits + [tuple(r) for r in tenant["revisions"]]:
             version = write(args.loom_url, tokens[writer], org, ns, writer, key, text)
             st["versions"][f"{ns}:{key}"] = version
+        docs = [(w, d) for w, rows in documents.items() for d in rows]
+        for writer, doc in docs + [(d["writer"], d) for d in tenant.get("document_revisions", [])]:
+            write_document(args.loom_url, tokens[writer], org, ns, writer, doc)
         # The scorer's own viewer token: check_citations reads each cited key with it.
         st["tokens"][f"scorer:{ns}"] = mint(
             args.loom_bin, subject=f"scorer-{org}", org=org, namespace=ns, role="viewer"
@@ -145,9 +178,11 @@ def cmd_seed(args: argparse.Namespace) -> None:
         st["tokens"][person["name"]] = minted["token"]
         st["tokens"][f"{person['name']}:jti"] = minted["jti"]
     save_state(st)
+    tenants = fixture["tenants"]
     print(
-        f"seeded {sum(len(r) for t in fixture['tenants'] for r in t['writers'].values())} "
-        f"memories; state in {STATE}"
+        f"seeded {sum(len(r) for t in tenants for r in t['writers'].values())} memories and "
+        f"{sum(len(r) for t in tenants for r in t.get('documents', {}).values())} documents; "
+        f"state in {STATE}"
     )
 
 
@@ -181,9 +216,11 @@ BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Sa
 
 INSTRUCTIONS = """You answer questions about the Loom namespace {namespace} in org {org}
 with the Loom tools. Pass org "{org}" and namespace "{namespace}" on every call unless the
-question names another. Cite each stored fact by its memory_key and version. When the tools
-return nothing relevant, say it is not stored in Loom. When a tool call fails, say that it
-failed and quote the error. Never answer from your own knowledge."""
+question names another. Cite each stored fact by its memory_key and version. Cite each
+document passage as [source_uri § section, revision N], with the section breadcrumb a search
+hit gives (leave it out when the hit has none) and the revision when a tool returned one.
+When the tools return nothing relevant, say it is not stored in Loom. When a tool call
+fails, say that it failed and quote the error. Never answer from your own knowledge."""
 
 
 def lc_login(lc: httpx.Client, email: str, password: str) -> str:
@@ -397,6 +434,104 @@ def check_citations(
     return cited, invalid
 
 
+def parse_doc_citations(text: str) -> list[dict[str, Any]]:
+    """The document citations an answer writes, in order: each a source_uri, a section
+    breadcrumb ('' when none is named) and a revision (None when none is named). A later
+    field such as a locator joins the dict; `check_doc_citations` keeps its contract."""
+    out: list[dict[str, Any]] = []
+    for m in DOC_CITE_RE.finditer(text):
+        revision = (m.group("revision") or "").strip()
+        out.append(
+            {
+                "source_uri": m.group("uri"),
+                "section": (m.group("section") or "").strip(),
+                "revision": int(revision) if revision.isdigit() else None,
+            }
+        )
+    return out
+
+
+def section_key(section: str) -> tuple[str, ...]:
+    """A breadcrumb compared case- and spacing-blind: `A > B` and `a >b` are one section."""
+    return tuple(" ".join(p.split()).casefold() for p in section.split(">") if p.strip())
+
+
+def doc_citation_label(c: dict[str, Any]) -> str:
+    label = c["source_uri"] + (f" § {c['section']}" if c["section"] else "")
+    return label + (f" @r{c['revision']}" if c["revision"] is not None else "")
+
+
+def scorer_read(st: dict[str, Any], token: str, op: str, body: dict[str, Any]) -> dict[str, Any]:
+    """One read the scorer makes, waited out when rate-limited: a check that could not read
+    the document says nothing about the answer, so any other failure stops the run."""
+    for _ in range(10):
+        code, out, _ = loom_call(st["loom_url"], token, op, body)
+        if code != 429:
+            break
+        time.sleep(float((out.get("detail") or {}).get("retry_after_s") or 1))
+    if code != 200:
+        sys.exit(f"scorer {op} {body.get('source_uri')}: {code} {out}")
+    return out
+
+
+def check_doc_citations(
+    st: dict[str, Any], person: dict[str, Any], case: dict[str, Any], text: str
+) -> tuple[list[str], list[str], bool]:
+    """Every document citation the answer writes, those that are not valid, and whether the
+    labeled section is among them. Valid: the document is live in the person's namespace,
+    a named section is one of its headings, a named revision is its live one, and the
+    cited text (the section with its subsections, else the whole document) holds one of
+    the case's labeled values. Read with the scorer's viewer token, no model."""
+    body = {"org": person["org"], "namespace": person["namespace"]}
+    scorer = st["tokens"][f"scorer:{person['namespace']}"]
+    cited: list[str] = []
+    invalid: list[str] = []
+    expected = False
+    label = case.get("cite_doc")
+    for c in parse_doc_citations(text):
+        name = doc_citation_label(c)
+        if name in cited:
+            continue
+        cited.append(name)
+        doc = scorer_read(st, scorer, "knowledge.get", {**body, "source_uri": c["source_uri"]})
+        if not doc.get("found"):
+            invalid.append(f"{name}: no such document")
+            continue
+        if c["revision"] is not None and c["revision"] != doc.get("revision"):
+            invalid.append(f"{name}: live revision is {doc.get('revision')}")
+            continue
+        span = doc.get("content") or ""
+        if c["section"]:
+            outline = scorer_read(
+                st, scorer, "knowledge.outline", {**body, "source_uri": c["source_uri"]}
+            )
+            # Every heading, a parent with no text of its own under it included.
+            paths = {
+                section_key(" > ".join(e["path"][:depth])): e["path"][:depth]
+                for e in outline.get("sections", [])
+                for depth in range(1, len(e["path"]) + 1)
+            }
+            path = paths.get(section_key(c["section"]))
+            if path is None:
+                invalid.append(f"{name}: no such section")
+                continue
+            read = scorer_read(
+                st,
+                scorer,
+                "knowledge.outline",
+                {**body, "source_uri": c["source_uri"], "section_path": path},
+            )
+            span = read.get("section_content") or ""
+        if case.get("expect") and not any(
+            re.search(p, span, re.IGNORECASE) for p in case["expect"]
+        ):
+            invalid.append(f"{name}: does not state the answer")
+            continue
+        if label and c["source_uri"] == label["source_uri"]:
+            expected = expected or section_key(c["section"]) == section_key(label["section"])
+    return cited, invalid, expected
+
+
 def score(case: dict[str, Any], text: str) -> dict[str, Any]:
     """Score a written answer: the labeled values present, no forbidden text."""
     kind = case["kind"]
@@ -454,6 +589,8 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
             cited = [hits[0]["memory_key"]]
         correct = abstained if case["kind"] == "abstain" else score(case, text)["correct"]
         correct = correct and case["kind"] != "refusal"
+    elif spec["op"] == "knowledge.search":
+        return native_document_score(case, out)
     else:
         value: Any = out
         for step in spec.get("path", []):
@@ -470,6 +607,40 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
         "cited": cited,
         "invalid_citations": [],
         "cited_expected": case.get("cite") in cited if case.get("cite") else None,
+    }
+
+
+def native_document_score(case: dict[str, Any], out: dict[str, Any]) -> dict[str, Any]:
+    """A knowledge.search answer: the top hit as the answer and its citation, and the rank
+    of the labeled section among the top `k` hits (None when it is not among them). The op returns
+    the nearest passages and has no abstain signal, so it abstains only when nothing is
+    found at all."""
+    hits = out.get("results") or []
+    ranked = [(h["source_uri"], section_key(h.get("section", ""))) for h in hits]
+    label = case.get("cite_doc")
+    rank = None
+    if label:
+        want = (label["source_uri"], section_key(label["section"]))
+        rank = ranked.index(want) + 1 if want in ranked else None
+    abstained = not hits
+    if abstained:
+        text, cited = "abstained", []
+        correct = case["kind"] == "abstain"
+    else:
+        top = hits[0]
+        cited = [top["source_uri"] + (f" § {top['section']}" if top.get("section") else "")]
+        text = f"{top.get('content', '')} [{cited[0]}]"
+        correct = case["kind"] != "abstain" and score(case, top.get("content", ""))["correct"]
+    return {
+        "correct": correct,
+        "abstained": abstained,
+        "answer": text[:300],
+        "tool_calls": 1,
+        "cited": cited,
+        "invalid_citations": [],
+        "cited_expected": rank == 1 if label else None,
+        "rank": rank,
+        "k": case["baseline"]["args"].get("top_k", 5),
     }
 
 
@@ -491,12 +662,12 @@ def cmd_run(args: argparse.Namespace) -> None:
         time.sleep(2)  # the ledger write is asynchronous
         calls = loom_calls(args.ch_url, case["person"], t0, t1)
         text = got["answer"] or got["error"]
-        cited, invalid = check_citations(st, person, text)
         result = score(case, text)
         rows.append(
             {
                 "id": case["id"],
                 "kind": case["kind"],
+                "documents": is_document_case(case),
                 "librechat": {
                     **got,
                     **result,
@@ -506,9 +677,7 @@ def cmd_run(args: argparse.Namespace) -> None:
                         for c in calls
                     ],
                     "consumers": sorted({c["consumer"] for c in calls}),
-                    "cited": cited,
-                    "invalid_citations": invalid,
-                    "cited_expected": case.get("cite") in cited if case.get("cite") else None,
+                    **answer_citations(st, case, person, text),
                 },
                 "native": native,
             }
@@ -523,6 +692,25 @@ def cmd_run(args: argparse.Namespace) -> None:
         rows.append(cancel_probe(st, args))
     Path(args.out).write_text(json.dumps({"model": st.get("model"), "rows": rows}, indent=2))
     print(report(rows, st.get("model", "")))
+
+
+def answer_citations(
+    st: dict[str, Any], case: dict[str, Any], person: dict[str, Any], text: str
+) -> dict[str, Any]:
+    """The memory keys and document passages an answer cites, the invalid ones, and whether
+    the labeled key or section is among them (None when the case labels neither)."""
+    cited, invalid = check_citations(st, person, text)
+    expected = case.get("cite") in cited if case.get("cite") else None
+    if is_document_case(case):
+        doc_cited, doc_invalid, doc_expected = check_doc_citations(st, person, case, text)
+        cited, invalid = cited + doc_cited, invalid + doc_invalid
+        expected = doc_expected if case.get("cite_doc") else None
+    return {"cited": cited, "invalid_citations": invalid, "cited_expected": expected}
+
+
+def is_document_case(case: dict[str, Any]) -> bool:
+    """A question over the namespace's documents: its direct path is knowledge.search."""
+    return case["baseline"]["op"] == "knowledge.search"
 
 
 def run_native_only(st: dict[str, Any], people: dict[str, Any], args: argparse.Namespace) -> None:
@@ -546,14 +734,21 @@ def run_native_only(st: dict[str, Any], people: dict[str, Any], args: argparse.N
 
 
 def cmd_rescore(args: argparse.Namespace) -> None:
-    """Score a saved run's LibreChat answers again against the current labels, offline.
-    Citations, timings and the native results are kept as recorded."""
+    """Score a saved run's LibreChat answers again against the current labels, with no
+    model. Timings and the native results are kept as recorded; with --citations, the
+    citations are checked again against the seeded Loom server."""
     saved = json.loads(Path(args.out).read_text())
     cases = {c["id"]: c for c in load("cases.json")}
+    people = {p["name"]: p for p in load("fixture.json")["people"]}
+    st = state() if args.citations else {}
     for row in saved["rows"]:
         if row["kind"] != "cancel":
             lc = row["librechat"]
-            lc.update(score(cases[row["id"]], lc["answer"] or lc["error"]))
+            case = cases[row["id"]]
+            text = lc["answer"] or lc["error"]
+            lc.update(score(case, text))
+            if args.citations:
+                lc.update(answer_citations(st, case, people[case["person"]], text))
     Path(args.out).write_text(json.dumps(saved, indent=2))
     print(report(saved["rows"], saved.get("model", "")))
 
@@ -628,6 +823,7 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
             f"TTFT p50 {pct(ttft, 0.5):.2f}s p95 {pct(ttft, 0.95):.2f}s; "
             f"tool calls {sum(g['tool_calls'] for g in got)}"
         )
+    lines.extend(document_report(cases))
     price_in, price_out = PRICE_PER_MTOK.get(model, (float("nan"), float("nan")))
     costs = [
         (
@@ -652,6 +848,42 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
                 f"{r['loom_calls_after_disconnect']} after the client disconnected"
             )
     return "\n".join(lines)
+
+
+def document_report(cases: list[dict[str, Any]]) -> list[str]:
+    """The document cases on their own: recall of the labeled section among the direct
+    path's hits, citation validity, the labeled section cited, and abstention."""
+    docs = [r for r in cases if r.get("documents")]
+    if not docs:
+        return []
+    answerable = [r for r in docs if r["kind"] != "abstain"]
+    unanswerable = [r for r in docs if r["kind"] == "abstain"]
+    ranks = [r["native"].get("rank") for r in answerable]
+    k = max((r["native"].get("k", 0) for r in answerable), default=0)
+    lines = [
+        f"\ndocuments: {len(answerable)} answerable and {len(unanswerable)} unanswerable cases; "
+        f"labeled section at rank 1 {sum(rank == 1 for rank in ranks)}/{len(ranks)}, "
+        f"within the top {k} {sum(rank is not None for rank in ranks)}/{len(ranks)} "
+        "(the direct path's knowledge.search hits)"
+    ]
+    for side in ("librechat", "native"):
+        got = [r[side] for r in docs]
+        cited = sum(len(g["cited"]) for g in got)
+        invalid = sum(len(g["invalid_citations"]) for g in got)
+        validity = "-" if side == "native" else f"{cited - invalid}/{cited} valid"
+        if side == "librechat":
+            revisions = sum(" @r" in c for g in got for c in g["cited"])
+            validity += f", {revisions} naming a revision"
+        expected = [r[side]["cited_expected"] for r in answerable]
+        false_abst = sum(r[side]["abstained"] for r in answerable)
+        lines.append(
+            f"{side} documents: correct {sum(r[side]['correct'] for r in answerable)}/"
+            f"{len(answerable)}; citations {validity}, labeled section cited "
+            f"{sum(bool(e) for e in expected)}/{len(expected)}; abstained "
+            f"{sum(r[side]['correct'] for r in unanswerable)}/{len(unanswerable)} where it "
+            f"should, {false_abst} false abstentions"
+        )
+    return lines
 
 
 def main() -> None:
@@ -703,6 +935,11 @@ def main() -> None:
     )
     rescore = sub.add_parser("rescore", help="score a saved run again against cases.json")
     rescore.add_argument("--out", default=str(HERE / "results.json"))
+    rescore.add_argument(
+        "--citations",
+        action="store_true",
+        help="also check every citation again against the seeded Loom server",
+    )
     args = p.parse_args()
     commands = {
         "seed": cmd_seed,
