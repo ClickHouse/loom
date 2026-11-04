@@ -8,6 +8,7 @@ from typing import Any
 
 from server.tasks.app.common import (
     _caller_is_human,
+    _err,
     _in_scope,
     _invalid,
     _triage_next,
@@ -43,6 +44,17 @@ async def _poster_may_post(inbox: InboxRow, subject: str, agent: str) -> bool:
     if not _token_subject() and agent != "-" and agent in posters:
         return True
     return await _in_scope(inbox["org"], inbox["owner_namespace"], write=True)
+
+
+async def _require_poster(inbox: InboxRow, subject: str, agent: str) -> None:
+    """Refuse a caller that may not post to `inbox`. One that may not read its namespace
+    either gets the unregistered-name answer: the name is guessable, and a 403 would
+    confirm the inbox exists."""
+    if await _poster_may_post(inbox, subject, agent):
+        return
+    if not await _in_scope(inbox["org"], inbox["owner_namespace"], write=False):
+        raise _err(404, "RESOURCE_NOT_FOUND", f"inbox {inbox['inbox']!r} is not registered")
+    raise _err(403, "AUTH_INSUFFICIENT", "this principal may not post to that inbox")
 
 
 async def _is_owner_principal(inbox: InboxRow, subject: str) -> bool:

@@ -47,7 +47,6 @@ from server.tasks.app.common import (
     _conflict,
     _drop_lease,
     _err,
-    _in_scope,
     _invalid,
     _is_poster,
     _load_inbox,
@@ -71,7 +70,7 @@ from server.tasks.app.common import (
 )
 from server.tasks.app.trust import (
     _decide_mode,
-    _poster_may_post,
+    _require_poster,
     _token_subject,
     _triage_note,
 )
@@ -86,12 +85,7 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
 
     inbox = await _load_inbox(input.org, input.inbox)
     subject = _caller_subject(input.from_subject)
-    if not await _poster_may_post(inbox, subject, input.agent):
-        # A caller who may neither post nor read the inbox gets the unregistered-name answer:
-        # the name is guessable, and a 403 would confirm the inbox exists.
-        if not await _in_scope(input.org, inbox["owner_namespace"], write=False):
-            raise _err(404, "RESOURCE_NOT_FOUND", f"inbox {input.inbox!r} is not registered")
-        raise _err(403, "AUTH_INSUFFICIENT", "this principal may not post to that inbox")
+    await _require_poster(inbox, subject, input.agent)
     if input.disclosure not in set(inbox.get("accept_disclosure") or []):
         raise _invalid(
             f"inbox {input.inbox!r} does not accept disclosure {input.disclosure!r}",
@@ -829,10 +823,7 @@ async def handle_task_reassign(input: TaskReassignInput) -> TaskReassignOutput:
         raise await _state_conflict("TASK_TERMINAL", task, want="it is already finished")
     dest = await _load_inbox(input.org, input.to_inbox)
     # The caller posts into the destination, so it passes the gate task.create applies.
-    if not await _poster_may_post(dest, _caller_subject(), input.agent):
-        if not await _in_scope(input.org, dest["owner_namespace"], write=False):
-            raise _err(404, "RESOURCE_NOT_FOUND", f"inbox {input.to_inbox!r} is not registered")
-        raise _err(403, "AUTH_INSUFFICIENT", "this principal may not post to that inbox")
+    await _require_poster(dest, _caller_subject(), input.agent)
     if dest["inbox"] == task["inbox"]:
         raise _invalid("the task is already in that inbox")
     if task["disclosure"] not in set(dest.get("accept_disclosure") or []):
