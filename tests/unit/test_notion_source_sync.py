@@ -999,21 +999,6 @@ def test_a_page_store_s_pages_are_mined_by_the_same_leg(
     assert mined == [uri]  # mined once per revision and text
 
 
-def test_a_page_read_again_at_the_same_revision_is_mined_again(
-    world: _Store, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    mined = _mock_mining(monkeypatch)
-    _only_the_page(world)
-    world.now = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)  # 30 s after the revision
-    _run()
-    world.blocks[PAGE] = [_para("Edited in the same minute.")]
-    world.now = datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
-    _run()
-    uri = _uri(world, PAGE)
-    assert world.docs[uri]["input"].content == "Edited in the same minute."
-    assert mined == [uri, uri]
-
-
 def test_the_pacer_forgets_only_integrations_no_longer_waiting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1090,7 +1075,9 @@ def test_other_text_at_the_same_revision_is_written_and_mined(
     world.blocks[PAGE] = [_para(text)]  # another text, or only other whitespace
     world.now = datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
     _run()
-    assert world.upserts == 2 and len(mined) == 2
+    uri = _uri(world, PAGE)
+    assert world.docs[uri]["input"].content == text
+    assert world.upserts == 2 and mined == [uri, uri]
 
 
 def test_more_unsettled_pages_than_the_pass_bound_settle_and_the_turn_completes(
@@ -1116,3 +1103,20 @@ def test_more_unsettled_pages_than_the_pass_bound_settle_and_the_turn_completes(
     world.requests.clear()
     _run()
     assert not [p for p in _paths(world) if p.startswith("/blocks/")]
+
+
+def test_a_database_page_read_within_the_margin_is_listed_again_by_an_incremental_turn(
+    world: _Store,
+) -> None:
+    world.sources[0] = _source(config={"page_ids": [], "database_ids": [DB]})
+    world.rows = [ROW1]
+    world.pages[ROW1] = _page(ROW1, "2026-03-01T00:00:00.000Z", parent=DB)
+    world.now = datetime(2026, 3, 1, 0, 1, 15, tzinfo=UTC)  # first read 75 s after its edit
+    _run(full=True)
+    world.blocks[ROW1] = [_para("Edited in the same minute.")]
+    world.now = datetime(2026, 3, 1, 0, 20, tzinfo=UTC)
+    world.requests.clear()
+    _run()  # incremental: listed again and rewritten
+    assert f"/blocks/{ROW1}/children" in _paths(world)
+    assert world.docs[_uri(world, ROW1)]["input"].content == "Edited in the same minute."
+    assert world.docs[_uri(world, ROW1)]["metadata"]["read_at"] == "2026-03-01T00:20:00.000Z"

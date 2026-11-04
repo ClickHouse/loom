@@ -29,7 +29,7 @@ import functools
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.clients import notion
@@ -126,7 +126,10 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     if trusted:
         _drop_out_of_scope(t)
         result.waits = {k: v for k, v in result.waits.items() if k in t.ids}
-    result.newest = sync.capped(max((f["modifiedTime"] for f in t.items), default=""), listed_at)
+    # The stamp trails the listing by the settle margin too, so a database page read
+    # within the margin is listed again by the next incremental turn.
+    newest = max((f["modifiedTime"] for f in t.items), default="")
+    result.newest = sync.capped(newest, listed_at - timedelta(seconds=_SETTLE_S))
     stored = {
         d["file_id"]: d for d in await store.source_revisions(src.org, src.namespace, src.name)
     }
