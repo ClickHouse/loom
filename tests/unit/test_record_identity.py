@@ -84,6 +84,7 @@ def test_text_without_latin_letters_keys_on_its_own_script() -> None:
 
 def test_punctuation_alone_has_no_key() -> None:
     assert canonical_value("scenario", "?! … —") == ""
+    assert canonical_value("scenario", "€$") == ""
     with pytest.raises(ValueError):
         canonical_record_key("decision", {"scenario": "?! … —"})
 

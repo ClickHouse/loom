@@ -299,8 +299,8 @@ def _record_key(
     if not memory_key and identity_names:
         from server.memory.domain.record_identity import canonical_record_key, canonical_value
 
-        # A value with no letter or digit (punctuation, symbols or marks alone) canonicalises
-        # to "" and has nothing to key on either.
+        # A value that canonicalises to "" (for a non-name field: punctuation, symbols or
+        # marks alone) has nothing to key on.
         missing_identity = [
             n
             for n in identity_names
