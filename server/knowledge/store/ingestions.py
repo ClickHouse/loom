@@ -24,7 +24,8 @@ CANCELS = "loom.knowledge_ingest_cancels"
 # rest are where it ended.
 OPEN_STATES = ("pending", "processing")
 DONE_STATES = ("ready", "partial", "failed", "cancelled")
-# A processing job's stages, in order (`stage`; empty once it ends).
+# A job's stages, in order (`stage`: where a processing job is, or where it last
+# ran; empty once it publishes).
 PARSE, EMBED, PUBLISH = "parse", "embed", "publish"
 
 INGESTION_COLUMNS = (

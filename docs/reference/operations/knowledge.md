@@ -230,7 +230,7 @@ A knowledge.ingest job's state, stage, coverage, failure and published revision.
 | `ingestion_id` | `str` | The job asked about. |
 | `source_uri` | `str` |  |
 | `state` | `str` | pending, processing, ready, partial, failed or cancelled. |
-| `stage` | `str` | The stage a processing job is in: parse, embed or publish. |
+| `stage` | `str` | Where a processing job is, or where it last ran: parse, embed or publish; empty once it published. |
 | `attempts` | `int` | Runs of the job so far, a retry after a transient failure included. |
 | `error_code` | `str` | Why it failed (`format_unavailable`, `encoding`, `incomplete_extraction`, `revision_conflict`, `too_large`, `no_text`, `retries_exhausted`, ...), or `retrying` while it waits for its next attempt; empty otherwise. |
 | `error_message` | `str` | The failure in words, for a person; empty when it did not fail. |

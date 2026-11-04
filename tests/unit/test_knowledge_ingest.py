@@ -59,6 +59,7 @@ class World:
     fail_document: Exception | None = None
     late_documents: list[dict[str, Any]] = field(default_factory=list)  # timed out, land later
     claim_busy: bool = False  # another write holds the source's claim
+    on_chunks: Any = None  # replaces the chunk insert, to act between it and the document row
     fail_retire_older: Exception | None = None  # raised once, by the next older-chunks retire
     log: list[str] = field(default_factory=list)
     stored_vectors: dict[str, list[float]] = field(default_factory=dict)
@@ -135,7 +136,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
         return {s: w.stored_vectors[s] for s in shas if s in w.stored_vectors}
 
     async def insert_chunks(rows: list[dict[str, Any]], **_: Any) -> int:
-        w.chunks.extend(rows)
+        (w.on_chunks or w.chunks.extend)(rows)
         w.log.append("chunks")
         return len(rows)
 
@@ -1129,12 +1130,12 @@ def test_a_retry_publishes_over_a_write_that_landed_while_it_waited(world: World
     """A job a retry put back to pending is not judged as a run that stopped
     mid-publish, so a metadata edit while it waits does not fail it."""
     _run(world, _ingest(world, _upload(world)))
-    world.fail_document = BackendUnavailableError("store down")
+    world.claim_busy = True
     job_id = _ingest(world, _upload(world))
     assert _run(world, job_id) == "pending"
     doc = world.documents[-1]
     world.documents.append({**doc, "title": "Edited", "version": time.time_ns()})
-    world.fail_document = None
+    world.claim_busy = False
     assert _run(world, job_id) == "ready"
     assert world.job(job_id)["revision"] == 2  # type: ignore[index]
 
@@ -1142,17 +1143,19 @@ def test_a_retry_publishes_over_a_write_that_landed_while_it_waited(world: World
 def test_a_document_insert_that_timed_out_and_landed_later_ends_the_job_published(
     world: World, settings_override: Any
 ) -> None:
-    """A client-side timeout does not stop the insert, so its chunks are not
-    retired and the job goes back to pending even on its last attempt. When the
-    row has landed the next run finishes from the job's own chunk version: the
-    earlier revision's chunks retired, its own live and counted. When it has
-    not, the next run retires them and the job fails."""
+    """A client-side timeout does not stop the insert: the run stops as a crash
+    would and leaves the job processing at its publish stage, chunks live. When
+    the row has landed the next run finishes from the job's own chunk version:
+    the earlier revision's chunks retired, its own live and counted. When it
+    has not, the next run retires them and the job fails."""
     settings_override(knowledge_ingest_max_attempts=1)
     _run(world, _ingest(world, _upload(world)))
     world.fail_document = BackendTimeoutError("timed out")
     job_id = _ingest(world, _upload(world))
-    assert _run(world, job_id) == "pending" and world.retired == []
-    version = world.job(job_id)["doc_version"]  # type: ignore[index]
+    assert _run(world, job_id) == "processing" and world.retired == []
+    job = world.job(job_id)
+    assert job is not None and (job["state"], job["stage"]) == ("processing", "publish")
+    version = job["doc_version"]
     world.fail_document = None
     world.documents.extend(world.late_documents)  # the insert lands
     assert _run(world, job_id) == "ready"
@@ -1164,7 +1167,7 @@ def test_a_document_insert_that_timed_out_and_landed_later_ends_the_job_publishe
 
     world.fail_document, world.late_documents = BackendTimeoutError("timed out"), []
     lost = _ingest(world, _upload(world))
-    assert _run(world, lost) == "pending"
+    assert _run(world, lost) == "processing"
     world.fail_document = None  # the insert never landed
     assert _run(world, lost) == "failed"
     assert world.job(lost)["error_code"] == "retries_exhausted"  # type: ignore[index]
@@ -1177,7 +1180,7 @@ def test_a_row_that_landed_after_its_chunks_were_retired_is_published_again(worl
     _run(world, _ingest(world, _upload(world)))
     world.fail_document = BackendTimeoutError("timed out")
     job_id = _ingest(world, _upload(world))
-    assert _run(world, job_id) == "pending"
+    assert _run(world, job_id) == "processing"
     stale = world.job(job_id)["doc_version"]  # type: ignore[index]
     world.fail_document = None
     world.dead.add(stale)  # retired before the row landed
@@ -1193,21 +1196,58 @@ def test_a_row_that_landed_after_its_chunks_were_retired_is_published_again(worl
     )
 
 
-def test_a_document_deleted_after_a_late_insert_stays_deleted(world: World) -> None:
+@pytest.mark.parametrize("merged", [False, True])
+def test_a_document_deleted_after_a_late_insert_stays_deleted(world: World, merged: bool) -> None:
     """The insert timed out and landed, the writer deleted the document, then
-    the job runs again: its own row stands (as a tombstone), so it ends
-    published and brings nothing back."""
+    the job runs again. The delete's tombstone names the job (a delete carries
+    `ingestion_id` forward), so even once a merge has folded the job's own row
+    into it the job ends published, and the document stays deleted."""
     _run(world, _ingest(world, _upload(world)))
     world.fail_document = BackendTimeoutError("timed out")
     job_id = _ingest(world, _upload(world))
-    assert _run(world, job_id) == "pending"
+    assert _run(world, job_id) == "processing"
     world.fail_document = None
     world.documents.extend(world.late_documents)  # the insert lands
-    doc = world.documents[-1]
-    world.documents.append({**doc, "version": doc["version"] + 1, "superseded_at": _now()})
+    late = world.documents[-1]
+    world.documents.append({**late, "version": time.time_ns(), "superseded_at": _now()})
     world.retire_source("repo://retention.sql")  # the delete retires every chunk
+    if merged:
+        world.documents.remove(late)
     documents, chunks = len(world.documents), len(world.chunks)
-    assert _run(world, job_id) == "ready"
-    assert world.job(job_id)["revision"] == 2  # type: ignore[index]
+    assert _run(world, job_id) == "ready" and world.job(job_id)["revision"] == 2  # type: ignore[index]
     assert (len(world.documents), len(world.chunks)) == (documents, chunks)
     assert world.documents[-1]["superseded_at"] is not None
+
+
+def test_a_cancel_after_an_uncertain_insert_waits_for_the_job_to_settle(world: World) -> None:
+    """The job stopped mid-publish, so a cancel answers `processing` (the
+    worker stops it before it publishes, if it can): its row may already have
+    landed, and then the job ends published."""
+    _run(world, _ingest(world, _upload(world)))
+    world.fail_document = BackendTimeoutError("timed out")
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "processing"
+    out = asyncio.run(
+        ingest.handle_knowledge_ingest_cancel(
+            KnowledgeIngestCancelInput(org="o", namespace="ns", ingestion_id=job_id)
+        )
+    )
+    assert (out.state, out.cancelled) == ("processing", True)
+    world.fail_document = None
+    world.documents.extend(world.late_documents)
+    assert _run(world, job_id) == "ready" and world.job(job_id)["revision"] == 2  # type: ignore[index]
+
+
+def test_a_job_erased_after_its_chunks_writes_no_document_row(world: World) -> None:
+    """An erasure that deletes the job's row between its chunk insert and its
+    document row: no document row is written for the erased scope."""
+    job_id = _ingest(world, _upload(world))
+    real_insert = world.chunks.extend
+
+    def erase_job(rows: Any) -> None:
+        real_insert(rows)
+        world.jobs[:] = [j for j in world.jobs if j["ingestion_id"] != job_id]
+
+    world.on_chunks = erase_job
+    assert _run(world, job_id) is None
+    assert world.documents == [] and world.job(job_id) is None

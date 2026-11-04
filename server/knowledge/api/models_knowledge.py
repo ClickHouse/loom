@@ -723,7 +723,8 @@ class KnowledgeIngestStatusOutput(BaseModel):
     source_uri: str = ""
     # pending, processing, ready, partial, failed or cancelled.
     state: str = ""
-    # The stage a processing job is in: parse, embed or publish.
+    # Where a processing job is, or where it last ran: parse, embed or publish;
+    # empty once it published.
     stage: str = ""
     # Runs of the job so far, a retry after a transient failure included.
     attempts: int = 0

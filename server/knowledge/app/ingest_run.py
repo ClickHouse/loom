@@ -83,8 +83,10 @@ class JobFailed(Exception):
 
 class _InsertUncertain(Exception):
     """The document row's insert failed transiently (a client-side timeout
-    among them): the row may still land, so this run's chunks are not retired.
-    `cause` is the transient error."""
+    among them): the row may still land. The run stops as a crash would,
+    writing nothing more, so the job stays `processing` at its publish stage;
+    once its lease lapses its next run settles it as it settles any publish
+    that stopped midway. `cause` is the transient error."""
 
     def __init__(self, cause: Exception) -> None:
         super().__init__(str(cause))
@@ -420,6 +422,7 @@ async def _publish(
             coverage=json.dumps(parsed.artifact.coverage.to_dict(), sort_keys=True),
             ingestion_id=job["ingestion_id"],
         )
+        await _current(job)  # an erased job writes no document row
         try:
             await documents_repo.insert_one(row)
         except _TRANSIENT as e:
@@ -428,21 +431,16 @@ async def _publish(
     return job, revision
 
 
-async def _retry_or_fail(job: dict[str, Any], e: Exception, *, uncertain: bool = False) -> str:
+async def _retry_or_fail(job: dict[str, Any], e: Exception) -> str:
     """After a transient failure: back to pending with a doubling delay, or
-    failed once the attempts are spent. After an `uncertain` document insert
-    (its row may still land) the chunks stay and the job goes back to pending
-    whatever its attempts: its next run finds the row and finishes published,
-    or finds none and retires the chunks before it publishes or fails."""
+    failed once the attempts are spent."""
     if (revision := await _settled(job)) is not None:  # failed after its row
         return await _finish_published(await _current(job), revision)
     attempts = int(job["attempts"])
-    if not uncertain:
-        if attempts >= settings.knowledge_ingest_max_attempts:
-            return await _end(job, "failed", "retries_exhausted", str(e))
-        # Retired before it waits, so search does not serve them meanwhile. After
-        # an uncertain insert they stay live while it waits: the row may land.
-        await _retire_unpublished(job)
+    if attempts >= settings.knowledge_ingest_max_attempts:
+        return await _end(job, "failed", "retries_exhausted", str(e))
+    # Retired before it waits, so search does not serve them meanwhile.
+    await _retire_unpublished(job)
     delay = min(_RETRY_BASE_S * 2 ** (attempts - 1), _RETRY_MAX_S)
     await _save(
         job,
@@ -483,7 +481,13 @@ async def run(job: dict[str, Any], lease: Any) -> str:
     except JobFailed as e:
         return await _end(job, "cancelled" if e.code == "cancelled" else "failed", e.code, str(e))
     except _InsertUncertain as e:
-        return await _retry_or_fail(job, e.cause, uncertain=True)
+        log.warning(
+            "knowledge_ingest: job %s: the document insert failed (%s) and may yet land;"
+            " its next run settles it",
+            job["ingestion_id"],
+            type(e.cause).__name__,
+        )
+        return "processing"
     except _TRANSIENT as e:
         return await _retry_or_fail(job, e)
     except (JobGone, LeaseLost):
