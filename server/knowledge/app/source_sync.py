@@ -403,7 +403,6 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
         addresses = {str(f["id"]): source_uri_of(f) for f in files}
         listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
         gone = functools.partial(_file_gone, token, folders=set(folders), turn=turn)
-
         await retire_absent(src, listed, gone, run, turn)
     return turn
 

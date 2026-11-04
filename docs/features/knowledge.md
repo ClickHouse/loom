@@ -288,10 +288,10 @@ most failures as GraphQL errors, often with HTTP 200 or 400, so a turn reads the
 type as well as the status: a `429` or an error typed `RATELIMITED` is `rate_limited`, a
 `401` or an authentication error is `credential_invalid`, and either ends the turn. A
 document the tracker no longer finds (`not_found`), one over the size bound and one it
-refuses (a `4xx`, or a GraphQL error typed `FORBIDDEN`, `INVALID_INPUT`,
-`FEATURE_NOT_ACCESSIBLE` or `USER_ERROR`: `http_<status>`, `graphql_<type>`) are given
-up on their revision at once; any other GraphQL error, a `5xx`, a timeout and an answer
-without the document (`no_document`) make it wait. List pages are paced half a second
+refuses (a GraphQL error typed `FORBIDDEN`, `INVALID_INPUT`, `FEATURE_NOT_ACCESSIBLE` or
+`USER_ERROR`, or a `4xx` with no GraphQL error type: `http_<status>`, `graphql_<type>`)
+are given up on their revision at once; any other GraphQL error, whatever its status, a
+`5xx`, a timeout and an answer without the document (`no_document`) make it wait. List pages are paced half a second
 apart.
 
 ## Searching

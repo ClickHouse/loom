@@ -80,9 +80,10 @@ class LinearError(RuntimeError):
 
     @property
     def refused(self) -> bool:
-        """The tracker refused this request (a 4xx, or an error it types as the
-        caller's), as opposed to failing to answer."""
-        return 400 <= self.status < 500 or self.kind in _REFUSED_KINDS
+        """The tracker refused this request, as opposed to failing to answer: by
+        the GraphQL error's type when it gave one (it answers most errors with a
+        400, its internal errors too), else by a 4xx status."""
+        return self.kind in _REFUSED_KINDS if self.kind else 400 <= self.status < 500
 
 
 class RateLimited(LinearError):
@@ -188,13 +189,13 @@ async def _query(
 
 
 async def documents_page(
-    api_key: str, project_id: str, *, after: str = "", first: int = PAGE_SIZE
+    api_key: str, project_id: str, *, after: str = ""
 ) -> tuple[list[dict[str, Any]], str]:
     """One page of a project's documents (id, title, updatedAt, url) and the cursor
     of the next page, '' after the last. NotFound when the tracker says the key
     cannot see the project."""
     what = f"project {project_id}"
-    variables: dict[str, Any] = {"id": project_id, "first": first}
+    variables: dict[str, Any] = {"id": project_id, "first": PAGE_SIZE}
     if after:
         variables["after"] = after
     data = await _query(api_key, _PROJECT_DOCUMENTS, variables, what, max_bytes=_PAGE_MAX_BYTES)
