@@ -111,6 +111,11 @@ and the `memory.import` audit rows that list them. For an imported item the link
 `import:` and a digest of its text, which confirms a guessed text; a `namespace` erasure
 removes the links.
 
+A `user_id` erasure removes the verbatim chunks stamped with the user, and the chunks
+stamped with no user (`-`) under one of the user's `(namespace, key)` pairs, whoever's
+memory they belong to: a `-` chunk can hold the user's text, and the write path retires
+those as the writer's too. Chunks stamped with another user stay.
+
 ### The saga
 
 ```mermaid

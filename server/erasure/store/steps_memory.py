@@ -558,9 +558,10 @@ async def tombstone_memory_chunks_by_user(
     ch: _CHClient | None = None,
 ) -> int:
     """Tombstone the verbatim chunks of a user: the chunks stamped with the
-    user, and the chunks whose parent memories' (namespace, key) pairs are the
-    user's, read from loom.memory (tombstoned rows included — the memory step
-    runs first and the chunks must follow it, not escape it)."""
+    user, and the no-user ('-') chunks whose parent (namespace, key) pairs are
+    the user's, read from loom.memory (tombstoned rows included — the memory
+    step runs first and the chunks must follow it, not escape it). Another
+    user's chunks of a shared key stay (`CHUNK_KEYS_IN`)."""
     ch = ch or _default_client()
     total = 0
     for part in slices_or_one_empty(await user_key_pairs(org, user_id, ch=ch)):
