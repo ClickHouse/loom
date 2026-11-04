@@ -278,7 +278,8 @@ def test_role_review_refuses_a_role_chain_it_cannot_see_or_that_grants_on() -> N
     rev = ob.review_grants(["GRANT analyst, other TO u"])
     ob.review_roles(rev, [{"role_name": "analyst", "with_admin_option": 0}])
     assert rev.not_enabled == ["other"] and not rev.read_only
-    assert "SET DEFAULT ROLE ALL TO u" in rev.refusal("u")
+    assert rev.refusal("u").endswith("Run: SET DEFAULT ROLE ALL TO u")
+    assert rev.refusal("loom-ro").endswith("Run: SET DEFAULT ROLE ALL TO `loom-ro`")
     # an admin option on a nested role shows only in the enabled roles
     rev = ob.review_grants(["GRANT analyst TO u"])
     enabled = [{"role_name": "analyst"}, {"role_name": "nested", "with_admin_option": 1}]

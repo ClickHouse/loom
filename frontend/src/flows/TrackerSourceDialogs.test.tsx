@@ -536,7 +536,8 @@ describe("Add a tracker", () => {
       new ApiError({
         status: 422,
         code: "CREDENTIAL_NOT_READONLY",
-        message: "'loom_ro' holds more than read access (INSERT)",
+        message:
+          "'loom_ro' holds more than read access (INSERT); loom takes a read-only user: create one with SELECT only, on the tables you map (or the views) and system.columns.",
       }),
     );
     render(
@@ -548,7 +549,7 @@ describe("Add a tracker", () => {
     await waitFor(() => expect(within(checks).getByText(/The user can only read/)).toHaveTextContent("failed"));
     expect(within(checks).getByText(/Reach abc.clickhouse.cloud/)).toHaveTextContent("passed");
     expect(
-      within(checks).getByText(/holds more than read access \(INSERT\) — create a user with SELECT only/),
+      within(checks).getByText(/holds more than read access \(INSERT\); loom takes a read-only user/),
     ).toBeInTheDocument();
     expect(within(checks).getByText(/Loom can read rows/)).toHaveTextContent("not checked");
   });

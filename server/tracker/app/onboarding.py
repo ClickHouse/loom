@@ -99,13 +99,14 @@ class GrantReview:
         if self.refused:
             why.append(
                 f"{user!r} holds more than read access ({', '.join(self.refused[:4])}); loom "
-                "takes a read-only user — SELECT on the contract views and system.columns only."
+                "takes a read-only user: create one with SELECT only, on the tables you map (or "
+                "the views) and system.columns."
             )
         if self.not_enabled:
             why.append(
                 f"{user!r} holds roles that are not default roles "
                 f"({', '.join(self.not_enabled[:4])}), so loom cannot check what they grant. "
-                f"Run: SET DEFAULT ROLE ALL TO {user}"
+                f"Run: SET DEFAULT ROLE ALL TO {_sql_name(user)}"
             )
         return " ".join(why)
 
@@ -147,6 +148,13 @@ def review_grants(lines: list[str]) -> GrantReview:
 
 
 _ESCAPES = {"t": "\t", "n": "\n", "r": "\r", "0": "\0"}
+
+
+def _sql_name(name: str) -> str:
+    """`name` as SQL takes it: bare when it is a plain identifier, else quoted."""
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        return name
+    return "`" + name.replace("\\", "\\\\").replace("`", "\\`") + "`"
 
 
 def _unquote(name: str) -> str:
@@ -272,7 +280,8 @@ async def probe_credential(
                 raise ReadonlyModeError(
                     f"{user!r} has readonly = 1, which refuses the per-query settings loom sends "
                     "(readonly = 2 and a timeout on every read), so nothing could be read. "
-                    f"Run: ALTER USER {user} SETTINGS readonly = 2 — it still allows SELECT only."
+                    f"Run: ALTER USER {_sql_name(user)} SETTINGS readonly = 2 — it still allows "
+                    "SELECT only."
                 ) from e
             raise ProbeError(f"{sql} refused for {user!r}: {str(e) or type(e).__name__}") from e
         grant_rows = answers["SHOW GRANTS"] + answers["SHOW GRANTS FINAL"]

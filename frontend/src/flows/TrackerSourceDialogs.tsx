@@ -1139,12 +1139,7 @@ function CheckStep({
           {refusal?.gate === "reach" && <span className="text-danger">{refusal.message}</span>}
         </CheckRow>
         <CheckRow state={state("readonly")} stale={stale} title="The user can only read">
-          {refusal?.gate === "readonly" && (
-            <span className="text-danger">
-              {refusal.message} — create a user with SELECT only: on the tables you map (or the views) and
-              system.columns.
-            </span>
-          )}
+          {refusal?.gate === "readonly" && <span className="text-danger">{refusal.message}</span>}
           {checked && !refusal && checked.roles.length > 0 && (
             <>
               It also holds the roles <span className="font-mono">{checked.roles.join(", ")}</span> — make sure that's
