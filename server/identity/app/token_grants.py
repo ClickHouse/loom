@@ -174,7 +174,7 @@ async def cascade_revoke_to_created_tokens(
                 # gave. A pending request admits nothing, so it keeps nothing.
                 if c.lower() == subject.lower()
                 or not await grants_repo.stored_spellings(
-                    org, namespace, await verified_spellings(org, c, ch=ch), active=True, ch=ch
+                    org, namespace, await verified_spellings(org, c, ch=ch), rows="active", ch=ch
                 )
             ]
         else:

@@ -190,33 +190,35 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
             params={"org": org, "was": was.lower()},  # grants match in any case, as at the gate
         )
     pending = [g for g in grants if g["revoked_at"] is None and g["status"] == "pending"]
+    live = [g for g in grants if g["revoked_at"] is None]
+    if was and live:
+        with own_write_reads():  # a link another process just made
+            was_linked = (org, namespace) in await sso_links.linked(was)
+        # An unlinked password account's address was never verified here: its rows
+        # do not admit this account. When it is another account's verified email,
+        # its rows (a pending request too) are that account's and the link leaves
+        # them; else they admit no one.
+        if not was_linked and await _verified_elsewhere(org, namespace, was):
+            live = pending = []
     if was and pending:
         named = ", ".join(g["namespace"] for g in pending)
         raise ValueError(
             f"{was} asked to join {named}: reject the request (or grant "
             f"{row['owner_email']} there and then reject it) first"
         )
-    live = [g for g in grants if g["revoked_at"] is None]
     if was and live:
         named = ", ".join(f"{g['namespace']} ({g['role']})" for g in live)
-        with own_write_reads():  # a link another process just made
-            was_linked = (org, namespace) in await sso_links.linked(was)
         if was_linked:
             # A linked address's grants admit the person; untied, they would reach no one.
             raise ValueError(
                 f"{was} holds grants of its own: {named}; grant them to "
                 f"{row['owner_email']} and revoke them first"
             )
-        # An unlinked password account's address was never verified here: its grants
-        # do not admit this account. When it is another account's verified email,
-        # its grants are that account's and the link leaves them; else they admit
-        # no one.
-        if not await _verified_elsewhere(org, namespace, was):
-            raise ValueError(
-                f"{was} holds grants of its own: {named}; they admit no one (the "
-                f"address was never verified): grant them to {row['owner_email']} if "
-                "they were meant for this account, and revoke them first"
-            )
+        raise ValueError(
+            f"{was} holds grants of its own: {named}; they admit no one (the "
+            f"address was never verified): grant them to {row['owner_email']} if "
+            "they were meant for this account, and revoke them first"
+        )
     revoked = [g for g in grants if g["revoked_at"] is not None] if was else []
     if revoked:
         with own_write_reads():

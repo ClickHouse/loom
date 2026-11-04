@@ -9,7 +9,7 @@ one; revocation is a separate INSERT with `revoked_at` populated
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from server.core import grant_cache
 from server.core.datetimes import to_naive_utc
@@ -394,24 +394,18 @@ async def stored_spellings(
     namespace: str,
     spellings: list[str],
     *,
-    live: bool = True,
-    active: bool = False,
+    rows: Literal["live", "active", "all"] = "live",
     ch: _CHClient | None = None,
 ) -> list[str]:
     """The subjects the rows on (org, namespace) are stored under that match one of
-    `spellings` in any case, as the gate matches them: the rows not revoked (a
-    pending request too, as `find_any_grant` reads them), only the active rows
-    that admit when `active`, or every row ever written when `live` is False."""
+    `spellings` in any case, as the gate matches them. `rows`: "live" reads the
+    rows not revoked (a pending request too, as `find_any_grant` reads them),
+    "active" the ones that admit, "all" every row ever written."""
     if not spellings:
         return []
     ch = ch or _default_client()
-    if active:
-        live_only = f"AND {LIVE_GRANT}"
-    elif live:
-        live_only = "AND revoked_at IS NULL"
-    else:
-        live_only = ""
-    rows = await ch.query_all(
+    live_only = {"live": "AND revoked_at IS NULL", "active": f"AND {LIVE_GRANT}", "all": ""}[rows]
+    found = await ch.query_all(
         f"""
         SELECT DISTINCT subject FROM loom.namespace_grants FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
@@ -423,7 +417,7 @@ async def stored_spellings(
         """,
         params={"org": org, "ns": namespace, "subs": sorted(set(spellings))},
     )
-    return [str(r["subject"]) for r in rows]
+    return [str(r["subject"]) for r in found]
 
 
 async def count_active_admins(

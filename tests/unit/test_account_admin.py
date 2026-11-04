@@ -653,20 +653,22 @@ def test_a_link_refuses_an_old_address_with_live_grants(
         asyncio.run(account_admin.link_plan("lee@corp.io", "acme", "lee"))
 
 
+@pytest.mark.parametrize("status", ["active", "pending"])
 def test_a_link_leaves_an_old_address_another_account_holds_verified(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
-    # The old address is an SSO account's verified email too: its grants are that
-    # account's, and linking this one away from the address leaves them.
+    # The old address is an SSO account's verified email too: its grants and its
+    # requests are that account's, and linking this one away from the address
+    # leaves them.
     import server.core.ch as ch_mod
 
     row = {"active": True, "password_hash": "h", "contact_email": "lee@home.io"}
     row |= {"owner_email": "lee", "org": "acme", "namespace": "lee"}
-    grant = {"namespace": "team", "role": "writer", "status": "active", "revoked_at": None}
+    grant = {"namespace": "team", "role": "writer", "status": status, "revoked_at": None}
 
     class _CH:
-        async def query_one(self, sql: str, *_a: Any, **_k: Any) -> dict[str, int] | None:
-            return {"held": 1} if "AS held" in sql else None
+        async def query_one(self, *_a: Any, **_k: Any) -> None:
+            return None  # no other account names the new address
 
         async def query_all(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
             return [grant]
@@ -677,9 +679,13 @@ def test_a_link_leaves_an_old_address_another_account_holds_verified(
     async def _linked(email: str) -> list[tuple[str, str]]:
         return []
 
+    async def _held(org: str, namespace: str, email: str) -> bool:
+        return email == "lee@home.io"  # an SSO account holds the old address
+
     monkeypatch.setattr(account_admin.settings, "oauth_login_provider", "oidc")
     monkeypatch.setattr(namespaces, "fetch_row", _row)
     monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
     monkeypatch.setattr(account_admin.sso_links, "linked", _linked)
+    monkeypatch.setattr(account_admin, "_verified_elsewhere", _held)
     plan = asyncio.run(account_admin.link_plan("lee@corp.io", "acme", "lee"))
     assert plan["was"] == "lee@home.io"

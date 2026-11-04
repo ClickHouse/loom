@@ -350,7 +350,7 @@ async def _live_grant_rows(
     found = await _rows_under(org, namespace, verified)
     if found or not unheld:
         return found, unheld
-    if await grants_repo.stored_spellings(org, namespace, verified, live=False):
+    if await grants_repo.stored_spellings(org, namespace, verified, rows="all"):
         return [], unheld  # revoked already: a retry takes nothing more
     seen = {s.lower() for s in verified}
     others = [s for s in await spellings(org, subject) if s.lower() not in seen]

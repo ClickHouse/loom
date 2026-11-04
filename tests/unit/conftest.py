@@ -921,9 +921,9 @@ def no_directory_ties(monkeypatch: pytest.MonkeyPatch) -> None:
         return [subject]
 
     async def _as_given(
-        org: str, ns: str, spellings: list[str], *, live: bool = True, **_: Any
+        org: str, ns: str, spellings: list[str], *, rows: str = "live", **_: Any
     ) -> list[str]:
-        return list(dict.fromkeys(spellings)) if live else []  # no revoked rows
+        return [] if rows == "all" else list(dict.fromkeys(spellings))  # no revoked rows
 
     monkeypatch.setattr("server.auth.aliases.read_aliases", _alone)
     monkeypatch.setattr("server.identity.store.grants.stored_spellings", _as_given)
