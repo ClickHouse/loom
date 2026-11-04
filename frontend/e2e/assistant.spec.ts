@@ -116,6 +116,183 @@ const INVENTORY = {
 };
 
 const TAG = "billing-and-invoicing-for-enterprise-accounts";
+const LONG_URI = `https://example.com/${"specs/".repeat(30)}billing.pdf`;
+
+function stats(size: number, stride: number, cut: number) {
+  return {
+    size,
+    stride,
+    chunks: 120,
+    min_chars: 40,
+    median_chars: size - 200,
+    p90_chars: size,
+    max_chars: size,
+    sections: 40,
+    sections_cut: cut,
+    max_input_tokens: size / 4,
+    over_input_limit: 0,
+  };
+}
+
+const finding = (code: string, kind: string, count: number) => ({
+  code,
+  kind,
+  severity: count ? "warning" : "info",
+  rule_version: 1,
+  source_op: "knowledge.inspect",
+  count,
+  share: count / 4,
+  population: 4,
+  sample_limit: 20,
+  samples: count ? [LONG_URI] : [],
+  samples_complete: count <= 1,
+  ingestion_ids: count ? ["0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"] : [],
+  without_document: 0,
+  ingested: 0,
+  ingested_samples: [],
+  detail:
+    "Sources whose job failed, or waits to retry, because no extractor could take its format: none is configured or routed for it.",
+  remedy:
+    "Configure an extractor for the format (LOOM_DOCUMENT_EXTRACTOR_URL, or a route in LOOM_DOCUMENT_EXTRACTORS_JSON) and upload the original again.",
+  exceptions: "",
+  uncertainty: "",
+});
+
+const job = {
+  ingestion_id: "0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+  state: "failed",
+  stage: "parse",
+  attempts: 3,
+  error_code: "format_unavailable",
+  failure_class: "extractor_unavailable",
+  queued_at: "2026-11-01T09:00:00",
+  updated_at: "2026-11-01T09:01:00",
+  ended_at: "2026-11-01T09:01:00",
+  next_attempt_at: null,
+  stalled: false,
+};
+
+const stage = { total: 3, confirmed: 1, unconfirmed: 2, source_changed: 1, outcome_known: 0 };
+
+const KNOWLEDGE = {
+  org: "dev",
+  namespace: "personal-alice",
+  computed_at: "2026-11-01T10:00:00",
+  documents: {
+    live: 2,
+    deleted: 1,
+    newest_ingested_at: "2026-11-01T09:01:00",
+    by_format: [
+      { name: "pdf", live: 1, deleted: 0 },
+      { name: "application/vnd.openxmlformats-officedocument.presentationml.presentation", live: 1, deleted: 1 },
+    ],
+    by_source_scheme: [{ name: "https", live: 2, deleted: 1 }],
+    earlier_revisions: 3,
+    unnumbered: 1,
+    retired_versions: 4,
+  },
+  chunks: {
+    embedder_model: "text-embedding-3-small",
+    live: 12,
+    searchable: 11,
+    unembedded: 1,
+    by_model: [
+      { model: "text-embedding-3-small", live: 11, embedded: 11 },
+      { model: "a-much-older-embedding-model-name", live: 1, embedded: 0 },
+    ],
+  },
+  decisions: {
+    definition:
+      "Live decision rows in this namespace whose source_resource_id cites a section of one of its documents (knowledge:<namespace>/<source_uri>#<section>).",
+    all_documents: { decided: stage, proposed: stage },
+  },
+  listed: [
+    {
+      source_uri: LONG_URI,
+      title: `Billing ${"specification ".repeat(12)}`,
+      format: "pdf",
+      source_scheme: "https",
+      version: 2,
+      revision: 2,
+      ingestion_id: job.ingestion_id,
+      ingested_at: "2026-11-01T09:01:00",
+      retired_versions: 1,
+      chunks: {
+        live: 8,
+        searchable: 7,
+        unembedded: 1,
+        other_model: 1,
+        versions: 2,
+        min_chars: 120,
+        median_chars: 900,
+        max_chars: 1200,
+        models: ["text-embedding-3-small"],
+      },
+      decisions: { decided: stage, proposed: stage },
+      extraction: { unit: "pages", total: 10, extracted: 9, failed: 1, lost: ["section_path"], complete: false },
+      jobs: {
+        source_uri: LONG_URI,
+        jobs: 2,
+        open_jobs: 0,
+        open_ingestion_id: "",
+        latest: job,
+        current: job,
+        replaced: false,
+      },
+    },
+  ],
+  listed_complete: false,
+  findings: [finding("unembedded_chunks", "system_state", 1), finding("mixed_live_versions", "usage_heuristic", 0)],
+  coverage: { rules_run: [], rules_skipped: ["ingest_backlog"], complete: false },
+  ingestions: {
+    sources: 4,
+    without_document: 1,
+    replaced: 0,
+    pending: 1,
+    processing: 0,
+    stalled: 0,
+    ready: 2,
+    partial: 0,
+    failed: 1,
+    cancelled: 0,
+    oldest_open_queued_at: "2026-11-01T09:00:00",
+    worker_enabled: true,
+    extractor_configured: false,
+    without_document_listed: [
+      {
+        source_uri: LONG_URI,
+        jobs: 1,
+        open_jobs: 0,
+        open_ingestion_id: "",
+        latest: job,
+        current: job,
+        replaced: false,
+      },
+    ],
+  },
+  extraction: { documents: 1, incomplete: 1, lost: [{ name: "section_path", live: 1, deleted: 0 }] },
+  ingest_findings: [
+    finding("ingest_backlog", "system_state", 1),
+    finding("extractor_unavailable", "system_state", 3),
+    finding("ingest_missing_access", "system_state", 1),
+    finding("ingest_content_rejected", "contract_violation", 2),
+    finding("extraction_incomplete", "usage_heuristic", 1),
+  ],
+  memory_findings: [
+    {
+      code: "oversized_values",
+      kind: "usage_heuristic",
+      severity: "warning",
+      rule_version: 1,
+      source_op: "namespace.audit",
+      count: 2,
+      share: 0.05,
+      detail: "Rows over the value size a memory should hold.",
+      remedy: "Move them to documents.",
+    },
+  ],
+  skipped: ["memory_findings.episodic_blobs: not reported by namespace.audit"],
+};
 const TUNE = {
   org: "dev",
   namespace: "personal-alice",
@@ -164,7 +341,91 @@ const TUNE = {
       },
       limits: "A tag used for two meanings would need two categories, not one.",
     },
+    {
+      id: "c1",
+      target: "settings.knowledge_chunking",
+      scope: "every namespace of this deployment (a deployment setting)",
+      title: "Cut documents into chunks of 2000 characters",
+      rationale:
+        "Of 30 documents of dev/personal-alice cut again at the current values, the size cuts 18 of 40 sections into more chunks than their structure makes, so a search hit returns part of a section.",
+      current: "LOOM_KNOWLEDGE_CHUNK_SIZE=1000, LOOM_KNOWLEDGE_CHUNK_STRIDE=800",
+      current_revision: null,
+      proposed: "LOOM_KNOWLEDGE_CHUNK_SIZE=2000, LOOM_KNOWLEDGE_CHUNK_STRIDE=1600",
+      evidence: {
+        finding_codes: [],
+        supporting_count: 12,
+        supporting: [],
+        counter_count: 18,
+        documents: [LONG_URI],
+      },
+      affected_agents: [],
+      affected_agents_total: 0,
+      effect: "future",
+      historical: "Documents already stored keep their chunks.",
+      apply: {
+        op: "settings.set",
+        via: "admin_route",
+        args: { name: "knowledge_chunk_size", value: 2000, expected: 1000 },
+        args_complete: true,
+        required_role: "platform_admin",
+        guard: "expected: the change is refused when the value in force is no longer the drafted current one.",
+      },
+      apply_also: [
+        {
+          op: "settings.set",
+          via: "admin_route",
+          args: { name: "knowledge_chunk_stride", value: 1600, expected: 800 },
+          args_complete: true,
+          required_role: "platform_admin",
+          guard: "expected: the change is refused when the value in force is no longer the drafted current one.",
+        },
+      ],
+      preview: { before: stats(1000, 800, 18), after: stats(2000, 1600, 2) },
+      limits: "The settings are the deployment's: every namespace's next writes are cut at them.",
+    },
+    {
+      id: "r1",
+      target: "settings.document_extractors_json",
+      scope: "every namespace of this deployment (a deployment setting)",
+      title: "Route pdf to an extractor that declares it",
+      rationale: "pdf: 2 sources failed format_unavailable; no extractor is configured for it.",
+      current: "{}",
+      current_revision: null,
+      proposed: '{"pdf": "<the URL LOOM_DOCUMENT_EXTRACTOR_URL names>"}',
+      evidence: {
+        finding_codes: ["extractor_unavailable"],
+        supporting_count: 2,
+        supporting: [],
+        counter_count: 0,
+        documents: [LONG_URI],
+      },
+      affected_agents: [],
+      affected_agents_total: 0,
+      effect: "future",
+      historical: "Sources already ingested keep their extraction.",
+      apply: {
+        op: "LOOM_DOCUMENT_EXTRACTORS_JSON",
+        via: "environment",
+        args: { LOOM_DOCUMENT_EXTRACTORS_JSON: { pdf: "<the URL LOOM_DOCUMENT_EXTRACTOR_URL names>" } },
+        args_complete: false,
+        required_role: "platform_admin",
+        guard: "None: an environment setting has no revision; compare the deployment's value with `current`.",
+      },
+      apply_also: [],
+      preview: null,
+      limits: "A URL is not shown, as an extractor URL can carry a credential.",
+    },
   ],
+  chunking: {
+    cap: 200,
+    population: 30,
+    documents: 30,
+    unread: 0,
+    load_cap: 20000000,
+    embedder_model: "text-embedding-3-small",
+    input_token_limit: 8191,
+    current: stats(1000, 800, 18),
+  },
   guide_revision: 2,
   categories_registered: 1,
   extraction_policy: "",
@@ -180,10 +441,15 @@ async function openWithEveryPanel(page: Page) {
     ["memory.inspect", INSPECTION],
     ["namespace.inventory", INVENTORY],
     ["namespace.tune", TUNE],
+    ["knowledge.inspect", KNOWLEDGE],
   ] as const)
     await page.route(`**/v1/${op}`, (r) => r.fulfill({ json: body }));
   await page.goto("/assistant");
   await expect(page.getByRole("heading", { level: 1, name: "Assistant" })).toBeVisible();
+  await page.getByRole("button", { name: "Documents", exact: true }).click();
+  await page.getByRole("button", { name: "Inspect", exact: true }).click();
+  await expect(page.getByTestId("assistant-documents")).toBeVisible();
+  await page.getByRole("button", { name: "User", exact: true }).click();
   await page.getByRole("button", { name: "What is in this project?" }).click();
   await expect(page.getByRole("table", { name: "What this namespace holds" })).toBeVisible();
   await page.getByLabel("User id").fill(LONG_ID);

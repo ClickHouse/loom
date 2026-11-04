@@ -2,7 +2,9 @@ import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  IngestFinding,
   InspectRow,
+  KnowledgeInspection,
   InspectView,
   MemoryInspection,
   MyNamespaceEntry,
@@ -235,7 +237,206 @@ const TUNE: NamespaceTune = {
   model_used: false,
 };
 
+// knowledge.inspect: two live documents, one ingested with an extraction and a job, one a
+// text write; one finding per ingest check, each clean unless a test makes it hit.
+const ingestFinding = (code: string, kind: IngestFinding["kind"], count = 0): IngestFinding => ({
+  code,
+  kind,
+  severity: count ? "warning" : "info",
+  rule_version: 1,
+  source_op: "knowledge.inspect",
+  count,
+  share: count / 4,
+  population: 4,
+  sample_limit: 20,
+  samples: count ? ["https://example.com/spec.pdf"] : [],
+  samples_complete: count <= 1,
+  ingestion_ids: count && code !== "extraction_incomplete" ? ["ing-1"] : [],
+  without_document: 0,
+  detail: `detail of ${code}`,
+  remedy: `remedy of ${code}`,
+  exceptions: "",
+  uncertainty: "",
+});
+
+const INGEST_CODES: Array<[string, IngestFinding["kind"], string]> = [
+  ["ingest_backlog", "system_state", "Backlog"],
+  ["extractor_unavailable", "system_state", "Extractor unavailable"],
+  ["ingest_missing_access", "system_state", "Missing access"],
+  ["ingest_content_rejected", "contract_violation", "Content rejected"],
+  ["ingest_failed_on_server", "system_state", "Failed on the server's side"],
+  ["extraction_incomplete", "usage_heuristic", "Extraction incomplete"],
+];
+
+const stage = (total: number) => ({
+  total,
+  confirmed: total ? 1 : 0,
+  unconfirmed: total ? total - 1 : 0,
+  source_changed: 0,
+  outcome_known: 0,
+});
+
+const JOB = {
+  ingestion_id: "ing-1",
+  state: "ready",
+  stage: "",
+  attempts: 1,
+  error_code: "",
+  failure_class: "",
+  queued_at: "2026-11-01T09:00:00",
+  updated_at: "2026-11-01T09:01:00",
+  ended_at: "2026-11-01T09:01:00",
+  next_attempt_at: null,
+  stalled: false,
+};
+
+const KNOWLEDGE: KnowledgeInspection = {
+  org: "dev",
+  namespace: "team",
+  computed_at: "2026-11-01T10:00:00",
+  documents: {
+    live: 2,
+    deleted: 1,
+    newest_ingested_at: "2026-11-01T09:01:00",
+    by_format: [
+      { name: "pdf", live: 1, deleted: 0 },
+      { name: "markdown", live: 1, deleted: 1 },
+    ],
+    by_source_scheme: [{ name: "https", live: 2, deleted: 1 }],
+    earlier_revisions: 3,
+    unnumbered: 0,
+    retired_versions: 4,
+  },
+  chunks: {
+    embedder_model: "text-embedding-3-small",
+    live: 12,
+    searchable: 11,
+    unembedded: 1,
+    by_model: [{ model: "text-embedding-3-small", live: 12, embedded: 11 }],
+  },
+  decisions: {
+    definition: "Live decision rows citing a document.",
+    all_documents: { decided: stage(3), proposed: stage(0) },
+  },
+  listed: [
+    {
+      source_uri: "https://example.com/spec.pdf",
+      title: "Billing spec",
+      format: "pdf",
+      source_scheme: "https",
+      version: 2,
+      revision: 2,
+      ingestion_id: "ing-1",
+      ingested_at: "2026-11-01T09:01:00",
+      retired_versions: 1,
+      chunks: {
+        live: 8,
+        searchable: 8,
+        unembedded: 0,
+        other_model: 0,
+        versions: 1,
+        min_chars: 120,
+        median_chars: 900,
+        max_chars: 1200,
+        models: ["text-embedding-3-small"],
+      },
+      decisions: { decided: stage(3), proposed: stage(0) },
+      extraction: { unit: "pages", total: 10, extracted: 9, failed: 1, lost: ["section_path"], complete: false },
+      jobs: {
+        source_uri: "https://example.com/spec.pdf",
+        jobs: 1,
+        open_jobs: 0,
+        open_ingestion_id: "",
+        latest: JOB,
+        current: JOB,
+        replaced: false,
+      },
+    },
+    {
+      source_uri: "https://example.com/notes.md",
+      title: "Notes",
+      format: "markdown",
+      source_scheme: "https",
+      version: 1,
+      revision: 1,
+      ingestion_id: "",
+      ingested_at: "2026-10-30T09:00:00",
+      retired_versions: 0,
+      chunks: {
+        live: 4,
+        searchable: 3,
+        unembedded: 1,
+        other_model: 0,
+        versions: 1,
+        min_chars: 80,
+        median_chars: 300,
+        max_chars: 600,
+        models: ["text-embedding-3-small"],
+      },
+      decisions: { decided: stage(0), proposed: stage(0) },
+      extraction: null,
+      jobs: null,
+    },
+  ],
+  listed_complete: true,
+  findings: [
+    {
+      code: "unembedded_chunks",
+      kind: "system_state",
+      severity: "warning",
+      rule_version: 1,
+      source_op: "knowledge.inspect",
+      count: 1,
+      share: 0.5,
+      population: 2,
+      sample_limit: 20,
+      samples: ["https://example.com/notes.md"],
+      samples_complete: true,
+      ingested: 0,
+      ingested_samples: [],
+      detail: "Live documents with a live chunk that carries no vector.",
+      remedy: "loom rechunk re-embeds it.",
+      exceptions: "",
+      uncertainty: "",
+    },
+  ],
+  coverage: { rules_run: [], rules_skipped: [], complete: true },
+  ingestions: {
+    sources: 4,
+    without_document: 0,
+    replaced: 0,
+    pending: 0,
+    processing: 0,
+    stalled: 0,
+    ready: 3,
+    partial: 0,
+    failed: 1,
+    cancelled: 0,
+    oldest_open_queued_at: null,
+    worker_enabled: true,
+    extractor_configured: true,
+    without_document_listed: [],
+  },
+  extraction: { documents: 1, incomplete: 1, lost: [{ name: "section_path", live: 1, deleted: 0 }] },
+  ingest_findings: INGEST_CODES.map(([code, kind]) => ingestFinding(code, kind)),
+  memory_findings: [
+    {
+      code: "oversized_values",
+      kind: "usage_heuristic",
+      severity: "warning",
+      rule_version: 1,
+      source_op: "namespace.audit",
+      count: 2,
+      share: 0.05,
+      detail: "Rows over the value size a memory should hold.",
+      remedy: "Move them to documents.",
+    },
+  ],
+  skipped: [],
+};
+
 const namespaceInventory = vi.fn(async () => INVENTORY);
+const inspectKnowledge = vi.fn(async () => KNOWLEDGE);
 const inspectMemories = vi.fn(async (_s: unknown, subject: MemoryInspection["subject"], id: string) =>
   inspection(subject, id),
 );
@@ -248,6 +449,7 @@ vi.mock("../api", async (importOriginal) => {
     isAuthDisabled: () => false,
     namespaceInventory: (...a: unknown[]) => namespaceInventory(...(a as [])),
     inspectMemories: (...a: [unknown, MemoryInspection["subject"], string]) => inspectMemories(...a),
+    inspectKnowledge: (...a: unknown[]) => inspectKnowledge(...(a as [])),
     tuneNamespace: (...a: unknown[]) => tuneNamespace(...(a as [])),
   };
 });
@@ -870,5 +1072,341 @@ describe("Assistant: review changes", () => {
     await act(async () => answer(TUNE));
     await waitFor(() => expect(screen.getByText(/No drafts yet/)).toBeInTheDocument());
     expect(screen.queryByTestId("assistant-review")).toBeNull();
+  });
+});
+
+const pickDocuments = async () => {
+  await userEvent.click(screen.getByRole("button", { name: "Documents" }));
+  await userEvent.click(screen.getByRole("button", { name: "Inspect" }));
+  return screen.findByTestId("assistant-documents");
+};
+
+describe("Assistant: documents", () => {
+  it("inspects the namespace's documents with no id: formats, what search serves, decisions and the newest", async () => {
+    const { container } = render(<Assistant />);
+    await userEvent.click(screen.getByRole("button", { name: "Documents" }));
+    expect(screen.queryByLabelText(/id$/)).toBeNull();
+    const result = await pickDocuments();
+    expect(inspectKnowledge).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, expect.anything());
+    expect(inspectMemories).not.toHaveBeenCalled();
+    expect(within(result).getByTestId("docs-totals-line")).toHaveTextContent(
+      "Live documents: 2 · deleted: 1 · earlier revisions: 3 · retired chunk versions: 4",
+    );
+    const formats = within(result).getByRole("table", { name: "Documents by format" });
+    expect(within(formats).getByText("pdf")).toBeInTheDocument();
+    expect(within(result).getByTestId("docs-searchable")).toHaveTextContent(
+      "11 of 12 live chunks searchable under text-embedding-3-small · without a vector: 1",
+    );
+    expect(within(result).getByRole("listitem", { name: "Chunks with no vector" })).toHaveTextContent(
+      "1 document of 2 (50%)",
+    );
+    expect(within(result).getByTestId("docs-decisions-total")).toHaveTextContent(
+      "Decided: 3 (1 confirmed, 2 unconfirmed, 0 source changed, 0 with an outcome) · Proposed: none",
+    );
+    const spec = result.querySelector('[data-source="https://example.com/spec.pdf"]') as HTMLElement;
+    expect(spec).toHaveTextContent("Chunks: 8 of 8 searchable");
+    expect(spec).toHaveTextContent("Extraction: 9 of 10 pages extracted, 1 failed, lost section_path");
+    expect(spec).toHaveTextContent("job ing-1: ready");
+    const notes = result.querySelector('[data-source="https://example.com/notes.md"]') as HTMLElement;
+    expect(notes).toHaveTextContent("Extraction: none (a text write, which no extractor read)");
+    expect(within(result).getByTestId("docs-extraction")).toHaveTextContent(
+      "Extraction coverage: 1 of 1 ingested document not complete · lost: section_path 1",
+    );
+    expect(within(result).getByText("oversized_values")).toBeInTheDocument();
+    expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("says an empty namespace holds no document, and lists no document sections", async () => {
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      documents: { ...KNOWLEDGE.documents, live: 0, deleted: 0, by_format: [], by_source_scheme: [] },
+      chunks: { ...KNOWLEDGE.chunks, live: 0, searchable: 0, unembedded: 0, by_model: [] },
+      listed: [],
+      findings: [],
+      ingestions: { ...KNOWLEDGE.ingestions, sources: 0, ready: 0, failed: 0 },
+      extraction: { documents: 0, incomplete: 0, lost: [] },
+      memory_findings: [],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).getByRole("status")).toHaveTextContent("This namespace holds no live document");
+    expect(within(result).queryByRole("heading", { name: /Newest documents/ })).toBeNull();
+    expect(within(result).queryByRole("heading", { name: "What search serves" })).toBeNull();
+    expect(within(result).getByText("No knowledge.ingest job in the last 30 days.")).toBeInTheDocument();
+  });
+
+  it("shows a section it could not read as not read, never as zero", async () => {
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      documents: {
+        ...KNOWLEDGE.documents,
+        live: null,
+        deleted: null,
+        earlier_revisions: null,
+        unnumbered: null,
+        by_format: [],
+        by_source_scheme: [],
+      },
+      chunks: { ...KNOWLEDGE.chunks, live: null, searchable: null, unembedded: null, by_model: [] },
+      decisions: { ...KNOWLEDGE.decisions, all_documents: null },
+      ingestions: { ...KNOWLEDGE.ingestions, extractor_configured: null },
+      listed: [],
+      skipped: [
+        "documents: TimeoutError",
+        "chunks: TimeoutError",
+        "listed: TimeoutError",
+        "decisions: TimeoutError",
+        "ingestions.extractor_configured: ValueError",
+      ],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).getByTestId("docs-totals-line")).toHaveTextContent(
+      "Live documents: not read · deleted: not read · earlier revisions: not read",
+    );
+    expect(within(result).getByText("The documents could not be counted by format and source.")).toBeInTheDocument();
+    expect(within(result).getByText("The chunks could not be counted.")).toBeInTheDocument();
+    expect(within(result).queryByTestId("docs-searchable")).toBeNull();
+    expect(within(result).getByText("The decisions could not be read.")).toBeInTheDocument();
+    expect(within(result).getByText("The documents could not be listed.")).toBeInTheDocument();
+    expect(within(result).getByText(/extractor settings not read/)).toBeInTheDocument();
+    expect(within(result).getByTestId("docs-skipped")).toHaveTextContent("Not read: documents: TimeoutError; chunks");
+    expect(within(result).queryByRole("status")).toBeNull();
+  });
+
+  it.each(INGEST_CODES)(
+    "shows the %s finding in its own %s group, apart from the others",
+    async (code, kind, label) => {
+      inspectKnowledge.mockResolvedValueOnce({
+        ...KNOWLEDGE,
+        ingest_findings: INGEST_CODES.map(([c, k]) => ingestFinding(c, k, c === code ? 3 : 0)),
+      });
+      render(<Assistant />);
+      const result = await pickDocuments();
+      const card = within(result).getByRole("listitem", { name: label });
+      expect(card).toHaveAttribute("data-code", code);
+      expect(card.closest("[data-kind]")).toHaveAttribute("data-kind", kind);
+      expect(card).toHaveTextContent(`remedy of ${code}`);
+      expect(card).toHaveTextContent("https://example.com/spec.pdf");
+      if (code !== "extraction_incomplete") expect(card).toHaveTextContent("job ing-1");
+      expect(card).toHaveTextContent("and 2 more not listed");
+      // Every other check is clean and named as such, never folded into this one.
+      for (const [other, , otherLabel] of INGEST_CODES.filter(([c]) => c !== code)) {
+        expect(result.querySelector(`li[data-code="${other}"]`)).toBeNull();
+        expect(result).toHaveTextContent(otherLabel);
+      }
+    },
+  );
+
+  it("offers documents to a token pinned to one user, which the server answers in scope", async () => {
+    const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
+    localStorage.setItem("loom_token_v1", `${b64({ alg: "HS256" })}.${b64({ sub: "ada", read_user_id: "ada" })}.sig`);
+    try {
+      render(<Assistant />);
+      await pickDocuments();
+      expect(inspectKnowledge).toHaveBeenCalledTimes(1);
+    } finally {
+      localStorage.removeItem("loom_token_v1");
+    }
+  });
+
+  it("offers no documents to a token scoped own_session, which this page cannot complete", async () => {
+    const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
+    localStorage.setItem(
+      "loom_token_v1",
+      `${b64({ alg: "HS256" })}.${b64({ sub: "ada", read_scope: "own_session", read_user_id: "ada" })}.sig`,
+    );
+    try {
+      render(<Assistant />);
+      await userEvent.click(screen.getByRole("button", { name: "Documents" }));
+      const inspect = screen.getByRole("button", { name: "Inspect" });
+      expect(inspect).toHaveAccessibleDescription(
+        "Your token's read scope needs a user or session id this page does not send.",
+      );
+      await userEvent.click(inspect);
+      expect(inspectKnowledge).not.toHaveBeenCalled();
+    } finally {
+      localStorage.removeItem("loom_token_v1");
+    }
+  });
+
+  it("brings the id field back, focused, when a user's memories are asked for from Documents", async () => {
+    render(<Assistant />);
+    await userEvent.click(screen.getByRole("button", { name: "Documents" }));
+    await userEvent.click(screen.getByRole("button", { name: "Analyze one user's memories" }));
+    expect(screen.getByLabelText("User id")).toHaveFocus();
+  });
+
+  it("says when the documents cannot be read", async () => {
+    inspectKnowledge.mockRejectedValueOnce(new ApiError({ status: 500, code: "INTERNAL", message: "boom" }));
+    render(<Assistant />);
+    await userEvent.click(screen.getByRole("button", { name: "Documents" }));
+    await userEvent.click(screen.getByRole("button", { name: "Inspect" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the documents");
+  });
+
+  it("drops the documents when the namespace changes", async () => {
+    render(<Assistant />);
+    await pickDocuments();
+    switchNamespace();
+    await waitFor(() => expect(screen.queryByTestId("assistant-documents")).toBeNull());
+  });
+});
+
+const STATS = (size: number, stride: number, chunks: number, cut: number, tokens: number) => ({
+  size,
+  stride,
+  chunks,
+  min_chars: 40,
+  median_chars: Math.round(size * 0.8),
+  p90_chars: size,
+  max_chars: size,
+  sections: 40,
+  sections_cut: cut,
+  max_input_tokens: tokens,
+  over_input_limit: 0,
+});
+
+// server/knowledge/app/tune.py _chunking_proposal: settings.set through the admin route,
+// the stride after it.
+const CHUNKING: TuneProposal = {
+  id: "c1",
+  target: "settings.knowledge_chunking",
+  scope: "every namespace of this deployment (a deployment setting)",
+  title: "Cut documents into chunks of 2000 characters",
+  rationale: "Of 30 documents of dev/team cut again at the current values, the size cuts 18 of 40 sections.",
+  current: "LOOM_KNOWLEDGE_CHUNK_SIZE=1000, LOOM_KNOWLEDGE_CHUNK_STRIDE=800",
+  proposed: "LOOM_KNOWLEDGE_CHUNK_SIZE=2000, LOOM_KNOWLEDGE_CHUNK_STRIDE=1600",
+  current_revision: null,
+  evidence: {
+    finding_codes: [],
+    supporting_count: 12,
+    supporting: [],
+    counter_count: 18,
+    documents: ["https://example.com/spec.pdf"],
+  },
+  affected_agents: ["claude-code"],
+  affected_agents_total: 1,
+  effect: "future",
+  historical: "Documents already stored keep their chunks.",
+  apply: {
+    op: "settings.set",
+    via: "admin_route",
+    args: { name: "knowledge_chunk_size", value: 2000, expected: 1000 },
+    args_complete: true,
+    required_role: "platform_admin",
+    guard: "expected: the change is refused when the value in force is no longer the drafted current one.",
+  },
+  apply_also: [
+    {
+      op: "settings.set",
+      via: "admin_route",
+      args: { name: "knowledge_chunk_stride", value: 1600, expected: 800 },
+      args_complete: true,
+      required_role: "platform_admin",
+      guard: "expected: the change is refused when the value in force is no longer the drafted current one.",
+    },
+  ],
+  preview: { before: STATS(1000, 800, 120, 18, 300), after: STATS(2000, 1600, 64, 2, 560) },
+  limits: "The settings are the deployment's.",
+};
+
+// _routes: an environment variable with placeholders to fill in.
+const ROUTES: TuneProposal = {
+  id: "r1",
+  target: "settings.document_extractors_json",
+  scope: "every namespace of this deployment (a deployment setting)",
+  title: "Route pdf to an extractor that declares it",
+  rationale: "pdf: 2 sources failed format_unavailable; no extractor is configured for it.",
+  current: "{}",
+  current_revision: null,
+  proposed: '{"pdf": "<the URL LOOM_DOCUMENT_EXTRACTOR_URL names>"}',
+  evidence: {
+    finding_codes: ["extractor_unavailable"],
+    supporting_count: 2,
+    supporting: [],
+    counter_count: 5,
+    documents: ["https://example.com/a.pdf", "https://example.com/b.pdf"],
+  },
+  affected_agents: [],
+  affected_agents_total: 0,
+  effect: "future",
+  historical: "Sources already ingested keep their extraction.",
+  apply: {
+    op: "LOOM_DOCUMENT_EXTRACTORS_JSON",
+    via: "environment",
+    args: { LOOM_DOCUMENT_EXTRACTORS_JSON: { pdf: "<the URL LOOM_DOCUMENT_EXTRACTOR_URL names>" } },
+    args_complete: false,
+    required_role: "platform_admin",
+    guard: "None: an environment setting has no revision.",
+  },
+  apply_also: [],
+  preview: null,
+  limits: "A URL is not shown.",
+};
+
+const SAMPLE = {
+  cap: 200,
+  population: 30,
+  documents: 30,
+  unread: 0,
+  load_cap: 20_000_000,
+  embedder_model: "text-embedding-3-small",
+  input_token_limit: 8191,
+  current: STATS(1000, 800, 120, 18, 300),
+};
+
+describe("Assistant: document drafts", () => {
+  it("shows a chunking draft's before and after on the sample, its cap, and the admin route that applies it", async () => {
+    tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [CHUNKING], chunking: SAMPLE });
+    const { container } = render(<Assistant />);
+    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    const review = await screen.findByTestId("assistant-review");
+    expect(within(review).getByTestId("tune-sample")).toHaveTextContent(
+      "Document sample: 30 of 30 live documents re-chunked at the current values (cap 200",
+    );
+    expect(within(review).getByTestId("tune-sample")).toHaveTextContent("input limit 8,191 tokens");
+    const card = within(review).getByRole("listitem", { name: /Cut documents into chunks of 2000/ });
+    expect(within(card).getByText("Chunk size and stride (deployment setting)", { exact: false })).toBeInTheDocument();
+    const preview = within(card).getByRole("table", { name: /Before and after/ });
+    const cut = within(preview).getByText("Sections cut by size").closest("tr") as HTMLElement;
+    expect(cut).toHaveTextContent("18 of 40");
+    expect(cut).toHaveTextContent("2 of 40");
+    expect(within(card).getByText(/12 supporting · 18 sampled documents it does not flag/)).toBeInTheDocument();
+    expect(within(card).getByRole("list", { name: /Documents cited for/ })).toHaveTextContent(
+      "https://example.com/spec.pdf",
+    );
+    expect(within(card).getAllByText("POST /v1/admin/settings.set")).toHaveLength(2);
+    expect(within(card).getByTestId("proposal-args")).toHaveTextContent('"name": "knowledge_chunk_size"');
+    expect(within(card).getByTestId("proposal-also-args")).toHaveTextContent('"name": "knowledge_chunk_stride"');
+    expect(within(card).getByText(/Applies to documents written after the change/)).toBeInTheDocument();
+    const apply = within(card).getByRole("button", { name: "Apply" });
+    expect(apply).toHaveAttribute("aria-disabled", "true");
+    expect(apply).toHaveAccessibleDescription(/A platform_admin sends POST \/v1\/admin\/settings.set/);
+    await userEvent.click(apply);
+    expect(tuneNamespace).toHaveBeenCalledTimes(1);
+    expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("shows an extractor route set in the environment, with its placeholders to fill in and the restart", async () => {
+    tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [ROUTES], chunking: null });
+    render(<Assistant />);
+    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    const review = await screen.findByTestId("assistant-review");
+    expect(within(review).queryByTestId("tune-sample")).toBeNull();
+    const card = within(review).getByRole("listitem", { name: /Route pdf to an extractor/ });
+    expect(card.querySelector('[data-via="environment"]')).not.toBeNull();
+    expect(within(card).getByText("Value to set, once each placeholder is filled in:")).toBeInTheDocument();
+    expect(within(card).getByText("LOOM_DOCUMENT_EXTRACTORS_JSON (environment)")).toBeInTheDocument();
+    expect(
+      within(card).getByText(/extractor_unavailable · 2 supporting · 5 documents of these formats extracted whole/),
+    ).toBeInTheDocument();
+    expect(within(card).getByRole("list", { name: /Documents cited for/ })).toHaveTextContent(
+      "https://example.com/b.pdf",
+    );
+    expect(within(card).getByRole("button", { name: "Apply" })).toHaveAccessibleDescription(
+      /A platform_admin sets LOOM_DOCUMENT_EXTRACTORS_JSON in the deployment; it is in force once each server and worker restarts/,
+    );
+    expect(within(card).queryByTestId("proposal-also")).toBeNull();
   });
 });

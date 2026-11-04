@@ -61,9 +61,10 @@ export const OP_MIN_ROLE = {
   "namespace.audit": { min: "viewer", by: "namespace" },
   // The mentor brief reads the ledger for one agent; a viewer of the namespace may ask.
   "mentor.brief": { min: "viewer", by: "namespace" },
-  // The Assistant page's three reads.
+  // The Assistant page's four reads.
   "namespace.inventory": { min: "viewer", by: "namespace" },
   "memory.inspect": { min: "viewer", by: "namespace" },
+  "knowledge.inspect": { min: "viewer", by: "namespace" },
   "namespace.tune": { min: "viewer", by: "namespace" },
   "memory.move": { min: "writer", by: "namespace" },
   "memory.pin": { min: "writer", by: "namespace" },

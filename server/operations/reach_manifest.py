@@ -237,6 +237,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "plugin_hook",
     ),
+    "knowledge.inspect": ("plugin_hook",),
     "knowledge.list": (
         "sdk_method",
         "plugin_hook",
