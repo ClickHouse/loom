@@ -34,13 +34,15 @@ USER_KEYS_SUBQ = (
 USER_PARENT_KEYS = f"(namespace, memory_key) IN {USER_KEYS_SUBQ}"
 PARENT_KEYS_IN = "(namespace, memory_key) IN {keys:Array(Tuple(String, String))}"
 # loom.memory_chunks names its parent `parent_memory_key`; same pair, same
-# reason. A chunk also carries its writer's `user_id` ('-' when it has
-# none), which reaches the chunks no parent key names — a
-# conversation's transcript chunks.
-USER_CHUNKS = f"(user_id = {{uid:String}} OR (namespace, parent_memory_key) IN {USER_KEYS_SUBQ})"
+# reason. A chunk also carries its writer's `user_id`, which reaches the chunks
+# no parent key names — a conversation's transcript chunks. The pair alone
+# would reach another user's chunks: users of one namespace share extractor
+# keys, so the parent-key arm reaches only the chunks stamped with no user
+# ('-'), which may be this user's (`set_chunks._key_chunks` reads them so too).
+_NO_USER_PARENT = "user_id IN ('-', '') AND (namespace, parent_memory_key) IN"
+USER_CHUNKS = f"(user_id = {{uid:String}} OR ({_NO_USER_PARENT} {USER_KEYS_SUBQ}))"
 CHUNK_KEYS_IN = (
-    "(user_id = {uid:String} OR (namespace, parent_memory_key) IN "
-    "{keys:Array(Tuple(String, String))})"
+    f"(user_id = {{uid:String}} OR ({_NO_USER_PARENT} {{keys:Array(Tuple(String, String))}}))"
 )
 USER_RECORDS_SUBQ = (
     "(SELECT record_id FROM loom.memory_records "
