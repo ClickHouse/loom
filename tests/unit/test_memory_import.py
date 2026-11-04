@@ -129,12 +129,17 @@ class _StoreCH(StubCH):
             asked = [r for r in self._stored() if _identity(r) in wanted]
             return [r for r in _newest(asked, _identity) if r["tombstoned_at"] is None]
         if "content_sha256 IN" in sql:
-            holding = [r for r in self._stored(params) if r["content_sha256"] in params["shas"]]
-            heads = _newest(holding, lambda r: (r["content_sha256"], r["memory_key"]))
+            heads = _newest(self._stored(params), _identity)
             return [
-                {k: r[k] for k in ("content_sha256", "memory_key", "memory_id")}
+                {
+                    "head_sha": r["content_sha256"],
+                    "memory_key": r["memory_key"],
+                    "memory_id": r["memory_id"],
+                }
                 for r in heads
-                if r["tombstoned_at"] is None and r["status"] in LIVE_STATUSES
+                if r["content_sha256"] in params["shas"]
+                and r["tombstoned_at"] is None
+                and r["status"] in LIVE_STATUSES
             ]
         return []
 
