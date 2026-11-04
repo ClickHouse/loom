@@ -280,27 +280,32 @@ this namespace's, and its `apply` names how the setting is changed (`via`).
   `knowledge_chunk_stride`, each by the chunker its write path uses: a text document's
   text, an ingested document's stored artifact, until 8 MiB of text and artifact is
   loaded; a document past that, a text over 2,000,000 characters or an artifact over 8
-  MiB counts as `unread`, and `load_cap` states the total. Nothing is written, no model is
-  called and no text is returned. `chunking` reports the cut: chunk count, characters per chunk, the
-  sections the size cuts into more chunks than their structure makes (`sections_cut`), the
-  largest embedding input in tokens and how many inputs are over the embedder's limit
-  (null when its provider states none Loom checks). A size is drafted when an input is
-  over the limit (the largest smaller size that fits), or when more than a quarter of the
-  sampled sections are cut over at least five documents and the limit is known (the
-  smallest larger size, up to four times the current, that keeps three quarters whole
-  within it); the stride keeps its ratio to the size. `preview` holds the sample cut at
-  both values. `apply` is `settings.set` (`POST /v1/admin/settings.set`, a platform
-  admin) with `expected`, and `apply_also` sets the stride. A sample that breaks neither
-  rule drafts nothing, and stands as the evidence; so does a `knowledge_chunk_size` of 0
-  (one chunk per document), for which no size is drafted.
+  MiB counts as `unread`, and `load_cap` states the total. Nothing is written, no model
+  is called and no text is returned. `chunking` reports the cut: chunk count, characters
+  per chunk, the sections the size cuts into more chunks than their structure makes
+  (`sections_cut`), the largest embedding input in tokens and how many inputs are over
+  the embedder's limit (null when its provider states none Loom checks). A size is
+  drafted when an input is over the limit (the largest smaller size that fits, down to
+  200), or when more than a quarter of the sampled sections are cut over at least five
+  documents and the limit is known (the smallest larger size, up to four times the
+  current, that keeps three quarters whole within it); each candidate size is tried
+  once, nearest first, and the stride keeps its ratio to the size. `preview` holds the
+  sample cut at both values. `apply` is `settings.set` (`POST /v1/admin/settings.set`, a
+  platform admin) with `expected`, and `apply_also` sets the stride. A sample that
+  breaks neither rule drafts nothing, and stands as the evidence. So does a
+  `knowledge_chunk_size` of 0 or less, which cuts no window (a text document is one
+  chunk, an ingested one a chunk per block): no size is drafted for it.
 - **Extractor routes** (`settings.document_extractors_json`): a format whose sources'
   current job failed `format_unavailable`, or whose published extractions are
-  incomplete, is routed to another configured extractor that declares it in its
-  capabilities. The draft names that service by the setting holding its URL, never the
-  URL, which can carry a credential, so `args_complete` is false; `via` is `environment`,
-  in force once each server and worker restarts. A format no other configured extractor
-  declares drafts nothing and is named in `skipped` (`extractor.<format>`), as is one
-  whose service declares it now, whose failed sources are ingested again instead.
+  incomplete, is routed to a configured extractor that declares it in its capabilities.
+  The service a source goes to now is read as ingest reads it, from its format and media
+  type; the draft adds a route for the format itself, which wins over a media-type
+  route, so it takes every source of the format. The draft names the service by the
+  setting holding its URL, never the URL, which can carry a credential, so
+  `args_complete` is false; `via` is `environment`, in force once each server and worker
+  restarts. A format no configured extractor declares drafts nothing and is named in
+  `skipped` (`extractor.<format>`), as are failed sources whose service declares the
+  format now, which are ingested again instead.
 
 Decision extraction (`loom decisions extract` and the source sync's mining) builds its
 prompt from fixed text and takes no instructions from a request, a namespace or an org,

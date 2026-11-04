@@ -19,7 +19,7 @@ import pytest
 
 from server.identity.api.models_namespace_tune import NamespaceTuneInput
 from server.knowledge.app import tune
-from server.knowledge.app.extractors import Service
+from server.knowledge.app.extractors import Service, endpoint_for
 from server.knowledge.domain.extract.artifact import Artifact, Block, Coverage
 from server.settings import settings
 
@@ -322,8 +322,16 @@ async def test_lost_structure_drafts_another_declaring_service_or_says_none(docs
             "incomplete": 2,
             "incomplete_uris": ["files/a.sql", "files/b.sql"],
             "lost": ["sql_structure"],
+            "content_types": [""],
         },
-        {"doc_format": "toml", "documents": 3, "incomplete": 0, "incomplete_uris": [], "lost": []},
+        {
+            "doc_format": "toml",
+            "documents": 3,
+            "incomplete": 0,
+            "incomplete_uris": [],
+            "lost": [],
+            "content_types": [""],
+        },
     ]
     out, skipped = await _drafts()
     assert not _target(out, "settings.document_extractors_json")
@@ -349,11 +357,13 @@ async def test_lost_structure_drafts_another_declaring_service_or_says_none(docs
 
 @pytest.mark.asyncio
 async def test_an_unread_section_is_skipped_not_raised(docs: Docs) -> None:
-    docs.fail = {"sample", "jobs", "services"}
+    docs.fail = {"sample", "jobs", "services", "documents"}
     docs.unavailable = []
     out, skipped = await _drafts()
     assert not out.proposals and out.chunking is None
     assert "chunking: RuntimeError" in skipped and "extractor.jobs: RuntimeError" in skipped
+    # The population read is named apart from the whole section's guard (`documents`).
+    assert "documents.population: RuntimeError" in skipped
 
 
 @pytest.mark.asyncio
@@ -422,9 +432,19 @@ async def test_a_chunk_size_of_zero_drafts_nothing_and_reports_the_sample(
     assert out.chunking is not None and out.chunking.documents == 5
     assert out.chunking.current.size == 0
     assert (
-        "chunking: knowledge_chunk_size is 0 (one chunk per document); no size is drafted"
-        in skipped
+        "chunking: knowledge_chunk_size is 0 (no window: a text document is one chunk, an "
+        "ingested one a chunk per block); no size is drafted" in skipped
     )
+
+
+@pytest.mark.asyncio
+async def test_a_negative_chunk_size_is_named_as_it_is(
+    docs: Docs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_chunk_size", -5)
+    out, skipped = await _drafts()
+    assert not out.proposals
+    assert any(s.startswith("chunking: knowledge_chunk_size is -5 (no window") for s in skipped)
 
 
 @pytest.mark.asyncio
@@ -481,3 +501,89 @@ async def test_two_unreachable_extractors_are_read_at_once(
         ("LOOM_DOCUMENT_EXTRACTOR_URL", None),
         ('LOOM_DOCUMENT_EXTRACTORS_JSON["pdf"]', None),
     ]
+
+
+@pytest.mark.asyncio
+async def test_each_candidate_size_is_tried_once(
+    docs: Docs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tried: list[int] = []
+    measure = tune._measure
+
+    def counting(d: Any, size: int, stride: int, limit: Any) -> Any:
+        tried.append(size)
+        return measure(d, size, stride, limit)
+
+    monkeypatch.setattr(tune, "_measure", counting)
+    monkeypatch.setattr(settings, "knowledge_chunk_size", 100)
+    monkeypatch.setattr(settings, "knowledge_chunk_stride", 80)
+    # Sections no candidate keeps whole: every one is tried, each once, nearest first.
+    docs.sample = [_long_sections(f"docs/{i}.md") for i in range(6)]
+    out, skipped = await _drafts()
+    assert tried == [100, 200, 300, 400]
+    assert any("no size tried (200, 300, 400)" in s for s in skipped)
+
+
+@pytest.mark.asyncio
+async def test_inputs_over_the_limit_at_the_smallest_size_say_so(
+    docs: Docs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_chunk_size", tune.MIN_CHUNK_SIZE)
+    monkeypatch.setattr(settings, "knowledge_chunk_stride", 150)
+    docs.limit = 10
+    out, skipped = await _drafts()
+    assert not out.proposals
+    assert any(
+        s.startswith("chunking: ")
+        and s.endswith(f"already at the smallest drafted size, {tune.MIN_CHUNK_SIZE}")
+        for s in skipped
+    ), skipped
+
+
+@pytest.mark.asyncio
+async def test_a_media_type_route_is_the_service_a_source_goes_to(
+    docs: Docs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The media type's route sends application/pdf sources to a service that does not
+    # declare pdf; the default one does, and takes a pdf named by its extension alone.
+    monkeypatch.setattr(tune.extractors, "endpoint_for", endpoint_for)
+    monkeypatch.setattr(settings, "document_extractor_url", DEFAULT)
+    monkeypatch.setattr(settings, "document_extractors_json", f'{{"application/pdf": "{SECRET}"}}')
+    docs.routes = {"application/pdf": SECRET}
+    docs.services = [
+        Service("LOOM_DOCUMENT_EXTRACTOR_URL", DEFAULT, frozenset({"pdf"})),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["application/pdf"]', SECRET, frozenset()),
+    ]
+    docs.unavailable = [
+        {
+            "source_uri": "files/a.pdf",
+            "filename": "a.pdf",
+            "content_type": "application/pdf",
+            "declared_format": "",
+            "ingestion_id": "j1",
+        },
+        {
+            "source_uri": "files/b.pdf",
+            "filename": "b.pdf",
+            "content_type": "",
+            "declared_format": "",
+            "ingestion_id": "j2",
+        },
+    ]
+    out, skipped = await _drafts()
+    (p,) = _target(out, "settings.document_extractors_json")
+    # A format's own route wins over the media type's: pdf goes to the default service.
+    assert p.apply.args["LOOM_DOCUMENT_EXTRACTORS_JSON"] == {
+        "application/pdf": "<as set>",
+        "pdf": "<the URL LOOM_DOCUMENT_EXTRACTOR_URL names>",
+    }
+    assert p.evidence.supporting_count == 1 and p.evidence.documents == ["files/a.pdf"]
+    assert 'LOOM_DOCUMENT_EXTRACTORS_JSON["application/pdf"], which does not declare it' in (
+        p.rationale
+    )
+    assert "wins over a media-type route" in p.limits
+    # The source the default service takes now is ingested again, not rerouted.
+    assert any(
+        s.startswith("extractor.pdf: 1 source failed format_unavailable") and "declares it now" in s
+        for s in skipped
+    ), skipped

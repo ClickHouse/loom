@@ -78,6 +78,7 @@ SETUP = [
         ingestion_id=_id(1),
         artifact_sha256="b" * 64,
         coverage=LOST,
+        blob_content_type="application/sql",
         agent="bot",
     ),
     _doc("files/c.toml", format="toml", ingestion_id=_id(2), coverage=WHOLE, agent="bot"),
@@ -194,12 +195,13 @@ def test_the_extractions_are_counted_per_format_with_what_they_lost() -> None:
             int(r["incomplete"]),
             r["incomplete_uris"],
             r["lost"],
+            r["content_types"],
         )
         for r in rows
     }
     assert got == {
-        "sql": (1, 1, ["files/q.sql"], ["sql_structure"]),
-        "toml": (1, 0, [], []),
+        "sql": (1, 1, ["files/q.sql"], ["sql_structure"], ["application/sql"]),
+        "toml": (1, 0, [], [], [""]),
     }
     # Most incomplete first.
     assert rows[0]["doc_format"] == "sql"
