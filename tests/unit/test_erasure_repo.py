@@ -279,9 +279,8 @@ async def test_tombstone_shared_by_user_zero_count_short_circuits() -> None:
 async def test_tombstone_shared_embeddings_by_user_names_each_namespace_with_its_key() -> None:
     """Shared embeddings don't carry user_id directly (sentinel
     agent='_shared'); the cascade reads the (namespace, key) pairs of the shared rows
-    promoted from the user, then tombstones the shared embeddings of those pairs. A
-    shared row of the same key in another namespace, promoted from someone else,
-    keeps its embedding."""
+    promoted from the user, then tombstones the shared embeddings of those pairs
+    (the rows on clickhouse-local: test_erasure_shared_embeddings_sql.py)."""
     ch = StubCH()
     ch.reads.append(("FROM loom.shared FINAL", [{"namespace": "team-a", "memory_key": "k1"}]))
     ch.query_one_returns.append({"n": 2})
