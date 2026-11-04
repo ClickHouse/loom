@@ -311,6 +311,53 @@ def test_a_hybrid_query_of_short_identifiers_still_runs_the_keys_leg(
     assert "repo://retention.sql" in {r.source_uri for r in out.results}
 
 
+def test_a_private_passs_exact_key_hit_scores_on_the_public_passs_scale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each pass of a private-first search fuses, so a pass whose keys matched and
+    one whose keys did not score on one scale: the keyed hit stands level with the
+    public pass's first hit, not under all of its raw similarities."""
+    from server.knowledge.api.models_knowledge import KnowledgeSearchInput
+    from server.knowledge.app import knowledge_search as h
+
+    _handler_world(monkeypatch)
+
+    async def _sem(q: Any, **kw: Any) -> list[ChunkHit]:
+        # Under the private-first threshold, so the public pass runs too.
+        ns = q.namespaces[0]
+        return [
+            dataclasses.replace(_hit(f"repo://{ns}-{i}.md", distance=0.72), namespace=ns)
+            for i in range(3)
+        ]
+
+    async def _keyed(q: Any, **kw: Any) -> list[ChunkHit]:
+        if "priv" not in q.namespaces:
+            return []
+        hit = _hit("repo://schema.sql", distance=0.75, keys=("db.ts",))
+        return [dataclasses.replace(hit, namespace="priv")]
+
+    async def _fanout(*a: Any, **kw: Any) -> tuple[list[str], list[str]]:
+        return ["priv", "pub"], []
+
+    async def _visibility(org: str, namespaces: list[str]) -> dict[str, str]:
+        return {"priv": "private", "pub": "public"}
+
+    monkeypatch.setattr("server.knowledge.app.search.hybrid_search", _sem)
+    monkeypatch.setattr("server.knowledge.app.search.keys_search", _keyed)
+    monkeypatch.setattr(h, "namespaces_to_search", _fanout)
+    monkeypatch.setattr(h.namespace_visibility, "visibility_map", _visibility)
+    out = asyncio.run(
+        h.handle_knowledge_search(
+            KnowledgeSearchInput(
+                org="o", namespace="priv", query="db.ts", namespace_scope="all_mine"
+            )
+        )
+    )
+    order = [r.source_uri for r in out.results]
+    assert {r.namespace for r in out.results} == {"priv", "pub"}
+    assert order.index("repo://schema.sql") < order.index("repo://pub-1.md"), order
+
+
 def test_a_chunks_metadata_reads_its_structure() -> None:
     from server.knowledge.domain.chunk_metadata import read_structure
 

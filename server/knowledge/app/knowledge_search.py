@@ -212,7 +212,9 @@ def _namespaces_search(
                 return await hybrid_search(base)
             keyed_q = dataclasses.replace(base, top_k=max(top_k * 3, 20), keys=keys)
             sem, keyed = await asyncio.gather(hybrid_search(keyed_q), keys_search(keyed_q))
-            return fuse_rrf(sem, [], top_k=top_k, keyed=keyed) if keyed else sem[:top_k]
+            # Fused even when no key matched: every pass of a private-first search
+            # then scores on one scale, and the passes' hits are sorted together.
+            return fuse_rrf(sem, [], top_k=top_k, keyed=keyed)
         # Lexical leg needs corpus statistics; a cold corpus (no view rows, no avgdl)
         # or a failed read degrades to the vector leg (and, in hybrid mode, the
         # exact-key leg).
@@ -234,8 +236,7 @@ def _namespaces_search(
         sem, lex, keyed = await asyncio.gather(
             hybrid_search(wide), lexical_search(wide), keys_search(wide)
         )
-        if not lex and not keyed:
-            return sem[:top_k]
+        # Fused even when the other legs found nothing, for the same one scale.
         return fuse_rrf(sem, lex, top_k=top_k, w_lex=input.lexical_weight, keyed=keyed)
 
     async def _search(namespaces: list[str]) -> list[tuple[str, list[ChunkHit]]]:
