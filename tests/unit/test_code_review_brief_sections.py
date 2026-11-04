@@ -691,7 +691,7 @@ async def test_rationale_is_read_on_every_call_and_never_stored(
             "line": "- design/new-flag [constraint, decision]: Keep `new_flag` off …",
             "text": rule,
         }
-        return [row], [], 0
+        return code_plane_reads.DecisionRows([row], [])
 
     async def _diff(org: str, ns: str, payload: Any, **kw: Any) -> tuple[str, bool]:
         diffs.append(kw["pr_number"])
@@ -734,11 +734,8 @@ async def test_rationale_reads_no_diff_when_no_row_names_anything_to_check(
 
     async def _decisions(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
         row = {"memory_key": "design/plain", "tags": ["decision"], "pinned": False}
-        return (
-            [row | {"code_state": "", "line": "- design/plain: Decided Z.", "text": "Decided Z."}],
-            [],
-            0,
-        )
+        plain = row | {"code_state": "", "line": "- design/plain: Decided Z.", "text": "Decided Z."}
+        return code_plane_reads.DecisionRows([plain], [])
 
     async def _diff(*a: Any, **kw: Any) -> tuple[str, bool]:
         raise AssertionError("read a diff with nothing to check")
@@ -764,7 +761,7 @@ async def test_rationale_reads_source_paths_first_and_the_rows_its_settings_allo
 
     async def _decisions(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
         calls.append((list(paths), limit))
-        return [], [], 0
+        return code_plane_reads.DecisionRows([], [])
 
     monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
     monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _decisions)
@@ -809,7 +806,7 @@ async def test_rationale_serves_whole_rows_up_to_its_token_setting(
     ]
 
     async def _decisions(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
-        return rows, [], 0
+        return code_plane_reads.DecisionRows(rows, [])
 
     monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
     monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _decisions)
@@ -819,6 +816,25 @@ async def test_rationale_serves_whole_rows_up_to_its_token_setting(
     sec = out.sections["rationale"]
     # the first row always; the second would pass 50 tokens
     assert len(sec["rows"]) == 1 and sec["rows_total"] == 3 and sec["truncated"]
+
+
+@pytest.mark.asyncio
+async def test_rationale_is_unknown_when_the_trunk_is_refused(
+    wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.app import memory_links
+    from server.memory.app import code_plane_reads
+
+    async def _refused(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
+        return code_plane_reads.DecisionRows([], [], refused=True)
+
+    monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
+    monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _refused)
+    wired["repo"] = _HandlerRepo(stored=None)
+    out = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354))
+    sec = out.sections["rationale"]
+    assert sec["verdict"] == "unknown" and sec["causes"] == ["trunk_not_readable"]
+    assert sec["rows"] == []
 
 
 @pytest.mark.asyncio

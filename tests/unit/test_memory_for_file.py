@@ -206,7 +206,8 @@ async def test_a_link_read_that_fails_leaves_the_file_match_standing(
     monkeypatch.setattr(app_reads, "current_links", down)
     monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda org, ns: "code-a")
     request = MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", extra_namespaces=["x"])
-    assert await mff._linked(request, "src/a.cpp", ["ns"]) == {}
+    # a failed read is told apart from no links: the caller learns a row may be missing
+    assert await mff._linked(request, "src/a.cpp", ["ns"]) is None
 
 
 # --- decision rows ------------------------------------------------------------

@@ -2103,18 +2103,13 @@ settings:
   # (the mirror may have fetched it); a hit is kept. [live]
   # code_review_brief_mirror_miss_ttl_s: 600.0
 
-  # Changed paths the review brief's `rationale` section reads decisions for, source
-  # paths first. Each is one memory.for_file read: four ClickHouse reads (files match,
-  # code links, their memories, the linked rows; a file with many links slices the
-  # last); each keeps up to 50 rows, read up to memory_for_file_whole_tokens × 48 bytes
-  # of value. [live]
+  # Changed paths the review brief's `rationale` section reads decisions for. [live]
   # code_review_brief_rationale_paths: 10
 
-  # Decision and constraint rows the `rationale` section serves; rows with something to
-  # check go first. [live]
+  # Decision and constraint rows the `rationale` section serves. [live]
   # code_review_brief_rationale_rows: 8
 
-  # Tokens of whole rows the `rationale` section serves; its first row is always served.
+  # The `rationale` section's own token budget; its first row is served even past it.
   # [live]
   # code_review_brief_rationale_tokens: 250
 

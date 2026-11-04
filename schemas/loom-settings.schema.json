@@ -1361,20 +1361,20 @@
           "maximum": 50,
           "minimum": 1,
           "type": "integer",
-          "description": "Changed paths the review brief's `rationale` section reads decisions for, source paths first. Each is one memory.for_file read: four ClickHouse reads (files match, code links, their memories, the linked rows; a file with many links slices the last); each keeps up to 50 rows, read up to memory_for_file_whole_tokens × 48 bytes of value."
+          "description": "Changed paths the review brief's `rationale` section reads decisions for."
         },
         "code_review_brief_rationale_rows": {
           "default": 8,
           "maximum": 50,
           "minimum": 1,
           "type": "integer",
-          "description": "Decision and constraint rows the `rationale` section serves; rows with something to check go first."
+          "description": "Decision and constraint rows the `rationale` section serves."
         },
         "code_review_brief_rationale_tokens": {
           "default": 250,
           "minimum": 50,
           "type": "integer",
-          "description": "Tokens of whole rows the `rationale` section serves; its first row is always served."
+          "description": "The `rationale` section's own token budget; its first row is served even past it."
         },
         "code_risk_annotations": {
           "default": true,

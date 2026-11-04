@@ -52,6 +52,28 @@ def _row(key: str, text: str, tags: list[str], **kw: Any) -> dict[str, Any]:
     }
 
 
+def test_checked_names_reads_every_name_past_the_mentions_cap() -> None:
+    names = [f"`DB::Option{i:02d}`" for i in range(20)]
+    text = "Decided X because Y. Rejected: " + "; ".join(names) + "."
+    assert rb.checked_names(text, constraint=False) == [f"DB::Option{i:02d}" for i in range(20)]
+
+
+def test_checked_names_stop_the_rejected_clause_at_the_realized_outcome() -> None:
+    from server.memory.domain.decision_statement import memory_value
+
+    value = memory_value(
+        {
+            "outcome": "spill into sorted runs",
+            "reasoning": "a set on disk costs a seek per row",
+            "alternatives": ["a plain `DB::SpillingHashSet`"],
+            "realized_outcome": "runs merged with `DB::MergingSortedTransform`",
+            "success": True,
+        }
+    )
+    assert "Realized:" in value
+    assert rb.checked_names(value, constraint=False) == ["DB::SpillingHashSet"]
+
+
 def test_checked_names_read_rejected_options_and_a_constraints_settings() -> None:
     assert rb.checked_names(DECISION, constraint=False) == ["DB::SpillingHashSet"]
     # the governed code (`Applies to`) is never a checked name
@@ -221,6 +243,18 @@ def test_section_keeps_whole_rows_within_its_budget_and_the_verdict_reads_every_
     assert sec["verdict"] == "check" and sec["causes"] == ["diff_cut"]
 
 
+def _listing(for_file_stub: Any) -> Any:
+    """A `listing_rows` over a stub of the memory.for_file handler: its hits as dicts with
+    a memory_id (the writer and key), the code-links read not skipped."""
+
+    async def _rows(inp: Any) -> tuple[list[dict[str, Any]], bool]:
+        out = await for_file_stub(inp)
+        hits = [h.model_dump() | {"memory_id": f"{h.agent}/{h.memory_key}"} for h in out.hits]
+        return hits, False
+
+    return _rows
+
+
 def _hit(key: str, **kw: Any) -> _MemoryForFileHit:
     return _MemoryForFileHit(
         memory_key=key,
@@ -255,8 +289,8 @@ async def test_decisions_for_paths_merges_paths_worst_state_and_orders_constrain
         return MemoryForFileOutput(path=inp.path, total=len(hits), hits=hits)
 
     monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
-    monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
-    rows, left, full = await code_plane_reads.decisions_for_paths(
+    monkeypatch.setattr(for_file, "listing_rows", _listing(_for_file))
+    rows, left, full, _, _ = await code_plane_reads.decisions_for_paths(
         "acme", "code-widgets", ["src/a.cpp", "src/b.cpp", "src/a.cpp"], limit=5
     )
     assert left == [] and full == 0
@@ -311,17 +345,16 @@ async def test_a_row_to_check_is_kept_ahead_of_the_row_cap(
         return MemoryForFileOutput(path=inp.path, total=len(hits), hits=hits)
 
     monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
-    monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
-    rows, left, full = await code_plane_reads.decisions_for_paths(
+    monkeypatch.setattr(for_file, "listing_rows", _listing(_for_file))
+    rows, left, full, _, _ = await code_plane_reads.decisions_for_paths(
         "acme", "code-widgets", ["src/a.cpp"], limit=8, first=rb.has_check
     )
     assert rows[0]["memory_key"] == "design/spill" and len(rows) == 8 and len(left) == 1
     assert full == 0
-    sec = _section(
-        rows, DIFF, rows_left=len(left), left_to_check=any(rb.has_check(d) for d in left)
-    )
+    sec = _section(rows, DIFF, left_out=left)
     assert sec["verdict"] == "check" and sec["rows"][0]["memory_key"] == "design/spill"
-    assert sec["causes"] == ["rows_not_read:1"]
+    # the constraint left out has nothing to check: no cause names it
+    assert sec["causes"] == []
 
 
 def test_the_per_path_row_ceiling_is_memory_for_files_own() -> None:
@@ -368,25 +401,29 @@ async def test_a_path_whose_read_reached_its_ceiling_is_never_clear(
         return MemoryForFileOutput(path=inp.path, total=len(got), hits=got)
 
     monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
-    monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
-    rows, left, full = await code_plane_reads.decisions_for_paths(
+    monkeypatch.setattr(for_file, "listing_rows", _listing(_for_file))
+    rows, left, full, _, _ = await code_plane_reads.decisions_for_paths(
         "acme", "code-widgets", ["src/a.cpp", "src/b.cpp"], limit=8, first=rb.has_check
     )
     assert full == 1 and rows[0]["memory_key"] == "design/spill"
     # the decision is checked and the diff does not add its rejected option: `clear` alone,
     # but the full path may hold a matching row past its ceiling
     assert _section(rows[:1], "")["verdict"] == "clear"
-    sec = _section(rows, "", rows_left=len(left), paths_full=full)
-    assert sec["verdict"] == "unknown"
-    assert sec["causes"] == [f"rows_not_read:{len(left)}", "paths_at_row_ceiling:1"]
+    sec = _section(rows, "", left_out=left, paths_full=full)
+    # the left-out rows have nothing to check, so only the ceiling is named
+    assert sec["verdict"] == "unknown" and sec["causes"] == ["paths_at_row_ceiling:1"]
 
 
 def test_a_left_out_row_with_something_to_check_keeps_the_section_from_clear() -> None:
     ratio = _row("design/ratio", CONSTRAINT, ["decision", "constraint"])
-    sec = _section([ratio], DIFF, rows_left=2, left_to_check=True)
+    spill = _row("design/spill", DECISION, ["decision"])
+    plain = _row("design/plain", "Decided Z.", ["decision"])
+    sec = _section([ratio], DIFF, left_out=[spill, spill, plain])
     assert sec["rows"][0]["verdict"] == "clear" and sec["verdict"] == "unknown"
     assert sec["causes"] == ["rows_not_read:2"]
-    assert _section([ratio], DIFF, rows_left=2)["verdict"] == "clear"
+    # left-out rows with nothing to check leave `clear` standing, and are not named
+    sec = _section([ratio], DIFF, left_out=[plain])
+    assert sec["verdict"] == "clear" and sec["causes"] == []
 
 
 @pytest.mark.asyncio
@@ -402,13 +439,14 @@ async def test_decisions_for_paths_reads_nothing_from_a_trunk_the_caller_cannot_
         raise AssertionError("read a namespace the caller may not read")
 
     monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
-    monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
-    nothing: Any = ([], [], 0)
-    assert (
-        await code_plane_reads.decisions_for_paths("acme", "code-widgets", ["a"], limit=5)
-        == nothing
-    )
-    assert await code_plane_reads.decisions_for_paths("acme", "", ["a"], limit=5) == nothing
+    monkeypatch.setattr(for_file, "listing_rows", _listing(_for_file))
+    refused = await code_plane_reads.decisions_for_paths("acme", "code-widgets", ["a"], limit=5)
+    assert refused.refused and refused.served == [] and refused.left_out == []
+    nothing = await code_plane_reads.decisions_for_paths("acme", "", ["a"], limit=5)
+    assert not nothing.refused and nothing.served == []
+    # a refused read is never `clear` or `none`
+    sec = _section(refused.served, None, refused=refused.refused)
+    assert sec["verdict"] == "unknown" and sec["causes"] == ["trunk_not_readable"]
 
 
 @pytest.mark.asyncio
@@ -498,7 +536,7 @@ async def test_decisions_for_paths_refuses_a_token_that_grants_the_branch_but_no
         reads.append(inp.namespace)
         return MemoryForFileOutput(path=inp.path, total=0, hits=[])
 
-    monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
+    monkeypatch.setattr(for_file, "listing_rows", _listing(_for_file))
 
     def _token(*namespaces: str) -> AuthInfo:
         return AuthInfo(
@@ -515,10 +553,40 @@ async def test_decisions_for_paths_refuses_a_token_that_grants_the_branch_but_no
         got = await code_plane_reads.decisions_for_paths(
             "acme", "code-widgets", ["src/a.cpp"], limit=5
         )
-        assert got == ([], [], 0) and reads == []
+        assert got.refused and got.served == [] and reads == []
         set_current_auth(_token("code-widgets-release", "code-widgets"))
         await code_plane_reads.decisions_for_paths("acme", "code-widgets", ["src/a.cpp"], limit=5)
         assert reads == ["code-widgets"]
     finally:
         set_current_auth(None)
         nc.reset()
+
+
+@pytest.mark.asyncio
+async def test_rows_sharing_a_writer_and_key_stay_two_rows_and_a_failed_links_read_is_counted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import code_link_reads, for_file
+
+    async def _readable(org: str, nss: set[str]) -> set[str]:
+        return nss
+
+    def _row_of(mid: str, user: str) -> dict[str, Any]:
+        hit = _hit("design/spill", agent="loom-decisions")
+        return hit.model_dump() | {"memory_id": mid, "user_id": user}
+
+    async def _rows(inp: Any) -> tuple[list[dict[str, Any]], bool]:
+        # two users' rows under one writer and key; the second path's links read failed
+        if inp.path == "src/a.cpp":
+            return [_row_of("m1", "alice"), _row_of("m2", "bob")], False
+        return [_row_of("m1", "alice")], True
+
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
+    monkeypatch.setattr(for_file, "listing_rows", _rows)
+    read = await code_plane_reads.decisions_for_paths(
+        "acme", "code-widgets", ["src/a.cpp", "src/b.cpp"], limit=8
+    )
+    assert sorted(r["memory_id"] for r in read.served) == ["m1", "m2"]
+    assert read.links_skipped == 1
+    sec = _section(read.served, "", links_skipped=read.links_skipped)
+    assert sec["verdict"] == "unknown" and sec["causes"] == ["links_not_read:1"]

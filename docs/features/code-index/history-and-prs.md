@@ -71,22 +71,26 @@ cover them, and what reviewers said.
 
 At the `standard` and `full` tiers the brief also has a `rationale` section: the design
 decisions and constraints in the repository's trunk code namespace whose `files` or code
-links touch the PR's files. It is read on every call, only when the caller may read the
-trunk namespace, and never stored with the brief, so a decision recorded or changed after
-the merge shows up on the next read. It reads the first
+links touch the PR's files. It is read on every call, from the trunk namespace only when
+the caller may read it, and never stored with the brief, so a decision recorded or changed
+after the merge shows up on the next read. It reads the first
 `LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` (10) changed files, source files first, up to 50
 rows each, and serves at most `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` (8) rows, those with
 something to check first, in whole rows up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS`
-(250) tokens: rows that say `check` first, then constraints; the first row is always
-served. Each row carries the line the pre-edit block prints for it (value, source,
-`(pinned)`, a code-change note), `pinned`, `code_state` and a `verdict`.
+(250) tokens: rows that say `check` first, then constraints; within that budget of its own
+the first row is always served, and the tier's budget may still trim the section like any
+other. Each row carries the line the pre-edit block prints for it (value, source,
+`(pinned)`, a code-change note), `pinned`, `code_state` and a `verdict`. Each changed file
+read is one `memory.for_file` read: four ClickHouse reads (files match, code links, their
+memories, the linked rows; a file with many links slices the last), each keeping up to 50
+rows with up to `LOOM_MEMORY_FOR_FILE_WHOLE_TOKENS` × 48 bytes of value.
 
-The check looks for two kinds of name: the code-shaped names in a row's `Rejected:` clause
-(backticked, qualified like `A::b`, or calls like `f()`), and the snake_case names a
-constraint states, backticked or not. The closing `Applies to` clause, which names the
-code the row governs, is not checked. It is a whole-word match on the lines the diff adds,
-read up to 200,000 characters of a posted diff or 200,000 bytes of the mirror's, so
-`check` means "read this row against the diff", not a violation found.
+The check looks for two kinds of name: the code-shaped names in a row's `Rejected:`
+clause, up to a `Realized:` one (backticked, qualified like `A::b`, or calls like `f()`),
+and the snake_case names a constraint states, backticked or not. The closing `Applies to`
+clause, which names the code the row governs, is not checked. It is a whole-word match on
+the lines the diff adds, read up to 200,000 characters of a posted diff or 200,000 bytes
+of the mirror's, so `check` means "read this row against the diff", not a violation found.
 
 | Row verdict | Meaning                                                                                                                                                                                    |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -98,9 +102,11 @@ read up to 200,000 characters of a posted diff or 200,000 bytes of the mirror's,
 The section's verdict is `check` when any row says so, then `unknown`, then `clear`, and
 `none` when no row has anything to check. It says `clear` or `none` only when every
 changed path and every matching row was checked; otherwise it says `unknown`, and the
-causes say what was left: changed paths not read (`paths_not_read`), a path whose read
-reached its 50 rows (`paths_at_row_ceiling`), or rows the row cap left out
-(`rows_not_read`) when one of them had something to check.
+causes say what was left: the caller may not read the trunk namespace
+(`trunk_not_readable`), changed paths not read (`paths_not_read`), a path whose read
+reached its 50 rows (`paths_at_row_ceiling`), a path whose code-links read failed
+(`links_not_read`), or rows the row cap left out that had something to check
+(`rows_not_read`).
 
 `code.conventions` states the repository's
 recurring maintainer checks as facts over one PR's diff (`pr_number`, `head_sha`,

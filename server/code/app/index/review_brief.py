@@ -60,7 +60,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -227,7 +227,7 @@ def _hunk_line(out: Hunks, cur: _Cursor, line: str) -> bool:
     if line.startswith("\\"):
         return True  # "\ No newline at end of file"
     marker = line[:1] or " "
-    if line.startswith("diff --git ") or marker not in "+- ":
+    if marker not in "+- ":  # `diff --git` of the next file among them
         out.malformed = True
         cur.old_left = cur.new_left = 0
         return False
@@ -545,22 +545,27 @@ def blame_verdict(rows: list[dict[str, Any]], *, ranges: int) -> str:
 
 _REJECTED = re.compile(r"\bRejected:(.*)", re.S)
 _APPLIES_TO = "Applies to "
+# decision.record's value closes its rejected options with the realized outcome
+_REALIZED = "Realized:"
 _SETTING_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+")
 
 
 def checked_names(text: str, *, constraint: bool) -> list[str]:
     """The names the token check looks for in a PR's diff: the code-shaped names of the
-    row's `Rejected:` clause (backticked, qualified like `A::b`, or calls like `f()`) and,
-    for a constraint, the snake_case names it states, backticked or not. The closing
-    `Applies to` clause names the code the row governs, which a PR touching that code
-    names anyway, so it is not read."""
+    row's `Rejected:` clause, up to a `Realized:` one (backticked, qualified like `A::b`,
+    or calls like `f()`) and, for a constraint, the snake_case names it states,
+    backticked or not. The closing `Applies to` clause names the code the row governs,
+    which a PR touching that code names anyway, so it is not read."""
     head = text.split(_APPLIES_TO, 1)[0]
     names: list[str] = []
+    # `mentions` caps how many it returns; no text holds more names than characters
+    cap = len(head)
     rejected = _REJECTED.search(head)
     if rejected:
-        names += [m.name for m in mentions(rejected.group(1)) if not m.in_prose]
+        options = rejected.group(1).split(_REALIZED, 1)[0]
+        names += [m.name for m in mentions(options, cap=cap) if not m.in_prose]
     if constraint:
-        names += [m.name for m in mentions(head) if _SETTING_NAME.fullmatch(m.name)]
+        names += [m.name for m in mentions(head, cap=cap) if _SETTING_NAME.fullmatch(m.name)]
     return list(dict.fromkeys(names))
 
 
@@ -590,15 +595,44 @@ def has_check(d: dict[str, Any]) -> bool:
     return bool(d.get("value_truncated") or checked_names(d["text"], constraint=constraint))
 
 
+def _checked_row(d: dict[str, Any], added: str, *, unsure: bool) -> dict[str, Any]:
+    """One served row with its token check against the `added` lines; `unsure` when the
+    diff could not be read whole (unread, cut or malformed)."""
+    constraint = "constraint" in d["tags"]
+    value_cut = bool(d.get("value_truncated"))
+    names = checked_names(d["text"], constraint=constraint)
+    found = names_in(added, names) if names else []
+    if not names and not value_cut:
+        verdict = ""
+    elif found:
+        verdict = "check"
+    elif unsure or value_cut:
+        verdict = "unknown"
+    else:
+        verdict = "clear"
+    row = {
+        "memory_key": d["memory_key"],
+        "kind": "constraint" if constraint else "decision",
+        "pinned": bool(d["pinned"]),
+        "code_state": d["code_state"],
+        "verdict": verdict,
+        "line": d["line"],
+    }
+    if found:
+        row["names"] = found
+    return row
+
+
 def rationale_section(
     decisions: list[dict[str, Any]],
     diff: str | None,
     *,
     diff_cut: bool = False,
     paths_left: int = 0,
-    rows_left: int = 0,
-    left_to_check: bool = False,
+    left_out: Sequence[dict[str, Any]] = (),
     paths_full: int = 0,
+    links_skipped: int = 0,
+    refused: bool = False,
     budget_tokens: int,
 ) -> dict[str, Any]:
     """The `rationale` section over the rows `decisions_for_paths` read and the PR's diff
@@ -609,42 +643,24 @@ def rationale_section(
     says ''. `check` rows first, then constraints, then the rest, whole rows up to
     `budget_tokens` (the first always). The verdict reads every row: check | unknown |
     clear | none (no row has anything to check). It is `clear` or `none` only when every
-    path and every matching row was checked; otherwise `unknown`: `paths_left` changed
-    paths were not read, `paths_full` paths' reads reached their row ceiling, or one of
-    the `rows_left` rows the row cap left out had something to check (`left_to_check`)."""
+    changed path and every matching row was checked; otherwise `unknown`, with the cause:
+    the caller may not read the trunk namespace (`refused`), `paths_left` changed paths
+    were not read, `paths_full` paths' reads reached their row ceiling, `links_skipped`
+    paths' code-links reads failed, or a row the row cap left out (`left_out`) had
+    something to check."""
     added, malformed = added_text(diff) if diff is not None else (None, False)
     malformed = malformed and not diff_cut  # a cut diff ends inside a hunk anyway
-    rows = []
-    for d in decisions:
-        constraint = "constraint" in d["tags"]
-        value_cut = bool(d.get("value_truncated"))
-        names = checked_names(d["text"], constraint=constraint)
-        found = names_in(added, names) if names and added is not None else []
-        if not names and not value_cut:
-            verdict = ""
-        elif found:
-            verdict = "check"
-        elif added is None or diff_cut or malformed or value_cut:
-            verdict = "unknown"
-        else:
-            verdict = "clear"
-        row = {
-            "memory_key": d["memory_key"],
-            "kind": "constraint" if constraint else "decision",
-            "pinned": bool(d["pinned"]),
-            "code_state": d["code_state"],
-            "verdict": verdict,
-            "line": d["line"],
-        }
-        if found:
-            row["names"] = found
-        rows.append(row)
+    unsure = added is None or diff_cut or malformed
+    rows = [_checked_row(d, added or "", unsure=unsure) for d in decisions]
     rows.sort(key=lambda r: (r["verdict"] != "check", r["kind"] != "constraint"))
     verdicts = {r["verdict"] for r in rows}
     verdict = next((v for v in ("check", "unknown", "clear") if v in verdicts), "none")
-    if (paths_left > 0 or paths_full > 0 or left_to_check) and verdict in ("clear", "none"):
+    left_to_check = sum(1 for d in left_out if has_check(d))
+    counts = (paths_left, paths_full, links_skipped, left_to_check)
+    incomplete = refused or any(n > 0 for n in counts)
+    if incomplete and verdict in ("clear", "none"):
         verdict = "unknown"
-    causes = []
+    causes = ["trunk_not_readable"] if refused else []
     if diff is None and "unknown" in verdicts:
         causes.append("diff_unread")
     if diff_cut:
@@ -655,10 +671,12 @@ def rationale_section(
         causes.append("value_cut")
     if paths_left > 0:
         causes.append(f"paths_not_read:{paths_left}")
-    if rows_left > 0:
-        causes.append(f"rows_not_read:{rows_left}")
+    if left_to_check:
+        causes.append(f"rows_not_read:{left_to_check}")
     if paths_full > 0:
         causes.append(f"paths_at_row_ceiling:{paths_full}")
+    if links_skipped > 0:
+        causes.append(f"links_not_read:{links_skipped}")
     kept = rows[:1]
     for r in rows[1:]:
         if estimate_tokens([*kept, r]) > budget_tokens:

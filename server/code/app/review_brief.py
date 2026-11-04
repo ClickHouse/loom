@@ -287,7 +287,7 @@ async def _rationale_section(
     rows = ((payload.get("sections") or {}).get("paths") or {}).get("rows") or []
     paths = [str(r["path"]) for r in sorted(rows, key=lambda r: r.get("class") != "src")]
     try:
-        found, left, paths_full = await decisions_for_paths(
+        read = await decisions_for_paths(
             org,
             trunk_namespace(org, ns) or ns,
             paths[:most],
@@ -296,6 +296,7 @@ async def _rationale_section(
         )
         diff: str | None = ""
         cut = False
+        found = read.served
         if any(rb.checked_names(d["text"], constraint="constraint" in d["tags"]) for d in found):
             diff, cut = await _pr_diff(org, ns, payload, pr_number=pr_number, is_open=is_open)
     except Exception as e:  # noqa: BLE001 — the stored sections serve without this one
@@ -305,10 +306,11 @@ async def _rationale_section(
         found,
         diff,
         diff_cut=cut,
-        paths_left=len(paths) - most,
-        rows_left=len(left),
-        left_to_check=any(rb.has_check(d) for d in left),
-        paths_full=paths_full,
+        paths_left=max(len(paths) - most, 0),
+        left_out=read.left_out,
+        paths_full=read.paths_full,
+        links_skipped=read.links_skipped,
+        refused=read.refused,
         budget_tokens=settings.code_review_brief_rationale_tokens,
     )
 

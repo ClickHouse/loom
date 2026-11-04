@@ -1702,16 +1702,11 @@ class CodeSettings(BaseModel):
     # Seconds before the review brief reads a mirror again for an object it did not have
     # (the mirror may have fetched it); a hit is kept.
     code_review_brief_mirror_miss_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
-    # Changed paths the review brief's `rationale` section reads decisions for, source
-    # paths first. Each is one memory.for_file read: four ClickHouse reads (files match,
-    # code links, their memories, the linked rows; a file with many links slices the
-    # last); each keeps up to 50 rows, read up to memory_for_file_whole_tokens × 48 bytes
-    # of value.
+    # Changed paths the review brief's `rationale` section reads decisions for.
     code_review_brief_rationale_paths: Annotated[int, LIVE] = Field(default=10, ge=1, le=50)
-    # Decision and constraint rows the `rationale` section serves; rows with something
-    # to check go first.
+    # Decision and constraint rows the `rationale` section serves.
     code_review_brief_rationale_rows: Annotated[int, LIVE] = Field(default=8, ge=1, le=50)
-    # Tokens of whole rows the `rationale` section serves; its first row is always served.
+    # The `rationale` section's own token budget; its first row is served even past it.
     code_review_brief_rationale_tokens: Annotated[int, LIVE] = Field(default=250, ge=50)
 
 
