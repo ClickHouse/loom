@@ -1274,3 +1274,19 @@ def test_a_document_insert_the_claims_deadline_cut_off_stops_the_run(
     world.claim_cuts_insert = False
     world.documents.extend(world.late_documents)  # the insert lands
     assert _run(world, job_id) == "ready" and world.job(job_id)["revision"] == 2  # type: ignore[index]
+
+
+def test_a_republish_over_its_own_row_stamped_later_fails_rather_than_hide(world: World) -> None:
+    """Its own live row carries a version at or above this run's (written on a
+    worker whose clock ran ahead): a row at the lower version would lose in
+    FINAL, so the run fails `revision_conflict` rather than report it."""
+    _run(world, _ingest(world, _upload(world)))
+    world.fail_document = BackendTimeoutError("timed out")
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "processing"
+    stale = world.job(job_id)["doc_version"]  # type: ignore[index]
+    world.fail_document = None
+    world.dead.add(stale)  # its chunks were retired before the row landed
+    world.documents.extend({**d, "version": 2**62} for d in world.late_documents)
+    assert _run(world, job_id) == "failed"
+    assert world.job(job_id)["error_code"] == "revision_conflict"  # type: ignore[index]

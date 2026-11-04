@@ -94,6 +94,17 @@ class _InsertUncertain(Exception):
         self.cause = cause
 
 
+class _AfterRow(Exception):
+    """This run's document row was written and a later step failed (the retire
+    of the earlier version's chunks, the claim's release): the publish stands,
+    so the job ends published. `cause` is the error."""
+
+    def __init__(self, revision: int, cause: Exception) -> None:
+        super().__init__(str(cause))
+        self.revision = revision
+        self.cause = cause
+
+
 class JobGone(Exception):
     """The job's row is gone: its namespace or user was erased while it ran.
     Nothing more is written for it, not even its own row."""
@@ -175,14 +186,15 @@ async def _own_publish(job: dict[str, Any]) -> int | None:
 
 
 async def _retire_unpublished(job: dict[str, Any]) -> None:
-    """Retire the chunks an earlier publish of this job inserted for a document
-    row it never wrote: search must not serve a revision that was not
-    published. Only this job's own chunk version is touched, under its lease;
-    retiring it again is a no-op."""
+    """Retire the chunk version the job last recorded, for a document row it
+    never wrote: search must not serve a revision that was not published. Its
+    callers know the row was not written: a run that failed before its own
+    insert returned, or one `take_and_run` found unsettled. Only this job's own
+    chunk version is touched, under its lease; retiring it again is a no-op."""
     from server.knowledge.store import chunks as chunks_repo
 
     version = int((await _current(job))["doc_version"])
-    if not version or await _own_publish(job) is not None:
+    if not version:
         return
     await chunks_repo.mark_doc_superseded(
         job["org"], job["namespace"], job["source_uri"], only_version=version
@@ -190,11 +202,7 @@ async def _retire_unpublished(job: dict[str, Any]) -> None:
 
 
 async def _end(job: dict[str, Any], state: str, code: str, message: str) -> str:
-    """End a job that publishes nothing: failed or cancelled. One whose
-    document row landed before the failure (the retire after it failed) ends
-    published instead."""
-    if (revision := await _settled(job)) is not None:
-        return await _finish_published(await _current(job), revision)
+    """End a job that publishes nothing: failed or cancelled."""
     await _retire_unpublished(job)
     await _save(job, state=state, error_code=code, error_message=message[:2000])
     return state
@@ -331,6 +339,12 @@ def _revision_for(job: dict[str, Any], prior: Any, version: int) -> int:
     JobFailed("revision_conflict") when the job may not publish over it."""
     from server.knowledge.app.writes import next_revision
 
+    # A write of the source that took its version after this one (a text write,
+    # a metadata edit or a delete, which take no claim; or this job's own row,
+    # written on a worker whose clock ran ahead) would outrank this row in FINAL:
+    # this publish would report a revision no reader sees.
+    if prior is not None and prior.version >= version:
+        raise JobFailed("revision_conflict", "a later write of this source landed first")
     current = prior if prior is not None and prior.superseded_at is None else None
     # This job's own live row, landed late after its chunks were retired: this
     # publish replaces it at the same revision, so it is no conflict.
@@ -343,11 +357,6 @@ def _revision_for(job: dict[str, Any], prior: Any, version: int) -> int:
     if expected >= 0 and (at != expected or (expected == 0 and current is not None)):
         now_at = f"revision {at}" if current is not None else "no live document"
         raise JobFailed("revision_conflict", f"the source has {now_at}, not {expected}")
-    # A write of the source that took its version after this one (a text write,
-    # a metadata edit or a delete, which take no claim) would outrank this row in
-    # FINAL: this publish would report a revision no reader sees.
-    if prior is not None and prior.version >= version:
-        raise JobFailed("revision_conflict", "a later write of this source landed first")
     return next_revision(prior)
 
 
@@ -394,7 +403,7 @@ async def _publish(
     # Set while the document row's insert has been sent and has not returned:
     # a transient failure then (the statement's own timeout, or the claim's
     # deadline cutting it off) may leave the row to land later.
-    in_flight = False
+    in_flight = published = False
     try:
         async with leases.holding(
             f"knowledge-source:{org}:{ns}:{uri}", ttl_s=_SOURCE_CLAIM_S, wait_s=10
@@ -435,11 +444,13 @@ async def _publish(
             await _current(job)  # an erased job writes no document row
             in_flight = True
             await documents_repo.insert_one(row)
-            in_flight = False
+            in_flight, published = False, True
             await chunks_repo.mark_doc_superseded(org, ns, uri, before_version=version, when=now)
     except _TRANSIENT as e:
         if in_flight:
             raise _InsertUncertain(e) from e
+        if published:
+            raise _AfterRow(revision, e) from e
         raise
     return job, revision
 
@@ -447,8 +458,6 @@ async def _publish(
 async def _retry_or_fail(job: dict[str, Any], e: Exception) -> str:
     """After a transient failure: back to pending with a doubling delay, or
     failed once the attempts are spent."""
-    if (revision := await _settled(job)) is not None:  # failed after its row
-        return await _finish_published(await _current(job), revision)
     attempts = int(job["attempts"])
     if attempts >= settings.knowledge_ingest_max_attempts:
         return await _end(job, "failed", "retries_exhausted", str(e))
@@ -493,6 +502,8 @@ async def run(job: dict[str, Any], lease: Any) -> str:
         job, revision = await _publish(job, parsed, vectors, lease)
     except JobFailed as e:
         return await _end(job, "cancelled" if e.code == "cancelled" else "failed", e.code, str(e))
+    except _AfterRow as e:  # the row was written: the retire of older chunks runs again
+        return await _finish_published(await _current(job), e.revision)
     except _InsertUncertain as e:
         log.warning(
             "knowledge_ingest: job %s: the document insert failed (%s) and may yet land;"
