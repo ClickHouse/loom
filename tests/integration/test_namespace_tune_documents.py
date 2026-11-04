@@ -1,8 +1,9 @@
 """namespace.tune's document drafts against a live Loom + ClickHouse.
 
 Six text documents whose sections are longer than the chunk size, and a PDF that no
-configured extractor takes (ingested through the wire and run by a knowledge_ingest
-worker pass in this process, so it fails `format_unavailable` as production fails it).
+configured extractor takes (ingested through the wire and its job run in this process
+as a knowledge_ingest worker pass runs one, so it fails `format_unavailable` as
+production fails it).
 Tune cuts the documents again in process and reports the cut: every section is cut, and
 no larger size is drafted because the test embedder states no input limit, which
 `skipped` says. The PDF is named in `skipped` with no route invented, decision extraction
@@ -39,9 +40,12 @@ async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:
 
 
 async def _failed_pdf(c: httpx.AsyncClient, org: str, ns: str) -> str:
-    """A PDF uploaded, ingested and run by a worker pass here: its source_uri."""
+    """A PDF uploaded, ingested and its job run here: its source_uri. The job is run
+    by itself, as a pass that took it runs it, since a pass takes one job of a queue
+    other tests' jobs share."""
     from server.core.ch import get_client
-    from server.knowledge.workers import ingest
+    from server.knowledge.app import ingest_run
+    from server.knowledge.store import ingestions
 
     data = b"plain words, not a PDF"
     up = await c.post(
@@ -67,19 +71,13 @@ async def _failed_pdf(c: httpx.AsyncClient, org: str, ns: str) -> str:
     ch = get_client()
     await ch.connect()
     try:
-        for _ in range(10):
-            await ingest.run_pass()
-            status = await _op(
-                c,
-                "knowledge.ingest_status",
-                org=org,
-                namespace=ns,
-                ingestion_id=job["ingestion_id"],
-            )
-            if status["state"] != "pending" or status["attempts"]:
-                break
+        row = await ingestions.get_ingestion(org, ns, job["ingestion_id"])
+        assert row is not None and await ingest_run.take_and_run(row) is not None
     finally:
         await ch.disconnect()
+    status = await _op(
+        c, "knowledge.ingest_status", org=org, namespace=ns, ingestion_id=job["ingestion_id"]
+    )
     assert status["error_code"] == "format_unavailable", status
     return uri
 
