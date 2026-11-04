@@ -84,8 +84,8 @@ class _Turn:
     # The pages this turn handles, in order; a child found during the turn is appended.
     items: list[dict[str, Any]] = field(default_factory=list)
     ids: set[str] = field(default_factory=set)
-    # Known children whose read this turn answered not found or trashed.
-    unanswered: set[str] = field(default_factory=set)
+    # Known children this turn found out of sight: not found, refused (403) or trashed.
+    absent: set[str] = field(default_factory=set)
 
     def add(self, page: dict[str, Any]) -> None:
         item = _item(page)
@@ -151,8 +151,8 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
 
 
 async def _forget_unlisted_without_documents(t: _Turn) -> None:
-    """After a complete full turn: forget the known children whose read this turn
-    answered not found or trashed and that hold no document (never written, or
+    """After a complete full turn: forget the known children this turn found out of
+    sight (not found, refused or trashed) that hold no document (never written, or
     retired), so a child gone for good costs no read each turn."""
     src = t.src
     held = {
@@ -162,7 +162,7 @@ async def _forget_unlisted_without_documents(t: _Turn) -> None:
         )
     }
     for child_id in list(t.known):
-        if child_id in t.unanswered and child_id not in held:
+        if child_id in t.absent and child_id not in held:
             t.known.pop(child_id)
 
 
@@ -192,6 +192,17 @@ def _item(page: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _ends_turn(e: notion.NotionError) -> bool:
+    """A rate limit or a refused token: the turn's, not one page's."""
+    return isinstance(e, notion.RateLimited) or e.status == 401
+
+
+def _out_of_sight(e: notion.NotionError) -> bool:
+    """The page is not one the integration can see: not found, or refused for it alone
+    (403, a page no longer shared with the integration)."""
+    return isinstance(e, notion.NotFound) or e.status == 403
+
+
 def _fail_turn(result: sync.TurnResult, e: notion.NotionError) -> None:
     if isinstance(e, notion.RateLimited):
         result.fail("rate_limited", "rate_limited")
@@ -203,7 +214,7 @@ def _container_failed(result: sync.TurnResult, e: notion.NotionError) -> None:
     """A listed page, database or data source, or a known child, that could not be
     read: the turn fails and retires nothing, but goes on with the others. A rate
     limit or a 401 stops it."""
-    if isinstance(e, notion.RateLimited) or e.status == 401:
+    if _ends_turn(e):
         raise _TurnStop(e)
     result.fail("failed", sync.client_error(e))
 
@@ -250,14 +261,14 @@ async def _list(t: _Turn, edited_after: str) -> None:
     for child_id in list(t.known):
         try:
             page = await notion.page(t.token, child_id)
-        except notion.NotFound:
-            t.unanswered.add(child_id)  # absent: a full turn's lookup decides
-            continue
         except notion.NotionError as e:
-            _container_failed(t.result, e)
+            if _out_of_sight(e):
+                t.absent.add(child_id)  # a full turn's lookup decides
+            else:
+                _container_failed(t.result, e)
             continue
         if page.get("in_trash"):
-            t.unanswered.add(child_id)
+            t.absent.add(child_id)
         else:
             t.add(page)
 
@@ -297,19 +308,17 @@ async def _page_gone(t: _Turn, page_id: str) -> bool | None:
 
 
 async def _lookup(t: _Turn, page_id: str) -> bool | None:
-    """Whether the store says the page is gone: not found, in the trash, or under
-    none of the listed pages, listed databases and pages this turn listed. A lookup
-    that fails retires nothing; a rate limit or a 401 is the turn's, and None stops
-    the retiring."""
+    """Whether the store says the page is gone: not found or refused (403: no longer
+    shared with the integration), in the trash, or under none of the listed pages,
+    listed databases and pages this turn listed. A lookup that fails otherwise retires
+    nothing; a rate limit or a 401 is the turn's, and None stops the retiring."""
     try:
         page = await notion.page(t.token, page_id)
-    except notion.NotFound:
-        return True
     except notion.NotionError as e:
-        if isinstance(e, notion.RateLimited) or e.status == 401:
+        if _ends_turn(e):
             _fail_turn(t.result, e)
             return None
-        return False
+        return _out_of_sight(e)
     if page.get("in_trash"):
         return True
     item = _item(page)
@@ -365,14 +374,11 @@ async def _fetch_and_write(t: _Turn, f: dict[str, Any], uri: str) -> str:
     try:
         blocks = await notion.page_blocks(t.token, f["id"], max_requests=_MAX_BLOCK_REQUESTS)
         content, skipped = convert.page_markdown(blocks)
-    except notion.RateLimited:
-        result.fail("rate_limited", "rate_limited")
-        return "stop"
     except notion.TooLarge:
         return sync.give_up(f, result, "too_large")
     except notion.NotionError as e:
-        if e.status == 401:
-            result.fail("credential_invalid", sync.client_error(e))
+        if _ends_turn(e):
+            _fail_turn(result, e)
             return "stop"
         if e.refused:
             return sync.give_up(f, result, f"http_{e.status}")
@@ -464,17 +470,17 @@ async def _add_new_children(t: _Turn, children: list[str]) -> None:
     for child in children:
         try:
             page = await notion.page(t.token, child)
-        except notion.NotFound:
-            t.unanswered.add(child)
-            continue
         except notion.NotionError as e:
-            if isinstance(e, notion.RateLimited) or e.status == 401:
+            if _ends_turn(e):
                 _fail_turn(t.result, e)
                 return
-            t.result.fail("failed", sync.client_error(e))
+            if _out_of_sight(e):
+                t.absent.add(child)
+            else:
+                t.result.fail("failed", sync.client_error(e))
             continue
         if page.get("in_trash"):
-            t.unanswered.add(child)
+            t.absent.add(child)
         else:
             t.add(page)
 

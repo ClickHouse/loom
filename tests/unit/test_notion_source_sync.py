@@ -69,6 +69,7 @@ def _para(text: str, **kw: Any) -> dict[str, Any]:
 
 
 def _page(page_id: str, edited: str, *, title: str = "", parent: str = "", **kw: Any) -> dict:
+    parent_of = kw.pop("parent_of", {"type": "workspace", "workspace": True})
     return {
         "object": "page",
         "id": page_id,
@@ -77,7 +78,7 @@ def _page(page_id: str, edited: str, *, title: str = "", parent: str = "", **kw:
         "in_trash": False,
         "parent": {"type": "data_source_id", "data_source_id": DS, "database_id": parent}
         if parent
-        else kw.pop("parent_of", {"type": "workspace", "workspace": True}),
+        else parent_of,
         "properties": {"Name": {"type": "title", "title": _rt(title or f"{page_id[:4]} title")}},
         **kw,
     }
@@ -320,7 +321,6 @@ def test_a_full_listing_retires_a_page_the_store_reports_gone(world: _Store) -> 
     world.pages[ROW1] = {**world.pages[ROW1], "in_trash": True}
     # ROW2 is missing from the listing but the lookup finds it still in the database.
     world.rows = []
-    world.pages[ROW2] = {**world.pages[ROW2]}
     _run(full=True)
     assert gone_uri not in world.docs and kept_uri in world.docs
     assert [a["subject"]["source_uri"] for a in world.audits] == [gone_uri]
@@ -1151,3 +1151,27 @@ def test_marks_wrap_a_run_s_text_and_keep_the_spaces_around_it() -> None:
     }
     md, _ = convert.page_markdown([para])
     assert md == "We keep **bold**  *text* `code` end."
+
+
+@pytest.mark.parametrize("where", ["known child", "lookup"])
+def test_a_page_the_integration_lost_access_to_is_out_of_sight_like_a_404(
+    world: _Store, where: str
+) -> None:
+    _only_the_page(world)
+    world.blocks[PAGE] = [_para("Parent."), _child_page(CHILD)]
+    world.pages[CHILD] = _page(
+        CHILD, "2026-01-04T00:00:00.000Z", title="Child", parent_of=_under(PAGE)
+    )
+    _run()
+    child_uri = _uri(world, CHILD)
+    if where == "lookup":
+        # The child left the known set (its page was read without it), and its lookup is refused.
+        world.blocks[PAGE] = [_para("Parent.")]
+        world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
+        _run()
+    world.answers[f"/pages/{CHILD}"] = httpx.Response(403)
+    _run(full=True)
+    detail = _detail(world)
+    assert detail["status"] == "ok"  # not a failed turn
+    assert child_uri not in world.docs and detail["child_pages"] == {}
+    assert [a["subject"]["source_uri"] for a in world.audits] == [child_uri]

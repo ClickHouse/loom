@@ -318,10 +318,12 @@ A page with no text (`no_text`) and one past the request bound or
 change. A listed page or database the integration no longer sees, or a database in the
 trash, fails the turn and retires nothing, while the pages it still sees are written. A
 listed page or child page in the trash is left out of the listing, so the next full turn
-retires it. A page is retired after a complete full listing lacks it and a lookup finds
-it gone, in the trash, or under none of the listed pages, the listed databases and the
-pages that listing had; a child moved out from under them, and its own children, are
-retired this way. A database query the store marks incomplete is an incomplete listing
+retires it. A known child or a looked-up page the store refuses (`403`: no longer shared
+with the integration) counts as gone, like a `404`, rather than failing the turn. A page
+is retired after a complete full listing lacks it and a lookup finds it gone, in the
+trash, or under none of the listed pages, the listed databases and the pages that
+listing had; a child moved out from under them, and its own children, are retired this
+way. A database query the store marks incomplete is an incomplete listing
 (`listing: incomplete result`).
 
 ### Mining decisions
