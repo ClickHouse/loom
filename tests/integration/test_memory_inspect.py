@@ -23,7 +23,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from tests.integration._resources import unique_org  # noqa: E402
+from tests.integration._resources import memory_rows, unique_org  # noqa: E402
 
 ORG = unique_org("inspect")
 
@@ -92,15 +92,7 @@ async def test_inspect_splits_own_from_others_and_changes_nothing(
             {"agent": "bot", "user_id": "u1", "session_id": "s1", "memory_key": "u1/pref"},
         )
 
-        def rows() -> int:
-            return int(
-                ch_client.query(
-                    "SELECT count() FROM loom.memory WHERE org = {org:String}",
-                    parameters={"org": ORG},
-                ).result_rows[0][0]
-            )
-
-        before = rows()
+        before = memory_rows(ch_client, ORG)
         agent = await post("memory.inspect", {"subject": "agent", "id": "bot"})
         assert agent["own"]["live_rows"] == 2 and agent["others"]["live_rows"] == 3
         assert {r["memory_key"] for r in agent["own"]["newest"]} == {"u1/pref", "u2/pref"}
@@ -182,7 +174,7 @@ async def test_inspect_splits_own_from_others_and_changes_nothing(
 
         r = await c.post("/v1/memory.inspect", json={**base, "subject": "user", "id": "-"})
         assert r.status_code == 422, r.text[:300]
-        assert rows() == before
+        assert memory_rows(ch_client, ORG) == before
 
         # Each inspection that listed rows left one exposure-ledger row with their keys.
         for _ in range(40):

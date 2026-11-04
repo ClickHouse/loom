@@ -1,10 +1,12 @@
-"""Isolated tenants for the integration suite, and their cleanup.
+"""Isolated tenants for the integration suite, their cleanup, and a snapshot of
+their memory rows.
 
 `unique_org` mints an org id no other run can hold. The suite purges every
 row of every org it minted when the session ends, straight from ClickHouse
 across every MergeTree table with an `org` column, then counts again to prove
 nothing is left. Only ids of the minted shape are ever purged, so a shared
-dev stack keeps every other tenant's rows.
+dev stack keeps every other tenant's rows. `memory_rows` reads a tenant's
+memory rows for a check that an op wrote nothing.
 """
 
 from __future__ import annotations
@@ -73,6 +75,24 @@ def ch_client_from_env(**kwargs: Any) -> Any:
     import clickhouse_connect
 
     return clickhouse_connect.get_client(**{**ch_target(), **kwargs})
+
+
+def memory_rows(client: Any, org: str) -> list[tuple[Any, ...]]:
+    """Each of the org's loom.memory rows at its latest version (FINAL), as its identity
+    and the fields a write changes, for a "wrote nothing" check that compares two of
+    these. A merge leaves it as it was, and so does the entity extractor, which
+    rewrites only `version` and `entities`."""
+    return [
+        tuple(r)
+        for r in client.query(
+            "SELECT namespace, agent, user_id, session_id, memory_key, memory_id,"
+            " content_sha256, status, pinned, tags, tombstoned_at, expires_at, on_expire,"
+            " actor, source_class, reinforcement_count, updated_at"
+            " FROM loom.memory FINAL WHERE org = {org:String}"
+            " ORDER BY namespace, agent, user_id, session_id, memory_key",
+            parameters={"org": org},
+        ).result_rows
+    ]
 
 
 _REFRESH_TARGET = r"\bREFRESH\b[^(]*?\bTO\s+`?\w+`?\.`?(\w+)"

@@ -22,7 +22,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from tests.integration._resources import unique_org  # noqa: E402
+from tests.integration._resources import memory_rows, unique_org  # noqa: E402
 
 ORG = unique_org("kinspect")
 
@@ -161,10 +161,7 @@ async def test_inspect_reports_formats_revisions_chunks_and_decisions(
             },
         )
 
-        before = ch_client.query(
-            "SELECT count(), max(version) FROM loom.memory WHERE org = {org:String}",
-            parameters={"org": ORG},
-        ).result_rows
+        before = memory_rows(ch_client, ORG)
         out = await post("knowledge.inspect", {"sample_limit": 3}, viewer)
 
     assert out["skipped"] == [], out["skipped"]
@@ -239,11 +236,7 @@ async def test_inspect_reports_formats_revisions_chunks_and_decisions(
     assert old["chunks"]["models"] == ["retired-model"] and old["retired_versions"] == 1
     assert listed["https://wiki.example/pages/plan.html?v=2"]["source_scheme"] == "https"
 
-    after = ch_client.query(
-        "SELECT count(), max(version) FROM loom.memory WHERE org = {org:String}",
-        parameters={"org": ORG},
-    ).result_rows
-    assert after == before
+    assert memory_rows(ch_client, ORG) == before
 
 
 @pytest.mark.asyncio

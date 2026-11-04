@@ -23,7 +23,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from tests.integration._resources import unique_org  # noqa: E402
+from tests.integration._resources import memory_rows, unique_org  # noqa: E402
 
 ORG = unique_org("tune")
 
@@ -71,22 +71,15 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
             )
 
         def snapshot() -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]]]:
-            """Each row's latest version (FINAL): the fields a write (a revision,
-            tombstone, pin, reinforce or re-stamp) would change, not `version` or
-            `entities`, which the entity extractor rewrites."""
-            rows = ch_client.query(
-                "SELECT agent, memory_key, memory_id, content_sha256, status, pinned, tags,"
-                " tombstoned_at, actor, source_class, reinforcement_count"
-                " FROM loom.memory FINAL WHERE org = {org:String}"
-                " ORDER BY agent, memory_key",
-                parameters={"org": ORG},
-            ).result_rows
+            """The memory rows (`memory_rows`) and the categories, at their latest
+            versions (FINAL)."""
+            rows = memory_rows(ch_client, ORG)
             cats = ch_client.query(
                 "SELECT name, category_id, description, tombstoned_at FROM loom.categories"
                 " FINAL WHERE org = {org:String} ORDER BY name",
                 parameters={"org": ORG},
             ).result_rows
-            return [tuple(r) for r in rows], [tuple(r) for r in cats]
+            return rows, [tuple(r) for r in cats]
 
         before = snapshot()
         out = await post("namespace.tune", {"sample_limit": 3}, viewer)
