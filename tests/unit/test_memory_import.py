@@ -81,8 +81,8 @@ class _StoreCH(StubCH):
     first one's rows), versions merged as ReplacingMergeTree merges them:
 
     - the live-row lookup: each asked identity key's newest version, unless a tombstone;
-    - identity dedup: per (content hash, key) of the identity's rows holding an asked hash,
-      the newest version, kept when it is live and holds its fact;
+    - identity dedup: each identity key's newest version, kept when it holds an asked
+      hash and is live;
     - the import's own read (`key_heads`): each asked key's newest version across
       sessions, a tombstone or a superseded row included.
 

@@ -181,7 +181,7 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
                 HAVING head_sha IN {{shas:Array(String)}}
                    AND argMax(tombstoned_at IS NULL, version) = 1
                    AND argMax(status, version) IN {{live:Array(String)}}
-                ORDER BY head_sha, memory_key
+                ORDER BY head_sha, memory_key, session_id
                 SETTINGS select_sequential_consistency = 1
                 """,
                 params=params,

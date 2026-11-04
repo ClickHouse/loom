@@ -214,13 +214,22 @@ async def test_same_key_same_bytes_reinforces_the_live_row_instead_of_vanishing(
     assert events[0]["event_type"] == "evidence" and events[0]["event_count"] == 1
 
 
-def _version_row(key: str, value: str, version: int, *, session: str = "s-old") -> str:
+def _version_row(
+    key: str,
+    value: str,
+    version: int,
+    *,
+    session: str = "s-old",
+    status: str = "active",
+    tombstoned: bool = False,
+) -> str:
     quoted = value.replace("'", "\\'")
+    tombstoned_at = "now()" if tombstoned else "NULL"
     return (
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
-        "memory_id, value, content_sha256, status, version) VALUES ('test', 'personal', "
-        f"'cursor', 'u', '{session}', '{key}', generateUUIDv4(), '{quoted}', "
-        f"'{sha256_value(value)}', 'active', {version})"
+        "memory_id, value, content_sha256, status, tombstoned_at, version) VALUES ('test', "
+        f"'personal', 'cursor', 'u', '{session}', '{key}', generateUUIDv4(), '{quoted}', "
+        f"'{sha256_value(value)}', '{status}', {tombstoned_at}, {version})"
     )
 
 
@@ -253,3 +262,20 @@ async def test_a_key_whose_current_value_holds_the_bytes_is_the_keeper() -> None
     )
     got = await _bulk_set_mod._bulk_identity_dupes(ch, _input())
     assert [key for key, _ in got.values()] == ["user_task_branch"]
+
+
+@pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_key_deleted_or_retired_since_is_not_a_keeper() -> None:
+    """A key whose newest version is a tombstone or no longer live is not the fact,
+    though its newest version still carries the bytes."""
+    ch = clickhouse_local.LocalCH(
+        clickhouse_local.ddl("memory"),
+        _version_row("user_task_branch", VALUE, 1),
+        _version_row("user_task_branch", VALUE, 2, tombstoned=True),
+        _version_row("user_task_alt", VALUE, 1),
+        _version_row("user_task_alt", VALUE, 2, status="superseded"),
+        _version_row("user_task_note", VALUE, 1, session="s-other"),
+    )
+    got = await _bulk_set_mod._bulk_identity_dupes(ch, _input())
+    assert [key for key, _ in got.values()] == ["user_task_note"]
