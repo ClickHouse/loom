@@ -98,13 +98,14 @@ def _not_accessible_result(
             else " Omit the namespace argument to use your default namespace, or request a "
             "grant from the dashboard's Spaces page."
         )
-    else:
-        ask = (
-            "ask the collection's admin for a grant on it or a collection above it; the op "
-            "collection.list (through loom_op) names the collections you can read"
-            if sharing.is_collection(ns)
-            else "request a grant from the dashboard's Spaces page"
+    elif sharing.is_collection(ns):
+        # Never "omit the namespace": a write meant for the collection would land in the
+        # default namespace instead.
+        msg += (
+            " Ask the collection's admin for a grant on it or a collection above it; the op "
+            f"collection.list (through loom_op) lists the collections you can read.{creator}"
         )
+    else:
         reads = (
             "your namespaces and the collections you can read"
             if knowledge_search_reads_collections()
@@ -112,7 +113,7 @@ def _not_accessible_result(
         )
         msg += (
             " Omit the namespace argument to use your default namespace (loom_search reads "
-            f"{reads}), or {ask}.{creator}"
+            f"{reads}), or request a grant from the dashboard's Spaces page.{creator}"
         )
     return _refusal_body(msg, ns)
 

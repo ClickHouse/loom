@@ -178,3 +178,21 @@ def test_a_claim_capped_delegated_token_is_told_its_creator_needs_a_grant_too() 
     ]["error"]
     assert "this token's claim must name it" in text
     assert text.endswith("This token's creator must hold a grant on it too.")
+
+
+def test_a_collection_refusal_never_says_to_omit_the_namespace() -> None:
+    """A write meant for the collection would land in the default namespace instead."""
+    auth = AuthInfo(
+        subject="avery@example.com",
+        org="clickhouse",
+        namespaces=("n",),
+        roles=(Role.WRITER,),
+        is_service_account=False,
+    )
+    text = mcp_auth._not_accessible_result("loom_op", auth, "col-handbook")["structuredContent"][
+        "error"
+    ]
+    assert "Omit the namespace" not in text
+    assert "collection.list (through loom_op)" in text
+    plain = mcp_auth._not_accessible_result("loom_op", auth, "team-x")["structuredContent"]["error"]
+    assert "Omit the namespace argument" in plain

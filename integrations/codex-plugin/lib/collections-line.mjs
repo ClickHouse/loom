@@ -111,7 +111,10 @@ export function renderCollectionsLine(result, { writes = true } = {}) {
       : "") +
     "\n" +
     recalledDataBlock(named.join("\n")) +
-    (more ? '\nThere are more: loom_op with {"op": "collection.list"} names them all.' : "")
+    (more
+      ? '\nThere are more: loom_op with {"op": "collection.list"} lists them a page at a time ' +
+        "(its limit and cursor arguments page through them)."
+      : "")
   );
 }
 

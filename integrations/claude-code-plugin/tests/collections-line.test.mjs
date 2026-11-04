@@ -63,7 +63,10 @@ test("names the ones the caller holds most on first, a few, and points at collec
   const listed = entries(line);
   assert.equal(listed.length, MAX_NAMED);
   assert.deepEqual(listed[0], { collection: "col-zz-mine", role: "admin" }, "not pushed off by names");
-  assert.match(line, /There are more: loom_op with \{"op": "collection\.list"\} names them all\.$/);
+  assert.match(
+    line,
+    /There are more: loom_op with \{"op": "collection\.list"\} lists them a page at a time \(its limit and cursor arguments page through them\)\.$/,
+  );
   assert.ok(
     line.indexOf("There are more") > line.lastIndexOf("</loom-recalled-data>"),
     "the pointer is the line's own",
