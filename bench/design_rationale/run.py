@@ -25,6 +25,7 @@ from bench.design_rationale.llm import (
     price,
 )
 from bench.design_rationale.loom import (
+    PRE_EDIT_BUDGET,
     CodeIndex,
     Loom,
     knowledge_section,
@@ -47,7 +48,6 @@ ARM_NAMES = {
 ARM_HOME = {2: "kb", 3: "gold", 4: "extract", 5: "gold"}
 # Planning estimates for a dry run, before any surface is read.
 SEARCH_SECTION_TOKENS = 800  # a loom_search section with the reading rule
-PRE_EDIT_TOKENS = 300  # the pre-edit block's budget per file
 CITED_TEXT_TOKENS = 1200  # the cited source text a judge reads
 JUDGE_FRAME_TOKENS = 900  # the judge's instructions and gold lists
 TYPICAL_OUT = {"A": 400, "B": 900, "C": 400, "judge": 500, "extract": 800}
@@ -138,7 +138,8 @@ def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:
     ]
     windows = _windows(chunks, set(), window_chars)
     known = settings.memory_decision_extract_known_max if doc.revision_of else 0
-    known_rows = [("", "", "x" * KNOWN_DECISION_CHARS)] * known
+    # In the scenario, which the prompt keeps whole (it shortens an outcome).
+    known_rows = [("", "x" * KNOWN_DECISION_CHARS, "")] * known
     system = len(dx.system_prompt(EXTRACT_MAX_PER_SECTION, known_rows))
     cap = llm_max_tokens("decision_extract")
     tin = 0
@@ -174,7 +175,7 @@ def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
                 ctx = SEARCH_SECTION_TOKENS
             elif arm in (3, 4):
                 blocks = len(ts.task_paths(t)) if pre_edit(cfg, arm) else 0
-                ctx = SEARCH_SECTION_TOKENS + PRE_EDIT_TOKENS * blocks
+                ctx = SEARCH_SECTION_TOKENS + PRE_EDIT_BUDGET * blocks
             else:
                 ctx = 0
             system, user, cap = prompts.answer_prompt(kind, t, "", ts.system)
@@ -689,7 +690,7 @@ def check_resume(state: dict[str, Any], cfg: Config) -> None:
 
 
 def cleanup_hint(cfg: Config, loom: Loom, ns: dict[str, str]) -> str:
-    """How to finish a run that fails after its setup or is interrupted: resume it, or
+    """How to finish a run that fails or is interrupted after its setup: resume it, or
     erase what it keeps."""
     from bench.bench_namespaces import gc_command
 
@@ -713,12 +714,11 @@ def run(
     code: CodeIndex | None = None,
 ) -> bool:
     """One pass of every stage; True when every answer is judged. A run the cap stops,
-    or that fails after its setup or is interrupted (a provider error, a server that went
+    or that fails or is interrupted after its setup (a provider error, a server that went
     away, Ctrl-C), keeps its namespaces: the next invocation on the same `--out`, with the
     same flags, resumes it, and the error is followed by the command that erases them
-    otherwise. A finished run,
-    or one whose setup failed for another reason than the cap, erases them (unless
-    --keep-namespaces) and is not resumed."""
+    otherwise. A finished run, or one whose setup failed for another reason than the cap,
+    erases them (unless --keep-namespaces) and is not resumed."""
     cfg.out.mkdir(parents=True, exist_ok=True)
     state_path = cfg.out / "state.json"
     state = load_json(state_path)

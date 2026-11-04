@@ -27,6 +27,8 @@ AGENT = "bench-design-rationale"
 # The agent identity a gold row is written under: one author for every row.
 GOLD_AGENT = "design-author"
 CHARS_PER_TOKEN = 4  # the server's estimate (memory.for_file tokens_estimate)
+# The pre-edit block's token budget per file, as the coding-agent hook asks for it.
+PRE_EDIT_BUDGET = 300
 # One document's extraction: a model call per window, each with its own provider timeout.
 EXTRACT_TIMEOUT_S = 3600
 
@@ -238,7 +240,9 @@ class Loom:
 
     # ---- reads
 
-    def for_file(self, namespace: str, path: str, token_budget: int = 300) -> dict[str, Any]:
+    def for_file(
+        self, namespace: str, path: str, token_budget: int = PRE_EDIT_BUDGET
+    ) -> dict[str, Any]:
         out = self.op(
             "memory.for_file",
             {"namespace": namespace, "path": path, "token_budget": token_budget},

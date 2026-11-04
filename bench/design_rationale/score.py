@@ -19,6 +19,7 @@ from statistics import mean
 from typing import Any
 
 from bench.bootstrap import paired_bootstrap
+from bench.design_rationale.loom import PRE_EDIT_BUDGET
 from bench.design_rationale.run import parse_key
 from bench.design_rationale.taskset import TaskSet
 
@@ -43,7 +44,6 @@ HEADLINE = {
     "B": ("avoids", "satisfies"),
     "C": ("passed",),
 }
-PRE_EDIT_BUDGET = 300
 
 
 def planning_mde(n_tasks: int, sd: float = PLANNING_SD) -> float:
@@ -196,7 +196,7 @@ def per_task(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, dict[st
     return dict(out)
 
 
-def arm_summary(ts: TaskSet, rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def arm_summary(rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for kind, metrics in (
         ("A", ("precision", "recall", "misleading", "abstained")),
@@ -269,7 +269,7 @@ def compare(
 # ---------------------------------------------------------------- tokens and treatment
 
 
-def token_summary(ts: TaskSet, surf: dict[str, Any], arms: list[int]) -> dict[int, dict[str, Any]]:
+def token_summary(surf: dict[str, Any], arms: list[int]) -> dict[int, dict[str, Any]]:
     out: dict[int, dict[str, Any]] = {}
     for arm in arms:
         rows = [v for k, v in surf.items() if parse_key(k)[1] == arm]
@@ -467,9 +467,9 @@ def score(
     by_arm = per_task(ts, judged)
     arms = sorted(by_arm)
     metrics = {
-        "arms": {arm: arm_summary(ts, by_arm[arm]) for arm in arms},
+        "arms": {arm: arm_summary(by_arm[arm]) for arm in arms},
         "comparisons": compare(ts, by_arm, (state.get("flags") or {}).get("arm4_files", True)),
-        "tokens": token_summary(ts, surf, sorted({parse_key(k)[1] for k in surf})),
+        "tokens": token_summary(surf, sorted({parse_key(k)[1] for k in surf})),
         "treatment": treatment_check(ts, surf, state),
         "judge_stability": judge_stability(ts, judged),
         "unreadable": unreadable(ts, judged),
@@ -517,7 +517,8 @@ def report(m: dict[str, Any]) -> str:
         )
     lines += [
         "",
-        "| Arm | Injected tokens per task (mean, max) | Pre-edit calls | Pre-edit max | Over 300 |",
+        "| Arm | Injected tokens per task (mean, max) | Pre-edit calls | Pre-edit max | "
+        f"Over {PRE_EDIT_BUDGET} |",
         "| --- | --- | --- | --- | --- |",
     ]
     for arm, t in m["tokens"].items():

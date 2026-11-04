@@ -13,7 +13,8 @@ The task set is a directory (bench/design_rationale/README.md has its schema;
 loom_search; 3 the gold rows through the pre-edit block (memory.for_file) and the
 loom_search memory section; 4 the same surfaces over the rows `loom decisions extract`
 mined from the documents (or, with --arm4-namespace, rows a document source's sync wrote);
-5 the gold rows through the loom_search memory section only.
+5 the gold rows through the loom_search memory section only, added whenever arm 4 has no
+files.
 
 Arm 4's rows name code by its names; the files that give them a pre-edit block come from
 a code index of the repository (--code-index: read-only code.symbol calls on the Loom that
@@ -197,7 +198,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     cfg.arm4_files = bool(a.code_index or a.arm4_namespace)
     if 4 in cfg.arms and not cfg.arm4_files:
         print("arm 4 has no code index: its rows reach loom_search only, no pre-edit block")
-        if 3 in cfg.arms and 5 not in cfg.arms:
+        if 5 not in cfg.arms:
             cfg.arms = [*cfg.arms, 5]
             print("arm 5 (gold rows through loom_search only) is added as its reference")
     provider = ""
@@ -237,14 +238,11 @@ def cmd_run(a: argparse.Namespace) -> int:
             [cfg.extract_model] if runner.own_extraction(cfg) else []
         )
         if not cfg.reader or not cfg.judges:
-            print("--reader-model and --judge-model are required", file=sys.stderr)
-            return 2
+            return _fail("--reader-model and --judge-model are required")
         if missing := [m for m in models if not price(m)]:
-            print(f"no price for {missing}: the spend cap cannot hold", file=sys.stderr)
-            return 2
+            return _fail(f"no price for {missing}: the spend cap cannot hold")
         if a.max_usd <= 0:
-            print("--max-usd is required for a run that calls a provider", file=sys.stderr)
-            return 2
+            return _fail("--max-usd is required for a run that calls a provider")
     from bench.design_rationale.loom import CodeIndex, Loom
 
     a.out.mkdir(parents=True, exist_ok=True)

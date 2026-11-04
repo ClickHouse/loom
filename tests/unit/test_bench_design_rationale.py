@@ -404,9 +404,15 @@ def test_the_extraction_bound_covers_every_window_the_extractor_reads():
         assert tin >= 2 * sent // 3 + read * cap
     # A re-run over a revision lists the known decisions: a longer prompt per call.
     ts = load(EXAMPLE)
-    _, revised_in, _ = run.extraction_bound(ts.documents["upload-retries-v2"], 6000)
+    from bench.design_rationale.llm import CHARS_PER_TOKEN_WORST
+    from server.settings import settings
+
+    calls, revised_in, _ = run.extraction_bound(ts.documents["upload-retries-v2"], 6000)
     _, first_in, _ = run.extraction_bound(ts.documents["upload-retries"], 6000)
-    assert revised_in > first_in
+    known = settings.memory_decision_extract_known_max
+    allowance = known * run.KNOWN_DECISION_CHARS // CHARS_PER_TOKEN_WORST
+    # Each call carries the whole allowance: the prompt keeps a scenario uncut.
+    assert revised_in - first_in >= allowance * calls
 
 
 # ---------------------------------------------------------------- end to end
@@ -879,6 +885,9 @@ def test_arm_5_is_added_when_arm_4_has_no_code_index(tmp_path, capsys):
     assert "5 = gold rows through loom_search only" in capsys.readouterr().out
     assert main([*base, "--code-index", "http://index.test"]) == 0
     assert "5 = " not in capsys.readouterr().out
+    # Whether arm 3 runs or not.
+    assert main([*base[:5], "4", "--dry-run"]) == 0
+    assert "5 = gold rows through loom_search only" in capsys.readouterr().out
 
 
 def test_a_resume_with_other_flags_is_refused(tmp_path):
@@ -976,3 +985,21 @@ def test_a_timed_out_extraction_keeps_both_output_streams(monkeypatch):
     rc, report = loom.extract("ns", "u", 6000)
     assert rc == 1
     assert report == f"\ufffd outerr\nerror: stopped after {EXTRACT_TIMEOUT_S} s"
+
+
+def test_each_knowledge_pointer_ends_where_the_next_begins():
+    uri = "https://docs.example.com/d"
+    line = f"see knowledge:kb/{uri}#Doc > A and knowledge:kb/{uri}#Doc > B here"
+    cites = [c["cite"] for c in detectors.find_citations(line, [uri])]
+    assert len(cites) == 2 and "knowledge:" not in cites[0][len("knowledge:") :]
+    sections = [detectors.parse_knowledge(c, [uri])[2] for c in cites]
+    assert sections == ["Doc > A and", "Doc > B here"]
+    # A pointer with no section: the words after it are the sentence's, not a section.
+    (bare,) = detectors.find_citations(f"knowledge:kb/{uri} is what we read", [uri])
+    assert detectors.parse_knowledge(bare["cite"], [uri]) == ("kb", uri, "")
+
+
+def test_a_citation_of_a_whole_path_names_that_section_though_another_ends_so():
+    content = "# A\n\n## B\n\nfirst.\n\n# X\n\n## A\n\n### B\n\nsecond.\n"
+    assert detectors.section_text(content, "A > B") == "B\n\nfirst.\n\n"
+    assert detectors.section_text(content, "X > A > B").startswith("B\n\nsecond.")

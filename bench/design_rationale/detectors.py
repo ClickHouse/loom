@@ -92,7 +92,8 @@ def run_detector(d: dict[str, Any], files: Diff) -> bool | None:
 
 # A memory key cited in brackets: `[design/cache/eviction]`, `[decision:0a1b2c]`.
 _CITED_KEY = re.compile(r"\[([A-Za-z0-9_.-]+(?:[:/][A-Za-z0-9_.:/-]+)+)\]")
-_CITED_KNOWLEDGE = re.compile(r"knowledge:[^\s\]\)`]+[^\n\]\)`]*")
+# Ends at a line end, a closing bracket or backtick, or the next pointer.
+_CITED_KNOWLEDGE = re.compile(r"knowledge:[^\s\]\)`]+(?:(?!knowledge:)[^\n\]\)`])*")
 
 
 def parse_knowledge(cite: str, source_uris: list[str]) -> tuple[str, str, str] | None:
@@ -102,7 +103,9 @@ def parse_knowledge(cite: str, source_uris: list[str]) -> tuple[str, str, str] |
     ns, _, uri_section = rest.partition("/")
     for uri in sorted(source_uris, key=len, reverse=True):
         if uri_section.startswith(uri):
-            section = uri_section[len(uri) :].removeprefix("#").strip().rstrip(".,;…")
+            rest = uri_section[len(uri) :]
+            # A section only after `#`: anything else after the uri is the sentence's.
+            section = rest[1:].strip().rstrip(".,;…") if rest.startswith("#") else ""
             return ns, uri, section
     return None
 
@@ -158,13 +161,18 @@ def _cited_section(cited: str, sections: list[Any]) -> Any:
     `)` or a backtick) or with words after it. In that order: the sections whose path
     ends with the cited segments; else those whose path, or its last segments, the cited
     text is the start of; else the longest path the cited text starts with, followed by
-    words rather than another segment. Exactly one section must fit, or none is chosen."""
+    words rather than another segment. A citation that is one section's whole path names
+    that section first. Exactly one section must fit, or none is chosen."""
     from server.knowledge.domain.chunking import SEPARATOR
 
     exact: dict[int, Any] = {}
     cut: dict[int, Any] = {}
     started: dict[int, Any] = {}
     started_len: dict[int, int] = {}
+    # A citation that is one section's whole path names it, whatever else ends so.
+    whole = [s for s in sections if SEPARATOR.join(s.path) == cited]
+    if len(whole) == 1:
+        return whole[0]
     for s in sections:
         for k in range(1, len(s.path) + 1):
             tail = SEPARATOR.join(s.path[-k:])
