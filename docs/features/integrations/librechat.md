@@ -203,5 +203,5 @@ TOML file's sections are its comments.
 
 The five documents make a small corpus, so rank 1 for every labeled section says the
 breadcrumbs reach the hits, not that retrieval holds up at scale. No citation names a
-revision: the run predates search hits carrying their revision, and the model read
-`knowledge.get` only on the two unanswerable questions.
+revision: the hits of the measured build carry none, and the model read `knowledge.get`
+only on the two unanswerable questions.

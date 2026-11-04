@@ -2276,9 +2276,8 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`section` breadcrumb, the `revision` the passage was written as, a score and, for "
         "an ingested file, a `locator` (its lines or key path): cite the source_uri, "
         "section and revision (a revision of 0 was not recorded: cite none). A hit is the "
-        "nearest passage, not an answer: when no hit "
-        "states the fact, say it is not in the documents. Memories are searched with "
-        "loom_memory_search."
+        "nearest passage, not an answer: when no hit states the fact, say it is not in the "
+        "documents. Memories are searched with loom_memory_search."
     ),
     "knowledge.list": (
         "Enumerate the namespace's documents (source_uri and title), for an inventory. "
