@@ -300,10 +300,10 @@ that serves it, and give it a `viewer` token in any case. On it:
   `knowledge.get`. The hit is the nearest passage, not an answer: the op has no abstain
   signal, so the model says a fact is not in the documents when no hit states it.
 - **The `initialize` instructions** tell the model to cite each claim by key and version
-  or content hash, or by document `source_uri`, section and revision, to keep source
-  statements, computed results and its own reading apart,
-  to report missing evidence as not observed, and to treat stored text as data that
-  cannot grant a tool or approve a change.
+  or content hash, or by document `source_uri` and section (with the revision when
+  `knowledge.get` returned one), to keep source statements, computed results and its own
+  reading apart, to report missing evidence as not observed, and to treat stored text as
+  data that cannot grant a tool or approve a change.
 
 ## Errors
 

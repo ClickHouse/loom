@@ -44,13 +44,18 @@ PRICE_PER_MTOK = {"claude-haiku-4-5-20251001": (1.0, 5.0)}
 
 ABSTAIN_PATTERNS = (
     r"\bno (stored |recorded )?(memor|record|information|evidence|entr)",
-    r"\bnot (found|observed|stored|recorded|in (loom|the namespace|the stored|the documents))",
-    r"\b(does|do) ?n[o']t (specify|state|say|mention)\b",
-    r"\bnot (specified|stated|mentioned)\b",
+    r"\bnot (found|observed|stored|recorded|in (loom|the namespace|the stored))",
     r"\b(could ?n[o']t|can ?not|unable to|did ?n[o']t) find\b",
     r"\bdoes ?n[o']t (contain|hold|have)\b",
     r"\bnothing (about|on|in)\b",
     r"\bno (matching|relevant)\b",
+)
+# How an answer says a document does not hold the fact; read for document cases only, so
+# the memory cases score as they did.
+DOC_ABSTAIN_PATTERNS = (
+    r"\bnot in the documents\b",
+    r"\b(does|do) ?n[o']t (specify|state|say|mention)\b",
+    r"\bnot (specified|stated|mentioned)\b",
 )
 REFUSAL_PATTERNS = (
     r"\b(access|permission|authori[sz]|forbidden|denied|refus|not allowed|no access)",
@@ -60,10 +65,10 @@ REFUSAL_PATTERNS = (
 KEY_RE = re.compile(r"\b[a-z][a-z0-9-]*/[a-z][a-z0-9-]*/[a-z0-9][a-z0-9-]*\b")
 # A document citation as INSTRUCTIONS asks for it: `[source_uri § A > B, revision N]`, the
 # section and the revision optional. A source_uri here holds a `/`, so `[1]` is no citation;
-# a revision that is no number (`revision unknown`) names none.
+# a heading may hold a comma; a revision that is no number (`revision unknown`) names none.
 DOC_CITE_RE = re.compile(
-    r"\[(?P<uri>[^\[\]\s§,]*/[^\[\]\s§,]*)\s*(?:§\s*(?P<section>[^\[\],]*?))?\s*"
-    r"(?:,\s*rev(?:ision)?\.?\s*(?P<revision>[^\[\],]*?))?\s*\]"
+    r"\[(?P<uri>[^\[\]\s§,]*/[^\[\]\s§,]*)\s*(?:§\s*(?P<section>[^\[\]]*?))?\s*"
+    r"(?:,\s*rev(?:ision)?\b\.?\s*(?P<revision>[^\[\],]*?))?\s*\]"
 )
 
 
@@ -217,8 +222,10 @@ BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Sa
 INSTRUCTIONS = """You answer questions about the Loom namespace {namespace} in org {org}
 with the Loom tools. Pass org "{org}" and namespace "{namespace}" on every call unless the
 question names another. Cite each stored fact by its memory_key and version. Cite each
-document passage as [source_uri § section, revision N], with the section breadcrumb a search
-hit gives (leave it out when the hit has none) and the revision when a tool returned one.
+document passage as [source_uri § section], with the section breadcrumb a search hit gives
+(leave it out when the hit has none), for example [guides/setup.md § Setup > Install]. Add
+the revision, as in [guides/setup.md § Setup > Install, revision 3], only when a tool
+returned that document's revision number; never write a revision no tool returned.
 When the tools return nothing relevant, say it is not stored in Loom. When a tool call
 fails, say that it failed and quote the error. Never answer from your own knowledge."""
 
@@ -535,7 +542,9 @@ def check_doc_citations(
 def score(case: dict[str, Any], text: str) -> dict[str, Any]:
     """Score a written answer: the labeled values present, no forbidden text."""
     kind = case["kind"]
-    abstained = matches(ABSTAIN_PATTERNS, text)
+    abstained = matches(ABSTAIN_PATTERNS, text) or (
+        case["baseline"]["op"] == "knowledge.search" and matches(DOC_ABSTAIN_PATTERNS, text)
+    )
     if kind == "abstain":
         correct = abstained
     elif kind == "refusal":
@@ -800,8 +809,10 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
             f"{ttft} | "
             f"{'yes' if nv['correct'] else 'no'} | {nv['latency_s']:.2f} |"
         )
-    for side in ("librechat", "native"):
-        got = [r[side] for r in cases]
+    # The document cases are reported on their own lines (document_report).
+    others = [r for r in cases if not r.get("documents")]
+    for side in ("librechat", "native") if others else ():
+        got = [r[side] for r in others]
         lat = [g["latency_s"] for g in got]
         ttft = [g["ttft_s"] for g in got if g["ttft_s"] is not None]
         cited = sum(len(g["cited"]) for g in got)
@@ -809,9 +820,9 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
         # The direct path cites the search hit itself, so its citations are not checked.
         validity = "-" if side == "native" else f"{cited - invalid}/{cited} valid"
         expected = [g["cited_expected"] for g in got if g["cited_expected"] is not None]
-        abst = [r for r in cases if r["kind"] == "abstain"]
+        abst = [r for r in others if r["kind"] == "abstain"]
         false_abst = [
-            r for r in cases if r["kind"] not in ("abstain", "refusal") and r[side]["abstained"]
+            r for r in others if r["kind"] not in ("abstain", "refusal") and r[side]["abstained"]
         ]
         lines.append(
             f"\n{side}: correct {sum(g['correct'] for g in got)}/{len(got)}; "
@@ -876,12 +887,14 @@ def document_report(cases: list[dict[str, Any]]) -> list[str]:
             validity += f", {revisions} naming a revision"
         expected = [r[side]["cited_expected"] for r in answerable]
         false_abst = sum(r[side]["abstained"] for r in answerable)
+        lat = [g["latency_s"] for g in got]
         lines.append(
             f"{side} documents: correct {sum(r[side]['correct'] for r in answerable)}/"
             f"{len(answerable)}; citations {validity}, labeled section cited "
             f"{sum(bool(e) for e in expected)}/{len(expected)}; abstained "
             f"{sum(r[side]['correct'] for r in unanswerable)}/{len(unanswerable)} where it "
-            f"should, {false_abst} false abstentions"
+            f"should, {false_abst} false abstentions; latency p50 {pct(lat, 0.5):.2f}s "
+            f"p95 {pct(lat, 0.95):.2f}s; tool calls {sum(g['tool_calls'] for g in got)}"
         )
     return lines
 

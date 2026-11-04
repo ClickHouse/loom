@@ -288,13 +288,6 @@ def test_document_labels_name_a_section_that_states_the_answer():
     fixture = json.loads((QUAL / "fixture.json").read_text())
     people = {p["name"]: p for p in fixture["people"]}
     docs = _documents()
-    formats = {
-        d["format"]
-        for t in fixture["tenants"]
-        for rows in t.get("documents", {}).values()
-        for d in rows
-    }
-    assert {"markdown", "text", "sql", "toml"} <= formats
     cases = json.loads((QUAL / "cases.json").read_text())
     document_cases = [c for c in cases if c["baseline"]["op"] == "knowledge.search"]
     assert any(c["kind"] == "abstain" for c in document_cases)
@@ -344,7 +337,13 @@ def test_no_document_uri_reads_as_a_memory_key():
             "[schema/orders.sql, revision unknown] [config/cache.toml § Session cache, revision N]",
             [("schema/orders.sql", "", None), ("config/cache.toml", "Session cache", None)],
         ),
-        ("Footnote [1] and [a link](http://x) are no citations.", []),
+        # A heading may hold a comma; a word after it is no revision.
+        (
+            "[guides/a.md § Limits, quotas > Notes, reviewed, revision 4]",
+            [("guides/a.md", "Limits, quotas > Notes, reviewed", 4)],
+        ),
+        # A source_uri holds a `/`: a bare name is no citation.
+        ("Footnote [1], [README.md § Intro] and [a link](http://x) are no citations.", []),
     ],
 )
 def test_parse_doc_citations(text, parsed):
@@ -464,6 +463,13 @@ def test_score_reads_a_document_abstention(answer, abstained):
     assert _qualify().score(_case("abstain-doc-credit"), answer)["correct"] is abstained
 
 
+def test_document_abstention_phrases_leave_the_memory_cases_alone():
+    q = _qualify()
+    answer = "The CFO is not stated in Loom."
+    assert q.score(_case("abstain-cfo"), answer)["abstained"] is False
+    assert q.score(_case("abstain-doc-credit"), answer)["abstained"] is True
+
+
 def test_report_counts_the_document_cases():
     q = _qualify()
 
@@ -509,6 +515,8 @@ def test_report_counts_the_document_cases():
         },
     ]
     text = q.report(rows, "m")
+    # Document rows stay out of the memory-key summary line.
+    assert "\nlibrechat: " not in text and "expected key cited" not in text
     assert "2 answerable and 1 unanswerable cases; labeled section at rank 1 1/2" in text
     assert "within the top 5 2/2" in text
     assert (

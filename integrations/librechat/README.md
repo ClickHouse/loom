@@ -123,6 +123,5 @@ export QUALIFY_CH_DATABASE=loom  # the Loom server's LOOM_CH_DATABASE
   `run --native-only` answers the direct path again into the saved run, with no model and
   no LibreChat.
 - `seed` writes memories and documents into orgs `acme` and `globex`, so use a scratch
-  deployment. Tokens,
-  LibreChat passwords and API keys of the run are kept in `qualification/.state.json`
-  (mode 0600); it and `results.json` are ignored by git.
+  deployment. Tokens, LibreChat passwords and API keys of the run are kept in
+  `qualification/.state.json` (mode 0600); it and `results.json` are ignored by git.
