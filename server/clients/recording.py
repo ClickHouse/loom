@@ -200,11 +200,12 @@ async def meet_space(token: str, space_id: str) -> dict[str, Any]:
 
 
 async def meet_records(
-    token: str, space_name: str, *, ended_after: str = "", page_size: int = 100
+    token: str, space_name: str, *, label: str, ended_after: str = "", page_size: int = 100
 ) -> list[dict[str, Any]]:
     """The space's ended conference records, or those that ended at or after
-    `ended_after` (an RFC 3339 time). `space_name` is the space's own `name`; a
-    record still running has no `endTime` and is left out."""
+    `ended_after` (an RFC 3339 time). `space_name` is the space's own `name`, for the
+    filter; `label` names the space in errors (`space <configured id>`). A record
+    still running has no `endTime` and is left out."""
     query = f'space.name = "{space_name}"'
     if ended_after:
         query += f' AND end_time >= "{ended_after}"'
@@ -213,7 +214,7 @@ async def meet_records(
         token,
         {"filter": query, "pageSize": str(page_size)},
         "conferenceRecords",
-        f"space {space_name.removeprefix('spaces/')}",
+        label,
     )
     return [r for r in found if r.get("endTime")]
 

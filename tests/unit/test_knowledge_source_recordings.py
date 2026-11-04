@@ -682,7 +682,11 @@ def test_a_401_on_a_transcript_s_entries_stops_the_turn(
     stores.transcripts = {"r1": _generated("r1", "t1"), "r2": _generated("r2", "t2")}
     stores.entry_status = {"t1": 401}
     asyncio.run(source_sync.run_sync())
-    assert _detail(world, "calls")["status"] == "credential_invalid"
+    detail = _detail(world, "calls")
+    assert (detail["status"], detail["error"]) == (
+        "credential_invalid",
+        "conferenceRecords/r1/transcripts/t1: http_401",
+    )
     assert world.upserts == []
     # The turn stopped at the first record: the second's transcripts were never read.
     assert not any("/r2/" in r.url.path for r in stores.requests)
@@ -722,3 +726,16 @@ def test_a_record_s_transcripts_are_merged_under_one_size_bound(
     # Each transcript fits 1000 bytes alone; together they do not.
     with pytest.raises(recording.TooLarge):
         asyncio.run(source_sync_recording.transcript(session, item, max_bytes=1000))
+
+
+def test_a_space_s_listing_error_names_the_configured_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/v2/spaces/"):
+            return httpx.Response(200, json={"name": "spaces/canonicalId"})
+        return httpx.Response(500)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_answer))
+    monkeypatch.setattr(recording, "get_client", lambda: client)
+    session = source_sync_recording.Session("meet", "tok")
+    with pytest.raises(recording.RecordingError, match="^space abc-mnop-xyz: http_500$"):
+        asyncio.run(source_sync_recording.list_recordings(session, ["abc-mnop-xyz"]))

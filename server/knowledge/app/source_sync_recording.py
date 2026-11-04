@@ -135,7 +135,9 @@ async def _meet_listing(token: str, space_id: str, since: str) -> list[dict[str,
     if not _MEET_SPACE_RE.fullmatch(name):
         raise recording.RecordingError(f"space {space_id}: no space name in the answer")
     out = []
-    for record in await recording.meet_records(token, name, ended_after=since):
+    for record in await recording.meet_records(
+        token, name, label=f"space {space_id}", ended_after=since
+    ):
         record_name = str(record.get("name") or "")
         if not recording.valid_record(record_name):
             continue
@@ -195,7 +197,7 @@ async def _meet_transcript(token: str, item: dict[str, Any], max_bytes: int) -> 
     entries: list[Entry] = []
     # The bound is the recording's, across its transcripts.
     left = max_bytes
-    for t in sorted(found, key=lambda t: str(t.get("startTime") or "")):
+    for t in found:
         read = await recording.meet_entries(token, str(t.get("name") or ""), max_bytes=left)
         left -= sum(len(str(e.get("text") or "").encode()) for e in read)
         for e in read:
