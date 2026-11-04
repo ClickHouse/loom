@@ -7,9 +7,12 @@ is private material read from a directory given on the command line.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from bench.design_rationale.detectors import TOKEN
 
 KINDS = ("A", "B", "C")
 # Each detector type and the keys it needs (`path_glob` and `to` are optional).
@@ -111,6 +114,9 @@ def _documents(root: Path) -> dict[str, Document]:
     docs: dict[str, Document] = {}
     for entry in _read_json(root / "documents.json"):
         doc_id = entry["id"]
+        if not isinstance(doc_id, str) or not doc_id or "/" in doc_id:
+            # A document id names its extraction log file.
+            raise TaskSetError(f"document id {doc_id!r}: a non-empty string without '/'")
         path = root / entry["path"]
         if not path.is_file():
             raise TaskSetError(f"document {doc_id}: no file {entry['path']}")
@@ -158,6 +164,17 @@ def _gold(root: Path, documents: dict[str, Document]) -> list[GoldRow]:
     return gold
 
 
+# The task fields a judge reads as lists of text.
+TEXT_LISTS = (
+    "gold_arguments",
+    "rejected_options",
+    "gold_constraints",
+    "forbidden_options",
+    "stale_claims",
+    "judge_rubric",
+)
+
+
 def _check_detector(tid: str, d: Any) -> None:
     if not isinstance(d, dict) or d.get("type") not in DETECTOR_TYPES:
         raise TaskSetError(f"task {tid}: a detector is an object with a known type")
@@ -170,13 +187,15 @@ def _check_detector(tid: str, d: Any) -> None:
     for key in ("pattern", "path_glob", "setting", "rubric"):
         if key in d and not isinstance(d[key], str):
             raise TaskSetError(f"task {tid}: a detector's {key} is a string")
+    if "pattern" in d:
+        try:
+            re.compile(d["pattern"])
+        except re.error as e:
+            raise TaskSetError(f"task {tid}: a detector's pattern does not compile: {e}") from None
     for key in ("from", "to"):
         # Compared as one token after the setting name.
-        if key in d and (
-            not isinstance(d[key], str | int | float)
-            or not str(d[key]).split()
-            or len(str(d[key]).split()) != 1
-        ):
+        value = d.get(key)
+        if key in d and not (isinstance(value, str | int | float) and TOKEN.fullmatch(str(value))):
             raise TaskSetError(f"task {tid}: a detector's {key} is one word or number")
 
 
@@ -205,6 +224,11 @@ def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
         raise TaskSetError(f"task {tid}: detector is a list")
     for d in detectors:
         _check_detector(tid, d)
+    for name in TEXT_LISTS:
+        if name in t and not (
+            isinstance(t[name], list) and all(isinstance(x, str) for x in t[name])
+        ):
+            raise TaskSetError(f"task {tid}: {name} is a list of strings")
     if kind == "C":
         if t["subtype"] not in C_SUBTYPES:
             raise TaskSetError(f"task {tid}: subtype is one of {C_SUBTYPES}")

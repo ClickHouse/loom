@@ -1369,3 +1369,54 @@ def test_a_detector_of_the_wrong_shape_is_refused(tmp_path):
         (root / "tasks.json").write_text(json.dumps(tasks))
         with pytest.raises(TaskSetError, match=message):
             load(root)
+
+
+def test_setting_values_are_tokens_signs_exponents_and_hyphens_included():
+    def fires(line, **d):
+        files = detectors.diff_files(f"--- a/c.py\n+++ b/c.py\n+{line}\n")
+        return detectors.run_detector(
+            {"type": "setting_default_changed", "setting": "s", **d}, files
+        )
+
+    assert not fires("s = -1", **{"from": "-1"})
+    assert fires("s = 1", **{"from": "-1"})
+    assert not fires("s = 1e-05", **{"from": "1e-05"})
+    assert not fires('s = "gpt-4o-mini"', **{"from": "gpt-4o-mini"})
+    assert fires('s = "gpt-4o"', **{"from": "gpt-4o-mini"})
+    assert fires("s = 8", **{"from": "4", "to": "8"})
+
+
+def test_a_diff_fence_closes_only_at_a_line_start():
+    text = "## Diff\n```diff\n--- a/x.md\n+++ b/x.md\n+see ```python here\n+more\n```\n"
+    assert detectors.diff_files(detectors.extract_diff(text)) == {
+        "x.md": {"+": ["see ```python here", "more"], "-": []}
+    }
+
+
+def test_the_loader_refuses_malformed_task_fields(tmp_path):
+    root = _copy_example(tmp_path)
+    for kind, index, broken, message in (
+        ("B", 0, {"detector": [{"type": "diff_added_regex", "pattern": "("}]}, "compile"),
+        (
+            "B",
+            1,
+            {"detector": [{"type": "setting_default_changed", "setting": "s", "from": "a b"}]},
+            "one word or number",
+        ),
+        ("A", 0, {"gold_arguments": "one argument"}, "gold_arguments is a list"),
+        ("A", 0, {"rejected_options": [1]}, "rejected_options is a list"),
+        ("B", 0, {"forbidden_options": None}, "forbidden_options is a list"),
+        ("B", 0, {"judge_rubric": "fail if"}, "judge_rubric is a list"),
+        ("C", 0, {"stale_claims": ["ok", 2]}, "stale_claims is a list"),
+    ):
+        tasks = json.loads((EXAMPLE / "tasks.json").read_text())
+        tasks[kind][index].update(broken)
+        (root / "tasks.json").write_text(json.dumps(tasks))
+        with pytest.raises(TaskSetError, match=message):
+            load(root)
+    (root / "tasks.json").write_text((EXAMPLE / "tasks.json").read_text())
+    docs = json.loads((EXAMPLE / "documents.json").read_text())
+    docs[0]["id"] = "a/b"
+    (root / "documents.json").write_text(json.dumps(docs))
+    with pytest.raises(TaskSetError, match="without '/'"):
+        load(root)

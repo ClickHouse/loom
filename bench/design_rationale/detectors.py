@@ -9,10 +9,15 @@ from typing import Any
 
 Diff = dict[str, dict[str, list[str]]]
 
+# One value a line can assign: a word or a number, a sign, dots and inner hyphens kept
+# (`-1`, `1e-05`, `gpt-4o-mini`). A setting detector's `from` and `to` must be one.
+TOKEN = re.compile(r"-?[A-Za-z0-9_.][A-Za-z0-9_.-]*")
+
 
 def extract_diff(text: str) -> str:
     """The diff an answer carries: every ```diff fence, else what follows `## Diff`."""
-    fences = re.findall(r"```diff\n(.*?)```", text, re.S)
+    # A fence opens and closes at a line start: a ``` inside a diff line is content.
+    fences = re.findall(r"^```diff[ \t]*\n(.*?)^```[ \t]*$", text, re.S | re.M)
     if fences:
         return "\n".join(fences)
     return text.split("## Diff", 1)[1] if "## Diff" in text else ""
@@ -26,10 +31,11 @@ def diff_files(diff: str) -> Diff:
     """path -> {"+": added lines, "-": removed lines} of a unified diff. A file header is
     a `diff --git a/x b/y` line, a `--- ` line right before a `+++ ` line (the path from
     the `+++`, or the `---` one when the file was deleted), or a `+++ ` line right before
-    a `@@` line. Hunk counts are not read: models miscount them. `@@` and `\ No newline`
-    lines are skipped; any other line is added (`+`), removed (`-`) or context.
-    Accepted: a removed line `-- x` right before an added line `++ y` reads as a header;
-    it is rare and only labels the lines after it with another file."""
+    a `@@` line. Hunk counts are not read: models miscount them. `@@` and `\\ No
+    newline` lines are skipped; any other line is added (`+`), removed (`-`) or context.
+    Accepted: a content line starting `-- ` or `++ ` (it reads `--- ` or `+++ `) next to a
+    header-shaped neighbour reads as a header; it is rare and only labels the lines after
+    it with another file."""
     files: Diff = {}
     current = None
 
@@ -79,7 +85,7 @@ def _value_tokens(line: str, name: str) -> set[str]:
     name, split into words and numbers (`512` is not `5120`), normalised as `_norm`
     does."""
     after = line.split(name, 1)[1]
-    return {_norm(t) for t in re.findall(r"[A-Za-z0-9_.]+", after)}
+    return {_norm(t) for t in TOKEN.findall(after)}
 
 
 def run_detector(d: dict[str, Any], files: Diff) -> bool | None:
