@@ -1634,10 +1634,19 @@ describe("Assistant: documents", () => {
   });
 
   it("names the ingested samples the server sampled apart from the first matches", async () => {
-    // 22 live documents miss a vector: 21 text writes, then the spec. The server cuts the
-    // matches to the first 20 and samples the ingested ones apart, so the spec is only in
-    // `ingested_samples`, and one text write is left unlisted.
-    const text = Array.from({ length: 20 }, (_, k) => `files/note-${k + 1}.md`);
+    // 22 live documents miss a vector: the notes and the spec, and 20 newer text writes. The
+    // server cuts the matches to the first 20 (the default sample_limit), all text writes, and
+    // samples the ingested ones apart, so the spec is only in `ingested_samples` and the notes
+    // are left unlisted. The listing holds the 20 newest documents.
+    const [, notes] = KNOWLEDGE.listed;
+    const text = Array.from({ length: 20 }, (_, k) => `https://docs.example.com/note-${k + 1}.md`);
+    const rows = text.map((uri, k) => ({
+      ...notes,
+      source_uri: uri,
+      title: `Note ${k + 1}`,
+      ingested_at: `2026-11-02T09:${String(59 - k).padStart(2, "0")}:00`,
+      chunks: notes.chunks && { ...notes.chunks, live: 1, searchable: 0, unembedded: 1 },
+    }));
     inspectKnowledge.mockResolvedValueOnce({
       ...KNOWLEDGE,
       documents: {
@@ -1648,9 +1657,9 @@ describe("Assistant: documents", () => {
           { name: "pdf", live: 1, deleted: 0 },
         ],
         by_source_scheme: [{ name: "https", live: 22, deleted: 1 }],
+        newest_ingested_at: rows[0].ingested_at,
       },
-      // The two base documents' 12 chunks (the spec's one unembedded now) plus one unembedded
-      // chunk for each of the 20 added text writes.
+      // The spec's 8 chunks (one now unembedded), the notes' 4 and one per added note.
       chunks: {
         ...KNOWLEDGE.chunks,
         live: 32,
@@ -1658,6 +1667,7 @@ describe("Assistant: documents", () => {
         unembedded: 22,
         by_model: [{ model: "text-embedding-3-small", live: 32, embedded: 10 }],
       },
+      listed: rows,
       listed_complete: false,
       findings: KNOWLEDGE.findings.map((f) =>
         f.code === "unembedded_chunks"
