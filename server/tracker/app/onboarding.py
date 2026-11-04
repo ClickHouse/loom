@@ -83,8 +83,7 @@ async def _vet(host: str) -> tuple[str, str]:
 
 @dataclass
 class GrantReview:
-    grants: list[str] = field(default_factory=list)  # the raw SHOW GRANTS lines
-    roles: list[str] = field(default_factory=list)  # roles granted (opaque)
+    roles: list[str] = field(default_factory=list)  # roles granted, reported back
     refused: list[str] = field(default_factory=list)  # what makes it not read-only
 
     @property
@@ -96,7 +95,7 @@ def review_grants(lines: list[str]) -> GrantReview:
     """Parse `SHOW GRANTS` output: `GRANT <types> ON <scope> TO <user>` lines
     name access types; `GRANT <role>[, …] TO <user>` lines name roles;
     `REVOKE` lines only narrow a grant. Any other line is refused."""
-    rev = GrantReview(grants=[str(x) for x in lines])
+    rev = GrantReview()
     for raw in lines:
         line = " ".join(str(raw).split())
         masked = _QUOTED.sub(lambda m: "_" * len(m.group()), line)
@@ -214,10 +213,11 @@ async def probe_credential(
         return [dict(zip(res.column_names, r, strict=True)) for r in res.result_rows]
 
     try:
+        # The direct grants name the roles; FINAL adds what those roles grant
+        grant_rows: list[dict[str, Any]] = []
         try:
-            # The direct grants name the roles; FINAL adds what those roles grant
-            grant_rows = await asyncio.wait_for(query("SHOW GRANTS"), timeout=timeout_s)
-            grant_rows += await asyncio.wait_for(query("SHOW GRANTS FINAL"), timeout=timeout_s)
+            for sql in ("SHOW GRANTS", "SHOW GRANTS FINAL"):
+                grant_rows += await asyncio.wait_for(query(sql), timeout=timeout_s)
         except Exception as e:
             if _is_readonly_mode(e):
                 raise ReadonlyModeError(
@@ -225,7 +225,8 @@ async def probe_credential(
                     "(readonly = 2 and a timeout on every read), so nothing could be read. "
                     f"Run: ALTER USER {user} SETTINGS readonly = 2 — it still allows SELECT only."
                 ) from e
-            raise ProbeError(f"SHOW GRANTS refused for {user!r}: {e}") from e
+            needs = " (loom needs a server that supports it)" if sql.endswith("FINAL") else ""
+            raise ProbeError(f"{sql} refused for {user!r}{needs}: {e}") from e
         lines = [str(next(iter(r.values()))) for r in grant_rows if r]
         tables: list[dict[str, Any]] = []
         if inspect:
