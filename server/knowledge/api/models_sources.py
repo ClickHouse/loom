@@ -55,13 +55,35 @@ class KnowledgeSourceSync(BaseModel):
     # source's response text), or why a turn that did not fail is incomplete (the
     # pass bound, an incomplete listing); '' when neither.
     error: str = ""
+    # Documents whose stored revision is not yet mined for decisions, as of the last pass.
+    pending_extract: int = 0
+    # When the worker last mined the source's written documents for decisions, ISO
+    # UTC; '' = never.
+    last_extracted_at: str = ""
+    # Documents that last mining turn read through, each with or without a decision.
+    extracted: int = 0
+    # Decision rows it tagged source-changed rather than rewriting them (pinned,
+    # attested, or with a recorded outcome): their document now says otherwise.
+    flagged_pinned: int = 0
+    # Documents given up on: three failed tries, or too large for a pass; tried again
+    # once the sync writes them again.
+    unextracted: int = 0
+    # Why an extraction failed: not_run (it could not run on the document, such as one
+    # with no chunks for the current embedding model), refused (a read or write it
+    # needed was refused for a reason of the moment, or failed), out_of_time (its model
+    # reads ran past the pass's read deadline), too_large_for_pass (it ran out of a
+    # whole pass's read time) or failed:<error>; or why documents wait: over_cap,
+    # switched_off, switch_unread, no_model, held, held:<code> or pass_bound. '' when
+    # none.
+    extract_error: str = ""
 
 
 class KnowledgeSourceEntry(BaseModel):
     # The source's name, unique in the namespace.
     name: str
     # The source's kind (`gdrive`: a shared folder of docs, slides, decks and PDFs;
-    # `linear`: a project tracker's project documents).
+    # `linear`: a project tracker's project documents; `recording`: the transcripts
+    # of a meeting store's recordings).
     kind: str
     # The ids and filters the source reads; never a credential.
     config: dict[str, Any] = Field(default_factory=dict)
@@ -107,20 +129,24 @@ class KnowledgeSourceAddInput(BaseModel):
     )
     kind: str = Field(
         ...,
-        description="The source kind: `gdrive` (a shared folder) or `linear` (a project "
-        "tracker's project documents).",
+        description="The source kind: `gdrive` (a shared folder), `linear` (a project "
+        "tracker's project documents) or `recording` (a meeting store's transcripts).",
     )
     config: dict[str, Any] = Field(
         ...,
         description="The ids and filters the source reads, per kind; gdrive: {folder_ids: "
         "[1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: "
-        "{project_ids: [1-20 project ids, UUIDs]}.",
+        "{project_ids: [1-20 project ids, UUIDs]}; recording: {provider: meet | zoom, ids: "
+        "[1-20 space ids (meet) or meeting ids (zoom)]}.",
     )
     credential: str = Field(
         ...,
         description="The source's read-only credential (gdrive: a service account's JSON key, "
         "with the folders shared to the account read-only; linear: a read-only API key of an "
-        "account that sees the projects); stored encrypted, never returned.",
+        "account that sees the projects; recording: for meet, an authorized_user JSON file "
+        "with the meetings.space.readonly scope only; for zoom, a server-to-server app's "
+        "{account_id, client_id, client_secret} with read-only scopes); stored encrypted, "
+        "never returned.",
     )
     dry_run: bool = Field(False, description="Probe and write nothing.")
 
@@ -215,9 +241,8 @@ class KnowledgeSourceRotateInput(BaseModel):
     name: str = Field(..., description="The source name.")
     credential: str = Field(
         ...,
-        description="The replacement credential (gdrive: a service account's JSON key; "
-        "linear: an API key); "
-        "stored encrypted, never returned.",
+        description="The replacement credential, of the same form as add's; stored "
+        "encrypted, never returned.",
     )
 
 

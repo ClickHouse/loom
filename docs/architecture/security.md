@@ -1095,11 +1095,14 @@ every folder of the source (for a tracker project's documents: a list read whole
 project on every page, and a lookup reporting the document not found, trashed, archived
 or in none of the source's projects), when the document sits at an address that is no
 longer its file's, or when a namespace admin asked (`knowledge.source.remove` with
-`delete_documents`); never on a fetch error, and never touches a live document another
+`delete_documents`); never on a fetch error or a recording its meeting store stopped
+listing, and never touches a live document another
 writer or source holds ([document sources](../features/knowledge.md#syncing-a-source)).
 Any holder of a writer grant on the namespace may still `knowledge.delete` a synced
 document, as any other; while its item is still in the source, a later turn writes it
-again (a folder's next full listing, a project's next turn).
+again (a folder's next full listing, a project's next turn). A meeting store's token goes only to that
+store's own hosts, a transcript download's link included
+([recordings](../features/knowledge.md#a-recording-source)).
 
 ## Audit log
 

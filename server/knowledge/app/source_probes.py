@@ -24,7 +24,8 @@ SAMPLE_TITLES = 5
 @dataclass(frozen=True)
 class Probe:
     # Documents the source lists now: the first 1000 at most (gdrive), the first
-    # page of each project (linear).
+    # page of each project (linear), the recordings listed, the first 1000 at most
+    # (recording).
     documents: int
     # Up to five of their titles, most recently changed first.
     sample: list[str] = field(default_factory=list)
@@ -98,9 +99,28 @@ async def _probe_linear(config: dict[str, Any], credential: str) -> Probe:
     return Probe(documents=len(found), sample=titles, more=more)
 
 
+async def _probe_recording(config: dict[str, Any], credential: str) -> Probe:
+    from server.clients import recording
+    from server.knowledge.app import source_sync_recording
+
+    try:
+        session = await source_sync_recording.open_session(config["provider"], credential)
+        found, lost = await source_sync_recording.list_recordings(session, config["ids"])
+    except recording.CredentialRefused as e:
+        raise CredentialRefused(str(e)) from None
+    except recording.RecordingError as e:
+        raise SourceUnreachable(str(e)) from None
+    if lost:
+        raise SourceUnreachable(f"{lost[0]}; check the id and that the account can see it")
+    found.sort(key=lambda r: r["modifiedTime"], reverse=True)
+    titles = [r["name"] for r in found[:SAMPLE_TITLES]]
+    return Probe(documents=min(len(found), 1000), sample=titles, more=len(found) > 1000)
+
+
 PROBES: dict[str, Callable[[dict[str, Any], str], Awaitable[Probe]]] = {
     "gdrive": _probe_gdrive,
     "linear": _probe_linear,
+    "recording": _probe_recording,
 }
 
 

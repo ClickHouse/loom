@@ -18,7 +18,7 @@ from server.tracker.domain.sources import SOURCE_NAME_RE
 
 # The kinds a source may be. Each has a config parser here and a probe in
 # `server.knowledge.app.source_probes`.
-KINDS = ("gdrive", "linear")
+KINDS = ("gdrive", "linear", "recording")
 
 # A shared-folder store's file kinds, by the name a config's `include` uses.
 GDRIVE_MIME_TYPES = {
@@ -33,6 +33,14 @@ MAX_FOLDERS = 20  # not a setting: the add op's wire contract (1 to 20 folders)
 # A tracker project id is a UUID; it travels as a GraphQL variable.
 _PROJECT_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 MAX_PROJECTS = 20  # not a setting: the add op's wire contract (1 to 20 projects)
+
+# A meeting store's recordings, by `provider`: a meeting space's id (it goes into a
+# request path and a listing filter) or a numeric meeting id.
+RECORDING_ID_RE = {
+    "meet": re.compile(r"[A-Za-z0-9_-]{1,128}"),
+    "zoom": re.compile(r"[0-9]{9,12}"),
+}
+MAX_RECORDING_IDS = 20  # not a setting: the add op's wire contract (1 to 20 ids)
 
 # The actor the sync worker writes a source's documents as. Its kind is neither
 # `human` nor `process`, the only kinds a token maps to, so no request writes as
@@ -99,6 +107,8 @@ def parse_config(kind: str, config: dict[str, Any]) -> dict[str, Any]:
         return _gdrive_config(config)
     if kind == "linear":
         return _linear_config(config)
+    if kind == "recording":
+        return _recording_config(config)
     raise SourceConfigError(f"no config rule for kind {kind!r}")
 
 
@@ -153,6 +163,33 @@ def _linear_config(config: dict[str, Any]) -> dict[str, Any]:
     return {"project_ids": projects}
 
 
+def _recording_config(config: dict[str, Any]) -> dict[str, Any]:
+    unknown = sorted(set(config) - {"provider", "ids"})
+    if unknown:
+        raise SourceConfigError(f"unknown config keys: {', '.join(unknown)}")
+    provider = config.get("provider")
+    if not isinstance(provider, str) or provider not in RECORDING_ID_RE:
+        raise SourceConfigError("config.provider: one of " + ", ".join(RECORDING_ID_RE))
+    id_re = RECORDING_ID_RE[provider]
+    raw_ids = config.get("ids")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise SourceConfigError(f"config.ids: a list of 1 to {MAX_RECORDING_IDS} ids")
+    ids: list[str] = []
+    for raw in raw_ids:
+        # A meeting id may come as a JSON number; a bool is no id.
+        value = str(raw) if isinstance(raw, int) and not isinstance(raw, bool) else raw
+        if isinstance(value, str) and provider == "meet":
+            value = value.removeprefix("spaces/")
+        if not isinstance(value, str) or not id_re.fullmatch(value):
+            what = "a space id" if provider == "meet" else "a meeting id (digits)"
+            raise SourceConfigError(f"config.ids: {raw!r} is not {what}")
+        if value not in ids:
+            ids.append(value)
+    if len(ids) > MAX_RECORDING_IDS:
+        raise SourceConfigError(f"config.ids: at most {MAX_RECORDING_IDS} ids")
+    return {"provider": provider, "ids": ids}
+
+
 def json_object(raw: str) -> dict[str, Any]:
     """A stored JSON object (a source's config, a sync state), or {} when it is not one."""
     try:
@@ -176,6 +213,12 @@ SYNC_FIELDS: dict[str, type] = {
     "unconverted_reasons": dict,
     "skipped": int,
     "error": str,
+    "pending_extract": int,
+    "last_extracted_at": str,
+    "extracted": int,
+    "flagged_pinned": int,
+    "unextracted": int,
+    "extract_error": str,
 }
 
 
@@ -192,6 +235,8 @@ __all__ = [
     "KnowledgeSource",
     "MAX_FOLDERS",
     "MAX_PROJECTS",
+    "MAX_RECORDING_IDS",
+    "RECORDING_ID_RE",
     "STATE_KEY_PREFIX",
     "SYNC_FIELDS",
     "SYNC_WORKER_ACTOR",
