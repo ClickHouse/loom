@@ -272,43 +272,47 @@ Trouble with one file is that file's:
 A `notion` source's turn follows the same rules, with pages for files. Its listing is
 each listed page, the pages of each listed database, read through the database's data
 sources (on an incremental turn, only the pages edited after the stamp), and each known
-child page. Every request to the store is paced to its average of three a second, for each integration on its own. A
-page's revision is its last edit time and its address the page URL the store reports,
-so a renamed page moves to its new address and the document at the old one is retired.
-A page whose stored copy has the listed revision is skipped only when that copy was
-read 90 seconds or more after the revision; one read sooner is read again, so an edit
-made just before or after a read is not lost to an equal stamp or a clock skew. A changed page's
-blocks are read, nested blocks included, at most 300 requests a page, and turned into
-Markdown one to one: headings, paragraphs, bulleted and numbered lists, to-dos
-(`- [x]`), quotes and callouts as `>` quotes, code fenced with its language, tables as
-Markdown tables (the first row as the header row), bookmarks and embeds as links,
-toggles, columns and synced blocks with their children inline, and a run of images or
-videos as `> [image-only: N pictures, rationale not extracted]` followed by their
-captions. Left out and counted by type in the document's metadata (`skipped_blocks`):
-a child database, a file, a PDF, a link that is not an https address, a synced copy
-whose original is not shared with the integration, and any type the converter does not
-map. `ingested_format` is `blocks`, and `read_at` is when the page was read.
+child page. Within each server process, the requests of one integration are paced to the
+store's average of three a second; two integrations do not wait on each other, and a
+rate limit (`429`) ends the turn, which the next pass retries. A page's revision is its
+last edit time and its address the page URL the store reports, so a renamed page moves
+to its new address and the document at the old one is retired. A page whose stored copy
+has the listed revision is skipped only when that copy was read 90 seconds or more after
+the revision; one read sooner is read again, so an edit made just before or after a read
+is not lost to an equal stamp or a clock skew. A changed page's blocks are read, nested
+blocks included, at most 300 requests a page, and turned into Markdown one to one:
+headings, paragraphs, bulleted and numbered lists, to-dos (`- [x]`), quotes and callouts
+as `>` quotes, code fenced with its language, tables as Markdown tables (the first row
+as the header row), bookmarks and embeds as links, toggles, columns and synced blocks
+with their children inline, and a run of images or videos as `> [image-only: N pictures,
+rationale not extracted]` followed by their captions. Left out and counted by type in
+the document's metadata (`skipped_blocks`): a child database, a file, a PDF, a link that
+is not an https address, a synced copy whose original is not shared with the
+integration, and any type the converter does not map. `ingested_format` is `blocks`, and
+`read_at` is when the page was read; a copy read again at the same revision is mined for
+decisions again ([mining](#mining-decisions)).
 
-A child page is a document of its own. The child pages a read page holds are kept in
-the source's sync state, at most 200 per source (more are counted in their parent's
+A child page is a document of its own. The child pages a read page holds are kept in the
+source's sync state, at most 200 per source (more are counted in their parent's
 `skipped_blocks`), and each later turn reads every known child once for its revision; a
 child found while a turn syncs its parent, and a grandchild found while it syncs the
 child, are synced in that turn. A child page inside a column, a toggle, a list item or a
-synced block belongs to the page whose blocks held it. A known child is forgotten in three ways only: its page is read and no longer holds it;
-a complete full turn's lookup finds it gone, in the trash or out from under the source
-(and retires its document); or a complete full turn read it as not found or trashed and
-it holds no document. A failed or cut turn forgets no child it could not read, and a child found while
-syncing whose read fails (other than not found) leaves the turn failed, so it is read
-again next turn. A page with no text (`no_text`) and one past the
-request bound or `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` (`too_large`) are given up
-on until they change. A listed page or database the integration no longer sees, or a
-database in the trash, fails the turn and retires nothing, while the pages it still
-sees are written. A listed page or child page in the trash is left out of the listing,
-so the next full turn retires it. A page is retired after a complete full listing lacks
-it and a lookup finds it gone, in the trash, or under none of the listed pages, the
-listed databases and the pages that listing had; a child moved out from under them, and
-its own children, are retired this way. A database query the store marks incomplete is
-an incomplete listing (`listing: incomplete result`).
+synced block belongs to the page whose blocks held it. A known child is forgotten in
+three ways only: its page is read and no longer holds it; a complete full turn's lookup
+finds it gone, in the trash or out from under the source (and retires its document); or
+a complete full turn read it as not found or trashed and it holds no document. A failed
+or cut turn forgets no child it could not read, and a child found while syncing whose
+read fails (other than not found) leaves the turn failed, so it is read again next turn.
+A page with no text (`no_text`) and one past the request bound or
+`LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` (`too_large`) are given up on until they
+change. A listed page or database the integration no longer sees, or a database in the
+trash, fails the turn and retires nothing, while the pages it still sees are written. A
+listed page or child page in the trash is left out of the listing, so the next full turn
+retires it. A page is retired after a complete full listing lacks it and a lookup finds
+it gone, in the trash, or under none of the listed pages, the listed databases and the
+pages that listing had; a child moved out from under them, and its own children, are
+retired this way. A database query the store marks incomplete is an incomplete listing
+(`listing: incomplete result`).
 
 ### Mining decisions
 

@@ -135,9 +135,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         addresses = {f["id"]: sync.source_uri_of(f) for f in t.items}
         listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
 
-        async def gone(page_id: str) -> bool | None:
-            return await _page_gone(t, page_id)
-
+        gone = functools.partial(_page_gone, t)
         await sync.retire_absent(src, listed, gone, run, result)
         if result.complete:
             await _forget_unlisted_without_documents(t)

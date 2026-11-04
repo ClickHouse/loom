@@ -753,21 +753,6 @@ def test_the_probe_refuses_a_trashed_page_or_database(
         )
 
 
-def test_every_request_waits_its_turn(monkeypatch: pytest.MonkeyPatch) -> None:
-    waits: list[float] = []
-
-    async def _sleep(seconds: float) -> None:
-        waits.append(seconds)
-
-    monkeypatch.setattr(notion, "PAGE_PACE_S", 0.35)
-    monkeypatch.setattr(notion, "_next_request_at", {})
-    monkeypatch.setattr(notion.asyncio, "sleep", _sleep)
-    _probe_world(monkeypatch, _probe_store)
-    asyncio.run(source_probes.probe("notion", {"page_ids": [PAGE], "database_ids": [DB]}, TOKEN))
-    # The sleeps are recorded, not slept: each request after the first is a pace later.
-    assert waits == pytest.approx([0.35, 0.70], abs=0.05)
-
-
 def _under_block(block_id: str) -> dict[str, Any]:
     return {"type": "block_id", "block_id": block_id}
 
@@ -964,9 +949,8 @@ def test_another_integration_s_busy_pacer_does_not_slow_a_probe(
     assert waits == pytest.approx([0.35, 0.70], abs=0.05)
 
 
-def test_a_page_store_s_pages_are_mined_by_the_same_leg(
-    world: _Store, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _mock_mining(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The extraction leg's outside calls answered here; the addresses it mined."""
     from server.llm import customer
     from server.memory.app import decision_extract
     from server.observability import budget, events
@@ -994,10 +978,59 @@ def test_a_page_store_s_pages_are_mined_by_the_same_leg(
     monkeypatch.setattr(budget, "namespace_over_cap", _under_cap)
     monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())
     monkeypatch.setattr(cost_event, "emit_worker_cost_event_for", lambda **kw: None)
+    return mined
+
+
+def test_a_page_store_s_pages_are_mined_by_the_same_leg(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mined = _mock_mining(monkeypatch)
     _only_the_page(world)
     result = _run()
     uri = _uri(world, PAGE)
     assert mined == [uri] and result.extracted == 1
-    assert _detail(world)["mined"] == {uri: "2026-01-01T00:00:00.000Z"}
+    revision = "2026-01-01T00:00:00.000Z@2026-03-01T00:00:00.000Z"  # revision@read_at
+    assert _detail(world)["mined"] == {uri: revision}
     _run()
-    assert mined == [uri]  # mined once per revision
+    assert mined == [uri]  # mined once per copy
+
+
+def test_a_page_read_again_at_the_same_revision_is_mined_again(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mined = _mock_mining(monkeypatch)
+    _only_the_page(world)
+    world.now = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)  # 30 s after the revision
+    _run()
+    world.blocks[PAGE] = [_para("Edited in the same minute.")]
+    world.now = datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
+    _run()
+    uri = _uri(world, PAGE)
+    assert world.docs[uri]["input"].content == "Edited in the same minute."
+    assert mined == [uri, uri]
+
+
+def test_the_pacer_forgets_only_integrations_no_longer_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+
+    waits: list[float] = []
+
+    async def _sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    now = notion.time.monotonic()
+    waiting = hashlib.sha256(TOKEN.encode()).hexdigest()[:16]
+    queue = {f"expired{n:09d}": now - 1.0 for n in range(40)}
+    queue |= {f"later{n:011d}": now + 60.0 for n in range(24)}
+    queue[waiting] = now + 10.0
+    monkeypatch.setattr(notion, "PAGE_PACE_S", 0.35)
+    monkeypatch.setattr(notion, "_next_request_at", queue)
+    monkeypatch.setattr(notion.asyncio, "sleep", _sleep)
+    asyncio.run(notion._pace(TOKEN))
+    assert not [k for k in queue if k.startswith("expired")]
+    assert len([k for k in queue if k.startswith("later")]) == 24
+    # The waiting integration still waits its turn, then queues one pace later.
+    assert waits == pytest.approx([10.0], abs=0.05)
+    assert queue[waiting] == pytest.approx(now + 10.35, abs=0.05)

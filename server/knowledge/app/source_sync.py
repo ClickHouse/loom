@@ -1049,6 +1049,15 @@ def _extract_waits(detail: dict[str, Any]) -> dict[str, list[Any]]:
     return {k: v for k, v in stored.items() if isinstance(v, list) and len(v) == 3}
 
 
+def _mined_revision(doc: dict[str, str]) -> str:
+    """The revision a document is mined at: its source revision, with the time its copy
+    was read for a kind that records one (`read_at`), since such a copy can be written
+    again at the same revision with newer text. Every other kind keeps no `read_at`, so
+    its key is the source revision alone."""
+    read_at = doc.get("read_at") or ""
+    return f"{doc['source_revision']}@{read_at}" if read_at else doc["source_revision"]
+
+
 def _unmined(docs: list[dict[str, str]], detail: dict[str, Any]) -> list[dict[str, str]]:
     """The documents whose stored revision is not the one last mined: one whose last try
     ran out of read time first, so it gets the most of the next pass, then oldest first."""
@@ -1056,10 +1065,10 @@ def _unmined(docs: list[dict[str, str]], detail: dict[str, Any]) -> list[dict[st
 
     def order(d: dict[str, str]) -> tuple[bool, str, str]:
         wait = waits.get(d["source_uri"]) or ["", 0, ""]
-        late = wait[0] == d["source_revision"] and wait[2] == "out_of_time"
+        late = wait[0] == _mined_revision(d) and wait[2] == "out_of_time"
         return not late, d["source_revision"], d["source_uri"]
 
-    todo = [d for d in docs if mined.get(d["source_uri"]) != d["source_revision"]]
+    todo = [d for d in docs if mined.get(d["source_uri"]) != _mined_revision(d)]
     return sorted(todo, key=order)
 
 
@@ -1281,7 +1290,7 @@ async def _extract_one(
     may_write: Callable[[], bool],
 ) -> bool:
     """Mine one document; False when a hold or a lost lease stops the source's turn."""
-    uri, revision = doc["source_uri"], doc["source_revision"]
+    uri, revision = doc["source_uri"], _mined_revision(doc)
     await require_current(src)
     pass_context.check_stop()  # a stopped pass or a lost worker's lease writes nothing
     run.left -= 1
