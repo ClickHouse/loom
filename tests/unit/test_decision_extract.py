@@ -1396,11 +1396,9 @@ async def test_an_unreadable_code_index_keeps_the_files_a_row_has(monkeypatch, c
 
 @pytest.mark.asyncio
 async def test_a_scenario_with_no_key_letters_is_dropped_and_the_run_goes_on(monkeypatch) -> None:
-    world = _World(monkeypatch, [_candidate(category="设计", scenario="如何溢出"), _candidate()])
+    world = _World(monkeypatch, [_candidate(category="设计", scenario="?! …"), _candidate()])
     report = await _run()
-    assert [d.reason for d in report.dropped] == [
-        "no letters or digits a-z, 0-9 to build a key from"
-    ]
+    assert [d.reason for d in report.dropped] == ["no letters or digits to build a key from"]
     assert [r.action for r in report.records] == ["written"] and len(world.recorded) == 1
 
 

@@ -291,6 +291,16 @@ async def _checked_statement(
 async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOutput:
     from server.memory.app.ops import handle_memory_link
 
+    empty = svc.fields_without_key_text(input.category, input.scenario)
+    if empty:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "MISSING_IDENTITY_FIELD",
+                "message": f"category and scenario need a letter or digit to key on: {empty}",
+                "fields": empty,
+            },
+        )
     ch = get_client()
     await ensure_schema(input.org, input.namespace)
     key = svc.decision_key(input.category, input.scenario)

@@ -312,6 +312,29 @@ def test_record_writes_schema_once_record_memory_and_edges(env) -> None:
     assert again.superseded_prior is True and len(calls["schema"]) == 1
 
 
+def test_a_scenario_without_latin_letters_records_under_its_own_key(env) -> None:
+    ch, calls, h = env
+    out = asyncio.run(
+        h.handle_decision_record(
+            record_input(category="хранение", scenario="Срок хранения журналов")
+        )
+    )
+    assert out.memory_key == svc.decision_key("хранение", "срок хранения журналов")
+    assert out.memory_key != svc.decision_key("хранение", "Срок хранения отчётов")
+    assert calls["record"][0].memory_key == out.memory_key == calls["set"][0].memory_key
+
+
+def test_a_scenario_of_punctuation_alone_is_refused_before_any_write(env) -> None:
+    from fastapi import HTTPException
+
+    ch, calls, h = env
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(h.handle_decision_record(record_input(scenario="?! …")))
+    assert ei.value.status_code == 400 and ei.value.detail["code"] == "MISSING_IDENTITY_FIELD"
+    assert ei.value.detail["fields"] == ["scenario"]
+    assert not calls["schema"] and not calls["record"] and not calls["set"]
+
+
 def test_precedents_search_decisions_and_join_records(env) -> None:
     from server.memory.api.models_decision import DecisionPrecedentsInput
 

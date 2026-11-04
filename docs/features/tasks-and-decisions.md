@@ -291,17 +291,20 @@ close pair it judges an update of the other; that is recorded as `memory.auto_su
 it.
 
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
-(`superseded_prior=true`); history keeps it. A decision recorded again word for word writes the same statement, which
-`memory.set` takes as a restatement: it reinforces the row, and a pinned decision accepts it. The restatement compares
-the statement's bytes, so a row stored under another statement form is revised rather than restated by the same fields,
-whether they come from `decision.record` or from `decision.outcome`, which rebuilds the statement too. A row whose value
-is locked refuses either with 423 `LOCKED` until the lock ends or is released; an attested row takes the write, and its
-attestation reads stale until `memory.verify` binds it again; a pinned row refuses `decision.record` until it is
-unpinned, and the pin is set again only through `memory.pin`, while `decision.outcome` keeps the pin. When the writer of
-a pinned decision decides it otherwise, the call is refused with 409 `PINNED_CONFLICT` and nothing is written; an admin
-unpins it with `memory.unpin` first. The pin guards only its writer's row: another identity's decision on the same
-scenario still supersedes the record. The new record holds only what the new decision states: fields it leaves out, and
-an earlier `realized_outcome` or `success`, are not carried over, whether it is written by `decision.record` or
+(`superseded_prior=true`); history keeps it. The key is derived as a record's identity key is (see [typed
+records](memory/writing.md#typed-records)): a scenario in any script records, and a category or scenario with no
+letter or digit (punctuation, symbols or marks alone) is refused with 400 `MISSING_IDENTITY_FIELD`. A decision
+recorded again word for word writes the same statement, which `memory.set` takes as a restatement: it reinforces the
+row, and a pinned decision accepts it. The restatement compares the statement's bytes, so a row stored under another
+statement form is revised rather than restated by the same fields, whether they come from `decision.record` or from
+`decision.outcome`, which rebuilds the statement too. A row whose value is locked refuses either with 423 `LOCKED`
+until the lock ends or is released; an attested row takes the write, and its attestation reads stale until
+`memory.verify` binds it again; a pinned row refuses `decision.record` until it is unpinned, and the pin is set again
+only through `memory.pin`, while `decision.outcome` keeps the pin. When the writer of a pinned decision decides it
+otherwise, the call is refused with 409 `PINNED_CONFLICT` and nothing is written; an admin unpins it with
+`memory.unpin` first. The pin guards only its writer's row: another identity's decision on the same scenario still
+supersedes the record. The new record holds only what the new decision states: fields it leaves out, and an earlier
+`realized_outcome` or `success`, are not carried over, whether it is written by `decision.record` or
 `memory.record.write`. A `decision.outcome` without `success` keeps the record's verdict.
 
 The record holds the text of its last writer, the agent, user and session that recorded it, so a delete of that
@@ -484,7 +487,7 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   document's span again, across the same labels, when the retire step looks for it. Each is at least 12 characters
   long, counted on the model's span: a shorter span ("We", "the") is in every document, so a decision resting on it
   could never retire. At most `--max-per-section` (default 3) are kept per section. A candidate whose category or
-  scenario holds no letter or digit from a-z, 0-9 has no key and is dropped. Of two candidates with one key, or with
+  scenario holds no letter or digit in any script has no key and is dropped. Of two candidates with one key, or with
   one outcome and reasoning (whitespace and letter case aside; overlapping chunks give two windows the same text), the
   first is kept.
 - **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line

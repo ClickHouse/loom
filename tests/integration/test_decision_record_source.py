@@ -157,8 +157,7 @@ async def test_precedents_find_a_decision_past_its_embedded_excerpt(agent) -> No
 @pytest.mark.asyncio
 async def test_precedents_find_a_cyrillic_decision_past_its_embedded_excerpt(agent) -> None:
     # Stored as JSON, each Cyrillic letter is a six-character escape: a 250-character
-    # scenario fills the excerpt, and the decision is found through its chunks. The
-    # scenario names one Latin term, as the decision's key needs one.
+    # scenario fills the excerpt, and the decision is found through its chunks.
     scenario = "MergeTree: " + "как ночное слияние планирует свои части " * 6
     assert len(scenario) < 1200 < len(json.dumps(scenario))
     distractor = await agent.decision.record(
@@ -179,3 +178,28 @@ async def test_precedents_find_a_cyrillic_decision_past_its_embedded_excerpt(age
     keys = [p["memory_key"] for p in found["precedents"]]
     assert keys and keys[0] == out["memory_key"], found
     assert distractor["memory_key"] in keys[1:], found
+
+
+@pytest.mark.asyncio
+async def test_a_scenario_without_latin_letters_records_and_punctuation_is_refused(
+    agent, ch_client
+) -> None:
+    from loom.errors import LoomError
+
+    base = dict(reasoning="журналы нужны для разбора инцидентов", outcome="хранить 30 дней")
+    first = await agent.decision.record(
+        category="хранение", scenario="Срок хранения журналов", **base
+    )
+    again = await agent.decision.record(
+        category="Хранение", scenario="срок хранения журналов!", **base
+    )
+    other = await agent.decision.record(
+        category="хранение", scenario="Срок хранения отчётов", **base
+    )
+    key = first["memory_key"]
+    assert again["memory_key"] == key and again["superseded_prior"] is True
+    assert other["memory_key"] != key
+    assert _memory_row(ch_client, agent, key)["memory_type"] == "decision"
+    with pytest.raises(LoomError) as excinfo:
+        await agent.decision.record(category="хранение", scenario="?! …", **base)
+    assert "MISSING_IDENTITY_FIELD" in str(excinfo.value), excinfo.value

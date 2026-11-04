@@ -42,6 +42,15 @@ def decision_key(category: str, scenario: str) -> str:
     return canonical_record_key(SCHEMA_NAME, {"category": category, "scenario": scenario})
 
 
+def fields_without_key_text(category: str, scenario: str) -> list[str]:
+    """The identity fields with no letter or digit to build the key from: punctuation,
+    symbols or marks alone."""
+    from server.memory.domain.record_identity import canonical_value
+
+    fields = {"category": category, "scenario": scenario}
+    return [name for name, value in fields.items() if not canonical_value(name, value)]
+
+
 def _wide(ch: str) -> bool:
     return unicodedata.east_asian_width(ch) in ("W", "F")
 

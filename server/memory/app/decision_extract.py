@@ -775,8 +775,8 @@ def _duplicate_or_unfit(
     try:
         key = svc.decision_key(cand.category, cand.scenario)
     except ValueError:
-        # The key keeps letters and digits a-z, 0-9 only (a CJK scenario has none).
-        return "no letters or digits a-z, 0-9 to build a key from", ""
+        # No letter or digit (punctuation, symbols or marks alone): nothing to key on.
+        return "no letters or digits to build a key from", ""
     if key in state.keys:
         return "same key as an earlier candidate", key
     if _held_key(cand.outcome, cand.reasoning) in state.pairs:
