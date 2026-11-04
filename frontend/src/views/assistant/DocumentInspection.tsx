@@ -419,7 +419,7 @@ function ListedSection({ result }: { result: KnowledgeInspection }) {
           {!result.listed_complete && result.listed.length > 0 && (
             <p className="text-xs text-text-muted">
               {live === null
-                ? `Newest ${fmtInt(result.listed.length)} listed; the total was not read.`
+                ? `Newest ${fmtInt(result.listed.length)} listed; the total was not counted.`
                 : `Newest ${fmtInt(result.listed.length)} of ${fmtInt(live)} listed.`}
             </p>
           )}
