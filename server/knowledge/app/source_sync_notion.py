@@ -54,9 +54,10 @@ _MAX_CHILD_PAGES = 200  # not a setting: a bound on one source's share of a pass
 # may be coarser than its edits, and its clock may differ from ours, so a page read
 # sooner is read again.
 _SETTLE_S = 90.0  # not a setting: a margin on the store's stamp resolution and clock skew
-# Recorded reads one source keeps (`unchanged_reads`), the newest first. A page past
-# it is read once more on its next listing and comes back unchanged, so no edit is
-# lost; the bound only keeps the sync state row small.
+# Recorded reads one source keeps (`unchanged_reads`); past it, the newest stay. While
+# more than this many pages need a read, the overflow is read again on each listing
+# (about that many extra page reads, each a document slot of the pass), comes back
+# unchanged and evicts the next-oldest; nothing is lost. It keeps the state row small.
 _MAX_UNCHANGED_READS = 500  # not a setting: a bound on one sync state row
 
 

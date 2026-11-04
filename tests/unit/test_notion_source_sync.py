@@ -188,7 +188,6 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _Store:
 
     monkeypatch.setattr(leases, "holding", _held)
     monkeypatch.setattr(leases, "cluster_lease", _held)
-    monkeypatch.setattr(notion, "PAGE_PACE_S", 0.0)
     monkeypatch.setattr(source_sync_notion, "_now", lambda: w.now)
     client = httpx.AsyncClient(transport=httpx.MockTransport(w.answer))
     monkeypatch.setattr(notion, "get_client", lambda: client)
@@ -386,8 +385,6 @@ def test_a_renamed_page_moves_to_its_new_address(world: _Store) -> None:
 def test_a_page_past_its_request_bound_is_given_up_as_too_large(
     world: _Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.knowledge.app import source_sync_notion
-
     monkeypatch.setattr(source_sync_notion, "_MAX_BLOCK_REQUESTS", 1)
     world.blocks[PAGE] = [_para("Has children.", id=ROW1, has_children=True)]
     world.sources[0] = _source(config={"page_ids": [PAGE], "database_ids": []})
@@ -1179,3 +1176,26 @@ def test_recorded_reads_past_the_cap_keep_the_newest(
     _run()  # incremental: the unlisted reads stay, then the cap keeps the newest two
     reads = _detail(world)["unchanged_reads"]
     assert set(reads) == {ROW1, "00000003-0000-4000-8000-000000000000"}
+
+
+def test_a_read_evicted_past_the_cap_costs_one_block_read_and_is_recorded_again(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(source_sync_notion, "_MAX_UNCHANGED_READS", 1)
+    world.sources[0] = _source(config={"page_ids": [PAGE, ROW1], "database_ids": []})
+    for page_id in (PAGE, ROW1):
+        world.pages[page_id] = _page(page_id, "2026-03-01T00:00:00.000Z")
+    world.now = datetime(2026, 3, 1, 0, 0, 30, tzinfo=UTC)
+    _run()  # both written 30 s after their revision: neither settled
+    world.now = datetime(2026, 3, 1, 0, 5, tzinfo=UTC)
+    _run()  # both read again unchanged; the cap keeps one read
+    reads = _detail(world)["unchanged_reads"]
+    assert len(reads) == 1
+    (kept,) = reads
+    evicted = ROW1 if kept == PAGE else PAGE
+    world.now = datetime(2026, 3, 1, 0, 10, tzinfo=UTC)
+    world.requests.clear()
+    _run()
+    assert [p for p in _paths(world) if p.startswith("/blocks/")] == [f"/blocks/{evicted}/children"]
+    assert world.upserts == 2
+    assert evicted in _detail(world)["unchanged_reads"]

@@ -283,18 +283,21 @@ is not lost to an equal stamp or a clock skew. A page read again whose title, Ma
 (whitespace included) and left-out blocks are exactly the stored copy's (a hash kept in
 its metadata, `text_sha256`) is not written again, so it is neither embedded nor mined
 again; the read is kept in the source's sync state, so the page settles (the newest 500
-reads per source; a page past them is read once more and found unchanged). A changed
-page's blocks are read, nested blocks included, at most 300 requests a page, and turned
-into Markdown one to one: headings, paragraphs, bulleted and numbered lists, to-dos
-(`- [x]`), quotes and callouts as `>` quotes, code fenced with its language, tables as
-Markdown tables (the first row as the header row), bookmarks and embeds as links,
-toggles, columns and synced blocks with their children inline, and a run of images or
-videos as `> [image-only: N pictures, rationale not extracted]` followed by their
-captions. Left out and counted by type in the document's metadata (`skipped_blocks`): a
-child database, a file, a PDF, a link that is not an https address, a synced copy whose
-original is not shared with the integration, and any type the converter does not map.
-`ingested_format` is `blocks`, and `read_at` is when the page was read; a copy written
-again at the same revision is mined for decisions again ([mining](#mining-decisions)).
+reads per source: while more pages than that need a read, the overflow is read again on
+each listing, about that many extra page reads each taking a document slot of the pass,
+and found unchanged; nothing is lost). A changed page's blocks are read, nested blocks
+included, at most 300 requests a page, and turned into Markdown one to one: headings,
+paragraphs, bulleted and numbered lists, to-dos (`- [x]`), quotes and callouts as `>`
+quotes, code fenced with its language, tables as Markdown tables (the first row as the
+header row), bookmarks and embeds as links, toggles, columns and synced blocks with
+their children inline, and a run of images or videos as
+`> [image-only: N pictures, rationale not extracted]` followed by
+their captions. Left out and counted by type in the document's metadata
+(`skipped_blocks`): a child database, a file, a PDF, a link that is not an https
+address, a synced copy whose original is not shared with the integration, and any type
+the converter does not map. `ingested_format` is `blocks`, and `read_at` is when the
+page was read; a copy written again at the same revision is mined for decisions again
+([mining](#mining-decisions)).
 
 A child page is a document of its own. The child pages a read page holds are kept in the
 source's sync state, at most 200 per source (more are counted in their parent's
