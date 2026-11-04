@@ -5,12 +5,13 @@ Addressed at a CODE namespace. The window's two ends are release versions
 (`26.3` → the release-branch namespace's recorded head when the caller may
 read it, else the mirror's branch or `v26.3.1.1-new` tag; `26.3.4.12` → its
 tag), commit shas, or empty (`to` defaults to the namespace's own head,
-`from` to the oldest release cut the mirror knows). Two legs run together: loom's PR ledger
-(`code_pr_history`, file lists — the floor) and `git blame -w -M -L` on the
-bare mirror at the upper commit, each blamed commit mapped to its pull
-request through the window's merge graph. The tracker namespace bound to this code namespace
-adds `has_test` and `caused_by` / `fixes` edges per candidate when it is available; the
-answer is complete without it.
+`from` to the oldest release cut the mirror knows). Two legs run together:
+loom's PR ledger (`code_pr_history`, file lists — the floor) and
+`git blame -w -M -L` on the bare mirror at the upper commit, each blamed
+commit mapped to its pull request through the window's merge graph. The
+tracker namespace bound to this code namespace adds `has_test` and
+`caused_by` / `fixes` edges per candidate when it is available; the answer
+is complete without it.
 
 The blame leg is exact for "last touched" and says so in `note`; it is not "introduced the
 bug": blame-based attribution of bug-inducing changes is imprecise, and a sizeable share of
