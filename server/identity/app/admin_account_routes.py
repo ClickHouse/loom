@@ -282,8 +282,8 @@ async def revoke_subject(input: RevokeSubjectInput, info: Admin) -> dict[str, An
     instant ahead of the server counts as now), so a later sign-in works. A
     revocation already there is never weakened: a cutoff is recorded beside the
     subject's own revocation and only ever moves later. The spellings `org`'s
-    directory ties to the subject are revoked with it, as grants read them: a
-    person's email and the login handle of the account it signs in to. `org` is
+    directory pairs with the subject, its email verified or not, are revoked with
+    it: a person's email and the login handle of each account naming it. `org` is
     also where the audit rows land; an end user's subject, `<org>/user:<id>`, must
     name it. `sessions` and `tokens` count the sign-in sessions and the tokens made
     by those subjects that the revocation ends, so a repeat answers the same.
