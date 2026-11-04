@@ -113,6 +113,19 @@ async def test_invalidate_drops_every_read_naming_the_spellings() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_read_in_flight_across_an_unlink_is_not_kept() -> None:
+    # The read saw the old link; the unlink's invalidation ran before it returned,
+    # so keeping it would admit under the old tie until the TTL.
+    class _Slow:
+        async def query_all(self, *_a: Any, **_k: Any) -> list[dict[str, str]]:
+            al.invalidate_org("acme")  # an unlink lands while the read runs
+            return [{"owner_email": "jdoe", "contact_email": "avery@example.com"}]
+
+    assert await al.subject_aliases("acme", "jdoe", ch=_Slow()) == ["jdoe", "avery@example.com"]
+    assert ("acme", "jdoe") not in al._CACHE
+
+
+@pytest.mark.asyncio
 async def test_restricted_gate_reads_the_pair(monkeypatch) -> None:
     from server.auth import authz
 

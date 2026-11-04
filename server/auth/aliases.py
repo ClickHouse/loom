@@ -44,6 +44,8 @@ log = logging.getLogger("loom.auth.aliases")
 
 _CACHE: dict[tuple[str, str], tuple[float, tuple[str, ...]]] = {}
 _CACHE_MAX = 10_000
+# Bumped by each invalidation of an org: a read in flight across one is not kept.
+_GENERATION: dict[str, int] = {}
 
 
 async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -> list[str]:
@@ -58,6 +60,7 @@ async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -
     now = time.monotonic()
     if hit is not None and now - hit[0] < settings.grant_cache_ttl_seconds:
         return list(hit[1])
+    generation = _GENERATION.get(org, 0)
     try:
         out = await read_aliases(org, subject, ch)
     except Exception:
@@ -66,6 +69,8 @@ async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -
         )
         note_unreadable()
         return [subject]
+    if _GENERATION.get(org, 0) != generation:
+        return out  # the directory changed while this read ran
     if len(_CACHE) >= _CACHE_MAX:
         _CACHE.clear()
     _CACHE[key] = (now, tuple(out))
@@ -113,6 +118,7 @@ def invalidate(org: str, subjects: Iterable[str]) -> None:
     """Drop the cached reads of `org` that asked about, or found, one of
     `subjects`: a row naming them changed."""
     lowered = {s.lower() for s in subjects if s}
+    _GENERATION[org] = _GENERATION.get(org, 0) + 1
     for key, (_, spellings) in list(_CACHE.items()):
         if key[0] == org and lowered & {s.lower() for s in (key[1], *spellings)}:
             del _CACHE[key]
@@ -122,6 +128,7 @@ def invalidate_org(org: str) -> None:
     """Drop every cached read of `org`: a link or an unlink changed which of
     its accounts' emails are verified, and a link's owner may not be among
     the spellings a cached read found."""
+    _GENERATION[org] = _GENERATION.get(org, 0) + 1
     for key in [k for k in _CACHE if k[0] == org]:
         del _CACHE[key]
 

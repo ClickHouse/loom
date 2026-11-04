@@ -416,15 +416,16 @@ async def _audit_stored_row(
     from server.observability import audit
 
     auth = current_auth()
-    row: dict[str, str] = {"namespace": input.namespace, "subject": subject, "named": input.subject}
+    taken: dict[str, str] = {"namespace": input.namespace, "subject": subject}
+    taken["named"] = input.subject
     if unconfirmed:
-        row["landed"] = "unknown"
+        taken["landed"] = "unknown"
     await audit.emit(
         "grants.revoke",
         org=input.org,
         namespace=input.namespace,
         actor=auth.subject if auth is not None and auth.subject else "anonymous",
-        subject=row,
+        subject=taken,
         request_id=request_id_var.get() or "",
     )
 

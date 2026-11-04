@@ -147,6 +147,8 @@ async def unlink(email: str, accounts: list[tuple[str, str]], linked_by: str) ->
 async def _write(
     email: str, accounts: list[tuple[str, str]], by: str, *, linked: int, ch: Any = None
 ) -> None:
+    """Write the link rows through `ch`; the grant watermark goes through the
+    default client (`grant_cache.changed`), as every grant write's does."""
     if not accounts:
         return
     ch = ch or get_client()
