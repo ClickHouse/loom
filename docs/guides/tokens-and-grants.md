@@ -248,7 +248,9 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   owner proving the password from an SSO sign-in). A self-signup email is not: whoever
   typed the address first does not hold the grants written under it, which still cap
   that account's claims. Grant a self-signup account under its login handle, the namespace
-  it signed up with.
+  it signed up with. A `grants.revoke` of such an address that never held a row of its
+  own on the namespace takes the rows stored under each unverified account naming it,
+  and the grants there of the tokens those accounts made.
 - **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.
   With self-signup (`LOOM_IDENTITY_PROVIDER=trust-network`) the first principal to claim a
   name owns it; `loom claim-release --org <org> --namespace <ns>` revokes its grants,
