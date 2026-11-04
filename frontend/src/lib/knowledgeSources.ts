@@ -15,11 +15,11 @@ export interface KnowledgeSourceSync {
   documents_seen: number;
   changed: number;
   removed: number;
-  /** Files not ingested. */
+  /** Documents not ingested. */
   unconverted: number;
   /** Why, as reason -> documents. */
   unconverted_reasons: Record<string, number>;
-  /** Files not written because another writer's document holds their address. */
+  /** Documents not written because another writer's document holds their address. */
   skipped: number;
   /** Why the turn failed, or why a turn that did not fail is incomplete; "" when neither. */
   error: string;
