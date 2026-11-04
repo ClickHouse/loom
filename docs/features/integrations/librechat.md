@@ -172,8 +172,8 @@ breadcrumb a `knowledge.search` hit carries in `section`, and adds `, revision 3
 with the number `knowledge.get` returned, since a hit carries no revision. A document with
 no headings (the contract, the SQL file) is cited by its `source_uri` alone. Every
 document is plain text to the server: the harness sends no format, and no case runs
-through extraction. On the text path a TOML
-`# comment` line is a Markdown heading, so the TOML file's sections are its comments.
+through extraction. On the text path a TOML `# comment` line is a Markdown heading, so the
+TOML file's sections are its comments.
 
 - **recall@k:** the rank of the labeled `(source_uri, section)` among the hits of the
   direct path's `knowledge.search`, with the question as the query and the case's
@@ -183,7 +183,6 @@ through extraction. On the text path a TOML
   its headings (`knowledge.outline`), a named revision is its live one (`knowledge.get`),
   and the cited text (the section with its subsections, or the whole document) holds one
   of the labeled values. A revision that is not a number (`revision unknown`) names none.
-  A locator, once hits carry one, is one more field each citation is checked on.
 - **labeled section cited:** a valid citation names the labeled section exactly; a parent
   section that also holds the value is valid but does not count.
 - **abstention:** the answer says the fact is not in the documents. `knowledge.search`

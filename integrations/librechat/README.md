@@ -96,9 +96,11 @@ Run it from the repository root, against a local Loom whose `.env` holds
 with LibreChat started on a fresh database. The published run used a Loom with
 `LOOM_AUTH_REQUIRED=true`, `LOOM_EMBEDDING_MODEL=fake-ngram-1024`,
 `LOOM_LLM_PROVIDER=fake` and `LOOM_BACKGROUND_WORKERS=off`, so the direct-path numbers
-involve no model. The document cases ran with `LOOM_EMBEDDING_MODEL=text-embedding-3-large`
-instead, since their recall measures the embedder too; run them alone with
-`run --only` and their ids (the `doc-` and `abstain-doc-` cases).
+involve no model. The document cases need a server started with
+`LOOM_EMBEDDING_MODEL=text-embedding-3-large` and seeded afresh, since their recall
+measures the embedder too and `knowledge.search` searches only the current model's
+chunks; run them alone with `run --only` and their ids (the `doc-` and `abstain-doc-`
+cases).
 
 ```bash
 Q=integrations/librechat/qualification/qualify.py

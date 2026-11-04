@@ -50,8 +50,8 @@ ABSTAIN_PATTERNS = (
     r"\bnothing (about|on|in)\b",
     r"\bno (matching|relevant)\b",
 )
-# How an answer says a document does not hold the fact; read for document cases only, so
-# the memory cases score as they did.
+# How an answer says a document does not hold the fact: read for document cases only;
+# memory cases use ABSTAIN_PATTERNS alone.
 DOC_ABSTAIN_PATTERNS = (
     r"\bnot in the documents\b",
     r"\b(does|do) ?n[o']t (specify|state|say|mention)\b",
@@ -167,7 +167,8 @@ def cmd_seed(args: argparse.Namespace) -> None:
         docs = [(w, d) for w, rows in documents.items() for d in rows]
         for writer, doc in docs + [(d["writer"], d) for d in tenant.get("document_revisions", [])]:
             write_document(args.loom_url, tokens[writer], org, ns, writer, doc)
-        # The scorer's own viewer token: check_citations reads each cited key with it.
+        # The scorer's own viewer token: the citation checks read each cited key and
+        # document with it.
         st["tokens"][f"scorer:{ns}"] = mint(
             args.loom_bin, subject=f"scorer-{org}", org=org, namespace=ns, role="viewer"
         )["token"]
@@ -443,8 +444,7 @@ def check_citations(
 
 def parse_doc_citations(text: str) -> list[dict[str, Any]]:
     """The document citations an answer writes, in order: each a source_uri, a section
-    breadcrumb ('' when none is named) and a revision (None when none is named). A later
-    field such as a locator joins the dict; `check_doc_citations` keeps its contract."""
+    breadcrumb ('' when none is named) and a revision (None when none is named)."""
     out: list[dict[str, Any]] = []
     for m in DOC_CITE_RE.finditer(text):
         revision = (m.group("revision") or "").strip()
@@ -543,7 +543,7 @@ def score(case: dict[str, Any], text: str) -> dict[str, Any]:
     """Score a written answer: the labeled values present, no forbidden text."""
     kind = case["kind"]
     abstained = matches(ABSTAIN_PATTERNS, text) or (
-        case["baseline"]["op"] == "knowledge.search" and matches(DOC_ABSTAIN_PATTERNS, text)
+        is_document_case(case) and matches(DOC_ABSTAIN_PATTERNS, text)
     )
     if kind == "abstain":
         correct = abstained
@@ -811,29 +811,32 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
         )
     # The document cases are reported on their own lines (document_report).
     others = [r for r in cases if not r.get("documents")]
-    for side in ("librechat", "native") if others else ():
-        got = [r[side] for r in others]
-        lat = [g["latency_s"] for g in got]
-        ttft = [g["ttft_s"] for g in got if g["ttft_s"] is not None]
-        cited = sum(len(g["cited"]) for g in got)
-        invalid = sum(len(g["invalid_citations"]) for g in got)
-        # The direct path cites the search hit itself, so its citations are not checked.
-        validity = "-" if side == "native" else f"{cited - invalid}/{cited} valid"
-        expected = [g["cited_expected"] for g in got if g["cited_expected"] is not None]
-        abst = [r for r in others if r["kind"] == "abstain"]
-        false_abst = [
-            r for r in others if r["kind"] not in ("abstain", "refusal") and r[side]["abstained"]
-        ]
-        lines.append(
-            f"\n{side}: correct {sum(g['correct'] for g in got)}/{len(got)}; "
-            f"citations {validity}, "
-            f"expected key cited {sum(expected)}/{len(expected)}; "
-            f"abstained {sum(r[side]['correct'] for r in abst)}/{len(abst)} where it should, "
-            f"{len(false_abst)} false abstentions; "
-            f"latency p50 {pct(lat, 0.5):.2f}s p95 {pct(lat, 0.95):.2f}s; "
-            f"TTFT p50 {pct(ttft, 0.5):.2f}s p95 {pct(ttft, 0.95):.2f}s; "
-            f"tool calls {sum(g['tool_calls'] for g in got)}"
-        )
+    if others:
+        for side in ("librechat", "native"):
+            got = [r[side] for r in others]
+            lat = [g["latency_s"] for g in got]
+            ttft = [g["ttft_s"] for g in got if g["ttft_s"] is not None]
+            cited = sum(len(g["cited"]) for g in got)
+            invalid = sum(len(g["invalid_citations"]) for g in got)
+            # The direct path cites the search hit itself, so its citations are not checked.
+            validity = "-" if side == "native" else f"{cited - invalid}/{cited} valid"
+            expected = [g["cited_expected"] for g in got if g["cited_expected"] is not None]
+            abst = [r for r in others if r["kind"] == "abstain"]
+            false_abst = [
+                r
+                for r in others
+                if r["kind"] not in ("abstain", "refusal") and r[side]["abstained"]
+            ]
+            lines.append(
+                f"\n{side}: correct {sum(g['correct'] for g in got)}/{len(got)}; "
+                f"citations {validity}, "
+                f"expected key cited {sum(expected)}/{len(expected)}; "
+                f"abstained {sum(r[side]['correct'] for r in abst)}/{len(abst)} where it should, "
+                f"{len(false_abst)} false abstentions; "
+                f"latency p50 {pct(lat, 0.5):.2f}s p95 {pct(lat, 0.95):.2f}s; "
+                f"TTFT p50 {pct(ttft, 0.5):.2f}s p95 {pct(ttft, 0.95):.2f}s; "
+                f"tool calls {sum(g['tool_calls'] for g in got)}"
+            )
     lines.extend(document_report(cases))
     price_in, price_out = PRICE_PER_MTOK.get(model, (float("nan"), float("nan")))
     costs = [
