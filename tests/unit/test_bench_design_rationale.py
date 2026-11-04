@@ -14,7 +14,7 @@ import pytest
 from bench.design_rationale import detectors, run, score
 from bench.design_rationale.__main__ import main
 from bench.design_rationale.llm import CapReached, Ledger, Model, ProviderComplete, Reply
-from bench.design_rationale.taskset import TaskSetError, load
+from bench.design_rationale.taskset import Document, TaskSetError, load
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "bench" / "design_rationale" / "example"
 
@@ -141,8 +141,10 @@ def test_citations_of_each_kind_are_found_once():
 
 def test_a_section_is_found_by_its_last_breadcrumb():
     content = "# T\n\n## Backoff\n\nbody"
-    assert detectors.section_text(content, "T > Backoff").startswith("Backoff")
+    assert detectors.section_text(content, "T > Backoff").startswith("## Backoff")
     assert detectors.section_text(content, "T > Missing") is None
+    # A heading is a heading line: the words in a sentence do not match.
+    assert detectors.section_text("# T\n\nWe tune Backoff here.\n", "T > Backoff") is None
 
 
 # ---------------------------------------------------------------- scoring
@@ -342,17 +344,24 @@ def test_the_dry_run_counts_every_call(capsys):
     assert "worst case" in capsys.readouterr().out
 
 
-def test_the_extraction_bound_covers_every_section_and_the_output_cap():
+def test_the_extraction_bound_covers_every_window_the_extractor_reads():
+    from server.knowledge.app.writes import _chunk_text
+    from server.memory.app.decision_extract import _windows
+    from server.memory.domain.corpus_synthesis import CorpusChunk
     from server.settings.budgets import llm_max_tokens
 
-    ts = load(EXAMPLE)
-    doc = ts.documents["thumbnail-cache"]
-    calls, tin, tout = run.extraction_bound(doc, 6000)
-    sections = sum(1 for line in doc.content.splitlines() if line.startswith("#"))
-    # Two calls per window (a window read again), a window per section here.
-    assert calls == 2 * max(sections, 1)
-    assert tout == calls * llm_max_tokens("decision_extract")
+    # A long document with few headings: overlapping chunks, windows cut by size.
+    body = "\n\n".join(f"Paragraph {i} " + "word " * 60 for i in range(80))
+    doc = Document("long", "u", "Long", f"# Title\n\n{body}\n\n## Tail\n\n" + "end " * 300)
+    for window_chars in (500, 1000, 2900, 6000):
+        chunks = [CorpusChunk("u", c.idx, c.text, c.section_path) for c in _chunk_text(doc.content)]
+        read = len(_windows(chunks, set(), window_chars))
+        calls, tin, tout = run.extraction_bound(doc, window_chars)
+        # Two calls per window the extractor reads (a window read again).
+        assert calls == 2 * read, window_chars
+        assert tout == calls * llm_max_tokens("decision_extract")
     # A re-run over a revision lists the known decisions: a longer prompt per call.
+    ts = load(EXAMPLE)
     _, revised_in, _ = run.extraction_bound(ts.documents["upload-retries-v2"], 6000)
     _, first_in, _ = run.extraction_bound(ts.documents["upload-retries"], 6000)
     assert revised_in > first_in
@@ -369,8 +378,11 @@ DEFINITIONS = {
 
 
 class FakeCodeIndex:
+    def __init__(self, down: bool = False):
+        self.down = down
+
     def definitions(self, name):
-        return DEFINITIONS.get(name, [])
+        return None if self.down else DEFINITIONS.get(name, [])
 
 
 class FakeLoom:
@@ -398,7 +410,7 @@ class FakeLoom:
     def erase(self, namespaces):
         self.erased += namespaces
 
-    def server_spend(self, namespaces):
+    def server_spend(self, namespaces, since):
         return sum(self.spend.get(org, 0.0) for org in {self.orgs[ns] for ns in namespaces})
 
     def upsert_document(self, namespace, source_uri, title, content):
@@ -430,7 +442,10 @@ class FakeLoom:
             f"    signal: {name}: camelcase, no definition\n- dropped [x] too short\n"
         )
 
-    def set_files(self, namespace, key, files):
+    def decision_reasoning(self, namespace):
+        return {}
+
+    def set_files(self, namespace, key, files, reasoning):
         row = self.rows.get((namespace, key))
         if row is None:
             return None
@@ -602,7 +617,9 @@ def test_without_a_code_index_arm_4_is_compared_with_gold_rows_served_alike(tmp_
     assert any(v["for_file"] for k, v in surf.items() if k.endswith("/arm3"))
     m = score.score(ts, out)
     assert "arm5_search_served" in m["treatment"]
-    assert (4, 5) in {(c["treatment"], c["reference"]) for c in m["comparisons"]}
+    assert "arm4_for_file_served" not in m["treatment"]
+    pairs = {(c["treatment"], c["reference"]) for c in m["comparisons"]}
+    assert (4, 5) in pairs and (4, 3) not in pairs
 
 
 def test_a_run_stopped_by_the_cap_resumes_without_spending_again(tmp_path):
@@ -703,7 +720,7 @@ def test_two_runs_with_one_org_prefix_read_neither_rows_nor_spend_of_the_other(t
         if ns.startswith(json.loads((tmp_path / "b" / "state.json").read_text())["prefix"])
     }
     assert a_orgs and b_orgs and not a_orgs & b_orgs
-    # Each ledger carries its own run's server spend (two documents written per run).
+    # Each ledger carries its own run's server spend (three documents written per run).
     spent = [sum(r["usd"] for r in led.rows() if r["stage"] == "server") for led in ledgers]
     assert spent[0] == pytest.approx(spent[1]) and spent[0] == pytest.approx(0.03)
 
@@ -736,8 +753,11 @@ def test_set_files_keeps_every_field_and_the_paths_the_text_spells_out(monkeypat
     loom = Loom("http://loom.test")
     loom.client = httpx.Client(transport=httpx.MockTransport(handler))
     loom.bind("ns", "org")
-    written = loom.set_files("ns", "decision:abc", ["src/cache/segmented_lru.py"])
-    assert written == ["src/cache/config.py", "src/cache/segmented_lru.py"]
+    # The value's path is the outcome's, not the reasoning's: the extractor would not
+    # have linked it. The reasoning's is.
+    reasoning = "scans churn probation, as src/cache/probation.py shows"
+    written = loom.set_files("ns", "decision:abc", ["src/cache/segmented_lru.py"], reasoning)
+    assert written == ["src/cache/probation.py", "src/cache/segmented_lru.py"]
     path, body = sent[-1]
     assert path == "/v1/memory.set"
     for field in (
@@ -784,3 +804,82 @@ def test_a_cap_stop_exits_1_and_a_fallback_model_refuses_arm_4(tmp_path, monkeyp
     monkeypatch.setattr(cli, "server_extract_model", lambda: ("openai", "gpt-4o-mini", "gpt-4o"))
     assert main([*base, "--arms", "4", "--dry-run"]) == 2
     assert "LOOM_LLM_FALLBACK_MODEL" in capsys.readouterr().err
+
+
+def test_a_task_needs_gold_rows_and_a_supersession_task_its_current_design(tmp_path):
+    root = _copy_example(tmp_path)
+    tasks = json.loads((root / "tasks.json").read_text())
+    del tasks["C"][0]["current"]
+    (root / "tasks.json").write_text(json.dumps(tasks))
+    with pytest.raises(TaskSetError, match="current"):
+        load(root)
+    tasks["C"][0]["current"] = "x"
+    del tasks["A"][0]["gold_rows"]
+    (root / "tasks.json").write_text(json.dumps(tasks))
+    with pytest.raises(TaskSetError, match="gold_rows"):
+        load(root)
+
+
+def test_a_paid_run_refuses_an_extraction_on_the_fake_model(tmp_path, capsys):
+    base = ["run", str(EXAMPLE), "--out", str(tmp_path), "--base-url", "http://loom.test"]
+    paid = ["--reader-model", "gpt-4o-mini", "--judge-model", "gpt-4o-mini", "--max-usd", "1"]
+    # The unit tests' settings resolve to the fake model.
+    assert main([*base, "--arms", "4", *paid]) == 2
+    assert "fake model" in capsys.readouterr().err
+
+
+def test_arm_5_is_added_when_arm_4_has_no_code_index(tmp_path, capsys):
+    base = ["run", str(EXAMPLE), "--out", str(tmp_path), "--arms", "3,4", "--dry-run"]
+    assert main(base) == 0
+    assert "5 = gold rows through loom_search only" in capsys.readouterr().out
+    assert main([*base, "--code-index", "http://index.test"]) == 0
+    assert "5 = " not in capsys.readouterr().out
+
+
+def test_a_resume_with_other_flags_is_refused(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 0.001)
+    model = _fake_model(ledger, usage=2000)
+    cfg = _config(out, arms=[0], max_usd=0.001)
+    assert run.run(ts, cfg, FakeLoom(), model, [model], ledger) is False
+    with pytest.raises(run.RunError, match="arms"):
+        run.run(ts, _config(out, arms=[0, 1], max_usd=1.0), FakeLoom(), model, [model], ledger)
+
+
+def test_an_error_after_setup_keeps_the_namespaces_and_says_how_to_erase_them(tmp_path, capsys):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+
+    def broken(system, user, max_tokens):
+        raise RuntimeError("provider down")
+
+    model = Model("gpt-4o-mini", broken, ledger)
+    loom = FakeLoom()
+    with pytest.raises(RuntimeError, match="provider down"):
+        run.run(ts, _config(out, arms=[0, 3]), loom, model, [model], ledger)
+    assert loom.erased == []
+    err = capsys.readouterr().err
+    assert "run the same command again to resume" in err and "loom namespaces-gc" in err
+
+
+def test_a_code_index_that_does_not_answer_is_reported(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    run.run(
+        ts,
+        _config(out, arms=[4], k=1, judge_orders=1),
+        FakeLoom(),
+        model,
+        [model],
+        ledger,
+        FakeCodeIndex(down=True),
+    )
+    t = score.score(ts, out)["treatment"]
+    assert t["arm4_code_lookups_failed"] == 3 and t["arm4_rows_with_files"] == 0

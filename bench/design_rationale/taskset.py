@@ -172,7 +172,9 @@ def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
         raise TaskSetError(f"task id {tid!r}: a non-empty string without '/'")
     if t.get("document") not in ts.documents:
         raise TaskSetError(f"task {tid}: unknown document {t.get('document')!r}")
-    for key in t.get("gold_rows", []):
+    if not isinstance(t.get("gold_rows"), list):
+        raise TaskSetError(f"task {tid}: gold_rows is a list (empty when nothing is recorded)")
+    for key in t["gold_rows"]:
         if key not in ts.gold:
             raise TaskSetError(f"task {tid}: unknown gold row {key!r}")
     need = {
@@ -189,8 +191,10 @@ def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
     if kind == "C":
         if t["subtype"] not in C_SUBTYPES:
             raise TaskSetError(f"task {tid}: subtype is one of {C_SUBTYPES}")
-        if t["subtype"] == "supersession" and not t.get("stale_claims"):
-            raise TaskSetError(f"task {tid}: a supersession task names its stale_claims")
+        if t["subtype"] == "supersession" and not (t.get("stale_claims") and t.get("current")):
+            raise TaskSetError(
+                f"task {tid}: a supersession task names its current and stale_claims"
+            )
 
 
 def load(root: Path) -> TaskSet:

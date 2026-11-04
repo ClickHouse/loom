@@ -8,7 +8,6 @@ process from this checkout, so it needs the server's ClickHouse and provider env
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 import sys
@@ -28,6 +27,8 @@ AGENT = "bench-design-rationale"
 # The agent identity a gold row is written under: one author for every row.
 GOLD_AGENT = "design-author"
 CHARS_PER_TOKEN = 4  # the server's estimate (memory.for_file tokens_estimate)
+# One document's extraction: a model call per window, each with its own provider timeout.
+EXTRACT_TIMEOUT_S = 3600
 
 
 def tokens(text: str) -> int:
@@ -113,15 +114,18 @@ class Loom:
         for ns in namespaces:
             erase_bench_namespaces_sync(self._post, org=self.orgs[ns], namespaces=[ns])
 
-    def server_spend(self, namespaces: list[str]) -> float:
-        """USD the server spent on model and embedding calls in these namespaces' orgs over
-        the last two days, as its own cost ledger records it."""
-        today = date.today()
+    def server_spend(self, namespaces: list[str], since: date) -> float:
+        """USD the server spent on model and embedding calls in these namespaces' orgs from
+        `since` (the run's first day) to today, as its own cost ledger records it."""
         total = 0.0
         for org in sorted({self.orgs[ns] for ns in namespaces}):
-            window = {"from_date": str(today - timedelta(days=1)), "to_date": str(today)}
             # traffic_class reads the events themselves: the daily rollup lags them.
-            body = {"org": org, "traffic_class": "bench", **window}
+            body = {
+                "org": org,
+                "traffic_class": "bench",
+                "from_date": str(since - timedelta(days=1)),
+                "to_date": str(date.today() + timedelta(days=1)),
+            }
             out = self._post("/v1/cost.summary", body)
             total += float(out.get("total_cost_usd") or 0.0)
         return total
@@ -171,22 +175,40 @@ class Loom:
             str(window_chars),
             "--apply",
         ]
-        done = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        try:
+            done = subprocess.run(
+                cmd, capture_output=True, text=True, check=False, timeout=EXTRACT_TIMEOUT_S
+            )
+        except subprocess.TimeoutExpired as e:
+            out = e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
+            return 1, out + f"\nerror: stopped after {EXTRACT_TIMEOUT_S} s"
         return done.returncode, done.stdout + done.stderr
 
-    def set_files(self, namespace: str, key: str, files: list[str]) -> list[str] | None:
+    def decision_reasoning(self, namespace: str) -> dict[str, str]:
+        """memory_key -> reasoning of each active decision record in the namespace."""
+        out = self.op(
+            "memory.record.query",
+            {"namespace": namespace, "schema_name": "decision", "limit": 1000},
+        )
+        return {
+            r["memory_key"]: str((r.get("record") or {}).get("reasoning") or "")
+            for r in out.get("rows") or []
+        }
+
+    def set_files(
+        self, namespace: str, key: str, files: list[str], reasoning: str
+    ) -> list[str] | None:
         """Add `files` to an extracted row: a new version under the extractor's identity
-        with every other field as read. The extractor also links the paths its text spells
-        out, which memory.get does not return, so they are found again in the value and
-        kept. The row's files as written, or None when the row is gone."""
+        with every other field as read. The extractor also links the paths its quote and
+        reasoning spell out; neither the row's files nor the quote can be read back, so the
+        paths the record's reasoning spells out are kept. The row's files as written, or
+        None when the row is gone."""
         from server.memory.domain.files import detect_value_files, normalize_files
 
         row = self.memory_get(namespace, key)
         if not row.get("found"):
             return None
-        value = row["value"]
-        text = value if isinstance(value, str) else json.dumps(value)
-        merged = normalize_files([*detect_value_files(text), *files])
+        merged = normalize_files([*detect_value_files(reasoning), *files])
         confidence = row.get("confidence")
         body = {
             "namespace": namespace,
@@ -195,7 +217,7 @@ class Loom:
             "session_id": row.get("session_id") or "-",
             "memory_key": key,
             "memory_type": row.get("memory_type") or "decision",
-            "value": value,
+            "value": row["value"],
             "tags": row.get("tags") or [],
             "entities": row.get("entities") or [],
             "files": merged,

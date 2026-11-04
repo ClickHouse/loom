@@ -79,7 +79,8 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--org",
         default="bench",
-        help="Org prefix: each arm's namespace goes in its own org <org>-dr-<role>",
+        help="Org prefix: each role's namespace goes in its own org <org>-<prefix>-<role>, "
+        "the prefix dr-<hex> fixed per run; --arm4-namespace is read in --org itself",
     )
     r.add_argument(
         "--arms",
@@ -199,6 +200,7 @@ def cmd_run(a: argparse.Namespace) -> int:
         if 3 in cfg.arms and 5 not in cfg.arms:
             cfg.arms = [*cfg.arms, 5]
             print("arm 5 (gold rows through loom_search only) is added as its reference")
+    provider = ""
     if runner.own_extraction(cfg):
         provider, model, fallback = server_extract_model()
         if fallback and fallback != model:
@@ -220,6 +222,12 @@ def cmd_run(a: argparse.Namespace) -> int:
     if a.dry_run:
         runner.print_plan(runner.plan(ts, cfg))
         return 0
+    if runner.own_extraction(cfg) and not a.offline and provider == "fake":
+        return _fail(
+            "the server settings resolve to the fake model, whose decisions pass the "
+            "extractor's checks by construction: set LOOM_LLM_PROVIDER and its key, or use "
+            "--offline"
+        )
     if not a.base_url:
         return _fail("--base-url (or LOOM_BASE_URL) names the run's own Loom server")
     if a.code_index and not (a.code_index_org and a.code_index_namespace):

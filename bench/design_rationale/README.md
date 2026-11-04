@@ -27,12 +27,35 @@ calls and a name with one defining file that is not a test or a page links the r
 that file, the rule `loom decisions extract --repo` applies. The harness's own Loom has
 no code index, and an arm's org must not hold one another arm reads. Without
 `--code-index` arm 4 reads no pre-edit block and is served through `loom_search` only,
-and arm 5 is added so that arm 4 is compared with gold rows served the same way. With
-`--arm4-namespace` the sync's rows keep the files it linked, arm 4 reads the pre-edit
-block and is compared with arm 3.
+and arm 5 is added so that arm 4 is compared with gold rows served the same way (the
+report then leaves out arm 4 against arm 3). With `--arm4-namespace` the sync's rows keep
+the files it linked, arm 4 reads the pre-edit block and is compared with arm 3.
 
-Each arm's namespace lives in an org of its own run and role, since a search reads every namespace of its
-org. The gold rows are never written where arm 4 extracts.
+Each role's namespace lives in an org of its own: `<org>-<prefix>-<role>`, the prefix
+`dr-<hex>` fixed per run, since a search and the cost readback read a whole org. The
+gold rows are never written where arm 4 extracts. A namespace given with
+`--arm4-namespace` is the exception: it is read in `--org` itself, the harness neither
+registers nor erases it, and its server spend is not read back (its daily cost cap, if
+any, is the deployment's).
+
+## Running
+
+```bash
+PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> --dry-run \
+  --reader-model <m> --judge-model <m>
+PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> \
+  --base-url http://127.0.0.1:<port> --reader-model <m> --judge-model <m> \
+  --code-index <url> --code-index-org <org> --code-index-namespace <ns> --max-usd <cap>
+PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale score <taskset> --out <dir> \
+  --extraction-labels <dir>/extraction_labels.todo.json
+```
+
+The server is one this run started, with real providers and the server's environment in
+the shell: arm 4 runs `loom decisions extract` in a child process, on the model those
+settings name. The dry run prints the calls, tokens and spend, typical and at every output
+cap. Each task is answered K times per arm, each answer judged in both orders and twice
+per order; arms are compared paired per task with a bootstrap over documents, and each
+comparison reports its minimum detectable effect.
 
 ## Task kinds
 
@@ -67,7 +90,7 @@ org. The gold rows are never written where arm 4 extracts.
 | `revision_of` | Optional: the id of the document this one revises. It shares that document's `source_uri` and is ingested after every first version, so the earlier text is superseded |
 
 `gold_rows.json` is a list of decision rows, written with `memory.set` (and `memory.pin`
-when pinned) in arm 3:
+when pinned) for arms 3 and 5:
 
 | Field                                                 | Meaning                                                                                                                                              |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -78,8 +101,8 @@ when pinned) in arm 3:
 | `image_only`                                          | Its source section carries no extractable text (counted per document in `score --extraction-labels`)                                                 |
 
 `tasks.json` holds `"system"` (how the prompts name the code base) and the lists `"A"`,
-`"B"`, `"C"`. Every task has `id`, `document` and `gold_rows` (keys of
-`gold_rows.json`).
+`"B"`, `"C"`. Every task has `id` (without `/`), `document` and `gold_rows` (keys of
+`gold_rows.json`; an empty list for an abstention task).
 
 | Kind | Fields                                                                                                                                                   |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -111,12 +134,19 @@ price; the extraction leg as an estimate charged before it runs; the server's ow
 in the run's orgs read back from `cost.summary` after each stage), `extract_<doc>.log`
 and `extraction_labels.todo.json`. The server's spend is recorded after the fact, not
 refused in advance: what stops the server itself is each namespace's daily cost cap,
-set to `--max-usd` at registration. A run the spend cap stops, in its setup or later,
-keeps its namespaces and resumes on the same `--out` (exit code 1); a finished run, or
-one whose setup failed otherwise, erases them (unless `--keep-namespaces`) and is not
-resumed. Fill each row's `verdict` (`correct`, `partly`, `wrong`
-or `misleading`) and pass the file to `score --extraction-labels` for extraction
-precision. `score --human-labels` takes a list of
+set to `--max-usd` at registration.
+
+A run the spend cap stops, in its setup or later, keeps its namespaces and resumes on
+the same `--out` (exit code 1). A run that fails after its setup (a provider error, a
+server that went away) keeps them too, and prints the `loom namespaces-gc` command that
+erases them if it is not resumed. A resume must use the same `--org`, arms,
+`--arm4-namespace`, code index use and window size, or it is refused. A finished run, or
+one whose setup failed other than on the cap, erases its namespaces (unless
+`--keep-namespaces`) and is not resumed.
+
+Fill each row's `verdict` (`correct`, `partly`, `wrong` or `misleading`) in
+`extraction_labels.todo.json` and pass the file to `score --extraction-labels` for
+extraction precision. `score --human-labels` takes a list of
 `{"answer": "<task>/arm<a>/s<k>", "field": "avoids", "value": true}` and reports judge
 accuracy and kappa. `score` writes `metrics.json` and prints aggregate tables with no
 task text. The run directory holds the task set's content: keep it out of the

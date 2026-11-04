@@ -219,14 +219,17 @@ def arm_summary(ts: TaskSet, rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
 
 
 def compare(
-    ts: TaskSet, tasks_by_arm: dict[int, dict[str, dict[str, Any]]]
+    ts: TaskSet, tasks_by_arm: dict[int, dict[str, dict[str, Any]]], arm4_files: bool = True
 ) -> list[dict[str, Any]]:
     """Paired per-task deltas (treatment minus reference) with a bootstrap over
-    documents and the MDE the run's own spread implies."""
+    documents and the MDE the run's own spread implies. Arm 4 without files is compared
+    with arm 5, not with arm 3, whose pre-edit block it lacks."""
     out: list[dict[str, Any]] = []
     docs = {t["id"]: t["document"] for _, t in ts.all_tasks()}
     for treat, ref in COMPARISONS:
         if treat not in tasks_by_arm or ref not in tasks_by_arm:
+            continue
+        if (treat, ref) == (4, 3) and not arm4_files:
             continue
         for kind, metrics in HEADLINE.items():
             for metric in metrics:
@@ -295,13 +298,14 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
     rows); for arm 4 the rows extracted, the rows given files, the failed runs."""
     out: dict[str, Any] = {}
     tasks = [t for _, t in ts.all_tasks()]
+    arm4_files = (state.get("flags") or {}).get("arm4_files", True)
     for arm in (3, 4, 5):
         rows = [(t, surf[f"{t['id']}/arm{arm}"]) for t in tasks if f"{t['id']}/arm{arm}" in surf]
         if not rows:
             continue
         for surface in ("for_file_keys", "search_keys"):
-            if arm == 5 and surface == "for_file_keys":
-                continue
+            if surface == "for_file_keys" and (arm == 5 or (arm == 4 and not arm4_files)):
+                continue  # this arm reads no pre-edit block
             # Tasks with gold rows only: an abstention task has nothing to serve. Arm 4's
             # rows have keys of their own, so any row it served counts.
             if arm == 4:
@@ -318,6 +322,9 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
         out["arm4_rows_extracted"] = sum(len(r["keys"]) for r in extraction.values())
         out["arm4_rows_with_files"] = sum(len(r.get("linked") or {}) for r in extraction.values())
         out["arm4_extract_failures"] = sum(1 for r in extraction.values() if r["exit"] != 0)
+        out["arm4_code_lookups_failed"] = sum(
+            len(r.get("lookup_failures") or []) for r in extraction.values()
+        )
     return out
 
 
@@ -456,7 +463,7 @@ def score(
     arms = sorted(by_arm)
     metrics = {
         "arms": {arm: arm_summary(ts, by_arm[arm]) for arm in arms},
-        "comparisons": compare(ts, by_arm),
+        "comparisons": compare(ts, by_arm, (state.get("flags") or {}).get("arm4_files", True)),
         "tokens": token_summary(ts, surf, sorted({int(k.split("arm")[1]) for k in surf})),
         "treatment": treatment_check(ts, surf, state),
         "judge_stability": judge_stability(ts, judged),

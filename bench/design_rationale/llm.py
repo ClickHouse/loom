@@ -51,6 +51,8 @@ class Ledger:
     def __init__(self, path: Path, max_usd: float):
         self.path = path
         self.max_usd = max_usd
+        # Read once; every row this ledger appends adds to it.
+        self._spent = float(sum(r["usd"] for r in self.rows()))
 
     def rows(self) -> list[dict[str, Any]]:
         if not self.path.exists():
@@ -58,7 +60,7 @@ class Ledger:
         return [json.loads(line) for line in self.path.read_text().splitlines() if line]
 
     def spent(self) -> float:
-        return float(sum(r["usd"] for r in self.rows()))
+        return self._spent
 
     def check(self, model: str, tokens_in: int, tokens_out: int) -> None:
         """Refuse a call whose worst-case price would cross the cap."""
@@ -90,6 +92,7 @@ class Ledger:
     def _append(self, row: dict[str, Any]) -> None:
         with self.path.open("a") as f:
             f.write(json.dumps({"t": time.time(), **row}) + "\n")
+        self._spent += float(row["usd"])
 
 
 @dataclass

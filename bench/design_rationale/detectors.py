@@ -133,10 +133,10 @@ def find_citations(text: str, source_uris: list[str]) -> list[dict[str, Any]]:
 
 
 def section_text(content: str, section: str, limit: int = 1500) -> str | None:
-    """The text from a section's heading on, found by the last breadcrumb segment; the
-    whole document start when no section is named; None when the heading is absent."""
+    """The text from a section's heading line on, found by the last breadcrumb segment;
+    the whole document start when no section is named; None when no heading line is it."""
     if not section:
         return content[:limit]
     head = section.split(" > ")[-1].strip()
-    i = content.find(head)
-    return None if i < 0 else content[i : i + limit]
+    m = re.search(rf"^#+\s+{re.escape(head)}\s*$", content, re.M)
+    return None if m is None else content[m.start() : m.start() + limit]

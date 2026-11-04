@@ -7,9 +7,10 @@ resumes where it stopped; its namespaces are kept until every answer is judged.
 from __future__ import annotations
 
 import json
-import math
 import secrets
+import sys
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -105,24 +106,39 @@ def pre_edit(cfg: Config, arm: int) -> bool:
 # ---------------------------------------------------------------- extraction bound
 
 
+def extraction_windows(doc: Document, window_chars: int) -> list[int]:
+    """The character count of each window the extractor reads `doc` in: the document
+    chunked as knowledge.upsert chunks it (overlapping chunks included), then grouped
+    as `loom decisions extract` groups them. Sections it skips as image-only only make
+    the real count smaller."""
+    from server.knowledge.domain.chunking import chunk_document
+    from server.memory.domain.corpus_synthesis import CorpusChunk, windows
+    from server.settings import settings
+
+    size = settings.knowledge_chunk_size
+    chunks = chunk_document(
+        doc.content, size=size, stride=min(settings.knowledge_chunk_stride, size)
+    )
+    corpus = [CorpusChunk(doc.source_uri, c.idx, c.text, c.section_path) for c in chunks]
+    return [sum(len(c.text) for c in w.chunks) for w in windows(corpus, window_chars=window_chars)]
+
+
 def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:
     """(calls, input tokens, output tokens) one extraction run on `doc` may spend at most:
-    a window per section or per third of a window's length, whichever is more (a window is
-    cut at section bounds), and two calls per window (a reply with no decision or a reason
-    that is not one span of the text is read again); each call carries a window, the
-    prompt and, on a re-run over a revision, the known decisions it lists; each may write
-    up to the extractor's output cap."""
+    two calls per window (a reply with no decision or a reason that is not one span of the
+    text is read again), each carrying its window, the prompt and, on a re-run over a
+    revision, the known decisions it lists, and each writing up to the extractor's output
+    cap."""
     from server.memory.domain import decision_extract as dx
     from server.settings import settings
     from server.settings.budgets import llm_max_tokens
 
-    sections = sum(1 for line in doc.content.splitlines() if line.startswith("#"))
-    windows = max(1, math.ceil(3 * len(doc.content) / window_chars), sections)
-    calls = 2 * windows
+    sizes = extraction_windows(doc, window_chars) or [0]
     known = settings.memory_decision_extract_known_max if doc.revision_of else 0
-    prompt = dx.system_prompt(3, [("", "", "x" * KNOWN_DECISION_CHARS)] * known)
-    tin = (min(window_chars, len(doc.content)) + len(prompt)) // CHARS_PER_TOKEN_WORST
-    return calls, calls * tin, calls * llm_max_tokens("decision_extract")
+    prompt = len(dx.system_prompt(3, [("", "", "x" * KNOWN_DECISION_CHARS)] * known))
+    calls = 2 * len(sizes)
+    tin = sum(2 * (n + prompt) // CHARS_PER_TOKEN_WORST for n in sizes)
+    return calls, tin, calls * llm_max_tokens("decision_extract")
 
 
 # ---------------------------------------------------------------- plan (dry run)
@@ -277,7 +293,9 @@ def owned(cfg: Config, ns: dict[str, str]) -> list[str]:
 def record_server_spend(loom: Loom, ledger: Ledger, state: dict[str, Any], cfg: Config) -> None:
     """Charge the ledger with what the server spent in the run's orgs since the last read:
     embeddings and any model call its writes and reads made."""
-    spent = loom.server_spend(list(namespaces(state, cfg).values()))
+    # A sync's namespace (--arm4-namespace) is the deployment's own, not the run's.
+    since = date.fromisoformat(state["started"])
+    spent = loom.server_spend(owned(cfg, namespaces(state, cfg)), since)
     if "server_usd_seen" not in state:
         # The first read, before any write: what earlier runs spent in these orgs.
         state["server_usd_seen"] = spent
@@ -363,17 +381,23 @@ def parse_report(report: str) -> dict[str, list[str]]:
     return rows
 
 
-def link_files(code: CodeIndex, names: list[str]) -> list[str]:
-    """The files the extractor would link a row to on a repository's index: each name with
-    exactly one defining file that a decision can govern (not a test, not a page)."""
+def link_files(code: CodeIndex, names: list[str]) -> tuple[list[str], list[str]]:
+    """(files, names the index did not answer for): the files the extractor would link a
+    row to on a repository's index, each name with exactly one defining file that a
+    decision can govern (not a test, not a page)."""
     from server.memory.domain import decision_extract as dx
 
     files: list[str] = []
+    failed: list[str] = []
     for name in names:
-        path = dx.definition_path(code.definitions(name) or [])
+        definitions = code.definitions(name)
+        if definitions is None:
+            failed.append(name)
+            continue
+        path = dx.definition_path(definitions)
         if path and dx.governs(path) and path not in files:
             files.append(path)
-    return files
+    return files, failed
 
 
 def run_extraction(
@@ -382,7 +406,8 @@ def run_extraction(
     """`loom decisions extract --apply` on one document, its worst-case spend charged to
     the ledger first: the calls run in the server's code, out of the ledger's sight. With a
     code index, each kept row's code names are resolved there and the files written on it,
-    so arm 4 reaches the pre-edit block as arm 3 does."""
+    so arm 4 reaches the pre-edit block as arm 3 does; a name the index did not answer for
+    is listed in `lookup_failures`."""
     calls, tin, tout = extraction_bound(doc, cfg.extract_window_chars)
     ledger.check(cfg.extract_model, tin, tout)
     ledger.record("extract", cfg.extract_model, tin, tout, estimated=True)
@@ -390,18 +415,28 @@ def run_extraction(
     (cfg.out / f"extract_{doc.id}.log").write_text(report)
     rows = parse_report(report)
     linked: dict[str, list[str]] = {}
+    failures: list[str] = []
     if code is not None:
+        reasoning = loom.decision_reasoning(namespace) if rows else {}
         for key, names in rows.items():
-            files = link_files(code, names)
-            written = loom.set_files(namespace, key, files) if files else None
-            if written:
-                linked[key] = written
+            files, failed = link_files(code, names)
+            failures += failed
+            if files:
+                written = loom.set_files(namespace, key, files, reasoning.get(key, ""))
+                if written:
+                    linked[key] = written
     image_only = sum(
         1
         for line in report.splitlines()
         if line.startswith("- image-only, rationale not extracted")
     )
-    return {"exit": rc, "keys": list(rows), "linked": linked, "image_only_sections": image_only}
+    return {
+        "exit": rc,
+        "keys": list(rows),
+        "linked": linked,
+        "lookup_failures": failures,
+        "image_only_sections": image_only,
+    }
 
 
 def write_label_sheet(cfg: Config, loom: Loom, namespace: str, reports: dict[str, Any]) -> None:
@@ -436,7 +471,8 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
     for arm in cfg.arms:
         session = f"{state['prefix']}-arm{arm}"
         home = ns[ARM_HOME[arm]] if arm in ARM_HOME else ""
-        if arm in (3, 4, 5):
+        missing = any(f"{t['id']}/arm{arm}" not in out for _, t in tasks)
+        if arm in (3, 4, 5) and missing:
             # The reading rule rides on a session's first search with memory hits: warm
             # the session so every task sees what a mid-session search shows.
             for _, t in tasks:
@@ -631,6 +667,34 @@ def judge(
     return out
 
 
+# The flags a resumed run must share with the run it resumes: they decide what the
+# namespaces hold and what the stored surfaces mean.
+RESUME_FLAGS = ("org", "arms", "arm4_namespace", "arm4_files", "extract_window_chars")
+
+
+def check_resume(state: dict[str, Any], cfg: Config) -> None:
+    flags = {name: getattr(cfg, name) for name in RESUME_FLAGS}
+    flags["arms"] = sorted(cfg.arms)
+    stored = state.setdefault("flags", flags)
+    if stored != flags:
+        changed = ", ".join(k for k in RESUME_FLAGS if stored.get(k) != flags[k])
+        raise RunError(f"{cfg.out} was run with other {changed}; resume it with the same flags")
+
+
+def cleanup_hint(cfg: Config, loom: Loom, ns: dict[str, str]) -> str:
+    """How to finish a run that stopped on an error: resume it, or erase what it keeps."""
+    from bench.bench_namespaces import gc_command
+
+    by_org: dict[str, list[str]] = {}
+    for name in owned(cfg, ns):
+        by_org.setdefault(loom.orgs[name], []).append(name)
+    erase = "; ".join(gc_command(org, names) for org, names in sorted(by_org.items()))
+    return (
+        f"the namespaces are kept: run the same command again to resume, or erase them "
+        f"with: {erase}"
+    )
+
+
 def run(
     ts: TaskSet,
     cfg: Config,
@@ -641,14 +705,18 @@ def run(
     code: CodeIndex | None = None,
 ) -> bool:
     """One pass of every stage; True when every answer is judged. A run the cap stops,
-    in its setup or after, keeps its namespaces, so the next invocation on the same
-    `--out` resumes it; a finished run, or one whose setup failed otherwise, erases them
-    (unless --keep-namespaces), and is not resumed."""
+    or that fails after its setup (a provider error, a server that went away), keeps its
+    namespaces: the next invocation on the same `--out`, with the same flags, resumes it,
+    and the error is followed by the command that erases them otherwise. A finished run,
+    or one whose setup failed for another reason than the cap, erases them (unless
+    --keep-namespaces) and is not resumed."""
     cfg.out.mkdir(parents=True, exist_ok=True)
     state_path = cfg.out / "state.json"
     state = load_json(state_path)
     if state.get("erased"):
         raise RunError(f"{cfg.out}: this run's namespaces were erased; score it or start anew")
+    check_resume(state, cfg)
+    state.setdefault("started", date.today().isoformat())
     ns = bind(loom, state, cfg)
     finished = False
     try:
@@ -671,6 +739,10 @@ def run(
         finished = True
     except CapReached as e:
         print(f"stopped: {e}; run again with the same --out (and a higher --max-usd) to resume")
+    except Exception:
+        if not state.get("erased"):
+            print(f"stopped on an error; {cleanup_hint(cfg, loom, ns)}", file=sys.stderr)
+        raise
     finally:
         if finished and not cfg.keep_namespaces:
             loom.erase(owned(cfg, ns))
