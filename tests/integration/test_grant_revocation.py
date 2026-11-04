@@ -258,6 +258,8 @@ def test_a_self_signup_naming_someone_elses_address_holds_none_of_its_grants(bas
         f"{base}/v1/auth/login", json={"identifier": bob, "password": password}, timeout=15.0
     )
     assert login.status_code == 200, login.text
+    # Her own sign-in names only her namespace: the grant read alone decides.
+    assert _writes(base, str(login.json()["token"]), ns) == 403
     mine = _call(base, "namespace.list_mine", str(login.json()["token"]))
     assert mine.status_code == 200, mine.text
     listed = {r["namespace"] for r in mine.json()["rows"]}
