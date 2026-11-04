@@ -468,6 +468,18 @@ def doc_citation_label(c: dict[str, Any]) -> str:
     return label + (f" @r{c['revision']}" if c["revision"] is not None else "")
 
 
+def retry_after(out: dict[str, Any]) -> float:
+    """The seconds a 429 asks to wait: `detail.retry_after_s` from the rate limiter and
+    the admission slots; 1 for a body without one (a detail that is a string, a plain-text
+    answer from a proxy)."""
+    detail = out.get("detail")
+    hint = detail.get("retry_after_s") if isinstance(detail, dict) else None
+    try:
+        return max(float(hint), 0.0) if hint is not None else 1.0
+    except (TypeError, ValueError):
+        return 1.0
+
+
 def scorer_read(st: dict[str, Any], token: str, op: str, body: dict[str, Any]) -> dict[str, Any]:
     """One read the scorer makes, waited out when rate-limited: a check that could not read
     the document says nothing about the answer, so any other failure stops the run."""
@@ -475,7 +487,7 @@ def scorer_read(st: dict[str, Any], token: str, op: str, body: dict[str, Any]) -
         code, out, _ = loom_call(st["loom_url"], token, op, body)
         if code != 429:
             break
-        time.sleep(float((out.get("detail") or {}).get("retry_after_s") or 1))
+        time.sleep(retry_after(out))
     if code != 200:
         sys.exit(f"scorer {op} {body.get('source_uri')}: {code} {out}")
     return out
@@ -621,9 +633,9 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
 
 def native_document_score(case: dict[str, Any], out: dict[str, Any]) -> dict[str, Any]:
     """A knowledge.search answer: the top hit as the answer and its citation, and the rank
-    of the labeled section among the top `k` hits (None when it is not among them). The op returns
-    the nearest passages and has no abstain signal, so it abstains only when nothing is
-    found at all."""
+    of the labeled section among the top `k` hits (None when it is not among them). The
+    op returns the nearest passages and has no abstain signal, so it abstains only when
+    nothing is found at all."""
     hits = out.get("results") or []
     ranked = [(h["source_uri"], section_key(h.get("section", ""))) for h in hits]
     label = case.get("cite_doc")
@@ -926,7 +938,7 @@ def main() -> None:
         "QUALIFY_CH_DATABASE (default loom)",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("seed", help="write the fixture's memories and mint its tokens")
+    sub.add_parser("seed", help="write the fixture's memories and documents and mint its tokens")
     sub.add_parser(
         "setup", help="register the fixture's people in LibreChat with their own Loom tokens"
     )

@@ -529,3 +529,105 @@ def test_report_counts_the_document_cases():
         "native documents: correct 1/2; citations -, labeled section cited 1/2; abstained 0/1"
         in text
     )
+
+
+@pytest.mark.parametrize(
+    ("out", "wait"),
+    [
+        # The rate limiter's and the admission slots' body: `detail.retry_after_s`.
+        ({"detail": {"code": "RATE_LIMITED", "message": "m", "retry_after_s": 3}}, 3.0),
+        # Self-signup's 429 names no hint.
+        ({"detail": {"code": "RATE_LIMITED", "message": "m"}}, 1.0),
+        ({"detail": "Too Many Requests"}, 1.0),
+        ({"text": "rate limited"}, 1.0),
+        ({"detail": {"retry_after_s": "soon"}}, 1.0),
+    ],
+)
+def test_retry_after_reads_every_429_body(out, wait):
+    assert _qualify().retry_after(out) == wait
+
+
+def test_scorer_read_waits_out_a_429_with_a_string_detail(monkeypatch):
+    q = _qualify()
+    answers = iter([(429, {"detail": "Too Many Requests"}, 0.0), (200, {"found": True}, 0.0)])
+    monkeypatch.setattr(q, "loom_call", lambda *a: next(answers))
+    slept = []
+    monkeypatch.setattr(q.time, "sleep", slept.append)
+    assert q.scorer_read({"loom_url": "u"}, "t", "knowledge.get", {}) == {"found": True}
+    assert slept == [1.0]
+
+
+def test_rescore_checks_a_saved_document_rows_citations_again(monkeypatch, tmp_path):
+    import argparse
+
+    q = _qualify()
+    _fake_documents(monkeypatch, q)
+    documents = q.loom_call
+
+    def fake_call(base, token, op, body):
+        if op == "memory.get":
+            return 200, {"found": True, "version": 1793745407448901606}, 0.0
+        return documents(base, token, op, body)
+
+    monkeypatch.setattr(q, "loom_call", fake_call)
+    st = {"loom_url": "http://loom", "tokens": {"scorer:acme-library": "viewer-token"}}
+    monkeypatch.setattr(q, "state", lambda: st)
+    answer = (
+        "Within 10 minutes [handbook/oncall-policy.md § On-call policy > Paging, revision 2]; "
+        "see also policy/deploy/freeze (version 1793745407448901606)."
+    )
+    side = {
+        "answer": answer,
+        "error": "",
+        "correct": False,
+        "abstained": False,
+        "cited": [],
+        "invalid_citations": [],
+        "cited_expected": None,
+        "tool_calls": 2,
+        "latency_s": 1.0,
+        "ttft_s": 0.5,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+    }
+    native = {**side, "correct": True, "rank": 1, "k": 5}
+    row = {"id": "doc-revised-ack", "kind": "document", "documents": True}
+    out = tmp_path / "results.json"
+    out.write_text(
+        json.dumps({"model": "m", "rows": [{**row, "librechat": side, "native": native}]})
+    )
+    q.cmd_rescore(argparse.Namespace(out=str(out), citations=True))
+    got = json.loads(out.read_text())["rows"][0]["librechat"]
+    # The memory key and the document passage are both cited, both valid, and the labeled
+    # section is among them.
+    assert got["cited"] == [
+        "policy/deploy/freeze",
+        "handbook/oncall-policy.md § On-call policy > Paging @r2",
+    ]
+    assert got["invalid_citations"] == []
+    assert got["cited_expected"] is True and got["correct"] is True
+
+
+def test_seed_writes_each_documents_revision_after_its_first_write(monkeypatch):
+    import argparse
+
+    q = _qualify()
+    written: list[tuple[str, dict]] = []
+
+    def fake_call(base, token, op, body):
+        written.append((op, body))
+        return 200, {"version": 1}, 0.0
+
+    monkeypatch.setattr(q, "loom_call", fake_call)
+    monkeypatch.setattr(q, "mint", lambda *a, **k: {"token": "t", "jti": "j"})
+    monkeypatch.setattr(q, "save_state", lambda data: None)
+    q.cmd_seed(argparse.Namespace(loom_url="http://loom", loom_bin="loom"))
+    docs = [b for op, b in written if op == "knowledge.upsert"]
+    revised = _case("doc-revised-ack")["cite_doc"]["source_uri"]
+    writes = [b["content"] for b in docs if b["source_uri"] == revised]
+    # The last write of the revised document is the live revision the case labels.
+    assert len(writes) == 2
+    assert re.search(r"within 10 minutes", writes[-1]) and "15 minutes" in writes[0]
+    # Every document is written before any revision of one.
+    first = {b["source_uri"]: i for i, b in reversed(list(enumerate(docs)))}
+    assert docs.index(next(b for b in docs if b["content"] == writes[-1])) > max(first.values())

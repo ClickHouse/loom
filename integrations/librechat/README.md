@@ -96,11 +96,8 @@ Run it from the repository root, against a local Loom whose `.env` holds
 with LibreChat started on a fresh database. The published run used a Loom with
 `LOOM_AUTH_REQUIRED=true`, `LOOM_EMBEDDING_MODEL=fake-ngram-1024`,
 `LOOM_LLM_PROVIDER=fake` and `LOOM_BACKGROUND_WORKERS=off`, so the direct-path numbers
-involve no model. The document cases need a server started with
-`LOOM_EMBEDDING_MODEL=text-embedding-3-large` and seeded afresh, since their recall
-measures the embedder too and `knowledge.search` searches only the current model's
-chunks; run them alone with `run --only` and their ids (the `doc-` and `abstain-doc-`
-cases).
+involve no model. The run below scores the document cases too, on whatever embedder the
+server has; their published numbers come from a separate run, shown after it.
 
 ```bash
 Q=integrations/librechat/qualification/qualify.py
@@ -110,6 +107,20 @@ export QUALIFY_CH_DATABASE=loom  # the Loom server's LOOM_CH_DATABASE
 .venv/bin/python $Q --librechat-url http://localhost:3080 setup
 .venv/bin/python $Q --loom-bin .venv/bin/loom revoke
 .venv/bin/python $Q run --cancel-probe
+```
+
+The document cases measure the embedder too, and `knowledge.search` searches only the
+chunks of the server's current embedding model: start a Loom with
+`LOOM_EMBEDDING_MODEL=text-embedding-3-large` on an empty database, seed it, set up a
+fresh LibreChat (the seed mints new tokens), and run only those cases into a file of
+their own so `results.json` is kept:
+
+```bash
+.venv/bin/python $Q --loom-url http://localhost:7777 --loom-bin .venv/bin/loom seed
+.venv/bin/python $Q --librechat-url http://localhost:3080 setup
+.venv/bin/python $Q run --out integrations/librechat/qualification/results-documents.json \
+  --only doc-release-reviews doc-migration-rollback doc-canary doc-contract-notice \
+  doc-orders-ttl doc-cache-entries doc-revised-ack abstain-doc-credit abstain-doc-phone
 ```
 
 - `--loom-url` is the address the harness reaches Loom at; with the bridge-gateway bind
@@ -126,4 +137,5 @@ export QUALIFY_CH_DATABASE=loom  # the Loom server's LOOM_CH_DATABASE
   no LibreChat.
 - `seed` writes memories and documents into orgs `acme` and `globex`, so use a scratch
   deployment. Tokens, LibreChat passwords and API keys of the run are kept in
-  `qualification/.state.json` (mode 0600); it and `results.json` are ignored by git.
+  `qualification/.state.json` (mode 0600); it, `results.json` and `results-*.json` are
+  ignored by git.
