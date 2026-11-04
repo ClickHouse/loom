@@ -161,9 +161,9 @@ def _priced(models: list[str], tin: int, tout: int) -> float | None:
 
 
 def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
-    """The calls and tokens a run would spend, worst case (inputs at three characters a
-    token and every output at its cap, the figure the spend cap holds against) and typical
-    (outputs at `TYPICAL_OUT`)."""
+    """The calls and tokens a run would spend, at every output cap and typical (outputs at
+    `TYPICAL_OUT`). Inputs are estimates either way: the documents at three characters a
+    token, the surfaces at planning constants, as no surface has been read yet."""
     tasks = ts.all_tasks(cfg.only)
     passes = max(1, len(cfg.judges)) * cfg.judge_orders * cfg.judge_repeats
     rows: list[dict[str, Any]] = []
@@ -196,30 +196,30 @@ def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
             "model": cfg.reader,
             "calls": answer_calls,
             "in": sum(r["answer_in"] for r in rows) * k,
-            "out_worst": sum(r["answer_cap"] for r in rows) * k,
+            "out_at_caps": sum(r["answer_cap"] for r in rows) * k,
             "out_typical": sum(TYPICAL_OUT[r["kind"]] for r in rows) * k,
         },
         "judge": {
             "model": ",".join(cfg.judges),
             "calls": judge_calls,
             "in": sum(r["judge_in"] for r in rows) * k * passes,
-            "out_worst": JUDGE_OUT_CAP * judge_calls,
+            "out_at_caps": JUDGE_OUT_CAP * judge_calls,
             "out_typical": TYPICAL_OUT["judge"] * judge_calls,
         },
         "extract": {
             "model": cfg.extract_model,
             "calls": n_extract,
             "in": sum(b[1] for b in bounds),
-            "out_worst": sum(b[2] for b in bounds),
+            "out_at_caps": sum(b[2] for b in bounds),
             "out_typical": n_extract * TYPICAL_OUT["extract"],
         },
     }
     models = {"answer": [cfg.reader], "judge": cfg.judges, "extract": [cfg.extract_model]}
     for stage, u in usage.items():
         if not u["calls"]:
-            u["usd_worst"] = u["usd_typical"] = 0.0
+            u["usd_at_caps"] = u["usd_typical"] = 0.0
             continue
-        u["usd_worst"] = _priced(models[stage], u["in"], u["out_worst"])
+        u["usd_at_caps"] = _priced(models[stage], u["in"], u["out_at_caps"])
         u["usd_typical"] = _priced(models[stage], u["in"], u["out_typical"])
     from bench.design_rationale.score import planning_mde
 
@@ -245,17 +245,17 @@ def print_plan(p: dict[str, Any]) -> None:
     total_w = total_t = 0.0
     for stage, u in p["usage"].items():
         usd = (
-            f"{u['usd_typical']:.2f} typical, {u['usd_worst']:.2f} worst case USD"
-            if u["usd_worst"] is not None
+            f"{u['usd_typical']:.2f} typical, {u['usd_at_caps']:.2f} at every output cap USD"
+            if u["usd_at_caps"] is not None
             else "unpriced model"
         )
         print(
             f"{stage}: {u['calls']} call(s) on {u['model'] or '-'}, {u['in']:,} tokens in, "
-            f"{u['out_typical']:,} out typical ({u['out_worst']:,} at the caps); {usd}"
+            f"{u['out_typical']:,} out typical ({u['out_at_caps']:,} at the caps); {usd}"
         )
-        total_w += u["usd_worst"] or 0.0
+        total_w += u["usd_at_caps"] or 0.0
         total_t += u["usd_typical"] or 0.0
-    print(f"total: {total_t:.2f} USD typical, {total_w:.2f} USD worst case")
+    print(f"total: {total_t:.2f} USD typical, {total_w:.2f} USD at every output cap")
     print(
         "planning MDE (paired, 80% power, two-sided 5%): "
         + ", ".join(f"{k} {v * 100:.0f} points" for k, v in p["planning_mde"].items())

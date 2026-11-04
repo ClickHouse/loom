@@ -218,10 +218,9 @@ class Loom:
         if not row.get("found"):
             return None
         merged = normalize_files([*detect_value_files(reasoning), *files])
-        confidence = row.get("confidence")
         body = {
             "namespace": namespace,
-            "agent": row.get("agent") or "loom-decisions",
+            "agent": row["agent"],
             "user_id": row.get("user_id") or "-",
             "session_id": row.get("session_id") or "-",
             "memory_key": key,
@@ -230,7 +229,7 @@ class Loom:
             "tags": row.get("tags") or [],
             "entities": row.get("entities") or [],
             "files": merged,
-            "confidence": 0.5 if confidence is None else confidence,
+            "confidence": row["confidence"],
             "source_resource_id": row.get("source_resource_id") or "",
             "source_trace": row.get("source_trace") or "",
             "source_class": "derived",

@@ -28,8 +28,8 @@ that file, the rule `loom decisions extract --repo` applies. The harness's own L
 no code index, and an arm's org must not hold one another arm reads. Without
 `--code-index` arm 4 reads no pre-edit block and is served through `loom_search` only,
 and arm 5 is added so that arm 4 is compared with gold rows served the same way (the
-report then leaves out arm 4 against arm 3). With `--arm4-namespace` the sync's rows keep
-the files it linked, arm 4 reads the pre-edit block and is compared with arm 3.
+report then leaves out arm 4 against arm 3). With `--arm4-namespace` the sync's rows
+keep the files it linked, arm 4 reads the pre-edit block and is compared with arm 3.
 
 Each role's namespace lives in an org of its own: `<org>-<prefix>-<role>`, the prefix
 `dr-<hex>` fixed per run, since a search and the cost readback read a whole org. The
@@ -52,10 +52,10 @@ PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale score <taskset> --out
 
 The server is one this run started, with real providers and the server's environment in
 the shell: arm 4 runs `loom decisions extract` in a child process, on the model those
-settings name. The dry run prints the calls, tokens and spend, typical and at every output
-cap. Each task is answered K times per arm, each answer judged in both orders and twice
-per order; arms are compared paired per task with a bootstrap over documents, and each
-comparison reports its minimum detectable effect.
+settings name. The dry run prints the calls, tokens and spend, typical and at every
+output cap. Each task is answered K times per arm, each answer judged in both orders and
+twice per order; arms are compared paired per task with a bootstrap over documents, and
+each comparison reports its minimum detectable effect.
 
 ## Task kinds
 
@@ -138,10 +138,10 @@ set to `--max-usd` at registration.
 
 A run the spend cap stops, in its setup or later, keeps its namespaces and resumes on
 the same `--out` (exit code 1). A run that fails or is interrupted after its setup (a
-provider error, a server that went away, Ctrl-C) keeps them too, and prints the
-`loom namespaces-gc` command that erases them if it is not resumed. A resume must use the
-same `--org`, arms, `--arm4-namespace`, code index use and window size, or it is refused.
-A finished run, or one whose setup failed other than on the cap, erases its namespaces
+provider error, a server that went away, Ctrl-C) keeps them too, and prints the `loom
+namespaces-gc` command that erases them if it is not resumed. A resume must use the same
+`--org`, arms, `--arm4-namespace`, code index use and window size, or it is refused. A
+finished run, or one whose setup failed other than on the cap, erases its namespaces
 (unless `--keep-namespaces`) and is not resumed.
 
 Fill each row's `verdict` (`correct`, `partly`, `wrong` or `misleading`) in

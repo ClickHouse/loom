@@ -22,8 +22,9 @@ indexes it, with the extractor's own rule: one defining file that is not a test 
 Without one (and without --arm4-namespace), arm 4 is served through loom_search only,
 and arm 5 is added so that arm 4 is compared with gold rows served the same way.
 
-`run --dry-run` reads nothing but the task set and prints the calls, tokens and spend a
-run would take. A real run needs a Loom server and ClickHouse this run started, with the
+`run --dry-run` needs no server: it reads the task set and, with arm 4, this
+environment's server settings (the extraction's model), and prints the calls, tokens and
+spend a run would take. A real run needs a Loom server and ClickHouse this run started, with the
 server's environment in this shell (the extraction runs the CLI in a child process, whose
 model is read from that environment and must match --extract-model when given), and
 --max-usd: every call is refused once its worst case would cross the cap. `--offline`

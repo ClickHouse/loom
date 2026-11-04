@@ -378,7 +378,7 @@ def test_the_dry_run_counts_every_call(capsys):
     assert p["usage"]["judge"]["calls"] == 8 * 2 * 2 * 2
     assert p["usage"]["extract"]["calls"] == 0  # arm 4 not run
     run.print_plan(p)
-    assert "worst case" in capsys.readouterr().out
+    assert "at every output cap" in capsys.readouterr().out
 
 
 def test_the_extraction_bound_covers_every_window_the_extractor_reads():
