@@ -4,7 +4,9 @@ over real HTTP against a server that requires auth.
 Each case first proves the token works, then takes the grant away the way an
 operator or the subject would, then replays what used to bring the access
 back: a self-join, a fresh join request, a re-request, an approval below the
-current role. A claim never backed by a grant keeps working.
+current role. A claim never backed by a grant keeps working. A self-signup
+account's email is unverified, so a grant written under that address never
+backs its claim (self-signup is open here for the two cases that need it).
 """
 
 from __future__ import annotations
@@ -234,3 +236,31 @@ def test_signing_in_again_does_not_bring_back_a_revoked_owner(base: str) -> None
     token = _login()
     assert _writes(base, token, ns) == 403
     assert _reads(base, token, ns) == 200
+
+
+def test_a_self_signup_naming_someone_elses_address_holds_none_of_its_grants(base: str) -> None:
+    # Bob's address is granted before he has an account; mallory self-signs up
+    # with it. Self-signup never verifies the email, so the grant is not hers: a
+    # token claiming the namespace is capped at no access, and her listing omits it.
+    ns = _namespace(base, "approval", alice=None)
+    bob = f"bob-{ns}@example.com"
+    granted = _call(base, "grants.create", _admin(), namespace=ns, subject=bob, role="writer")
+    assert granted.status_code == 200, granted.text
+    mallory, password = f"m-{ns}", secrets.token_urlsafe(16)
+    signup = httpx.post(
+        f"{base}/v1/auth/self-signup",
+        json={"namespace": mallory, "email": bob, "password": password},
+        timeout=15.0,
+    )
+    assert signup.status_code == 200, signup.text
+    assert _writes(base, _token(signup.json()["subject"], [ns]), ns) == 403
+    login = httpx.post(
+        f"{base}/v1/auth/login", json={"identifier": bob, "password": password}, timeout=15.0
+    )
+    assert login.status_code == 200, login.text
+    # Her own sign-in names only her namespace: the grant read alone decides.
+    assert _writes(base, str(login.json()["token"]), ns) == 403
+    mine = _call(base, "namespace.list_mine", str(login.json()["token"]))
+    assert mine.status_code == 200, mine.text
+    listed = {r["namespace"] for r in mine.json()["rows"]}
+    assert mallory in listed and ns not in listed  # her own namespace, not Bob's grant

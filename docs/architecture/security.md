@@ -160,7 +160,8 @@ forgotten.
   statement per (org, subject) into a per-process cache (`server/core/grant_cache.py`) kept
   for `grant_cache_ttl_seconds` (10 s). A grant write in this process drops at once the
   entries whose read covered the spelling it wrote, and any read in flight; a write to the
-  accounts that tie a person's spellings drops the org's.
+  accounts that tie a person's spellings, or to the links that verify an account's email
+  (`loom.sso_links`), drops the org's.
 - Every other process, on this server or another, drops the org's entries within
   `acl_watermark_poll_seconds` (1 s). The write adds one change for its org to
   `loom.acl_versions` (a `SummingMergeTree`, counted per org and kind of change), and each
@@ -334,6 +335,15 @@ signs in to none, and JIT adds nothing beside them. A person who says a password
 naming their address is not theirs goes on to a JIT account, unless an account naming the
 address is revoked: offboarding stands, and a squatter's account is released
 (`loom claim-release` clears its email and its links) rather than revoked.
+
+Grants follow the same rule: an account's email is another spelling of its owner, and a
+grant written under it admits the account, only when the account is an SSO account or a
+linked one (`VERIFIED_EMAIL_SQL` in `server/core/grant_sql.py`, read by
+`server/auth/aliases.py`, the grant map and `grants.list`). An unverified pair still caps
+the account's claims and is still reached by a subject revocation
+(`/v1/admin/revoke_subject`), where reaching further fails closed. So revoking the subject
+of an account that registered someone else's address also revokes that address; release
+such an account instead.
 
 With `LOOM_SCIM_TOKEN` set, the provider deactivates people over SCIM 2.0 (`/scim/v2`,
 `server/auth/scim.py`); that bearer token, compared in constant time, is the only credential

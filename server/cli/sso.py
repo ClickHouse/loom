@@ -63,7 +63,9 @@ def register_sso_cli(sub: Any) -> None:
     p_link.add_argument("--namespace", required=True, help="the account's namespace")
     add_apply_flags(p_link, writes="change its email and link it")
     p_link.set_defaults(func=_cmd_link)
-    p_unlink = sso.add_parser("unlink", help="Undo the links of one email.")
+    p_unlink = sso.add_parser(
+        "unlink", help="Undo the links of one email: its grants stop admitting the accounts."
+    )
     p_unlink.add_argument("--email", required=True)
     add_apply_flags(p_unlink, writes="remove the links")
     p_unlink.set_defaults(func=_cmd_unlink)
@@ -117,6 +119,15 @@ def _cmd_adopt(args: argparse.Namespace) -> int:
     return run_connected(_run)
 
 
+def _carried_line(was: str, owner: str, names: list[str], elsewhere: bool, *, dry_run: bool) -> str:
+    """The line naming the grants a link carries to `owner`, revoked."""
+    if elsewhere:
+        lead = f"{was} is another account's verified email: its grants stay theirs, and are "
+    else:
+        lead = f"revoked under {was}, so " if dry_run else ""
+    return f"  {lead}revoked for {owner} too: {', '.join(names)}"
+
+
 def _cmd_link(args: argparse.Namespace) -> int:
     from server.core.errors import LoomServerError
     from server.identity.app import account_admin
@@ -132,14 +143,15 @@ def _cmd_link(args: argparse.Namespace) -> int:
             owner = row["owner_email"]
             if args.dry_run:
                 if plan["revoked"]:
-                    names = ", ".join(sorted({g["namespace"] for g in plan["revoked"]}))
-                    print(f"  revoked under {plan['was']}, so revoked for {owner} too: {names}")
+                    names = sorted({g["namespace"] for g in plan["revoked"]})
+                    print(_carried_line(plan["was"], owner, names, plan["elsewhere"], dry_run=True))
                 return 0
-            _, carried = await account_admin.link_account(
+            # What the link read under the account and email claims, not the plan above.
+            was, carried, elsewhere = await account_admin.link_account(
                 args.email, args.org, args.namespace, by=_by()
             )
-            if carried:  # what it carried under the grant claims, not what the plan read
-                print(f"  revoked for {owner} too: {', '.join(carried)}")
+            if carried:
+                print(_carried_line(was, owner, carried, elsewhere, dry_run=False))
         except (ValueError, LoomServerError) as e:  # refused (fix what it names) or busy (rerun)
             print(f"  ✗ {e}", file=sys.stderr)
             return 2
@@ -162,7 +174,8 @@ def _cmd_unlink(args: argparse.Namespace) -> int:
             return 0
         await account_admin.unlink(args.email, by=_by())
         print(
-            f"unlinked {len(accounts)} account(s): new SSO sign-ins no longer reach them; "
+            f"unlinked {len(accounts)} account(s): new SSO sign-ins no longer reach them, "
+            f"and grants under {args.email} stop admitting them; "
             "end open sessions with `loom revoke-token --subject <subject>`"
         )
         return 0

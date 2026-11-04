@@ -32,7 +32,9 @@ GrantStatusStr = Literal["active", "pending"]
 class GrantsCreateInput(BaseModel):
     org: str
     namespace: str
-    subject: str  # email or service-account 'sub' claim
+    # A login handle, an email (it admits an account once that email is verified: an SSO
+    # account's or a linked one's), or a service-account `sub` claim.
+    subject: str
     # `viewer`, `writer` or `admin`; a code namespace takes only `viewer` (reader) and
     # `admin` (maintainer).
     role: GrantRoleStr
@@ -50,7 +52,8 @@ class GrantsCreateInput(BaseModel):
 class GrantsCreateOutput(BaseModel):
     org: str
     namespace: str
-    # The subject as the request spelled it (the row is stored under its login handle).
+    # The subject as the request spelled it (the row is stored under the login handle
+    # of the account whose verified email it is, else as spelled).
     subject: str
     # The role now active for the subject.
     role: GrantRoleStr
@@ -84,7 +87,7 @@ class _GrantEntry(ProjectedRow):
     granted_at: datetime
     granted_by: str
     # The person's other spellings whose rows folded onto
-    # this one (a login handle's contact email, or the reverse).
+    # this one (a login handle's verified email, or the reverse).
     also: list[str] = Field(default_factory=list)
 
 
@@ -125,13 +128,15 @@ class GrantsPendingForMeOutput(BaseModel):
 class GrantsRevokeInput(BaseModel):
     org: str
     namespace: str
-    # Whose grant to revoke: an email or a service-account `sub` claim; revoking a pending
-    # request rejects it.
+    # Whose grant to revoke: a login handle, an email or a service-account `sub`; the
+    # person's row under each verified spelling goes, and a pending request is rejected.
+    # An address no verified account holds that never held a row here takes the rows of
+    # the unverified accounts naming it.
     subject: str
 
 
 class GrantsRevokeOutput(BaseModel):
-    # True when a grant row was found and revoked; false when the subject had none.
+    # True when any of the subject's grant rows was found and revoked; false when it had none.
     revoked: bool
     # When the revoke was written (UTC); None when nothing was revoked.
     revoked_at: datetime | None = None

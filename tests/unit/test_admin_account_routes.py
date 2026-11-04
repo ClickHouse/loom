@@ -68,11 +68,11 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
 
     async def link_account(
         email: str, org: str, namespace: str, *, by: str
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str, list[str], bool]:
         seen.append(("link", (email, org, namespace)))
         if email == "taken@acme.io":
             raise ValueError("taken@acme.io is already acme/lee's; release that one first")
-        return "lee@home.example", ["secret"]
+        return "lee@home.example", ["secret"], True
 
     for name, fake in [
         ("link_account", link_account),
@@ -284,6 +284,7 @@ def test_a_link_points_one_account_at_the_providers_address(calls) -> None:
         "linked": {"org": "acme", "namespace": "lee"},
         "was": "lee@home.example",
         "carried_revoked": ["secret"],
+        "elsewhere": True,
     }
     refused = c.post("/v1/admin/sso.link", json={**body, "email": "taken@acme.io"})
     assert refused.status_code == 422 and "release that one first" in refused.text

@@ -14,6 +14,8 @@ from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from typing import Any
 
+from server.auth import aliases
+from server.core import grant_cache
 from server.core.ch import get_client
 from server.core.versions import next_version
 
@@ -70,7 +72,8 @@ async def reached_by_sso(emails: list[str]) -> set[str]:
 
 
 async def link(email: str, accounts: list[tuple[str, str]], linked_by: str) -> None:
-    """Let an SSO sign-in with `email` reach each (org, namespace)."""
+    """Let an SSO sign-in with `email` reach each (org, namespace), and the grants
+    stored under `email` admit it (the email is verified)."""
     await _write(email, accounts, linked_by, linked=1)
 
 
@@ -136,13 +139,16 @@ async def reaching(email: str) -> list[tuple[str, str]]:
 
 
 async def unlink(email: str, accounts: list[tuple[str, str]], linked_by: str) -> None:
-    """Stop SSO sign-ins with `email` reaching `accounts`."""
+    """Stop SSO sign-ins with `email` reaching `accounts`, and the grants stored
+    under `email` admitting them."""
     await _write(email, accounts, linked_by, linked=0)
 
 
 async def _write(
     email: str, accounts: list[tuple[str, str]], by: str, *, linked: int, ch: Any = None
 ) -> None:
+    """Write the link rows through `ch`; the grant watermark goes through the
+    default client (`grant_cache.changed`), as every grant write's does."""
     if not accounts:
         return
     ch = ch or get_client()
@@ -150,18 +156,29 @@ async def _write(
     # FINAL a later unlink with a lower version would be lost.
     version = await next_version(ch, TABLE, {"email": email.strip().lower()})
     now = datetime.now(UTC)
-    await ch.insert(
-        TABLE,
-        [
-            {
-                "email": email.strip().lower(),
-                "org": org,
-                "namespace": namespace,
-                "linked": linked,
-                "linked_by": by,
-                "linked_at": now,
-                "version": version,
-            }
-            for org, namespace in accounts
-        ],
-    )
+    # A link verifies the account's email, which ties it to the owner's grants
+    # (`server.auth.aliases`): an unlink must not leave a cached tie admitting,
+    # even when its reply is lost after the row landed.
+    orgs = sorted({org for org, _ in accounts})
+    async with AsyncExitStack() as announced:
+        for org in orgs:
+            await announced.enter_async_context(grant_cache.announced(org))
+        try:
+            await ch.insert(
+                TABLE,
+                [
+                    {
+                        "email": email.strip().lower(),
+                        "org": org,
+                        "namespace": namespace,
+                        "linked": linked,
+                        "linked_by": by,
+                        "linked_at": now,
+                        "version": version,
+                    }
+                    for org, namespace in accounts
+                ],
+            )
+        finally:
+            for org in orgs:
+                aliases.invalidate_org(org)

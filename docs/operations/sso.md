@@ -75,7 +75,8 @@ account keeps its subject, grants, namespaces and data; no new one is made.
   container, or with the same environment), or call `/v1/admin/sso.adopt`,
   which a running server answers. It vouches that the
   domain's addresses are the provider's people, so read the list: an address
-  someone else registered is linked too. It skips an email whose accounts are
+  someone else registered is linked too, and a link makes every grant written
+  under the address admit its account. It skips an email whose accounts are
   in several orgs or have several owners, or that SSO already reaches. It
   revokes every token the adopted subjects hold, so people sign in again, and
   that includes the service-account and MCP tokens they made from their
@@ -97,23 +98,31 @@ link --email <their provider address> --org <org> --namespace <ns>` shows
   nobody can register the freed address and inherit what it named. The old
   address's links go, and a grant once revoked under it is carried to the
   account's subject, revoked, so it goes on capping the person's tokens. It
-  refuses an old address that still holds live grants of its own (grant them
-  to the account's subject and revoke them first) or a pending request to join
-  (reject it), and an address another account already names. When that is a
-  JIT account an earlier SSO sign-in made, `loom claim-release` it first: its
+  refuses an old address that still holds live grants of its own (when the old
+  address is linked, grant them to the account's subject and revoke them first;
+  when it was never verified, they admit no one: grant them to the account's
+  subject if they were meant for it, and revoke them) or a pending request to
+  join (reject it); when the old address is another account's verified email,
+  its grants and requests are that account's and the link leaves them, carrying
+  each to the account's subject revoked, as it capped the account's tokens. It
+  also refuses an address another account already names. When that is a JIT
+  account an earlier SSO sign-in made, `loom claim-release` it first: its
   memories stay behind in it (carry them over with `namespace.snapshot` and
   `namespace.restore`), and grants made to it must be made again.
-- `loom sso unlink --email <email> --apply` takes a link back. Sessions already
-  open are not ended; revoke them with `loom revoke-token --subject`.
+- `loom sso unlink --email <email> --apply` takes a link back: grants stored
+  under the address (written before the link) stop admitting the account.
+  Grants made while it was linked are stored under the login handle and stay;
+  revoke those with `grants.revoke`. Sessions already open are not ended;
+  revoke them with `loom revoke-token --subject`.
 - Someone who says a password account naming their address is not theirs is
   denied when that account is in `LOOM_OIDC_JIT_ORG`, and
-  `auth.sso_link_declined` is audited: a second account there naming the same
-  address would receive every grant made to it. To free an address someone
-  else registered, release that account (`loom claim-release`), which clears
-  its email and links; with `LOOM_OIDC_JIT_PROVISION=true` the person's next
-  sign-in then makes their own account. An account in another org does not
-  stop them. A revoked account naming the address blocks new accounts, since
-  it may be the same person.
+  `auth.sso_link_declined` is audited: beside that account, a password sign-in
+  with the address would still find it, and a revocation of the address would
+  reach both. To free an address someone else registered, release that account
+  (`loom claim-release`), which clears its email and links; with
+  `LOOM_OIDC_JIT_PROVISION=true` the person's next sign-in then makes their own
+  account. An account in another org does not stop them. A revoked account
+  naming the address blocks new accounts, since it may be the same person.
 
 For a person with no account:
 
@@ -679,18 +688,18 @@ loom call /v1/admin/revoke_subject --data \
   '{"org":"acme","subject":"lee@acme.io","reason":"left","issued_before":"2026-01-31T12:00:00Z"}'
 ```
 
-Loom revokes the subject and every spelling the org's directory ties to it, the
-same pairing grants are read under: an email reaches the login handle of the
-account it signs in to (an SSO account's subject is its namespace, `u-…`), and a
-handle reaches its email. For each, every token whose subject it is, every token
-it made or that descends from one of its tokens, and every refresh of its sign-in
-sessions are refused at once by the process that took the request, and by every
-other process at its next revocation refresh. Every mint reads revocations from
-ClickHouse, so a sign-in, a device approval or an MCP connect for it gets no token
-either. The service accounts and MCP tokens it ends show as revoked in the Tokens
-list, by `admin:<you>`, and their names are free again, as after a SCIM
-deactivation. The accounts, their grants and their data stay; this is not
-erasure.
+Loom revokes the subject and every spelling the org's directory pairs with it,
+its email verified or not (a grant admits under verified pairs only): an email
+reaches the login handle of each account naming it (an SSO account's subject is
+its namespace, `u-…`), and a handle reaches its email. For each, every token
+whose subject it is, every token it made or that descends from one of its tokens,
+and every refresh of its sign-in sessions are refused at once by the process that
+took the request, and by every other process at its next revocation refresh.
+Every mint reads revocations from ClickHouse, so a sign-in, a device approval or
+an MCP connect for it gets no token either. The service accounts and MCP tokens
+it ends show as revoked in the Tokens list, by `admin:<you>`, and their names are
+free again, as after a SCIM deactivation. The accounts, their grants and their
+data stay; this is not erasure.
 
 `issued_before` (RFC 3339, with its offset) limits the revocation to what was
 issued before that instant, for good: a platform deprovisioning someone sends the

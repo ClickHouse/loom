@@ -9,11 +9,17 @@ one; revocation is a separate INSERT with `revoked_at` populated
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from server.core import grant_cache
 from server.core.datetimes import to_naive_utc
-from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT, grant_rank_sql, has_aliases_sql
+from server.core.grant_sql import (
+    GRANT_RANK_SQL,
+    LIVE_GRANT,
+    VERIFIED_EMAIL_SQL,
+    grant_rank_sql,
+    has_aliases_sql,
+)
 from server.core.principals import AGENT, EVERYONE, GROUP, SERVICE_ACCOUNT
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.grants import GrantPerson, GrantState, PendingGrant
@@ -185,6 +191,7 @@ FROM (
                        arrayJoin([handle, lowerUTF8(contact_email)]) AS spelling
                 FROM loom.namespaces FINAL
                 WHERE org = {org:String} AND ifNull(active, true) = true AND contact_email != ''
+                  AND {verified}
             )
             -- Only spellings that ever held a grant here (a superset of the live ones
             -- needs no FINAL): the map then grows with the namespace, not the org.
@@ -207,6 +214,7 @@ _PEOPLE_PAGE = (
     .replace("{rank}", GRANT_RANK_SQL)
     .replace("{rank_asked}", grant_rank_sql("asked"))
     .replace("{has_aliases}", has_aliases_sql("g.subject"))
+    .replace("{verified}", VERIFIED_EMAIL_SQL)
 )
 
 
@@ -379,6 +387,37 @@ async def find_any_grant(
         params={"org": org, "ns": namespace, "sub": subject},
     )
     return None if row is None else GrantState.from_row(row)
+
+
+async def stored_spellings(
+    org: str,
+    namespace: str,
+    spellings: list[str],
+    *,
+    rows: Literal["live", "active", "all"] = "live",
+    ch: _CHClient | None = None,
+) -> list[str]:
+    """The subjects the rows on (org, namespace) are stored under that match one of
+    `spellings` in any case, as the gate matches them. `rows`: "live" reads the
+    rows not revoked (a pending request too, as `find_any_grant` reads them),
+    "active" the ones that admit, "all" every row ever written."""
+    if not spellings:
+        return []
+    ch = ch or _default_client()
+    live_only = {"live": "AND revoked_at IS NULL", "active": f"AND {LIVE_GRANT}", "all": ""}[rows]
+    found = await ch.query_all(
+        f"""
+        SELECT DISTINCT subject FROM loom.namespace_grants FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          -- both sides lowered by ClickHouse, as the grant map lowers them
+          AND has(arrayMap(s -> lower(s), {{subs:Array(String)}}), lower(subject))
+          {live_only}
+        ORDER BY subject
+        LIMIT 64
+        """,
+        params={"org": org, "ns": namespace, "subs": sorted(set(spellings))},
+    )
+    return [str(r["subject"]) for r in found]
 
 
 async def count_active_admins(

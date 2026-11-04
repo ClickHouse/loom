@@ -1,9 +1,10 @@
-"""The SQL a read of `loom.namespace_grants` uses to find the rows that
-confer access, and to put a subject's highest grant first.
+"""The SQL fragments the grant reads share: the rows of `loom.namespace_grants`
+that confer access, a subject's highest grant first, the subjects the
+directory may tie to a person, and the account emails that tie.
 
 The authorization gate (`server/auth`) and the identity plane read the same
-table, and a platform package may not import a domain package nor a domain
-store a platform one, so the two fragments live here, once.
+tables, and a platform package may not import a domain package nor a domain
+store a platform one, so the fragments live here, once.
 """
 
 from __future__ import annotations
@@ -31,3 +32,13 @@ def has_aliases_sql(column: str) -> str:
     whether the directory may tie it to a person's other spellings."""
     one_spelling = [f"NOT startsWith({column}, '{prefix}')" for prefix in ONE_SPELLING]
     return " AND ".join([f"{column} NOT IN ('', '*', '{EVERYONE}')", *one_spelling])
+
+
+# Whether a `loom.namespaces` row's `contact_email` is verified, so another spelling of
+# its owner: an SSO account's (no password) or one linked in `loom.sso_links`. Binds
+# `{org:String}`.
+VERIFIED_EMAIL_SQL = (
+    "(password_hash = '' OR (org, namespace, contact_email) IN ("
+    "SELECT org, namespace, email FROM loom.sso_links FINAL"
+    " WHERE org = {org:String} AND linked = 1))"
+)

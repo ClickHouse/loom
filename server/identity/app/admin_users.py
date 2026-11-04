@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from server.auth.login import platform_roles
 from server.core.ch import get_client
+from server.core.grant_sql import VERIFIED_EMAIL_SQL
 from server.identity.api.models_admin_users import (
     AdminUsersInput,
     AdminUsersOutput,
@@ -100,18 +102,21 @@ async def handle_admin_users(input: AdminUsersInput) -> AdminUsersOutput:
         contact_rows = await ch.query_all(
             """
             SELECT owner_email AS subject,
-                   any(contact_email) AS contact_email,
-                   max(password_hash != '') AS has_pw
+                   -- An owner's other rows (a personal namespace) name no email.
+                   anyIf(contact_email, contact_email != '') AS contact,
+                   max(password_hash != '') AS has_pw,
+                   anyIf(contact_email, contact_email != '' AND {verified}) AS verified_email
             FROM loom.namespaces FINAL
             WHERE org = {org:String} AND owner_email IN {subjects:Array(String)}
             GROUP BY owner_email
-            """,
+            """.replace("{verified}", VERIFIED_EMAIL_SQL),
             params={"org": input.org, "subjects": subjects},
         )
         contact_map = {
             str(r["subject"]): {
-                "contact_email": str(r.get("contact_email") or ""),
+                "contact_email": str(r.get("contact") or ""),
                 "has_pw": bool(r.get("has_pw") or False),
+                "verified_email": str(r.get("verified_email") or ""),
             }
             for r in contact_rows
         }
@@ -121,9 +126,11 @@ async def handle_admin_users(input: AdminUsersInput) -> AdminUsersOutput:
         grants = by_subject[subj]
         info = contact_map.get(subj, {})
         contact = str(info.get("contact_email", ""))
-        is_admin = subj.lower() in admin_emails or (
-            contact.strip().lower() in admin_emails if contact else False
-        )
+        # The rule an SSO sign-in applies (`platform_roles`): a handle entry matches the
+        # subject, an email entry a verified address only. A password sign-in carries no
+        # verified email, so a linked account listed by email is admin over SSO only.
+        verified = str(info.get("verified_email", ""))
+        is_admin = platform_roles(subj, verified_email=verified) == ["platform_admin"]
         # Service-account filter: subjects without a contact_email AND
         # without password_hash are almost always service accounts.
         if not input.include_service_accounts:

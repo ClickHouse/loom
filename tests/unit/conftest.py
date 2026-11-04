@@ -910,3 +910,31 @@ def _no_revocations_left_behind() -> Iterator[None]:
     yield
     revocation._revoked_jtis, revocation._revoked_before, revocation._cut_off = saved
     revocation._recent.clear()
+
+
+@pytest.fixture
+def no_directory_ties(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A revoke reads the spellings the directory ties to its subject (none here),
+    whether a verified account holds it (when another spelling is tied), and the
+    rows stored under them (each as given, and none revoked)."""
+
+    async def _alone(org: str, subject: str, ch: Any) -> list[str]:
+        return [subject]
+
+    async def _as_given(
+        org: str, ns: str, spellings: list[str], *, rows: str = "live", **_: Any
+    ) -> list[str]:
+        return [] if rows == "all" else list(dict.fromkeys(spellings))  # no revoked rows
+
+    async def _tie(org: str, subject: str, **_: Any) -> tuple[list[str], bool]:
+        # Through whatever `read_aliases` a test sets: held when it ties another
+        # spelling, so a handle that is itself the address is not represented here
+        # (test_aliases_verified_email_sql.py runs that case on the real rows).
+        from server.auth import aliases
+
+        spellings = await aliases.read_aliases(org, subject, None)
+        return spellings, len(spellings) > 1
+
+    monkeypatch.setattr("server.auth.aliases.read_aliases", _alone)
+    monkeypatch.setattr("server.auth.aliases.verified_tie", _tie)
+    monkeypatch.setattr("server.identity.store.grants.stored_spellings", _as_given)

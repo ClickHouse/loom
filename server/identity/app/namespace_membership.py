@@ -487,7 +487,7 @@ async def handle_namespace_list_mine(
     Union of the JWT's `namespaces` claim and the caller's active rows in
     `loom.namespace_grants` — under the caller's subject or any spelling the
     directory ties to it (`server.auth.aliases`: a person's login handle and
-    email are one principal, as the read gate counts them). Also auto-claims
+    verified email are one principal, as the read gate counts them). Also auto-claims
     `personal-<sub>` if it doesn't yet exist — the dashboard calls this on
     load, so the personal namespace lazily-creates on first visit.
     """
@@ -502,8 +502,8 @@ async def handle_namespace_list_mine(
     # this handler stays read-only.
     # Union of grant rows + JWT namespaces. LEFT JOIN namespace_visits
     # for the `is_new` flag — true when the caller hasn't visited since
-    # the grant was made. A grant written under the person's email before
-    # their first sign-in (an operator's, an invitation's, a sync's) is
+    # the grant was made. A grant written under the person's verified email
+    # before their first sign-in (an operator's, an invitation's, a sync's) is
     # theirs as much as one under the login handle: the gate reads both,
     # so this list names both — else the dashboard would refuse a namespace
     # the server serves.

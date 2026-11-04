@@ -211,8 +211,9 @@ async def _create_grant(
     input: GrantsCreateInput, may_replace: Callable[[GrantState], None] | None
 ) -> datetime:
     """`grants.create`'s write and what follows it; returns when it was granted."""
-    # A human's grant is written under the login handle, so one person keeps one row
-    # whichever spelling the granter typed; the downgrade guard reads that same row.
+    # A grant to a verified email is written under its account's login handle, so the
+    # person keeps one row; any other spelling is written as typed. The downgrade
+    # guard reads that same row.
     from server.auth.aliases import canonical_subject
 
     subject = await canonical_subject(input.org, input.subject)
@@ -332,16 +333,42 @@ async def handle_grants_pending_for_me(
     )
 
 
-async def _live_grant_row(org: str, namespace: str, subject: str) -> tuple[str, GrantState | None]:
-    """(the subject the grant row is stored under, that row): the login handle a human
-    spelling canonicalises to, else the spelling as given."""
-    from server.auth.aliases import canonical_subject
+async def _live_grant_rows(
+    org: str, namespace: str, subject: str
+) -> tuple[list[tuple[str, GrantState]], bool]:
+    """The (stored subject, row) pairs a revoke of `subject` takes: the live row
+    under each spelling the gate admits the person by, matched in any case. An
+    address no verified account holds (`unheld`, returned beside the rows) and
+    that never held a row here also takes the live rows of the unverified
+    accounts naming it (`aliases.spellings`)."""
+    from server.auth.aliases import spellings, verified_tie
 
-    canonical = await canonical_subject(org, subject)
-    row = await grants_repo.find_any_grant(org, namespace, canonical)
-    if row is None and canonical != subject:
-        return subject, await grants_repo.find_any_grant(org, namespace, subject)
-    return canonical, row
+    verified, held = await verified_tie(org, subject)
+    # A verified account holding the address is the person (by its verified email,
+    # or a handle that is the address): an unverified account naming it too is
+    # someone else, whose rows and tokens stay.
+    unheld = "@" in subject and not held
+    found = await _rows_under(org, namespace, verified)
+    if found or not unheld:
+        return found, unheld
+    if await grants_repo.stored_spellings(org, namespace, verified, rows="all"):
+        return [], unheld  # revoked already: a retry takes nothing more
+    seen = {s.lower() for s in verified}
+    others = [s for s in await spellings(org, subject) if s.lower() not in seen]
+    return await _rows_under(org, namespace, others), unheld
+
+
+async def _rows_under(
+    org: str, namespace: str, spellings: list[str]
+) -> list[tuple[str, GrantState]]:
+    """Each live row on (org, namespace) stored under one of `spellings`, in any case,
+    with the subject it is stored under."""
+    found: list[tuple[str, GrantState]] = []
+    for stored in await grants_repo.stored_spellings(org, namespace, spellings):
+        row = await grants_repo.find_any_grant(org, namespace, stored)
+        if row is not None:
+            found.append((stored, row))
+    return found
 
 
 async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
@@ -358,47 +385,114 @@ async def revoke_grant(
 ) -> GrantsRevokeOutput:
     """`grants.revoke`; `may_take` raises for a row this caller must not
     revoke, checked before any change and again on the row read under the
-    grant's claim."""
-    subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
-    if row is None:
-        return GrantsRevokeOutput(revoked=False)
+    grant's claim. Every live row of the person's (`_live_grant_rows`) goes."""
+    rows, unheld = await _live_grant_rows(input.org, input.namespace, input.subject)
     if may_take is not None:
-        may_take(row)
+        for _, row in rows:
+            may_take(row)
+    # Refused before any write when the person holds every admin row there. Each
+    # row's write checks again under the admins claim, so an admin revoked
+    # meanwhile can still stop a later row: the earlier ones stay revoked, and
+    # the namespace keeps an admin.
+    admins = sum(_active_admin(row) for _, row in rows)
+    if admins:
+        await _refuse_last_admin(input, also_going=admins - 1)
+    revoked_at = None
+    taken: list[str] = []
+    try:
+        for subject, row in rows:
+            # A row under another spelling, or one of several, is audited as its
+            # write lands: a later row refused fails the call, and the op's own
+            # audit row is written only for a call that succeeds.
+            audited = subject != input.subject or len(rows) > 1
+            now = await _revoke_row(input, subject, row, may_take, audited=audited)
+            if now is not None:
+                revoked_at = now
+                taken.append(subject)
+    finally:
+        if taken:  # the rows that went, even when a later one refused
+            await _cascade(input, tuple(taken), unheld=unheld)
+    if revoked_at is None:
+        return GrantsRevokeOutput(revoked=False)
+    return GrantsRevokeOutput(revoked=True, revoked_at=revoked_at)
+
+
+async def _audit_stored_row(
+    input: GrantsRevokeInput, subject: str, *, unconfirmed: bool = False
+) -> None:
+    """The op's own audit row names the subject asked for; a row taken under
+    another spelling, or one of several, gets one of its own, so the log shows
+    whose grant went. `unconfirmed`: its insert raised, and it may not have landed."""
+    from server.auth.context import current_auth
+    from server.core.logging_config import request_id_var
+    from server.observability import audit
+
+    auth = current_auth()
+    taken = {"namespace": input.namespace, "subject": subject, "named": input.subject}
+    if unconfirmed:
+        taken["landed"] = "unknown"
+    await audit.emit(
+        "grants.revoke",
+        org=input.org,
+        namespace=input.namespace,
+        actor=auth.subject if auth is not None and auth.subject else "anonymous",
+        subject=taken,
+        request_id=request_id_var.get() or "",
+    )
+
+
+async def _revoke_row(
+    input: GrantsRevokeInput,
+    subject: str,
+    row: GrantState,
+    may_take: Callable[[GrantState], None] | None,
+    *,
+    audited: bool,
+) -> datetime | None:
+    """Revoke the row stored under `subject`, under its claim; when it was
+    revoked, or None when nothing was."""
 
     async def _write(row: GrantState | None) -> tuple[GrantState, datetime] | None:
         if row is None:
             return None
         if may_take is not None:
             may_take(row)
-        return row, await _write_revoke(input, subject, row)
+        return row, await _write_revoke(input, subject, row, audited=audited)
 
     done = None
+    latest: GrantState | None = row
     if not _active_admin(row):
         # A reader's grant, or a request: only its own claim, unless it became admin.
         async with grant_change(input.org, input.namespace, subject):
-            row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
-            if row is None or not _active_admin(row):
-                done = await _write(row)
-    if done is None and row is not None and _active_admin(row):
+            latest = await grants_repo.find_any_grant(input.org, input.namespace, subject)
+            if latest is None or not _active_admin(latest):
+                done = await _write(latest)
+    if done is None and latest is not None and _active_admin(latest):
         done = await _taking_admin(input, subject, _write)
     if done is None:
-        return GrantsRevokeOutput(revoked=False)
-    row, now = done
-    # The tokens this person minted lose their own grants here. Best-effort: the
-    # person's revoke has landed; a failed cascade is logged, never a 500.
+        return None
+    return done[1]
+
+
+async def _cascade(input: GrantsRevokeInput, taken: tuple[str, ...], *, unheld: bool) -> None:
+    """The tokens the person minted lose their own grants on the namespace, once
+    for all the rows taken: under each stored subject that went and the spellings
+    of the subject asked for. Best-effort: the person's revoke has landed; a
+    failed cascade is logged, never a 500."""
     from server.identity.app import token_grants
 
     try:
-        await token_grants.cascade_revoke_to_created_tokens(input.org, input.namespace, subject)
+        await token_grants.cascade_revoke_to_created_tokens(
+            input.org, input.namespace, input.subject, unheld=unheld, taken=taken
+        )
     except Exception as e:  # noqa: BLE001 - the revoke itself succeeded
         log.warning(
             "token grant cascade failed for %s/%s %s: %s",
             input.org,
             input.namespace,
-            subject,
+            input.subject,
             e,
         )
-    return GrantsRevokeOutput(revoked=True, revoked_at=now)
 
 
 async def _taking_admin[T](
@@ -444,10 +538,14 @@ def _active_admin(row: GrantState) -> bool:
     return row.role == "admin" and (row.status or "active") == "active"
 
 
-async def _refuse_last_admin(input: GrantsRevokeInput | GrantsCreateInput) -> None:
-    """Refuse a change that would leave the namespace without an admin; it is
-    counted under `admins_change`."""
-    if await grants_repo.count_active_admins(input.org, input.namespace) <= 1:
+async def _refuse_last_admin(
+    input: GrantsRevokeInput | GrantsCreateInput, *, also_going: int = 0
+) -> None:
+    """Refuse a change that would leave the namespace without an admin, with
+    `also_going` more of its admin rows taken by the same change. The count is
+    authoritative under `admins_change`; `revoke_grant` also calls it before any
+    write, without the claim, to refuse early."""
+    if await grants_repo.count_active_admins(input.org, input.namespace) <= 1 + also_going:
         from server.core.errors import PreconditionFailedError
 
         raise PreconditionFailedError(
@@ -457,25 +555,35 @@ async def _refuse_last_admin(input: GrantsRevokeInput | GrantsCreateInput) -> No
         )
 
 
-async def _write_revoke(input: GrantsRevokeInput, subject: str, row: GrantState) -> datetime:
+async def _write_revoke(
+    input: GrantsRevokeInput, subject: str, row: GrantState, *, audited: bool
+) -> datetime:
     """`grants.revoke`'s write, under the grant's claim. Refuses to revoke a
-    namespace's last active admin."""
+    namespace's last active admin. An `audited` row gets its own audit row even
+    when the insert raises (marked unconfirmed): the row may have landed with
+    its reply lost, and a retry would find nothing."""
     if _active_admin(row):
         await _refuse_last_admin(input)
     now = datetime.now(UTC).replace(tzinfo=None)
-    await grants_repo.insert_row(
-        {
-            "org": input.org,
-            "namespace": input.namespace,
-            "subject": subject,
-            "role": row.role,
-            "status": row.status or "active",
-            "granted_at": now,
-            "granted_by": row.granted_by,
-            "revoked_at": now,
-            "version": _version(),
-        }
-    )
+    landed = False
+    try:
+        await grants_repo.insert_row(
+            {
+                "org": input.org,
+                "namespace": input.namespace,
+                "subject": subject,
+                "role": row.role,
+                "status": row.status or "active",
+                "granted_at": now,
+                "granted_by": row.granted_by,
+                "revoked_at": now,
+                "version": _version(),
+            }
+        )
+        landed = True
+    finally:
+        if audited:
+            await _audit_stored_row(input, subject, unconfirmed=not landed)
     return now
 
 

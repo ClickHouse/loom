@@ -19,6 +19,9 @@ from server.identity.app import grants as grants_mod
 from server.identity.domain.grants import GrantState
 from server.identity.store import grants as grants_repo
 
+# A revoke reads no directory ties here (`conftest.no_directory_ties`).
+pytestmark = pytest.mark.usefixtures("no_directory_ties")
+
 
 class _Cfg:
     def __init__(self, org: str, namespace: str, repo: str) -> None:
@@ -274,6 +277,56 @@ async def test_grants_revoke_admin_fans_out(
     # The other branches first, the grant last.
     assert out.revoked and _handler_env["events"] == ["fan-out", "write"]
     assert set(_handler_env["revoke"]) == {("clickhouse", "code-x", "alice")}
+
+
+async def test_an_admin_revoked_meanwhile_stops_the_persons_later_row(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # dave holds admin under his handle and his verified email, beside one other
+    # admin who is revoked between dave's two rows: the first row stays revoked,
+    # the second is refused, and the namespace keeps an admin.
+    from server.core.errors import PreconditionFailedError
+    from server.identity.app import token_grants
+
+    async def _any(org: str, ns: str, sub: str, **_k: Any) -> GrantState | None:
+        if sub in {"dave", "dave@x.io"} and sub not in {r["subject"] for r in _handler_env["rows"]}:
+            return GrantState.from_row({"role": "admin", "status": "active", "granted_by": "ops"})
+        return None
+
+    async def _verified(org: str, subject: str, ch: Any) -> list[str]:
+        return ["dave", "dave@x.io"]
+
+    async def _admins(*_a: Any, **_k: Any) -> int:
+        # dave's two rows and eve's; eve is revoked as soon as dave's first row goes.
+        written = len(_handler_env["rows"])
+        return 3 - written - (1 if written else 0)
+
+    cascaded: list[tuple[str, tuple[str, ...]]] = []
+
+    async def _cascade(org: str, namespace: str, subject: str, **kw: Any) -> int:
+        cascaded.append((subject, kw["taken"]))
+        return 0
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _any)
+    monkeypatch.setattr("server.auth.aliases.read_aliases", _verified)
+    monkeypatch.setattr(grants_repo, "count_active_admins", _admins)
+    monkeypatch.setattr(token_grants, "cascade_revoke_to_created_tokens", _cascade)
+    audited: list[Any] = []
+
+    async def _emit(event_type: str, **kw: Any) -> str:
+        audited.append((event_type, kw["subject"]))
+        return ""
+
+    monkeypatch.setattr("server.observability.audit.emit", _emit)
+    with pytest.raises(PreconditionFailedError, match="only admin"):
+        await grants_mod.handle_grants_revoke(
+            GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="dave")
+        )
+    assert [r["subject"] for r in _handler_env["rows"]] == ["dave"]
+    # The call failed, so no op audit row: the row that went is audited on its own.
+    assert ("grants.revoke", {"namespace": "code-x", "subject": "dave", "named": "dave"}) in audited
+    # The tokens dave made lose their grants for the row that went, once.
+    assert cascaded == [("dave", ("dave",))]
 
 
 @pytest.mark.parametrize(

@@ -242,6 +242,17 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   server or another, and a pending or rejected request caps it at no access. A scoped
   token keeps its own role there, capped at the grant. A namespace an operator named at
   mint that was never granted to the subject keeps its claim; revoke the token for that.
+- **A grant under an email reaches the account only once the email is verified.** An SSO
+  account's email is verified (the identity provider vouched for it), and so is an email
+  linked to a password account (`loom sso adopt`, `loom sso link`, a password link, or its
+  owner proving the password from an SSO sign-in). A self-signup email is not: whoever
+  typed the address first does not hold the grants written under it, which still cap
+  that account's claims. Grant a self-signup account under its login handle, the namespace
+  it signed up with. A `grants.revoke` of an address no verified account holds, and that
+  never held a row of its own on the namespace, takes the rows stored under each
+  unverified account naming it, and the grants there of the tokens those accounts made.
+  When the address held a row of its own there, its revoke also takes the grants of the
+  tokens those accounts made there, unless one still holds an active grant of its own.
 - **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.
   With self-signup (`LOOM_IDENTITY_PROVIDER=trust-network`) the first principal to claim a
   name owns it; `loom claim-release --org <org> --namespace <ns>` revokes its grants,
@@ -261,7 +272,7 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
 ### List every grant
 
 `grants.list` answers one row per person, newest grant first: a login handle and the
-contact email tied to it fold into one row, the other spelling in `also`. A person with an
+verified email tied to it fold into one row, the other spelling in `also`. A person with an
 active grant reads `active` at their highest active role, with any request of theirs in
 `pending_role`. A page holds up to `limit` rows (default 100, at most 500). When more people
 follow, the answer carries `truncated: true` and a `next_cursor`; send it back as `cursor`,
@@ -273,10 +284,12 @@ to `max_pages`.
 
 - **A cursor is a place in the list, not a snapshot.** A grant written during a walk (a new
   grant, a role change, an approval) moves to the front of the list, which the walk has
-  passed, and a revoked one drops out; revoking a person's newest spelling can bring them
-  back later under an older one. A tie between a login and an email made between pages can
-  hide the person it joins, not even listed in `also`, and a tie removed can list them twice.
-  Everyone else comes back exactly once; a walk started after the change sees it.
+  passed, and a revoked one drops out. A `grants.revoke` takes the person's row under
+  every verified spelling, so no older spelling brings them back; a `namespace.leave`
+  drops only the caller's row under their exact subject, so one under their verified
+  email can. A tie between a login and an email made between pages can hide the person it
+  joins, not even listed in `also`, and a tie removed can list them twice. Everyone else
+  comes back exactly once; a walk started after the change sees it.
 - **A failed read fails the call.** The answer is 503 `BACKEND_UNAVAILABLE` when ClickHouse
   is unreachable and 504 `BACKEND_TIMEOUT` past the read deadline, never a list with people
   unfolded. Retry with the same cursor: it holds only a position.

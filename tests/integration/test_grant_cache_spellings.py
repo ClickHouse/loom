@@ -1,9 +1,11 @@
 """The claim cap's grant read on ClickHouse: which tied spellings set the rank.
 
-An active account's login handle and email are one person, so a grant under
-either counts. A deactivated account's pair, and a released account's
-`released_aliases`, still tie the spellings, but only to cap: their revoked
-rows cap a token's claim, their live grants never admit it.
+An active account whose email is verified ties its login handle and email as
+one person, so a grant under either counts. The email is verified when the
+account has no password (an SSO account) or is linked to it in `loom.sso_links`.
+A password account's unverified email only caps. A deactivated account's pair,
+and a released account's `released_aliases`, still tie the spellings, but only
+to cap: their revoked rows cap a token's claim, their live grants never admit it.
 """
 
 from __future__ import annotations
@@ -27,7 +29,13 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
     name = f"it-spellings-{uuid.uuid4().hex[:8]}"
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
-    account = {"org": name, "created_at": now, "updated_at": now, "released_aliases": []}
+    account = {
+        "org": name,
+        "created_at": now,
+        "updated_at": now,
+        "released_aliases": [],
+        "password_hash": "",
+    }
 
     def _account(namespace: str, owner: str, contact: str, **over: Any) -> dict[str, Any]:
         row = {**account, "namespace": namespace, "owner_email": owner, "contact_email": contact}
@@ -37,14 +45,21 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
         "loom.namespaces",
         [
             _account("h", "h", "h@x"),
+            # A password account, never linked: its email is unverified.
+            _account("u", "u", "u@x", password_hash="x"),
+            # A password account linked to its email: verified.
+            _account("l", "l", f"l@{name}.x", password_hash="x"),
             _account("d", "d", "d@x", active=False),
             _account("r", "", "", active=False, released_aliases=["r", "r@x"]),
             # Released, then re-registered by an admin: its owner is not the released person.
             _account("q", "admin", "admin@x", released_aliases=["q", "q@x"]),
         ],
     )
+    linked = f"l@{name}.x"  # sso_links is keyed by email: one of this org's own
+    link = {"email": linked, "org": name, "namespace": "l", "linked": 1, "linked_by": "it"}
+    await client.insert("loom.sso_links", [{**link, "linked_at": now, "version": 1}])
     grants: list[dict[str, Any]] = []
-    for spelling in ("h@x", "d@x", "r@x", "admin@x"):
+    for spelling in ("h@x", "d@x", "r@x", "admin@x", "u@x", linked):
         for namespace, revoked in (("live", None), ("gone", now)):
             grants.append(
                 {
@@ -69,6 +84,10 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
     try:
         yield name
     finally:
+        await client.execute(
+            "ALTER TABLE loom.sso_links DELETE WHERE email = {e:String} SETTINGS mutations_sync = 2",
+            params={"e": linked},
+        )
         for table in ("loom.namespace_grants", "loom.namespaces"):
             for partition in (name, f"{name}-other"):
                 await client.execute(
@@ -81,6 +100,8 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
     ("subject", "ranks"),
     [
         ("h", {"live": 2, "gone": 0}),  # an active account: one person
+        ("u", {"live": 0, "gone": 0}),  # an unverified email: caps, never admits
+        ("l", {"live": 2, "gone": 0}),  # a linked email: verified, one person
         ("d", {"live": 0, "gone": 0}),  # deactivated: caps, never admits
         ("r", {"live": 0, "gone": 0}),  # released: caps, never admits
         ("r@x", {"live": 2, "gone": 0}),  # a spelling's own grants count

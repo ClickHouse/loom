@@ -524,8 +524,8 @@ async def grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
     from server.core.ch import get_client
 
     try:
-        # The person's login handle and their email are one principal — a
-        # grant under either spelling, in any case, counts; the highest wins
+        # The person's login handle and their verified email are one principal —
+        # a grant under either spelling, in any case, counts; the highest wins
         subjects = [s.lower() for s in await subject_aliases(org, subject)]
         row = await get_client().query_one(
             """

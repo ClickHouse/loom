@@ -612,3 +612,131 @@ def test_the_maximum_floor_matches_the_physical_migration() -> None:
     )
     assert path.is_file()
     assert int(path.name.split("_", 1)[0]) == machines.ACCESS_TOKEN_MIGRATION
+
+
+@pytest.mark.parametrize(
+    ("linked", "advice"),
+    [
+        # A linked old address's grants admit the person: carry them to the subject.
+        ([("acme", "lee")], "grant them to lee and revoke them first"),
+        # An unlinked password account's address was never verified: they admit no one.
+        ([], "they admit no one"),
+    ],
+)
+def test_a_link_refuses_an_old_address_with_live_grants(
+    monkeypatch: pytest.MonkeyPatch, linked: list[tuple[str, str]], advice: str
+) -> None:
+    import server.core.ch as ch_mod
+
+    row = {"active": True, "password_hash": "h", "contact_email": "lee@home.io"}
+    row |= {"owner_email": "lee", "org": "acme", "namespace": "lee"}
+    grant = {"namespace": "team", "role": "writer", "status": "active", "revoked_at": None}
+
+    class _CH:
+        async def query_one(self, *_a: Any, **_k: Any) -> None:
+            return None  # no other account names the new address
+
+        async def query_all(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
+            return [grant]
+
+    async def _row(org: str, namespace: str) -> dict[str, Any]:
+        return row
+
+    async def _linked(email: str) -> list[tuple[str, str]]:
+        return linked
+
+    monkeypatch.setattr(account_admin.settings, "oauth_login_provider", "oidc")
+    monkeypatch.setattr(namespaces, "fetch_row", _row)
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
+    monkeypatch.setattr(account_admin.sso_links, "linked", _linked)
+    with pytest.raises(ValueError, match=advice):
+        asyncio.run(account_admin.link_plan("lee@corp.io", "acme", "lee"))
+
+
+@pytest.mark.parametrize("status", ["active", "pending", "revoked", "none"])
+def test_a_link_leaves_an_old_address_another_account_holds_verified(
+    monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    # The old address is an SSO account's verified email too: its grants and its
+    # requests are that account's, and linking this one away from the address
+    # leaves them. The link says so whatever rows the address holds, none too.
+    import server.core.ch as ch_mod
+
+    row = {"active": True, "password_hash": "h", "contact_email": "lee@home.io"}
+    row |= {"owner_email": "lee", "org": "acme", "namespace": "lee"}
+    revoked_at = datetime(2026, 1, 1) if status == "revoked" else None
+    grant = {"namespace": "team", "role": "writer", "status": "active", "revoked_at": revoked_at}
+    if status == "pending":
+        grant["status"] = "pending"
+    rows = [] if status == "none" else [grant]
+
+    class _CH:
+        async def query_one(self, *_a: Any, **_k: Any) -> None:
+            return None  # no other account names the new address
+
+        async def query_all(self, sql: str, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
+            return [] if "DISTINCT namespace" in sql else rows  # lee has no row of its own
+
+    async def _row(org: str, namespace: str) -> dict[str, Any]:
+        return row
+
+    async def _linked(email: str) -> list[tuple[str, str]]:
+        return []
+
+    async def _held(org: str, namespace: str, email: str) -> bool:
+        return email == "lee@home.io"  # an SSO account holds the old address
+
+    monkeypatch.setattr(account_admin.settings, "oauth_login_provider", "oidc")
+    monkeypatch.setattr(namespaces, "fetch_row", _row)
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
+    monkeypatch.setattr(account_admin.sso_links, "linked", _linked)
+    monkeypatch.setattr(account_admin, "_verified_elsewhere", _held)
+    plan = asyncio.run(account_admin.link_plan("lee@corp.io", "acme", "lee"))
+    assert plan["was"] == "lee@home.io" and plan["elsewhere"] is True
+    # The row capped lee's tokens at rank 0 while the tie held: it is carried to
+    # lee, revoked, so a token minted under the tie stays capped.
+    assert [g["namespace"] for g in plan["revoked"]] == ([] if status == "none" else ["team"])
+
+
+_ELSEWHERE = "is another account's verified email: its grants stay theirs"
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "elsewhere", "line"),
+    [
+        (True, True, f"lee@home.io {_ELSEWHERE}"),
+        (True, False, "revoked under lee@home.io, so revoked for lee too: team"),
+        # The applied link names the address it read, not the plan's.
+        (False, True, f"lee@old.io {_ELSEWHERE}"),
+        (False, False, "  revoked for lee too: team"),
+    ],
+)
+def test_the_link_names_whose_grants_it_caps(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    dry_run: bool,
+    elsewhere: bool,
+    line: str,
+) -> None:
+    import argparse
+
+    from server.cli import sso
+
+    async def plan(email: str, org: str, namespace: str) -> dict[str, Any]:
+        row = {"owner_email": "lee"}
+        revoked = [{"namespace": "team"}]
+        # The applied link reports what it read under the claims, not this plan.
+        seen = elsewhere if dry_run else not elsewhere
+        return {"row": row, "was": "lee@home.io", "revoked": revoked, "elsewhere": seen}
+
+    async def link(*a: Any, **k: Any) -> tuple[str, list[str], bool]:
+        assert not dry_run, "a dry run links nothing"
+        return "lee@old.io", ["team"], elsewhere
+
+    monkeypatch.setattr(account_admin, "link_plan", plan)
+    monkeypatch.setattr(account_admin, "link_account", link)
+    monkeypatch.setattr(sso, "run_connected", lambda run: asyncio.run(run(None)))
+    args = argparse.Namespace(email="lee@corp.io", org="acme", namespace="lee", dry_run=dry_run)
+    assert sso._cmd_link(args) == 0
+    out = capsys.readouterr().out
+    assert line in out and (_ELSEWHERE in out) is elsewhere

@@ -14,6 +14,10 @@ import server.identity.app.token_grants as tg
 from server.identity.domain.grants import GrantState
 from server.identity.store import grants as grants_repo
 
+# A revoke reads no directory ties here (`conftest.no_directory_ties`).
+pytestmark = pytest.mark.usefixtures("no_directory_ties")
+
+
 ORG = "clickhouse"
 
 
@@ -153,11 +157,18 @@ async def test_revoking_the_person_cascades_to_the_tokens_they_minted_on_that_na
     fake = _FakeCH(live, [{"sa_subject": "sa:t1"}, {"sa_subject": "sa:t2"}])
     import server.auth.aliases as aliases
 
-    async def _aliases(org: str, subject: str, *, ch: Any = None) -> list[str]:
+    async def _spellings(org: str, subject: str, *, ch: Any = None) -> list[str]:
         return [subject, "alice"]
 
-    monkeypatch.setattr(aliases, "subject_aliases", _aliases)
-    touched = await tg.cascade_revoke_to_created_tokens(ORG, "code-private", "alice@x", ch=fake)
+    async def _none_left(*_a: Any, **_k: Any) -> list[str]:
+        return []  # alice holds no grant of her own left on the namespace
+
+    # Every spelling a revocation reaches, an unverified email too.
+    monkeypatch.setattr(aliases, "spellings", _spellings)
+    monkeypatch.setattr(grants_repo, "stored_spellings", _none_left)
+    touched = await tg.cascade_revoke_to_created_tokens(
+        ORG, "code-private", "alice@x", unheld=True, ch=fake
+    )
     assert touched == 2
     # only the revoked namespace's grants go; the token keeps secret-notes
     assert [(r["subject"], r["namespace"]) for r in inserted] == [
@@ -166,6 +177,47 @@ async def test_revoking_the_person_cascades_to_the_tokens_they_minted_on_that_na
     ]
     sa_sql, sa_params = next(x for x in fake.sql if "service_accounts" in x[0])
     assert sa_params["subs"] == ["alice@x", "alice"]
+
+
+@pytest.mark.asyncio
+async def test_the_rows_a_revoke_took_reach_their_tokens_whatever_a_read_sees(
+    inserted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The revoke of the address took mallory's row, stored as typed in another case.
+    # A replica that has not seen the revoke still reads it live, and no directory
+    # spelling matches the stored case: the tokens mallory made still lose their grants.
+    fake = _FakeCH([], [])
+    import server.auth.aliases as aliases
+
+    async def _spellings(org: str, subject: str, *, ch: Any = None) -> list[str]:
+        return [subject, "mallory"]
+
+    async def _stale(*_a: Any, **_k: Any) -> list[str]:
+        return ["Mallory"]  # her row, read before the revoke reached this replica
+
+    monkeypatch.setattr(aliases, "spellings", _spellings)
+    monkeypatch.setattr(grants_repo, "stored_spellings", _stale)
+    await tg.cascade_revoke_to_created_tokens(
+        ORG, "team-z", "bob@x", unheld=True, taken=("Mallory",), ch=fake
+    )
+    _, sa_params = next(x for x in fake.sql if "service_accounts" in x[0])
+    assert sa_params["subs"] == ["Mallory", "bob@x", "mallory"]
+
+
+@pytest.mark.asyncio
+async def test_an_unread_directory_still_cascades_under_the_exact_subject(
+    inserted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeCH([], [])
+    import server.auth.aliases as aliases
+
+    async def _unread(org: str, subject: str, *, ch: Any = None) -> list[str]:
+        raise RuntimeError("directory down")
+
+    monkeypatch.setattr(aliases, "spellings", _unread)
+    await tg.cascade_revoke_to_created_tokens(ORG, "code-private", "alice@x", unheld=True, ch=fake)
+    _, sa_params = next(x for x in fake.sql if "service_accounts" in x[0])
+    assert sa_params["subs"] == ["alice@x"]
 
 
 @pytest.mark.asyncio

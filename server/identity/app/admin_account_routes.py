@@ -104,7 +104,7 @@ async def sso_link(input: LinkInput, info: Admin) -> dict[str, Any]:
     """Point one password account at the address its owner signs in with (see `loom sso link`)."""
     _only_a_person(info, "an account is linked to an SSO address", "loom sso link")
     try:
-        was, carried = await account_admin.link_account(
+        was, carried, elsewhere = await account_admin.link_account(
             input.email, input.org, input.namespace, by=_by(info)
         )
     except ValueError as e:
@@ -113,6 +113,9 @@ async def sso_link(input: LinkInput, info: Admin) -> dict[str, Any]:
         "linked": {"org": input.org, "namespace": input.namespace},
         "was": was,
         "carried_revoked": carried,
+        # `was` is another account's verified email: its grants stay that
+        # account's, and `carried_revoked` names the ones capped for this one.
+        "elsewhere": elsewhere,
     }
 
 
@@ -282,8 +285,8 @@ async def revoke_subject(input: RevokeSubjectInput, info: Admin) -> dict[str, An
     instant ahead of the server counts as now), so a later sign-in works. A
     revocation already there is never weakened: a cutoff is recorded beside the
     subject's own revocation and only ever moves later. The spellings `org`'s
-    directory ties to the subject are revoked with it, as grants read them: a
-    person's email and the login handle of the account it signs in to. `org` is
+    directory pairs with the subject, its email verified or not, are revoked with
+    it: a person's email and the login handle of each account naming it. `org` is
     also where the audit rows land; an end user's subject, `<org>/user:<id>`, must
     name it. `sessions` and `tokens` count the sign-in sessions and the tokens made
     by those subjects that the revocation ends, so a repeat answers the same.

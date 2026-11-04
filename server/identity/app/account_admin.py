@@ -12,7 +12,7 @@ from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from typing import Any
 
-from server.auth import agents, aliases, machines, revocation, sso_links
+from server.auth import agents, machines, revocation, sso_links
 from server.auth.grant_claims import account_change, bot_change, trusts_change
 from server.core.naming import SSO_NAMESPACE_PREFIX
 from server.observability import audit
@@ -125,10 +125,30 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
     return linked
 
 
+async def _verified_elsewhere(org: str, namespace: str, email: str) -> bool:
+    """Whether another active account in `org` holds `email` verified (an SSO
+    account's, or one linked to it), so grants under it are that account's."""
+    from server.core.ch import get_client, own_write_reads
+    from server.core.grant_sql import VERIFIED_EMAIL_SQL
+
+    with own_write_reads():
+        row = await get_client().query_one(
+            f"""
+            SELECT 1 AS held FROM loom.namespaces FINAL
+            WHERE org = {{org:String}} AND namespace != {{ns:String}} AND active = 1
+              AND contact_email = {{email:String}} AND {VERIFIED_EMAIL_SQL}
+            LIMIT 1
+            """,
+            params={"org": org, "ns": namespace, "email": email},
+        )
+    return row is not None
+
+
 async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
     """What `link_account` would change: the account row, the address it names
-    now, and the revoked grants that address carries. Raises ValueError when it
-    cannot take `email`."""
+    now, the grants under it to carry to the subject revoked (its revoked ones,
+    or all of them when it is another account's verified email, `elsewhere`).
+    Raises ValueError when it cannot take `email`."""
     from server.core.ch import get_client, own_write_reads
     from server.identity.store import namespaces
 
@@ -171,21 +191,41 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
             params={"org": org, "was": was.lower()},  # grants match in any case, as at the gate
         )
     pending = [g for g in grants if g["revoked_at"] is None and g["status"] == "pending"]
+    live = [g for g in grants if g["revoked_at"] is None]
+    was_linked = elsewhere = False
+    if was:
+        with own_write_reads():  # a link another process just made
+            was_linked = (org, namespace) in await sso_links.linked(was)
+        # An unlinked password account's address was never verified here: its rows
+        # do not admit this account. When it is another account's verified email,
+        # its rows (a pending request too) are that account's and the link leaves
+        # them in place; else they admit no one.
+        elsewhere = not was_linked and await _verified_elsewhere(org, namespace, was)
+        if elsewhere:
+            live = pending = []
     if was and pending:
         named = ", ".join(g["namespace"] for g in pending)
         raise ValueError(
             f"{was} asked to join {named}: reject the request (or grant "
             f"{row['owner_email']} there and then reject it) first"
         )
-    live = [g for g in grants if g["revoked_at"] is None]
     if was and live:
-        # Granted to the address by name, they would reach no one once it is untied.
         named = ", ".join(f"{g['namespace']} ({g['role']})" for g in live)
+        if was_linked:
+            # A linked address's grants admit the person; untied, they would reach no one.
+            raise ValueError(
+                f"{was} holds grants of its own: {named}; grant them to "
+                f"{row['owner_email']} and revoke them first"
+            )
         raise ValueError(
-            f"{was} holds grants of its own: {named}; grant them to "
-            f"{row['owner_email']} and revoke them first"
+            f"{was} holds grants of its own: {named}; they admit no one (the "
+            f"address was never verified): grant them to {row['owner_email']} if "
+            "they were meant for this account, and revoke them first"
         )
-    revoked = [g for g in grants if g["revoked_at"] is not None] if was else []
+    # Each revoked row under the old address capped this account's tokens while the
+    # tie held, and when the address is another account's every row did (at rank
+    # 0): each is carried to the subject revoked, so the cap outlives the tie.
+    revoked = [g for g in grants if elsewhere or g["revoked_at"] is not None] if was else []
     if revoked:
         with own_write_reads():
             own = await get_client().query_all(
@@ -196,20 +236,24 @@ async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
         # Where the subject has a row of its own it caps its tokens already.
         mine = {r["namespace"] for r in own}
         revoked = [g for g in revoked if g["namespace"] not in mine]
-    return {"row": row, "was": was, "revoked": revoked}
+    return {"row": row, "was": was, "revoked": revoked, "elsewhere": elsewhere}
 
 
-async def link_account(email: str, org: str, namespace: str, *, by: str) -> tuple[str, list[str]]:
+async def link_account(
+    email: str, org: str, namespace: str, *, by: str
+) -> tuple[str, list[str], bool]:
     """Let SSO sign-ins with `email` reach the password account (org, namespace)
     registered under another address (a personal one, a `+tag`): its contact
     becomes `email` and it is linked, so the person keeps its subject, grants,
     namespaces and tokens. The operator vouches that `email` is theirs. A grant
-    revoked under the old address stops capping the person's tokens once the
-    address is untied, so each is carried to the subject, revoked. Holds the
-    address as JIT holds it, so no SSO sign-in makes a second account for it
-    meanwhile. Returns the address it had and the namespaces carried."""
+    revoked under the old address (any, when it is another account's verified
+    email) stops capping the person's tokens once the address is untied, so each
+    is carried to the subject, revoked. Holds the address as JIT holds it, so no
+    SSO sign-in makes a second account for it meanwhile. Returns the address it
+    had, the namespaces carried, and whether that address is another account's
+    verified email, as read under the account and email claims."""
     from server.auth.self_signup import CLAIM_TTL_S, email_claim
-    from server.core import grant_cache, leases
+    from server.core import leases
     from server.core.ch import get_client
     from server.core.errors import GrantBusyError
 
@@ -234,8 +278,6 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
             [{**row, "contact_email": email, "updated_at": max(now, row["updated_at"])}],
         )
         await sso_links.link(email, [(org, namespace)], by)
-    await grant_cache.changed(org)  # the person's spellings changed
-    aliases.invalidate(org, [str(row["owner_email"]), was, email])
     await audit.emit(
         "auth.sso_linked",
         org=org,
@@ -247,16 +289,17 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> tupl
             "by": by,
             "subject": row["owner_email"],
             "carried_revoked": carried,
+            "elsewhere": bool(plan["elsewhere"]),
         },
     )
-    return was, carried
+    return was, carried, bool(plan["elsewhere"])
 
 
 async def _carry_revoked(revoked: list[dict[str, Any]], owner: str, by: str) -> list[str]:
-    """The subject's own revoked row on each namespace an address's revoked row
-    named, unless the subject has a row there already (checked again under the
-    grant claims): it caps the person's tokens as the address's did. Returns
-    the namespaces carried."""
+    """The subject's own revoked row on each namespace a row under the old address
+    named (`link_plan`'s list), unless the subject has a row there already
+    (checked again under the grant claims): it caps the person's tokens as the
+    address's did. Returns the namespaces carried."""
     from server.auth.grant_claims import grant_change
     from server.core.ch import get_client
     from server.identity.store import grants
@@ -294,7 +337,8 @@ async def _carry_revoked(revoked: list[dict[str, Any]], owner: str, by: str) -> 
 
 
 async def unlink(email: str, org: str = "", *, by: str) -> list[tuple[str, str]]:
-    """Stop new SSO sign-ins with `email` reaching its linked accounts (in `org`)."""
+    """Stop new SSO sign-ins with `email` reaching its linked accounts (in `org`),
+    and the grants stored under `email` admitting them."""
     accounts = [a for a in await sso_links.linked(email) if org in ("", a[0])]
     await sso_links.unlink(email, accounts, by)
     for account_org, namespace in accounts:

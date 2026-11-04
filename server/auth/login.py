@@ -277,22 +277,27 @@ async def refreshed_roles(subject: str, org: str, roles: list[str]) -> list[str]
     """The roles an OAuth refresh may carry now, or None when the subject has
     no active account left in `org` (deactivated, claim-released) — the refresh
     chain ends there. Re-derived from LOOM_PLATFORM_ADMINS, so removing a host
-    demotes their next refresh; a refresh never promotes. The stored
-    contact_email stands in for the verified email: platform_admin was only
-    granted at sign-in when the IdP verified it (`platform_roles`)."""
+    demotes their next refresh; a refresh never promotes. An account's stored
+    email counts only when it is verified (`VERIFIED_EMAIL_SQL`), as at sign-in
+    (`platform_roles`)."""
+    from server.core.grant_sql import VERIFIED_EMAIL_SQL
+
     row = await get_client().query_one(
         """
-        SELECT contact_email FROM loom.namespaces FINAL
+        SELECT count() AS accounts,
+               -- an owner's other rows (a personal namespace) name no email
+               anyIf(contact_email, contact_email != '' AND {verified}) AS verified_email
+        FROM loom.namespaces FINAL
         WHERE org = {org:String} AND owner_email = {sub:String} AND active = 1
-        LIMIT 1
-        """,
+        """.replace("{verified}", VERIFIED_EMAIL_SQL),
         params={"org": org, "sub": subject},
     )
-    if row is None:
+    row = row or {}  # typed optional; the aggregate answers one row, a count of 0 for none
+    if not int(row.get("accounts") or 0):
         return None
     if "platform_admin" not in roles:
         return ["writer"]
-    return platform_roles(subject, verified_email=str(row.get("contact_email") or ""))
+    return platform_roles(subject, verified_email=str(row.get("verified_email") or ""))
 
 
 async def resolve_identity_for_email(

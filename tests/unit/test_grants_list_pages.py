@@ -305,6 +305,7 @@ class _LocalCH:
         return [
             ddl("namespace_grants"),
             ddl("namespaces"),
+            ddl("sso_links"),
             "INSERT INTO loom.namespace_grants (org, namespace, subject, role, granted_at, "
             "granted_by, revoked_at, version, status, pending_role, pending_since) "
             f"VALUES\n{grants_sql}",
