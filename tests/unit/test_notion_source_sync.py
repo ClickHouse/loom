@@ -28,6 +28,7 @@ from server.knowledge.store import documents
 from server.memory.domain.provenance import pipeline_actor_var
 from server.observability import audit
 from server.settings import settings
+from tests.unit.clock_fake import ManualClock
 
 ORG, NS = "acme", "code-acme-app"
 TOKEN = "ntn_integration_token_for_tests"
@@ -43,6 +44,20 @@ GRANDCHILD = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 @pytest.fixture(autouse=True)
 def _unpaced(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(notion, "PAGE_PACE_S", 0.0)
+
+
+def _paced(monkeypatch: pytest.MonkeyPatch) -> ManualClock:
+    """The pacer at the store's real pace on a manual clock: a sleep is recorded and
+    moves the clock, and nothing waits."""
+    clock = ManualClock(t=1000.0)
+
+    async def _sleep(seconds: float) -> None:
+        clock.sleep(seconds)
+
+    monkeypatch.setattr(notion, "PAGE_PACE_S", 0.35)
+    monkeypatch.setattr(notion.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(notion.asyncio, "sleep", _sleep)
+    return clock
 
 
 def _rt(text: str, **marks: Any) -> list[dict[str, Any]]:
@@ -817,10 +832,7 @@ def test_a_probe_of_twenty_databases_fits_its_time_bound_at_the_store_s_pace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     databases = [f"{n:08x}-0000-4000-8000-000000000000" for n in range(1, 21)]
-    waits: list[float] = []
-
-    async def _sleep(seconds: float) -> None:
-        waits.append(seconds)
+    clock = _paced(monkeypatch)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.startswith("/v1/databases/"):
@@ -832,18 +844,17 @@ def test_a_probe_of_twenty_databases_fits_its_time_bound_at_the_store_s_pace(
             return httpx.Response(200, json={"data_sources": sources})
         return httpx.Response(200, json={"results": [], "has_more": False})
 
-    monkeypatch.setattr(notion, "PAGE_PACE_S", 0.35)
     # Another integration's queue is long; this probe does not wait on it.
-    monkeypatch.setattr(notion, "_next_request_at", {"0" * 16: notion.time.monotonic() + 600.0})
-    monkeypatch.setattr(notion.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(notion, "_next_request_at", {"0" * 16: clock.t + 600.0})
     seen = _probe_world(monkeypatch, handler)
     found = asyncio.run(
         source_probes.probe("notion", {"page_ids": [], "database_ids": databases}, TOKEN)
     )
     # Every database is read; only three first data sources are queried.
     assert len(seen) == 23 and found.more
-    # The longest wait is the probe's length at the real pace, well inside its bound.
-    assert max(waits) < float(settings.knowledge_source_probe_timeout_s) / 2
+    # Each request after the first waits one pace: 7.7 s in all, well inside the bound.
+    assert clock.sleeps == pytest.approx([0.35] * 22)
+    assert sum(clock.sleeps) < float(settings.knowledge_source_probe_timeout_s) / 2
 
 
 @pytest.mark.parametrize("held_in", ["page", "column"])
@@ -937,19 +948,13 @@ def test_a_rename_s_old_address_is_retired_when_a_new_child_read_is_rate_limited
 def test_another_integration_s_busy_pacer_does_not_slow_a_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    waits: list[float] = []
-
-    async def _sleep(seconds: float) -> None:
-        waits.append(seconds)
-
-    monkeypatch.setattr(notion, "PAGE_PACE_S", 0.35)
+    clock = _paced(monkeypatch)
     # Another integration has a long queue of requests ahead.
-    busy = {"0" * 16: notion.time.monotonic() + 600.0}
-    monkeypatch.setattr(notion, "_next_request_at", busy)
-    monkeypatch.setattr(notion.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(notion, "_next_request_at", {"0" * 16: clock.t + 600.0})
     _probe_world(monkeypatch, _probe_store)
     asyncio.run(source_probes.probe("notion", {"page_ids": [PAGE], "database_ids": [DB]}, TOKEN))
-    assert waits == pytest.approx([0.35, 0.70], abs=0.05)
+    # Three requests: the first goes at once, each later one a pace after the last.
+    assert clock.sleeps == pytest.approx([0.35, 0.35])
 
 
 def _mock_mining(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -1004,25 +1009,19 @@ def test_the_pacer_forgets_only_integrations_no_longer_waiting(
 ) -> None:
     import hashlib
 
-    waits: list[float] = []
-
-    async def _sleep(seconds: float) -> None:
-        waits.append(seconds)
-
-    now = notion.time.monotonic()
+    clock = _paced(monkeypatch)
+    now = clock.t
     waiting = hashlib.sha256(TOKEN.encode()).hexdigest()[:16]
     queue = {f"expired{n:09d}": now - 1.0 for n in range(40)}
     queue |= {f"later{n:011d}": now + 60.0 for n in range(24)}
     queue[waiting] = now + 10.0
-    monkeypatch.setattr(notion, "PAGE_PACE_S", 0.35)
     monkeypatch.setattr(notion, "_next_request_at", queue)
-    monkeypatch.setattr(notion.asyncio, "sleep", _sleep)
     asyncio.run(notion._pace(TOKEN))
     assert not [k for k in queue if k.startswith("expired")]
     assert len([k for k in queue if k.startswith("later")]) == 24
     # The waiting integration still waits its turn, then queues one pace later.
-    assert waits == pytest.approx([10.0], abs=0.05)
-    assert queue[waiting] == pytest.approx(now + 10.35, abs=0.05)
+    assert clock.sleeps == pytest.approx([10.0])
+    assert queue[waiting] == pytest.approx(now + 10.35)
 
 
 def test_an_edited_page_goes_before_re_reads_that_only_settle(
@@ -1137,3 +1136,18 @@ def test_a_callout_keeps_every_line_of_its_children_quoted() -> None:
     md, _ = convert.page_markdown([callout])
     assert md == "> Note\n>\n> First.\n>\n> ```sql\n> select 1\n>\n>\n> from t\n> ```"
     assert all(line.startswith(">") for line in md.split("\n"))
+
+
+def test_marks_wrap_a_run_s_text_and_keep_the_spaces_around_it() -> None:
+    para = {
+        "type": "paragraph",
+        "paragraph": {
+            "rich_text": _rt("We keep ")
+            + _rt("bold ", bold=True)
+            + _rt(" text", italic=True)
+            + _rt(" code ", code=True)
+            + _rt("end.")
+        },
+    }
+    md, _ = convert.page_markdown([para])
+    assert md == "We keep **bold**  *text* `code` end."

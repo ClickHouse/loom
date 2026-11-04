@@ -123,13 +123,13 @@ A `gdrive` probe exchanges the key for a read-only token, checks every folder to
 (one call each) and lists the included files of all folders in one call, the first 1000
 at most. A `linear` probe reads the first page (50 documents) of every project together,
 so a project the key's account cannot see refuses the probe. A `notion` probe reads each
-listed page and database in turn (one in the trash refuses) and counts the first 100
-pages of the first data source of up to three databases, so a probe of 20 ids stays well
-inside its bound at the store's pace; `more` says the count leaves pages out. A
-`recording` probe exchanges its credential, reads each id and counts the recordings it
-lists. Each is bounded as a whole by `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` (default
-20 s); past it `add` and `rotate` answer `SOURCE_UNREACHABLE` and `check` answers
-`reachable: false`.
+listed page and database in turn (one in the trash refuses) and counts the listed pages
+and the first 100 pages of each of up to three databases (read from each database's
+first data source), so a probe of 20 ids stays well inside its bound at the store's
+pace; `more` says the count leaves pages out. A `recording` probe exchanges its
+credential, reads each id and counts the recordings it lists. Each is bounded as a whole
+by `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` (default 20 s); past it `add` and `rotate`
+answer `SOURCE_UNREACHABLE` and `check` answers `reachable: false`.
 
 Every write of a namespace's sources (`add`, `rotate`, `remove`, `sync_now`, and the
 retirement in `code.repo.remove`) is serialized by a lease, so a write's checks still

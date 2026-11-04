@@ -126,8 +126,8 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     if trusted:
         _drop_out_of_scope(t)
         result.waits = {k: v for k, v in result.waits.items() if k in t.ids}
-    # The stamp trails the listing by the settle margin too, so a database page read
-    # within the margin is listed again by the next incremental turn.
+    # The stamp trails the listing by 150 s, the shared minute plus the settle margin,
+    # so a database page read within the margin is listed again by the next turn.
     newest = max((f["modifiedTime"] for f in t.items), default="")
     result.newest = sync.capped(newest, listed_at - timedelta(seconds=_SETTLE_S))
     stored = {

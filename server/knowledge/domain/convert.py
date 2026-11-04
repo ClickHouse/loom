@@ -173,21 +173,24 @@ def _rich(items: Any) -> str:
             continue
         text = str(item.get("plain_text") or "")
         marks = item.get("annotations") or {}
-        if not text.strip():
+        core = text.strip()
+        if not core:
             out.append(text)
             continue
+        # Marks wrap the run's text, not the spaces around it ("**bold** ", not "**bold **").
+        lead, trail = text[: len(text) - len(text.lstrip())], text[len(text.rstrip()) :]
         if item.get("type") == "equation":
-            text = f"${text}$"
+            core = f"${core}$"
         elif marks.get("code"):
-            text = f"`{text}`"
-        elif text == text.strip():
+            core = f"`{core}`"
+        else:
             for mark, wrap in (("bold", "**"), ("italic", "*"), ("strikethrough", "~~")):
                 if marks.get(mark):
-                    text = f"{wrap}{text}{wrap}"
+                    core = f"{wrap}{core}{wrap}"
         href = item.get("href")
         if isinstance(href, str) and href.startswith("https://") and item.get("type") == "text":
-            text = f"[{text}]({href})"
-        out.append(text)
+            core = f"[{core}]({href})"
+        out.append(lead + core + trail)
     return "".join(out).strip()
 
 
