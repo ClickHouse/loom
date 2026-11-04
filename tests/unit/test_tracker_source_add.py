@@ -259,7 +259,7 @@ def test_grant_review_refuses_what_it_cannot_classify_as_read_only() -> None:
     rev = ob.review_grants(
         ["GRANT SELECT(`a, b`, `c ON d`) ON db.t TO `loom-ro`", "GRANT `my, role` TO `loom-ro`"]
     )
-    assert rev.read_only and rev.roles == ["`my, role`"]
+    assert rev.read_only and rev.roles == ["my, role"]
     rev = ob.review_grants(["GRANT analyst TO u WITH ADMIN OPTION"])
     assert rev.roles == ["analyst"] and rev.refused == ["WITH ADMIN OPTION (analyst)"]
     ob.review_roles(rev, [{"role_name": "analyst", "with_admin_option": 1}])

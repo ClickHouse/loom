@@ -1142,8 +1142,8 @@ function CheckStep({
           {refusal?.gate === "readonly" && <span className="text-danger">{refusal.message}</span>}
           {checked && !refusal && checked.roles.length > 0 && (
             <>
-              It also holds the roles <span className="font-mono">{checked.roles.join(", ")}</span> — make sure that's
-              intended.
+              It also holds the roles <span className="font-mono">{checked.roles.join(", ")}</span>, which grant read
+              access only.
             </>
           )}
         </CheckRow>

@@ -135,7 +135,7 @@ def review_grants(lines: list[str]) -> GrantReview:
             rev.refused.append(line)
             continue
         if on < 0:
-            rev.roles.extend(names)
+            rev.roles.extend(_unquote(r) for r in names)
             if " WITH ADMIN OPTION" in upper:
                 rev.refused.extend(f"WITH ADMIN OPTION ({_unquote(r)})" for r in names)
             continue
@@ -171,7 +171,7 @@ def review_roles(rev: GrantReview, enabled: list[dict[str, Any]]) -> None:
     be checked) and an admin option on any role in the chain, nested ones
     included."""
     names = {str(r.get("role_name")) for r in enabled}
-    rev.not_enabled.extend(r for r in rev.roles if _unquote(r) not in names)
+    rev.not_enabled.extend(r for r in rev.roles if r not in names)
     rev.refused.extend(
         f"WITH ADMIN OPTION ({r.get('role_name')})" for r in enabled if r.get("with_admin_option")
     )
