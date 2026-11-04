@@ -142,9 +142,10 @@ A run the spend cap stops, in its setup or later, keeps its namespaces and resum
 the same `--out` (exit code 1). A run that fails or is interrupted after its setup (a
 provider error, a server that went away, Ctrl-C) keeps them too, and prints the
 `loom namespaces-gc` command that erases them if it is not resumed. A resume must use
-the same `--org`, arms, `--arm4-namespace`, code index use, window size, and reader and
-judge models, or it is refused. A finished run, or one whose setup failed other than on
-the cap, erases its namespaces (unless `--keep-namespaces`) and is not resumed.
+the same `--org`, arms, `--arm4-namespace`, code index use, window size, and reader,
+judge and extraction models, or it is refused. A finished run, or one whose setup failed
+other than on the cap, erases its namespaces (unless `--keep-namespaces`) and is not
+resumed.
 
 Fill each row's `verdict` (`correct`, `partly`, `wrong` or `misleading`) in
 `extraction_labels.todo.json` and pass the file to `score --extraction-labels` for
