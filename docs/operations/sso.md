@@ -680,7 +680,7 @@ loom call /v1/admin/revoke_subject --data \
 ```
 
 Loom revokes the subject and every spelling the org's directory pairs with it,
-its email verified or not (grants are read under verified pairs only): an email
+its email verified or not (a grant admits under verified pairs only): an email
 reaches the login handle of each account naming it (an SSO account's subject is
 its namespace, `u-…`), and a handle reaches its email. For each, every token
 whose subject it is, every token it made or that descends from one of its tokens,

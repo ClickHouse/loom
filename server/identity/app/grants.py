@@ -338,7 +338,7 @@ async def _live_grant_rows(org: str, namespace: str, subject: str) -> list[tuple
     under every spelling the gate admits the person by (the subject, its login
     handle, its verified email), matched in any case as the gate matches them,
     since one left live would keep admitting them. When there is none and the
-    subject is an address, the first row under a spelling a revocation reaches
+    subject is an address, the rows under the spellings a revocation reaches
     (`aliases.spellings`): a grant for it stored under an unverified account's
     handle. A handle never falls back to its unverified email, which may name
     someone else's grant."""
@@ -355,7 +355,7 @@ async def _live_grant_rows(org: str, namespace: str, subject: str) -> list[tuple
         return found
     seen = {s.lower() for s in verified}
     others = [s for s in await spellings(org, subject) if s.lower() not in seen]
-    return (await _rows_under(org, namespace, others))[:1]
+    return await _rows_under(org, namespace, others)
 
 
 async def _rows_under(

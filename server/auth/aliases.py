@@ -12,7 +12,7 @@ directory ties to the same account: the row whose `owner_email` is the
 subject gives its `contact_email`, the row whose `contact_email` is the
 subject gives its `owner_email`. Only rows whose email is verified take part
 (`VERIFIED_EMAIL_SQL`): an SSO account's, or one linked to the address. A
-self-signup email is unverified, so it ties nothing: a grant written under an
+self-signup email is unverified, so it admits nothing: a grant written under an
 address before its owner signs in is not handed to whoever typed it first.
 Service-account subjects (`sa:` prefix) and wildcards have no aliases. The
 gate's grant map (`server.core.grant_cache`) and the `grants.list` fold
