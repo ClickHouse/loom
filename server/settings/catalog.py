@@ -5668,8 +5668,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.touch": 40,
     "memory.unlock": 40,
     "memory.unpin": 40,
-    "memory.update": 120,
-    "memory.update_by_id": 80,
+    # + the audit-row wait each revision makes.
+    "memory.update": 170,
+    "memory.update_by_id": 130,
     "memory.verify": 80,
     "memory_schema.approve": 120,
     "memory_schema.list": 120,
@@ -5871,8 +5872,8 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
     "memory.get_by_id": {"audited": 100},
     "memory.history": {"audited": 130},
     "memory.restore": {"undo": 130, "webhook": 130},
-    "memory.update": {"webhook": 170},
-    "memory.update_by_id": {"webhook": 130},
+    "memory.update": {"webhook": 220},
+    "memory.update_by_id": {"webhook": 180},
     "session.brief_save": {
         "model": 90000,
     },
