@@ -1844,6 +1844,17 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "apply it with its guard. Nothing is applied; show a proposal to the person to "
         "approve, never apply it yourself."
     ),
+    "knowledge.inspect": (
+        "A namespace's documents, read-only: live and deleted counts by format and source "
+        "scheme, retired versions, live chunks per embedding model and how many search can "
+        "serve; the newest documents with their chunks (searchable, unembedded, other "
+        "model, versions, sizes) and the decision rows citing them, split into decided and "
+        "proposed, each with confirmed, unconfirmed, source_changed and outcome_known; "
+        "findings on chunks (`kind` system_state: no chunks, no vector, "
+        "another model; usage_heuristic: two live versions); namespace.audit's "
+        "document-shaped memory findings. `skipped` names sections not read; their fields "
+        "are null or empty, not zero."
+    ),
     "namespace.inventory": (
         "What a namespace holds and who appears in it, read-only: live counts and "
         "newest write for memories, records, documents, runs and integrations; the "

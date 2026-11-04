@@ -54,6 +54,7 @@ the operations reference.
 | `knowledge.delete`          | writer | Supersede a document and its chunks.                                                   |
 | `knowledge.bulk_delete`     | writer | The same for up to 500 `source_uris`.                                                  |
 | `knowledge.reads`           | viewer | How often agents opened each document over the last `days` (1–30).                     |
+| `knowledge.inspect`         | viewer | A report on the namespace's documents ([below](#inspecting-a-namespaces-documents)).   |
 | `knowledge.dedup_list`      | admin  | Documents (and, optionally, chunks) of the namespace with identical content hashes.    |
 | `knowledge.dedup_resolve`   | admin  | Supersede one side of a duplicate pair.                                                |
 | `knowledge.ingest`          | writer | Extract an uploaded file and publish it as a document revision (a job).                |
@@ -454,6 +455,70 @@ namespace and appends the passages as a citable block (per request `knowledge=fa
 opts out), and routes a summary-shaped question to `knowledge.synthesize` when the
 knowledge search concentrates on a few documents. See
 [search and ask](./memory/search-and-ask.md).
+
+## Inspecting a namespace's documents
+
+`knowledge.inspect` (viewer) reports what a namespace's documents are, which of their
+versions search serves, and what was extracted from them. It reads what is stored, never
+parses a document and writes nothing. It is in the [assistant
+toolset](../reference/mcp.md#the-assistant-toolset). `sample_limit` (0–100, default 20)
+bounds the listed documents and every finding's samples.
+
+- **`documents`**: live and deleted (`knowledge.delete`) documents by format (the row's
+  `format`, which `knowledge.ingest` sets, else the `ingested_format` a source sync
+  records in its metadata (`transcript`, `markdown`, `slides`, or the extractor's `pdf`
+  or `pptx`), else the stored content type, else the extension of the original filename
+  or the `source_uri` path) and by `source_uri` scheme, and the newest ingest. A
+  document row holds only its current version, and its `revision` numbers it (1, 2,
+  ...): `earlier_revisions` sums the revisions before each current one, and `unnumbered`
+  counts rows no write numbered (`revision` 0). An earlier revision's text is known only
+  through its retired chunks. `retired_versions` counts those chunk versions: the ones a
+  later write or a delete replaced, and every `knowledge.ingest` attempt that inserted
+  chunks and never published (failed, cancelled, or beaten by a later write), which no
+  revision numbers.
+- **`chunks`**: the live chunks per embedding model, how many carry a vector, and
+  `searchable`, the ones under the server's model (`embedder_model`) with a vector:
+  `knowledge.search` reads no others.
+- **`listed`**: the newest live documents, each with its version, its `revision`, the
+  `ingestion_id` of the `knowledge.ingest` job that published it (empty for a text
+  write), its retired versions, its live chunks (searchable, unembedded, under another
+  model, distinct versions, characters per chunk) and its decisions. `listed_complete`
+  says whether the list holds every live document.
+- **`decisions`**: the live decision rows whose `source_resource_id` cites a section of
+  a document (`knowledge:<namespace>/<source_uri>#<section>`, as
+  `loom decisions extract` writes it), per listed document and for the namespace. A
+  citation of `doc#v2#Intro` counts for the document `doc#v2`, never for `doc`. Each
+  stage is counted apart: `decided`, and `proposed` (a decision recorded with
+  `stage="proposed"`, tagged `decision:proposed`). Within a stage, the rows are counted
+  as confirmed (pinned or attested; for a proposal that backs its wording, not a
+  choice), unconfirmed, tagged `source-changed`, and with a recorded outcome. Rows the
+  extractor wrote into a repository's namespace are not counted.
+- **`findings`**: one per check, in the shape of the [audit's
+  findings](./namespaces-and-sharing.md#reading-a-namespaces-health), a clean check at
+  `info` with count 0. `documents_without_chunks`, `unembedded_chunks` and
+  `chunks_under_other_model` are `system_state`: the server's own state.
+  `mixed_live_versions` is a `usage_heuristic`: live chunks of two versions of one
+  document, which `knowledge.add` on an existing `source_uri` leaves and
+  `knowledge.upsert` does not; a `knowledge.ingest` publish passes through it too,
+  briefly, or until the job's next run when it could not confirm its insert. Each
+  finding names the documents `knowledge.ingest` published apart (`ingested`,
+  `ingested_samples`). A text document is repaired with `knowledge.upsert` or
+  `loom rechunk --source-uri <uri>`; an ingested one with `knowledge.ingest` of its
+  original (`GET /v1/knowledge.download` serves it), since a text write re-cuts its
+  rendered text and clears its format, parser, coverage and ingestion. For
+  `mixed_live_versions` on an ingested document, a job of the source still processing at
+  its publish stage settles the state on its next run, so it is re-ingested only when no
+  ingest of the source is open.
+- **`memory_findings`**: `namespace.audit`'s `oversized_values` and `episodic_blobs`,
+  memory rows that may belong in documents, cited by code and count. `mentor.brief`
+  reports the same shape for one agent as `documents_as_memories`.
+- **`skipped`**: each section that could not be read, as `section: reason`. Its fields
+  are null or empty, not zero.
+
+Documents are the namespace's under any read scope, as every `knowledge.*` read serves
+them. Under a token narrowed to one user or session, the decisions count only the rows
+inside that scope, and `memory_findings` is skipped, since the audit reads every user's
+rows.
 
 ## Replacing, editing and deleting
 
