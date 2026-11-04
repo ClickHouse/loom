@@ -87,7 +87,8 @@ def parser() -> argparse.ArgumentParser:
         "--arms",
         type=_arms,
         default=[0, 1, 2, 3, 4],
-        help="Comma list of arms (default 0,1,2,3,4; 5 is added when arm 4 has no code index)",
+        help="Comma list of arms (default 0,1,2,3,4; 5 is added when arm 4 has no files: "
+        "no --code-index or --arm4-namespace)",
     )
     r.add_argument("--k", type=int, default=4, help="Samples per task and arm (default 4)")
     r.add_argument("--tasks", default="", help="Comma list of task ids (default all)")

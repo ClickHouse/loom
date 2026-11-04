@@ -93,7 +93,9 @@ def run_detector(d: dict[str, Any], files: Diff) -> bool | None:
 # A memory key cited in brackets: `[design/cache/eviction]`, `[decision:0a1b2c]`.
 _CITED_KEY = re.compile(r"\[([A-Za-z0-9_.-]+(?:[:/][A-Za-z0-9_.:/-]+)+)\]")
 # Ends at a line end, a closing bracket or backtick, or the next pointer.
-_CITED_KNOWLEDGE = re.compile(r"knowledge:[^\s\]\)`]+(?:(?!knowledge:)[^\n\]\)`])*")
+_CITED_KNOWLEDGE = re.compile(
+    r"knowledge:(?:(?!knowledge:)[^\s\]\)`])+(?:(?!knowledge:)[^\n\]\)`])*"
+)
 
 
 def parse_knowledge(cite: str, source_uris: list[str]) -> tuple[str, str, str] | None:
@@ -103,9 +105,9 @@ def parse_knowledge(cite: str, source_uris: list[str]) -> tuple[str, str, str] |
     ns, _, uri_section = rest.partition("/")
     for uri in sorted(source_uris, key=len, reverse=True):
         if uri_section.startswith(uri):
-            rest = uri_section[len(uri) :]
+            after = uri_section[len(uri) :]
             # A section only after `#`: anything else after the uri is the sentence's.
-            section = rest[1:].strip().rstrip(".,;…") if rest.startswith("#") else ""
+            section = after[1:].strip().rstrip(".,;…") if after.startswith("#") else ""
             return ns, uri, section
     return None
 
@@ -158,11 +160,11 @@ def section_text(content: str, section: str, limit: int = 1500) -> str | None:
 def _cited_section(cited: str, sections: list[Any]) -> Any:
     """The one section a cited breadcrumb names. A citation may give the path whole or
     only its last segments, and may arrive cut short (the citation pattern stops at a
-    `)` or a backtick) or with words after it. In that order: the sections whose path
-    ends with the cited segments; else those whose path, or its last segments, the cited
-    text is the start of; else the longest path the cited text starts with, followed by
-    words rather than another segment. A citation that is one section's whole path names
-    that section first. Exactly one section must fit, or none is chosen."""
+    `)` or a backtick) or with words after it. In that order: the one section whose
+    whole path the citation is; else the sections whose path ends with the cited
+    segments; else those whose path, or its last segments, the cited text is the start
+    of; else the longest path the cited text starts with, followed by words rather than
+    another segment. Exactly one section must fit, or none is chosen."""
     from server.knowledge.domain.chunking import SEPARATOR
 
     exact: dict[int, Any] = {}

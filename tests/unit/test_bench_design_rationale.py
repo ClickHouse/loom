@@ -4,6 +4,7 @@ synthetic example set end to end over a fake Loom and a fake model."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from pathlib import Path
@@ -407,8 +408,9 @@ def test_the_extraction_bound_covers_every_window_the_extractor_reads():
     from bench.design_rationale.llm import CHARS_PER_TOKEN_WORST
     from server.settings import settings
 
-    calls, revised_in, _ = run.extraction_bound(ts.documents["upload-retries-v2"], 6000)
-    _, first_in, _ = run.extraction_bound(ts.documents["upload-retries"], 6000)
+    first = ts.documents["upload-retries"]
+    calls, revised_in, _ = run.extraction_bound(dataclasses.replace(first, revision_of="x"), 6000)
+    _, first_in, _ = run.extraction_bound(first, 6000)
     known = settings.memory_decision_extract_known_max
     allowance = known * run.KNOWN_DECISION_CHARS // CHARS_PER_TOKEN_WORST
     # Each call carries the whole allowance: the prompt keeps a scenario uncut.
@@ -994,6 +996,10 @@ def test_each_knowledge_pointer_ends_where_the_next_begins():
     assert len(cites) == 2 and "knowledge:" not in cites[0][len("knowledge:") :]
     sections = [detectors.parse_knowledge(c, [uri])[2] for c in cites]
     assert sections == ["Doc > A and", "Doc > B here"]
+    # Two pointers with no space between them.
+    joined = detectors.find_citations(f"knowledge:kb/{uri}#A,knowledge:kb/{uri}#B", [uri])
+    assert [c["cite"] for c in joined] == [f"knowledge:kb/{uri}#A,", f"knowledge:kb/{uri}#B"]
+    assert [detectors.parse_knowledge(c["cite"], [uri])[2] for c in joined] == ["A", "B"]
     # A pointer with no section: the words after it are the sentence's, not a section.
     (bare,) = detectors.find_citations(f"knowledge:kb/{uri} is what we read", [uri])
     assert detectors.parse_knowledge(bare["cite"], [uri]) == ("kb", uri, "")
