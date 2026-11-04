@@ -147,7 +147,6 @@ const REASON_LABEL: Record<string, string> = {
   no_address: "no https link",
   no_extractor: "no extractor for the format",
   too_large: "over the size limit",
-  unreachable: "unreachable",
   extractor_unavailable: "extractor unavailable",
 };
 

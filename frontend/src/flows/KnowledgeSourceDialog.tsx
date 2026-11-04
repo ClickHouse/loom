@@ -98,7 +98,8 @@ export function AddSourceDialog({
         onOpenChange(false);
       }
     } catch (e) {
-      setChecked(null);
+      // A failed add keeps the check that passed, so Add can be tried again.
+      if (dryRun) setChecked(null);
       setError(humanizeError(e));
     } finally {
       setBusy(null);
@@ -137,7 +138,7 @@ export function AddSourceDialog({
       }
     >
       <TextField
-        label="Name (2-32 lower-case letters, digits, - or _)"
+        label="Name (2-32 lower-case letters, digits, - or _, starting with a letter)"
         value={form.name}
         autoComplete="off"
         placeholder="design-docs"

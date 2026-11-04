@@ -138,6 +138,22 @@ describe("AddSourceDialog", () => {
     expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
     expectKeyNowhere();
   });
+  it("a refused add keeps the passed check, so Add can be tried again", async () => {
+    vi.mocked(addKnowledgeSource).mockImplementation(async (_id, _f, dryRun) => {
+      if (dryRun) return addResult(true);
+      throw new ApiError({ status: 503, code: "OVERLOADED", message: "the namespace's sources are busy" });
+    });
+    renderAdd();
+    await fill();
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    await screen.findByText(/lists 12 documents/);
+    const add = screen.getByRole("button", { name: "Add source" });
+    fireEvent.click(add);
+    expect(await screen.findByRole("alert")).toHaveTextContent("busy");
+    expect(add).toBeEnabled();
+    expect(screen.getByText(/lists 12 documents/)).toBeInTheDocument();
+    expectKeyNowhere();
+  });
 });
 
 describe("RotateSourceDialog", () => {
