@@ -1,11 +1,13 @@
 """The sync of registered document sources into their repositories' documents:
 one pass over every active source, run by the `knowledge_source_sync` worker and
 by `loom knowledge sync`. A folder's turn is below; each other kind has its own
-turn module (`source_sync_linear`, `source_sync_recording`), chosen by `_turn_of`,
-which builds on the public helpers here: `Pass` and `TurnResult`, `start_waits`,
-`full_due` and `capped` for a turn's start and stamp, `sync_item` for one listed
-item, with `give_up`, `wait` and `require_current` for its fetch,
-`write_document`, `retire_absent` and `retire`, and `client_error`.
+turn module (`source_sync_linear`, `source_sync_notion`, `source_sync_recording`),
+chosen by `_turn_of`, which builds on the public helpers here: `Pass` and
+`TurnResult`, `start_waits`, `full_due`, `capped`, `stamp_of` and `valid_stamp` for a
+turn's start and stamp, `sync_item` for one listed item, with `give_up`, `wait` and
+`require_current` for its fetch, `write_document`, `retire_absent` and `retire`, and
+`client_error`. A kind's own bookkeeping goes in `TurnResult.kind_state`, which the
+sync state keeps.
 
 A pass reads the active sources and drops those whose namespace is inactive or no
 longer a repository's trunk. Sources a maintainer asked to sync (`sync_now`) go
@@ -76,6 +78,7 @@ import contextlib
 import dataclasses
 import functools
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -184,6 +187,8 @@ class TurnResult:
     # The newest revision the listing returned, capped at the listing's start.
     newest: str = ""
     full: bool = False
+    # A kind's own bookkeeping, written into the sync state as it is.
+    kind_state: dict[str, Any] = field(default_factory=dict)
 
     def fail(self, status: str, error: str) -> None:
         """The turn ends `status` with `error`, as a pair: the first plain failure
@@ -376,6 +381,10 @@ def _turn_of(kind: str) -> Callable[..., Awaitable[TurnResult]]:
         from server.knowledge.app import source_sync_linear
 
         return source_sync_linear.turn
+    if kind == "notion":
+        from server.knowledge.app import source_sync_notion
+
+        return source_sync_notion.turn
     if kind == "recording":
         from server.knowledge.app import source_sync_recording
 
@@ -399,7 +408,7 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     detail = json_object(state.get("detail", ""))
     stamp = state.get("state_value", "")
     turn = TurnResult()
-    turn.full = bool(detail.get("full")) or not gdrive.valid_stamp(stamp) or full_due(detail)
+    turn.full = bool(detail.get("full")) or not valid_stamp(stamp) or full_due(detail)
     start_waits(turn, detail)
     credential = unseal("knowledge_sources.credential", src.credential_enc)
     if not credential:
@@ -494,7 +503,21 @@ def capped(newest: str, listed_at: datetime) -> str:
         return ""
     if seen <= cap:
         return newest
-    return cap.strftime("%Y-%m-%dT%H:%M:%S.") + f"{cap.microsecond // 1000:03d}Z"
+    return stamp_of(cap)
+
+
+def stamp_of(at: datetime) -> str:
+    """`at` (UTC) as the stores write their stamps: RFC 3339 with milliseconds."""
+    return at.strftime("%Y-%m-%dT%H:%M:%S.") + f"{at.microsecond // 1000:03d}Z"
+
+
+# A stamp as every store reports it and `stamp_of` writes it (RFC 3339, UTC).
+_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z")
+
+
+def valid_stamp(stamp: str) -> bool:
+    """Whether a stored stamp is one a store reported or `stamp_of` wrote."""
+    return bool(_STAMP_RE.fullmatch(stamp))
 
 
 async def _folders_visible(token: str, folders: list[str], turn: TurnResult) -> bool:
@@ -942,6 +965,7 @@ async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnRes
             skipped=turn.skipped,
             error=turn.error or turn.note,
         )
+        detail.update(turn.kind_state)
         if turn.waits_read:
             detail["file_waits"] = turn.waits
             if turn.waits_reset_for:
@@ -951,7 +975,7 @@ async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnRes
         stamp = current.get("state_value", "")
         if turn.complete:
             # A change made after this listing is stamped later than anything it saw.
-            stamp = max(turn.newest, stamp if gdrive.valid_stamp(stamp) else "")
+            stamp = max(turn.newest, stamp if valid_stamp(stamp) else "")
             if turn.full:
                 detail["full_listed_at"] = now
             if detail.get("requested_at") == asked:
@@ -1430,8 +1454,10 @@ __all__ = [
     "retire_absent",
     "run_sync",
     "source_uri_of",
+    "stamp_of",
     "start_waits",
     "sync_item",
+    "valid_stamp",
     "wait",
     "write_document",
 ]

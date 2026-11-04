@@ -87,6 +87,7 @@ export const SYNC_OFF = "Sync is off on this deployment: sources are stored and 
 const KIND_LABEL: Record<string, string> = {
   gdrive: "shared folder",
   linear: "project documents",
+  notion: "pages",
   recording: "meeting transcripts",
 };
 
@@ -98,6 +99,7 @@ export function kindLabel(kind: string): string {
 const CREDENTIAL_LABEL: Record<string, string> = {
   gdrive: "Service account key (JSON; stored encrypted, never shown again)",
   linear: "Read-only API key (stored encrypted, never shown again)",
+  notion: "Integration token (stored encrypted, never shown again)",
   recording: "Read-only credential (JSON; stored encrypted, never shown again)",
 };
 

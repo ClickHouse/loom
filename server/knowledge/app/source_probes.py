@@ -24,8 +24,9 @@ SAMPLE_TITLES = 5
 @dataclass(frozen=True)
 class Probe:
     # Documents the source lists now: the first 1000 at most (gdrive), the first
-    # page of each project (linear), the recordings listed, the first 1000 at most
-    # (recording).
+    # page of each project (linear), a page store's listed pages and the first 100
+    # pages of up to three databases (notion), the recordings listed, the first 1000
+    # at most (recording).
     documents: int
     # Up to five of their titles, most recently changed first.
     sample: list[str] = field(default_factory=list)
@@ -99,6 +100,53 @@ async def _probe_linear(config: dict[str, Any], credential: str) -> Probe:
     return Probe(documents=len(found), sample=titles, more=more)
 
 
+# Databases whose pages a page-store probe samples. Every listed id is read; only
+# this many first data sources are queried, so a probe of 20 ids stays well inside
+# its time bound at the store's pace of about three requests a second.
+_SAMPLED_DATABASES = 3  # not a setting: a bound on one probe's requests
+
+
+async def _probe_notion(config: dict[str, Any], credential: str) -> Probe:
+    from server.clients import notion
+
+    if not notion.valid_token(credential):
+        raise CredentialRefused("the credential is not an integration token")
+    found: list[dict[str, Any]] = []
+    more = False
+    sampled = 0
+    try:
+        # Every listed page and database must be one the integration sees: one
+        # shared with it answers, one that is not answers 404.
+        for page_id in config["page_ids"]:
+            page = await notion.page(credential, page_id)
+            if page.get("in_trash"):
+                raise SourceUnreachable(f"page {page_id}: in the trash")
+            found.append(page)
+        for database_id in config["database_ids"]:
+            db = await notion.database(credential, database_id)
+            if db.get("in_trash"):
+                raise SourceUnreachable(f"database {database_id}: in the trash")
+            sources = notion.data_source_ids(db)
+            if sources and sampled < _SAMPLED_DATABASES:
+                sampled += 1
+                pages, has_more = await notion.first_pages(credential, sources[0])
+                found.extend(pages)
+                more = more or has_more or len(sources) > 1
+            elif sources:
+                more = True  # not sampled: its pages are not counted
+    except notion.CredentialRefused as e:
+        raise CredentialRefused(str(e)) from None
+    except notion.NotFound as e:
+        raise SourceUnreachable(f"{e}; share it with the integration") from None
+    except notion.NotionError as e:
+        raise SourceUnreachable(str(e)) from None
+    # A listed page may also be a listed database's.
+    found = list({str(p.get("id")): p for p in found}.values())
+    found.sort(key=lambda p: str(p.get("last_edited_time") or ""), reverse=True)
+    titles = [notion.title_of(p) for p in found[:SAMPLE_TITLES]]
+    return Probe(documents=len(found), sample=titles, more=more)
+
+
 async def _probe_recording(config: dict[str, Any], credential: str) -> Probe:
     from server.clients import recording
     from server.knowledge.app import source_sync_recording
@@ -120,6 +168,7 @@ async def _probe_recording(config: dict[str, Any], credential: str) -> Probe:
 PROBES: dict[str, Callable[[dict[str, Any], str], Awaitable[Probe]]] = {
     "gdrive": _probe_gdrive,
     "linear": _probe_linear,
+    "notion": _probe_notion,
     "recording": _probe_recording,
 }
 
