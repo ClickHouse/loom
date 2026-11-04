@@ -75,14 +75,6 @@ class TaskSet:
     def document_of(self, task: dict[str, Any]) -> Document:
         return self.documents[task["document"]]
 
-    def current_documents(self) -> list[Document]:
-        """One document per source_uri: the last revision."""
-        latest: dict[str, Document] = {}
-        for d in self.documents.values():
-            if d.revision_of or d.source_uri not in latest:
-                latest[d.source_uri] = d
-        return list(latest.values())
-
     def task_paths(self, task: dict[str, Any]) -> list[str]:
         """The files an agent would edit for the task: its gold rows' files, then the
         paths its detectors name. The pre-edit surface is read for each."""

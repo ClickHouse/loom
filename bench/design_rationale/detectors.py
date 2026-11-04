@@ -135,17 +135,56 @@ def find_citations(text: str, source_uris: list[str]) -> list[dict[str, Any]]:
 def section_text(content: str, section: str, limit: int = 1500) -> str | None:
     """A cited section's heading and text, found the way the chunker named it: the
     breadcrumb is the parser's cleaned heading path (code spans, emphasis and anchors
-    stripped; Setext and HTML headings read), matched whole, else by its last segment.
-    The document start when no section is named; None when no section is it."""
-    from server.knowledge.domain.chunking import SEPARATOR, detect_sections
-
+    stripped; Setext and HTML headings read). The document start when no section is
+    named; None when no section, or more than one, fits the citation."""
     if not section:
         return content[:limit]
+    from server.knowledge.domain.chunking import detect_sections
+
     sections = [s for s in detect_sections(content) if s.path]
-    found = next((s for s in sections if SEPARATOR.join(s.path) == section), None)
-    if found is None:
-        head = section.split(SEPARATOR)[-1].strip()
-        found = next((s for s in sections if s.path[-1] == head), None)
-    if found is None:
+    cleaned = section.replace("`", "").replace("*", "").strip()
+    # The chunker strips code spans and emphasis from headings: the cleaned text first.
+    for cited in dict.fromkeys((cleaned, section)):
+        found = _cited_section(cited, sections)
+        if found is not None:
+            title: str = found.path[-1]
+            return (title + "\n" + content[found.start : found.end])[:limit]
+    return None
+
+
+def _cited_section(cited: str, sections: list[Any]) -> Any:
+    """The one section a cited breadcrumb names. A citation may give the path whole or
+    only its last segments, and may arrive cut short (the citation pattern stops at a
+    `)` or a backtick) or with words after it. In that order: the sections whose path
+    ends with the cited segments; else those whose path, or its last segments, the cited
+    text is the start of; else the longest path the cited text starts with, followed by
+    words rather than another segment. Exactly one section must fit, or none is chosen."""
+    from server.knowledge.domain.chunking import SEPARATOR
+
+    exact: dict[int, Any] = {}
+    cut: dict[int, Any] = {}
+    started: dict[int, Any] = {}
+    started_len: dict[int, int] = {}
+    for s in sections:
+        for k in range(1, len(s.path) + 1):
+            tail = SEPARATOR.join(s.path[-k:])
+            if cited == tail:
+                exact[s.idx] = s
+            elif tail.startswith(cited):
+                cut[s.idx] = s
+            elif (
+                cited.startswith(tail)
+                # Words after the path, not a further segment: "T > Missing" is not T.
+                and not cited[len(tail) :].lstrip().startswith(">")
+                and len(tail) > started_len.get(s.idx, 0)
+            ):
+                started[s.idx] = s
+                started_len[s.idx] = len(tail)
+    for group in (exact, cut):
+        if group:
+            return next(iter(group.values())) if len(group) == 1 else None
+    if not started:
         return None
-    return (found.path[-1] + "\n" + content[found.start : found.end])[:limit]
+    best = max(started_len.values())
+    longest = [s for idx, s in started.items() if started_len[idx] == best]
+    return longest[0] if len(longest) == 1 else None

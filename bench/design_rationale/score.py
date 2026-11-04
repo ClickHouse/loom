@@ -19,6 +19,7 @@ from statistics import mean
 from typing import Any
 
 from bench.bootstrap import paired_bootstrap
+from bench.design_rationale.run import parse_key
 from bench.design_rationale.taskset import TaskSet
 
 # z(0.975) + z(0.80): the effect a two-sided 5% test detects with 80% power is this many
@@ -162,10 +163,10 @@ def unreadable(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, int]]
         lambda: {"passes": 0, "unreadable": 0, "answers_unscored": 0}
     )
     for key, entry in judged.items():
-        tid, arm_s, _ = key.split("/")
+        tid, arm = parse_key(key)
         if tid not in tasks:
             continue
-        row = out[int(arm_s.removeprefix("arm"))]
+        row = out[arm]
         passes = entry.get("passes", [])
         bad = sum(not readable(*tasks[tid], p.get("verdict")) for p in passes)
         row["passes"] += len(passes)
@@ -182,13 +183,13 @@ def per_task(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, dict[st
     by: dict[tuple[int, str], list[dict[str, float | None]]] = defaultdict(list)
     tasks = {t["id"]: (kind, t) for kind, t in ts.all_tasks()}
     for key, entry in judged.items():
-        tid, arm_s, _ = key.split("/")
+        tid, arm = parse_key(key)
         if tid not in tasks:
             continue
         kind, t = tasks[tid]
         m = answer_metrics(kind, t, entry)
         if m:
-            by[(int(arm_s.removeprefix("arm")), tid)].append(m)
+            by[(arm, tid)].append(m)
     out: dict[int, dict[str, dict[str, Any]]] = defaultdict(dict)
     for (arm, tid), rows in by.items():
         out[arm][tid] = {"kind": tasks[tid][0], "samples": len(rows), **_avg(rows)}
@@ -271,7 +272,7 @@ def compare(
 def token_summary(ts: TaskSet, surf: dict[str, Any], arms: list[int]) -> dict[int, dict[str, Any]]:
     out: dict[int, dict[str, Any]] = {}
     for arm in arms:
-        rows = [v for k, v in surf.items() if k.endswith(f"/arm{arm}")]
+        rows = [v for k, v in surf.items() if parse_key(k)[1] == arm]
         if not rows:
             continue
         calls = [n for r in rows for n in r["tokens"].get("for_file", [])]
@@ -343,9 +344,10 @@ def judge_stability(ts: TaskSet, judged: dict[str, Any]) -> dict[str, Any]:
     headline = {"A": "misleading", "B": "judge_forbidden", "C": "passed"}
     agree: dict[str, list[bool]] = defaultdict(list)
     for key, entry in judged.items():
-        if key.split("/")[0] not in tasks:
+        tid, _arm = parse_key(key)
+        if tid not in tasks:
             continue
-        kind, t = tasks[key.split("/")[0]]
+        kind, t = tasks[tid]
         verdicts = {
             (p["model"], p["order"], p["repeat"]): pass_metrics(kind, t, entry, p["verdict"]).get(
                 headline[kind]
@@ -388,7 +390,7 @@ def judge_vs_human(
         entry = judged.get(lab["answer"])
         if entry is None:
             continue
-        kind, t = tasks[lab["answer"].split("/")[0]]
+        kind, t = tasks[parse_key(lab["answer"])[0]]
         value = answer_metrics(kind, t, entry).get(lab["field"])
         if value is None:
             continue
@@ -467,7 +469,7 @@ def score(
     metrics = {
         "arms": {arm: arm_summary(ts, by_arm[arm]) for arm in arms},
         "comparisons": compare(ts, by_arm, (state.get("flags") or {}).get("arm4_files", True)),
-        "tokens": token_summary(ts, surf, sorted({int(k.split("arm")[1]) for k in surf})),
+        "tokens": token_summary(ts, surf, sorted({parse_key(k)[1] for k in surf})),
         "treatment": treatment_check(ts, surf, state),
         "judge_stability": judge_stability(ts, judged),
         "unreadable": unreadable(ts, judged),

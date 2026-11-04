@@ -137,8 +137,8 @@ refused in advance: what stops the server itself is each namespace's daily cost 
 set to `--max-usd` at registration.
 
 A run the spend cap stops, in its setup or later, keeps its namespaces and resumes on
-the same `--out` (exit code 1). A run that fails after its setup (a provider error, a
-server that went away) keeps them too, and prints the `loom namespaces-gc` command that
+the same `--out` (exit code 1). A run that fails after its setup or is interrupted (a provider
+error, a server that went away, Ctrl-C) keeps them too, and prints the `loom namespaces-gc` command that
 erases them if it is not resumed. A resume must use the same `--org`, arms,
 `--arm4-namespace`, code index use and window size, or it is refused. A finished run, or
 one whose setup failed other than on the cap, erases its namespaces (unless

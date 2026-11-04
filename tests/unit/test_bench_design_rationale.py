@@ -31,7 +31,6 @@ def test_the_example_set_loads_with_its_revision_and_kinds():
     assert [r.after_revision for r in writes] == [False, True]
     assert ts.gold["design/upload/retried-statuses"].after_revision
     assert ts.task_paths(ts.tasks["B"][0]) == ["src/cache/segmented_lru.py"]
-    assert [d.id for d in ts.current_documents()] == ["thumbnail-cache", "upload-retries-v2"]
 
 
 def _copy_example(tmp_path: Path) -> Path:
@@ -160,6 +159,28 @@ def test_a_section_is_found_by_its_last_breadcrumb():
     assert detectors.section_text(content, "T > Missing") is None
     # A heading is a heading line: the words in a sentence do not match.
     assert detectors.section_text("# T\n\nWe tune Backoff here.\n", "T > Backoff") is None
+    # Two sections of one title: the cited segments pick one, a bare title neither.
+    two = "# T\n\n## Option A\n\n### Cons\n\nA cons.\n\n## Option B\n\n### Cons\n\nB cons.\n"
+    assert detectors.section_text(two, "Option B > Cons") == "Cons\n\nB cons.\n"
+    assert detectors.section_text(two, "T > Option A > Cons").startswith("Cons\n\nA cons.")
+    assert detectors.section_text(two, "Cons") is None
+
+
+def test_a_citation_cut_short_or_with_backticks_still_finds_its_section():
+    uri = "https://docs.example.com/d"
+    content = "# Doc\n\n## Why `max_rows` is 512\n\nRows.\n\n## Retries (v2)\n\nRetried.\n"
+    for text, want in (
+        # The citation pattern stops at a backtick and at a closing parenthesis.
+        (f"see knowledge:kb/{uri}#Doc > Why `max_rows` is 512.", "Why max_rows is 512"),
+        (f"(knowledge:kb/{uri}#Doc > Retries (v2))", "Retries (v2)"),
+        (f"[{uri}#Doc > Why `max_rows` is 512]", "Why max_rows is 512"),
+    ):
+        cite = detectors.find_citations(text, [uri])[0]
+        if cite["kind"] == "knowledge":
+            section = detectors.parse_knowledge(cite["cite"], [uri])[2]
+        else:
+            section = cite["cite"].partition("#")[2]
+        assert detectors.section_text(content, section).startswith(want), text
 
 
 # ---------------------------------------------------------------- scoring
@@ -924,3 +945,34 @@ def test_an_interrupt_after_setup_keeps_the_namespaces_and_says_how_to_erase_the
         run.run(ts, _config(out, arms=[0, 3]), loom, model, [model], ledger)
     assert loom.erased == []
     assert "loom namespaces-gc" in capsys.readouterr().err
+
+
+def test_task_ids_holding_arm_are_scored(tmp_path):
+    root = _copy_example(tmp_path)
+    tasks = json.loads((root / "tasks.json").read_text())
+    tasks["A"][0]["id"], tasks["A"][1]["id"] = "warm-start", "arm2-x"
+    (root / "tasks.json").write_text(json.dumps(tasks))
+    ts = load(root)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    run.run(ts, _config(out, arms=[0, 3], k=1, judge_orders=1), FakeLoom(), model, [model], ledger)
+    m = score.score(ts, out)
+    assert {"warm-start", "arm2-x"} <= set(m["per_task"][3]) and set(m["tokens"]) == {0, 3}
+
+
+def test_a_timed_out_extraction_keeps_both_output_streams(monkeypatch):
+    import subprocess
+
+    from bench.design_rationale.loom import EXTRACT_TIMEOUT_S, Loom
+
+    def slow(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 1, output=b"\xff out", stderr=b"err")
+
+    monkeypatch.setattr(subprocess, "run", slow)
+    loom = Loom("http://loom.test")
+    loom.bind("ns", "org")
+    rc, report = loom.extract("ns", "u", 6000)
+    assert rc == 1
+    assert report == f"\ufffd outerr\nerror: stopped after {EXTRACT_TIMEOUT_S} s"

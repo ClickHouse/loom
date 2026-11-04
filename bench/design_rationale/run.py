@@ -55,6 +55,9 @@ JUDGE_OUT_CAP = 4000
 # A known decision as the extractor's prompt lists it on a re-run: category, scenario and
 # outcome, at most this many characters together (an assumed bound for the estimate).
 KNOWN_DECISION_CHARS = 600
+# Decisions kept per section, which the extractor's prompt states: the default of
+# `loom decisions extract --max-per-section` (server/cli/decisions.py), which the run uses.
+EXTRACT_MAX_PER_SECTION = 3
 
 
 class RunError(RuntimeError):
@@ -94,6 +97,13 @@ def answer_key(tid: str, arm: int, sample: int) -> str:
     return f"{tid}/arm{arm}/s{sample}"
 
 
+def parse_key(key: str) -> tuple[str, int]:
+    """(task id, arm) of an answer key (`<task>/arm<a>/s<k>`) or a surface key
+    (`<task>/arm<a>`); a task id may hold "arm" but never "/"."""
+    tid, _, rest = key.rpartition("/arm")
+    return tid, int(rest.split("/", 1)[0])
+
+
 def own_extraction(cfg: Config) -> bool:
     return 4 in cfg.arms and not cfg.arm4_namespace
 
@@ -106,20 +116,6 @@ def pre_edit(cfg: Config, arm: int) -> bool:
 # ---------------------------------------------------------------- extraction bound
 
 
-def extraction_windows(doc: Document, window_chars: int) -> list[Any]:
-    """The windows the extractor reads `doc` in: the document chunked by knowledge.upsert's
-    own chunker (overlapping chunks included) and grouped by the extractor's own
-    windowing. Sections it skips as image-only only make the real count smaller."""
-    from server.knowledge.app.writes import _chunk_text
-    from server.memory.app.decision_extract import _windows
-    from server.memory.domain.corpus_synthesis import CorpusChunk
-
-    chunks = [
-        CorpusChunk(doc.source_uri, c.idx, c.text, c.section_path) for c in _chunk_text(doc.content)
-    ]
-    return _windows(chunks, set(), window_chars)
-
-
 def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:
     """(calls, input tokens, output tokens) one extraction run on `doc` may spend at most.
     Two calls per window: a reply with no decision, or with a reason that is not one span
@@ -128,14 +124,23 @@ def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:
     its `[document: ...]` and `[section: ...]` lines included (`user_prompt`). The second
     call may also carry the note listing the first reply's failed spans, which the first
     reply wrote, so it is bounded by the output cap. Each call writes up to that cap."""
+    from server.knowledge.app.writes import _chunk_text
+    from server.memory.app.decision_extract import _windows
     from server.memory.domain import decision_extract as dx
+    from server.memory.domain.corpus_synthesis import CorpusChunk
     from server.settings import settings
     from server.settings.budgets import llm_max_tokens
 
+    # The document as knowledge.upsert chunks it and the extractor groups it. Sections
+    # it skips as image-only only make the real count smaller.
+    chunks = [
+        CorpusChunk(doc.source_uri, c.idx, c.text, c.section_path) for c in _chunk_text(doc.content)
+    ]
+    windows = _windows(chunks, set(), window_chars)
     known = settings.memory_decision_extract_known_max if doc.revision_of else 0
-    system = len(dx.system_prompt(3, [("", "", "x" * KNOWN_DECISION_CHARS)] * known))
+    known_rows = [("", "", "x" * KNOWN_DECISION_CHARS)] * known
+    system = len(dx.system_prompt(EXTRACT_MAX_PER_SECTION, known_rows))
     cap = llm_max_tokens("decision_extract")
-    windows = extraction_windows(doc, window_chars)
     tin = 0
     for w in windows:
         one = (system + len(dx.user_prompt(w, doc.title))) // CHARS_PER_TOKEN_WORST
@@ -604,10 +609,9 @@ def judge(
     resolver = Resolver(ts, loom, namespaces(state, cfg))
     tasks = {t["id"]: (kind, t) for kind, t in ts.all_tasks()}
     for key, answer in ans.items():
-        tid, arm_s, _sample = key.split("/")
+        tid, arm = parse_key(key)
         if tid not in tasks:
             continue
-        arm = int(arm_s.removeprefix("arm"))
         kind, t = tasks[tid]
         entry = out.get(key) or {}
         if "citations" not in entry:
@@ -685,7 +689,8 @@ def check_resume(state: dict[str, Any], cfg: Config) -> None:
 
 
 def cleanup_hint(cfg: Config, loom: Loom, ns: dict[str, str]) -> str:
-    """How to finish a run that stopped on an error: resume it, or erase what it keeps."""
+    """How to finish a run that fails after its setup or is interrupted: resume it, or
+    erase what it keeps."""
     from bench.bench_namespaces import gc_command
 
     by_org: dict[str, list[str]] = {}
@@ -708,9 +713,10 @@ def run(
     code: CodeIndex | None = None,
 ) -> bool:
     """One pass of every stage; True when every answer is judged. A run the cap stops,
-    or that fails after its setup (a provider error, a server that went away), keeps its
-    namespaces: the next invocation on the same `--out`, with the same flags, resumes it,
-    and the error is followed by the command that erases them otherwise. A finished run,
+    or that fails after its setup or is interrupted (a provider error, a server that went
+    away, Ctrl-C), keeps its namespaces: the next invocation on the same `--out`, with the
+    same flags, resumes it, and the error is followed by the command that erases them
+    otherwise. A finished run,
     or one whose setup failed for another reason than the cap, erases them (unless
     --keep-namespaces) and is not resumed."""
     cfg.out.mkdir(parents=True, exist_ok=True)

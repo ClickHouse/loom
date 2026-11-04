@@ -187,8 +187,8 @@ class Loom:
             )
         except subprocess.TimeoutExpired as e:
             # The partial output arrives as bytes even in text mode.
-            out = [_text(e.stdout), _text(e.stderr), f"error: stopped after {EXTRACT_TIMEOUT_S} s"]
-            return 1, "".join(out[:2]) + "\n" + out[2]
+            stopped = f"\nerror: stopped after {EXTRACT_TIMEOUT_S} s"
+            return 1, _text(e.stdout) + _text(e.stderr) + stopped
         return done.returncode, done.stdout + done.stderr
 
     def decision_reasoning(self, namespace: str) -> dict[str, str]:
