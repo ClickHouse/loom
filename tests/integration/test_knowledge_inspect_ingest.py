@@ -274,7 +274,9 @@ async def test_with_the_extractor_bad_content_lost_structure_and_a_refused_token
 
         out = await _op(c, "knowledge.inspect", org=org, namespace=ns, sample_limit=10)
     assert out["skipped"] == [], out["skipped"]
-    assert out["ingestions"]["extractor_configured"] is True
+    assert out["ingestions"]["extractor_configured"] is True, (
+        "the server has no document extractor configured: give it the test's settings"
+    )
 
     f = _findings(out)
     rejected = f["ingest_content_rejected"]
