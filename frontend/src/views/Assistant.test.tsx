@@ -2,7 +2,10 @@ import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  DocumentFinding,
+  FindingKind,
   IngestFinding,
+  IngestJob,
   InspectRow,
   KnowledgeInspection,
   InspectView,
@@ -237,27 +240,20 @@ const TUNE: NamespaceTune = {
   model_used: false,
 };
 
-// knowledge.inspect: two live documents, one ingested with an extraction and a job, one a
-// text write; one finding per ingest check, each clean unless a test makes it hit.
-const ingestFinding = (code: string, kind: IngestFinding["kind"], count = 0): IngestFinding => ({
-  code,
-  kind,
-  severity: count ? "warning" : "info",
-  rule_version: 1,
-  source_op: "knowledge.inspect",
-  count,
-  share: count / 4,
-  population: 4,
-  sample_limit: 20,
-  samples: count ? ["https://example.com/spec.pdf"] : [],
-  samples_complete: count <= 1,
-  ingestion_ids: count && code !== "extraction_incomplete" ? ["ing-1"] : [],
-  without_document: 0,
-  detail: `detail of ${code}`,
-  remedy: `remedy of ${code}`,
-  exceptions: "",
-  uncertainty: "",
-});
+// knowledge.inspect, as server/knowledge/app/inspect.py builds it. The base: two live
+// documents, one ingested (its extraction lost a unit, so it published partial) and one a
+// text write with an unembedded chunk; one job source; every check run, a clean one sent as
+// an `info` finding with count 0. Each derived state below changes every field the server
+// changes for it.
+const SPEC = "https://example.com/spec.pdf";
+const NOTES = "https://example.com/notes.md";
+
+const DOC_CHECKS: Array<[string, FindingKind]> = [
+  ["documents_without_chunks", "system_state"],
+  ["unembedded_chunks", "system_state"],
+  ["chunks_under_other_model", "system_state"],
+  ["mixed_live_versions", "usage_heuristic"],
+];
 
 const INGEST_CODES: Array<[string, IngestFinding["kind"], string]> = [
   ["ingest_backlog", "system_state", "Backlog"],
@@ -267,6 +263,64 @@ const INGEST_CODES: Array<[string, IngestFinding["kind"], string]> = [
   ["ingest_failed_on_server", "system_state", "Failed on the server's side"],
   ["extraction_incomplete", "usage_heuristic", "Extraction incomplete"],
 ];
+// The five job checks, skipped together when the job read fails (store.INGEST_CHECKS).
+const JOB_CODES = INGEST_CODES.slice(0, 5).map(([c]) => c);
+const ALL_CHECKS = [...DOC_CHECKS.map(([c]) => c), ...INGEST_CODES.map(([c]) => c)];
+
+const share = (count: number, population: number) => (population ? Math.min(count / population, 1) : 0);
+
+/** A document check: its population is the live documents. */
+const docFinding = (code: string, kind: FindingKind, population: number, samples: string[] = []): DocumentFinding => ({
+  code,
+  kind,
+  severity: samples.length ? "warning" : "info",
+  rule_version: 1,
+  source_op: "knowledge.inspect",
+  count: samples.length,
+  share: share(samples.length, population),
+  population,
+  sample_limit: 20,
+  samples,
+  samples_complete: true,
+  ingested: 0,
+  ingested_samples: [],
+  detail: `detail of ${code}`,
+  remedy: `remedy of ${code}`,
+  exceptions: "",
+  uncertainty: "",
+});
+
+/** An ingest check: a job check's population is the sources with a job, each sample naming
+ *  its job; extraction_incomplete's is the documents with an extraction, and names none. */
+const ingestFinding = (
+  code: string,
+  kind: IngestFinding["kind"],
+  population: number,
+  samples: Array<[string, string]> = [],
+  withoutDocument = 0,
+): IngestFinding => ({
+  code,
+  kind,
+  severity: samples.length ? "warning" : "info",
+  rule_version: 1,
+  source_op: "knowledge.inspect",
+  count: samples.length,
+  share: share(samples.length, population),
+  population,
+  sample_limit: 20,
+  samples: samples.map(([uri]) => uri),
+  samples_complete: true,
+  ingestion_ids: samples.map(([, id]) => id).filter(Boolean),
+  without_document: withoutDocument,
+  detail: `detail of ${code}`,
+  remedy: `remedy of ${code}`,
+  exceptions: "",
+  uncertainty: "",
+});
+
+/** Every ingest check clean over `sources` job sources and `extracted` extractions. */
+const cleanIngest = (sources: number, extracted: number) =>
+  INGEST_CODES.map(([c, k]) => ingestFinding(c, k, c === "extraction_incomplete" ? extracted : sources));
 
 const stage = (total: number) => ({
   total,
@@ -276,9 +330,9 @@ const stage = (total: number) => ({
   outcome_known: 0,
 });
 
-const JOB = {
+const JOB: IngestJob = {
   ingestion_id: "ing-1",
-  state: "ready",
+  state: "partial",
   stage: "",
   attempts: 1,
   error_code: "",
@@ -290,6 +344,36 @@ const JOB = {
   stalled: false,
 };
 
+const sourceJobs = (uri: string, job: IngestJob) => {
+  const open = job.state === "pending" || job.state === "processing";
+  return {
+    source_uri: uri,
+    jobs: 1,
+    open_jobs: open ? 1 : 0,
+    open_ingestion_id: open ? job.ingestion_id : "",
+    latest: job,
+    current: job,
+    replaced: false,
+  };
+};
+
+const NO_JOBS: KnowledgeInspection["ingestions"] = {
+  sources: 0,
+  without_document: 0,
+  replaced: 0,
+  pending: 0,
+  processing: 0,
+  stalled: 0,
+  ready: 0,
+  partial: 0,
+  failed: 0,
+  cancelled: 0,
+  oldest_open_queued_at: null,
+  worker_enabled: true,
+  extractor_configured: true,
+  without_document_listed: [],
+};
+
 const KNOWLEDGE: KnowledgeInspection = {
   org: "dev",
   namespace: "team",
@@ -298,11 +382,13 @@ const KNOWLEDGE: KnowledgeInspection = {
     live: 2,
     deleted: 1,
     newest_ingested_at: "2026-11-01T09:01:00",
+    // Most live first, then most deleted (inspect.py _counts).
     by_format: [
-      { name: "pdf", live: 1, deleted: 0 },
       { name: "markdown", live: 1, deleted: 1 },
+      { name: "pdf", live: 1, deleted: 0 },
     ],
     by_source_scheme: [{ name: "https", live: 2, deleted: 1 }],
+    // The spec's first revision, and two of the deleted document's.
     earlier_revisions: 3,
     unnumbered: 0,
     retired_versions: 4,
@@ -320,7 +406,7 @@ const KNOWLEDGE: KnowledgeInspection = {
   },
   listed: [
     {
-      source_uri: "https://example.com/spec.pdf",
+      source_uri: SPEC,
       title: "Billing spec",
       format: "pdf",
       source_scheme: "https",
@@ -342,18 +428,10 @@ const KNOWLEDGE: KnowledgeInspection = {
       },
       decisions: { decided: stage(3), proposed: stage(0) },
       extraction: { unit: "pages", total: 10, extracted: 9, failed: 1, lost: ["section_path"], complete: false },
-      jobs: {
-        source_uri: "https://example.com/spec.pdf",
-        jobs: 1,
-        open_jobs: 0,
-        open_ingestion_id: "",
-        latest: JOB,
-        current: JOB,
-        replaced: false,
-      },
+      jobs: sourceJobs(SPEC, JOB),
     },
     {
-      source_uri: "https://example.com/notes.md",
+      source_uri: NOTES,
       title: "Notes",
       format: "markdown",
       source_scheme: "https",
@@ -379,46 +457,13 @@ const KNOWLEDGE: KnowledgeInspection = {
     },
   ],
   listed_complete: true,
-  findings: [
-    {
-      code: "unembedded_chunks",
-      kind: "system_state",
-      severity: "warning",
-      rule_version: 1,
-      source_op: "knowledge.inspect",
-      count: 1,
-      share: 0.5,
-      population: 2,
-      sample_limit: 20,
-      samples: ["https://example.com/notes.md"],
-      samples_complete: true,
-      ingested: 0,
-      ingested_samples: [],
-      detail: "Live documents with a live chunk that carries no vector.",
-      remedy: "loom rechunk re-embeds it.",
-      exceptions: "",
-      uncertainty: "",
-    },
-  ],
-  coverage: { rules_run: [], rules_skipped: [], complete: true },
-  ingestions: {
-    sources: 4,
-    without_document: 0,
-    replaced: 0,
-    pending: 0,
-    processing: 0,
-    stalled: 0,
-    ready: 3,
-    partial: 0,
-    failed: 1,
-    cancelled: 0,
-    oldest_open_queued_at: null,
-    worker_enabled: true,
-    extractor_configured: true,
-    without_document_listed: [],
-  },
+  findings: DOC_CHECKS.map(([c, k]) => docFinding(c, k, 2, c === "unembedded_chunks" ? [NOTES] : [])),
+  coverage: { rules_run: ALL_CHECKS, rules_skipped: [], complete: true },
+  ingestions: { ...NO_JOBS, sources: 1, partial: 1 },
   extraction: { documents: 1, incomplete: 1, lost: [{ name: "section_path", live: 1, deleted: 0 }] },
-  ingest_findings: INGEST_CODES.map(([code, kind]) => ingestFinding(code, kind)),
+  ingest_findings: INGEST_CODES.map(([c, k]) =>
+    c === "extraction_incomplete" ? ingestFinding(c, k, 1, [[SPEC, ""]]) : ingestFinding(c, k, 1),
+  ),
   memory_findings: [
     {
       code: "oversized_values",
@@ -433,6 +478,240 @@ const KNOWLEDGE: KnowledgeInspection = {
     },
   ],
   skipped: [],
+};
+
+/** No document and no job: every group read is empty, so the totals are 0 and the newest
+ *  write null; each check runs over a population of 0. */
+const emptyNamespace = (): KnowledgeInspection => ({
+  ...KNOWLEDGE,
+  documents: {
+    live: 0,
+    deleted: 0,
+    newest_ingested_at: null,
+    by_format: [],
+    by_source_scheme: [],
+    earlier_revisions: 0,
+    unnumbered: 0,
+    retired_versions: 0,
+  },
+  chunks: { ...KNOWLEDGE.chunks, live: 0, searchable: 0, unembedded: 0, by_model: [] },
+  decisions: { ...KNOWLEDGE.decisions, all_documents: { decided: stage(0), proposed: stage(0) } },
+  listed: [],
+  listed_complete: true,
+  findings: DOC_CHECKS.map(([c, k]) => docFinding(c, k, 0)),
+  ingestions: NO_JOBS,
+  extraction: { documents: 0, incomplete: 0, lost: [] },
+  ingest_findings: cleanIngest(0, 0),
+  memory_findings: [],
+});
+
+/** The documents read failed: its totals, groups and newest write are null or empty, and
+ *  the listing cannot be complete. */
+const documentsUnread = (r: KnowledgeInspection): KnowledgeInspection => ({
+  ...r,
+  documents: {
+    ...r.documents,
+    live: null,
+    deleted: null,
+    newest_ingested_at: null,
+    by_format: [],
+    by_source_scheme: [],
+    earlier_revisions: null,
+    unnumbered: null,
+  },
+  listed_complete: false,
+  skipped: [...r.skipped, "documents: TimeoutError"],
+});
+
+/** The job read failed: every job count is null, nothing is listed, and the five job checks
+ *  are skipped (extraction_incomplete reads the coverage and still runs). */
+const jobsUnread = (r: KnowledgeInspection): KnowledgeInspection => ({
+  ...r,
+  ingestions: {
+    sources: null,
+    without_document: null,
+    replaced: null,
+    pending: null,
+    processing: null,
+    stalled: null,
+    ready: null,
+    partial: null,
+    failed: null,
+    cancelled: null,
+    oldest_open_queued_at: null,
+    worker_enabled: r.ingestions.worker_enabled,
+    extractor_configured: r.ingestions.extractor_configured,
+    without_document_listed: [],
+  },
+  ingest_findings: r.ingest_findings.filter((f) => !JOB_CODES.includes(f.code)),
+  coverage: {
+    rules_run: r.coverage.rules_run.filter((c) => !JOB_CODES.includes(c)),
+    rules_skipped: [...r.coverage.rules_skipped, ...JOB_CODES],
+    complete: false,
+  },
+  skipped: [...r.skipped, "ingestions: TimeoutError"],
+});
+
+// store.MAX_GROUPS: a report reads at most this many group rows, and says when there are more.
+const MAX_GROUPS = 1000;
+
+/** inspect.py _counts: one group row per (format, scheme), folded by `key`, most live first,
+ *  then most deleted, then by name. */
+const foldGroups = (groups: Array<[string, string, number, number]>, key: 0 | 1) => {
+  const totals = new Map<string, [number, number]>();
+  for (const g of groups) {
+    const t = totals.get(g[key]) ?? [0, 0];
+    totals.set(g[key], [t[0] + g[2], t[1] + g[3]]);
+  }
+  return [...totals.entries()]
+    .sort(([a, [al, ad]], [b, [bl, bd]]) => bl - al || bd - ad || (a < b ? -1 : 1))
+    .map(([name, [live, deleted]]) => ({ name, live, deleted }));
+};
+
+/** The base's two live documents and more than MAX_GROUPS format and scheme pairs, the rest
+ *  deleted documents: the read keeps the first MAX_GROUPS rows (most live first) and totals
+ *  none of them. */
+const documentsCut = (): KnowledgeInspection => {
+  type Group = [string, string, number, number];
+  const groups: Group[] = [
+    ["markdown", "https", 1, 1] as Group,
+    ["pdf", "https", 1, 0] as Group,
+    ...Array.from({ length: MAX_GROUPS - 1 }, (_, i): [string, string, number, number] => [
+      `f${i % 25}`,
+      `s${Math.floor(i / 25)}`,
+      0,
+      1,
+    ]),
+  ].slice(0, MAX_GROUPS);
+  return {
+    ...KNOWLEDGE,
+    documents: {
+      ...KNOWLEDGE.documents,
+      live: null,
+      deleted: null,
+      earlier_revisions: null,
+      unnumbered: null,
+      by_format: foldGroups(groups, 0),
+      by_source_scheme: foldGroups(groups, 1),
+    },
+    listed_complete: false,
+    skipped: [`documents: more than ${MAX_GROUPS} format and scheme pairs; the counts cover the first`],
+  };
+};
+
+/** The spec lost more than MAX_GROUPS capabilities: the coverage read keeps the first
+ *  MAX_GROUPS, most documents first, then by name. */
+const extractionCut = (): KnowledgeInspection => {
+  const names = Array.from({ length: MAX_GROUPS + 1 }, (_, i) => `cap${i}`);
+  const [spec, notes] = KNOWLEDGE.listed;
+  return {
+    ...KNOWLEDGE,
+    listed: [
+      { ...spec, extraction: { unit: "pages", total: 10, extracted: 9, failed: 1, lost: names, complete: false } },
+      notes,
+    ],
+    extraction: {
+      documents: 1,
+      incomplete: 1,
+      lost: [...names]
+        .sort()
+        .slice(0, MAX_GROUPS)
+        .map((name) => ({ name, live: 1, deleted: 0 })),
+    },
+    skipped: [`extraction: more than ${MAX_GROUPS} lost capabilities; the counts cover the first`],
+  };
+};
+
+const QUEUED = "https://example.com/first.pdf";
+const PENDING: IngestJob = {
+  ...JOB,
+  ingestion_id: "ing-2",
+  state: "pending",
+  ended_at: null,
+  updated_at: "2026-11-01T09:00:00",
+  next_attempt_at: "2026-11-01T09:00:30",
+  attempts: 0,
+};
+
+/** An empty namespace whose first ingest is queued: one source, its job pending, which
+ *  the backlog check counts, with no live document. */
+const firstIngestQueued = (): KnowledgeInspection => ({
+  ...emptyNamespace(),
+  ingestions: {
+    ...NO_JOBS,
+    sources: 1,
+    without_document: 1,
+    pending: 1,
+    oldest_open_queued_at: PENDING.queued_at,
+    without_document_listed: [sourceJobs(QUEUED, PENDING)],
+  },
+  ingest_findings: INGEST_CODES.map(([c, k]) =>
+    c === "ingest_backlog"
+      ? ingestFinding(c, k, 1, [[QUEUED, "ing-2"]], 1)
+      : ingestFinding(c, k, c === "extraction_incomplete" ? 0 : 1),
+  ),
+});
+
+// How a job that one check counts looks: its state, failure class and error code.
+const HIT_JOB: Record<string, { state: string; failure_class: string; error_code: string }> = {
+  ingest_backlog: { state: "pending", failure_class: "", error_code: "" },
+  extractor_unavailable: { state: "failed", failure_class: "extractor_unavailable", error_code: "format_unavailable" },
+  ingest_missing_access: { state: "failed", failure_class: "missing_access", error_code: "original_gone" },
+  ingest_content_rejected: { state: "failed", failure_class: "bad_content", error_code: "corrupt" },
+  ingest_failed_on_server: { state: "failed", failure_class: "retries_exhausted", error_code: "retries_exhausted" },
+};
+const HIT_SOURCES = ["https://example.com/a.pdf", "https://example.com/b.pdf", "https://example.com/c.pdf"];
+
+/** Exactly one ingest check hits. A job check: three more sources, first ingests with no
+ *  live document, whose jobs it counts, and the spec's extraction whole, so the extraction
+ *  check is clean. extraction_incomplete: the base, where only it hits. */
+const oneIngestHit = (code: string): KnowledgeInspection => {
+  if (code === "extraction_incomplete") return KNOWLEDGE;
+  const hit = HIT_JOB[code];
+  const jobs = HIT_SOURCES.map((uri, k) => {
+    const open = hit.state === "pending";
+    return sourceJobs(uri, {
+      ...JOB,
+      ingestion_id: `ing-h${k}`,
+      ...hit,
+      ended_at: open ? null : JOB.ended_at,
+      next_attempt_at: open ? "2026-11-01T09:00:30" : null,
+    });
+  });
+  const [spec, notes] = KNOWLEDGE.listed;
+  return {
+    ...KNOWLEDGE,
+    listed: [
+      {
+        ...spec,
+        extraction: { unit: "pages", total: 10, extracted: 10, failed: 0, lost: [], complete: true },
+        jobs: sourceJobs(SPEC, { ...JOB, state: "ready" }),
+      },
+      notes,
+    ],
+    ingestions: {
+      ...NO_JOBS,
+      sources: 4,
+      without_document: 3,
+      ready: 1,
+      pending: hit.state === "pending" ? 3 : 0,
+      failed: hit.state === "failed" ? 3 : 0,
+      oldest_open_queued_at: hit.state === "pending" ? JOB.queued_at : null,
+      without_document_listed: jobs,
+    },
+    extraction: { documents: 1, incomplete: 0, lost: [] },
+    ingest_findings: INGEST_CODES.map(([c, k]) =>
+      c === code
+        ? ingestFinding(
+            c,
+            k,
+            4,
+            jobs.map((j) => [j.source_uri, j.current.ingestion_id]),
+            3,
+          )
+        : ingestFinding(c, k, c === "extraction_incomplete" ? 1 : 4),
+    ),
+  };
 };
 
 const namespaceInventory = vi.fn(async () => INVENTORY);
@@ -1106,7 +1385,7 @@ describe("Assistant: documents", () => {
     const spec = result.querySelector('[data-source="https://example.com/spec.pdf"]') as HTMLElement;
     expect(spec).toHaveTextContent("Chunks: 8 of 8 searchable");
     expect(spec).toHaveTextContent("Extraction: 9 of 10 pages extracted, 1 failed, lost section_path");
-    expect(spec).toHaveTextContent("job ing-1: ready");
+    expect(spec).toHaveTextContent("job ing-1: partial");
     const notes = result.querySelector('[data-source="https://example.com/notes.md"]') as HTMLElement;
     expect(notes).toHaveTextContent("Extraction: none (a text write, which no extractor read)");
     expect(within(result).getByTestId("docs-extraction")).toHaveTextContent(
@@ -1117,16 +1396,7 @@ describe("Assistant: documents", () => {
   });
 
   it("says an empty namespace holds no document, and lists no document sections", async () => {
-    inspectKnowledge.mockResolvedValueOnce({
-      ...KNOWLEDGE,
-      documents: { ...KNOWLEDGE.documents, live: 0, deleted: 0, by_format: [], by_source_scheme: [] },
-      chunks: { ...KNOWLEDGE.chunks, live: 0, searchable: 0, unembedded: 0, by_model: [] },
-      listed: [],
-      findings: [],
-      ingestions: { ...KNOWLEDGE.ingestions, sources: 0, ready: 0, failed: 0 },
-      extraction: { documents: 0, incomplete: 0, lost: [] },
-      memory_findings: [],
-    });
+    inspectKnowledge.mockResolvedValueOnce(emptyNamespace());
     render(<Assistant />);
     const result = await pickDocuments();
     expect(within(result).getByRole("status")).toHaveTextContent("This namespace holds no live document");
@@ -1136,23 +1406,15 @@ describe("Assistant: documents", () => {
   });
 
   it("shows a section it could not read as not read, never as zero", async () => {
+    const base = documentsUnread(KNOWLEDGE);
     inspectKnowledge.mockResolvedValueOnce({
-      ...KNOWLEDGE,
-      documents: {
-        ...KNOWLEDGE.documents,
-        live: null,
-        deleted: null,
-        earlier_revisions: null,
-        unnumbered: null,
-        by_format: [],
-        by_source_scheme: [],
-      },
+      ...base,
       chunks: { ...KNOWLEDGE.chunks, live: null, searchable: null, unembedded: null, by_model: [] },
       decisions: { ...KNOWLEDGE.decisions, all_documents: null },
       ingestions: { ...KNOWLEDGE.ingestions, extractor_configured: null },
       listed: [],
       skipped: [
-        "documents: TimeoutError",
+        ...base.skipped,
         "chunks: TimeoutError",
         "listed: TimeoutError",
         "decisions: TimeoutError",
@@ -1177,19 +1439,21 @@ describe("Assistant: documents", () => {
   it.each(INGEST_CODES)(
     "shows the %s finding in its own %s group, apart from the others",
     async (code, kind, label) => {
-      inspectKnowledge.mockResolvedValueOnce({
-        ...KNOWLEDGE,
-        ingest_findings: INGEST_CODES.map(([c, k]) => ingestFinding(c, k, c === code ? 3 : 0)),
-      });
+      inspectKnowledge.mockResolvedValueOnce(oneIngestHit(code));
       render(<Assistant />);
       const result = await pickDocuments();
       const card = within(result).getByRole("listitem", { name: label });
       expect(card).toHaveAttribute("data-code", code);
       expect(card.closest("[data-kind]")).toHaveAttribute("data-kind", kind);
       expect(card).toHaveTextContent(`remedy of ${code}`);
-      expect(card).toHaveTextContent("https://example.com/spec.pdf");
-      if (code !== "extraction_incomplete") expect(card).toHaveTextContent("job ing-1");
-      expect(card).toHaveTextContent("and 2 more not listed");
+      if (code === "extraction_incomplete") {
+        expect(card).toHaveTextContent("1 document of 1 (100%)");
+        expect(card).toHaveTextContent(SPEC);
+        expect(card).not.toHaveTextContent("job ");
+      } else {
+        expect(card).toHaveTextContent("3 sources of 4 (75%) · 3 with no live document");
+        for (const [k, uri] of HIT_SOURCES.entries()) expect(card).toHaveTextContent(`${uri} · job ing-h${k}`);
+      }
       // Every other check is clean and named as such, never folded into this one.
       for (const [other, , otherLabel] of INGEST_CODES.filter(([c]) => c !== code)) {
         expect(result.querySelector(`li[data-code="${other}"]`)).toBeNull();
@@ -1199,14 +1463,7 @@ describe("Assistant: documents", () => {
   );
 
   it("does not call a namespace empty when its job count could not be read", async () => {
-    inspectKnowledge.mockResolvedValueOnce({
-      ...KNOWLEDGE,
-      documents: { ...KNOWLEDGE.documents, live: 0, deleted: 0, by_format: [], by_source_scheme: [] },
-      listed: [],
-      ingestions: { ...KNOWLEDGE.ingestions, sources: null, ready: null, failed: null },
-      ingest_findings: [ingestFinding("extraction_incomplete", "usage_heuristic")],
-      skipped: ["ingestions: TimeoutError"],
-    });
+    inspectKnowledge.mockResolvedValueOnce(jobsUnread(emptyNamespace()));
     render(<Assistant />);
     const result = await pickDocuments();
     expect(within(result).queryByRole("status")).toBeNull();
@@ -1215,13 +1472,7 @@ describe("Assistant: documents", () => {
   });
 
   it("says there is no live document to list while a first ingest is queued", async () => {
-    inspectKnowledge.mockResolvedValueOnce({
-      ...KNOWLEDGE,
-      documents: { ...KNOWLEDGE.documents, live: 0, deleted: 0, by_format: [], by_source_scheme: [] },
-      listed: [],
-      listed_complete: true,
-      ingestions: { ...KNOWLEDGE.ingestions, sources: 1, pending: 1 },
-    });
+    inspectKnowledge.mockResolvedValueOnce(firstIngestQueued());
     render(<Assistant />);
     const result = await pickDocuments();
     expect(within(result).queryByRole("status")).toBeNull();
@@ -1230,33 +1481,15 @@ describe("Assistant: documents", () => {
   });
 
   it("says a listing may be partial when the documents total was not read", async () => {
-    inspectKnowledge.mockResolvedValueOnce({
-      ...KNOWLEDGE,
-      documents: {
-        ...KNOWLEDGE.documents,
-        live: null,
-        deleted: null,
-        earlier_revisions: null,
-        unnumbered: null,
-        by_format: [],
-        by_source_scheme: [],
-      },
-      listed_complete: false,
-      skipped: ["documents: TimeoutError"],
-    });
+    inspectKnowledge.mockResolvedValueOnce(documentsUnread(KNOWLEDGE));
     render(<Assistant />);
     const result = await pickDocuments();
     expect(within(result).getByText(/listed; the total was not counted\./)).toBeInTheDocument();
   });
 
   it("shows the documents a cut read counted, with the server's note, not as unread", async () => {
-    const note = "more than 200 format and scheme pairs; the counts cover the first";
-    inspectKnowledge.mockResolvedValueOnce({
-      ...KNOWLEDGE,
-      documents: { ...KNOWLEDGE.documents, live: null, deleted: null, earlier_revisions: null, unnumbered: null },
-      listed_complete: false,
-      skipped: [`documents: ${note}`],
-    });
+    const note = `more than ${MAX_GROUPS} format and scheme pairs; the counts cover the first`;
+    inspectKnowledge.mockResolvedValueOnce(documentsCut());
     render(<Assistant />);
     const result = await pickDocuments();
     expect(
@@ -1269,34 +1502,25 @@ describe("Assistant: documents", () => {
   });
 
   it("shows the extraction coverage a cut read counted, with the server's note", async () => {
-    const note = "more than 200 lost capabilities; the counts cover the first";
-    inspectKnowledge.mockResolvedValueOnce({ ...KNOWLEDGE, skipped: [`extraction: ${note}`] });
+    const note = `more than ${MAX_GROUPS} lost capabilities; the counts cover the first`;
+    inspectKnowledge.mockResolvedValueOnce(extractionCut());
     render(<Assistant />);
     const result = await pickDocuments();
-    expect(within(result).getByTestId("docs-extraction")).toHaveTextContent("lost: section_path 1");
+    expect(within(result).getByTestId("docs-extraction")).toHaveTextContent("lost: cap0 1, cap1 1, cap10 1");
     expect(within(result).getByTestId("docs-extraction-note")).toHaveTextContent(`Note: ${note}`);
     expect(within(result).queryByText("The extraction coverage could not be read.")).toBeNull();
   });
 
   it("says the checks did not run only when the reads they run on failed", async () => {
+    // The chunk, job and coverage reads all failed: every check is skipped.
+    const jobs = jobsUnread(KNOWLEDGE);
     inspectKnowledge.mockResolvedValueOnce({
-      ...KNOWLEDGE,
+      ...jobs,
       findings: [],
-      coverage: {
-        rules_run: [],
-        rules_skipped: [
-          "documents_without_chunks",
-          "unembedded_chunks",
-          "chunks_under_other_model",
-          "mixed_live_versions",
-          ...INGEST_CODES.map(([c]) => c),
-        ],
-        complete: false,
-      },
-      ingestions: { ...KNOWLEDGE.ingestions, sources: null },
       extraction: { documents: null, incomplete: null, lost: [] },
       ingest_findings: [],
-      skipped: ["findings: TimeoutError", "ingestions: TimeoutError", "extraction: TimeoutError"],
+      coverage: { rules_run: [], rules_skipped: ALL_CHECKS, complete: false },
+      skipped: ["findings: TimeoutError", ...jobs.skipped, "extraction: TimeoutError"],
     });
     render(<Assistant />);
     const result = await pickDocuments();

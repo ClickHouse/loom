@@ -134,45 +134,106 @@ function stats(size: number, stride: number, cut: number) {
   };
 }
 
-const finding = (code: string, kind: string, count: number) => ({
+// knowledge.inspect as the server builds it (server/knowledge/app/inspect.py), with long
+// URIs, titles and format names. Two live documents, both listed: the spec, ingested and
+// published partial, with an unembedded chunk; a slide deck from a source sync, its chunks
+// under an older embedding model. Four job sources: the spec, a first ingest queued, one
+// whose extractor is unavailable and one whose file was rejected.
+const longUri = (name: string) => `https://example.com/${"specs/".repeat(30)}${name}`;
+const DECK_URI = longUri("quarterly-review.pptx");
+const QUEUED_URI = longUri("queued-first-ingest.pdf");
+const NO_EXTRACTOR_URI = longUri("scanned-contract.tiff");
+const REJECTED_URI = longUri("corrupt-export.pdf");
+
+const DETAIL =
+  "What the check matches, as the server words it: which documents or sources, and why search does or does not serve them now.";
+const REMEDY =
+  "What to do about it, as the server words it: the setting to change (LOOM_DOCUMENT_EXTRACTORS_JSON), or the original to upload again and ingest.";
+
+const contract = (code: string, kind: string) => ({
   code,
   kind,
-  severity: count ? "warning" : "info",
   rule_version: 1,
   source_op: "knowledge.inspect",
-  count,
-  share: count / 4,
-  population: 4,
   sample_limit: 20,
-  samples: count ? [LONG_URI] : [],
-  samples_complete: count <= 1,
-  ingestion_ids: count ? ["0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"] : [],
-  without_document: 0,
-  ingested: 0,
-  ingested_samples: [],
-  detail:
-    "Sources whose job failed, or waits to retry, because no extractor could take its format: none is configured or routed for it.",
-  remedy:
-    "Configure an extractor for the format (LOOM_DOCUMENT_EXTRACTOR_URL, or a route in LOOM_DOCUMENT_EXTRACTORS_JSON) and upload the original again.",
+  samples_complete: true,
+  detail: DETAIL,
+  remedy: REMEDY,
   exceptions: "",
   uncertainty: "",
 });
 
-const job = {
-  ingestion_id: "0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
-  state: "failed",
-  stage: "parse",
-  attempts: 3,
-  error_code: "format_unavailable",
-  failure_class: "extractor_unavailable",
+// A document check over the live documents.
+const docFinding = (code: string, kind: string, samples: string[], ingested: string[] = []) => ({
+  ...contract(code, kind),
+  severity: samples.length ? "warning" : "info",
+  count: samples.length,
+  population: 2,
+  share: samples.length / 2,
+  samples,
+  ingested: ingested.length,
+  ingested_samples: ingested,
+});
+
+// A job check over the sources with a job, each sample naming its job; extraction_incomplete
+// over the documents with an extraction, naming none.
+const ingestFinding = (
+  code: string,
+  kind: string,
+  population: number,
+  samples: Array<[string, string]>,
+  noDoc = 0,
+) => ({
+  ...contract(code, kind),
+  severity: samples.length ? "warning" : "info",
+  count: samples.length,
+  population,
+  share: population ? samples.length / population : 0,
+  samples: samples.map(([uri]) => uri),
+  ingestion_ids: samples.map(([, id]) => id).filter(Boolean),
+  without_document: noDoc,
+});
+
+const job = (id: string, state: string, failure_class = "", error_code = "") => ({
+  ingestion_id: id,
+  state,
+  stage: state === "pending" ? "" : state === "failed" ? "parse" : "",
+  attempts: state === "pending" ? 0 : 1,
+  error_code,
+  failure_class,
   queued_at: "2026-11-01T09:00:00",
   updated_at: "2026-11-01T09:01:00",
-  ended_at: "2026-11-01T09:01:00",
-  next_attempt_at: null,
+  ended_at: state === "pending" ? null : "2026-11-01T09:01:00",
+  next_attempt_at: state === "pending" ? "2026-11-01T09:00:30" : null,
   stalled: false,
+});
+
+const sourceJobs = (uri: string, j: ReturnType<typeof job>) => {
+  const open = j.state === "pending";
+  return {
+    source_uri: uri,
+    jobs: 1,
+    open_jobs: open ? 1 : 0,
+    open_ingestion_id: open ? j.ingestion_id : "",
+    latest: j,
+    current: j,
+    replaced: false,
+  };
 };
 
+const SPEC_JOB = job("0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", "partial");
+const QUEUED_JOB = job("0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c", "pending");
+const NO_EXTRACTOR_JOB = job(
+  "0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5d",
+  "failed",
+  "extractor_unavailable",
+  "format_unavailable",
+);
+const REJECTED_JOB = job("0198a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5e", "failed", "bad_content", "corrupt");
+
 const stage = { total: 3, confirmed: 1, unconfirmed: 2, source_changed: 1, outcome_known: 0 };
+const none = { total: 0, confirmed: 0, unconfirmed: 0, source_changed: 0, outcome_known: 0 };
+const DECK_FORMAT = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
 const KNOWLEDGE = {
   org: "dev",
@@ -182,11 +243,13 @@ const KNOWLEDGE = {
     live: 2,
     deleted: 1,
     newest_ingested_at: "2026-11-01T09:01:00",
+    // Most live first, then most deleted.
     by_format: [
+      { name: DECK_FORMAT, live: 1, deleted: 1 },
       { name: "pdf", live: 1, deleted: 0 },
-      { name: "application/vnd.openxmlformats-officedocument.presentationml.presentation", live: 1, deleted: 1 },
     ],
     by_source_scheme: [{ name: "https", live: 2, deleted: 1 }],
+    // The spec's first revision, and two of the deleted deck's; the live deck is unnumbered.
     earlier_revisions: 3,
     unnumbered: 1,
     retired_versions: 4,
@@ -194,11 +257,11 @@ const KNOWLEDGE = {
   chunks: {
     embedder_model: "text-embedding-3-small",
     live: 12,
-    searchable: 11,
+    searchable: 7,
     unembedded: 1,
     by_model: [
-      { model: "text-embedding-3-small", live: 11, embedded: 11 },
-      { model: "a-much-older-embedding-model-name", live: 1, embedded: 0 },
+      { model: "text-embedding-3-small", live: 8, embedded: 7 },
+      { model: "a-much-older-embedding-model-name", live: 4, embedded: 4 },
     ],
   },
   decisions: {
@@ -214,15 +277,15 @@ const KNOWLEDGE = {
       source_scheme: "https",
       version: 2,
       revision: 2,
-      ingestion_id: job.ingestion_id,
+      ingestion_id: SPEC_JOB.ingestion_id,
       ingested_at: "2026-11-01T09:01:00",
       retired_versions: 1,
       chunks: {
         live: 8,
         searchable: 7,
         unembedded: 1,
-        other_model: 1,
-        versions: 2,
+        other_model: 0,
+        versions: 1,
         min_chars: 120,
         median_chars: 900,
         max_chars: 1200,
@@ -230,23 +293,40 @@ const KNOWLEDGE = {
       },
       decisions: { decided: stage, proposed: stage },
       extraction: { unit: "pages", total: 10, extracted: 9, failed: 1, lost: ["section_path"], complete: false },
-      jobs: {
-        source_uri: LONG_URI,
-        jobs: 2,
-        open_jobs: 0,
-        open_ingestion_id: "",
-        latest: job,
-        current: job,
-        replaced: false,
+      jobs: sourceJobs(LONG_URI, SPEC_JOB),
+    },
+    {
+      source_uri: DECK_URI,
+      title: `Quarterly ${"review ".repeat(12)}`,
+      format: DECK_FORMAT,
+      source_scheme: "https",
+      version: 1,
+      revision: 0,
+      ingestion_id: "",
+      ingested_at: "2026-10-30T09:00:00",
+      retired_versions: 3,
+      chunks: {
+        live: 4,
+        searchable: 0,
+        unembedded: 0,
+        other_model: 4,
+        versions: 0,
+        min_chars: 200,
+        median_chars: 600,
+        max_chars: 900,
+        models: ["a-much-older-embedding-model-name"],
       },
+      decisions: { decided: none, proposed: none },
+      extraction: null,
+      jobs: null,
     },
   ],
-  listed_complete: false,
+  listed_complete: true,
   findings: [
-    finding("documents_without_chunks", "system_state", 0),
-    finding("unembedded_chunks", "system_state", 1),
-    finding("chunks_under_other_model", "system_state", 0),
-    finding("mixed_live_versions", "usage_heuristic", 0),
+    docFinding("documents_without_chunks", "system_state", []),
+    docFinding("unembedded_chunks", "system_state", [LONG_URI], [LONG_URI]),
+    docFinding("chunks_under_other_model", "system_state", [DECK_URI]),
+    docFinding("mixed_live_versions", "usage_heuristic", []),
   ],
   coverage: {
     rules_run: [
@@ -266,38 +346,32 @@ const KNOWLEDGE = {
   },
   ingestions: {
     sources: 4,
-    without_document: 1,
+    without_document: 3,
     replaced: 0,
     pending: 1,
     processing: 0,
     stalled: 0,
-    ready: 2,
-    partial: 0,
-    failed: 1,
+    ready: 0,
+    partial: 1,
+    failed: 2,
     cancelled: 0,
-    oldest_open_queued_at: "2026-11-01T09:00:00",
+    oldest_open_queued_at: QUEUED_JOB.queued_at,
     worker_enabled: true,
     extractor_configured: false,
     without_document_listed: [
-      {
-        source_uri: LONG_URI,
-        jobs: 1,
-        open_jobs: 0,
-        open_ingestion_id: "",
-        latest: job,
-        current: job,
-        replaced: false,
-      },
+      sourceJobs(QUEUED_URI, QUEUED_JOB),
+      sourceJobs(NO_EXTRACTOR_URI, NO_EXTRACTOR_JOB),
+      sourceJobs(REJECTED_URI, REJECTED_JOB),
     ],
   },
   extraction: { documents: 1, incomplete: 1, lost: [{ name: "section_path", live: 1, deleted: 0 }] },
   ingest_findings: [
-    finding("ingest_backlog", "system_state", 1),
-    finding("extractor_unavailable", "system_state", 3),
-    finding("ingest_missing_access", "system_state", 1),
-    finding("ingest_content_rejected", "contract_violation", 2),
-    finding("ingest_failed_on_server", "system_state", 0),
-    finding("extraction_incomplete", "usage_heuristic", 1),
+    ingestFinding("ingest_backlog", "system_state", 4, [[QUEUED_URI, QUEUED_JOB.ingestion_id]], 1),
+    ingestFinding("extractor_unavailable", "system_state", 4, [[NO_EXTRACTOR_URI, NO_EXTRACTOR_JOB.ingestion_id]], 1),
+    ingestFinding("ingest_missing_access", "system_state", 4, []),
+    ingestFinding("ingest_content_rejected", "contract_violation", 4, [[REJECTED_URI, REJECTED_JOB.ingestion_id]], 1),
+    ingestFinding("ingest_failed_on_server", "system_state", 4, []),
+    ingestFinding("extraction_incomplete", "usage_heuristic", 1, [[LONG_URI, ""]]),
   ],
   memory_findings: [
     {
