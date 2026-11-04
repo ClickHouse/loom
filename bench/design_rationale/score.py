@@ -104,8 +104,14 @@ def pass_metrics(
         covered = {
             i for i in verdict.get("gold_covered") or [] if isinstance(i, int) and 0 <= i < gold_n
         }
+        # A claim counts as cited when one of its own citations resolves and supports it.
         cited_ok = sum(
-            any(str(x).strip().strip("[]`()") in good for x in claim.get("cites") or [])
+            any(
+                ok is True and str(c).strip().strip("[]`()") in resolving
+                for c, ok in zip(
+                    claim.get("cites") or [], claim.get("cites_support") or [], strict=False
+                )
+            )
             for claim in claims
         )
         m.update(

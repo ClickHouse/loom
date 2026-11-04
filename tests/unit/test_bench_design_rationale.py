@@ -227,6 +227,14 @@ def test_a_why_answer_scores_precision_recall_and_cited_claims():
     assert m["precision"] == 0.5 and m["recall"] == pytest.approx(1 / 3)
     # An unresolved citation never counts, whatever the judge said of it.
     assert m["citations"] == 2 and m["citations_good"] == 1 and m["claims_cited"] == 1
+    # Each claim is scored on its own citations: a shared key that supports one claim
+    # does not make another claim it does not support count as cited.
+    verdict["claims"] = [
+        {"verdict": "correct", "gold": [0], "cites": ["design/a"], "cites_support": [True]},
+        {"verdict": "unsupported", "cites": ["design/a"], "cites_support": [False]},
+    ]
+    m = score.pass_metrics("A", task, entry, verdict)
+    assert m["citations_good"] == 1 and m["claims_cited"] == 1
 
 
 def test_a_change_task_fails_on_a_detector_even_when_the_judge_passes_it():
