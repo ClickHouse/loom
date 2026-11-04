@@ -19,6 +19,7 @@ from statistics import mean
 from typing import Any
 
 from bench.bootstrap import paired_bootstrap
+from bench.design_rationale.llm import cost_usd
 from bench.design_rationale.taskset import TaskSet, parse_key, surface_key
 
 # z(0.975) + z(0.80): the effect a two-sided 5% test detects with 80% power is this many
@@ -29,7 +30,7 @@ MDE_Z = 1.96 + 0.84
 PLANNING_SD = 0.35
 # (treatment arm, reference arm) pairs reported when both ran. Arm 4 against arm 5 is
 # the like-for-like comparison when arm 4 had no code index (no pre-edit block).
-COMPARISONS = ((3, 0), (4, 0), (4, 3), (4, 5), (1, 3), (2, 3))
+COMPARISONS = ((3, 0), (4, 0), (4, 3), (4, 5), (1, 0), (1, 3), (2, 3))
 # The keys a verdict must carry to be read; one without them is unreadable, not a pass.
 REQUIRED = {
     "A": ("claims", "gold_covered", "potentially_misleading"),
@@ -38,6 +39,8 @@ REQUIRED = {
 }
 # The verdict fields read as lists, at the top level and in each claim.
 LIST_FIELDS = ("cites", "cites_support")
+# The verdict fields read as lists at the top level only.
+TOP_LIST_FIELDS = ("gold_covered",)
 # The per-task metric each kind's comparison is made on, higher is better.
 HEADLINE = {
     "A": ("precision", "recall"),
@@ -66,6 +69,8 @@ def readable(kind: str, task: dict[str, Any], verdict: Any) -> bool:
     for part in (verdict, *claims):
         if any(not isinstance(part.get(f) or [], list) for f in LIST_FIELDS):
             return False
+    if any(not isinstance(verdict.get(f) or [], list) for f in TOP_LIST_FIELDS):
+        return False
     # A rubric the judge left unanswered would pass the task.
     rubric = any(d["type"] == "judge" for d in task.get("detector", []))
     return not (kind == "B" and rubric and not isinstance(verdict.get("rubric_fail"), bool))
@@ -154,7 +159,7 @@ def pass_metrics(
             m["current_stated"] = float(bool(verdict.get("current_stated")))
         else:
             passed = bool(verdict.get("abstained")) and not verdict.get("invented_rationale")
-            m["invented"] = float(not passed)
+            m["abstention_failed"] = float(not passed)
         m["passed"] = float(passed)
     return m
 
@@ -226,7 +231,7 @@ def arm_summary(rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
     for kind, metrics in (
         ("A", ("precision", "recall", "misleading", "abstained")),
         ("B", ("avoids", "satisfies", "pushed_back", "detector_fired")),
-        ("C", ("passed", "current_stated", "stale", "invented")),
+        ("C", ("passed", "current_stated", "stale", "abstention_failed")),
     ):
         mine = [r for r in rows.values() if r["kind"] == kind]
         if not mine:
@@ -518,6 +523,43 @@ def score(
         metrics["extraction"] = extraction_precision(ts, extraction_labels, state)
     (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=1))
     return metrics
+
+
+def summary(metrics: dict[str, Any], out_dir: Path) -> dict[str, Any]:
+    """The run's aggregates without the per-task rows (task ids can name private
+    material), with the run's flags and its spend: by ledger stage, and the answers'
+    cost per arm."""
+    state = json.loads((out_dir / "state.json").read_text())
+    answers = json.loads((out_dir / "answers.json").read_text())
+    flags = state.get("flags") or {}
+    by_stage: dict[str, float] = defaultdict(float)
+    ledger = out_dir / "ledger.jsonl"
+    for line in ledger.read_text().splitlines() if ledger.exists() else []:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # a row an interrupt cut short, as the ledger itself drops it
+        by_stage[row["stage"]] += row["usd"]
+    answer_usd: dict[int, float] = defaultdict(float)
+    answer_n: dict[int, int] = defaultdict(int)
+    for key, a in answers.items():
+        arm = parse_key(key)[1]
+        answer_usd[arm] += cost_usd(flags["reader"], a.get("in", 0), a.get("out", 0))
+        answer_n[arm] += 1
+    samples = {key.rsplit("/s", 1)[1] for key in answers}
+    run = {k: v for k, v in flags.items() if k not in ("org", "arm4_namespace")}
+    return {
+        "run": {**run, "k": len(samples)},
+        "spend_usd": {
+            "by_stage": {k: round(v, 4) for k, v in sorted(by_stage.items())},
+            "total": round(sum(by_stage.values()), 4),
+            "answers_by_arm": {
+                arm: {"answers": answer_n[arm], "usd": round(answer_usd[arm], 4)}
+                for arm in sorted(answer_usd)
+            },
+        },
+        **{k: v for k, v in metrics.items() if k != "per_task"},
+    }
 
 
 def _pct(v: float | None) -> str:

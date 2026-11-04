@@ -303,6 +303,7 @@ def test_a_verdict_with_a_bool_where_a_list_goes_is_unreadable():
     a = {"claims": [{"cites": "x"}], "gold_covered": [], "potentially_misleading": False}
     assert not score.readable("A", ts.tasks["A"][0], a)
     assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": "none"})
+    assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": [], "gold_covered": True})
 
 
 def test_one_document_gives_no_mde():
@@ -1320,6 +1321,30 @@ def test_scoring_with_the_unfilled_label_sheet_fails_clearly(tmp_path, capsys):
     code = main(["score", str(EXAMPLE), "--out", str(out), "--extraction-labels", str(sheet)])
     assert code == 2
     assert "fill each row's verdict first" in capsys.readouterr().err
+
+
+def test_score_writes_the_summary_without_per_task_rows(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    cfg = _config(out, arms=[0, 1, 3], k=2, judge_orders=1)
+    run.run(ts, cfg, FakeLoom(), model, [model], ledger)
+    path = tmp_path / "summary.json"
+    assert main(["score", str(EXAMPLE), "--out", str(out), "--summary", str(path)]) == 0
+    first = path.read_text()
+    summary = json.loads(first)
+    assert "per_task" not in summary
+    assert summary["run"]["reader"] == "gpt-4o-mini" and summary["run"]["k"] == 2
+    assert "org" not in summary["run"]
+    spend = summary["spend_usd"]
+    assert spend["total"] == round(sum(r["usd"] for r in ledger.rows()), 4)
+    assert spend["answers_by_arm"]["0"]["answers"] == 2 * len(list(ts.all_tasks()))
+    assert {(c["treatment"], c["reference"]) for c in summary["comparisons"]} >= {(1, 0)}
+    # Scoring again regenerates the same file.
+    assert main(["score", str(EXAMPLE), "--out", str(out), "--summary", str(path)]) == 0
+    assert path.read_text() == first
 
 
 def test_a_ledger_line_cut_short_by_an_interrupt_is_dropped(tmp_path, capsys):
