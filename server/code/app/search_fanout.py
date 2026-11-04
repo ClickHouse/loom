@@ -109,9 +109,9 @@ async def readable_subset(
     org: str, namespaces: list[str]
 ) -> tuple[list[str], list[dict[str, str]]]:
     """The namespaces the principal may read, and the rest as `{namespace, reason:
-    "not_readable"}`. Only for a fan-out LOOM expanded (every configured release branch
-    of a repository the caller named); a list the caller named goes through `authorize`,
-    which fails closed."""
+    "not_readable"}`. Only for namespaces LOOM added on its own (a release-branch fan-out,
+    a trunk or sibling namespace); a list the caller named goes through `authorize`, which
+    fails closed."""
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
 
