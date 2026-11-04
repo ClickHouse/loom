@@ -34,7 +34,9 @@ def _missing_evidence(brief: dict[str, Any], required: Iterable[str]) -> list[st
     return missing
 
 
-async def _poster_may_post(inbox: InboxRow, subject: str, agent: str) -> bool:
+async def _poster_may_post(
+    inbox: InboxRow, subject: str, agent: str, *, hides_answer: bool = True
+) -> bool:
     # The posters list needs no read, so the owner check, last, decides alone.
     posters = set(inbox.get("posters") or [])
     if bool(subject) and subject in posters:
@@ -43,7 +45,9 @@ async def _poster_may_post(inbox: InboxRow, subject: str, agent: str) -> bool:
     # must name its subject.
     if not _token_subject() and agent != "-" and agent in posters:
         return True
-    return await _in_scope(inbox["org"], inbox["owner_namespace"], write=True)
+    return await _in_scope(
+        inbox["org"], inbox["owner_namespace"], write=True, hides_answer=hides_answer
+    )
 
 
 async def _require_poster(inbox: InboxRow, subject: str, agent: str) -> None:

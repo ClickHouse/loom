@@ -32,7 +32,7 @@ from server.tasks.app.common import (
     _require_admin_side,
 )
 from server.tasks.app.trust import (
-    _token_subject,
+    _poster_may_post,
 )
 from server.tasks.store import repo as repo
 from server.tasks.store.rows import InboxRow, PolicyRow
@@ -109,18 +109,11 @@ async def handle_inbox_list(input: InboxListInput) -> InboxListOutput:
     if input.mine_everywhere:
         rows = await repo.list_inboxes(input.org, limit=input.limit)
         subject = _caller_subject()
-        # The inboxes the caller may post to, by the rule posting applies
-        # (_poster_may_post): listed by subject, or write on the owner namespace. An agent
-        # LABEL admits only a caller with no token: with one, the entry must name its subject.
-        label = input.agent if input.agent != "-" and not _token_subject() else ""
+        # The inboxes the caller may post to; a filter never marks the answer unverified.
         keep = []
         for r in rows:
-            posters = set(r.get("posters") or [])
-            if (
-                r["owner_namespace"] == input.namespace
-                or (subject and subject in posters)
-                or (label and label in posters)
-                or await _in_scope(input.org, r["owner_namespace"], write=True, hides_answer=False)
+            if r["owner_namespace"] == input.namespace or await _poster_may_post(
+                r, subject, input.agent, hides_answer=False
             ):
                 keep.append(r)
         rows = keep

@@ -987,6 +987,8 @@ async def test_a_reassign_into_an_inbox_the_caller_may_not_post_to_is_refused(
         await reassign()
     assert e.value.status_code == unregistered.value.status_code == 404
     assert e.value.detail == unregistered.value.detail
+    assert [r["task_id"] for r in fake.tasks.values()] == [t.task_id]
+    assert fake.tasks[t.task_id]["status"] == t.status
 
 
 @pytest.mark.asyncio
