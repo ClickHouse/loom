@@ -77,6 +77,10 @@ SETUP = (
     _grant("team-z", "mallory"),
     # Granted under the address as typed, before the account was linked.
     _grant("team-w", "Dave@Corp.example"),
+    # Carol's address, verified as u-carol's, typed by a self-signup account too,
+    # which holds a grant of its own on team-u, where Carol holds none.
+    _account("mallory3", "carol@corp.example", "argon2-hash"),
+    _grant("team-u", "mallory3"),
     # On team-v the address's own row was revoked, and mallory holds one of her own.
     "INSERT INTO loom.namespace_grants (org, namespace, subject, role, status, granted_at,"
     f" granted_by, revoked_at, version) VALUES ('{ORG}', 'team-v', 'bob@corp.example',"
@@ -416,6 +420,9 @@ async def test_the_user_list_marks_a_platform_admin_by_a_verified_email_only(
         # And a row stored in another case is reached by the handle or the address.
         ("team-w", "dave", ["Dave@Corp.example"]),
         ("team-w", "dave@corp.example", ["Dave@Corp.example"]),
+        # An address a verified account holds is that person: no fallback to the
+        # row of an unverified account that typed it too.
+        ("team-u", "carol@corp.example", []),
     ],
 )
 async def test_a_revoke_takes_the_rows_its_spellings_reach(
