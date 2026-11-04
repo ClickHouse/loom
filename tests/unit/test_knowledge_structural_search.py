@@ -321,3 +321,31 @@ def test_a_chunks_metadata_reads_its_structure() -> None:
     empty = read_structure("not json")
     assert (empty.section_path, empty.revision, empty.format, empty.locator) == ((), 0, "", None)
     assert read_structure('{"revision": "7"}').revision == 0
+
+
+def test_a_cold_corpus_fuses_the_vector_and_exact_key_legs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No corpus statistics yet: the lexical leg finds nothing, and a hybrid search
+    is the vector leg fused with the exact-key leg."""
+    from server.knowledge.api.models_knowledge import KnowledgeSearchInput
+    from server.knowledge.app import bm25 as knowledge_bm25
+    from server.knowledge.app import knowledge_search as h
+
+    seen = _handler_world(monkeypatch)
+
+    async def _cold(ch: Any, **kw: Any) -> tuple[int, float]:
+        return 0, 0.0
+
+    monkeypatch.setattr(knowledge_bm25, "corpus_stats", _cold)
+    out = asyncio.run(
+        h.handle_knowledge_search(
+            KnowledgeSearchInput(
+                org="o", namespace="ns", query="where is orders_daily", namespace_scope="this"
+            )
+        )
+    )
+    assert "orders_daily" in seen["keys"]
+    by = {r.source_uri: r for r in out.results}
+    assert by["repo://retention.sql"].keys_matched == ["events"]
+    assert "repo://a.md" in by

@@ -45,7 +45,7 @@ the operations reference.
 | `knowledge.add`             | writer | Store one document and its chunks.                                                     |
 | `knowledge.bulk_add`        | writer | Store up to 500 documents in one call; the same per-document behaviour as `add`.       |
 | `knowledge.upsert`          | writer | Add or replace the document at a `source_uri`; earlier chunks are superseded.          |
-| `knowledge.search`          | viewer | Hybrid passage search (vector and BM25 fused).                                         |
+| `knowledge.search`          | viewer | Hybrid passage search (vector, BM25 and exact keys fused).                             |
 | `knowledge.get`             | viewer | One document's full text and metadata by `source_uri`.                                 |
 | `knowledge.list`            | viewer | Documents of a namespace, paged by an opaque cursor, filterable by tag and URI prefix. |
 | `knowledge.outline`         | viewer | A document's table of contents, and optionally one section's assembled text.           |
@@ -457,15 +457,16 @@ the source.
 mode the query's identifiers are looked up in them, and the chunks that name the most
 rank first in a third leg; a hit from it reports `keys_matched`. A term counts as an
 identifier when it cannot be a plain word (an underscore, a dot, a `$` or a digit, or a
-capital after its first letter: `orders_daily`, `server.port`, `userId`), or when it is
-the whole query; a plain word in a question (`status`, `name`) is as often a column of
-many tables as the word the question means, and the lexical leg matches it already.
-Identifiers that share their words (`orders_daily`, `daily_orders`) read the same to
-BM25, and the exact-key leg tells them apart. A block type filter leaves out text a
-caller extracted (it has none); a TOML table packs with its keys, so its chunk's type
-is `mixed`. A chunk records the revision and format it was written as; one written
-before they were recorded reads revision 0 and format `""` until its document is
-written again.
+capital after a lowercase letter: `orders_daily`, `server.port`, `userId`; the acronyms
+`ID` and `TTL` are not), or when it is the whole query, and a dash joins the segments of
+a dotted path (`pool.max-size`) and nothing else; a plain word in a question (`status`,
+`name`) is as often a column of many tables as the word the question means, and the
+lexical leg matches it already. Identifiers that share their words (`orders_daily`,
+`daily_orders`) read the same to BM25, and the exact-key leg tells them apart. A block
+type filter leaves out text a caller extracted (it has none); a TOML table packs with
+its keys, so its chunk's type is `mixed`. A chunk records the revision and format it was
+written as; one written before they were recorded reads revision 0 and format `""` until
+its document is written again.
 
 **Reranking.** `rerank` names a reranker (`builtin:openai[:<model>]`,
 `builtin:cohere[:<model>]` or an endpoint in `LOOM_RERANK_ENDPOINTS_JSON`; a URL is
@@ -494,14 +495,14 @@ when no hit in that first pass reaches a similarity of 0.30.
 `narrow_spans` returns one sentence pair instead of a whole section, for one extra batched embed call.
 
 A lexical leg needs corpus statistics; a namespace with none yet (or a failed read)
-degrades to the vector leg alone. `loom lexical-stats-rebuild --org O --namespace N`
-rebuilds them. A chunk with an empty context (one an older build wrote) is scored on
-its text alone until `loom rechunk` rewrites its document; run
-`loom lexical-stats-rebuild` after it, since the superseded chunks stay in the
-document frequencies until then. Rechunk such documents before changing the
-embedding model in Settings → Models & keys too: the provider rebuild embeds a
-chunk's stored context and text, and an older chunk's empty context would drop the
-context its vector was written with (and a titled document with no text, which has
+degrades to the vector leg (and, in hybrid mode, the exact-key leg). `loom
+lexical-stats-rebuild --org O --namespace N` rebuilds them. A chunk with an empty
+context (one an older build wrote) is scored on its text alone until `loom rechunk`
+rewrites its document; run `loom lexical-stats-rebuild` after it, since the superseded
+chunks stay in the document frequencies until then. Rechunk such documents before
+changing the embedding model in Settings → Models & keys too: the provider rebuild
+embeds a chunk's stored context and text, and an older chunk's empty context would drop
+the context its vector was written with (and a titled document with no text, which has
 nothing else to embed, fails the rebuild until it is rechunked).
 
 ## Reading a document

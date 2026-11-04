@@ -213,8 +213,9 @@ def _namespaces_search(
             keyed_q = dataclasses.replace(base, top_k=max(top_k * 3, 20), keys=keys)
             sem, keyed = await asyncio.gather(hybrid_search(keyed_q), keys_search(keyed_q))
             return fuse_rrf(sem, [], top_k=top_k, keyed=keyed) if keyed else sem[:top_k]
-        # Lexical leg needs corpus statistics; a cold corpus (no view rows,
-        # no avgdl) or a failed read degrades to the vector leg alone.
+        # Lexical leg needs corpus statistics; a cold corpus (no view rows, no avgdl)
+        # or a failed read degrades to the vector leg (and, in hybrid mode, the
+        # exact-key leg).
         from server.core.ch import get_client as _get_ch
 
         avgdl, idfs = await knowledge_bm25.lexical_stats(

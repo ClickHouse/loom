@@ -6,6 +6,8 @@ at LOOM_DOCUMENT_EXTRACTOR_URL), then knowledge.search reads them back.
   chunk that defines it through the exact-key leg, with its keys, locator, block type,
   format and revision.
 - `formats` and `block_types` keep only chunks of those documents and blocks.
+- A prose question whose words are SQL column names (`status`, `name`) still finds the
+  document that answers it first, with no keys matched.
 """
 
 from __future__ import annotations
