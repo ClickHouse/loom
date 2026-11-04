@@ -308,11 +308,20 @@ async def test_an_admin_revoked_meanwhile_stops_the_persons_later_row(
     monkeypatch.setattr("server.auth.aliases.read_aliases", _verified)
     monkeypatch.setattr(grants_repo, "count_active_admins", _admins)
     monkeypatch.setattr(token_grants, "cascade_revoke_to_created_tokens", _no_cascade)
+    audited: list[Any] = []
+
+    async def _emit(event_type: str, **kw: Any) -> str:
+        audited.append((event_type, kw["subject"]))
+        return ""
+
+    monkeypatch.setattr("server.observability.audit.emit", _emit)
     with pytest.raises(PreconditionFailedError, match="only admin"):
         await grants_mod.handle_grants_revoke(
             GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="dave")
         )
     assert [r["subject"] for r in _handler_env["rows"]] == ["dave"]
+    # The call failed, so no op audit row: the row that went is audited on its own.
+    assert ("grants.revoke", {"subject": "dave", "named": "dave"}) in audited
 
 
 @pytest.mark.parametrize(

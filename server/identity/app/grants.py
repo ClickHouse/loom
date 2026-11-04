@@ -398,7 +398,9 @@ async def revoke_grant(
     for subject, row in rows:
         now = await _revoke_row(input, subject, row, may_take)
         revoked_at = now or revoked_at
-        if now is not None and subject != input.subject:
+        if now is not None and (subject != input.subject or len(rows) > 1):
+            # Audited as each lands: a later row refused fails the call, and
+            # the op's own audit row is written only for a call that succeeds.
             await _audit_stored_row(input, subject)
     if revoked_at is None:
         return GrantsRevokeOutput(revoked=False)
@@ -406,8 +408,9 @@ async def revoke_grant(
 
 
 async def _audit_stored_row(input: GrantsRevokeInput, subject: str) -> None:
-    """The op's own audit row names the subject asked for; a row it took under
-    another spelling gets one of its own, so the log shows whose grant went."""
+    """The op's own audit row names the subject asked for; a row taken under
+    another spelling, or one of several, gets one of its own, so the log shows
+    whose grant went."""
     from server.auth.context import current_auth
     from server.observability import audit
 
