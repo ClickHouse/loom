@@ -19,6 +19,7 @@ The job sends originals to the extractor the settings route SQL and TOML to
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -53,20 +54,31 @@ SQL = (
 async def _upload(
     c: httpx.AsyncClient, org: str, ns: str, data: bytes, filename: str
 ) -> httpx.Response:
-    return await c.post(
-        "/v1/knowledge.upload",
-        params={
-            "org": org,
-            "namespace": ns,
-            "filename": filename,
-            "sha256": hashlib.sha256(data).hexdigest(),
-        },
-        content=data,
-    )
+    """The upload's response; one the namespace's rate limit refuses is sent again."""
+    for _ in range(10):
+        r = await c.post(
+            "/v1/knowledge.upload",
+            params={
+                "org": org,
+                "namespace": ns,
+                "filename": filename,
+                "sha256": hashlib.sha256(data).hexdigest(),
+            },
+            content=data,
+        )
+        if r.status_code != 429:
+            break
+        await asyncio.sleep(float(r.json()["detail"].get("retry_after_s") or 1))
+    return r
 
 
 async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:
-    r = await c.post(f"/v1/{op}", json=body)
+    """The op's answer; a call the namespace's rate limit refuses waits and is sent again."""
+    for _ in range(10):
+        r = await c.post(f"/v1/{op}", json=body)
+        if r.status_code != 429:
+            break
+        await asyncio.sleep(float(r.json()["detail"].get("retry_after_s") or 1))
     assert r.status_code == 200, r.text
     return dict(r.json())
 
@@ -232,7 +244,9 @@ async def test_a_mislabelled_upload_is_stored_and_the_extractor_refuses_it(
 
 
 @pytest.mark.asyncio
-async def test_the_queue_offers_each_namespace_its_oldest_open_job(control_plane_url: str) -> None:
+async def test_the_queue_offers_each_namespace_one_due_job_at_the_head_of_its_source(
+    control_plane_url: str,
+) -> None:
     """What a worker pass reads (`ingestions.due`), for this test's org alone: one
     candidate per namespace, the oldest due job of its sources; a later ingest of a
     source waits behind the earlier one even while that one is not due (a retry's
@@ -245,7 +259,7 @@ async def test_the_queue_offers_each_namespace_its_oldest_open_job(control_plane
     org = unique_org("ingest-due")
     jobs: list[tuple[str, str]] = []  # (namespace, ingestion id)
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
-        for ns, uri in [("a", "one"), ("a", "one"), ("a", "two"), ("b", "one")]:
+        for ns, uri in [("a", "one"), ("a", "one"), ("a", "two"), ("a", "three"), ("b", "one")]:
             up = (await _upload(c, org, ns, SQL, "q.sql")).json()
             job = await _op(
                 c,
@@ -275,7 +289,9 @@ async def test_the_queue_offers_each_namespace_its_oldest_open_job(control_plane
         finally:
             await ch.disconnect()
     offered = sorted((j["namespace"], j["ingestion_id"]) for j in due if j["org"] == org)
-    assert offered == [jobs[2], jobs[3]]
+    # Without the per-namespace rule `a` would offer `three` too; without the per-source
+    # one, the waiting source's later job (older than `two`) would be offered.
+    assert offered == [jobs[2], jobs[4]]
 
 
 @pytest.mark.asyncio
