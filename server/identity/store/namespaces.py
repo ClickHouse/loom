@@ -40,3 +40,21 @@ async def is_active(org: str, namespace: str, *, ch: _CHClient | None = None) ->
         params={"org": org, "ns": namespace},
     )
     return row is not None
+
+
+async def descriptions(
+    org: str, namespaces: list[str], *, ch: _CHClient | None = None
+) -> dict[str, str]:
+    """The directory description of each of `namespaces` that has one."""
+    if not namespaces:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT namespace, description FROM loom.namespaces FINAL
+        WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND description != ''
+        LIMIT {n:UInt32}
+        """,
+        params={"org": org, "ns": namespaces, "n": len(namespaces)},
+    )
+    return {str(r["namespace"]): str(r["description"]) for r in rows}
