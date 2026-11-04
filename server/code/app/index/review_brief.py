@@ -470,6 +470,7 @@ def blame_verdict(rows: list[dict[str, Any]], *, ranges: int) -> str:
 _REJECTED = re.compile(r"\bRejected:(.*)", re.S)
 _APPLIES_TO = "Applies to "
 _SETTING_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+")
+_HUNK = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 
 
 def checked_names(text: str, *, constraint: bool) -> list[str]:
@@ -488,12 +489,29 @@ def checked_names(text: str, *, constraint: bool) -> list[str]:
 
 
 def added_text(diff: str) -> str:
-    """The lines a unified diff adds, without their `+`."""
-    return "\n".join(
-        line[1:]
-        for line in diff.splitlines()
-        if line.startswith("+") and not line.startswith(("+++ b/", "+++ /dev/null"))
-    )
+    """The lines a unified diff adds, without their `+`: only lines inside a hunk, counted
+    off its `@@ -a,b +c,d @@` header, so no file header (with or without `a/` and `b/`
+    prefixes) is read as one."""
+    added: list[str] = []
+    old_left = new_left = 0
+    for line in diff.splitlines():
+        if old_left <= 0 and new_left <= 0:
+            m = _HUNK.match(line)
+            if m:
+                old_left = int(m.group(1) if m.group(1) is not None else 1)
+                new_left = int(m.group(2) if m.group(2) is not None else 1)
+            continue
+        if line.startswith("\\"):
+            continue  # "\ No newline at end of file"
+        if line.startswith("+"):
+            added.append(line[1:])
+            new_left -= 1
+        elif line.startswith("-"):
+            old_left -= 1
+        else:
+            old_left -= 1
+            new_left -= 1
+    return "\n".join(added)
 
 
 def names_in(added: str, names: list[str]) -> list[str]:
@@ -518,22 +536,27 @@ def rationale_section(
 ) -> dict[str, Any]:
     """The `rationale` section over the rows `decisions_for_paths` read and the PR's diff
     (None: it could not be read). A row whose checked names the diff adds says `check`;
-    one with checked names none of which it adds says `clear`; one with nothing to check
-    says ''. Constraints first, `check` rows first among them, whole rows up to
-    `code_review_brief_rationale_tokens` (the first always); the verdict reads every row:
-    check | unknown (a diff that could not be read) | clear | none."""
+    one whose checked names it does not add says `clear`, or `unknown` when the diff was
+    cut, the row's value was cut at the read (a name may lie past either cut) or the diff
+    could not be read; one with nothing to check says ''. Constraints first, `check` rows
+    first among them, whole rows up to `code_review_brief_rationale_tokens` (the first
+    always); the verdict reads every row: check | unknown | clear | none (no row has
+    anything to check)."""
     added = added_text(diff) if diff is not None else None
     rows = []
     for d in decisions:
         constraint = "constraint" in d["tags"]
+        value_cut = bool(d.get("value_truncated"))
         names = checked_names(d["text"], constraint=constraint)
         found = names_in(added, names) if names and added is not None else []
-        if not names:
+        if not names and not value_cut:
             verdict = ""
-        elif added is None:
+        elif found:
+            verdict = "check"
+        elif added is None or diff_cut or value_cut:
             verdict = "unknown"
         else:
-            verdict = "check" if found else "clear"
+            verdict = "clear"
         row = {
             "memory_key": d["memory_key"],
             "kind": "constraint" if constraint else "decision",
@@ -547,19 +570,14 @@ def rationale_section(
         rows.append(row)
     rows.sort(key=lambda r: (r["kind"] != "constraint", r["verdict"] != "check"))
     verdicts = {r["verdict"] for r in rows}
-    if not rows:
-        verdict = "none"
-    elif "check" in verdicts:
-        verdict = "check"
-    elif "unknown" in verdicts:
-        verdict = "unknown"
-    else:
-        verdict = "clear"
+    verdict = next((v for v in ("check", "unknown", "clear") if v in verdicts), "none")
     causes = []
-    if "unknown" in verdicts:
+    if diff is None and "unknown" in verdicts:
         causes.append("diff_unread")
     if diff_cut:
         causes.append("diff_cut")
+    if any(d.get("value_truncated") for d in decisions):
+        causes.append("value_cut")
     if paths_left > 0:
         causes.append(f"paths_not_read:{paths_left}")
     kept = rows[:1]

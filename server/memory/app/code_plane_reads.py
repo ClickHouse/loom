@@ -119,7 +119,8 @@ async def decisions_for_paths(
     whose `files[]` or code links touch `paths`: constraints first, then pinned, then by
     confidence, at most `limit`. Each is a `memory.for_file` hit with `code_state` the
     worst over its links on every path, `line` (the pre-edit block's line, the value cut)
-    and `text` (the whole value). Empty when the caller may not read `trunk_ns`."""
+    and `text` (the value as that read holds it: cut at its ceiling when
+    `value_truncated`). Empty when the caller may not read `trunk_ns`."""
     from server.memory.api.models_for_file import MemoryForFileInput
     from server.memory.app.code_link_reads import readable_namespaces
     from server.memory.app.for_file import handle_memory_for_file, listing_line, value_text

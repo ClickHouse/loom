@@ -305,24 +305,28 @@ async def _rationale_section(
 async def _pr_diff(
     org: str, ns: str, payload: dict[str, Any], *, pr_number: int, is_open: bool
 ) -> tuple[str | None, bool]:
-    """(diff, cut) of the briefed PR: the diff the caller posted, else the mirror's diff
-    of the open head against its merge-base or of the merge commit against its first
-    parent, cut at MAX_DIFF_CHARS bytes; (None, False) when it cannot be read here."""
+    """(diff, cut) of the briefed PR, cut at MAX_DIFF_CHARS: the diff the caller posted,
+    else the diff of the open head against its merge-base or of the merge commit against
+    its first parent, from a mirror already on this host (a read here never starts a
+    clone); (None, False) when it cannot be read here."""
     from server.code.app.index import gitrepo
+    from server.code.app.index.mirrors import present_dir
     from server.code.domain.index.repos import repo_for_namespace
 
     img = po.posted(pr_number) if is_open else None
     if img is not None:
-        return (img.diff or None), False
-    git_dir, _gap = await history_dir(repo_for_namespace(org, ns))
+        if not img.diff:
+            return None, False
+        return img.diff[: rb.MAX_DIFF_CHARS], len(img.diff) > rb.MAX_DIFF_CHARS
     if payload.get("overlay"):
         base, head = str(payload.get("base_sha") or ""), str(payload.get("head_sha") or "")
     else:
         head = str(payload.get("merge_sha") or "")
         base = f"{head}^1" if head else ""
-    if not (git_dir and base and head):
-        return None, False
     try:
+        git_dir = await present_dir(repo_for_namespace(org, ns))
+        if not (git_dir and base and head):
+            return None, False
         return await gitrepo.run_bounded(
             git_dir, "diff", "--no-renames", base, head, max_bytes=rb.MAX_DIFF_CHARS
         )

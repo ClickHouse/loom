@@ -59,7 +59,29 @@ def test_names_in_matches_added_lines_as_whole_words() -> None:
     assert rb.names_in(added, ["DB::SpillingHashSet"]) == ["DB::SpillingHashSet"]
     assert rb.names_in(added, ["DB::HashSet", "ExternalDistinctTransform"]) == []
     # an added line that starts with `++` is still an added line
-    assert rb.names_in(rb.added_text("+++counter_value;\n"), ["counter_value"]) == ["counter_value"]
+    hunk = "@@ -1,0 +1,1 @@\n+++counter_value;\n"
+    assert rb.names_in(rb.added_text(hunk), ["counter_value"]) == ["counter_value"]
+
+
+def test_added_text_reads_hunks_only_whatever_the_header_prefixes() -> None:
+    # `git diff --no-prefix`: the headers name the path bare, and are not added lines
+    diff = (
+        "diff --git src/SpillingHashSet.h src/SpillingHashSet.h\n"
+        "--- src/SpillingHashSet.h\n"
+        "+++ src/SpillingHashSet.h\n"
+        "@@ -1,2 +1,2 @@\n"
+        " keep\n"
+        "--- removed line\n"
+        "++++ added line\n"
+        "\\ No newline at end of file\n"
+        "diff --git src/b.h src/b.h\n"
+        "--- /dev/null\n"
+        "+++ src/b.h\n"
+        "@@ -0,0 +1 @@\n"
+        "+new\n"
+    )
+    assert rb.added_text(diff) == "+++ added line\nnew"
+    assert rb.names_in(rb.added_text(diff), ["DB::SpillingHashSet"]) == []
 
 
 def test_section_says_check_for_a_row_whose_rejected_option_the_diff_adds() -> None:
@@ -84,12 +106,28 @@ def test_section_says_check_for_a_row_whose_rejected_option_the_diff_adds() -> N
 def test_section_without_a_diff_is_unknown_and_without_rows_none() -> None:
     sec = rb.rationale_section([_row("design/spill", DECISION, ["decision"])], None)
     assert sec["verdict"] == "unknown" and sec["causes"] == ["diff_unread"]
-    # nothing to check needs no diff
+    # nothing to check needs no diff, and the section says there is nothing to check
     sec = rb.rationale_section([_row("design/plain", "Decided Z.", ["decision"])], None)
-    assert sec["verdict"] == "clear" and sec["rows"][0]["verdict"] == ""
+    assert sec["verdict"] == "none" and sec["rows"][0]["verdict"] == ""
+    assert sec["status"] == rb.SERVED and sec["causes"] == []
     sec = rb.rationale_section([], "", paths_left=3)
     assert sec["verdict"] == "none" and sec["status"] == rb.EMPTY
     assert sec["causes"] == ["paths_not_read:3"]
+
+
+def test_a_cut_diff_or_a_cut_value_that_shows_no_name_is_unknown() -> None:
+    spill = _row("design/spill", DECISION, ["decision"])
+    # the name lies past the cut: the part read adds nothing the row names
+    cut = DIFF.split("+    SpillingHashSet")[0]
+    sec = rb.rationale_section([spill], cut, diff_cut=True)
+    assert sec["rows"][0]["verdict"] == "unknown" and sec["verdict"] == "unknown"
+    assert sec["causes"] == ["diff_cut"]
+    # a name found before the cut still says check
+    assert rb.rationale_section([spill], DIFF, diff_cut=True)["verdict"] == "check"
+    # a value cut at the read may name code past the cut, even with no name before it
+    cut_row = _row("design/long", "Decided Z because W. Rejected: a plain…", ["decision"])
+    sec = rb.rationale_section([{**cut_row, "value_truncated": True}], DIFF)
+    assert sec["rows"][0]["verdict"] == "unknown" and sec["causes"] == ["value_cut"]
 
 
 def test_section_keeps_whole_rows_within_its_budget_and_the_verdict_reads_every_row() -> None:
@@ -183,14 +221,16 @@ async def test_pr_diff_reads_the_posted_diff_else_the_mirror(
 
     runs: list[tuple[str, ...]] = []
 
-    async def _dir(cfg: Any, **kw: Any) -> tuple[str, str]:
-        return ("/m.git", "") if cfg is not None else ("", "")
+    async def _dir(cfg: Any) -> str:
+        return "/m.git" if cfg is not None else ""
 
     async def _run(git_dir: str, *args: str, max_bytes: int, **kw: Any) -> tuple[str, bool]:
         runs.append((git_dir, *args))
         return DIFF, False
 
-    monkeypatch.setattr(h, "history_dir", _dir)
+    from server.code.app.index import mirrors
+
+    monkeypatch.setattr(mirrors, "present_dir", _dir)
     monkeypatch.setattr(gitrepo, "run_bounded", _run)
     import server.code.domain.index.repos as repos_mod
 
@@ -209,7 +249,76 @@ async def test_pr_diff_reads_the_posted_diff_else_the_mirror(
         assert await h._pr_diff("o", "n", opened, pr_number=7, is_open=True) == ("+x\n", False)
     finally:
         po._POSTED.reset(token)
+    # a posted diff is cut where the mirror's would be
+    monkeypatch.setattr(rb, "MAX_DIFF_CHARS", 3)
+    token = po._POSTED.set(po.PostImage(pr_number=7, files={}, diff="+abcdef\n"))
+    try:
+        assert await h._pr_diff("o", "n", opened, pr_number=7, is_open=True) == ("+ab", True)
+    finally:
+        po._POSTED.reset(token)
     assert len(runs) == 2
     # no repository here: nothing to read
     monkeypatch.setattr(repos_mod, "repo_for_namespace", lambda o, n: None)
     assert await h._pr_diff("o", "n", merged, pr_number=7, is_open=False) == (None, False)
+
+    # a lookup that fails is a diff that cannot be read
+    def _boom(o: str, n: str) -> Any:
+        raise RuntimeError("repos unreadable")
+
+    monkeypatch.setattr(repos_mod, "repo_for_namespace", _boom)
+    assert await h._pr_diff("o", "n", merged, pr_number=7, is_open=False) == (None, False)
+
+
+@pytest.mark.asyncio
+async def test_decisions_for_paths_refuses_a_token_that_grants_the_branch_but_not_the_trunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real scope check: a token naming only the branch namespace reads nothing from
+    the trunk, and the pre-edit read never runs; the same token naming the trunk does."""
+    import server.auth.authz as authz
+    import server.code.domain.index.repos as repos
+    import server.identity.app.namespace_classification as nc
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.app import for_file
+    from server.operations.base import Role
+
+    async def _none_restricted(org: str) -> frozenset[str]:
+        return frozenset()
+
+    async def _no_grant(org: str, ns: str, subject: str) -> None:
+        return None
+
+    monkeypatch.setattr(nc, "restricted_set", _none_restricted)
+    monkeypatch.setattr(authz, "grant_role_for", _no_grant)
+    monkeypatch.setattr(repos, "repo_for_namespace", lambda org, ns: None)
+    reads: list[str] = []
+
+    async def _for_file(inp: Any) -> MemoryForFileOutput:
+        reads.append(inp.namespace)
+        return MemoryForFileOutput(path=inp.path, total=0, hits=[])
+
+    monkeypatch.setattr(for_file, "handle_memory_for_file", _for_file)
+
+    def _token(*namespaces: str) -> AuthInfo:
+        return AuthInfo(
+            subject="alice@x",
+            org="acme",
+            namespaces=namespaces,
+            roles=(Role.VIEWER,),
+            is_service_account=False,
+        )
+
+    nc.reset()
+    try:
+        set_current_auth(_token("code-widgets-release"))
+        got = await code_plane_reads.decisions_for_paths(
+            "acme", "code-widgets", ["src/a.cpp"], limit=5
+        )
+        assert got == [] and reads == []
+        set_current_auth(_token("code-widgets-release", "code-widgets"))
+        await code_plane_reads.decisions_for_paths("acme", "code-widgets", ["src/a.cpp"], limit=5)
+        assert reads == ["code-widgets"]
+    finally:
+        set_current_auth(None)
+        nc.reset()

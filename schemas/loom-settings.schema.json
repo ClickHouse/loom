@@ -1361,7 +1361,7 @@
           "maximum": 50,
           "minimum": 1,
           "type": "integer",
-          "description": "Changed paths the review brief's `rationale` section reads decisions for, source paths first: one memory.for_file read each."
+          "description": "Changed paths the review brief's `rationale` section reads decisions for, source paths first. Each is one memory.for_file read: four ClickHouse reads (files match, code links, their memories, the linked rows; a file with many links slices the last)."
         },
         "code_review_brief_rationale_rows": {
           "default": 8,

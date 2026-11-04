@@ -80,17 +80,18 @@ trunk namespace. It serves whole rows up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TO
 the pre-edit block prints for it (value, source, `(pinned)`, a code-change note),
 `pinned`, `code_state` and a `verdict`:
 
-| Row verdict | Meaning                                                                                                             |
-| ----------- | ------------------------------------------------------------------------------------------------------------------- |
-| `check`     | the diff adds a backticked name from the row's `Rejected:` options, or a setting name a constraint states (`names`) |
-| `clear`     | the row names such code and the diff adds none of it                                                                |
-| `unknown`   | the row names such code and the diff could not be read here                                                         |
-| `""`        | the row names nothing to check                                                                                      |
+| Row verdict | Meaning                                                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------------------------------- |
+| `check`     | the diff adds a backticked name from the row's `Rejected:` options, or a setting name a constraint states (`names`)  |
+| `clear`     | the row names such code and the diff adds none of it                                                                 |
+| `unknown`   | no name found, but the diff could not be read here, or the diff or the row's value was cut (`diff_cut`, `value_cut`) |
+| `""`        | the row names nothing to check                                                                                       |
 
-The section's verdict is `check` when any row says so, then `unknown`, `clear`, or `none`
-when no decision touches the files. The check is a whole-word match on added lines, so
-`check` means "read this row against the diff", not a violation found. The `Applies to`
-clause, which names the code the row governs, is not checked.
+The section's verdict is `check` when any row says so, then `unknown`, then `clear`, and
+`none` when no row has anything to check (or no decision touches the files). The diff is
+read up to 200,000 bytes. The check is a whole-word match on added lines, so `check` means
+"read this row against the diff", not a violation found. The `Applies to` clause, which
+names the code the row governs, is not checked.
 
 `code.conventions` states the repository's
 recurring maintainer checks as facts over one PR's diff (`pr_number`, `head_sha`,

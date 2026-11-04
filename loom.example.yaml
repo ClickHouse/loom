@@ -2104,7 +2104,9 @@ settings:
   # code_review_brief_mirror_miss_ttl_s: 600.0
 
   # Changed paths the review brief's `rationale` section reads decisions for, source
-  # paths first: one memory.for_file read each. [live]
+  # paths first. Each is one memory.for_file read: four ClickHouse reads (files match,
+  # code links, their memories, the linked rows; a file with many links slices the
+  # last). [live]
   # code_review_brief_rationale_paths: 10
 
   # Decision and constraint rows the `rationale` section reads. [live]
