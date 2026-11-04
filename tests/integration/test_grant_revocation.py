@@ -234,3 +234,28 @@ def test_signing_in_again_does_not_bring_back_a_revoked_owner(base: str) -> None
     token = _login()
     assert _writes(base, token, ns) == 403
     assert _reads(base, token, ns) == 200
+
+
+def test_a_self_signup_naming_someone_elses_address_holds_none_of_its_grants(base: str) -> None:
+    # Bob's address is granted before he has an account; mallory self-signs up
+    # with it. Self-signup never verifies the email, so the grant is not hers: a
+    # token claiming the namespace is capped at no access, and her listing omits it.
+    ns = _namespace(base, "approval", alice=None)
+    bob = f"bob-{ns}@example.com"
+    granted = _call(base, "grants.create", _admin(), namespace=ns, subject=bob, role="writer")
+    assert granted.status_code == 200, granted.text
+    mallory, password = f"m-{ns}", secrets.token_urlsafe(16)
+    signup = httpx.post(
+        f"{base}/v1/auth/self-signup",
+        json={"namespace": mallory, "email": bob, "password": password},
+        timeout=15.0,
+    )
+    assert signup.status_code == 200, signup.text
+    assert _writes(base, _token(signup.json()["subject"], [ns]), ns) == 403
+    login = httpx.post(
+        f"{base}/v1/auth/login", json={"identifier": bob, "password": password}, timeout=15.0
+    )
+    assert login.status_code == 200, login.text
+    mine = _call(base, "namespace.list_mine", str(login.json()["token"]))
+    assert mine.status_code == 200, mine.text
+    assert ns not in mine.text
