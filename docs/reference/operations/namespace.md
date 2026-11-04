@@ -574,7 +574,7 @@ The de-facto taxonomy of a namespace — tags + entities across its memories.
 
 ## `namespace.tune`
 
-Draft changes to a namespace's extraction rules, categories and guide from what its rows and the audit show.
+Draft changes to a namespace's extraction rules, categories and guide from what its rows and the audit show, and to the chunking and extractor settings from what its documents show.
 
 `POST /v1/namespace.tune` · MCP `loom_namespace_tune` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -592,13 +592,14 @@ Draft changes to a namespace's extraction rules, categories and guide from what 
 | `org` | `str` | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | The namespace the op reads or writes. |
 | `computed_at` | `datetime` | When the drafts were read (UTC). |
-| `proposals` | `list[TuneProposal]` | The drafts, extraction instructions first, then categories, then the guide. |
+| `proposals` | `list[TuneProposal]` | The drafts, extraction instructions first, then categories, the guide, chunking and extractor routes. |
 | `guide_revision` | `int \| None` | The guide's current revision (0: none written), which a guide draft's `expected_revision` carries; None when the guide could not be read. |
 | `categories_registered` | `int \| None` | Categories registered in the namespace now; None when they could not be read. |
 | `extraction_policy` | `str \| None` | The operator extraction policy the namespace's extractions run under (the org's, then the namespace's), for an org admin; None otherwise. |
 | `extraction_policy_unavailable` | `str` | Why `extraction_policy` is None, or "". |
+| `chunking` | `ChunkingSample \| None` | The namespace's documents re-chunked at the current values, the evidence a chunking draft is judged on; null when the namespace has no live document or the sample could not be read. |
 | `skipped` | `list[str]` | Sections that drafted nothing, as "section: reason": a read that failed, or evidence that rules the draft out. |
-| `model_used` | `bool` | Proposals use no model: every draft is built from the rows, the audit and the current settings. |
+| `model_used` | `bool` | Proposals use no model: every draft is built from the rows, the documents, the audit and the current settings. |
 
 ## `namespace.validate`
 

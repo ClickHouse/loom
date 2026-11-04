@@ -37,7 +37,10 @@ interface Props {
   org: string;
   /** The collections a new one may sit in: those the caller writes, never a personal one. */
   parents: CollectionEntry[];
-  onCreated: () => void;
+  /** The parent the form starts on; "" for top level. */
+  initialParent?: string;
+  /** Fires with the new collection's name. */
+  onCreated: (namespace: string) => void;
 }
 
 /**
@@ -45,16 +48,16 @@ interface Props {
  * becomes its admin; under a parent it also inherits the parent's grants, which needs
  * writer on the parent.
  */
-export function CreateCollectionDialog({ open, onOpenChange, org, parents, onCreated }: Props) {
+export function CreateCollectionDialog({ open, onOpenChange, org, parents, initialParent = "", onCreated }: Props) {
   const [name, setName] = useState(COLLECTION_PREFIX);
-  const [parent, setParent] = useState(TOP_LEVEL);
+  const [parent, setParent] = useState(initialParent || TOP_LEVEL);
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
     setName(COLLECTION_PREFIX);
-    setParent(TOP_LEVEL);
+    setParent(initialParent || TOP_LEVEL);
     setDescription("");
     setBusy(false);
     setError(null);
@@ -67,7 +70,9 @@ export function CreateCollectionDialog({ open, onOpenChange, org, parents, onCre
   const trimmed = name.trim();
   // Said once something past the prefix is typed, not on the prefilled prefix.
   const nameError = trimmed === COLLECTION_PREFIX ? null : collectionNameError(trimmed);
-  const canSubmit = collectionNameError(trimmed) === null && !busy;
+  // Counted by character, as the server counts it (an emoji is one).
+  const descriptionTooLong = Array.from(description.trim()).length > 2000;
+  const canSubmit = collectionNameError(trimmed) === null && !descriptionTooLong && !busy;
 
   const onSubmit = async () => {
     if (!canSubmit) return;
@@ -79,7 +84,7 @@ export function CreateCollectionDialog({ open, onOpenChange, org, parents, onCre
         description: description.trim(),
       });
       toast(r.created ? `Created ${r.namespace}` : `${r.namespace} already exists`, "ok");
-      onCreated();
+      onCreated(r.namespace);
       reset();
       onOpenChange(false);
     } catch (e) {
@@ -137,6 +142,7 @@ export function CreateCollectionDialog({ open, onOpenChange, org, parents, onCre
           value={description}
           onChange={setDescription}
           placeholder="What the collection holds"
+          {...fieldError("create-collection-description-error", descriptionTooLong ? "At most 2000 characters." : null)}
         />
         {error && <Alert role="alert" state="danger" text={error} />}
         <ModalFooter>

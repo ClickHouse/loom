@@ -23,11 +23,17 @@ identity, so a re-run revises the extractor's own rows instead of writing beside
 - no record under the key, but a pinned or attested decision row reads the same at or
   above the conflict threshold: skipped as already recorded.
 
+The same words keep a row's stage on every path (the stage is the model's reading and flips
+between runs), also under a key the model reworded when its outcome, reasoning and rejected
+options' reasons are those of one of the extractor's rows (`_carried_stage`). A changed text
+is written at the stage it reads as.
+
 After the writes, the extractor deletes its rows citing this document, unless pinned or
 attested, whose reasoning (a span of the document) is no longer in its text, read as in
 the verbatim check, or whose outcome and reasoning this run recorded under another key. A
 row it keeps (pinned, attested, or with a recorded outcome) whose reasoning left is
-tagged `source-changed` instead. A refused write is reported and the run goes on.
+tagged `source-changed` instead. A refused write is reported and the run goes on; a
+model call held for the org (`customer.HOLDS`) stops the run before any write.
 
 A document outside a repository's code namespace names the repository: its code names
 resolve in the repository's trunk, and the rows go there or stay beside the document,
@@ -40,9 +46,13 @@ document's branch namespace.
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
+import time
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 import httpx
 from fastapi import HTTPException
@@ -50,13 +60,15 @@ from pydantic import ValidationError
 
 from server.auth.authz import row_in_scope
 from server.code.domain.extract.lang_markdown import is_markdown_path
+from server.core.background import TaskSet
 from server.core.errors import LoomServerError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.llm import customer
 from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.app import decisions as svc
 from server.memory.domain import decision_extract as dx
 from server.memory.domain.corpus_synthesis import CorpusChunk, Window, windows
-from server.memory.domain.decision_schema import SOURCE_CHANGED_TAG
+from server.memory.domain.decision_schema import PROPOSED_TAG, SOURCE_CHANGED_TAG, Stage
 from server.memory.domain.decision_statement import alternatives, collapse_ws, memory_value
 from server.memory.domain.files import detect_value_files, normalize_files
 from server.memory.domain.trust import confirmed, row_content_sha256, verification_state
@@ -133,6 +145,9 @@ class Dropped:
     # failed (the reason says which): it counts toward the exit code, as
     # `ExtractReport.refused` does.
     refused: bool = False
+    # The refusal is one every later run gets too (`PERMANENT_REFUSALS`): the
+    # document, not the moment, decides it.
+    permanent: bool = False
 
 
 @dataclass
@@ -177,6 +192,18 @@ class ExtractReport:
     # "<key>: deleted since the run read it" or "<key>: rewritten since the run read it":
     # a write that found its row gone or moved on, a race the next run settles.
     races: list[str] = field(default_factory=list)
+    # The hold (`customer.HOLDS`) that stopped the run's model calls, its reads or its
+    # writes: the org's calls are switched off or refused for now. A run held while
+    # reading wrote nothing; one held while writing kept what it wrote. Neither retired.
+    held: LoomServerError | None = None
+    # The run's `read_deadline` passed before every window was read: it wrote and
+    # retired nothing.
+    out_of_time: bool = False
+    # `may_write` said no before a write: the run stopped there; what it wrote stays.
+    write_stopped: bool = False
+
+    def reads_stopped(self) -> bool:
+        return self.held is not None or self.out_of_time
 
 
 def _frozen(row: MemoryRow) -> bool:
@@ -185,11 +212,6 @@ def _frozen(row: MemoryRow) -> bool:
     current = row_content_sha256(row)
     state = verification_state(row.verified_by, row.verified_sha256, current)
     return confirmed(row.pinned, state)
-
-
-def _has_outcome(record: dict[str, Any]) -> bool:
-    """decision.outcome recorded what happened: a re-record or a delete would lose it."""
-    return bool(str(record.get("realized_outcome") or "").strip())
 
 
 def _is_extractor(agent: str, user_id: str, session_id: str) -> bool:
@@ -255,7 +277,7 @@ def _fake_chosen() -> bool:
     return settings.llm_provider == "fake" and not settings.llm_provider_inferred()
 
 
-def _no_model_error() -> str:
+def no_model_error() -> str:
     """Why the run must not start: it would read the document with the fake model, whose
     decisions pass the verbatim check by construction and would be recorded as the
     document's. That is so when a keyed provider has no key (the client falls back to the
@@ -287,13 +309,52 @@ def _no_model_error() -> str:
 _REPORTED_ERRORS = (HTTPException, LoomServerError, httpx.HTTPError, TimeoutError)
 
 
-def _refusal(e: BaseException) -> str:
+# Refusals a write of the same candidate gets on every run: a blacklisted decision, a
+# pinned peer it would contradict, a body the op will not take.
+PERMANENT_REFUSALS = frozenset({"BLACKLISTED", "PINNED_CONFLICT", "VALIDATION_FAILED"})
+
+
+def _code(e: BaseException) -> str:
+    """The server's refusal code, or '' for a provider error or a timeout."""
     if isinstance(e, LoomServerError):
-        return f"refused: {e.code}"
+        return e.code
     if isinstance(e, HTTPException):
         detail: dict[str, Any] = e.detail if isinstance(e.detail, dict) else {}
-        return f"refused: {detail.get('code') or e.status_code}"
-    return f"failed: {type(e).__name__}"
+        return str(detail.get("code") or e.status_code)
+    return ""
+
+
+def _refusal(e: BaseException) -> str:
+    code = _code(e)
+    return f"refused: {code}" if code else f"failed: {type(e).__name__}"
+
+
+async def finish_writes(writes: TaskSet) -> None:
+    """Wait for the units of one run (`writes`, as passed to `extract_document`) still
+    running, such as the one a cancelled run left: a caller that bills the run's spend
+    drains its accumulator after them. Another run's units are not waited for. A cancel
+    of this wait leaves them running."""
+    pending = [t for t in writes if not t.done()]
+    if pending:
+        await asyncio.shield(asyncio.gather(*pending, return_exceptions=True))
+
+
+async def _whole[T](writes: TaskSet, coro: Coroutine[Any, Any, T]) -> T:
+    """Run one candidate's or one row's writes, with their audit rows, as one unit held in
+    the run's `writes`, to the end even when the caller is cancelled: no row is left
+    without its audit row. Every unit is registered for shutdown to drain
+    (`server.core.background.drain_task_sets`)."""
+    return await asyncio.shield(writes.spawn(coro, name="decision-extract-write"))
+
+
+def _may_go_on(report: ExtractReport, may_write: Callable[[], bool] | None) -> bool:
+    """Whether the next write may start; once `may_write` says no, the run stops
+    writing (`write_stopped`): what it wrote stays, and nothing more is retired."""
+    if may_write is None or may_write():
+        return True
+    report.write_stopped = True
+    report.error = "stopped before every write: the run may no longer write"
+    return False
 
 
 @dataclass(frozen=True)
@@ -383,15 +444,23 @@ async def extract_document(
     into: Into | None = None,
     max_per_section: int = 3,
     window_chars: int = 6000,
+    read_deadline: float | None = None,
+    may_write: Callable[[], bool] | None = None,
+    writes: TaskSet | None = None,
 ) -> ExtractReport:
     """Mine `source_uri`, a document in `namespace`, into decision records; `repo` names
     the repository its code names resolve in and `into` where the rows go (`_target`).
-    `dry_run` writes nothing and reports what a run would write."""
+    `dry_run` writes nothing and reports what a run would write. `read_deadline` (a
+    `time.monotonic()` instant) bounds the model reads: a run still reading then stops
+    with nothing written, so its writes and their audit rows are never cut short.
+    `may_write` is asked before each candidate's or row's writes (the sync worker: its
+    pass is not stopped and it holds the source's lease); each such unit runs whole, held
+    in `writes` (a fresh set when none is given) for `finish_writes`."""
     from server.knowledge.api.models_knowledge import KnowledgeGetInput
     from server.knowledge.app.document_reads import document_chunks, handle_knowledge_get
 
     report = ExtractReport(source_uri, dry_run)
-    if error := _no_model_error():
+    if error := no_model_error():
         report.error = error
         return report
     t = await _target(org, namespace, repo, into, dry_run)
@@ -426,29 +495,69 @@ async def extract_document(
     if report.error:
         return report
     known = _known_decisions(own)
-    kept, answered = await _candidates(org, t, source_uri, wins, max_per_section, report, known)
-    if wins and not answered:
-        # A run that read nothing must not retire anything.
+    own_by_words = _prior_rows_by_words(own)
+    kept, answered = await _candidates(
+        org, t, source_uri, wins, max_per_section, report, known, doc.title or "", read_deadline
+    )
+    if wins and not answered and not report.error:
         report.error = (
             "no window was read: every model call failed, was answered by the fake model, "
             "came back unreadable, or answered nothing and failed when read again"
         )
+    if report.error:
+        # Held, out of time or nothing read: such a run must not write or retire anything.
         return report
+    # An empty TaskSet is falsy: the caller's is told apart from none by `is None`.
+    units = TaskSet() if writes is None else writes
+    done = await _write_kept(
+        org, t, source_uri, kept, dry_run, report, own_by_words, may_write, units
+    )
+    if done is not None:
+        await _retire(report, own, live_texts, *done, t.row_tag, may_write, units)
+    return report
+
+
+async def _write_kept(
+    org: str,
+    t: Target,
+    source_uri: str,
+    kept: list[tuple[dx.Candidate, str, list[str]]],
+    dry_run: bool,
+    report: ExtractReport,
+    own_by_words: dict[tuple[str, str], _PriorRow],
+    may_write: Callable[[], bool] | None,
+    writes: TaskSet,
+) -> tuple[set[str], dict[tuple[str, str], str]] | None:
+    """Reconcile and write each kept candidate; the keys handled and the decisions held
+    (`_held_key` -> key) for the retire step, or None when a hold on an embedding or
+    `may_write` stopped the writes: the run then retires nothing, and a later run goes
+    on from what it wrote."""
     written: set[str] = set()
     # The key of each decision this document now holds, keyed by _held_key(outcome,
     # reasoning), for the retire step: the same outcome on the same verbatim reasoning is
     # the same decision, however the model worded its scenario and category.
     held: dict[tuple[str, str], str] = {}
     for cand, section, texts in kept:
+        if not _may_go_on(report, may_write):
+            return None
         try:
-            rec = await _reconcile(org, t, source_uri, cand, section, texts, dry_run)
+            rec = await _whole(
+                writes, _reconcile(org, t, source_uri, cand, section, texts, dry_run, own_by_words)
+            )
+        except customer.HOLDS as e:
+            report.held = e
+            report.error = _held_error(org, e)
+            return None
         except _REPORTED_ERRORS as e:
             # A blacklisted or newly pinned decision, a busy key, a store that timed out:
             # the other candidates and the retire step still run, and a re-run does not
             # stop at the same place.
             key = svc.decision_key(cand.category, cand.scenario)
             reason = f"{key}: {_refusal(e)}"
-            report.dropped.append(Dropped(section, reason, cand.quote, refused=True))
+            permanent = _code(e) in PERMANENT_REFUSALS
+            report.dropped.append(
+                Dropped(section, reason, cand.quote, refused=True, permanent=permanent)
+            )
             # Handled this run: the retire step must not judge the key it just failed on.
             written.add(key)
             continue
@@ -462,8 +571,11 @@ async def extract_document(
             report.flagged.append(rec.memory_key)
         if rec.holds:
             held.setdefault(_held_key(rec.held_outcome, cand.reasoning), rec.memory_key)
-    await _retire(report, own, live_texts, written, held, t.row_tag)
-    return report
+    return written, held
+
+
+def _held_error(org: str, e: LoomServerError) -> str:
+    return f"model calls for {org} are held ({e.code}); try again later"
 
 
 def _windows(chunks: list[CorpusChunk], skipped: set[str], window_chars: int) -> list[Window]:
@@ -578,18 +690,25 @@ async def _read_window(
     report: ExtractReport,
     *,
     fake_chosen: bool,
+    title: str,
+    deadline: float | None = None,
     note: str = "",
     answered_already: bool = False,
 ) -> list[dx.Candidate] | None:
     """The model's candidates for one window, or None when the read is lost: the call
     failed, the fake model answered for a real provider, or the reply is unreadable; each
     is a dropped line marked `refused`, a read the run needed, reported under `section`.
-    `note` goes before the window's text. When the window is `answered_already` (a second
-    read for what the first reply got wrong), a lost read is a `read again` line under
-    `section`, never refused."""
+    `note` goes before the window's text, which opens with the document's `title` when it
+    has one. When the window is `answered_already` (a second read for what the first reply
+    got wrong), a lost read is a `read again` line under `section`, never refused. A read
+    not done by `deadline` sets `out_of_time`."""
     from server.llm.json_text import strip_code_fence
 
-    user = f"{note}\n\n{dx.user_prompt(w)}" if note else dx.user_prompt(w)
+    def late() -> bool:
+        return deadline is not None and time.monotonic() >= deadline
+
+    body = dx.user_prompt(w, title)
+    user = f"{note}\n\n{body}" if note else body
 
     def lost(reason: str) -> None:
         if answered_already:
@@ -599,15 +718,27 @@ async def _read_window(
 
     # Read once: the override is live, and a cut reply names the cap this call used.
     cap = llm_max_tokens("decision_extract")
+    if late():
+        report.out_of_time = True
+        return None
+    left = None if deadline is None else deadline - time.monotonic()
     try:
         with llm_stage("decision_extract"):
-            res = await llm.complete(
-                system,
-                user,
-                max_tokens=cap,
-                response_format={"type": "json_object"},
-            )
+            async with asyncio.timeout(left):
+                res = await llm.complete(
+                    system,
+                    user,
+                    max_tokens=cap,
+                    response_format={"type": "json_object"},
+                )
+    except customer.HOLDS as e:
+        # Every later call of the run would be held too: the run stops.
+        report.held = e
+        return None
     except (httpx.HTTPError, TimeoutError, LoomServerError) as e:
+        if late():
+            report.out_of_time = True
+            return None
         # A provider error, a timeout or a refused call loses this window only.
         lost(f"the model call failed: {type(e).__name__}")
         return None
@@ -645,6 +776,8 @@ async def _candidates(
     max_per_section: int,
     report: ExtractReport,
     known: list[tuple[str, str, str]],
+    title: str,
+    deadline: float | None = None,
 ) -> tuple[list[tuple[dx.Candidate, str, list[str]]], int]:
     """(candidate, its section, the texts it was checked against) for every candidate
     that passes the checks of `_check_window` (verbatim spans, restatement with a
@@ -657,19 +790,30 @@ async def _candidates(
     not one span of the text while its quote is (the second reply adds to the first)."""
     from server.llm.client import get_llm_client
 
-    llm = get_llm_client()
-    fake_chosen = _fake_chosen()
     system = dx.system_prompt(max_per_section, known)
+    read = functools.partial(
+        _read_window,
+        get_llm_client(),
+        system,
+        fake_chosen=_fake_chosen(),
+        title=title,
+        deadline=deadline,
+    )
     state = _Kept(max_per_section)
     answered = 0
-    # An operator command: its calls are not gated by the namespace's cost cap.
+    # Not gated here by the namespace's cost cap: the operator's command spends as asked,
+    # and the sync worker checks the cap before each document.
     for w in wins:
         first = dx.breadcrumb(w.chunks[0].section_path)
-        cands = await _read_window(llm, system, w, first, report, fake_chosen=fake_chosen)
+        cands = await read(w, first, report)
+        if report.reads_stopped():
+            break
         retried = cands == [] and dx.more_than_a_caption("\n\n".join(c.text for c in w.chunks))
         if retried:
             report.retried.append(Retried(first, _EMPTY_REPLY))
-            cands = await _read_window(llm, system, w, first, report, fake_chosen=fake_chosen)
+            cands = await read(w, first, report)
+        if report.reads_stopped():
+            break
         if cands is None:
             continue
         answered += 1
@@ -680,18 +824,15 @@ async def _candidates(
             section = failed[0][2]
             report.retried.append(Retried(section, _STITCHED))
             note = dx.stitched_note([(outcome, span) for outcome, span, _ in failed])
-            again = await _read_window(
-                llm,
-                system,
-                w,
-                section,
-                report,
-                fake_chosen=fake_chosen,
-                note=note,
-                answered_already=True,
-            )
+            again = await read(w, section, report, note=note, answered_already=True)
+            if report.reads_stopped():
+                break
             repaired = _repairs(w, again or [], failed, state.kept[before:], report)
             _check_window(org, t, source_uri, w, repaired, state, report)
+    if report.held is not None:
+        report.error = _held_error(org, report.held)
+    elif report.out_of_time:
+        report.error = "the run's time to read the document ran out; nothing was written"
     return state.kept, answered
 
 
@@ -775,8 +916,8 @@ def _duplicate_or_unfit(
     try:
         key = svc.decision_key(cand.category, cand.scenario)
     except ValueError:
-        # The key keeps letters and digits a-z, 0-9 only (a CJK scenario has none).
-        return "no letters or digits a-z, 0-9 to build a key from", ""
+        # No letter or digit (punctuation, symbols or marks alone): nothing to key on.
+        return "no letters or digits to build a key from", ""
     if key in state.keys:
         return "same key as an earlier candidate", key
     if _held_key(cand.outcome, cand.reasoning) in state.pairs:
@@ -824,9 +965,11 @@ def _record_input(
         scenario=cand.scenario,
         reasoning=cand.reasoning,
         outcome=cand.outcome,
-        # As decision.record keeps them: deduplicated, at most MAX_ALTERNATIVES.
+        # As decision.record will keep them (deduplicated once cut, at most
+        # MAX_ALTERNATIVES), but uncut, so a reason can be compared whole.
         alternatives=svc.clean_alternatives(cand.rejected(), cut=False),
         confidence=EXTRACTED_CONFIDENCE,
+        stage=cand.stage,
         tags=tags,
         files=files,
         source_class="derived",
@@ -855,8 +998,8 @@ def record_body(inp: DecisionRecordInput) -> dict[str, Any]:
 
 def _same_reasons(stored: list[str], candidate: list[str]) -> bool:
     """Each stored reason is one of the candidate's, the two sets alike. A stored
-    alternative cut at ALTERNATIVE_CHARS keeps only the start of its reason, and where the
-    cut falls moves with the option's wording, so it matches as a prefix. One cut before
+    alternative the record cut (`svc.is_cut`) keeps only the start of its reason, and where
+    the cut falls moves with the option's wording, so it matches as a prefix. One cut before
     its reason (inside the option or the marker) holds none, and matches whichever
     candidate reason is left. Letter case aside, as the verbatim check reads a span."""
     # `candidate` is the input's list, already kept as decision.record keeps it, uncut.
@@ -868,13 +1011,14 @@ def _same_reasons(stored: list[str], candidate: list[str]) -> bool:
         stored,
         key=lambda a: (
             dx.REJECTED not in a,
-            len(a) >= svc.ALTERNATIVE_CHARS,
+            svc.is_cut(a),
             -len(a.rpartition(dx.REJECTED)[2]),
         ),
     )
     for alt in order:
-        reason = alt.rpartition(dx.REJECTED)[2].casefold()
-        cut = len(alt) >= svc.ALTERNATIVE_CHARS
+        cut = svc.is_cut(alt)
+        kept = alt.removesuffix(svc.CUT_MARK) if cut else alt
+        reason = kept.rpartition(dx.REJECTED)[2].casefold()
         if dx.REJECTED not in alt:
             match = remaining[0] if cut and remaining else None
         else:
@@ -923,8 +1067,11 @@ async def _reconcile(
     section: str,
     texts: list[str],
     dry_run: bool,
+    own_by_words: dict[tuple[str, str], _PriorRow],
 ) -> RecordReport:
-    """Decide what the candidate does to the target namespace, and do it unless `dry_run`."""
+    """Decide what the candidate does to the target namespace, and do it unless `dry_run`.
+    `own_by_words` holds the extractor's rows on this document by outcome and reasoning, so
+    a decision whose key the model reworded keeps its stage."""
     namespace = t.rows_namespace
     files, signals, unresolved, complete = await resolve_mentions(
         org, t.code_namespace, cand, texts
@@ -937,6 +1084,8 @@ async def _reconcile(
     rec = RecordReport(key, "written", record_body(inp), signals, unresolved)
     writer = await live_writer_record(org, namespace, key)
     if writer is None:
+        inp, rec.note = _carried_stage(inp, own_by_words)
+        rec.body["stage"] = inp.stage
         peer = await _frozen_restatement(org, namespace, key, inp)
         if peer is not None:
             rec.action = "already_recorded"
@@ -967,32 +1116,17 @@ async def _reconcile(
         ours = this_doc and _is_extractor(writer.agent, writer.user_id, writer.session_id)
         record = svc.parse_record_json(writer.record_json)
         same = _same_decision(record, inp)
+        inp, rec.note = _stage_reading(inp, row, record, same)
+        rec.body["stage"] = inp.stage
         # Our own row is revised for its files, source, constraint or repository tag too: a
         # document extracted before its code was indexed gains its files on a later run.
         stale_row = row is not None and ours and not _frozen(row) and not _same_row(row, inp)
         if same and not stale_row:
-            rec.action = "unchanged"
-            rec.holds = ours
-            rec.held_outcome = str(record.get("outcome") or "").strip()
-            if row is not None and this_doc:
-                # Another writer's row that is not frozen gains no repository tag.
-                # (Our own such row reached here with its tags the same already.)
-                link = t.row_tag if _frozen(row) else ""
-                await _reconcile_tags(rec, row, dry_run, link)
-            return rec
-        if row is not None and _frozen(row) and this_doc:
-            # A pinned or attested row is frozen: whoever froze it decides; a pinned writer
-            # row refuses decision.record.
-            rec.body.update(agent=row.agent, user_id=row.user_id, session_id=row.session_id)
-            rec.note = (
-                "pinned; the document now says otherwise; to accept this body, unpin the row "
-                "with memory.unpin, then send it"
-                if row.pinned
-                else "attested; the document now says otherwise; to accept this body, send it "
-                "and attest the new decision again with memory.verify"
+            return await _unchanged(
+                rec, row, record, t, ours=ours, this_doc=this_doc, dry_run=dry_run
             )
-            rec.action = await _flag(rec, row, dry_run, t.row_tag)
-            return rec
+        if row is not None and _frozen(row) and this_doc:
+            return await _flag_frozen(rec, row, t, dry_run)
         if not ours:
             rec.body.update(
                 agent=writer.agent, user_id=writer.user_id, session_id=writer.session_id
@@ -1005,7 +1139,7 @@ async def _reconcile(
                 else f"recorded by {writer.agent}; the extractor revises only its own rows"
             )
             return rec
-        if row is not None and _has_outcome(record):
+        if row is not None and svc.has_outcome(record):
             # decision.record rebuilds the record from the body, so a re-record would drop
             # the outcome.
             rec.note = "its outcome is recorded; re-recording would lose it"
@@ -1024,6 +1158,104 @@ async def _reconcile(
         # read above and this write is replaced by the new record, outcome and all.
         await handle_decision_record(inp)
         await _audit("decision.record", inp)
+    return rec
+
+
+class _PriorRow(NamedTuple):
+    """One of the extractor's rows on this document, as a reworded key finds it."""
+
+    memory_key: str
+    stage: Stage
+    acted: bool
+    alternatives: list[str]
+
+
+def _prior_rows_by_words(
+    own: list[tuple[MemoryRow, dict[str, Any]]],
+) -> dict[tuple[str, str], _PriorRow]:
+    """The extractor's rows on this document by _held_key(outcome, reasoning), the identity
+    the retire step names an heir by: the model rewords a decision's scenario and category
+    between runs."""
+    out: dict[tuple[str, str], _PriorRow] = {}
+    for row, record in own:
+        key = _held_key(str(record.get("outcome") or ""), str(record.get("reasoning") or ""))
+        stage = svc.stage_of(PROPOSED_TAG in row.tags, record)
+        acted = svc.has_outcome(record)
+        out.setdefault(key, _PriorRow(row.memory_key, stage, acted, alternatives(record)))
+    return out
+
+
+def _carried_stage(
+    inp: DecisionRecordInput, own_by_words: dict[tuple[str, str], _PriorRow]
+) -> tuple[DecisionRecordInput, str]:
+    """(the input with the stage to write, a note): a new key on the same words as one of
+    the extractor's rows (outcome, reasoning and rejected options' reasons) takes that row's
+    stage, as the same words under the same key do."""
+    found = own_by_words.get(_held_key(inp.outcome, inp.reasoning))
+    if found is None or found.stage == inp.stage:
+        return inp, ""
+    if not _same_reasons(found.alternatives, inp.alternatives):
+        return inp, ""
+    note = (
+        ""
+        if found.acted
+        else (
+            f"the document reads as {inp.stage}; written at the stage {found.stage} of "
+            f"{found.memory_key}"
+        )
+    )
+    return inp.model_copy(update={"stage": found.stage}), note
+
+
+def _stage_reading(
+    inp: DecisionRecordInput, row: MemoryRow | None, record: dict[str, Any], same: bool
+) -> tuple[DecisionRecordInput, str]:
+    """(the input at the row's stage when the words are the same, a note when this run
+    reads otherwise); the module docstring has the rule."""
+    if row is None or not same:
+        return inp, ""
+    stage = svc.stage_of(PROPOSED_TAG in row.tags, record)
+    note = ""
+    if inp.stage != stage and not svc.has_outcome(record):
+        note = f"the document reads as {inp.stage}; the row keeps its stage {stage}"
+    return inp.model_copy(update={"stage": stage}), note
+
+
+async def _unchanged(
+    rec: RecordReport,
+    row: MemoryRow | None,
+    record: dict[str, Any],
+    t: Target,
+    *,
+    ours: bool,
+    this_doc: bool,
+    dry_run: bool,
+) -> RecordReport:
+    """The candidate says what the key's record says: nothing is written but tags."""
+    rec.action = "unchanged"
+    rec.holds = ours
+    rec.held_outcome = str(record.get("outcome") or "").strip()
+    if row is not None and this_doc:
+        # Another writer's row that is not frozen gains no repository tag.
+        # (Our own such row reached here with its tags the same already.)
+        link = t.row_tag if _frozen(row) else ""
+        await _reconcile_tags(rec, row, dry_run, link)
+    return rec
+
+
+async def _flag_frozen(rec: RecordReport, row: MemoryRow, t: Target, dry_run: bool) -> RecordReport:
+    """A pinned or attested (frozen) row of this document the document now contradicts:
+    flagged, and the new body printed in the run's report under the row's identity (a
+    pinned writer row refuses decision.record)."""
+    rec.body.update(agent=row.agent, user_id=row.user_id, session_id=row.session_id)
+    rec.note = (
+        "pinned; the document now says otherwise; to accept this body, unpin the row "
+        "with memory.unpin, then send it"
+        if row.pinned
+        else "attested; the document now says otherwise; to accept this body, send it "
+        "and attest the new decision again with memory.verify"
+    )
+    rec.action = await _flag(rec, row, dry_run, t.row_tag)
     return rec
 
 
@@ -1047,7 +1279,8 @@ async def _frozen_restatement(
             "outcome": inp.outcome,
             "reasoning": inp.reasoning,
             "alternatives": inp.alternatives,
-        }
+        },
+        proposed=inp.stage == "proposed",
     )
     res = await handle_memory_search(
         MemorySearchInput(
@@ -1302,6 +1535,8 @@ async def _retire(
     written: set[str],
     held: dict[tuple[str, str], str],
     repo_tag: str,
+    may_write: Callable[[], bool] | None,
+    writes: TaskSet,
 ) -> None:
     """Contract the extractor's own rows on this document whose reasoning left its text:
     delete one that is not frozen; tag a frozen one (pinned or attested), or one with a
@@ -1316,8 +1551,10 @@ async def _retire(
     for row, record in own:
         if row.memory_key in written:
             continue
+        if not _may_go_on(report, may_write):
+            return
         try:
-            await _retire_one(report, row, record, live_texts, held, repo_tag)
+            await _whole(writes, _retire_one(report, row, record, live_texts, held, repo_tag))
         except _REPORTED_ERRORS as e:
             report.refused.append(f"{row.memory_key}: {_refusal(e)}")
 
@@ -1346,7 +1583,7 @@ async def _retire_one(
     outcome = str(record.get("outcome") or "")
     restated = held.get(_held_key(outcome, reasoning))
     # A row with a recorded outcome is kept: deleting it would lose the outcome.
-    if not _frozen(row) and restated is not None and not _has_outcome(record):
+    if not _frozen(row) and restated is not None and not svc.has_outcome(record):
         if await _delete_row(report, row):
             report.replaced.append(f"{key} -> {restated}")
         return
@@ -1354,7 +1591,7 @@ async def _retire_one(
     # read across is the same text.
     if not dx.find_span(reasoning, live_texts):
         # A row with a recorded outcome is tagged, never deleted, like a pinned one.
-        keep = _frozen(row) or _has_outcome(record)
+        keep = _frozen(row) or svc.has_outcome(record)
         await _retire_row(report, row, keep=keep, repo_tag=repo_tag)
     elif repo_tag:
         # Its reasoning is still there though the model did not emit it: it stays, linked.

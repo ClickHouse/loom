@@ -41,14 +41,14 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from loom_extractor import child
-from loom_extractor.source import PARSED_FORMATS
+from loom_extractor.source import BINARY_PARSED, PARSED_FORMATS
 
 logger = logging.getLogger("loom_extractor")
 
 CONTRACT_VERSION = 1
 NAME = "loom-reference"
 VERSION = "1"  # the service; each artifact names its own parser and parser_version
-_FORMAT_OPTIONS = {fmt: ["encoding"] for fmt in PARSED_FORMATS} | {
+_FORMAT_OPTIONS = {fmt: [] if fmt in BINARY_PARSED else ["encoding"] for fmt in PARSED_FORMATS} | {
     "sql": ["encoding", "sql_dialect"]
 }
 _READ_CHUNK = 64 * 1024

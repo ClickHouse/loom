@@ -68,6 +68,8 @@ async def test_decision_record_sends_files_and_refuses_a_bare_string(agent: Agen
     )
     sent = cap.last("/v1/decision.record")
     assert sent["files"] == ["src/a.cpp"] and sent["source_class"] == "derived"
-    assert sent["source_resource_id"] == "doc:1"
+    assert sent["source_resource_id"] == "doc:1" and "stage" not in sent
+    await agent.decision.record(**kw, stage="proposed")
+    assert cap.last("/v1/decision.record")["stage"] == "proposed"
     with pytest.raises(TypeError):
         await agent.decision.record(**kw, files="src/a.cpp")

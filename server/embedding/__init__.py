@@ -9,6 +9,7 @@ leg; see `embedder.py`.
 
 from __future__ import annotations
 
-from server.embedding.embedder import Embedder, get_embedder
+from server.embedding._provider import count_tokens
+from server.embedding.embedder import Embedder, get_embedder, input_token_limit
 
-__all__ = ["Embedder", "get_embedder"]
+__all__ = ["Embedder", "count_tokens", "get_embedder", "input_token_limit"]

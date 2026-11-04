@@ -45,6 +45,7 @@ import { Alert, ExternalLink, Loading, Stat, Tip } from "../../components/ui";
 import { ListTime } from "../../components/ui/ListTime";
 import { KindTag, PriorityBadge, StatusPill, copyTaskId } from "./TaskBits";
 import { MenuTrigger } from "../../components/ui/Menu";
+import { keepOpenOnToasts } from "../../components/Toast";
 
 /**
  * The detail panel: what it is, what to do, then the document. Header — status, priority,
@@ -604,6 +605,8 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
         e.preventDefault();
         if (e.currentTarget instanceof HTMLElement) e.currentTarget.focus();
       }}
+      // A press on a toast, or the expired session's card, leaves the sheet open.
+      onPointerDownOutside={keepOpenOnToasts}
       // No Dialog.Trigger opened it, so Radix has nowhere to return the focus: the row has it back.
       onCloseAutoFocus={(e) => {
         const rowEl = document.querySelector<HTMLElement>(`[data-task-id="${row.task_id}"]`);

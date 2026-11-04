@@ -1666,3 +1666,14 @@ textarea[aria-invalid="true"]:focus-visible {
     }
   }
 }
+
+/* The Library's collection tree: a child is indented in the open list; the closed select,
+   which shows the picked item's own content, keeps its text in line. */
+@layer components {
+  .collection-depth {
+    padding-inline-start: calc(var(--depth, 0) * 1rem);
+  }
+  [data-testid="select-trigger"] .collection-depth {
+    padding-inline-start: 0;
+  }
+}

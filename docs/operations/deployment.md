@@ -312,10 +312,11 @@ back.
   restart is needed ([tokens and grants](../guides/tokens-and-grants.md#revoke-and-rotate)).
   Replacing `LOOM_JWT_SECRET` itself re-keys everything. Tokens it signed (kid
   `default`) stop verifying: mint new ones. The keyring keys and stored credentials
-  (repository tokens, tracker-source passwords, provider keys) sealed under it keep
-  opening only while the old value is set as `LOOM_JWT_SECRET_PREVIOUS`, which never
-  verifies a token. The order: put the new root in `LOOM_JWT_SECRET` and the old one in
-  `LOOM_JWT_SECRET_PREVIOUS` in `.env`; in a container with that env run
+  (repository tokens, tracker-source passwords, document-source credentials, provider
+  keys) sealed under it keep opening only while the old value is set as
+  `LOOM_JWT_SECRET_PREVIOUS`, which never verifies a token. The order: put the new root
+  in `LOOM_JWT_SECRET` and the old one in `LOOM_JWT_SECRET_PREVIOUS` in `.env`; in a
+  container with that env run
   `loom secrets reseal --dry-run && loom signing-key record-root && loom deployment publish --yes`
   (the dry run checks the previous root while the old one is still recorded); recreate
   the containers; run `loom secrets reseal`; and remove `LOOM_JWT_SECRET_PREVIOUS` once

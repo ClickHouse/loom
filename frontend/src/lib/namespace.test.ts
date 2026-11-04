@@ -242,7 +242,16 @@ describe("deepLinkNamespace: an explicit path keeps its view and takes the names
   });
 
   it("a memory view with a code/QA-only token gets no namespace — it renders its own empty state", () => {
-    for (const v of ["memories", "recall", "profile", "knowledge", "sharing", "sessions", "runs"] as const) {
+    for (const v of [
+      "memories",
+      "recall",
+      "profile",
+      "knowledge",
+      "sharing",
+      "sessions",
+      "runs",
+      "assistant",
+    ] as const) {
       expect(needsMemoryNamespace(v)).toBe(true);
       expect(deepLinkNamespace(v, null, claims, codeTrackerOnly)).toBeNull();
     }

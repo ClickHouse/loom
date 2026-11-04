@@ -119,10 +119,11 @@ async def test_with_no_service_configured_nothing_is_extracted(
 
 
 async def test_a_format_its_service_does_not_declare_is_unavailable(hosts: _Hosts) -> None:
-    with pytest.raises(extractors.ExtractorUnavailable, match="does not declare"):
-        await extractors.extract(b"%PDF-1.7", name="a.pdf")
+    # A FormatUnavailable, which is an ExtractorUnavailable: configuration, not an outage.
+    with pytest.raises(extractors.FormatUnavailable, match="does not declare"):
+        await extractors.extract(b"a,b\n", name="a.csv")
     assert await extractors.available_formats() == {
-        f: "http://ref" for f in ("markdown", "html", "text", "sql", "toml")
+        f: "http://ref" for f in ("markdown", "html", "text", "sql", "toml", "pdf", "docx", "pptx")
     }
 
 
@@ -465,9 +466,9 @@ def test_a_token_for_no_configured_url_or_not_a_string_is_refused_at_load(tokens
 async def test_a_format_routed_only_by_media_type_is_available(
     hosts: _Hosts, settings_override: Any
 ) -> None:
-    hosts.apps["stub"] = _stub(lambda r: Response(status_code=500))
-    settings_override(document_extractors_json='{"application/pdf": "http://stub"}')
-    assert (await extractors.available_formats())["pdf"] == "http://stub"
+    hosts.apps["stub"] = _stub(lambda r: Response(status_code=500), formats=["csv"])
+    settings_override(document_extractors_json='{"text/csv": "http://stub"}')
+    assert (await extractors.available_formats())["csv"] == "http://stub"
 
 
 async def test_a_response_dripped_past_the_timeout_is_unavailable(
@@ -515,12 +516,10 @@ async def test_a_deep_toml_value_from_the_reference_extractor_passes_the_contrac
 async def test_a_formats_own_route_hides_its_media_types_when_listing_too(
     hosts: _Hosts, settings_override: Any
 ) -> None:
-    hosts.apps["stub"] = _stub(lambda r: Response(status_code=500))
-    settings_override(
-        document_extractors_json='{"pdf": "http://ref", "application/pdf": "http://stub"}'
-    )
-    assert "pdf" not in await extractors.available_formats(), "extract would send it to ref"
-    assert extractors.endpoint_for("pdf", "application/pdf") == "http://ref"
+    hosts.apps["stub"] = _stub(lambda r: Response(status_code=500), formats=["csv"])
+    settings_override(document_extractors_json='{"csv": "http://ref", "text/csv": "http://stub"}')
+    assert "csv" not in await extractors.available_formats(), "extract would send it to ref"
+    assert extractors.endpoint_for("csv", "text/csv") == "http://ref"
 
 
 async def test_a_media_type_route_key_is_read_as_routing_reads_it(

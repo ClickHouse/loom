@@ -2,8 +2,8 @@ import { create } from "zustand";
 import type { Identity, MyNamespaceEntry, WhoAmI } from "../api";
 import { hasToken, isAuthDisabled, isProxyMode } from "../api";
 import { sameIdentity } from "./boot";
-import { NAMESPACE_NAME } from "./namespace";
-import { patchEntry, readPlace, rememberPlace, type Place } from "./place";
+import { NAMESPACE_NAME, isCollectionName } from "./namespace";
+import { patchEntry, readPlace, rememberPlace, type InspectedOwner, type Place } from "./place";
 
 export type View =
   | "memories"
@@ -14,6 +14,7 @@ export type View =
   | "sessions"
   | "runs"
   | "graph"
+  | "assistant"
   | "browse"
   | "code"
   | "tasks"
@@ -25,7 +26,6 @@ export type View =
   | "admin:activity"
   | "admin:usage"
   | "admin:agents"
-  | "admin:collections"
   | "admin:users"
   | "admin:settings";
 
@@ -38,6 +38,7 @@ export const ALL_VIEWS: View[] = [
   "sessions",
   "runs",
   "graph",
+  "assistant",
   "browse",
   "code",
   "tasks",
@@ -49,7 +50,6 @@ export const ALL_VIEWS: View[] = [
   "admin:activity",
   "admin:usage",
   "admin:agents",
-  "admin:collections",
   "admin:users",
   "admin:settings",
 ];
@@ -97,7 +97,8 @@ const VIEW_QUERY_KEYS: Partial<Record<View, readonly string[]>> = {
   // the memory in the drawer, the document in the preview, the thread in the replay.
   // Memories also carries its tab: `?section=insights` is the Insights tab (MemoryTabs).
   memories: ["memory", "section"],
-  knowledge: ["doc"],
+  // The Library also carries the collection it shows (`?collection=`).
+  knowledge: ["doc", "collection"],
   sessions: ["thread"],
 };
 
@@ -178,7 +179,7 @@ function pushView(v: View, opts: NavOptions = {}, remember = true): void {
   // its state.
   if (!remember) return patchEntry({}, want + window.location.hash);
   const s = useStore.getState();
-  rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent }, opts.focusKey);
+  rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent, owner: s.inspectedOwner }, opts.focusKey);
   // A navigation's entry is made in the current namespace.
   const namespace = s.identity?.namespace ?? null;
   history.pushState(
@@ -219,6 +220,9 @@ function linkedAgent(key: string): string {
 
 // The URL keys that name an object of one namespace: a switch drops them.
 const SWITCH_CLEARS = ["memory", "thread", "doc", "task"];
+// A collection is the org's, not a namespace's: an entry made in another namespace keeps it,
+// and only the person's own switch of namespace leaves it.
+const PICK_CLEARS = [...SWITCH_CLEARS, "collection"];
 
 /** The namespace the current history entry was made in: the app's stamp, else the one its
  *  address names (the entry a link opened, which boot rewrites and never stamps). */
@@ -226,6 +230,12 @@ function entryNamespace(): string | null {
   const s: unknown = typeof history === "undefined" ? null : history.state;
   const ns = s && typeof s === "object" ? (s as Record<string, unknown>).loomNamespace : null;
   return typeof ns === "string" ? ns : urlParam(NAMESPACE_KEY);
+}
+
+/** A document the entry opens in a collection: the collection's, like the collection itself,
+ *  so an entry made in another namespace keeps it. */
+function collectionDoc(view: View): string | null {
+  return view === "knowledge" && isCollectionName(urlParam("collection")) ? urlParam("doc") : null;
 }
 
 /** Whether what the current entry names belongs to `namespace`: an entry made in another
@@ -240,7 +250,8 @@ function entryHere(namespace: string | null): boolean {
 export function addressPageNamespace(): void {
   const namespace = useStore.getState().identity?.namespace ?? null;
   const here = entryHere(namespace);
-  const want = addressFor(pageNamespace(), here ? [] : SWITCH_CLEARS);
+  const keepDoc = !here && collectionDoc(useStore.getState().view) !== null;
+  const want = addressFor(pageNamespace(), here ? [] : SWITCH_CLEARS.filter((k) => !(keepDoc && k === "doc")));
   // An entry made in another namespace becomes this one's, so what is opened on it next
   // reopens after a reload, and what it remembered of the other never does.
   if (!here || want !== window.location.pathname + window.location.search + window.location.hash)
@@ -254,7 +265,7 @@ function stampFor(namespace: string | null): Record<string, unknown> {
   return {
     loomNamespace: namespace,
     loomInspect: null,
-    ...(place ? { loomPlace: { ...place, inspected: null, inspectedAgent: "" } } : {}),
+    ...(place ? { loomPlace: { ...place, inspected: null, inspectedAgent: "", inspectedOwner: null } } : {}),
   };
 }
 
@@ -266,6 +277,7 @@ function openedByUrl(v: View): Partial<AppState> {
   return {
     inspectedMemoryKey: memory,
     inspectedAgent: memory ? linkedAgent(memory) : "",
+    inspectedOwner: null,
     ...(doc ? { pendingDocSourceUri: doc } : {}),
     ...(thread ? { pendingConversationThread: { threadId: thread } } : {}),
   };
@@ -284,15 +296,19 @@ export function pathnameView(): View | null {
   return urlParam("memory") ? "memories" : null;
 }
 
-/** Why the sign-in gate is showing: a stored token the server no longer accepts is
- *  "expired"; a first visit carries null. */
-export type GateReason = "expired" | null;
+/** Why the sign-in gate is showing: a sign-in session's token the server no longer
+ *  accepts is "expired" (SSO resumes by itself), any other stored token "ended"; a token a
+ *  sign-in link brought that it refused is "refused"; a first visit carries null. */
+export type GateReason = "expired" | "ended" | "refused" | null;
 
 interface AppState {
   authed: boolean;
   whoami: WhoAmI | null;
   identity: Identity | null;
   gateReason: GateReason;
+  /** The server refused the stored token mid-session: a card among the toasts says so and
+   *  offers the sign-in, and the page stays as it is, so nothing typed into it is lost. */
+  sessionExpired: boolean;
   /** The caller's namespaces with roles (`namespace.list_mine`), set once at
    *  boot. null = not fetched / the fetch failed, which the role helpers
    * treat as "unknown", not "no access". */
@@ -318,6 +334,9 @@ interface AppState {
   // with agent="*", the writer's agent may differ from identity.agent and
   // a strict memory.get would 404. Empty string falls back to identity.agent.
   inspectedAgent: string;
+  // The user and session the inspected row is filed under, when the view that opened it
+  // names them (the Assistant's inspected and cited rows); null reads the caller's own.
+  inspectedOwner: InspectedOwner | null;
   // Tag-chip navigation target; Recent.tsx filters by it.
   memoryTagFilter: string | null;
   // Header-search document target; Documents.tsx opens its preview dialog.
@@ -335,6 +354,7 @@ interface AppState {
   // actions
   setAuthed: (v: boolean) => void;
   setGateReason: (r: GateReason) => void;
+  setSessionExpired: (v: boolean) => void;
   setMyNamespaces: (rows: MyNamespaceEntry[] | null) => void;
   setWhoami: (w: WhoAmI | null) => void;
   setIdentity: (i: Identity | null) => void;
@@ -355,7 +375,7 @@ interface AppState {
    *  user picks one). The picker clears the flag once it has opened. */
   namespacePickerOpen: boolean;
   openNamespacePicker: (v: boolean) => void;
-  inspect: (memoryKey: string | null, opts?: { agent?: string }) => void;
+  inspect: (memoryKey: string | null, opts?: { agent?: string; userId?: string; sessionId?: string }) => void;
   helpOpen: boolean;
   openHelp: (v: boolean) => void;
   toggleSidebar: () => void;
@@ -365,6 +385,11 @@ interface AppState {
   setMemoryTagFilter: (tag: string | null) => void;
   openDocument: (sourceUri: string) => void;
   clearPendingDoc: () => void;
+  /** The Library shows a place other than the header's namespace (a collection, or one it
+   *  is confirming), or shows nothing of a namespace that holds no documents: the header's
+   *  New › Document, which adds to the header's namespace, steps aside then. */
+  libraryElsewhere: boolean;
+  setLibraryElsewhere: (elsewhere: boolean) => void;
   openConversationThread: (threadId: string) => void;
   clearPendingConversationThread: () => void;
   inspectProfile: (label: string | null) => void;
@@ -399,6 +424,7 @@ export const useStore = create<AppState>((set, get) => ({
   whoami: null,
   identity: null,
   gateReason: null,
+  sessionExpired: false,
   myNamespaces: null,
   deniedNamespace: null,
   linkOpened: null,
@@ -408,6 +434,7 @@ export const useStore = create<AppState>((set, get) => ({
   navNote: null,
   inspectedMemoryKey: null,
   inspectedAgent: "",
+  inspectedOwner: null,
   memoryTagFilter: null,
   pendingDocSourceUri: null,
   pendingConversationThread: null,
@@ -417,18 +444,19 @@ export const useStore = create<AppState>((set, get) => ({
   sidebarCollapsed: typeof localStorage !== "undefined" && localStorage.getItem("loom_sidebar_collapsed") === "1",
   setAuthed: (authed) => set({ authed }),
   setGateReason: (gateReason) => set({ gateReason }),
+  setSessionExpired: (sessionExpired) => set({ sessionExpired }),
   setMyNamespaces: (myNamespaces) => set({ myNamespaces }),
   setWhoami: (whoami) => set({ whoami }),
   // A memory belongs to its namespace: a switch, from any picker, closes the open one. The
   // address names the new namespace and drops the keys that name an object of the one left
-  // (`?memory=`, `?thread=`, `?doc=`, `?task=`), and the entry is stamped with the new
+  // (`?memory=`, `?thread=`, `?doc=`, `?task=`, `?collection=`), and the entry is stamped with the new
   // namespace and forgets the memory it remembered, so neither a reload nor Back reopens
   // the old namespace's object here. Any pick leaves a link's unreadable namespace, the
   // namespace the page already shows included.
   setIdentity: (identity) => {
     const s = get();
     if (s.identity && identity && (s.identity.namespace !== identity.namespace || s.deniedNamespace)) {
-      patchEntry(stampFor(identity.namespace), addressFor(identity.namespace, SWITCH_CLEARS));
+      patchEntry(stampFor(identity.namespace), addressFor(identity.namespace, PICK_CLEARS));
       // The Recall Lab's run filter names a run of the namespace left.
       set({
         identity,
@@ -466,18 +494,23 @@ export const useStore = create<AppState>((set, get) => ({
     // What a link names belongs to its namespace: none of it opens on another, and nothing
     // opens under the page that says the account cannot read the link's namespace.
     const here = !get().deniedNamespace && entryHere(get().identity?.namespace ?? null);
-    set({ view, ...(here ? openedByUrl(view) : { inspectedMemoryKey: null, inspectedAgent: "" }) });
+    set({
+      view,
+      ...(here ? openedByUrl(view) : { inspectedMemoryKey: null, inspectedAgent: "", inspectedOwner: null }),
+    });
   },
   arriveFromHistory: (view, place) => {
     // An entry made in another namespace reopens nothing it names in this one.
     const here = entryHere(get().identity?.namespace ?? null);
-    const opened = here ? openedByUrl(view) : {};
+    const doc = collectionDoc(view);
+    const opened = here ? openedByUrl(view) : doc ? { pendingDocSourceUri: doc } : {};
     const inspected = here ? (place?.inspected ?? null) : null;
     set({
       view,
       ...opened,
       inspectedMemoryKey: inspected ?? opened.inspectedMemoryKey ?? null,
       inspectedAgent: inspected ? (place?.inspectedAgent ?? "") : (opened.inspectedAgent ?? ""),
+      inspectedOwner: inspected ? (place?.inspectedOwner ?? null) : null,
     });
     addressPageNamespace();
   },
@@ -489,7 +522,9 @@ export const useStore = create<AppState>((set, get) => ({
     // link's unreadable namespace is left first, as Continue leaves it.
     if (inspectedMemoryKey && deniedNamespace && identity) get().setIdentity(identity);
     const agent = opts?.agent || "";
-    set({ inspectedMemoryKey, inspectedAgent: agent });
+    const owner =
+      opts?.userId || opts?.sessionId ? { user_id: opts.userId || "-", session_id: opts.sessionId || "-" } : null;
+    set({ inspectedMemoryKey, inspectedAgent: agent, inspectedOwner: owner });
     // On Memories the open memory is the page's URL (`?memory=`), with the agent it was
     // read as in the entry's state for a reload.
     if (get().view === "memories") {
@@ -527,6 +562,8 @@ export const useStore = create<AppState>((set, get) => ({
   },
   memoriesVersion: 0,
   bumpMemoriesVersion: () => set((s) => ({ memoriesVersion: s.memoriesVersion + 1 })),
+  libraryElsewhere: false,
+  setLibraryElsewhere: (libraryElsewhere) => set({ libraryElsewhere }),
   paletteRequest: null,
   openPalette: (hint) => set((s) => ({ paletteRequest: { hint, nonce: (s.paletteRequest?.nonce ?? 0) + 1 } })),
   clearPaletteRequest: () => set({ paletteRequest: null }),

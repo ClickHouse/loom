@@ -1,0 +1,5 @@
+[
+  {"id": "thumbnail-cache", "source_uri": "https://docs.example.com/thumbnail-cache", "title": "Thumbnail cache eviction", "path": "docs/thumbnail-cache.md"},
+  {"id": "upload-retries", "source_uri": "https://docs.example.com/upload-retries", "title": "Upload retry policy", "path": "docs/upload-retries.md"},
+  {"id": "upload-retries-v2", "source_uri": "https://docs.example.com/upload-retries", "title": "Upload retry policy", "path": "docs/upload-retries-v2.md", "revision_of": "upload-retries"}
+]

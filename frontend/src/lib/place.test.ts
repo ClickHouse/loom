@@ -29,7 +29,15 @@ describe("rememberPlace / readPlace", () => {
       focusKey: "memory:a",
       inspected: "a",
       inspectedAgent: "bot",
+      inspectedOwner: null,
     });
+  });
+
+  it("keeps the user and session an inspected row is filed under", () => {
+    rememberPlace({ key: "a", agent: "bot", owner: { user_id: "ada", session_id: "-" } });
+    expect(readPlace(history.state)?.inspectedOwner).toEqual({ user_id: "ada", session_id: "-" });
+    rememberPlace({ key: "a", agent: "bot" });
+    expect(readPlace(history.state)?.inspectedOwner).toBeNull();
   });
 
   it("an explicit focus key wins over the focused element", () => {
@@ -55,7 +63,10 @@ describe("restorePlace and arriveAt", () => {
   it("scrolls back once the page is tall enough, then focuses the keyed element", () => {
     const main = page("<h1>Memories</h1>");
     tall(main, 600);
-    restorePlace({ scrollTop: 900, focusKey: "entity:redis", inspected: "k", inspectedAgent: "" }, true);
+    restorePlace(
+      { scrollTop: 900, focusKey: "entity:redis", inspected: "k", inspectedAgent: "", inspectedOwner: null },
+      true,
+    );
     vi.advanceTimersByTime(20);
     expect(main.scrollTop).toBe(0);
     // The list and the drawer arrive.
@@ -76,7 +87,10 @@ describe("restorePlace and arriveAt", () => {
         main.scrollTop = 770;
       });
     });
-    restorePlace({ scrollTop: 900, focusKey: "entity:redis", inspected: "k", inspectedAgent: "" }, true);
+    restorePlace(
+      { scrollTop: 900, focusKey: "entity:redis", inspected: "k", inspectedAgent: "", inspectedOwner: null },
+      true,
+    );
     vi.advanceTimersByTime(20);
     expect(main.scrollTop).toBe(900);
     vi.advanceTimersByTime(20);
@@ -91,7 +105,7 @@ describe("restorePlace and arriveAt", () => {
     const main = page("<h1>Memories</h1>");
     tall(main, 2000);
     main.scrollTop = 300;
-    restorePlace({ scrollTop: 0, focusKey: null, inspected: null, inspectedAgent: "" }, true);
+    restorePlace({ scrollTop: 0, focusKey: null, inspected: null, inspectedAgent: "", inspectedOwner: null }, true);
     vi.advanceTimersByTime(40);
     expect(main.scrollTop).toBe(0);
   });
@@ -106,7 +120,7 @@ describe("restorePlace and arriveAt", () => {
         offset = Math.min(value, 100);
       },
     });
-    restorePlace({ scrollTop: 900, focusKey: null, inspected: null, inspectedAgent: "" }, true);
+    restorePlace({ scrollTop: 900, focusKey: null, inspected: null, inspectedAgent: "", inspectedOwner: null }, true);
     vi.advanceTimersByTime(3100);
     expect(main.scrollTop).toBe(100);
     main.scrollTop = 50;
@@ -117,7 +131,7 @@ describe("restorePlace and arriveAt", () => {
   it("a new navigation cancels the pending scroll verification", () => {
     const main = page("<h1>Memories</h1>");
     tall(main, 2000);
-    restorePlace({ scrollTop: 900, focusKey: null, inspected: null, inspectedAgent: "" }, true);
+    restorePlace({ scrollTop: 900, focusKey: null, inspected: null, inspectedAgent: "", inspectedOwner: null }, true);
     vi.advanceTimersByTime(20);
     arriveAt();
     main.scrollTop = 300;
@@ -132,7 +146,10 @@ describe("restorePlace and arriveAt", () => {
         '<button role="checkbox" aria-label="Select a"></button><button data-row-open="">a</button></div>',
     );
     tall(main, 2000);
-    restorePlace({ scrollTop: 0, focusKey: "memory:a", inspected: null, inspectedAgent: "" }, true);
+    restorePlace(
+      { scrollTop: 0, focusKey: "memory:a", inspected: null, inspectedAgent: "", inspectedOwner: null },
+      true,
+    );
     vi.advanceTimersByTime(20);
     expect(document.activeElement).toBe(main.querySelector("[data-row-open]"));
   });
@@ -140,7 +157,7 @@ describe("restorePlace and arriveAt", () => {
   it("without a focus key, a changed view focuses its h1", () => {
     const main = page("<h1>Library</h1>");
     tall(main, 2000);
-    restorePlace({ scrollTop: 0, focusKey: null, inspected: null, inspectedAgent: "" }, true);
+    restorePlace({ scrollTop: 0, focusKey: null, inspected: null, inspectedAgent: "", inspectedOwner: null }, true);
     vi.advanceTimersByTime(20);
     expect(document.activeElement).toBe(main.querySelector("h1"));
     expect(main.querySelector("h1")!.getAttribute("tabindex")).toBe("-1");

@@ -293,15 +293,19 @@ async def _set_chunk_rows(
         by_writer.setdefault((c.agent, c.user_id, c.memory_key), []).append(c)
     out: dict[ChunkId, SetChunkRow] = {}
     # rows of a key written in many sessions often hold one value: chunk it once
-    cuts_of: dict[tuple[str, str], frozenset[tuple[int, str]]] = {}
+    cuts_of: dict[tuple[str, str, str], frozenset[tuple[int, str]]] = {}
     for r in served:  # newest first: the first row whose value cuts a chunk names it
         row = row_key_of(q.namespace, r)
         if row not in values:
             continue
         text, memory_type = values[row]
-        if (text, memory_type) not in cuts_of:
-            cuts_of[text, memory_type] = set_chunk_identities(parse_memory_value(text), memory_type)
-        cuts = cuts_of[text, memory_type]
+        # the key changes the excerpt's room, so the cut is per key too
+        cut_key = (text, memory_type, row.memory_key)
+        if cut_key not in cuts_of:
+            cuts_of[cut_key] = set_chunk_identities(
+                parse_memory_value(text), memory_type, row.memory_key
+            )
+        cuts = cuts_of[cut_key]
         for c in by_writer.get((row.agent, row.user_id, row.memory_key), []):
             if (c.chunk_index, c.sha) in cuts:
                 identity = (row.agent, row.user_id, row.session_id)

@@ -154,7 +154,7 @@ async def test_saga_dispatch_passes_the_list_and_purge_to_the_namespace_saga(mon
     )
     out = await h.run_saga(
         input=inp,
-        row={},
+        row={"actor": "human:t"},
         erasure_id="e1",
         requested_at=h.datetime.now(h.UTC).replace(tzinfo=None),
         previously_completed=set(),
@@ -445,7 +445,7 @@ async def test_saga_dispatch_reads_external_from_scope_value(monkeypatch) -> Non
     )
     await h.run_saga(
         input=inp,
-        row={},
+        row={"actor": "human:t"},
         erasure_id="e2",
         requested_at=h.datetime.now(h.UTC).replace(tzinfo=None),
         previously_completed=set(),
@@ -593,7 +593,7 @@ async def test_the_dispatcher_sets_the_saga_id_for_the_run_and_resets_it(monkeyp
     inp = ErasureRequestInput(org="o", scope_type="namespace", scope_value="ns", requester="cli")
     await h.run_saga(
         input=inp,
-        row={},
+        row={"actor": "human:t"},
         erasure_id="e-777",
         requested_at=h.datetime.now(h.UTC).replace(tzinfo=None),
         previously_completed=set(),

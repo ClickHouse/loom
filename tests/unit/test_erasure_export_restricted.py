@@ -284,6 +284,24 @@ async def test_a_namespace_export_marks_conversations_truncated_past_the_byte_bu
     assert out.counts["conversations"] == 1 and out.conversations.truncated
 
 
+@pytest.mark.asyncio
+async def test_the_exported_audit_row_names_the_token_not_the_body(exports, monkeypatch) -> None:
+    emitted: list[dict] = []
+
+    async def _emit(**kw):
+        emitted.append(kw)
+        return "h"
+
+    monkeypatch.setattr(h.audit, "emit", _emit)
+    set_current_auth(_admin(STD))
+    await h.handle_erasure_export(
+        ErasureExportInput(org=ORG, scope_type="namespace", scope_value=STD, requester="dpo@y")
+    )
+    (row,) = [e for e in emitted if e["event_type"] == "erasure.exported"]
+    assert row["actor"] == "human:ops@x"
+    assert row["subject"]["requester"] == "dpo@y"
+
+
 def _turn(ns: str, msg_id: str, content: str, *, saved: bool = False, reasoning: str = "") -> dict:
     return {
         "namespace": ns,

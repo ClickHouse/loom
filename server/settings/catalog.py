@@ -1983,6 +1983,19 @@ class KnowledgeSettings(BaseModel):
     # Namespace kinds an all_mine knowledge.search spans (comma list over
     # loom.namespaces.kind): the memory fan-out's, and the caller's collections.
     knowledge_search_fanout_kinds: Annotated[str, LIVE] = "memory,collection,personal"
+    # Reranker knowledge.search uses when the request names none (same values as the
+    # per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON;
+    # rerank="none" turns it off for a call). Empty = no default rerank.
+    knowledge_search_rerank_default: Annotated[str, LIVE] = ""
+    # How many fused hits a rerank reads (the legs fetch at least this many).
+    knowledge_search_rerank_top: Annotated[int, LIVE] = Field(default=30, ge=2, le=100)
+    # Characters of each hit a reranker reads: its context (title, description,
+    # breadcrumb; at most half), then the chunk text. builtin:cohere reads at most 1024.
+    knowledge_search_rerank_excerpt_chars: Annotated[int, LIVE] = Field(
+        default=800, ge=100, le=4000
+    )
+    # Seconds a knowledge.search waits on its reranker before it keeps the fused order.
+    knowledge_search_rerank_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
 
     # ---- chunking ----
     # Sliding-window chunking on knowledge.add/upsert, in characters.
@@ -1993,6 +2006,30 @@ class KnowledgeSettings(BaseModel):
     # Characters between chunk starts: below chunk_size the chunks overlap; above it
     # the step is chunk_size, so no text falls between chunks.
     knowledge_chunk_stride: Annotated[int, LIVE] = 1230
+
+    # ---- server-side ingestion (knowledge.upload, knowledge.ingest) ----
+    # Largest file POST /v1/knowledge.upload accepts, in bytes; a larger body is
+    # refused with 413 before any of it is stored.
+    knowledge_upload_max_bytes: Annotated[int, LIVE] = Field(default=64 * 1024 * 1024, ge=1)
+    # Seconds an upload stays ingestible; the originals sweep keeps its bytes
+    # until then, and knowledge.ingest refuses it after.
+    knowledge_upload_ttl_seconds: int = Field(default=86_400, ge=60)
+    # The worker that runs ingestion jobs: extract, chunk, embed, publish.
+    knowledge_ingest_enabled: bool = True
+    # Seconds between ingestion passes while jobs wait.
+    knowledge_ingest_interval_seconds: int = 2
+    # Seconds between passes when the last one found nothing to do.
+    knowledge_ingest_idle_interval_seconds: int = 15
+    # Seconds one pass, which runs one job, may take before it is cancelled:
+    # the extractor's timeout plus embedding the largest source. A job cut off
+    # runs again from its start and counts toward its attempts.
+    knowledge_ingest_max_pass_seconds: int = Field(default=900, ge=60)
+    # Attempts a job gets after a transient failure (a provider or store
+    # outage) before it fails for good.
+    knowledge_ingest_max_attempts: int = Field(default=5, ge=1)
+    # Most chunks one source may publish; a larger extraction fails with
+    # `too_large` rather than flood the embedder.
+    knowledge_ingest_max_chunks: Annotated[int, LIVE] = Field(default=20_000, ge=1)
 
     # ---- timeouts, budgets and caches ----
     # Seconds the repository-docs read for a brief may take.
@@ -2020,6 +2057,41 @@ class KnowledgeSettings(BaseModel):
     document_extractor_timeout_s: float = Field(default=180.0, gt=0)
     # Bytes of an extractor's response the server reads; a larger artifact is refused.
     document_extractor_max_artifact_bytes: int = Field(default=64 * 1024 * 1024, ge=1024)
+
+    # ---- document sources ----
+    # Active document sources (knowledge.source.add) one repository namespace may
+    # register; an add past it is refused with SOURCE_QUOTA.
+    knowledge_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=8, ge=1)
+    # Seconds a document source's probe (add, check, rotate) may take in all; past it
+    # add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false.
+    knowledge_source_probe_timeout_s: Annotated[float, LIVE] = Field(default=20.0, gt=0, le=25.0)
+    # The knowledge_source_sync worker: pulls each registered document source's changed
+    # files into its repository's documents. Off by default: it needs each source's
+    # credential, spends embedding calls on every changed document and model calls
+    # mining it for decisions.
+    knowledge_source_sync_enabled: bool = False
+    # Seconds between sync passes while there are sources.
+    knowledge_source_sync_interval_seconds: int = Field(default=900, ge=60)
+    # Seconds between passes that found no source to sync; one idle sleep plus one
+    # pass stays under three intervals, so the worker never reads as stalled.
+    knowledge_source_sync_idle_interval_seconds: int = Field(default=1800, ge=60)
+    # Seconds one sync pass may run before it is cancelled; it stops starting sources
+    # at three quarters of it. At least 180: 90 for the sync, then 60 of read time for
+    # one document's extraction and 30 for its writes before the deadline.
+    knowledge_source_sync_max_pass_seconds: int = Field(default=600, ge=180)
+    # Documents one pass fetches, writes, retires or mines for decisions across all
+    # sources; the rest wait for the next pass.
+    knowledge_source_sync_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Seconds after which a source's next pass lists every file, not only those
+    # changed since the last one: what finds a file trashed or moved out of a folder.
+    knowledge_source_sync_full_interval_seconds: Annotated[int, LIVE] = Field(default=86400, ge=900)
+    # Bytes of one file a sync downloads or exports; a larger file is not ingested.
+    knowledge_source_sync_max_file_bytes: Annotated[int, LIVE] = Field(
+        default=64 * 1024 * 1024, ge=1024 * 1024
+    )
+    # The share of a namespace's daily LLM cost cap the sync may spend mining changed
+    # documents for decisions, counted over its own calls; the rest stays for requests.
+    knowledge_source_sync_cap_share: Annotated[float, LIVE] = Field(default=0.25, gt=0.0, le=1.0)
 
     def document_extractor_routes(self) -> dict[str, str]:
         """The operator's per-format extractor URLs, format or media type → URL;
@@ -2193,6 +2265,11 @@ class MemorySettings(BaseModel):
     # ---- scratchpad ----
     # Characters each injected working-memory block renders before it is cut with "(truncated)".
     memory_scratchpad_max_chars: int = Field(default=2000, ge=1)
+
+    # ---- pre-edit block ----
+    # Tokens (4 characters each) memory.for_file gives its decision and constraint rows, which
+    # print whole outside token_budget; a row past it is left out and named.
+    memory_for_file_whole_tokens: Annotated[int, LIVE] = Field(default=1500, ge=50, le=4000)
 
     # ---- deployment-specific names the fact filters recognise ----
     # Comma-separated names of the people whose sessions this deployment records
@@ -3624,6 +3701,9 @@ class NamespaceSettings(BaseModel):
     # Largest value (bytes) namespace.audit, namespace.validate and memory.inspect read
     # to cite a row's content hash; a larger row is cited with none. 0 = cite no hash.
     namespace_report_hash_max_bytes: Annotated[int, LIVE] = Field(default=65536, ge=0, le=2**32 - 1)
+    # Most live documents namespace.tune re-chunks in process to judge the chunk size and
+    # stride, picked by a hash of their source_uri; the report states the cap.
+    namespace_tune_document_sample: Annotated[int, LIVE] = Field(default=50, ge=1, le=1000)
     # Seconds a namespace's relation cardinalities (one or many) are cached for the
     # triple writer.
     namespace_ontology_cardinality_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
@@ -4443,7 +4523,8 @@ class ProviderSettings(ModelSettings):
     # every tier eligible.
     llm_policy_by_traffic_class: Annotated[str, JsonObject] = '{"bench": {"llm_cache": true}}'
     # JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's
-    # `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are
+    # `rerank_endpoint`, LOOM_CODE_SEARCH_RERANK_DEFAULT and
+    # LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT may name. Names are
     # short identifiers, URLs http(s). Loom posts candidate text only to these. A
     # secret: its URLs can carry a credential.
     rerank_endpoints_json: Annotated[str, JsonObject] = "{}"
@@ -5479,10 +5560,29 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.dedup_resolve": 400,
     "knowledge.delete": 100,
     "knowledge.get": 30,
+    "knowledge.ingest": 60,
+    "knowledge.ingest_cancel": 60,
+    "knowledge.ingest_status": 40,
+    # Thirteen reads: eight of the documents, chunks and retired ingestions (one a join), one
+    # of the extractions' coverage, three of the knowledge.ingest jobs (each a GROUP BY
+    # source over the namespace's job rows, which reads its cancels, joined to its document
+    # rows) and one of the decision rows; then namespace.audit in process (sample_limit 0)
+    # for its memory findings.
+    "knowledge.inspect": 4000,
     "knowledge.list": 150,
     "knowledge.outline": 80,
     "knowledge.reads": 500,
     "knowledge.search": 250,
+    # add and rotate: a probe bounded by knowledge_source_probe_timeout_s, up to 5 s
+    # waiting for the namespace's lease, a few reads and inserts; check: the probe
+    # alone, writing nothing.
+    "knowledge.source.add": 30000,
+    "knowledge.source.check": 30000,
+    "knowledge.source.inspect": 400,
+    "knowledge.source.list": 300,
+    "knowledge.source.remove": 400,
+    "knowledge.source.rotate": 30000,
+    "knowledge.source.sync_now": 300,
     # One LLM call per window plus the reduce; bounded by max_windows.
     "knowledge.synthesize": 60000,
     "knowledge.update_metadata": 60,
@@ -5609,8 +5709,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.touch": 40,
     "memory.unlock": 40,
     "memory.unpin": 40,
-    "memory.update": 120,
-    "memory.update_by_id": 80,
+    # + the audit-row wait each revision makes.
+    "memory.update": 170,
+    "memory.update_by_id": 130,
     "memory.verify": 80,
     "memory_schema.approve": 120,
     "memory_schema.list": 120,
@@ -5629,8 +5730,14 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # The audit, then three reads of the namespace's rows (agents, plain tags, key
     # prefixes), the categories, guide and policy, two reads for the extraction draft
     # (its writers, and which cited rows it wrote), one of the drafted tags' spellings,
-    # and three per category draft (`max_category_proposals`, default 5).
-    "namespace.tune": 5000,
+    # and three per category draft (`max_category_proposals`, default 5). Then the
+    # document drafts: four document reads (counts, writers, the sample, the per-format
+    # coverage) and the per-source job read, one artifact read per sampled ingested
+    # document (`namespace_tune_document_sample`, default 50), the sample (at most 8 Mi
+    # characters of text and artifact in all) cut in process up to six times, and, when a
+    # format fails, every extractor's capabilities read at once (5 s in all, cached for a
+    # minute).
+    "namespace.tune": 8000,
     "namespace.browse": 120,
     "namespace.cancel_request": 80,
     "namespace.delete": 60,
@@ -5812,8 +5919,8 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
     "memory.get_by_id": {"audited": 100},
     "memory.history": {"audited": 130},
     "memory.restore": {"undo": 130, "webhook": 130},
-    "memory.update": {"webhook": 170},
-    "memory.update_by_id": {"webhook": 130},
+    "memory.update": {"webhook": 220},
+    "memory.update_by_id": {"webhook": 180},
     "session.brief_save": {
         "model": 90000,
     },

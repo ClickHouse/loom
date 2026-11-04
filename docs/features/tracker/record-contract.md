@@ -49,9 +49,15 @@ mapping is `server/tracker/domain/mapping.py`, and the columns read per table ar
    namespaces. Before anything is written Loom checks that the host resolves to a public
    address (`HOST_REFUSED`), that the credential is read-only (`CREDENTIAL_NOT_READONLY`,
    `CREDENTIAL_READONLY_MODE`), that it can connect (`SOURCE_UNREACHABLE`) and that the
-   schema or mapping meets the contract (`CONTRACT_FAILED`). With `dry_run: true` a
-   failing schema comes back as the report instead, with a `CREATE OR REPLACE VIEW` draft
-   per failing table.
+   schema or mapping meets the contract (`CONTRACT_FAILED`). Read-only means every access
+   type `SHOW GRANTS` and `SHOW GRANTS FINAL` list, the granted roles' types included,
+   is `SELECT`, a `SHOW` of databases, tables, columns or dictionaries, `dictGet` or
+   `CREATE TEMPORARY TABLE`, and nothing is granted `WITH GRANT OPTION` or
+   `WITH ADMIN OPTION`, on a nested role either; any other type is refused. Every role
+   granted to the user must be a default role, so the check sees its whole chain. A
+   server that does not accept `SHOW GRANTS FINAL` is refused (`SOURCE_UNREACHABLE`). With
+   `dry_run: true` a failing schema comes back as the report instead, with a
+   `CREATE OR REPLACE VIEW` draft per failing table.
 
    | Op                           | Does                                                                                                                                                                   |
    | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

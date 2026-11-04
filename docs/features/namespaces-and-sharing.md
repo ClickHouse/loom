@@ -103,7 +103,7 @@ halfway leaves the source intact and the target without the row. The learnings q
 | `namespace.validate`                                                             | An integrity report: stuck conflicts, low-confidence rows, rows still waiting for an embedding. Run it after a batch of writes or when a recall looks wrong.                                                                                                                                                                                                                                                                                                               |
 | `namespace.audit`                                                                | Whether the namespace is used as a memory or as an object store: exact-key reads against searches, hash-shaped keys, double-encoded or oversized values, leases stored as memories, version churn. It also names the deployment's own state (kind `system_state`: missing telemetry, an indexing backlog), and skips the ledger checks rather than report them clean when the ledger recorded none of the calls behind the window's writes. Each finding carries a remedy. |
 | `memory.inspect`                                                                 | One user, agent or session: its own rows apart from the rest of the namespace, its calls in a window, and the guide, categories and extraction policy that create its memories ([below](#inspecting-one-user-agent-or-session)).                                                                                                                                                                                                                                           |
-| `namespace.tune`                                                                 | Drafts of changes to the extraction rules, categories and guide that create the namespace's memories, each with its evidence and the write that would apply it; nothing is applied ([below](#drafting-changes-to-how-memories-are-made)).                                                                                                                                                                                                                                  |
+| `namespace.tune`                                                                 | Drafts of changes to the extraction rules, categories and guide that create the namespace's memories and to the chunking and extractor settings for its documents, each with its evidence and the write that would apply it; nothing is applied ([below](#drafting-changes-to-how-memories-are-made)).                                                                                                                                                                     |
 | `namespace.taxonomy`                                                             | The live vocabulary: top tags, entities, memory types and communities.                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `agents.connected`                                                               | The agents active in a window (default 24 hours): last and first seen, ops, namespaces touched and cost per agent. Answers "is my client actually talking to Loom?"                                                                                                                                                                                                                                                                                                        |
 
@@ -221,7 +221,9 @@ and calls no model. Each proposal names:
 
 - **`target`**: the setting it changes. `extraction_instructions.request` (the
   instructions a `memory.set_from_messages` request sends; no user, agent or session
-  setting stores them), `namespace.category` or `namespace.guide`. Extraction rules are
+  setting stores them), `namespace.category`, `namespace.guide`, or for documents
+  `settings.knowledge_chunking` and `settings.document_extractors_json`
+  ([below](#document-drafts)). Extraction rules are
   never drafted as the operator extraction policy: a policy in force overrides every
   other instruction and turns off extraction's recovery passes, so a style rule there
   would cost facts the namespace keeps today. A rule whose exact text the policy in force
@@ -265,6 +267,59 @@ target or an argument; neither is a `<prefix>:` tag (`source:`, `speaker:`, `age
 which says where a row came from, not what it is about. A check the audit could not run is
 listed in `skipped` as `audit.<check>`. A token narrowed below the namespace
 (`read_scope`) cannot call it.
+
+### Document drafts
+
+The settings that cut and extract documents are the deployment's, the only place they
+live: a document draft's `scope` is every namespace of the deployment, its evidence is
+this namespace's, and its `apply` names how the setting is changed (`via`).
+
+- **Chunk size and stride** (`settings.knowledge_chunking`): up to
+  `namespace_tune_document_sample` live documents (default 50, picked by a hash of their
+  `source_uri`) are cut again in process at the current `knowledge_chunk_size` and
+  `knowledge_chunk_stride`, each by the chunker its write path uses: a text document's
+  text, an ingested document's stored artifact, until 8 MiB of text and artifact is
+  loaded; a document past that, a text over 2,000,000 characters or an artifact over 8
+  MiB counts as `unread`, and `load_cap` states the total. Nothing is written, no model
+  is called and no text is returned. `chunking` reports the cut: chunk count, characters
+  per chunk, the sections the size cuts into more chunks than their structure makes
+  (`sections_cut`), the largest embedding input in tokens and how many inputs are over
+  the embedder's limit (null when its provider states none Loom checks). A size is
+  drafted when an input is over the limit (the largest smaller size that fits, down to
+  200), or when more than a quarter of the sampled sections are cut over at least five
+  documents and the limit is known (the smallest larger size, up to four times the
+  current, that keeps three quarters whole within it); each candidate size is tried
+  once, nearest first, and the stride keeps its ratio to the size. `preview` holds the
+  sample cut at both values. `apply` is `settings.set` (`POST /v1/admin/settings.set`, a
+  platform admin) with `expected`, and `apply_also` sets the stride. A sample that
+  breaks neither rule drafts nothing, and stands as the evidence. So does a
+  `knowledge_chunk_size` of 0 or less, which cuts no window (a text document is one
+  chunk, an ingested one a chunk per block), and a `knowledge_chunk_stride` of 0 or
+  less, which windows no section or block longer than the size: no size is drafted for
+  either.
+- **Extractor routes** (`settings.document_extractors_json`): a format whose sources'
+  current job failed `format_unavailable`, or whose published extractions are
+  incomplete, is routed to a configured extractor that declares it in its capabilities.
+  The service a source goes to now is read as ingest reads it, from its format and media
+  type; the draft adds a route for the format itself, which wins over a media-type
+  route, so it takes every source of the format. Of the services that declare the format
+  (for incomplete extractions, those that did not make them), the route goes to one its
+  sources already work on (extracted whole, or failed sources whose service declares the
+  format now), else one its media-type routes reach, else any, a service that did not
+  make its incomplete extractions first within each. A route can still move sources that
+  extract whole on another service, and its rationale names them; a route that does not
+  answer the incomplete extractions says so in `skipped`. The draft names the service by
+  the setting holding its URL, never the URL, which can carry a credential, so
+  `args_complete` is false; `via` is `environment`, in force once each server and worker
+  restarts. A format no configured extractor declares drafts nothing and is named in
+  `skipped` (`extractor.<format>`), as are failed sources whose service declares the
+  format now, which are ingested again instead.
+
+Decision extraction (`loom decisions extract` and the source sync's mining) builds its
+prompt from fixed text and takes no instructions from a request, a namespace or an org,
+so no instruction is drafted for it; `skipped` says so when the namespace has documents.
+Stored documents keep their chunks and extraction: cutting or extracting them again is a
+separate action (`historical`).
 
 ## A namespace's guide
 

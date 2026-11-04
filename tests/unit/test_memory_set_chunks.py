@@ -258,6 +258,37 @@ async def test_a_900_char_value_writes_no_chunks() -> None:
     assert n == 0 and ch.inserts == [] and emb.batches == [] and ch.query_all_sqls == []
 
 
+def test_a_short_value_the_excerpt_holds_only_in_part_is_chunked() -> None:
+    # Stored as JSON, a Cyrillic or CJK character is a six-character escape, so 300 of them
+    # run past the excerpt the row is embedded by; the human text is chunked.
+    cyrillic = "Решили хранить блоки в арене потока. " * 8
+    assert len(cyrillic) < EXCERPT_LIMIT < len(json.dumps(cyrillic))
+    chunks, _ = sc.plan_set_chunks(cyrillic, "semantic", "lesson")
+    assert chunks and "".join(c for c, _, _ in chunks).startswith("Решили")
+    # The same length of ASCII fits the excerpt whole: no chunks.
+    assert sc.plan_set_chunks("a" * len(cyrillic), "semantic", "lesson") == ([], 0)
+
+
+def test_a_value_the_key_suffix_pushes_past_the_excerpt_is_chunked() -> None:
+    # The excerpt keeps room for " (#<key>)", so a decision statement stored in 1,180
+    # characters under a decision key runs past it.
+    key = "decision:" + "0123456789abcdef"
+    statement = ("Spill to disk. Decided sorted runs because they merge. " * 25)[:1178]
+    assert len(json.dumps(statement)) == 1180 < EXCERPT_LIMIT
+    assert len(json.dumps(statement)) > EXCERPT_LIMIT - len(f" (#{key})")
+    chunks, _ = sc.plan_set_chunks(statement, "decision", key)
+    assert chunks
+    # Without a key the excerpt holds it whole.
+    assert sc.plan_set_chunks(statement, "decision", "") == ([], 0)
+
+
+def test_an_ascii_value_whose_escapes_pass_the_excerpt_is_chunked() -> None:
+    # Quotes and line breaks are stored escaped: 1,100 characters store past 1,200.
+    text = ('a "quoted" line\n' * 80)[:1100]
+    assert len(text) < EXCERPT_LIMIT < len(json.dumps(text))
+    assert sc.plan_set_chunks(text, "semantic", "lesson")[0]
+
+
 @pytest.mark.asyncio
 async def test_a_dict_value_chunks_its_indented_json() -> None:
     value = {

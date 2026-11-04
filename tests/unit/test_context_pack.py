@@ -160,10 +160,9 @@ def test_context_pack_section_order_is_independent_of_completion_order(
 
     async def _records(*a: Any, **k: Any) -> Any:
         await asyncio.sleep(delay["decisions"])
-        return {"d1": {"scenario": "pick a store", "outcome": "clickhouse"}}
+        return {"d1": {"scenario": "pick a store", "outcome": "clickhouse", "stage": "decided"}}
 
     monkeypatch.setattr("server.memory.app.decision._decision_records", _records)
-    monkeypatch.setattr("server.core.ch.get_client", lambda: object())
     monkeypatch.setattr(
         "server.memory.app.procedure.handle_procedure_match",
         _stub(

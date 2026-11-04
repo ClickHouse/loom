@@ -1,5 +1,6 @@
 """namespace.tune — drafts of the changes to the settings that create a namespace's
-memories, from what its rows and its audit show.
+memories and cut and extract its documents, from what its rows, its documents and its
+audit show.
 
 Three settings shape the memories a namespace gets: the extraction rules (an org
 admin's namespace policy, or the instructions a request sends), the registered
@@ -10,6 +11,9 @@ that would apply it with the guard that write has. Nothing is applied, and every
 is built here from fixed templates: a tag or key prefix from the rows is used only when
 it is a plain name (`_NAME`), so stored text can never choose a target, an op or an
 argument other than the name it is. No model is called.
+
+The document drafts (the chunk size and stride, an extractor route per format) come from
+`server.knowledge.app.tune`, which cuts a sample of the documents again in process.
 
 Each section is guarded: one that cannot be read lands in `skipped` and drafts nothing.
 """
@@ -48,6 +52,7 @@ from server.identity.app.namespace_catalog import handle_namespace_list_categori
 from server.identity.app.namespace_guide import handle_namespace_guide_get
 from server.identity.app.request_scope import request_scope
 from server.identity.store import namespace_tune as store
+from server.knowledge.app.tune import DocumentDrafts, document_drafts
 from server.memory.app import extraction_policy
 from server.memory.app.finding_evidence import IDENTITY, revisions_for
 from server.memory.app.pipeline import OFFERED_CATEGORIES
@@ -614,5 +619,14 @@ async def handle_namespace_tune(input: NamespaceTuneInput) -> NamespaceTuneOutpu
         drafted = _guide_proposal(run, guide, prefixes, tags, agents, agents_total)
         if drafted is not None:
             out.proposals.append(drafted)
+    documents = await run.guarded(
+        "documents",
+        lambda: document_drafts(input, run.guarded, run.skipped),
+        DocumentDrafts(),
+    )
+    for p in documents.proposals:
+        p.id = _proposal_id(p.target, p.proposed)
+    out.proposals += documents.proposals
+    out.chunking = documents.chunking
     out.skipped = run.skipped
     return out

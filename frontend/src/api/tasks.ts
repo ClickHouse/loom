@@ -170,7 +170,8 @@ const PERSON_LEASE_SECONDS = 86_400;
 // ---------------------------------------------------------------- inbox.*
 
 /** Inboxes owned by `namespace`; with `mineEverywhere`, every inbox in the
- *  org the caller may read or is listed as a poster on — the reassign picker. */
+ *  org the caller may post to (write on its owner namespace, or listed as a poster) —
+ *  the reassign picker. */
 export async function listInboxes(id: Caller, opts: { mineEverywhere?: boolean } = {}): Promise<Inbox[]> {
   const out = await post<{ inboxes: Inbox[] }>(
     "/v1/inbox.list",

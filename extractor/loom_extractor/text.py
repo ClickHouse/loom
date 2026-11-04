@@ -19,6 +19,7 @@ from html.parser import HTMLParser
 from loom_extractor.artifact import (
     Artifact,
     Block,
+    Blocks,
     BlockType,
     Coverage,
     Failure,
@@ -54,49 +55,6 @@ _YAML_LINE = re.compile(r"^(?:[\w\"'.-]+\s*:|\s*-\s|#(?![ \t])|\s+\S)")
 _YAML_KEY = re.compile(r"^[\w\"'.-]+\s*:")
 
 
-class _Blocks:
-    """Accumulates blocks with a heading stack, giving each block its section
-    path and the id of the heading it sits under."""
-
-    def __init__(self) -> None:
-        self.blocks: list[Block] = []
-        self._stack: list[tuple[int, str, str]] = []  # (depth, title, block id)
-
-    def heading(self, depth: int, title: str, loc: Locator) -> None:
-        while self._stack and self._stack[-1][0] >= depth:
-            self._stack.pop()
-        parent = self._stack[-1][2] if self._stack else ""
-        bid = f"b{len(self.blocks)}"
-        # The whole title: `within_contract` cuts a path entry to the contract's bound
-        # and marks the cut. The heading block keeps all of it, and a long one is
-        # chunked like any long block.
-        self._stack.append((depth, title, bid))
-        self.blocks.append(
-            Block(
-                id=bid,
-                type="heading",
-                text=title,
-                locator=loc,
-                section_path=tuple(t for _, t, _ in self._stack),
-                parent=parent,
-                depth=depth,
-            )
-        )
-
-    def add(self, type_: BlockType, text: str, loc: Locator, **attrs: object) -> None:
-        self.blocks.append(
-            Block(
-                id=f"b{len(self.blocks)}",
-                type=type_,
-                text=text,
-                locator=loc,
-                section_path=tuple(t for _, t, _ in self._stack),
-                parent=self._stack[-1][2] if self._stack else "",
-                attrs=dict(attrs),
-            )
-        )
-
-
 class _Lines(Lines):
     """The text's lines, and the locator of a run of them."""
 
@@ -125,7 +83,7 @@ class _Lines(Lines):
         return Coverage("lines", len(nonblank), sum(1 for i in nonblank if i in covered))
 
 
-def _fence(src: _Lines, acc: _Blocks, i: int, marker: str) -> int:
+def _fence(src: _Lines, acc: Blocks, i: int, marker: str) -> int:
     """The fenced code block opening on line `i`; returns the line after it."""
     lines, n = src.lines, len(src.lines)
     j = i + 1
@@ -145,7 +103,7 @@ def _fence(src: _Lines, acc: _Blocks, i: int, marker: str) -> int:
     return j + 1
 
 
-def _front_matter(src: _Lines, acc: _Blocks) -> int:
+def _front_matter(src: _Lines, acc: Blocks) -> int:
     """A leading `---` ... `---` block (YAML front matter of documentation
     pages) as one block; returns the line after it, 0 when there is none."""
     lines = src.lines
@@ -165,7 +123,7 @@ def _front_matter(src: _Lines, acc: _Blocks) -> int:
     return 0
 
 
-def _html_lines(src: _Lines, acc: _Blocks, i: int, end: str) -> int:
+def _html_lines(src: _Lines, acc: Blocks, i: int, end: str) -> int:
     """An HTML block from line `i` as one paragraph, as written: to the line
     holding `end` (line `i` itself too, so `<!-->` is a whole comment), or the
     file's end; to the next blank line when `end` is ''. Returns the line after it."""
@@ -216,7 +174,7 @@ def _paragraph_end(lines: list[str], i: int, kind: BlockType) -> tuple[int, int]
 def markdown_blocks(text: str) -> tuple[list[Block], Coverage]:
     src = _Lines(text)
     lines, n = src.lines, len(src.lines)
-    acc = _Blocks()
+    acc = Blocks()
     i = _front_matter(src, acc)
     while i < n:
         line = lines[i]
@@ -264,7 +222,7 @@ def markdown_blocks(text: str) -> tuple[list[Block], Coverage]:
 def paragraph_blocks(text: str) -> tuple[list[Block], Coverage]:
     """Text with no markup: one paragraph per run of non-blank lines."""
     src = _Lines(text)
-    acc = _Blocks()
+    acc = Blocks()
     i, n = 0, len(src.lines)
     while i < n:
         if not src.lines[i].strip():
@@ -354,7 +312,7 @@ class _HTMLBlocks(HTMLParser):
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.acc = _Blocks()
+        self.acc = Blocks()
         # Hidden elements open, by tag: counts, not a stack, so nesting costs
         # nothing per tag (an end tag closes the latest of its kind).
         self._hidden: dict[str, int] = {}

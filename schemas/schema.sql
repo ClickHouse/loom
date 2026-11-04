@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 173 tables + 19 materialized views.
+-- Counts: 177 tables + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (173)
+-- Tables (177)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -372,9 +372,13 @@ CREATE TABLE IF NOT EXISTS loom.chunks
     `user_id` String DEFAULT '-',
     `session_id` String DEFAULT '-',
     `source_class` LowCardinality(String) DEFAULT '',
+    `keys` Array(String) DEFAULT [],
+    `embed_input_sha256` String DEFAULT '',
     INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1,
     INDEX content_text content_lc TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 100000000,
-    INDEX context_text context_lc TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 100000000
+    INDEX context_text context_lc TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 100000000,
+    INDEX keys_bloom keys TYPE bloom_filter() GRANULARITY 1,
+    INDEX embed_input_bloom embed_input_sha256 TYPE bloom_filter() GRANULARITY 1
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(created_at)
@@ -1429,6 +1433,12 @@ CREATE TABLE IF NOT EXISTS loom.documents
     `session_id` String DEFAULT '-',
     `actor` String DEFAULT '',
     `source_class` LowCardinality(String) DEFAULT '',
+    `revision` UInt64 DEFAULT 0,
+    `format` LowCardinality(String) DEFAULT '',
+    `artifact_sha256` String DEFAULT '',
+    `parser` String DEFAULT '',
+    `coverage` String DEFAULT '',
+    `ingestion_id` String DEFAULT '',
     INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(version)
@@ -1699,7 +1709,8 @@ CREATE TABLE IF NOT EXISTS loom.erasure_requests
     `residue_count` UInt32 DEFAULT 0,
     `residue` String DEFAULT '',
     `verified_at` Nullable(DateTime) DEFAULT NULL,
-    `purge` Bool DEFAULT false
+    `purge` Bool DEFAULT false,
+    `actor` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY id
@@ -1856,6 +1867,113 @@ ENGINE = MergeTree
 ORDER BY (seen_at, process)
 TTL toDateTime(seen_at) + toIntervalDay(1)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
+-- loom.knowledge_ingest_cancels
+CREATE TABLE IF NOT EXISTS loom.knowledge_ingest_cancels
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `ingestion_id` UUID,
+    `agent` LowCardinality(String) DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `actor` String DEFAULT '',
+    `requested_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree
+ORDER BY (org, namespace, ingestion_id)
+TTL toDateTime(requested_at) + toIntervalDay(30)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 1024;
+
+-- loom.knowledge_ingestions
+CREATE TABLE IF NOT EXISTS loom.knowledge_ingestions
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `ingestion_id` UUID,
+    `source_uri` String,
+    `upload_id` UUID,
+    `sha256` FixedString(64),
+    `filename` String DEFAULT '',
+    `content_type` LowCardinality(String) DEFAULT '',
+    `title` String DEFAULT '',
+    `description` String DEFAULT '',
+    `tags` Array(LowCardinality(String)) DEFAULT [],
+    `metadata` String DEFAULT '{}',
+    `options` String DEFAULT '{}',
+    `expected_revision` Int64 DEFAULT -1,
+    `allow_partial` Bool DEFAULT false,
+    `state` LowCardinality(String),
+    `stage` LowCardinality(String) DEFAULT '',
+    `attempts` UInt16 DEFAULT 0,
+    `next_attempt_at` DateTime64(3) DEFAULT now64(3),
+    `error_code` LowCardinality(String) DEFAULT '',
+    `error_message` String DEFAULT '',
+    `format` LowCardinality(String) DEFAULT '',
+    `coverage` String DEFAULT '',
+    `warnings` Array(String) DEFAULT [],
+    `artifact_sha256` String DEFAULT '',
+    `chunks` UInt32 DEFAULT 0,
+    `revision` UInt64 DEFAULT 0,
+    `doc_version` UInt64 DEFAULT 0,
+    `agent` LowCardinality(String) DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `actor` String DEFAULT '',
+    `source_class` LowCardinality(String) DEFAULT '',
+    `created_at` DateTime64(3) DEFAULT now64(3),
+    `updated_at` DateTime64(3) DEFAULT now64(3),
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, ingestion_id)
+TTL toDateTime(updated_at) + toIntervalDay(30)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 1024;
+
+-- loom.knowledge_sources
+CREATE TABLE IF NOT EXISTS loom.knowledge_sources
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `name` LowCardinality(String),
+    `source_id` UUID,
+    `kind` LowCardinality(String),
+    `config_json` String DEFAULT '{}',
+    `credential_enc` String DEFAULT '',
+    `created_by` String DEFAULT '',
+    `active` Bool DEFAULT true,
+    `pending_delete` Bool DEFAULT false,
+    `created_at` DateTime DEFAULT now(),
+    `updated_at` DateTime DEFAULT now(),
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, name)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
+-- loom.knowledge_uploads
+CREATE TABLE IF NOT EXISTS loom.knowledge_uploads
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `upload_id` UUID,
+    `sha256` FixedString(64),
+    `size` UInt64,
+    `filename` String DEFAULT '',
+    `content_type` LowCardinality(String) DEFAULT '',
+    `format` LowCardinality(String) DEFAULT '',
+    `agent` LowCardinality(String) DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `actor` String DEFAULT '',
+    `source_class` LowCardinality(String) DEFAULT '',
+    `created_at` DateTime64(3) DEFAULT now64(3),
+    `expires_at` DateTime64(3)
+)
+ENGINE = MergeTree
+ORDER BY (org, namespace, upload_id)
+TTL toDateTime(expires_at) + toIntervalDay(7)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 1024;
 
 -- loom.learnings_queue
 CREATE TABLE IF NOT EXISTS loom.learnings_queue

@@ -197,6 +197,14 @@ _WORKERS: tuple[_Worker, ...] = (
         "document_blob_gc_interval_seconds",
     ),
     _Worker(
+        "knowledge_ingest",
+        "server.knowledge.workers.ingest",
+        "knowledge_ingest_enabled",
+        "knowledge_ingest_interval_seconds",
+        idle_interval="knowledge_ingest_idle_interval_seconds",
+        max_pass_setting="knowledge_ingest_max_pass_seconds",
+    ),
+    _Worker(
         "namespace_gc",
         "server.identity.workers.namespace_gc",
         "namespace_gc_worker_enabled",
@@ -384,6 +392,15 @@ _WORKERS: tuple[_Worker, ...] = (
         "server.code.workers.pr_history",
         "code_pr_history_enabled",
         "code_pr_history_interval_seconds",
+    ),
+    _Worker(
+        "knowledge_source_sync",
+        "server.knowledge.workers.source_sync",
+        "knowledge_source_sync_enabled",
+        "knowledge_source_sync_interval_seconds",
+        idle_interval="knowledge_source_sync_idle_interval_seconds",
+        # the pass stops starting sources at three quarters of it
+        max_pass_setting="knowledge_source_sync_max_pass_seconds",
     ),
     _Worker(
         "code_embed_recovery",

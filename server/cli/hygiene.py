@@ -658,6 +658,7 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
                 row=request_row_template(
                     erasure_id=str(row["id"]),
                     input=input_obj,
+                    actor=row["actor"],
                     requested_at=row["requested_at"],
                     attempts=int(row["attempts"]) + 1,
                 ),

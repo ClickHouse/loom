@@ -817,6 +817,10 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | --- | --- | --- | --- | --- |
 | `LOOM_KNOWLEDGE_SEARCH_MAX_NAMESPACES` | `int` | `10000` | live | Namespaces an all_mine knowledge.search reads besides the addressed one, at most; the rest come back in `namespaces_skipped`. Each search leg is one statement over all of them (measured 110 ms at 10,000 collections). |
 | `LOOM_KNOWLEDGE_SEARCH_FANOUT_KINDS` | `str` | `'memory,collection,personal'` | live | Namespace kinds an all_mine knowledge.search spans (comma list over loom.namespaces.kind): the memory fan-out's, and the caller's collections. |
+| `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT` | `str` | `''` | live | Reranker knowledge.search uses when the request names none (same values as the per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON; rerank="none" turns it off for a call). Empty = no default rerank. |
+| `LOOM_KNOWLEDGE_SEARCH_RERANK_TOP` | `int` | `30` | live | How many fused hits a rerank reads (the legs fetch at least this many). |
+| `LOOM_KNOWLEDGE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `800` | live | Characters of each hit a reranker reads: its context (title, description, breadcrumb; at most half), then the chunk text. builtin:cohere reads at most 1024. |
+| `LOOM_KNOWLEDGE_SEARCH_RERANK_TIMEOUT_S` | `float` | `8.0` | live | Seconds a knowledge.search waits on its reranker before it keeps the fused order. |
 
 ### Chunking
 
@@ -824,6 +828,19 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | --- | --- | --- | --- | --- |
 | `LOOM_KNOWLEDGE_CHUNK_SIZE` | `int` | `1500` | live | Sliding-window chunking on knowledge.add/upsert, in characters. chunk_size 0 = one chunk per doc (hurts long-form retrieval). Smaller chunks mean more embed calls; 1500/1230 stays well under the text-embedding-3 context. |
 | `LOOM_KNOWLEDGE_CHUNK_STRIDE` | `int` | `1230` | live | Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks. |
+
+### Server-side ingestion (knowledge.upload, knowledge.ingest)
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_UPLOAD_MAX_BYTES` | `int` | `67108864` | live | Largest file POST /v1/knowledge.upload accepts, in bytes; a larger body is refused with 413 before any of it is stored. |
+| `LOOM_KNOWLEDGE_UPLOAD_TTL_SECONDS` | `int` | `86400` |  | Seconds an upload stays ingestible; the originals sweep keeps its bytes until then, and knowledge.ingest refuses it after. |
+| `LOOM_KNOWLEDGE_INGEST_ENABLED` | `bool` | `True` |  | The worker that runs ingestion jobs: extract, chunk, embed, publish. |
+| `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | `int` | `2` |  | Seconds between ingestion passes while jobs wait. |
+| `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS` | `int` | `15` |  | Seconds between passes when the last one found nothing to do. |
+| `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS` | `int` | `900` |  | Seconds one pass, which runs one job, may take before it is cancelled: the extractor's timeout plus embedding the largest source. A job cut off runs again from its start and counts toward its attempts. |
+| `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS` | `int` | `5` |  | Attempts a job gets after a transient failure (a provider or store outage) before it fails for good. |
+| `LOOM_KNOWLEDGE_INGEST_MAX_CHUNKS` | `int` | `20000` | live | Most chunks one source may publish; a larger extraction fails with `too_large` rather than flood the embedder. |
 
 ### Timeouts, budgets and caches
 
@@ -843,6 +860,21 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON` | `str` | *(unset)* |  | JSON {base URL: bearer token}: each extractor service's own token, so none holds another's. Each URL must be one an extractor URL setting names. |
 | `LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S` | `float` | `180.0` |  | Seconds one call to an extractor may take as a whole: reading its capabilities, or sending the original and reading its artifact. |
 | `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES` | `int` | `67108864` |  | Bytes of an extractor's response the server reads; a larger artifact is refused. |
+
+### Document sources
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` | `int` | `8` | live | Active document sources (knowledge.source.add) one repository namespace may register; an add past it is refused with SOURCE_QUOTA. |
+| `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` | `float` | `20.0` | live | Seconds a document source's probe (add, check, rotate) may take in all; past it add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | `bool` | `False` |  | The knowledge_source_sync worker: pulls each registered document source's changed files into its repository's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between sync passes while there are sources. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_IDLE_INTERVAL_SECONDS` | `int` | `1800` |  | Seconds between passes that found no source to sync; one idle sleep plus one pass stays under three intervals, so the worker never reads as stalled. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_PASS_SECONDS` | `int` | `600` |  | Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it. At least 180: 90 for the sync, then 60 of read time for one document's extraction and 30 for its writes before the deadline. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes, retires or mines for decisions across all sources; the rest wait for the next pass. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_FULL_INTERVAL_SECONDS` | `int` | `86400` | live | Seconds after which a source's next pass lists every file, not only those changed since the last one: what finds a file trashed or moved out of a folder. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` | `int` | `67108864` | live | Bytes of one file a sync downloads or exports; a larger file is not ingested. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_CAP_SHARE` | `float` | `0.25` | live | The share of a namespace's daily LLM cost cap the sync may spend mining changed documents for decisions, counted over its own calls; the rest stays for requests. |
 
 ## Mcp
 
@@ -883,6 +915,12 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_SCRATCHPAD_MAX_CHARS` | `int` | `2000` |  | Characters each injected working-memory block renders before it is cut with "(truncated)". |
+
+### Pre-edit block
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_FOR_FILE_WHOLE_TOKENS` | `int` | `1500` | live | Tokens (4 characters each) memory.for_file gives its decision and constraint rows, which print whole outside token_budget; a row past it is left out and named. |
 
 ### Deployment-specific names the fact filters recognise
 
@@ -1433,6 +1471,7 @@ Namespace registration, write marks and bench-namespace GC.
 | --- | --- | --- | --- | --- |
 | `LOOM_NAMESPACE_AUDIT_INDEX_ROW_SCAN_CAP` | `int` | `20000` | live | Most live rows the namespace audit's value scan reads (it is O(total value bytes)); above it that check is skipped and says so. |
 | `LOOM_NAMESPACE_REPORT_HASH_MAX_BYTES` | `int` | `65536` | live | Largest value (bytes) namespace.audit, namespace.validate and memory.inspect read to cite a row's content hash; a larger row is cited with none. 0 = cite no hash. |
+| `LOOM_NAMESPACE_TUNE_DOCUMENT_SAMPLE` | `int` | `50` | live | Most live documents namespace.tune re-chunks in process to judge the chunk size and stride, picked by a hash of their source_uri; the report states the cap. |
 | `LOOM_NAMESPACE_ONTOLOGY_CARDINALITY_TTL_S` | `float` | `60.0` | live | Seconds a namespace's relation cardinalities (one or many) are cached for the triple writer. |
 | `LOOM_NAMESPACE_TAXONOMY_TTL_S` | `float` | `300.0` | live | Seconds a namespace's taxonomy is reused: one is four FINAL scans of the namespace (about 20 MB per open on a large namespace) and changes only when the namespace does. |
 
@@ -1550,7 +1589,7 @@ Embedding and LLM providers.
 | `LOOM_LLM_RETRY_MAX_WAIT_S` | `float` | `20.0` | live | Longest backoff, in seconds, between two attempts of an LLM call. |
 | `LOOM_LLM_MAX_TOKENS_OVERRIDES` | `str` | `''` | live | JSON {call: tokens} over LLM_MAX_TOKENS (in server/settings/catalog.py): the most tokens one kind of LLM call may write, keyed by its `llm_stage`. A count below 1 is refused; a call this build lacks is logged and ignored. '' = the table as declared. |
 | `LOOM_LLM_POLICY_BY_TRAFFIC_CLASS` | `str` | `'{"bench": {"llm_cache": true}}'` |  | JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}: `llm_cache` overrides the class's cache default (a per-request pin wins); `strong`/`mid` false bars the cascade from that tier. Unlisted = every tier eligible. |
-| `LOOM_RERANK_ENDPOINTS_JSON` | `str` | *(unset)* |  | JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are short identifiers, URLs http(s). Loom posts candidate text only to these. A secret: its URLs can carry a credential. |
+| `LOOM_RERANK_ENDPOINTS_JSON` | `str` | *(unset)* |  | JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's `rerank_endpoint`, LOOM_CODE_SEARCH_RERANK_DEFAULT and LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT may name. Names are short identifiers, URLs http(s). Loom posts candidate text only to these. A secret: its URLs can carry a credential. |
 | `LOOM_LLM_RERANK_SKIP_ABOVE` | `float` | `0.62` |  | Skip the rerank when the vector top hit's cosine is ≥ this (strong matches rank reliably; the rerank costs ~500 ms). Fallback when the adaptive gate has no probe. |
 | `LOOM_EMBEDDING_WORKER_ENABLED` | `bool` | `True` |  | Recovery worker: retries failed embeds and reconciles orphan scope='shared' rows (the write path embeds inline). |
 | `LOOM_EMBEDDING_WORKER_INTERVAL_SECONDS` | `int` | `5` |  | Seconds between recovery worker passes while there is work. |

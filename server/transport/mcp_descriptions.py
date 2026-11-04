@@ -252,12 +252,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Results are point-in-time. RE-CALL on repeat questions — "
         "documents can change between turns; don't replay an earlier "
         "answer."
-        " Ranking is hybrid by default: vector similarity fused with a BM25 "
-        "lexical leg by reciprocal rank (`search_mode` = hybrid | semantic | "
-        "lexical; `lexical_weight` 0-1 tunes the fusion). One hit per "
-        "section by default (`collapse_sections`; `siblings_folded` says how "
-        "many chunks it stands for). Hits carry "
-        "`section` (heading breadcrumb) and `score`."
+        " Ranking is hybrid by default: vector similarity, a BM25 lexical leg "
+        "and an exact-key leg (identifier-shaped terms such as `orders_daily` "
+        "against the names a chunk defines or reads) fused by reciprocal rank "
+        "(`search_mode` = hybrid | semantic | lexical; `lexical_weight` 0-1 "
+        "tunes the fusion). One hit per section by default "
+        "(`collapse_sections`; `siblings_folded` says how many chunks it "
+        "stands for). Hits carry `section` (heading breadcrumb), `score`, the "
+        "`revision` the passage was written as and, for an ingested file, its "
+        "`locator`; `formats` and `block_types` narrow them."
     ),
     "knowledge.upsert": (
         "WHAT: Add-or-replace a document by `source_uri`. Same shape "
@@ -482,7 +485,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "memories whose files[] facet names the path "
         "(repo-relative or bare filename both match). Rows tagged `constraint` "
         "come first, then pinned, then by confidence; `rendered` is a "
-        "prompt-ready block cut at token_budget. The Claude Code plugin calls "
+        "prompt-ready block: decisions and constraints whole, the other rows "
+        "cut at token_budget. The Claude Code plugin calls "
         "this from its PreToolUse hook on Edit/Write and injects `rendered` as "
         "additional context; call it yourself before changing a file you have "
         "not touched this session."
@@ -1835,13 +1839,36 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "writer, not a read boundary. `skipped` names sections not read, which are not empty."
     ),
     "namespace.tune": (
-        "Drafts of changes to the settings that create a namespace's memories, read-only: "
-        "extraction rules for the shapes the audit found, categories for much-used tags, "
-        "a guide naming the key layout. Each proposal has its real target, current and "
+        "Drafts of changes to the settings that create a namespace's memories and cut "
+        "its documents, read-only: extraction rules for the shapes the audit found, "
+        "categories for much-used tags, a guide naming the key layout, the chunk size and "
+        "stride (a sample of the documents cut again at the current and proposed values, "
+        "in `chunking` and each draft's `preview`) and an extractor route per format that "
+        "failed or lost structure. Each proposal has its real target, current and "
         "proposed value, supporting rows (key, version, content_sha256) and a count of the "
         "rows it must keep working for, the agents it affects and the write that would "
         "apply it with its guard. Nothing is applied; show a proposal to the person to "
         "approve, never apply it yourself."
+    ),
+    "knowledge.inspect": (
+        "A namespace's documents, read-only: live and deleted counts by format and source "
+        "scheme, retired versions, live chunks per embedding model and how many search can "
+        "serve; the newest documents with their chunks (searchable, unembedded, other "
+        "model, versions, sizes) and the decision rows citing them, split into decided and "
+        "proposed, each with confirmed, unconfirmed, source_changed and outcome_known; "
+        "findings on chunks (`kind` system_state: no chunks, no vector, "
+        "another model; usage_heuristic: two live versions); knowledge.ingest jobs by "
+        "state, sources with a job and no live document (a first ingest, or one after a "
+        "delete, queued or failed), and per listed document its "
+        "extraction coverage (unit, total, extracted, failed, lost) and its jobs (newest, "
+        "and the open one's ingestion_id for knowledge.ingest_status); ingest findings that "
+        "keep apart a backlog, an extractor unavailable, missing access and a job failed on "
+        "the server's side (system_state), "
+        "a file the extractor rejected (contract_violation) and an extraction that lost "
+        "structure (usage_heuristic), each with source samples and their job ids (a source a "
+        "later write or delete replaced is judged by none); "
+        "namespace.audit's document-shaped memory findings. `skipped` names sections not "
+        "read; their fields are null or empty, not zero."
     ),
     "namespace.inventory": (
         "What a namespace holds and who appears in it, read-only: live counts and "
@@ -2246,9 +2273,11 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "knowledge.search": (
         "Search the namespace's documents. Hits carry the document's `source_uri`, its "
-        "section breadcrumb and a score: cite the source_uri and section. Read a hit's full "
-        "text with loom_knowledge_get before quoting more than the excerpt. Memories are "
-        "searched with loom_memory_search."
+        "`section` breadcrumb, the `revision` the passage was written as, a score and, for "
+        "an ingested file, a `locator` (its lines, key path or pages): cite the source_uri, "
+        "section and revision (a revision of 0 was not recorded: cite none). A hit is the "
+        "nearest passage, not an answer: when no hit states the fact, say it is not in the "
+        "documents. Memories are searched with loom_memory_search."
     ),
     "knowledge.list": (
         "Enumerate the namespace's documents (source_uri and title), for an inventory. "
@@ -2256,8 +2285,8 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "knowledge.get": (
         "Fetch one document by `source_uri` (latest version; `include_superseded=true` "
-        "reads a soft-deleted one). Cite the source_uri with its `doc_id` (or "
-        "`ingested_at`), and quote the passage you rely on."
+        "reads a soft-deleted one). Cite the source_uri with its `revision`, and quote "
+        "the passage you rely on."
     ),
     "code.search": (
         "Search the shared code index of a repository by concept ('quota enforcement'). "

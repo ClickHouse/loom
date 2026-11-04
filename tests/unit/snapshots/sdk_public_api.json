@@ -819,6 +819,22 @@
               "body",
               "options"
             ],
+            "ingest": [
+              "body",
+              "options"
+            ],
+            "ingest_cancel": [
+              "body",
+              "options"
+            ],
+            "ingest_status": [
+              "body",
+              "options"
+            ],
+            "inspect": [
+              "body",
+              "options"
+            ],
             "list": [
               "body",
               "options"
@@ -832,6 +848,34 @@
               "options"
             ],
             "search": [
+              "body",
+              "options"
+            ],
+            "source_add": [
+              "body",
+              "options"
+            ],
+            "source_check": [
+              "body",
+              "options"
+            ],
+            "source_inspect": [
+              "body",
+              "options"
+            ],
+            "source_list": [
+              "body",
+              "options"
+            ],
+            "source_remove": [
+              "body",
+              "options"
+            ],
+            "source_rotate": [
+              "body",
+              "options"
+            ],
+            "source_sync_now": [
               "body",
               "options"
             ],
@@ -2179,6 +2223,7 @@
           "outcome",
           "alternatives",
           "confidence",
+          "stage",
           "decision_maker",
           "caused_by",
           "influenced_by",

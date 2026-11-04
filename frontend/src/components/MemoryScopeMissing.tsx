@@ -22,7 +22,6 @@ const VIEW_TITLE: Partial<Record<View, string>> = {
   memories: "Memories",
   recall: "Recall",
   profile: "Profile",
-  knowledge: "Library",
   sharing: "Flow",
   sessions: "Conversations",
   runs: "Runs",

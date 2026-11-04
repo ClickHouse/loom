@@ -43,6 +43,12 @@ export const WILDCARD_NAMESPACE = "*";
  *  letters, digits and hyphens, starting with a letter or digit. */
 export const NAMESPACE_NAME = /^[a-z0-9][a-z0-9-]{0,127}$/;
 
+/** Whether `name` is a collection's name (`col-…`, server/auth/sharing.py), as a link may
+ *  name one: anything else a link carries is not shown. */
+export function isCollectionName(name: string | null | undefined): name is string {
+  return !!name && name.startsWith("col-") && NAMESPACE_NAME.test(name);
+}
+
 /** A name the dashboard may switch into: a real namespace, whatever its kind. */
 function isReachableNamespace(m: Pick<MyNamespaceEntry, "namespace">): boolean {
   return m.namespace !== WILDCARD_NAMESPACE && m.namespace !== "";
@@ -87,6 +93,7 @@ const MEMORY_VIEWS: ReadonlySet<View> = new Set<View>([
   "sharing",
   "sessions",
   "runs",
+  "assistant",
   // An inbox is owned by a memory namespace.
   "tasks",
 ]);

@@ -45,13 +45,18 @@ export function Header() {
   const openHelp = useStore((s) => s.openHelp);
   const [addMemOpen, setAddMemOpen] = useState(false);
   const [addDocOpen, setAddDocOpen] = useState(false);
+  const libraryElsewhere = useStore((s) => s.libraryElsewhere);
+  // The dialog adds to the header's namespace: it belongs to a page showing that, and a
+  // Back to a collection closes it, as the Library's own dialogs close.
+  useEffect(() => {
+    if (libraryElsewhere) setAddDocOpen(false);
+  }, [libraryElsewhere]);
   const [mobileSearch, setMobileSearch] = useState(false);
   const role = useNamespaceRole(identity?.namespace);
   const readOnly = !canWrite(role);
 
   const onLogout = () => {
-    signOut();
-    toast("Signed out", "info");
+    toast(signOut() ? "Signed out" : "Another account is signed in here", "info");
     setTimeout(() => location.reload(), 300);
   };
 
@@ -106,9 +111,13 @@ export function Header() {
               <Dropdown.Item onSelect={() => setAddMemOpen(true)}>
                 <ItemLabel icon="sparkle">Memory</ItemLabel>
               </Dropdown.Item>
-              <Dropdown.Item onSelect={() => setAddDocOpen(true)}>
-                <ItemLabel icon="document">Document</ItemLabel>
-              </Dropdown.Item>
+              {/* New adds to the header's namespace; while the Library shows a collection,
+                  its own Add document is the one that adds there. */}
+              {!libraryElsewhere && (
+                <Dropdown.Item onSelect={() => setAddDocOpen(true)}>
+                  <ItemLabel icon="document">Document</ItemLabel>
+                </Dropdown.Item>
+              )}
             </Menu>
           ))}
 

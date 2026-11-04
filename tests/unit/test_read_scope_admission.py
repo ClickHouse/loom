@@ -263,6 +263,7 @@ _ACTS_AS_A_USER = [
     # with no session named, it would be written outside what the token reads.
     "knowledge.add",
     "knowledge.bulk_add",
+    "knowledge.ingest",
     "knowledge.upsert",
     "memory.bulk_set",
     "memory.delete",

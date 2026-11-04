@@ -80,7 +80,8 @@ content posted to classifiers and rerankers go only to the hosts
 allow-list, so a cloud's own endpoint, an IP address or a look-alike name is refused as a
 provider's API is. The settings refuse to load with no hosts, or with an API root, the
 token endpoint or a rerank endpoint elsewhere, or the Gemini embedder (`gateway_refusal`),
-and with a `builtin:cohere` code-search default (`_check_code_rerank_behind_the_gateway`).
+and with a `builtin:cohere` code-search or knowledge-search default
+(`_check_rerank_defaults_behind_the_gateway`).
 Model calls go through their own client, `server/clients/_http.py::get_model_client`,
 whose request hook (`_on_request`) refuses every other host on every hop, redirects
 included; GitHub and an issuer's discovery document use the other client, which has no
@@ -1092,6 +1093,27 @@ A structured profile is served only from a row written as `worker:structured-pro
 actor kind no token maps to, so a caller cannot forge one
 ([memory invariants](memory-architecture.md#invariants)).
 
+A document a registered document source's sync wrote carries the actor
+`worker:knowledge-source-sync` and the class `imported`. No token maps to that actor
+kind, so no request can write a document that reads as synced from a source: a source's
+documents are those tagged `source:<name>` with that actor, and only the sync worker
+writes, rewrites or retires them. The worker opens a source's credential only for its
+own turn; a credential that does not open stops the turn with `credential_invalid` and
+nothing is fetched without it. It retires a document only when a complete full listing
+no longer has the file and a lookup of that file reports it gone, trashed or out of
+every folder of the source (for a tracker project's documents: a list read whole, every
+project on every page, and a lookup reporting the document not found, trashed, archived
+or in none of the source's projects), when the document sits at an address that is no
+longer its file's, or when a namespace admin asked (`knowledge.source.remove` with
+`delete_documents`); never on a fetch error or a recording its meeting store stopped
+listing, and never touches a live document another
+writer or source holds ([document sources](../features/knowledge.md#syncing-a-source)).
+Any holder of a writer grant on the namespace may still `knowledge.delete` a synced
+document, as any other; while its item is still in the source, a later turn writes it
+again (a folder's next full listing, a project's next turn). A meeting store's token goes only to that
+store's own hosts, a transcript download's link included
+([recordings](../features/knowledge.md#a-recording-source)).
+
 ## Audit log
 
 `emit` in `server/observability/audit.py` writes `loom.audit_log` rows. `row_hash` is
@@ -1170,10 +1192,11 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   to start with the checked-in dev secret; only `LOOM_INSTANCE_LABEL=deploy:dev` is exempt
   (`require_real_signing_secret`). `loom doctor` and `/v1/health` flag it elsewhere
   (`dev_jwt_secret`).
-- **Stored tokens.** Private-repository tokens, tracker-source passwords and provider
-  keys are encrypted at rest with a key derived from `LOOM_JWT_SECRET` and a per-purpose
-  salt (`seal` and `unseal` in `server/core/secrets_at_rest.py`), as are the signing
-  keys in `loom.signing_keys`. Changing the secret makes them undecryptable; re-enter
+- **Stored tokens.** Private-repository tokens, tracker-source passwords, document-source
+  credentials (`loom.knowledge_sources.credential_enc`) and provider keys are encrypted
+  at rest with a key derived from `LOOM_JWT_SECRET` and a per-purpose salt (`seal` and
+  `unseal` in `server/core/secrets_at_rest.py`), as are the signing keys in
+  `loom.signing_keys`. Changing the secret makes them undecryptable; re-enter
   the credentials and re-mint tokens.
 - **Ledger arguments.** `loom.agent_events` stores free-text arguments as
   `sha256:<digest>/<length>`, not text (`server/observability/event_args.py`).

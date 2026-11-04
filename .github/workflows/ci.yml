@@ -521,6 +521,21 @@ jobs:
       # tests sign with it (LOOM_TEST_END_USER_KEY).
       - name: Test end-user issuer
         run: python -m tests.end_user_issuer "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      # The reference extractor, before the servers boot so they read its URL and token:
+      # the ingestion tests' jobs call it and knowledge.inspect reports it as configured.
+      - name: Start the reference extractor
+        run: |
+          token="$(openssl rand -hex 24)"
+          echo "::add-mask::$token"
+          (cd extractor && LOOM_EXTRACTOR_TOKEN="$token" LOOM_EXTRACTOR_PORT=8790 \
+            nohup python -m loom_extractor > "$GITHUB_WORKSPACE/extractor.log" 2>&1 &)
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8790/healthz >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8790/healthz >/dev/null || { tail -50 extractor.log; exit 1; }
+          echo "LOOM_DOCUMENT_EXTRACTOR_URL=http://127.0.0.1:8790" >> "$GITHUB_ENV"
+          echo "LOOM_DOCUMENT_EXTRACTOR_TOKEN=$token" >> "$GITHUB_ENV"
       # The image's launcher with several web processes, so state that must
       # bind every process (rate limits, budgets, schema caches) is tested.
       - name: Boot control plane
@@ -598,6 +613,7 @@ jobs:
           path: |
             server.log
             server-auth.log
+            extractor.log
 
   mixed-version:
     name: builds N-1 and N on one ClickHouse

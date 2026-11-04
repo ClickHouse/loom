@@ -34,6 +34,10 @@ log = logging.getLogger("loom.tracker.sources")
 
 # the source the default tracker record is configured under
 DEFAULT_SOURCE = "qa"
+# A registered source's name: 2-32 lower-case letters, digits, - or _, starting
+# with a letter (matched whole, with fullmatch). Document sources
+# (`knowledge.source.add`) take the same rule.
+SOURCE_NAME_RE = re.compile(r"[a-z][a-z0-9_-]{1,31}")
 
 _warned: set[str] = set()
 
@@ -393,6 +397,7 @@ def credential_configured(credential: str = DEFAULT_SOURCE) -> bool:
 
 __all__ = [
     "DEFAULT_SOURCE",
+    "SOURCE_NAME_RE",
     "NamespaceEntry",
     "TrackerEndpoint",
     "credential_configured",

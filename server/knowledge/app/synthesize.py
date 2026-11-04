@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from server.knowledge.api.models_knowledge import (
     KnowledgeSynthesizeInput,
     KnowledgeSynthesizeOutput,
+    _CitedChunk,
 )
 from server.knowledge.app.document_reads import document_chunks
 from server.observability.genai import llm_stage
@@ -22,7 +23,8 @@ async def handle_knowledge_synthesize(
     """Map-reduce over every active chunk of the named documents: windows by section and
     size, one LLM note per window with chunk citations, notes folded into the answer
     (hierarchically when they do not fit one call). Cost-cap gated like memory.ask;
-    abstains, never guesses, when the documents are empty or the namespace is capped."""
+    abstains, never guesses, when the documents are empty, the namespace is capped, or the
+    answer is empty as written or once citations of chunks it did not read are removed."""
     from server.memory.domain import corpus_synthesis as cs
     from server.observability.budget import namespace_over_cap
     from server.settings import settings as _s
@@ -99,18 +101,47 @@ async def handle_knowledge_synthesize(
         if rounds > 8:  # pathological: give the best we have
             answer = "\n\n".join(notes)
             break
+    # Grounded before the cut, so removed citations take no room; a kept citation the
+    # cut halves is no longer one, so `citations` is read again from what is returned.
+    by_key = {(c.source_uri, c.idx): c for w in wins for c in w.chunks}
+    read = set(by_key)
+    answer, cited, unsupported = cs.ground_citations(answer, read)
     if len(answer) > input.max_answer_chars:
         answer = answer[: input.max_answer_chars].rstrip() + "…"
+        cited = cs.ground_citations(answer, read)[1]
+    # Punctuation or list markers left by the removed citations are no answer either.
+    if not any(ch.isalnum() for ch in answer):
+        answer = ""
+    located = _located(by_key, cs.cited_chunks(cited, read))
     return KnowledgeSynthesizeOutput(
         answer=answer,
         windows=len(wins),
         chunks_read=sum(len(w.chunks) for w in wins),
         documents=docs,
         reduce_rounds=rounds,
-        citations=cs.citations(answer),
+        citations=cited,
+        cited_chunks=located,
+        unsupported_citations=unsupported,
         truncated=truncated,
+        abstain=not answer,
+        abstain_reason="" if answer else "empty_answer",
         model=str(getattr(llm, "model", "") or synth_model or ""),
     )
+
+
+def _located(
+    by_key: dict[tuple[str, int], CorpusChunk], chunks: list[tuple[str, int]]
+) -> list[_CitedChunk]:
+    """Each cited chunk with the revision it was written as and its locator, as read."""
+    return [
+        _CitedChunk(
+            source_uri=uri,
+            chunk_idx=idx,
+            revision=by_key[(uri, idx)].revision,
+            locator=by_key[(uri, idx)].locator,
+        )
+        for uri, idx in chunks
+    ]
 
 
 async def _corpus_chunks(input: KnowledgeSynthesizeInput) -> tuple[list[CorpusChunk], int]:

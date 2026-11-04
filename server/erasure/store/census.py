@@ -386,6 +386,27 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate(
         "loom.blob_uploads", "1", UID, "documents.tombstone", "documents.tombstone", final=False
     ),
+    # Server-side ingestion: an upload names its file and its uploader; a job holds
+    # the document's title, description, metadata and file name. Both go with the
+    # documents.
+    Substrate(
+        "loom.knowledge_uploads",
+        "1",
+        UID,
+        "documents.tombstone",
+        "documents.tombstone",
+        final=False,
+    ),
+    Substrate("loom.knowledge_ingestions", "1", UID, "documents.tombstone", "documents.tombstone"),
+    # A cancel names its job and who asked for it.
+    Substrate(
+        "loom.knowledge_ingest_cancels",
+        "1",
+        UID,
+        "documents.tombstone",
+        "documents.tombstone",
+        final=False,
+    ),
 )
 
 # Steps that mutate a table the census does not count, with the reason. The
@@ -503,6 +524,11 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "A tracker source a person registered (host, database, read-only user, "
         "an encrypted password, the tracker namespaces reading it) — deployment configuration "
         "keyed by (org, name), holding no memory or record content; retired by active=false."
+    ),
+    "loom.knowledge_sources": (
+        "A document source a repository's maintainer registered (kind, folder ids, an "
+        "encrypted credential) — deployment configuration keyed by (org, namespace, name), "
+        "holding no memory or document content; retired by active=false."
     ),
     "loom.task_inboxes": (
         "An inbox a namespace admin registered (owner agent, posters, "

@@ -228,7 +228,7 @@ Which merged PRs last touched these lines, between release A and B?
 | `symbol` | `dict[str, Any]` | the enclosing function of the range when the index has one: {qualified_name, start_line, end_line} |
 | `latest_pr` | `int` | the newest PR among those blame named (0 when none) |
 | `lines` | `dict[str, Any]` | {total, attributed, noise, outside_window, unmapped} |
-| `legs` | `dict[str, Any]` | {blame{status, warm, ms, window_commits, graph_truncated}, ledger{status}, introduced{status ok\|skipped, ms, git_calls, demoted, promoted, blameless}} |
+| `legs` | `dict[str, Any]` | {blame{status, warm, ms, window_commits, graph_truncated}, ledger{status, skipped: [{namespace, reason: not_readable}] when the trunk is unreadable}, introduced{status ok\|skipped, ms, git_calls, demoted, promoted, blameless}} |
 | `first_release_basis` | `str` | How `first_release` was derived; "" when the mirror has no branch-cut tags. |
 | `tracker_namespace` | `str` | The tracker namespace bound to this code namespace; "" when none is bound. |
 | `tracker_unavailable` | `bool` | True when a tracker is bound but its read failed; the candidates stand without `has_test` / `caused_by` / `fixes`. |
@@ -1229,6 +1229,7 @@ Retire a repository index a person added.
 | `purged_tables` | `int` | How many code tables keyed by the namespace the erasure saga purges. |
 | `erasure_id` | `str` | The erasure saga that purges them — follow it with erasure.status; erasure_recovery resumes it. |
 | `mirror_removed` | `bool` | True when the bare mirror was deleted because no other branch of the repository uses it. |
+| `sources_deactivated` | `list[str]` | The document sources registered on the namespace (knowledge.source.add), now inactive with their credentials cleared. |
 
 ## `code.repo.set_access`
 

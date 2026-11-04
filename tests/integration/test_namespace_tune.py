@@ -70,17 +70,25 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
                 },
             )
 
-        def counts() -> tuple[int, int]:
+        def snapshot() -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]]]:
+            """Each row's latest version (FINAL): the fields a write (a revision,
+            tombstone, pin, reinforce or re-stamp) would change, not `version` or
+            `entities`, which the entity extractor rewrites."""
             rows = ch_client.query(
-                "SELECT count() FROM loom.memory WHERE org = {org:String}", parameters={"org": ORG}
-            ).result_rows[0][0]
-            cats = ch_client.query(
-                "SELECT count() FROM loom.categories WHERE org = {org:String}",
+                "SELECT agent, memory_key, memory_id, content_sha256, status, pinned, tags,"
+                " tombstoned_at, actor, source_class, reinforcement_count"
+                " FROM loom.memory FINAL WHERE org = {org:String}"
+                " ORDER BY agent, memory_key",
                 parameters={"org": ORG},
-            ).result_rows[0][0]
-            return int(rows), int(cats)
+            ).result_rows
+            cats = ch_client.query(
+                "SELECT name, category_id, description, tombstoned_at FROM loom.categories"
+                " FINAL WHERE org = {org:String} ORDER BY name",
+                parameters={"org": ORG},
+            ).result_rows
+            return [tuple(r) for r in rows], [tuple(r) for r in cats]
 
-        before = counts()
+        before = snapshot()
         out = await post("namespace.tune", {"sample_limit": 3}, viewer)
         assert out["model_used"] is False
         # Extraction writes nothing here yet: the one skipped note says no rule is drafted.
@@ -103,17 +111,18 @@ async def test_tune_drafts_from_the_rows_and_changes_nothing(
         served = await post(
             "memory.get", {"agent": cited["agent"], "memory_key": cited["memory_key"]}
         )
-        assert (cited["memory_id"], cited["version"], cited["content_sha256"]) == (
+        assert (cited["memory_id"], cited["content_sha256"]) == (
             served["memory_id"],
-            served["version"],
             served["content_sha256"],
         )
+        # The entity extractor may tag the row between the two reads: a newer version.
+        assert int(served["version"]) >= int(cited["version"])
 
         guide = by_target["namespace.guide"]
         assert guide["current_revision"] == 0 and guide["apply"]["args"]["expected_revision"] == 0
         assert "`billing/…`: 10 rows" in guide["proposed"]
 
-        assert counts() == before
+        assert snapshot() == before
         assert (await post("namespace.guide_get", {}))["found"] is False
 
         # Extraction now writes here, but none of the flagged rows came from it: the rule

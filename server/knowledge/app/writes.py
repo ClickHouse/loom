@@ -16,6 +16,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from server.core.errors import ValidationError
 from server.core.hashing import sha256_document_text as _content_sha256
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
@@ -28,6 +29,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeBulkDeleteOutput,
     KnowledgeDeleteInput,
     KnowledgeDeleteOutput,
+    KnowledgeIngestInput,
     KnowledgeUpdateMetadataInput,
     KnowledgeUpdateMetadataOutput,
     KnowledgeUpsertInput,
@@ -36,6 +38,7 @@ from server.knowledge.api.models_knowledge import (
     _KnowledgeBulkEntryResult,
 )
 from server.knowledge.domain.chunking import Chunk, chunk_context, chunk_document, embedding_text
+from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, source_tags
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +49,16 @@ if TYPE_CHECKING:
     from server.knowledge.store.documents import DocumentInsertRow, DocumentRow
 
 
-def _authorship(input: KnowledgeAddInput | KnowledgeBulkAddInput) -> dict[str, str]:
+def authorship(
+    input: KnowledgeAddInput | KnowledgeBulkAddInput | KnowledgeIngestInput,
+) -> dict[str, str]:
+    """`authorship_of` the body's agent, session and declared class."""
+    return authorship_of(
+        agent=input.agent, session_id=input.session_id, source_class=input.source_class
+    )
+
+
+def authorship_of(*, agent: str, session_id: str, source_class: str | None) -> dict[str, str]:
     """Who writes a document and what it is. The end user comes from the
     request's identity, never its body (an end-user token's `sub`, a token's
     `read_user_id`), so no body can make a row erasable as someone else's; the
@@ -61,11 +73,11 @@ def _authorship(input: KnowledgeAddInput | KnowledgeBulkAddInput) -> dict[str, s
     auth = current_auth()
     asserted = auth.agent_principal.removeprefix("agent:") if auth is not None else ""
     return {
-        "agent": asserted or input.agent.strip() or "-",
+        "agent": asserted or agent.strip() or "-",
         "user_id": (auth.read_user_id if auth is not None else "") or "-",
-        "session_id": input.session_id.strip() or "-",
+        "session_id": session_id.strip() or "-",
         "actor": writer_actor(),
-        "source_class": source_class_for(default="asserted", requested=input.source_class),
+        "source_class": source_class_for(default="asserted", requested=source_class),
     }
 
 
@@ -96,8 +108,32 @@ def _author_for(
     return author
 
 
+def _require_source_tags_kept(
+    prior: DocumentRow | None, writer: str, author_actor: str, tags: list[str]
+) -> None:
+    """Refuse a change to the `source:*` tags of a sync-written document by another
+    writer that keeps the worker as its author (see `SYNC_WORKER_ACTOR`)."""
+    if prior is None or author_actor != SYNC_WORKER_ACTOR or writer == SYNC_WORKER_ACTOR:
+        return
+    if source_tags(tags) != source_tags(prior.tags):
+        raise ValidationError(
+            f"{prior.source_uri!r} was written by a document source's sync; its source:* "
+            "tags belong to the sync and cannot be changed here",
+            code="SOURCE_TAGS_LOCKED",
+        )
+
+
 def _nano_version() -> int:
     return time.time_ns()
+
+
+def next_revision(prior: DocumentRow | None) -> int:
+    """The revision a new version of the source publishes: one past the
+    latest, deleted or not. Sequential writes never reuse one. Ingests of a
+    source publish under its claim, one at a time; a text write takes no claim,
+    so a text write racing another write of the same source can number the
+    same revision (the later version row wins)."""
+    return (prior.revision if prior is not None else 0) + 1
 
 
 def _original_of(prior: DocumentRow | None, author: dict[str, str]) -> DocumentRow | None:
@@ -118,7 +154,7 @@ async def _resolve_blob(
     carries forward so a metadata-only edit doesn't drop the user's download.
     Only a live, unerased prior carries: a deleted one's original is the sweep's
     and an erased one's is gone (carrying it would answer 410 or be residue).
-    `uploader` is the writing user's id (`_authorship`), recorded with fresh
+    `uploader` is the writing user's id (`authorship`), recorded with fresh
     bytes. Returns (blob_path, blob_size, blob_content_type, original_filename)."""
     from server.knowledge.store.documents import serves_original
 
@@ -131,8 +167,6 @@ async def _resolve_blob(
         try:
             raw = base64.b64decode(input.original_bytes_b64, validate=True)
         except (binascii.Error, ValueError) as e:
-            from server.core.errors import ValidationError
-
             raise ValidationError(f"original_bytes_b64 is not valid base64: {e}") from e
         from server.knowledge.store import blobs
 
@@ -186,7 +220,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     """
     from server.knowledge.store import chunks as knowledge_repo
 
-    author = _authorship(input)
+    author = authorship(input)
 
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
@@ -217,18 +251,19 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     #   (c) no new bytes and no prior blob → blob-less row, no cleanup.
     from server.knowledge.store import documents as _documents_repo
 
-    prior = (
-        await _documents_repo.get_one(
-            input.org,
-            input.namespace,
-            input.source_uri,
-            include_superseded=True,
-        )
-        if superseded_count > 0
-        else None
+    # Read even when nothing is live: a deleted document's revision still counts.
+    prior = await _documents_repo.get_one(
+        input.org,
+        input.namespace,
+        input.source_uri,
+        include_superseded=True,
     )
+    # The document row and every chunk row record the same revision.
+    revision = next_revision(prior)
     uploader = author["user_id"]  # the writer's, even when the document keeps its author
+    writer = author["actor"]
     author = _author_for(prior, input.content, author, _fresh_sha(input))
+    _require_source_tags_kept(prior, writer, author["actor"], input.tags)
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
         input, _original_of(prior, author), uploader=uploader
     )
@@ -262,6 +297,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
             blob_size=blob_size,
             blob_content_type=blob_content_type,
             original_filename=original_filename,
+            revision=revision,
         )
     )
 
@@ -277,6 +313,8 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         tags=input.tags,
         metadata=json.dumps(input.metadata, sort_keys=True),
         doc_version=version,
+        revision=revision,
+        doc_format="",
         embedding_model=embedder.model_name,
         embedding_dim=embedder.dim,
         now=now,
@@ -307,7 +345,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
 async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
     from server.observability.otel import traced
 
-    author = _authorship(input)
+    author = authorship(input)
 
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
@@ -328,8 +366,12 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
         input.source_uri,
         include_superseded=True,
     )
+    # The document row and every chunk row record the same revision.
+    revision = next_revision(prior)
     uploader = author["user_id"]  # the writer's, even when the document keeps its author
+    writer = author["actor"]
     author = _author_for(prior, input.content, author, _fresh_sha(input))
+    _require_source_tags_kept(prior, writer, author["actor"], input.tags)
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
         input, _original_of(prior, author), uploader=uploader
     )
@@ -353,6 +395,7 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
         blob_size=blob_size,
         blob_content_type=blob_content_type,
         original_filename=original_filename,
+        revision=revision,
     )
 
     from server.knowledge.store import chunks as knowledge_repo
@@ -369,6 +412,8 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
             tags=input.tags,
             metadata=json.dumps(input.metadata, sort_keys=True),
             doc_version=version,
+            revision=revision,
+            doc_format="",
             embedding_model=embedder.model_name,
             embedding_dim=embedder.dim,
             now=now,
@@ -496,9 +541,19 @@ async def handle_knowledge_update_metadata(
             },
         )
 
+    if input.reindex and existing.ingestion_id:
+        # Its chunks were cut from the extracted artifact (keys, lines, blocks);
+        # re-cutting the rendered text would turn it into a text document.
+        raise ValidationError(
+            "this document was ingested from a file: ingest it again (knowledge.ingest)"
+            " to re-index it with the new title and description"
+        )
     next_title = existing.title if input.title is None else input.title
     next_description = existing.description if input.description is None else input.description
     next_tags = existing.tags if input.tags is None else input.tags
+    from server.memory.app.provenance import writer_actor
+
+    _require_source_tags_kept(existing, writer_actor(), existing.actor, next_tags)
 
     # No-op if nothing changed, so idempotent re-applies don't pile up versions.
     if (
@@ -560,7 +615,7 @@ async def handle_knowledge_bulk_add(
 ) -> KnowledgeBulkAddOutput:
     """One CH insert for documents, one for all chunks (across all entries).
     Chunking + embedding still per-doc per the configured policy."""
-    author = _authorship(input)
+    author = authorship(input)
 
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
@@ -585,11 +640,18 @@ async def handle_knowledge_bulk_add(
         )
     }
 
+    # Every entry is checked before any is chunked or embedded: a refusal writes nothing.
+    authors = []
     for entry in input.entries:
+        prior_doc = priors.get(entry.source_uri)
+        authors.append(_author_for(prior_doc, entry.content, author))
+        _require_source_tags_kept(prior_doc, author["actor"], authors[-1]["actor"], entry.tags)
+
+    for entry, entry_author in zip(input.entries, authors, strict=True):
         doc_id = str(uuid.uuid4())
         version = _nano_version()
+        revision = next_revision(priors.get(entry.source_uri))
         chunks = _chunk_text(entry.content)
-        entry_author = _author_for(priors.get(entry.source_uri), entry.content, author)
         prior = _original_of(priors.get(entry.source_uri), entry_author)
         prior = prior if documents_repo.serves_original(prior) else None
 
@@ -611,6 +673,7 @@ async def handle_knowledge_bulk_add(
                 blob_size=prior.blob_size if prior else 0,
                 blob_content_type=prior.blob_content_type if prior else "",
                 original_filename=prior.original_filename if prior else "",
+                revision=revision,
             )
         )
 
@@ -627,6 +690,8 @@ async def handle_knowledge_bulk_add(
                 tags=entry.tags,
                 metadata=json.dumps(entry.metadata, sort_keys=True),
                 doc_version=version,
+                revision=revision,
+                doc_format="",
                 embedding_model=embedder.model_name,
                 embedding_dim=embedder.dim,
                 now=now,

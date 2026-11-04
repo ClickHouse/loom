@@ -3,9 +3,11 @@ import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
 import {
+  ApiError,
   listKnowledge,
   deleteKnowledge,
   bulkDeleteKnowledge,
@@ -19,6 +21,8 @@ import {
   type InlinePreview,
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
+import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
+import { roleOnNamespace } from "../lib/namespaceRole";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
@@ -33,8 +37,10 @@ import { Modal } from "../components/ui/Modal";
 import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
+import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
+import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { oneOf } from "../lib/oneOf";
 import { parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
@@ -88,13 +94,97 @@ async function findDocument(
   return null;
 }
 
+/** The collection a Library link names (`?collection=`), or null for the header's namespace. */
+function linkedCollection(): string | null {
+  const name = new URLSearchParams(window.location.search).get("collection");
+  // The page never prints text a link made up: only a collection's name counts.
+  return isCollectionName(name) ? name : null;
+}
+
 export function Documents() {
-  const identity = useIdentity();
+  const picked = useIdentity();
+  // The Library reads the header's namespace, or a collection picked here, as the URL names
+  // it (`?collection=`): read on every render, so a navigation (a document opened from the
+  // search), Back and Forward, and a namespace switch (which drops the key) all show at
+  // once. A collection never becomes the header's namespace: that one is also where the
+  // person's agents write.
+  const [, setPicks] = useState(0);
+  useStore((s) => s.navSeq); // a navigation renders the page again
+  useEffect(() => {
+    const onPop = () => setPicks((n) => n + 1);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const collection = linkedCollection();
+  const pickCollection = useCallback((c: string | null) => {
+    setViewParam("collection", c);
+    // A document open in one place, or a link's still to open, is not in another.
+    setViewParam("doc", null);
+    useStore.getState().clearPendingDoc();
+    setPicks((n) => n + 1);
+  }, []);
+  // A person's pick is a new history entry, so Back steps through the places they picked;
+  // the page's own corrections (leaving a collection it cannot show) replace the entry.
+  const goTo = (c: string | null) => {
+    if (c === collection) return; // the place already shown: nothing moves
+    useStore.getState().clearPendingDoc();
+    useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {} });
+  };
+  // A collection is read only once collection.list names it, so the page never shows or
+  // writes one under the namespace's name, nor one the caller cannot open.
+  const collections = useReadableCollections(picked.org);
+  // A header namespace that is itself a collection is shown as that collection, with its role.
+  const shown = collections.rows?.find((c) => c.namespace === (collection ?? picked.namespace)) ?? null;
+  const resolving = !!collection && collections.rows === null && !collections.error;
+  // A code or tracker namespace, or none, holds no documents: the Library then reads only a
+  // collection picked here.
+  const mine = useStore((s) => s.myNamespaces);
+  // A header namespace deleted here (it was a collection) holds nothing more to read.
+  const [deleted, setDeleted] = useState<string | null>(null);
+  const ownShelf = isMemoryNamespace(picked.namespace, mine) && deleted !== picked.namespace;
+  const noPlace = !shown && !resolving && !ownShelf;
+  const fallback = ownShelf ? `showing ${picked.namespace}` : "pick another";
+  const createdTold = useRef("");
+  // A list that names the linked collection no more leaves it for good; one that failed
+  // shows the namespace for now and keeps the link, for "Load collections again".
+  useEffect(() => {
+    if (!collection || !collections.rows || shown) return;
+    // Said, not done silently: a link to one, a revoke while shown, or one just created that
+    // a replica does not list yet.
+    // "Just created" is said once; a later visit to it is any other link's.
+    const created = collections.expected === collection && createdTold.current !== collection;
+    createdTold.current = created ? collection : createdTold.current;
+    toast(
+      created
+        ? `${collection} was created but is not listed yet; ${fallback}.`
+        : collections.truncated
+          ? `${collection} is past the first collections listed here; ${fallback}.`
+          : `${collection} is not among the collections you can read now; ${fallback}.`,
+      "info",
+    );
+    pickCollection(null);
+  }, [collection, collections.rows, collections.truncated, collections.expected, shown, pickCollection, fallback]);
+  const identity = useMemo(() => (shown ? { ...picked, namespace: shown.namespace } : picked), [picked, shown]);
+  // A header namespace that is a collection, before (or without) the list naming its role,
+  // takes it from the namespace menu, and writes nothing while neither says.
+  // Read as the header reads it: a claim-only row by the token's claim, a pending one as none.
+  const whoami = useStore((s) => s.whoami);
+  const headerRole = roleOnNamespace(whoami, mine, picked.namespace);
+  const readOnly = shown
+    ? shown.role === "viewer"
+    : isCollectionName(picked.namespace) && (!headerRole || headerRole === "viewer");
   const phone = useMedia(PHONE_QUERY);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  // The header's New › Document adds to the header's namespace: it steps aside while a
+  // collection is linked here, so a document meant for it is added from this page.
+  const elsewhere = resolving || noPlace || (!!shown && shown.namespace !== picked.namespace);
+  useEffect(() => {
+    useStore.getState().setLibraryElsewhere(elsewhere);
+  }, [elsewhere]);
+  useEffect(() => () => useStore.getState().setLibraryElsewhere(false), []);
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement | null>(null);
   const focusSearchOnRead = useRef(false);
@@ -139,6 +229,10 @@ export function Documents() {
   // The tags the rows on screen were read for, and why the last read failed.
   const [rowsFor, setRowsFor] = useState("");
   const [loadError, setLoadError] = useState<unknown>(null);
+  // The namespace the failed read was for: an error belongs to the place it came from.
+  const [loadErrorFor, setLoadErrorFor] = useState("");
+  // The place ("org/namespace") the rows on screen were read for.
+  const [rowsScope, setRowsScope] = useState("");
   // Every reload (Retry, a delete, an add, an edit) goes through the effect below, so an
   // answer for a namespace the page has left is aborted and dropped.
   const [reloads, setReloads] = useState(0);
@@ -146,11 +240,19 @@ export function Documents() {
 
   const load = (signal: AbortSignal, live: () => boolean) => {
     scopeRef.current += 1;
+    if (resolving || noPlace) {
+      shownScope.current = "";
+      setRows(null);
+      setLoadError(null);
+      return;
+    }
     // Blank only for a new namespace; a new filter keeps the rows until the next land.
     const scope = `${identity.org}/${identity.namespace}`;
     if (shownScope.current !== scope) {
       shownScope.current = scope;
       setRows(null);
+      // The last place's failure is not this one's.
+      setLoadError(null);
     }
     setNextCursor(null);
     const tags = JSON.parse(serverTags) as string[];
@@ -167,6 +269,9 @@ export function Documents() {
         if (live()) {
           setLoadError(null);
           setRows(r.rows || []);
+          setRowsScope(scope);
+          // A collection that answers again earns a fresh re-read if it is refused later.
+          reReadFor.current = "";
           setRowsFor(serverTags);
           setNextCursor(r.next_cursor ?? null);
         }
@@ -175,13 +280,39 @@ export function Documents() {
         if (!live()) return;
         // A failed read is said as a failure, never as an empty library.
         setLoadError(e);
+        setLoadErrorFor(identity.namespace);
         setRows([]);
+        setRowsScope(scope);
         setRowsFor(serverTags);
       });
   };
 
   // A memory write cannot change the document list.
-  useAbortableEffect(load, [identity.org, identity.namespace, serverTags, reloads]);
+  useAbortableEffect(load, [identity.org, identity.namespace, serverTags, reloads, resolving, noPlace]);
+  // A collection refused or gone while shown (deleted, or the grant revoked): reading the
+  // collections again leaves it, and the page shows the namespace.
+  const refusedShown =
+    !!shown &&
+    loadErrorFor === shown.namespace &&
+    loadError instanceof ApiError &&
+    [403, 404].includes(loadError.status);
+  // Once per collection: replicas can disagree for a moment (one has the revoke, another
+  // not yet), so when the list still names it after a re-read the page leaves it.
+  const reloadCollections = collections.reload;
+  const reReadFor = useRef("");
+  useEffect(() => {
+    if (!refusedShown || !shown) return;
+    if (reReadFor.current === shown.namespace) {
+      // The header's own namespace stays, with its error, until the header picks another.
+      if (collection) {
+        toast(`${shown.namespace} is not among the collections you can read now; ${fallback}.`, "info");
+        pickCollection(null);
+      }
+      return;
+    }
+    reReadFor.current = shown.namespace;
+    reloadCollections();
+  }, [refusedShown, shown, collection, reloadCollections, pickCollection, fallback]);
 
   // The library is empty only when nothing narrowed the read and the read worked.
   const emptyLibrary = rows !== null && rows.length === 0 && !loadError && serverTags === "[]" && tagKey === serverTags;
@@ -234,7 +365,11 @@ export function Documents() {
   useEffect(() => () => linkRead.current?.abort(), [identity.org, identity.namespace]);
 
   useEffect(() => {
-    if (!pendingDocSourceUri || !rows) return;
+    // Only rows read for the place shown: a navigation renders the new place before its
+    // rows land.
+    // Nor while the URL names a collection the list has not confirmed (it may yet).
+    if (!pendingDocSourceUri || !rows || rowsScope !== `${identity.org}/${identity.namespace}`) return;
+    if (collection && !shown) return;
     const uri = pendingDocSourceUri;
     clearPendingDoc();
     const target = rows.find((r) => r.source_uri === uri);
@@ -257,7 +392,7 @@ export function Documents() {
       .catch((e) => {
         if (!ac.signal.aborted) toastError("Open failed", e);
       });
-  }, [pendingDocSourceUri, rows, clearPendingDoc, identity.org, identity.namespace]);
+  }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc, identity.org, identity.namespace]);
   // After a row's delete, the read that drops the row hands focus to the search field.
   useEffect(() => {
     if (!focusSearchOnRead.current) return;
@@ -298,6 +433,8 @@ export function Documents() {
     }
   };
 
+  // Bumped by each open and by leaving the place: what an older open reads arrives too late.
+  const openSeq = useRef(0);
   const onOpen = async (r: KnowledgeEntry) => {
     linkRead.current?.abort();
     // The open document is the page's URL (`?doc=`): a reload or Back reopens it.
@@ -314,19 +451,25 @@ export function Documents() {
     }
     setPreviewFile(null);
     setPreviewLoading(true);
+    // An answer for an open the page has since left (another place shown) is dropped.
+    const opened = ++openSeq.current;
     try {
       const docPromise = getKnowledge({ org: identity.org, namespace: identity.namespace }, r.source_uri).catch((e) => {
-        toastError("Open failed", e);
+        if (opened === openSeq.current) toastError("Open failed", e);
         return null;
       });
       const blobPromise = r.has_blob
         ? fetchKnowledgePreview({ org: identity.org, namespace: identity.namespace }, r.source_uri).catch(() => null)
         : Promise.resolve(null);
       const [d, blob] = await Promise.all([docPromise, blobPromise]);
+      if (opened !== openSeq.current) {
+        if (blob?.url) URL.revokeObjectURL(blob.url);
+        return;
+      }
       setPreviewDoc(d);
       setPreviewFile(blob);
     } finally {
-      setPreviewLoading(false);
+      if (opened === openSeq.current) setPreviewLoading(false);
     }
   };
   // The deep-link effect and the rows call the latest render's handlers without re-firing
@@ -349,6 +492,34 @@ export function Documents() {
     setShowText(false);
     setViewParam("doc", null);
   };
+
+  // A preview or a dialog belongs to the place it was opened in: another place shown (Back
+  // into a collection, a collection confirmed after a wait) closes it, so nothing opened for
+  // one is written to the other. The address is the new place's own.
+  const place = `${identity.org}/${identity.namespace}`;
+  const openedIn = useRef(place);
+  useEffect(() => {
+    if (openedIn.current === place) return;
+    openedIn.current = place;
+    linkRead.current?.abort();
+    openSeq.current += 1;
+    setPreviewLoading(false);
+    // The address stops naming the document the preview showed; a pending one (Back to an
+    // entry that names its own) is left to open.
+    setPreviewEntry((open) => {
+      if (open && new URLSearchParams(window.location.search).get("doc") === open.source_uri) setViewParam("doc", null);
+      return null;
+    });
+    setPreviewDoc(null);
+    setPreviewFile((f) => {
+      if (f?.url) URL.revokeObjectURL(f.url);
+      return null;
+    });
+    setShowText(false);
+    setAddOpen(false);
+    setReplaceEntry(null);
+    setEditEntry(null);
+  }, [place]);
 
   // The first screen mounts with the page, the rest of the rows in a transition after the
   // first frame — the Memories rule for the Library's fifty-row template (280 ms of long
@@ -409,7 +580,7 @@ export function Documents() {
   const shownRows = firstScreenOnly ? visibleRows?.slice(0, FIRST_SCREEN_ROWS) : visibleRows;
   const rowKeys = useMemo(() => (visibleRows ?? []).map((r) => r.source_uri), [visibleRows]);
   const dialogOpen = !!previewEntry || addOpen || !!replaceEntry || !!editEntry;
-  const selection = useRowSelection(rowKeys, { enabled: !dialogOpen });
+  const selection = useRowSelection(rowKeys, { enabled: !dialogOpen && !readOnly });
   const { selected } = selection;
   const clearSelection = selection.clear;
   // One tab stop over the rows: arrows and j/k move, Enter previews, Space selects.
@@ -516,14 +687,70 @@ export function Documents() {
     () => ({
       open: (r) => void handlers.current.onOpen(r),
       download: (r) => void handlers.current.onDownload(r),
-      replace: setReplaceEntry,
-      edit: setEditEntry,
-      remove: (uri) => void handlers.current.onDelete(uri),
-      toggle: toggleRow,
+      ...(readOnly
+        ? {}
+        : { replace: setReplaceEntry, edit: setEditEntry, remove: (uri) => void handlers.current.onDelete(uri) }),
+      ...(readOnly ? {} : { toggle: toggleRow }),
       tag: (t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`)),
     }),
-    [toggleRow],
+    [toggleRow, readOnly],
   );
+
+  const picker = (
+    <LibraryCollections
+      org={picked.org}
+      namespace={ownShelf ? picked.namespace : null}
+      collections={collections}
+      current={shown}
+      opening={resolving ? collection : null}
+      place={collection ?? picked.namespace}
+      // The header's own namespace, picked as a collection, is the header's namespace shown.
+      onPick={(c) => goTo(c === picked.namespace ? null : c)}
+      onDeleted={setDeleted}
+      onLeave={pickCollection}
+    />
+  );
+
+  if (noPlace) {
+    // Where this namespace's data lives instead, as the memory views' empty page says.
+    const kind = kindOf(picked.namespace, mine);
+    const go = useStore.getState();
+    const action = !picked.namespace
+      ? { label: "Browse and join spaces", onClick: () => go.setView("browse") }
+      : kind === "qa" || kind === "tracker"
+        ? { label: "Open in Patterns", onClick: () => go.navigate("graph", { query: { mode: "patterns" } }) }
+        : kind === "code"
+          ? { label: "Open repositories", onClick: () => go.setView("code") }
+          : undefined;
+    // The list's answer decides: none while it is read, and a failure is not "none".
+    const listed = collections.rows;
+    const pick = listed !== null && listed.length === 0 ? "Create a collection above" : "Pick a collection above";
+    const where =
+      deleted === picked.namespace
+        ? `${picked.namespace} was deleted.`
+        : picked.namespace
+          ? `${picked.namespace} holds no documents.`
+          : "Your token reaches no namespace yet.";
+    return (
+      <PageContainer>
+        <PageHeader title="Library">
+          <ScopeBadge kind="namespace" value={picked.namespace} />
+        </PageHeader>
+        {picker}
+        <EmptyState
+          icon="folder-open"
+          title={listed !== null && listed.length === 0 ? "No collection yet" : "Pick a collection"}
+          description={`${where} ${pick}, or a memory namespace from the namespace menu.`}
+          action={action}
+        />
+        <p className="text-center text-sm text-text-muted">
+          <Link component="button" type="button" onClick={() => go.openNamespacePicker(true)}>
+            Open the namespace menu
+          </Link>
+        </p>
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer>
@@ -532,7 +759,7 @@ export function Documents() {
         actions={
           <>
             {/* The empty state's own Add is the one primary while it shows. */}
-            {!emptyLibrary && (
+            {!emptyLibrary && !readOnly && !resolving && (
               <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
                 Add document
               </Button>
@@ -542,11 +769,15 @@ export function Documents() {
       >
         {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
         <span className="hidden sm:contents">
-          <ScopeBadge kind="namespace" value={identity.namespace} />
+          {/* On a collection the select below names where the documents are. */}
+          {!shown && !resolving && <ScopeBadge kind="namespace" value={picked.namespace} />}
         </span>
       </PageHeader>
-      {/* One line: the library's figures once they are read, what the library is behind the tip. */}
-      <div className="mb-4 flex min-h-6 items-center gap-1 text-sm text-text-muted tabular">
+      {picker}
+      {/* One line: the library's figures once they are read, what the library is behind the tip.
+          A phone, with the place picker above the list, has no room for it: the bar's count
+          says how many are shown. */}
+      <div className="mb-4 hidden min-h-6 items-center gap-1 text-sm text-text-muted tabular sm:flex">
         <span className="min-w-0 truncate">
           {docCount && aggregateStats && rows && rows.length > 0
             ? [
@@ -572,7 +803,7 @@ export function Documents() {
         label="Search and filters"
         count={countShown && <span aria-busy={reading || undefined}>{countShown}</span>}
         selection={
-          selected.size > 0
+          selected.size > 0 && !readOnly
             ? {
                 count: selected.size,
                 onClear: clearSelection,
@@ -666,9 +897,13 @@ export function Documents() {
         <ListState
           kind="empty"
           icon="document"
-          title="Your library is empty"
-          description="Upload PDFs, DOCX, Markdown or any text-shaped file. Your agents can search the extracted text via knowledge.search, and you can download the originals back any time."
-          action={{ label: "Add document", onClick: () => setAddOpen(true) }}
+          title={shown ? "This collection is empty" : "Your library is empty"}
+          description={
+            readOnly
+              ? "Nothing has been added yet. Its members who write can add documents."
+              : "Upload PDFs, DOCX, Markdown or any text-shaped file. Your agents can search the extracted text via knowledge.search, and you can download the originals back any time."
+          }
+          action={readOnly ? undefined : { label: "Add document", onClick: () => setAddOpen(true) }}
         />
       )}
 
@@ -743,20 +978,22 @@ export function Documents() {
           </div>
           {previewEntry && (
             <div className="flex items-center gap-2 shrink-0">
-              <Tip content="Upload a new file version of this document">
-                <Button
-                  type="secondary"
-                  htmlType="button"
-                  iconLeft="refresh"
-                  onClick={() => {
-                    const r = previewEntry;
-                    closePreview();
-                    setReplaceEntry(r);
-                  }}
-                >
-                  Edit content
-                </Button>
-              </Tip>
+              {!readOnly && (
+                <Tip content="Upload a new file version of this document">
+                  <Button
+                    type="secondary"
+                    htmlType="button"
+                    iconLeft="refresh"
+                    onClick={() => {
+                      const r = previewEntry;
+                      closePreview();
+                      setReplaceEntry(r);
+                    }}
+                  >
+                    Edit content
+                  </Button>
+                </Tip>
+              )}
               <Tip
                 content={
                   hasOriginalFile(previewEntry) ? "Download the original file" : "Save the stored text as Markdown"
@@ -821,7 +1058,7 @@ export function Documents() {
                   <strong>Download text (.md)</strong> above saves its text as Markdown; re-upload it to attach an
                   original file.
                 </div>
-                {previewEntry && (
+                {previewEntry && !readOnly && (
                   <Button
                     type="secondary"
                     htmlType="button"
@@ -900,10 +1137,12 @@ function hasOriginalFile(r: KnowledgeEntry): boolean {
 interface DocRowActions {
   open: (r: KnowledgeEntry) => void;
   download: (r: KnowledgeEntry) => void;
-  replace: (r: KnowledgeEntry) => void;
-  edit: (r: KnowledgeEntry) => void;
-  remove: (sourceUri: string) => void;
-  toggle: (sourceUri: string, range?: boolean) => void;
+  /** The writes; absent where the caller only reads (a collection it views). */
+  replace?: (r: KnowledgeEntry) => void;
+  edit?: (r: KnowledgeEntry) => void;
+  remove?: (sourceUri: string) => void;
+  /** Selection, for the bulk delete; absent where the caller only reads. */
+  toggle?: (sourceUri: string, range?: boolean) => void;
   tag: (tag: string) => void;
 }
 
@@ -922,12 +1161,13 @@ interface DocRowProps {
 const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, activeTags, actions }: DocRowProps) {
   const name = r.title || r.original_filename || r.source_uri;
   const file = r.title ? r.original_filename || r.source_uri : "";
+  const { replace, edit, remove, toggle } = actions;
   const menu: RowMenuItem[] = [
     { label: "Preview", icon: "eye", onSelect: () => actions.open(r) },
     { label: downloadLabel(r), icon: "download", onSelect: () => actions.download(r) },
     // Uploading a file into a text-only document is the same replace flow.
-    { label: "Replace content", icon: "refresh", onSelect: () => actions.replace(r) },
-    { label: "Edit details", icon: "pencil", onSelect: () => actions.edit(r) },
+    ...(replace ? [{ label: "Replace content", icon: "refresh" as const, onSelect: () => replace(r) }] : []),
+    ...(edit ? [{ label: "Edit details", icon: "pencil" as const, onSelect: () => edit(r) }] : []),
     {
       label: "Copy URI",
       icon: "copy",
@@ -938,7 +1178,9 @@ const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, acti
         );
       },
     },
-    { label: "Delete", icon: "trash", danger: true, onSelect: () => actions.remove(r.source_uri) },
+    ...(remove
+      ? [{ label: "Delete", icon: "trash" as const, danger: true, onSelect: () => remove(r.source_uri) }]
+      : []),
   ];
   return (
     <ListRow
@@ -948,21 +1190,23 @@ const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, acti
       checked={checked}
       trailing={<RowMenu name={name} items={menu} />}
       leading={
-        <Checkbox
-          checked={checked}
-          aria-label={`Select ${name}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            actions.toggle(r.source_uri, e.shiftKey);
-          }}
-          className="list-row-control"
-        />
+        toggle && (
+          <Checkbox
+            checked={checked}
+            aria-label={`Select ${name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggle(r.source_uri, e.shiftKey);
+            }}
+            className="list-row-control"
+          />
+        )
       }
     >
       <button
         type="button"
         data-row-open=""
-        onClick={() => (selecting ? actions.toggle(r.source_uri) : actions.open(r))}
+        onClick={() => (selecting && toggle ? toggle(r.source_uri) : actions.open(r))}
         className="list-row-open block w-full"
         aria-label={`Preview ${name}`}
       >

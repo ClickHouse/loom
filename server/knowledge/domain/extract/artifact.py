@@ -50,13 +50,15 @@ BlockType = Literal[
 class Locator:
     """Where a block sits in the original revision. Only the fields that apply
     to the format are set; `to_dict` drops the rest. A format that needs
-    another field (a page, a cell range) adds it with its parser."""
+    another field (a cell range) adds it with its parser."""
 
     line_start: int = 0  # 1-based, inclusive
     line_end: int = 0
     char_start: int = -1  # 0-based offset into the decoded text
     char_end: int = -1  # exclusive
     key_path: str = ""  # TOML `server.limits.max_rows`
+    page_start: int = 0  # a PDF's pages or a PPTX's slides, 1-based, inclusive
+    page_end: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -13,6 +13,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
+from server.memory.domain.rerank_names import RerankName
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 
@@ -138,6 +139,21 @@ class _SearchHit(BaseModel):
     agent: str = "-"
     session_id: str = "-"
     source_class: str = ""
+    # The document revision this chunk was written as and the document's format (`sql`,
+    # `markdown`, ...; '' for text a caller extracted), as the chunk records them: a
+    # citation names the revision it read. 0 and '' for a chunk written before they were
+    # recorded.
+    revision: int = 0
+    format: str = ""
+    # For a chunk of an extracted file: its blocks' type (`sql_statement`, `toml_table`,
+    # `paragraph`, `mixed`, ...) and where it sits in the source (`line_start`,
+    # `line_end`, a key path, `page_start`/`page_end` for a PDF's pages or a deck's
+    # slides). '' and None for text a caller extracted.
+    block_type: str = ""
+    locator: dict[str, Any] | None = None
+    # The query's identifier-shaped terms this chunk defines or reads (a table, a TOML
+    # key path), from the exact-key leg of a hybrid search; empty otherwise.
+    keys_matched: list[str] = Field(default_factory=list)
 
 
 class KnowledgeSearchInput(BaseModel):
@@ -160,7 +176,8 @@ class KnowledgeSearchInput(BaseModel):
     namespaces: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
         default_factory=list, max_length=100
     )
-    # hybrid: vector leg + BM25 lexical leg fused by reciprocal rank;
+    # hybrid: the vector leg, the BM25 lexical leg and the exact-key leg (the query's
+    # identifiers looked up in an extracted file's chunk keys) fused by reciprocal rank;
     # semantic: vector only;
     # lexical: BM25 only.
     search_mode: Literal["hybrid", "semantic", "lexical"] = "hybrid"
@@ -193,6 +210,21 @@ class KnowledgeSearchInput(BaseModel):
     # agents wrote as their own, without what an agent derived or fetched.
     # Empty = every class.
     source_classes: list[str] = Field(default_factory=list, max_length=8)
+    # Only chunks of documents in these formats: an ingested file's `format` (`sql`,
+    # `toml`, `markdown`, ...), or '' for every other document, a synced one included
+    # whatever `knowledge.inspect` names it (`knowledge.get` returns null for those).
+    # A chunk written before formats were recorded is ''. Empty = every format.
+    formats: list[Annotated[str, Field(max_length=32)]] = Field(default_factory=list, max_length=16)
+    # Only chunks of these block types (`sql_statement`, `toml_table`, `toml_key`,
+    # `heading`, `paragraph`, `code`, `mixed`, ...). Empty = every type; text a caller
+    # extracted has none, so any entry leaves it out.
+    block_types: list[Annotated[str, Field(min_length=1, max_length=32)]] = Field(
+        default_factory=list, max_length=16
+    )
+    # Reranker for the fused head: "" = the deployment default
+    # (LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT), "none" = off, "builtin:openai[:<model>]",
+    # "builtin:cohere[:<model>]" or an endpoint name in LOOM_RERANK_ENDPOINTS_JSON (no URL).
+    rerank: RerankName = ""
 
     @field_validator("source_classes")
     @classmethod
@@ -220,8 +252,13 @@ class KnowledgeSearchInput(BaseModel):
 
 
 class KnowledgeSearchOutput(BaseModel):
-    # Hits ranked by `score` (then similarity), best first; empty when nothing matched.
+    # Hits best first (empty when nothing matched): when `reranked_by` is set, the
+    # reranked head in the reranker's order, then the rest by `score`; else by `score`
+    # (then similarity).
     results: list[_SearchHit]
+    # The reranker that ordered `results`; empty when no reranker ran, it failed, it ran
+    # past its time limit, or it kept the fused order.
+    reranked_by: str = ""
     # Embedding model the query was embedded with; only chunks of this model are searched.
     embedding_model: str
     # Namespaces of the caller an all_mine search did not read because it stops
@@ -363,6 +400,16 @@ class KnowledgeSynthesizeInput(BaseModel):
     max_windows: int = Field(default=64, ge=1, le=512)
 
 
+class _CitedChunk(BaseModel):
+    source_uri: str
+    chunk_idx: int
+    # The document revision the chunk was written as (0 for a chunk written before it was
+    # recorded), and where the chunk sits in the source for an extracted file
+    # (`line_start`, `line_end`, a key path, ...; None for text a caller extracted).
+    revision: int = 0
+    locator: dict[str, Any] | None = None
+
+
 class KnowledgeSynthesizeOutput(BaseModel):
     # The task's answer, citing chunks as `[source#idx]`; empty when it abstained.
     answer: str
@@ -374,16 +421,23 @@ class KnowledgeSynthesizeOutput(BaseModel):
     documents: int
     # How many fold rounds merged the notes into the answer; 1 when they fit one call.
     reduce_rounds: int
-    # Distinct `source#idx` (or `source#a-b`) citations in the answer, in reading order.
+    # Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning
+    # documents) citations in the answer, in the order found; each names chunks the passes read.
     citations: list[str] = Field(default_factory=list)
+    # Each chunk the kept `citations` name, once, in the order first cited: its revision
+    # and its locator, so a caller can open the passage the answer came from.
+    cited_chunks: list[_CitedChunk] = Field(default_factory=list)
+    # Citations the model wrote naming a chunk the passes did not read; removed from `answer`.
+    unsupported_citations: list[str] = Field(default_factory=list)
     # True when the documents needed more than `max_windows` windows and only the first were read.
     truncated: bool = False
-    # True when no answer was attempted; `abstain_reason` says why.
+    # True when there is no answer to give; `abstain_reason` says why.
     abstain: bool = False
-    # `budget_capped` (the namespace is over its cost cap) or `no_chunks`
-    # (the documents have no chunks); empty otherwise.
+    # `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents have
+    # none) or `empty_answer` (no letter or digit once unread citations are removed);
+    # empty otherwise.
     abstain_reason: str = ""
-    # LLM that wrote the notes and the answer; empty when it abstained.
+    # LLM that wrote the notes and the answer; empty when it abstained before any call.
     model: str = ""
 
 
@@ -406,6 +460,14 @@ class KnowledgeGetOutput(BaseModel):
     superseded: bool | None = None
     # Id of the returned document version.
     doc_id: str | None = None
+    # The source's revision (1, 2, ... per source_uri); 0 for a document no write numbered.
+    revision: int | None = None
+    # For a file Loom extracted (knowledge.ingest): the format it was extracted as.
+    format: str | None = None
+    # For an extracted file: the extractor's parser and version that read it.
+    parser: str | None = None
+    # For an extracted file: what was extracted (unit, total, extracted, failed, lost).
+    coverage: dict[str, Any] | None = None
 
 
 class KnowledgeListInput(BaseModel):
@@ -499,7 +561,8 @@ class KnowledgeUpdateMetadataInput(BaseModel):
     tags: list[str] | None = None
     # When True, rewrite every chunk with the new title + description in its
     # context (re-embedded, re-scored by the lexical leg), routed through the upsert
-    # flow for identical supersession semantics (same content, fresh chunks).
+    # flow for identical supersession semantics (same content, fresh chunks). A
+    # document ingested from a file is refused (422): ingest it again instead.
     reindex: bool = False
 
 
@@ -624,3 +687,129 @@ class KnowledgeDedupResolveOutput(BaseModel):
     decision: str
     # The URI that was soft-superseded.
     superseded_uri: str = ""
+
+
+class KnowledgeIngestOptions(BaseModel):
+    # The file's format when its name does not say (`markdown`, `html`, `text`, `sql`,
+    # `toml`, ...); it never overrides what the bytes are.
+    format: str = ""
+    # The text encoding when it is not UTF-8 and the file has no byte-order mark.
+    encoding: str = ""
+    # The SQL dialect (`clickhouse`, `postgres`, `mysql`, ...); empty detects it.
+    sql_dialect: str = ""
+
+
+class KnowledgeIngestInput(BaseModel):
+    """Extract an uploaded file (the extractor service parses it, the server
+    checks what it returns) and publish it as a document revision,
+    asynchronously: the answer names the job, and `knowledge.ingest_status`
+    follows it."""
+
+    org: str
+    namespace: str
+    # The `upload_id` POST /v1/knowledge.upload returned for the file.
+    upload_id: str
+    # The document's stable identifier in the namespace; a later ingest of the same
+    # source_uri publishes its next revision.
+    source_uri: str
+    # Document title; empty takes the upload's file name.
+    title: str = ""
+    # Prepended with the title to each chunk before embedding.
+    description: str = ""
+    # Labels stored on the document and every chunk.
+    tags: list[str] = Field(default_factory=list)
+    # Free-form JSON stored with the document and every chunk.
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    # Publish only if the source's live revision is this one (0: no live document);
+    # unset publishes over whatever is live.
+    expected_revision: int | None = Field(default=None, ge=0)
+    # Publish an extraction that lost part of the source (coverage incomplete),
+    # marked `partial`; off fails it instead.
+    allow_partial: bool = False
+    # Overrides for what the file cannot say about itself.
+    options: KnowledgeIngestOptions = Field(default_factory=KnowledgeIngestOptions)
+    # The agent writing the document; an end-user token's signed agent takes its place.
+    agent: str = Field(default="", max_length=128)
+    # The session the document was written in. Empty = '-'.
+    session_id: str = Field(default="", max_length=256)
+    # `derived`, `external` or `imported` when the content is not the writer's own.
+    source_class: str | None = None
+
+
+class KnowledgeIngestOutput(BaseModel):
+    # The job's id; `knowledge.ingest_status` and `knowledge.ingest_cancel` take it.
+    ingestion_id: str
+    # `pending` until a worker takes it.
+    state: str
+    source_uri: str
+    namespace: str = ""
+
+
+class KnowledgeIngestStatusInput(BaseModel):
+    """A knowledge.ingest job's state, stage, coverage, failure and published
+    revision."""
+
+    org: str
+    namespace: str
+    # The `ingestion_id` knowledge.ingest returned.
+    ingestion_id: str
+
+
+class KnowledgeIngestStatusOutput(BaseModel):
+    # False when no job of this id is in the namespace; every other field is then empty.
+    found: bool
+    # The job asked about.
+    ingestion_id: str
+    source_uri: str = ""
+    # pending, processing, ready, partial, failed or cancelled.
+    state: str = ""
+    # Where a processing job is, or where it last ran: parse, embed or publish;
+    # empty once it published.
+    stage: str = ""
+    # Runs of the job so far, a retry after a transient failure included.
+    attempts: int = 0
+    # Why it failed (`format_unavailable`, `encoding`, `incomplete_extraction`,
+    # `revision_conflict`, `too_large`, `no_text`, `retries_exhausted`, ...), or
+    # `retrying` while it waits for its next attempt; empty otherwise.
+    error_code: str = ""
+    # The failure in words, for a person; empty when it did not fail.
+    error_message: str = ""
+    # The format the file was extracted as, empty before extraction.
+    format: str = ""
+    # What the extraction covered (unit, total, extracted, failed, lost).
+    coverage: dict[str, Any] | None = None
+    # The extractor's warnings about the file.
+    warnings: list[str] = Field(default_factory=list)
+    # Chunks published, 0 until the job publishes.
+    chunks: int = 0
+    # The revision the job published, 0 until it does.
+    revision: int = 0
+    # The revision the job requires to be live when it publishes; None for any.
+    expected_revision: int | None = None
+    # The uploaded file's name.
+    filename: str = ""
+    # Whether the document is searchable from this job: ready (published), pending
+    # (not yet), failed (it will not be) or cancelled.
+    retrieval: str = ""
+    # Whether knowledge.ingest_cancel was called for the job.
+    cancel_requested: bool = False
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class KnowledgeIngestCancelInput(BaseModel):
+    org: str
+    namespace: str
+    # The `ingestion_id` knowledge.ingest returned.
+    ingestion_id: str
+
+
+class KnowledgeIngestCancelOutput(BaseModel):
+    # False when no job of this id is in the namespace.
+    found: bool
+    # The job's state after the call: `cancelled` for a job that had not started,
+    # its running state when the worker will stop it before publishing, or where it
+    # already ended (a published revision stays published).
+    state: str = ""
+    # True when this call stopped the job, or asked the worker to.
+    cancelled: bool = False

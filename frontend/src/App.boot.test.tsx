@@ -13,8 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { preloadView } = vi.hoisted(() => ({ preloadView: vi.fn() }));
 vi.mock("./views/registry", () => ({ preloadView, VIEW_LOADERS: {} }));
+vi.mock("./lib/navigation", () => ({ goToSso: vi.fn(), reloadPage: vi.fn() }));
 
 import App from "./App";
+import { goToSso, reloadPage } from "./lib/navigation";
 import { useStore } from "./lib/state";
 import { resetNamespaceRoleCache } from "./lib/namespaceRole";
 import { invalidateShared } from "./lib/sharedReads";
@@ -274,6 +276,39 @@ describe("boot order", () => {
     await until(() => useStore.getState().identity?.namespace === "joined");
     expect(useStore.getState().identity?.namespace).toBe("joined");
   });
+
+  it("opens the Library on a code namespace, reading only the collections it lists", async () => {
+    const CODE = "code-repo";
+    localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [CODE], roles: ["ADMIN"] }));
+    localStorage.setItem("loom_kinds_v1", JSON.stringify({ [CODE]: "code" }));
+    window.history.replaceState(null, "", "/library");
+    const order: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const path = url
+          .replace(/^https?:\/\/[^/]+/, "")
+          .split("?")[0]
+          .replace("/v1/", "");
+        order.push(path);
+        if (path === "whoami")
+          return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [CODE], roles: ["ADMIN"] });
+        if (path === "namespace.list_mine")
+          return json({ ...GENERIC, rows: [{ ...MINE[0], namespace: CODE, kind: "code" }] });
+        if (path === "collection.list")
+          return json({
+            collections: [{ namespace: "col-q3", parent: "", personal: false, role: "writer", description: "" }],
+            next_cursor: null,
+          });
+        return json(GENERIC);
+      }),
+    );
+    render(<App />);
+    await until(() => order.includes("collection.list"));
+    expect(await screen.findByText("Pick a collection")).toBeInTheDocument();
+    expect(order).not.toContain("knowledge.list");
+  });
 });
 
 // A link names its namespace (`?namespace=`): one the account can read opens for this tab
@@ -340,6 +375,43 @@ describe("a link's namespace", () => {
     expect(calls.filter((c) => c.path === "memory.list").every((c) => c.body?.namespace === "joined")).toBe(true);
     expect(localStorage.getItem("loom_namespace_v1")).toBe(NS);
     expect(savedDefault()).toBe(false);
+  });
+
+  it("opens a Library link to a collection on the reader's own namespace, though the sender's denies them", async () => {
+    window.history.replaceState(null, "", "/library?namespace=group-b-shared&collection=col-q3");
+    serve(MINE);
+    // The reader holds a grant on the collection itself.
+    const serveRest = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/v1/collection.list"))
+        return json({
+          collections: [{ namespace: "col-q3", parent: "", personal: false, role: "viewer", description: "" }],
+          next_cursor: null,
+        });
+      return serveRest ? serveRest(input, init) : json(GENERIC);
+    });
+    render(<App />);
+    await until(() => useStore.getState().identity !== null && useStore.getState().view === "knowledge");
+    expect(useStore.getState()).toMatchObject({ identity: { namespace: NS }, deniedNamespace: null });
+    expect(screen.queryByRole("heading", { level: 1, name: "No access to group-b-shared" })).toBeNull();
+    // The Library then asks collection.list whether the reader can open the collection.
+    await until(() => vi.mocked(fetch).mock.calls.some(([u]) => String(u).includes("/v1/collection.list")));
+    await until(() =>
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([u, init]) => String(u).includes("knowledge.list") && String(init?.body).includes("col-q3")),
+    );
+    expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-q3");
+    expect(new URLSearchParams(window.location.search).get("namespace")).toBe(NS);
+  });
+
+  it("still says no access when the link's collection is no collection's name", async () => {
+    window.history.replaceState(null, "", "/library?namespace=group-b-shared&collection=x");
+    serve(MINE);
+    render(<App />);
+    await until(() => screen.queryByRole("heading", { level: 1, name: "No access to group-b-shared" }) !== null);
+    expect(useStore.getState().deniedNamespace).toBe("group-b-shared");
   });
 
   it("says it has no access to one the account cannot read, reads nothing there, and saves nothing", async () => {
@@ -525,5 +597,412 @@ describe("login link", () => {
     await settle();
     expect(stored).toEqual(["frag.jwt.value"]);
     expect(window.location.href).not.toContain("frag.jwt.value");
+  });
+});
+
+// Each case boots the whole App, some twice: slower than a unit test on a loaded runner.
+describe("a refused token", { timeout: 30_000 }, () => {
+  let refuse = false;
+  let refuseListMine = false;
+  // whoami alone refuses (any token but `fresh`); counted.
+  let refuseWhoamiOnly = false;
+  let refusedWhoami = 0;
+  let whoamiAnswers: number[] = [];
+  let whoamiCalls = 0;
+  let listMineRefused: () => void = () => undefined;
+  // A dashboard sign-in's token carries its session (`sid`).
+  const alice = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], sid: "s1" });
+  const fresh = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 2 });
+  const bob = jwt({ sub: "bob", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    sessionStorage.clear();
+    invalidateShared();
+    resetNamespaceRoleCache();
+    refuse = false;
+    refuseListMine = false;
+    refuseWhoamiOnly = false;
+    refusedWhoami = 0;
+    whoamiAnswers = [];
+    whoamiCalls = 0;
+    useStore.setState({
+      authed: true,
+      sessionExpired: false,
+      gateReason: null,
+      whoami: null,
+      myNamespaces: null,
+      identity: null,
+    });
+    Element.prototype.scrollTo = vi.fn();
+    window.history.replaceState(null, "", "/memories");
+    localStorage.setItem("loom_token_v1", alice);
+    localStorage.setItem("loom_namespace_v1", NS);
+    const listMineDone = new Promise<void>((r) => {
+      listMineRefused = r;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const refused = new Response('{"detail":{"code":"AUTH_INVALID","message":"token expired"}}', { status: 401 });
+        if (url.includes("/v1/whoami")) {
+          whoamiCalls++;
+          // The server answers for the token the request carries.
+          const bearer = new Headers(init?.headers).get("Authorization")?.replace("Bearer ", "") ?? "";
+          if (refuseListMine) {
+            await listMineDone; // its 401 lands first and clears the token
+            // Another replica, or a revocation a moment later: whoami still says yes.
+            return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+          }
+          const status = whoamiAnswers.shift() ?? 200;
+          if (status !== 200) return new Response("{}", { status });
+          if (refuseWhoamiOnly && bearer !== fresh) {
+            refusedWhoami++;
+            return json({ authenticated: false });
+          }
+          if (!bearer || (refuse && bearer !== fresh)) {
+            await new Promise((r) => setTimeout(r, 30)); // after the early read's 401
+            return json({ authenticated: false });
+          }
+          const sub = bearer === bob ? "bob" : "alice";
+          return json({ authenticated: true, subject: sub, org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+        }
+        if (url.includes("namespace.list_mine")) {
+          // The server refuses the same token on every op, and the early read is first back.
+          const bearer = new Headers(init?.headers).get("Authorization")?.replace("Bearer ", "") ?? "";
+          if (refuse && bearer === alice) return refused;
+          if (!refuseListMine) return json({ ...GENERIC, rows: MINE });
+          setTimeout(listMineRefused, 0);
+          return refused;
+        }
+        if (refuse && url.includes("/v1/") && !url.includes("/v1/health")) return refused;
+        return json(GENERIC);
+      }),
+    );
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    delete window.__LOOM_SSO;
+    useStore.setState({ sessionExpired: false, gateReason: null, whoami: null, myNamespaces: null, identity: null });
+    window.history.replaceState(null, "", "/");
+  });
+
+  async function expireMidSession() {
+    render(<App />);
+    await until(() => !!document.getElementById("main") && useStore.getState().whoami !== null);
+    refuse = true;
+    // Any call now, as a view's refresh or a poll would make it.
+    await act(async () => {
+      await import("./api").then((api) => api.post("/v1/memory.list", { org: ORG, namespace: NS }).catch(() => null));
+    });
+    await until(() => useStore.getState().sessionExpired);
+  }
+
+  function storeElsewhere(token: string | null) {
+    // Another tab's write: this tab hears it as a storage event, after the value changed.
+    const oldValue = localStorage.getItem("loom_token_v1");
+    if (token === null) localStorage.removeItem("loom_token_v1");
+    else localStorage.setItem("loom_token_v1", token);
+    window.dispatchEvent(new StorageEvent("storage", { key: "loom_token_v1", oldValue, newValue: token }));
+  }
+
+  it("mid-session says so in a card over the page, which stays as it was", async () => {
+    await expireMidSession();
+    const card = screen.getByTestId("session-expired-bar");
+    expect(card).toHaveTextContent("Your session ended");
+    // In the toasts' viewport: over every dialog, and a press on it dismisses none.
+    expect(card.closest("[data-toast-viewport]")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Sign in in a new tab" })).toBeInTheDocument();
+    expect(localStorage.getItem("loom_token_v1")).toBeNull();
+    expect(document.getElementById("main")).not.toBeNull();
+    expect(useStore.getState().authed).toBe(true);
+  });
+
+  it("takes the same person's token from another tab once the server confirms it, and carries on", async () => {
+    await expireMidSession();
+    const before = whoamiCalls;
+    refuse = false;
+    await act(async () => storeElsewhere(fresh));
+    await until(() => !useStore.getState().sessionExpired);
+    expect(whoamiCalls).toBe(before + 1);
+    expect(reloadPage).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("session-expired-bar")).not.toBeInTheDocument();
+  });
+
+  it("reloads when someone else signed in in another tab", async () => {
+    await expireMidSession();
+    refuse = false;
+    await act(async () => storeElsewhere(bob));
+    await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
+    expect(useStore.getState().whoami?.subject).toBe("alice");
+  });
+
+  it("keeps the card when a newer drop lands while whoami answers for a stored token", async () => {
+    await expireMidSession();
+    refuse = false;
+    await act(async () => {
+      storeElsewhere(fresh);
+      storeElsewhere(null);
+    });
+    await settle(4);
+    expect(useStore.getState().sessionExpired).toBe(true);
+    expect(reloadPage).not.toHaveBeenCalled();
+  });
+
+  it("leaves a healthy page alone when another tab's token cannot be confirmed", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    whoamiAnswers = [503, 503, 503, 503, 503, 503];
+    await act(async () => storeElsewhere(fresh));
+    await until(() => whoamiAnswers.length === 0, 10_000);
+    await settle(2);
+    expect(reloadPage).not.toHaveBeenCalled();
+    expect(useStore.getState().sessionExpired).toBe(false);
+  });
+
+  it("reloads to a plain sign-in when the person signed out in another tab", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    localStorage.setItem("loom_signed_out_v1", "1");
+    await act(async () => storeElsewhere(null));
+    await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
+    expect(useStore.getState().sessionExpired).toBe(false);
+    expect(sessionStorage.getItem("loom_session_ended_v1")).toBeNull();
+  });
+
+  it("ends this tab's session, keeping the page, when another tab stores a token the server refuses", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    const stale = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 1 });
+    refusedWhoami = 0;
+    refuseWhoamiOnly = true; // the server refuses the stored token; no other call is made to say so
+    await act(async () => storeElsewhere(stale));
+    await until(() => useStore.getState().sessionExpired);
+    expect(refusedWhoami).toBe(1);
+    expect(reloadPage).not.toHaveBeenCalled();
+  });
+
+  it("reloads at once for another person's token, without waiting on whoami", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    whoamiAnswers = [503, 503, 503, 503, 503, 503];
+    await act(async () => storeElsewhere(bob));
+    await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
+    expect(whoamiAnswers).toHaveLength(6);
+  });
+
+  it("a reload after a sign-out elsewhere is still a plain sign-in, with the mark kept", async () => {
+    await expireMidSession();
+    localStorage.setItem("loom_signed_out_v1", "1"); // another tab signed out; this one had no token to drop
+    cleanup();
+    useStore.setState({ authed: true, sessionExpired: false, gateReason: null, whoami: null, identity: null });
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    expect(useStore.getState().gateReason).toBeNull();
+    expect(localStorage.getItem("loom_signed_out_v1")).toBe("1");
+  });
+
+  it("a drop and a sign-in elsewhere, heard together, keep the new token", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    await act(async () => {
+      // Both land before this tab's handler runs (its chunk resolves after the events).
+      storeElsewhere(null);
+      storeElsewhere(fresh);
+    });
+    await settle(3);
+    expect(localStorage.getItem("loom_token_v1")).toBe(fresh);
+  });
+
+  it("ends this tab's session too when another tab clears the whole storage", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    await act(async () => {
+      localStorage.clear();
+      window.dispatchEvent(new StorageEvent("storage", { key: null }));
+    });
+    await until(() => useStore.getState().sessionExpired);
+    expect(screen.getByTestId("session-expired-bar")).toBeInTheDocument();
+  });
+
+  it("ends this tab's session too when another tab drops the token", async () => {
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null);
+    await act(async () => storeElsewhere(null));
+    await until(() => useStore.getState().sessionExpired);
+    expect(screen.getByTestId("session-expired-bar")).toBeInTheDocument();
+    // The dropped token was a sign-in session's: a reload resumes it, as the tab that lost
+    // it first would.
+    expect(sessionStorage.getItem("loom_session_ended_v1")).toBe("expired");
+  });
+
+  it("a reload after the session ended starts SSO by itself", async () => {
+    window.__LOOM_SSO = true;
+    await expireMidSession();
+    cleanup();
+    useStore.setState({ authed: true, sessionExpired: false, gateReason: null, whoami: null, identity: null });
+    render(<App />);
+    await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
+    await until(() => vi.mocked(goToSso).mock.calls.length > 0);
+    expect(goToSso).toHaveBeenCalledTimes(1);
+  });
+
+  it("a reload after a minted token ended shows the gate and starts no sign-in by itself", async () => {
+    window.__LOOM_SSO = true;
+    localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] }));
+    await expireMidSession();
+    cleanup();
+    useStore.setState({ authed: true, sessionExpired: false, gateReason: null, whoami: null, identity: null });
+    render(<App />);
+    await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
+    expect(useStore.getState().gateReason).toBe("ended");
+    expect(screen.getByRole("status")).toHaveTextContent("Your session ended");
+    await settle();
+    expect(goToSso).not.toHaveBeenCalled();
+  });
+
+  it("an ended tab that cannot confirm another tab's token asks again later, and then carries on", async () => {
+    await expireMidSession();
+    refuse = false;
+    whoamiAnswers = [503, 503, 503, 503, 503, 503];
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await act(async () => storeElsewhere(fresh));
+      await until(() => whoamiAnswers.length === 0, 10_000);
+      expect(useStore.getState().sessionExpired).toBe(true);
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+      });
+      await until(() => !useStore.getState().sessionExpired, 10_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a sign-out elsewhere reloads a tab whose session had already ended", async () => {
+    await expireMidSession();
+    await act(async () => {
+      localStorage.setItem("loom_signed_out_v1", "1");
+      window.dispatchEvent(new StorageEvent("storage", { key: "loom_signed_out_v1", oldValue: null, newValue: "1" }));
+    });
+    await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
+  });
+
+  it("a Reload while the server is away starts no sign-in by itself", async () => {
+    window.__LOOM_SSO = true;
+    await expireMidSession();
+    cleanup();
+    useStore.setState({ authed: true, sessionExpired: false, gateReason: null, whoami: null, identity: null });
+    vi.mocked(fetch).mockImplementation(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
+    expect(useStore.getState().gateReason).toBeNull();
+    expect(goToSso).not.toHaveBeenCalled();
+  });
+
+  it("a reload after the session ended shows the gate saying so, though the token is gone", async () => {
+    await expireMidSession();
+    cleanup();
+    useStore.setState({ authed: true, sessionExpired: false, gateReason: null, whoami: null, identity: null });
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    expect(useStore.getState().gateReason).toBe("expired");
+  });
+
+  it("at boot shows the gate saying the session expired when list_mine is refused while whoami answers yes", async () => {
+    refuseListMine = true;
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    await settle();
+    expect(useStore.getState()).toMatchObject({ authed: false, gateReason: "expired", sessionExpired: false });
+    // whoami's yes did not bring the app up without a token.
+    expect(useStore.getState().whoami).toBeNull();
+    expect(document.getElementById("main")).toBeNull();
+    expect(localStorage.getItem("loom_token_v1")).toBeNull();
+  });
+
+  it("signing out after the session ended reloads to a plain sign-in, which starts no SSO", async () => {
+    window.__LOOM_SSO = true;
+    await expireMidSession();
+    // Header's Sign out: the mark, then the reload, which boots with no token.
+    const api = await import("./api");
+    api.signOut();
+    cleanup();
+    useStore.setState({ authed: true, sessionExpired: false, gateReason: null, whoami: null, identity: null });
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    expect(useStore.getState().gateReason).toBeNull();
+    await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
+    expect(goToSso).not.toHaveBeenCalled();
+  });
+
+  it("a refused sign-in link says so and starts no SSO: it may be the way in while the provider is down", async () => {
+    window.__LOOM_SSO = true;
+    localStorage.clear();
+    refuse = true; // whoami refuses the link's token
+    window.history.replaceState(null, "", `/me#token=${alice}`);
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
+    expect(useStore.getState().gateReason).toBe("refused");
+    expect(goToSso).not.toHaveBeenCalled();
+    expect(localStorage.getItem("loom_token_v1")).toBeNull();
+    delete window.__LOOM_SSO;
+  });
+
+  it("boots afresh when another tab stores a token while whoami cannot answer", async () => {
+    whoamiAnswers = [503, 503, 503, 503, 503, 503];
+    render(<App />);
+    await until(() => whoamiCalls >= 1);
+    localStorage.setItem("loom_token_v1", fresh);
+    await until(() => vi.mocked(reloadPage).mock.calls.length > 0, 10_000);
+    expect(useStore.getState().authed).toBe(true);
+  });
+
+  it("a sign-in link that whoami alone refuses says so and starts no SSO", async () => {
+    window.__LOOM_SSO = true;
+    localStorage.clear();
+    refuseWhoamiOnly = true; // list_mine answers; only whoami refuses the link's token
+    window.history.replaceState(null, "", `/me#token=${alice}`);
+    render(<App />);
+    await until(() => useStore.getState().authed === false);
+    await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
+    expect(useStore.getState().gateReason).toBe("refused");
+    expect(refusedWhoami).toBeGreaterThan(0);
+    expect(goToSso).not.toHaveBeenCalled();
+  });
+
+  it("boots afresh when another tab stores a token while whoami answers for this one", async () => {
+    let answer: () => void = () => undefined;
+    const held = new Promise<void>((r) => {
+      answer = r;
+    });
+    const fetchMock = vi.mocked(fetch);
+    const serve = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/v1/whoami")) await held;
+      return serve ? serve(input, init) : json(GENERIC);
+    });
+    render(<App />);
+    await until(() => whoamiCalls === 0 && fetchMock.mock.calls.some(([u]) => String(u).includes("/v1/whoami")));
+    localStorage.setItem("loom_token_v1", bob);
+    answer();
+    await until(() => vi.mocked(reloadPage).mock.calls.length > 0);
+  });
+
+  it("asks whoami again while the replica answers 503, and keeps the token", async () => {
+    whoamiAnswers = [503];
+    render(<App />);
+    await until(() => useStore.getState().whoami !== null, 8000);
+    expect(whoamiCalls).toBe(2);
+    expect(localStorage.getItem("loom_token_v1")).not.toBeNull();
+    expect(useStore.getState().authed).toBe(true);
   });
 });

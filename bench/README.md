@@ -117,6 +117,10 @@ built from it is right.
   codes, paraphrases, old and current policy versions, multi-document
   questions), and the top-hit similarity on answerable and unanswerable
   queries; `--param KEY=VALUE` sets any search field the harness does not fix.
+- **`beir_knowledge.py`** — BEIR passage retrieval through `knowledge.search`:
+  nDCG@10, recall@10/100 and MRR@10 against the dataset's graded judgements;
+  `--fetch` pulls one small dataset (checked against its published MD5) into
+  `bench/datasets/beir/`, `--param KEY=VALUE` sets a search field.
 - **`narrativeqa.py`** — NarrativeQA through the knowledge plane:
   long-document QA with F1 / ROUGE-L, build time and tokens per question.
 - **`time_dialog.py`** — Time-Dialog temporal reasoning over multi-session
@@ -264,6 +268,12 @@ Access patterns where vector-only memory falls down.
 - `code_ask_cache_threshold/` — re-measures the `code.ask` answer-cache
   threshold for the served embedder.
 
+## Design rationale
+
+- **`design_rationale/`** — whether decisions mined from design documents keep a coding
+  agent from re-proposing rejected options, over a private task set read from a
+  directory (`python -m bench.design_rationale --help`; synthetic set in `example/`).
+
 ## Tracker
 
 - **`tracker_similar_bench.py`** — `tracker.similar` per leg, paired per query.
@@ -375,6 +385,7 @@ Langfuse's run-comparison view shows which queries moved. Details:
 | Is recall holding without paying LLM-judge cost?                               | `quality.py`                                                                  |
 | Did ranking regress on a corpus that already exists?                           | `retrieval_recall.py` (recall@k + MRR + rank@1)                               |
 | Did `knowledge.search` document ranking regress?                               | `knowledge_retrieval.py` (labelled fixture, per query kind)                   |
+| Where does `knowledge.search` sit on a public passage-retrieval set?           | `beir_knowledge.py` (SciFact ≈ 5K passages; ingest embeds the corpus)         |
 | Did the code plane regress?                                                    | `code_intel_qa.py` (`make bench-code-intel`)                                  |
 | Does throughput cliff under concurrency?                                       | `scripts/ops/benchmark.py` (not bench/)                                       |
 | How much of a namespace can a prompt-only attacker echo out through the agent? | `memory_extraction_redteam.py` (RN/EN/EE per arm; `--max-rn-fraction` gate)   |

@@ -29,6 +29,7 @@ _FRONTEND_DIST = FRONTEND_DIST
 PAGE_SEGMENTS = frozenset(
     {
         "admin",
+        "assistant",
         "conversations",
         "flow",
         "graph",

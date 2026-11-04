@@ -41,12 +41,27 @@ class StructuralChunk:
     def breadcrumb(self) -> str:
         return SEPARATOR.join(self.section_path)
 
+    @property
+    def meta(self) -> dict[str, object]:
+        """What a chunk row stores in `chunk_metadata`: the section the outline
+        reads, and the blocks and locator a citation reads."""
+        out: dict[str, object] = {
+            "block_ids": list(self.block_ids),
+            "block_type": self.block_type,
+            "locator": self.locator.to_dict(),
+        }
+        if self.section_path:
+            out["section_path"] = list(self.section_path)
+            out["section_depth"] = len(self.section_path)
+        return out
+
 
 def _merge(locs: list[Locator]) -> Locator:
     """The span covering `locs`; a field kept only when every part agrees
-    (one key path) or it is a range (lines, chars)."""
+    (one key path) or it is a range (lines, chars, pages)."""
     lines = [x for x in locs if x.line_start]
     chars = [x for x in locs if x.char_start >= 0]
+    pages = [x for x in locs if x.page_start]
     paths = {x.key_path for x in locs}
     return Locator(
         line_start=min((x.line_start for x in lines), default=0),
@@ -54,6 +69,8 @@ def _merge(locs: list[Locator]) -> Locator:
         char_start=min((x.char_start for x in chars), default=-1),
         char_end=max((x.char_end for x in chars), default=-1),
         key_path=paths.pop() if len(paths) == 1 else "",
+        page_start=min((x.page_start for x in pages), default=0),
+        page_end=max((x.page_end for x in pages), default=0),
     )
 
 

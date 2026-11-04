@@ -1216,6 +1216,7 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
                     "row_in_scope",
                     "_in_scope",
                     "_gated",
+                    "_poster_may_post",
                     "_may_read_tracker",
                     "authorized_tracker_namespace",
                     "authorized_tracker_namespaces",

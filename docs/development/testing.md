@@ -56,10 +56,20 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
   the test process's `LOOM_JWT_SECRET`, which must match the server's.
 - Run the server with `LOOM_BACKGROUND_WORKERS=off`: tests that exercise a worker call its
   `run_pass` in-process against their own namespace, and a live supervisor's workers have
-  no namespace filter and would drain those tests' rows.
+  no namespace filter and would drain those tests' rows. A worker whose pass takes one item
+  of a queue every tenant shares, such as `knowledge_ingest`, is exercised by running the
+  test's own item as a pass runs one (`ingest_run.take_and_run`).
 - `tests/integration/test_document_object_store_live.py` also needs an S3-compatible store
   in `LOOM_TEST_S3_ENDPOINT` (CI runs a local one, see `.github/workflows/ci.yml`) and
   skips without it.
+- The publishing tests in `tests/integration/test_knowledge_ingest_live.py` run their own
+  job, which sends originals to a document extractor: they need one routed for SQL and TOML
+  (`LOOM_DOCUMENT_EXTRACTOR_URL` or `LOOM_DOCUMENT_EXTRACTORS_JSON`, with its token; see
+  the [configuration reference](../reference/configuration.md)), and skip without one.
+  `tests/integration/test_knowledge_inspect_ingest.py` also asserts, through
+  `knowledge.inspect`, that the server has one configured, so give the server the same
+  settings. CI starts the reference extractor before the servers (`.github/workflows/ci.yml`;
+  [running it](../../extractor/README.md)).
 - CI sets `LOOM_LATENCY_BUDGET_MULTIPLIER=10`: shared runners are noisy enough that the
   default per-op budgets fire violations.
 - Tests that depend on self-signup skip in CI, which has no `LOOM_SELF_SIGNUP=open`; prefer

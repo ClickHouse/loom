@@ -13,6 +13,16 @@ import pytest
 from server.knowledge.app.search import ChunkHit, HybridSearchQuery, fuse_rrf, lexical_search
 
 
+@pytest.fixture(autouse=True)
+def _no_keyed_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No chunk carries exact keys here: the exact-key leg finds none."""
+
+    async def _none(*a: Any, **k: Any) -> list[Any]:
+        return []
+
+    monkeypatch.setattr("server.knowledge.app.search.keys_search", _none)
+
+
 class StubCH:
     def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -67,6 +77,7 @@ async def test_lexical_search_sql_shape_and_cold_corpus_short_circuit() -> None:
                 "chunk_idx": 2,
                 "content": "Deploy then rollback",
                 "tags": [],
+                "context": "Ops",
                 "chunk_metadata": '{"section_path": ["Ops"]}',
                 "distance": 0.4,
                 "lexical": 3.2,
@@ -96,6 +107,7 @@ async def test_lexical_search_sql_shape_and_cold_corpus_short_circuit() -> None:
     assert params["toks"] == ["deploy", "rollback"] and params["idfs"] == [1.5, 2.5]
     assert params["avgdl"] == 120.0
     assert hits[0].lexical_score == 3.2 and hits[0].score == 3.2 and hits[0].section == "Ops"
+    assert hits[0].context == "Ops"  # the stored context rides the hit, for a reranker
     assert hits[0].distance == 0.4  # the lexical leg carries the cosine too
     # cold namespace / no tokens: no query issued
     assert await lexical_search(_q(avgdl=0.0), ch=StubCH()) == []

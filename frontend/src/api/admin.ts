@@ -811,13 +811,7 @@ export async function memoryHistory(
   memoryKey: string,
   limit: number = 10,
 ): Promise<{ rows: MemoryHistoryEntry[] }> {
-  return post("/v1/memory.history", {
-    org: id.org,
-    namespace: id.namespace,
-    agent: id.agent,
-    memory_key: memoryKey,
-    limit,
-  });
+  return post("/v1/memory.history", { ...id, memory_key: memoryKey, limit });
 }
 
 export interface RelatedMemoryRow {
@@ -832,13 +826,7 @@ export async function memoryRelated(
   memoryKey: string,
   topK: number = 5,
 ): Promise<{ results: RelatedMemoryRow[] }> {
-  return post("/v1/memory.related", {
-    org: id.org,
-    namespace: id.namespace,
-    agent: id.agent,
-    memory_key: memoryKey,
-    top_k: topK,
-  });
+  return post("/v1/memory.related", { ...id, memory_key: memoryKey, top_k: topK });
 }
 
 export interface LineageStep {
@@ -850,6 +838,7 @@ export interface LineageStep {
 
 /** Trace back to the original write event + supporting learnings. */
 export async function memoryLineage(id: Identity, memoryKey: string): Promise<{ steps: LineageStep[] }> {
+  // Lineage is read by key alone (server/memory/app/dedup.py), so no user or session is sent.
   return post("/v1/memory.lineage", {
     org: id.org,
     namespace: id.namespace,

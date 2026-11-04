@@ -88,6 +88,13 @@ _SKIP_OPS = {
     "knowledge.bulk_delete",
     "knowledge.update_metadata",
     "knowledge.dedup_resolve",
+    # Document-source writes and the credential probe: each is ADMIN on the
+    # repository's code namespace, asserted in tests/unit/test_knowledge_sources.py.
+    "knowledge.source.add",
+    "knowledge.source.check",
+    "knowledge.source.rotate",
+    "knowledge.source.remove",
+    "knowledge.source.sync_now",
     "procedure.add",
     "procedure.record_run",
     "procedure.evolve",
@@ -214,6 +221,7 @@ _CORE = {
     "facts.list",
     "facts.traverse",
     "knowledge.search",
+    "knowledge.inspect",
     "namespace.snapshot",
     "namespace.get",
     "namespace.summary",

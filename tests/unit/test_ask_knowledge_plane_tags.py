@@ -31,9 +31,11 @@ async def test_knowledge_passages_forward_the_asks_tags(monkeypatch) -> None:
     import server.knowledge.app.knowledge_search as kh
 
     seen: list[list[str]] = []
+    reranks: list[str] = []
 
     async def ok(inp):
         seen.append(list(inp.tags))
+        reranks.append(inp.rerank)
         return SimpleNamespace(results=[])
 
     monkeypatch.setattr(kh, "handle_knowledge_search", ok)
@@ -44,6 +46,7 @@ async def test_knowledge_passages_forward_the_asks_tags(monkeypatch) -> None:
     await knowledge_passages(hard, "q", enabled=True)
     await knowledge_passages(soft, "q", enabled=True)
     assert seen == [["workflow:x"], []]
+    assert reranks == ["none", "none"]  # an ask's knowledge read makes no rerank call
 
 
 @pytest.mark.asyncio
@@ -57,6 +60,7 @@ async def test_synthesize_route_forwards_the_asks_tags(monkeypatch) -> None:
 
     async def ok(inp):
         seen.append(list(inp.tags))
+        assert inp.rerank == "none"
         return SimpleNamespace(results=[])
 
     monkeypatch.setattr(kh, "handle_knowledge_search", ok)

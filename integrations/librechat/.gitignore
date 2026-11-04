@@ -1,0 +1,4 @@
+.env
+qualification/.state.json
+qualification/results.json
+qualification/results-*.json

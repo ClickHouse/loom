@@ -40,6 +40,7 @@ from server.tracker.api.models import (
 )
 from server.tracker.app import contract
 from server.tracker.domain import contract as record_contract
+from server.tracker.domain.sources import SOURCE_NAME_RE
 from server.tracker.store.source import contract_reports
 
 logger = logging.getLogger(__name__)
@@ -369,7 +370,6 @@ async def _none() -> dict[str, Any]:
 
 # ---- the write ops ---------------------------------------------
 
-_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{1,31}$")
 # `tracker-<team>` or `qa-<team>`
 _NS_RE = re.compile(r"^(?:tracker|qa)-[a-z0-9][a-z0-9-]{1,62}$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -469,11 +469,7 @@ async def _probe_or_refuse(
     except onboarding.ProbeError as e:
         raise ValidationError(str(e), code="SOURCE_UNREACHABLE") from None
     if not probe.grants.read_only:
-        raise ValidationError(
-            f"{user!r} holds write access ({', '.join(probe.grants.write_types[:4])}); loom "
-            "takes a read-only user — SELECT on the contract views and system.columns only",
-            code="CREDENTIAL_NOT_READONLY",
-        )
+        raise ValidationError(probe.grants.refusal(user), code="CREDENTIAL_NOT_READONLY")
     if mapping is not None:
         mapped = _mapped_report_or_refuse(name, database, user, mapping, probe, refuse_contract)
         return probe, mapped
@@ -589,7 +585,7 @@ async def _admissible(input: Any) -> tuple[str, list[dict[str, Any]]]:
             code="BAD_ORG",
         )
     name = str(input.name).strip().lower()
-    if not _NAME_RE.match(name):
+    if not SOURCE_NAME_RE.fullmatch(name):
         raise ValidationError(
             "source name: 2–32 lower-case letters, digits, - or _, starting with a letter",
             code="BAD_NAME",
@@ -751,11 +747,7 @@ async def handle_tracker_source_inspect(
     except onboarding.ProbeError as e:
         raise ValidationError(str(e), code="SOURCE_UNREACHABLE") from None
     if not probe.grants.read_only:
-        raise ValidationError(
-            f"{user!r} holds write access ({', '.join(probe.grants.write_types[:4])}); "
-            "loom takes a read-only user",
-            code="CREDENTIAL_NOT_READONLY",
-        )
+        raise ValidationError(probe.grants.refusal(user), code="CREDENTIAL_NOT_READONLY")
     repos = sorted({str(r).strip() for r in (input.repos or []) if str(r).strip()})
     proposal = automap.propose(probe.tables, database=database, repos=repos)
     return TrackerSourceInspectOutput(

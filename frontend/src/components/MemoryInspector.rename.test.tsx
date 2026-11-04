@@ -129,7 +129,13 @@ describe("MemoryInspector rename with redirect", () => {
   });
   afterEach(() => {
     cleanup();
-    useStore.setState({ whoami: null, myNamespaces: null, identity: null, inspectedMemoryKey: null });
+    useStore.setState({
+      whoami: null,
+      myNamespaces: null,
+      identity: null,
+      inspectedMemoryKey: null,
+      inspectedOwner: null,
+    });
   });
 
   it("previews with dry_run first, then moves for real, toasts and re-reads the row", async () => {
@@ -206,6 +212,31 @@ describe("MemoryInspector rename with redirect", () => {
     expect(badge).toHaveAccessibleName("Redirects to prefs/coffee; open it");
     await userEvent.click(badge);
     expect(useStore.getState().inspectedMemoryKey).toBe("prefs/coffee");
+  });
+
+  it("a renamed row opened under its user keeps that writer; a redirect's target opens as any row", async () => {
+    const owned = { ...identity, agent: "claude-code", user_id: "ada", session_id: "-" };
+    seed("admin");
+    render(<MemoryInspector identity={owned} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByText("oat milk, no sugar");
+    await openRename();
+    const form = screen.getByTestId("rename-form");
+    await userEvent.click(within(form).getByRole("checkbox", { name: "Keep old key readable (redirect)" }));
+    const input = within(form).getByLabelText("New key");
+    await userEvent.clear(input);
+    await userEvent.type(input, "prefs/coffee");
+    await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(useStore.getState().inspectedMemoryKey).toBe("prefs/coffee"));
+    expect(useStore.getState()).toMatchObject({
+      inspectedAgent: "claude-code",
+      inspectedOwner: { user_id: "ada", session_id: "-" },
+    });
+    cleanup();
+
+    vi.mocked(getMemory).mockResolvedValue(REDIRECTED);
+    render(<MemoryInspector identity={owned} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />);
+    await userEvent.click(await screen.findByTestId("redirect-badge"));
+    expect(useStore.getState()).toMatchObject({ inspectedMemoryKey: "prefs/coffee", inspectedOwner: null });
   });
 
   it("a live row has no badge, and a viewer is not offered the rename", async () => {

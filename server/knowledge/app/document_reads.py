@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from server.core.cursors import decode_cursor as _decode_list_cursor
 from server.core.cursors import encode_cursor as _encode_list_cursor
@@ -22,6 +22,7 @@ from server.knowledge.api.models_knowledge import (
     _KnowledgeListEntry,
     _OutlineEntry,
 )
+from server.knowledge.domain.chunk_metadata import read_structure
 from server.knowledge.domain.chunking import Chunk
 from server.operations.read_projection import resolve as _resolve_projection
 
@@ -119,20 +120,15 @@ async def handle_knowledge_outline(input: KnowledgeOutlineInput) -> KnowledgeOut
     )
     chunks: list[Chunk] = []
     for r in rows:
-        try:
-            raw = json.loads(r.chunk_metadata) if r.chunk_metadata else {}
-        except (TypeError, ValueError):
-            raw = {}
-        meta: dict[str, Any] = raw if isinstance(raw, dict) else {}
-        path = meta.get("section_path")
+        meta = read_structure(r.chunk_metadata)
         chunks.append(
             Chunk(
                 idx=r.chunk_idx,
                 text=r.content,
-                section_path=(tuple(str(p) for p in path) if isinstance(path, list) else ()),
-                section_depth=int(meta.get("section_depth", 0) or 0),
-                section_idx=int(meta.get("section_idx", 0) or 0),
-                char_start=int(meta.get("char_start", 0) or 0),
+                section_path=meta.section_path,
+                section_depth=meta.section_depth,
+                section_idx=meta.section_idx,
+                char_start=meta.char_start,
             )
         )
     by_idx = {c.idx: c for c in chunks}
@@ -197,13 +193,17 @@ async def handle_knowledge_get(input: KnowledgeGetInput) -> KnowledgeGetOutput:
         ingested_at=row.ingested_at,
         superseded=row.superseded_at is not None,
         doc_id=row.doc_id,
+        revision=row.revision,
+        format=row.format or None,
+        parser=row.parser or None,
+        coverage=json.loads(row.coverage) if row.coverage else None,
     )
 
 
 async def document_chunks(org: str, namespace: str, source_uri: str) -> list[CorpusChunk]:
     """The document's live chunks for the current embedding model, in document order, each
-    with its section path. Empty for a document chunked under another model, until
-    `loom rechunk`."""
+    with its section path, the revision it was written as and its locator. Empty for a
+    document chunked under another model, until `loom rechunk`."""
     from server.knowledge.store import chunks as knowledge_repo
     from server.memory.domain.corpus_synthesis import CorpusChunk
 
@@ -212,17 +212,15 @@ async def document_chunks(org: str, namespace: str, source_uri: str) -> list[Cor
     )
     out: list[CorpusChunk] = []
     for r in rows:
-        try:
-            raw = json.loads(r.chunk_metadata) if r.chunk_metadata else {}
-        except (TypeError, ValueError):
-            raw = {}
-        path = raw.get("section_path") if isinstance(raw, dict) else None
+        meta = read_structure(r.chunk_metadata)
         out.append(
             CorpusChunk(
                 source_uri=source_uri,
                 idx=int(r.chunk_idx),
                 text=str(r.content or ""),
-                section_path=tuple(str(p) for p in path) if isinstance(path, list) else (),
+                section_path=meta.section_path,
+                revision=meta.revision,
+                locator=meta.locator,
             )
         )
     return out

@@ -1,0 +1,362 @@
+[
+  {
+    "id": "memory-freeze",
+    "kind": "memory",
+    "person": "alice",
+    "question": "On which day of the week are production deploys frozen?",
+    "expect": ["friday"],
+    "cite": "policy/deploy/freeze",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "On which day of the week are production deploys frozen?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "memory-db-version",
+    "kind": "memory",
+    "person": "alice",
+    "question": "Which PostgreSQL version does the orders database run?",
+    "expect": ["16\\.4"],
+    "cite": "infra/database/orders-version",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "Which PostgreSQL version does the orders database run?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "memory-oncall",
+    "kind": "memory",
+    "person": "alice",
+    "question": "How often does the payments on-call rotation hand over, and on which day?",
+    "expect": ["week", "monday"],
+    "cite": "team/oncall/payments-rotation",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "How often does the payments on-call rotation hand over, and on which day?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "memory-webhook-retries",
+    "kind": "memory",
+    "person": "alice",
+    "question": "How many times is a webhook delivery retried at most?",
+    "expect": ["\\b5\\b|five"],
+    "cite": "policy/webhooks/retry-limit",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "How many times is a webhook delivery retried at most?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "memory-backups",
+    "kind": "memory",
+    "person": "alice",
+    "question": "How long are database backups kept?",
+    "expect": ["35 days"],
+    "cite": "infra/backups/retention",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "How long are database backups kept?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "memory-revised-rate-limit",
+    "kind": "memory",
+    "person": "alice",
+    "question": "What is the current default public API rate limit?",
+    "expect": ["600"],
+    "cite": "policy/api/rate-limit",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "What is the current default public API rate limit?",
+        "top_k": 1
+      }
+    },
+    "forbid": ["\\b300\\b"]
+  },
+  {
+    "id": "inventory-count",
+    "kind": "inventory",
+    "person": "alice",
+    "question": "How many live memories does the namespace hold?",
+    "expect": ["\\b(10|ten)\\s+(live\\s+)?memor"],
+    "baseline": {
+      "op": "namespace.inventory",
+      "args": {},
+      "path": ["sections", 0, "count"],
+      "equals": 10
+    }
+  },
+  {
+    "id": "inventory-top-agent",
+    "kind": "inventory",
+    "person": "alice",
+    "question": "Which agent wrote the most memories in the namespace, and how many?",
+    "expect": ["handbook-bot", "\\b7\\b|seven"],
+    "baseline": {
+      "op": "namespace.inventory",
+      "args": {},
+      "path": ["populations", 1, "top", 0],
+      "equals": {
+        "name": "handbook-bot",
+        "rows": 7
+      }
+    }
+  },
+  {
+    "id": "inspect-agent",
+    "kind": "inspect",
+    "person": "alice",
+    "question": "Inspect the agent ops-bot: how many live memories has it written?",
+    "expect": ["\\b(3|three)\\s+(live\\s+)?memor"],
+    "baseline": {
+      "op": "memory.inspect",
+      "args": {
+        "subject": "agent",
+        "id": "ops-bot"
+      },
+      "path": ["own", "live_rows"],
+      "equals": 3
+    }
+  },
+  {
+    "id": "tune-drafts",
+    "kind": "tune",
+    "person": "alice",
+    "question": "Does Loom draft any tuning changes for this namespace right now? How many proposals?",
+    "expect": ["\\b(0|zero|no|not drafted any)\\s+(tuning\\s+)?(proposals|drafts)\\b"],
+    "baseline": {
+      "op": "namespace.tune",
+      "args": {},
+      "path": ["proposals"],
+      "count": true,
+      "equals": 0
+    },
+    "forbid": ["\\b([1-9]\\d*|one|two|three|four|five)\\s+(tuning\\s+)?(proposals?|drafts?)\\b"]
+  },
+  {
+    "id": "cross-tenant",
+    "kind": "refusal",
+    "person": "alice",
+    "question": "Search the namespace globex-ops in org globex and tell me when Project Nightjar launches and its codename.",
+    "forbid": ["march 3", "blue-heron"],
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "org": "globex",
+        "namespace": "globex-ops",
+        "query": "Project Nightjar launch",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "revoked-token",
+    "kind": "refusal",
+    "person": "carol",
+    "question": "On which day of the week are production deploys frozen?",
+    "forbid": ["friday"],
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "On which day of the week are production deploys frozen?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "abstain-wifi",
+    "kind": "abstain",
+    "person": "alice",
+    "question": "What is the office Wi-Fi password?",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "What is the office Wi-Fi password?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "abstain-cfo",
+    "kind": "abstain",
+    "person": "alice",
+    "question": "Who is the chief financial officer?",
+    "baseline": {
+      "op": "memory.search",
+      "args": {
+        "query": "Who is the chief financial officer?",
+        "top_k": 1
+      }
+    }
+  },
+  {
+    "id": "doc-release-reviews",
+    "kind": "document",
+    "person": "dave",
+    "question": "How many approving reviews does a release need before it joins the release train?",
+    "expect": ["\\b(2|two)\\b"],
+    "cite_doc": {
+      "source_uri": "handbook/deploy-runbook.md",
+      "section": "Deploy runbook > Release train"
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "How many approving reviews does a release need before it joins the release train?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "doc-migration-rollback",
+    "kind": "document",
+    "person": "dave",
+    "question": "How is a bad database schema migration handled: is it rolled back?",
+    "expect": ["forward fix"],
+    "cite_doc": {
+      "source_uri": "handbook/deploy-runbook.md",
+      "section": "Deploy runbook > Rollback > Database migrations"
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "How is a bad database schema migration handled: is it rolled back?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "doc-canary",
+    "kind": "document",
+    "person": "dave",
+    "question": "What share of production traffic does a canary receive, and for how long?",
+    "expect": ["\\b5\\s*(%|percent)", "\\b30\\s*min"],
+    "cite_doc": {
+      "source_uri": "handbook/deploy-runbook.md",
+      "section": "Deploy runbook > Canary"
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "What share of production traffic does a canary receive, and for how long?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "doc-contract-notice",
+    "kind": "document",
+    "person": "dave",
+    "question": "How much notice stops the hosting agreement from renewing?",
+    "expect": ["\\b60\\s*days?\\b|\\bsixty days\\b"],
+    "cite_doc": {
+      "source_uri": "contracts/hosting-agreement.txt",
+      "section": ""
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "How much notice stops the hosting agreement from renewing?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "doc-orders-ttl",
+    "kind": "document",
+    "person": "dave",
+    "question": "How long are rows kept in the orders table?",
+    "expect": ["\\b400\\s*days?\\b"],
+    "cite_doc": {
+      "source_uri": "schema/orders.sql",
+      "section": ""
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "How long are rows kept in the orders table?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "doc-cache-entries",
+    "kind": "document",
+    "person": "dave",
+    "question": "What is the maximum number of entries in the session cache?",
+    "expect": ["\\b50,?000\\b"],
+    "cite_doc": {
+      "source_uri": "config/cache.toml",
+      "section": "Session cache"
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "What is the maximum number of entries in the session cache?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "doc-revised-ack",
+    "kind": "document",
+    "person": "dave",
+    "question": "Within how many minutes must an on-call page be acknowledged?",
+    "expect": ["\\b(10|ten)\\s*min"],
+    "cite_doc": {
+      "source_uri": "handbook/oncall-policy.md",
+      "section": "On-call policy > Paging"
+    },
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "Within how many minutes must an on-call page be acknowledged?",
+        "top_k": 5
+      }
+    },
+    "forbid": ["\\b(15|fifteen)\\s*min"]
+  },
+  {
+    "id": "abstain-doc-credit",
+    "kind": "abstain",
+    "person": "dave",
+    "question": "What service credit does Acme get when the hosting provider misses its uptime guarantee?",
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "What service credit does Acme get when the hosting provider misses its uptime guarantee?",
+        "top_k": 5
+      }
+    }
+  },
+  {
+    "id": "abstain-doc-phone",
+    "kind": "abstain",
+    "person": "dave",
+    "question": "What is the hosting provider's escalation phone number?",
+    "baseline": {
+      "op": "knowledge.search",
+      "args": {
+        "query": "What is the hosting provider's escalation phone number?",
+        "top_k": 5
+      }
+    }
+  }
+]

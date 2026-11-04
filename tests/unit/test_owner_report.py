@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from server.auth.context import OrgScopeFilter
 from server.auth.jwt import AuthInfo
 from server.memory.app import owner_report as R
 from server.operations.base import Role
@@ -16,16 +17,20 @@ from server.operations.base import Role
 
 def test_queries_are_owner_scoped_and_namespace_bounded() -> None:
     (rows, reads, usage), params = R.build_queries(
-        org="acme", user_id="u1", namespaces=["shop", "support"], since_hours=48, limit=20
+        org="acme",
+        user_id="u1",
+        scope=R.namespace_scope(["support", "shop"]),
+        since_hours=48,
+        limit=20,
     )
     for sql, _ in (rows, reads, usage):
         assert "user_id = {uid:String}" in sql and "status = 'active'" in sql
         assert "tombstoned_at IS NULL" in sql and "loom.memory FINAL" in sql
         assert "namespace IN {nss:Array(String)}" in sql
-    assert (
-        "ARRAY JOIN e.returned_keys AS k" in reads[0]
-        and "e.namespace IN {nss:Array(String)}" in reads[0]
-    )
+    # The ledger's filter and the memory subquery's: `namespace` there is
+    # `e.namespace`, by the SELECT alias.
+    assert "ARRAY JOIN e.returned_keys AS k" in reads[0]
+    assert reads[0].count("namespace IN {nss:Array(String)}") == 2
     assert "loom.memory_usage_totals" in usage[0]
     assert params == {
         "org": "acme",
@@ -36,15 +41,32 @@ def test_queries_are_owner_scoped_and_namespace_bounded() -> None:
     }
 
 
-def test_wildcard_token_reads_every_namespace() -> None:
-    (rows, _, _), params = R.build_queries(
-        org="acme", user_id="u1", namespaces=["*"], since_hours=1, limit=1
-    )
-    assert "nss" not in params and "namespace IN" not in rows[0]
-    (rows, _, _), _ = R.build_queries(
-        org="acme", user_id="u1", namespaces=None, since_hours=1, limit=1
-    )
-    assert "namespace IN" not in rows[0]
+@pytest.mark.asyncio
+async def test_an_inaccessible_scope_runs_no_statement() -> None:
+    """Its empty predicate would read every namespace, so it reads none."""
+    ch = _CH()
+    for scope in (R.namespace_scope([]), OrgScopeFilter(accessible=False, where="", params={})):
+        rep = await R.owner_report(org="acme", user_id="u1", scope=scope, ch=ch)
+        assert rep == {"rows": [], "reads": [], "usage": []}
+    assert ch.calls == []
+
+
+@pytest.mark.asyncio
+async def test_with_auth_off_the_report_reads_every_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api import models_exposure as OPS
+    from server.memory.app import exposure as H
+
+    ch = _CH()
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr("server.auth.context.current_auth", lambda: None)
+    await H.handle_memory_owner_report(OPS.MemoryOwnerReportInput(org="acme", user_id="u1"))
+    assert len(ch.calls) == 3
+    for sql, params in ch.calls:
+        # no scope parameter bound, and no predicate that would bind one
+        assert set(params) == {"org", "uid", "hours", "lim"}
+        assert not any(p in sql for p in ("{nss:", "{ns_hidden:", "{col_prefix:"))
 
 
 class _CH:
@@ -196,3 +218,99 @@ async def test_unpinned_token_must_name_the_user(monkeypatch: pytest.MonkeyPatch
     )
     with pytest.raises(IdentityIncompleteError):
         await H.handle_memory_owner_report(OPS.MemoryOwnerReportInput(org="acme"))
+
+
+@pytest.fixture
+def restricted_ns_r(monkeypatch: pytest.MonkeyPatch) -> _CH:
+    """`ns-r` is restricted and the `*` VIEWER token holds no grant and reads
+    no collection; the statements land in the returned fake client."""
+    import server.code.domain.index.repos as repos
+    import server.identity.app.namespace_classification as nc
+
+    async def _restricted_set(org: str) -> frozenset[str]:
+        return frozenset({"ns-r"})
+
+    async def _no_grant(org: str, ns: str, subject: str) -> Role | None:
+        return None
+
+    async def _no_collections(auth: AuthInfo, org: str) -> list[str]:
+        return []
+
+    monkeypatch.setattr(nc, "restricted_set", _restricted_set)
+    monkeypatch.setattr(repos, "repo_for_namespace", lambda org, ns: None)
+    monkeypatch.setattr(repos, "configured_repos", list)
+    monkeypatch.setattr("server.auth.authz._lookup_grant", _no_grant)
+    monkeypatch.setattr("server.auth.authz.grant_role_for", _no_grant)
+    monkeypatch.setattr("server.auth.sharing.readable", _no_collections)
+    monkeypatch.setattr("server.settings.settings.restricted_serve", True)
+    ch = _CH()
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    auth = _token(("*",))
+    monkeypatch.setattr("server.auth.context.current_auth", lambda: auth)
+    return ch
+
+
+@pytest.mark.asyncio
+async def test_a_wildcard_token_leaves_out_the_restricted_namespaces_it_cannot_read(
+    restricted_ns_r: _CH,
+) -> None:
+    """`*` never counts toward a restricted namespace (`authz.names_namespace`),
+    so the report for a wildcard token excludes one it holds no grant on."""
+    from server.memory.api import models_exposure as OPS
+    from server.memory.app import exposure as H
+
+    ch = restricted_ns_r
+    await H.handle_memory_owner_report(OPS.MemoryOwnerReportInput(org="acme"))
+    assert len(ch.calls) == 3
+    for sql, params in ch.calls:
+        assert "namespace NOT IN {ns_hidden:Array(String)}" in sql
+        assert params["ns_hidden"] == ["ns-r"]
+        # and the collections it cannot read (none here)
+        assert "NOT startsWith(namespace, {col_prefix:String})" in sql
+        assert params["col_readable"] == []
+    reads_sql = next(sql for sql, _ in ch.calls if "ARRAY JOIN" in sql)
+    assert reads_sql.count("namespace NOT IN {ns_hidden:Array(String)}") == 2
+
+
+@pytest.mark.asyncio
+async def test_a_wildcard_token_gets_nothing_when_classification_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch, restricted_ns_r: _CH
+) -> None:
+    """Which namespaces are restricted cannot be told: the report is empty,
+    runs no statement, and the request is marked the server's."""
+    import server.identity.app.namespace_classification as nc
+    from server.auth import fail_closed
+    from server.auth.directory import ClassificationUnavailable
+    from server.core import request_work
+    from server.memory.api import models_exposure as OPS
+    from server.memory.app import exposure as H
+
+    async def _down(org: str) -> frozenset[str]:
+        raise ClassificationUnavailable("down")
+
+    monkeypatch.setattr(nc, "restricted_set", _down)
+    request_work.begin()
+    out = await H.handle_memory_owner_report(OPS.MemoryOwnerReportInput(org="acme"))
+    assert restricted_ns_r.calls == [] and out.live_rows == 0 and out.reads == []
+    assert fail_closed.answered_unverified()
+
+
+@pytest.mark.asyncio
+async def test_a_delegated_wildcard_token_takes_the_member_path(
+    monkeypatch: pytest.MonkeyPatch, grants: dict[str, list[str]]
+) -> None:
+    """A delegated token's `*` reaches only where its creator holds a live
+    grant (`authz._check_delegated`), so its report is bounded to the member
+    namespaces `resolve_my_namespaces` names (faked here), never every one."""
+    from dataclasses import replace
+
+    from server.memory.api import models_exposure as OPS
+    from server.memory.app import exposure as H
+
+    ch = _CH()
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    grants["acme"] = ["shop"]
+    auth = replace(_token(("*",)), creator="alice")
+    monkeypatch.setattr("server.auth.context.current_auth", lambda: auth)
+    await H.handle_memory_owner_report(OPS.MemoryOwnerReportInput(org="acme"))
+    assert len(ch.calls) == 3 and all(p["nss"] == ["shop"] for _, p in ch.calls)

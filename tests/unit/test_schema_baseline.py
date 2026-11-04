@@ -36,6 +36,9 @@ TRANSIENT_TABLES = {
     "delete_version_checks": "memory.delete_version's owed checks (identity and key only)",
     "memory_webhook_outbox": "memory webhook events to send (identity, key and id only)",
     "memory_projection_failures": "the repair queue; a resolved entry is done",
+    "knowledge_uploads": "a verified upload waiting for its ingestion; the document keeps the file",
+    "knowledge_ingestions": "the ingestion job queue and its status; the document holds the result",
+    "knowledge_ingest_cancels": "a cancel of an ingestion job, a row of its own beside the job",
 }
 
 # Objects that are gone and must not come back.
@@ -130,6 +133,9 @@ def test_the_journal_files() -> None:
         "077_machine_access_token_ttl.sql",
         "078_document_blob_location.sql",
         "079_chunk_context.sql",
+        "080_knowledge_sources.sql",
+        "081_erasure_request_actor.sql",
+        "082_knowledge_ingestion.sql",
     ]
 
 

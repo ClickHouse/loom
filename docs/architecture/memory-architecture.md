@@ -1137,16 +1137,20 @@ took the very row it checked), so a restore brings back the row it removed and a
 after it lifts over the copy as over this tombstone.
 
 Only when the key did not move on does the delete stand and retire the removed version's
-vectors and chunks: the chunks whose index and content hash its own value writes, so a
-newer value's chunks of the key stay. A newer value that repeats one of those chunks at
-the same index shares its row; the delete reads the key's newest value after the retire
-and puts the shared chunks back when search serves that value (live, and not `sensitivity:
-high`), reading the key again afterwards to retire them once more if a delete or a write
-landed in between. A `memory.delete` whose insert lands after that read can still answer
-`tombstoned` alongside it, as two racing `memory.delete` calls can. Between the tombstone
-and a write back, the key reads as deleted, and a `memory.delete` in that window answers
-`found=false`. A delete of a decision row, by either op, also tombstones the key's
-decision record unless the record's writer still has a live decision row under the key.
+vectors and chunks: every chunk row its value's passages can hold (`passage_identities`:
+each index and content hash of its text, whether or not the excerpt rule chunks it), so
+another value's chunks of the key stay. A key's chunk rows are shared by every user, agent
+and session holding the key, and a value that repeats one of those passages at the same
+index shares its row. After the retire, the delete reads the key's newest value under its
+own identity and every other row of the key in the namespace that search serves (live, not
+expired, inside its validity, of a served status, and not `sensitivity: high`). It puts
+back the shared chunks any of them cuts, then reads them again to retire those chunks once
+more if a delete or a write landed in between. A `memory.delete` whose insert lands after
+that read can still answer `tombstoned` alongside it, as two racing `memory.delete` calls
+can. Between the tombstone and a write back, the key reads as deleted, and a
+`memory.delete` in that window answers `found=false`. A delete of a decision row, by
+either op, also tombstones the key's decision record unless the record's writer still has
+a live decision row under the key.
 
 Before its tombstone the delete records the check it owes in `loom.delete_version_checks`,
 and marks it done once the check has run; if its insert fails, the call answers the same
@@ -1210,10 +1214,15 @@ are rebuilt by their workers (`memory/domain/rollback.py` plans the rollback,
 `erasure.request` (`erasure/app/handlers.py`) starts a saga (`erasure/app/saga.py`)
 over a `user_id`, `namespace` or `namespace_list`. Each step is idempotent and
 checkpointed as a new version of the `erasure_requests` row (`steps_completed`), so a
-restart resumes. `erasure_recovery` replays sagas stuck `in_progress`; after
-`max_attempts` it marks the request `failed` and emits `erasure.abandoned`. Configured
-external backends (Langfuse traces and ClickStack rows) are steps
-too and fail the saga closed.
+restart resumes. The row keeps the request's audit actor (`actor`: the token's
+principal, else the command's pipeline actor, else the body's `requester`, else `-`).
+The saga's `erasure.started`, `erasure.failed` and `erasure.completed` rows name it, on
+a resumed run too (a row an older build checkpointed holds no actor, and its resume
+names the resuming process); the body's `requester` goes in their subject.
+`erasure_recovery` replays sagas stuck `in_progress` and names itself on the
+`erasure.recovered` row; after `max_attempts` it marks the request `failed` and emits
+`erasure.abandoned`. Configured external backends (Langfuse traces and ClickStack rows)
+are steps too and fail the saga closed.
 
 The last step is a residue census over every table the read paths touch and, with a
 document bucket configured, the bucket objects left under the erased namespaces

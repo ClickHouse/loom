@@ -43,7 +43,7 @@ import { navigationHref, useStore } from "../lib/state";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
 import { DiffView } from "./DiffView";
-import { toast } from "./Toast";
+import { keepOpenOnToasts, toast } from "./Toast";
 import { IconButton } from "./IconButton";
 import { SkeletonText } from "./Skeleton";
 import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip } from "./ui";
@@ -194,6 +194,13 @@ export function MemoryInspector({
   });
   const inspect = useStore((s) => s.inspect);
   const openMemory = onInspectMemory ?? inspect;
+  // A rename's destination is this row moved: it opens under the writer identity this one
+  // was read as. A redirect's target may be another writer's (a deduplicated row's
+  // canonical), as may related rows, mentions and provenance links: those open as before.
+  const followMoved =
+    onInspectMemory ??
+    ((key: string) =>
+      inspect(key, { agent: identity.agent, userId: identity.user_id, sessionId: identity.session_id }));
   const searchByTag = useStore((s) => s.searchByTag);
   const openConversationThread = useStore((s) => s.openConversationThread);
   // A dialog over the drawer (Copy to…, the source conversation) owns the keys and the
@@ -250,11 +257,7 @@ export function MemoryInspector({
   // the drawer; an active edit or the Copy-to dialog keep the drawer open;
   // otherwise it closes.
   const onPointerDownOutside = (e: Event) => {
-    const target = e.target;
-    if (target instanceof Element && target.closest("[data-toast-viewport]")) {
-      e.preventDefault();
-      return;
-    }
+    if (keepOpenOnToasts(e)) return;
     if (expanded) {
       e.preventDefault();
       setExpanded(false);
@@ -587,7 +590,7 @@ export function MemoryInspector({
         toast(`Reload failed: ${humanizeError(e)}`, "error");
       }
     } else {
-      openMemory(r.to_key);
+      followMoved(r.to_key);
     }
   };
 
@@ -1212,7 +1215,8 @@ export function MemoryInspector({
 }
 
 function shownAs(identity: Identity, memoryKey: string): string {
-  return `${identity.org}/${identity.namespace}/${identity.agent}/${memoryKey}`;
+  const { org, namespace, agent, user_id = "-", session_id = "-" } = identity;
+  return `${org}/${namespace}/${agent}/${user_id}/${session_id}/${memoryKey}`;
 }
 
 /** Map the backend's status enum to a human label. */

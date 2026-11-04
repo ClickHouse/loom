@@ -148,7 +148,7 @@ Count tasks by status for one inbox or every inbox of a namespace.
 | `deadline` | `datetime \| None` | `None` | When the poster needs it done (naive = UTC); stored and shown, nothing enforces it. |
 | `origin` | `str` | `''` | Free text naming where the task came from; stored and returned, never interpreted. |
 | `parent_task_id` | `str \| None` | `None` | The task this one follows from (a task id); None for a top-level task. |
-| `idempotency_key` | `str` | `''` | A retry with the same key into the same inbox returns the first task with `created=false`; "" never deduplicates. |
+| `idempotency_key` | `str` | `''` | A retry by the same poster with the same key into the same inbox returns the first task with `created=false`; another poster's same key stores its own task; "" never deduplicates. |
 | `from_subject` | `str` | `''` | Dev mode only (no token): who is posting. |
 
 | Output field | Type | Meaning |
@@ -340,7 +340,7 @@ Owner side: cancel here, re-post into another inbox as a child task (the destina
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `task_id` | `str` | required | The unfinished task to move; it is cancelled in its current inbox. |
-| `to_inbox` | `str` | required | The destination; it must accept the task's disclosure, and its policy for the original poster decides `todo` or `triage`. |
+| `to_inbox` | `str` | required | The destination; the caller must be able to post to it (as for task.create), it must accept the task's disclosure, and its policy for the original poster decides `todo` or `triage`. |
 | `reason` | `str` | required | Why; stored on both the cancelled task and the replacement. |
 
 | Output field | Type | Meaning |

@@ -258,3 +258,56 @@ async def test_the_orientation_pack_appends_the_docs_and_caches_the_listing(monk
     # a caller the gate refuses reads no listing, cached or not
     monkeypatch.setattr("server.code.app.repo_scope.row_in_scope", _gate(set()))
     assert await cc._with_repo_docs(ORG, "code-kj", "# map", 2500) == "# map"
+
+
+@pytest.mark.asyncio
+async def test_the_repository_leg_never_reranks_and_a_reranked_answer_keeps_its_order(
+    monkeypatch,
+) -> None:
+    """The repository leg runs under a short timeout a reranker's model call would
+    outlast; a reranked base answer keeps its order, the repository's hits after it."""
+    seen: list[str] = []
+
+    async def handle_knowledge_search(inp: KnowledgeSearchInput) -> KnowledgeSearchOutput:
+        seen.append(f"{inp.namespace}:{inp.rerank}")
+        if inp.namespace == "code-kj":
+            hits = [_hit("doc://repo", 0.9), _hit("n://b", 0.8, "me")]
+            return KnowledgeSearchOutput(results=hits, embedding_model="fake")
+        # the reranker put the lower-scored hit first
+        hits = [_hit("n://b", 0.1, "me"), _hit("n://a", 0.5, "me")]
+        return KnowledgeSearchOutput(results=hits, embedding_model="fake", reranked_by="builtin:x")
+
+    monkeypatch.setattr(
+        "server.knowledge.app.knowledge_search.handle_knowledge_search", handle_knowledge_search
+    )
+    out = await rd.knowledge_with_repo_docs(BASE, repo_namespace="code-kj")
+    assert sorted(seen) == ["code-kj:none", "me:"]
+    assert [h.source_uri for h in out.results] == ["n://b", "n://a", "doc://repo"]
+    assert out.reranked_by == "builtin:x"
+
+
+@pytest.mark.asyncio
+async def test_a_reranked_page_admits_repository_hits_by_score_and_keeps_its_order(
+    monkeypatch,
+) -> None:
+    """Which repository hits join is the fused-score rule of the unreranked merge; a
+    reranked page keeps its own order for the rest and the admitted hits follow it."""
+
+    async def handle_knowledge_search(inp: KnowledgeSearchInput) -> KnowledgeSearchOutput:
+        if inp.namespace == "code-kj":
+            # one strong repository hit, two weak ones
+            hits = [_hit("doc://strong", 0.9), _hit("doc://weak1", 0.05), _hit("doc://weak2", 0.04)]
+            return KnowledgeSearchOutput(results=hits, embedding_model="fake")
+        # reranked: fused scores 0.2-0.5, in the reranker's order
+        hits = [
+            _hit(f"n://{c}", s, "me") for c, s in zip("xyzw", (0.2, 0.5, 0.3, 0.4), strict=True)
+        ]
+        return KnowledgeSearchOutput(results=hits, embedding_model="fake", reranked_by="builtin:x")
+
+    monkeypatch.setattr(
+        "server.knowledge.app.knowledge_search.handle_knowledge_search", handle_knowledge_search
+    )
+    page = BASE.model_copy(update={"top_k": 4})
+    out = await rd.knowledge_with_repo_docs(page, repo_namespace="code-kj")
+    # only the strong repository hit beats a base hit; the reranked head keeps its order
+    assert [h.source_uri for h in out.results] == ["n://x", "n://y", "n://z", "doc://strong"]

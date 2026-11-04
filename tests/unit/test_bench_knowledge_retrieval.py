@@ -147,15 +147,20 @@ def test_a_run_without_a_real_embedder_is_refused(model: str) -> None:
 def test_a_namespace_holding_other_documents_than_the_fixture_is_refused() -> None:
     docs = [{"source_uri": "a.md", "content": "x"}, {"source_uri": "b.md", "content": "y"}]
     tag = fixture_tag(docs)
-    pages = {None: {"rows": [{"source_uri": "a.md", "tags": [tag]}], "next_cursor": "c"}}
+    first = {"source_uri": "a.md", "tags": [tag], "chunk_count": 1}
+    pages = {None: {"rows": [first], "next_cursor": "c"}}
     pages["c"] = {"rows": []}
     with pytest.raises(SystemExit, match="missing 1, extra 0, from another version 0"):
         check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs)
-    pages["c"] = {"rows": [{"source_uri": "b.md", "tags": [tag]}]}
-    check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs)
+    pages["c"] = {"rows": [{"source_uri": "b.md", "tags": [tag], "chunk_count": 2}]}
+    assert check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs) == 3
     # the same documents from an edited corpus carry another tag
     pages["c"] = {"rows": [{"source_uri": "b.md", "tags": ["fixture:000000000000"]}]}
     with pytest.raises(SystemExit, match="from another version 1"):
+        check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs)
+    # a document an interrupted write left without chunks is not this corpus either
+    pages["c"] = {"rows": [{"source_uri": "b.md", "tags": [tag], "chunk_count": 0}]}
+    with pytest.raises(SystemExit, match="without chunks 1"):
         check_corpus(lambda path, body: pages[body["cursor"]], "o", "n", docs)
     assert fixture_tag([*docs[:1], {**docs[1], "content": "z"}]) != tag
 
@@ -322,3 +327,39 @@ def test_the_corpus_check_returns_the_chunk_count_the_run_measured() -> None:
     docs = [{"source_uri": "a.md", "content": "x"}]
     row = {"source_uri": "a.md", "tags": [fixture_tag(docs)], "chunk_count": 3}
     assert check_corpus(lambda path, body: {"rows": [row]}, "o", "n", docs) == 3
+
+
+@pytest.mark.parametrize(
+    ("rerank", "reranked", "fails"),
+    [
+        ("none", 0, False),
+        ("none", 3, True),
+        ("builtin:openai", 0, True),
+        ("builtin:openai", 1, False),
+    ],
+    ids=["baseline", "baseline-reranked", "rerank-never-ran", "rerank-ran"],
+)
+def test_an_arm_whose_reranker_did_not_run_as_it_says_fails(rerank, reranked, fails) -> None:
+    from bench.knowledge_retrieval import check_reranked
+
+    if fails:
+        with pytest.raises(SystemExit):
+            check_reranked(rerank, reranked)
+    else:
+        check_reranked(rerank, reranked)
+
+
+def test_an_arm_naming_no_reranker_pins_none() -> None:
+    queries = [
+        {"id": "a", "query": "x", "gold": [["a.md", "y"]], "kind": "context", "cluster": "c"}
+    ]
+    hit = {"source_uri": "a.md", "content": "y", "similarity": 0.5, "lexical_score": 1.0}
+    sent: list[dict] = []
+    report = search(
+        lambda path, body: sent.append(body) or {"results": [hit]}, "o", "n", queries, {}
+    )
+    assert sent[0]["rerank"] == "none" and report["params"] == {"rerank": "none"}
+    # a deployment default that reranks anyway fails the baseline
+    answer = {"results": [hit], "reranked_by": "builtin:openai"}
+    with pytest.raises(SystemExit, match="names none"):
+        search(lambda path, body: answer, "o", "n", queries, {})

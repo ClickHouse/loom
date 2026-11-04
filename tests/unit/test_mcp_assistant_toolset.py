@@ -178,6 +178,7 @@ def test_every_field_the_assistant_primer_names_is_served() -> None:
         "skipped": NamespaceAuditOutput,
         "content_sha256": FindingEvidence,
         "source_uri": _SearchHit,
+        "revision": _SearchHit,
     }
     primer = mcp_primer._assistant_primer({"namespace": "ns"})
     # The default namespace is named too; it is the caller's, not a field.

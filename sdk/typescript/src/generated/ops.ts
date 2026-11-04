@@ -1290,6 +1290,7 @@ export interface CodeRepoRemoveOutput {
   purged_tables: number;
   erasure_id?: string;
   mirror_removed?: boolean;
+  sources_deactivated?: string[];
 }
 
 export interface CodeRepoSetAccessInput {
@@ -1815,7 +1816,7 @@ export interface CollectionCreateInput {
   namespace: string;
   /** The collection it sits in and inherits grants from; '' for a top-level one. */
   parent?: string;
-  /** What the collection holds, shown beside its name; '' for none. */
+  /** What the collection holds, shown beside its name (at most 2000 characters); '' for none. */
   description?: string;
 }
 
@@ -1853,10 +1854,11 @@ export interface CollectionEntry {
   parent: string;
   personal: boolean;
   role: string;
+  description?: string;
 }
 
 export interface CollectionListOutput {
-  /** The collections the caller can read on this page, by name, with its role. */
+  /** The collections the caller can read on this page, by name, with the caller's role and the collection's description. */
   collections: CollectionEntry[];
   /** Pass as `cursor` for the next page; none on the last. */
   next_cursor?: string | null;
@@ -2573,6 +2575,7 @@ export interface DecisionRow {
   realized_outcome?: string;
   success?: boolean | null;
   made_at?: string;
+  stage?: "decided" | "proposed";
   similarity?: number;
 }
 
@@ -2634,6 +2637,7 @@ export interface DecisionRecordInput {
   outcome: string;
   alternatives?: string[];
   confidence?: number;
+  stage?: "decided" | "proposed";
   decision_maker?: string;
   caused_by?: string[];
   influenced_by?: string[];
@@ -3311,6 +3315,312 @@ export interface KnowledgeGetOutput {
   ingested_at?: string | null;
   superseded?: boolean | null;
   doc_id?: string | null;
+  revision?: number | null;
+  format?: string | null;
+  parser?: string | null;
+  coverage?: Record<string, unknown> | null;
+}
+
+export interface KnowledgeIngestOptions {
+  format?: string;
+  encoding?: string;
+  sql_dialect?: string;
+}
+
+export interface KnowledgeIngestInput {
+  org: string;
+  namespace: string;
+  upload_id: string;
+  source_uri: string;
+  title?: string;
+  description?: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  expected_revision?: number | null;
+  allow_partial?: boolean;
+  options?: KnowledgeIngestOptions;
+  agent?: string;
+  session_id?: string;
+  source_class?: string | null;
+}
+
+export interface KnowledgeIngestOutput {
+  ingestion_id: string;
+  state: string;
+  source_uri: string;
+  namespace?: string;
+}
+
+export interface KnowledgeIngestCancelInput {
+  org: string;
+  namespace: string;
+  ingestion_id: string;
+}
+
+export interface KnowledgeIngestCancelOutput {
+  found: boolean;
+  state?: string;
+  cancelled?: boolean;
+}
+
+export interface KnowledgeIngestStatusInput {
+  org: string;
+  namespace: string;
+  ingestion_id: string;
+}
+
+export interface KnowledgeIngestStatusOutput {
+  found: boolean;
+  ingestion_id: string;
+  source_uri?: string;
+  state?: string;
+  stage?: string;
+  attempts?: number;
+  error_code?: string;
+  error_message?: string;
+  format?: string;
+  coverage?: Record<string, unknown> | null;
+  warnings?: string[];
+  chunks?: number;
+  revision?: number;
+  expected_revision?: number | null;
+  filename?: string;
+  retrieval?: string;
+  cancel_requested?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface KnowledgeInspectInput {
+  org: string;
+  namespace: string;
+  sample_limit?: number;
+}
+
+export interface DocumentTotals {
+  live?: number | null;
+  deleted?: number | null;
+  newest_ingested_at?: string | null;
+  by_format?: DocumentCount[];
+  by_source_scheme?: DocumentCount[];
+  earlier_revisions?: number | null;
+  unnumbered?: number | null;
+  retired_versions?: number | null;
+}
+
+export interface DocumentCount {
+  name: string;
+  live: number;
+  deleted: number;
+}
+
+export interface ChunkTotals {
+  embedder_model?: string;
+  live?: number | null;
+  searchable?: number | null;
+  unembedded?: number | null;
+  by_model?: ChunkModelCount[];
+}
+
+export interface ChunkModelCount {
+  model: string;
+  live: number;
+  embedded: number;
+}
+
+export interface DecisionTotals {
+  definition: string;
+  all_documents?: DocumentDecisions | null;
+}
+
+export interface DocumentDecisions {
+  decided: DecisionStage;
+  proposed: DecisionStage;
+}
+
+export interface DecisionStage {
+  total: number;
+  confirmed: number;
+  unconfirmed: number;
+  source_changed: number;
+  outcome_known: number;
+}
+
+export interface InspectDocument {
+  source_uri: string;
+  title: string;
+  format: string;
+  source_scheme: string;
+  version: number;
+  revision: number;
+  ingestion_id?: string;
+  ingested_at: string; // date-time
+  retired_versions?: number | null;
+  chunks?: DocumentChunks | null;
+  decisions?: DocumentDecisions | null;
+  extraction?: ExtractionCoverage | null;
+  jobs?: SourceJobs | null;
+}
+
+export interface DocumentChunks {
+  live: number;
+  searchable: number;
+  unembedded: number;
+  other_model: number;
+  versions: number;
+  min_chars: number;
+  median_chars: number;
+  max_chars: number;
+  models?: string[];
+}
+
+export interface ExtractionCoverage {
+  unit: string;
+  total: number;
+  extracted: number;
+  failed: number;
+  lost?: string[];
+  complete: boolean;
+}
+
+export interface SourceJobs {
+  source_uri: string;
+  jobs: number;
+  open_jobs: number;
+  open_ingestion_id?: string;
+  latest: IngestJob;
+  current: IngestJob;
+  replaced?: boolean;
+}
+
+export interface IngestJob {
+  ingestion_id: string;
+  state: string;
+  stage: string;
+  attempts: number;
+  error_code: string;
+  failure_class: "" | "extractor_unavailable" | "missing_access" | "bad_content" | "retrying" | "retries_exhausted" | "revision_conflict" | "cancelled" | "internal";
+  queued_at: string; // date-time
+  updated_at: string; // date-time
+  ended_at?: string | null;
+  next_attempt_at?: string | null;
+  stalled?: boolean;
+}
+
+export interface DocumentFinding {
+  kind: "contract_violation" | "usage_heuristic" | "system_state";
+  rule_version: number;
+  source_op: string;
+  window_seconds?: number | null;
+  population?: number | null;
+  sample_limit: number;
+  samples_complete: boolean;
+  evidence?: FindingEvidence[];
+  exceptions?: string;
+  uncertainty?: string;
+  code: string;
+  severity: "info" | "warning";
+  count: number;
+  share: number;
+  samples?: string[];
+  ingested?: number;
+  ingested_samples?: string[];
+  detail: string;
+  remedy: string;
+}
+
+export interface FindingEvidence {
+  memory_key: string;
+  memory_id: string;
+  version: number;
+  content_sha256: string;
+  agent: string;
+  user_id: string;
+  session_id: string;
+  memory_type: string;
+  source_class: string;
+  updated_at: string; // date-time
+}
+
+export interface ReportCoverage {
+  rules_run?: string[];
+  rules_skipped?: string[];
+  complete: boolean;
+}
+
+export interface IngestionTotals {
+  sources?: number | null;
+  without_document?: number | null;
+  replaced?: number | null;
+  pending?: number | null;
+  processing?: number | null;
+  stalled?: number | null;
+  ready?: number | null;
+  partial?: number | null;
+  failed?: number | null;
+  cancelled?: number | null;
+  oldest_open_queued_at?: string | null;
+  worker_enabled: boolean;
+  extractor_configured?: boolean | null;
+  without_document_listed?: SourceJobs[];
+}
+
+export interface ExtractionTotals {
+  documents?: number | null;
+  incomplete?: number | null;
+  lost?: DocumentCount[];
+}
+
+export interface IngestFinding {
+  kind: "contract_violation" | "usage_heuristic" | "system_state";
+  rule_version: number;
+  source_op: string;
+  window_seconds?: number | null;
+  population?: number | null;
+  sample_limit: number;
+  samples_complete: boolean;
+  evidence?: FindingEvidence[];
+  exceptions?: string;
+  uncertainty?: string;
+  code: string;
+  severity: "info" | "warning";
+  count: number;
+  share: number;
+  samples?: string[];
+  ingestion_ids?: string[];
+  without_document?: number;
+  detail: string;
+  remedy: string;
+}
+
+export interface MemoryFindingRef {
+  code: string;
+  kind: string;
+  severity: string;
+  rule_version: number;
+  source_op: string;
+  count: number;
+  share: number;
+  detail: string;
+  remedy: string;
+}
+
+export interface KnowledgeInspectOutput {
+  org: string;
+  namespace: string;
+  computed_at: string; // date-time
+  documents: DocumentTotals;
+  chunks: ChunkTotals;
+  decisions: DecisionTotals;
+  listed?: InspectDocument[];
+  listed_complete?: boolean;
+  findings?: DocumentFinding[];
+  coverage: ReportCoverage;
+  ingestions: IngestionTotals;
+  extraction: ExtractionTotals;
+  ingest_findings?: IngestFinding[];
+  memory_findings?: MemoryFindingRef[];
+  skipped?: string[];
 }
 
 export interface KnowledgeListInput {
@@ -3400,6 +3710,9 @@ export interface KnowledgeSearchInput {
   uri_prefix?: string[];
   session_ids?: string[];
   source_classes?: string[];
+  formats?: string[];
+  block_types?: string[];
+  rerank?: string;
 }
 
 export interface SearchHit {
@@ -3424,12 +3737,186 @@ export interface SearchHit {
   agent?: string;
   session_id?: string;
   source_class?: string;
+  revision?: number;
+  format?: string;
+  block_type?: string;
+  locator?: Record<string, unknown> | null;
+  keys_matched?: string[];
 }
 
 export interface KnowledgeSearchOutput {
   results: SearchHit[];
+  reranked_by?: string;
   embedding_model: string;
   namespaces_skipped?: string[];
+}
+
+export interface KnowledgeSourceAddInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+  /** Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. */
+  name: string;
+  /** The source kind: `gdrive` (a shared folder), `linear` (a project tracker's project documents) or `recording` (a meeting store's transcripts). */
+  kind: string;
+  /** The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: {project_ids: */
+  config: Record<string, unknown>;
+  /** The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an acc */
+  credential: string;
+  /** Probe and write nothing. */
+  dry_run?: boolean;
+}
+
+export interface KnowledgeSourceProbe {
+  documents?: number;
+  more?: boolean;
+  sample?: string[];
+}
+
+export interface KnowledgeSourceAddOutput {
+  name: string;
+  kind: string;
+  namespace: string;
+  config?: Record<string, unknown>;
+  probe?: KnowledgeSourceProbe;
+  dry_run?: boolean;
+}
+
+export interface KnowledgeSourceCheckInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+  /** The source name. */
+  name: string;
+}
+
+export interface KnowledgeSourceCheckOutput {
+  name: string;
+  reachable?: boolean;
+  documents?: number;
+  more?: boolean;
+  sample?: string[];
+  summary?: string;
+  checked_at?: string;
+}
+
+export interface KnowledgeSourceInspectInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+  /** The source name. */
+  name: string;
+}
+
+export interface KnowledgeSourceSync {
+  requested_at?: string;
+  last_synced_at?: string;
+  status?: string;
+  documents_seen?: number;
+  changed?: number;
+  removed?: number;
+  unconverted?: number;
+  unconverted_reasons?: Record<string, number>;
+  skipped?: number;
+  error?: string;
+  pending_extract?: number;
+  last_extracted_at?: string;
+  extracted?: number;
+  flagged_pinned?: number;
+  unextracted?: number;
+  extract_error?: string;
+}
+
+export interface KnowledgeSourceDocument {
+  source_uri: string;
+  title?: string;
+  source_revision?: string;
+  ingested_at?: string;
+}
+
+export interface KnowledgeSourceInspectOutput {
+  name: string;
+  kind: string;
+  config?: Record<string, unknown>;
+  created_by?: string;
+  created_at?: string;
+  sync?: KnowledgeSourceSync;
+  documents?: KnowledgeSourceDocument[];
+}
+
+export interface KnowledgeSourceListInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+}
+
+export interface KnowledgeSourceEntry {
+  name: string;
+  kind: string;
+  config?: Record<string, unknown>;
+  created_by?: string;
+  created_at?: string;
+  sync?: KnowledgeSourceSync;
+}
+
+export interface KnowledgeSourceListOutput {
+  sources?: KnowledgeSourceEntry[];
+  enabled?: boolean;
+}
+
+export interface KnowledgeSourceRemoveInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+  /** The source name. */
+  name: string;
+  /** Type the source name to confirm. */
+  confirm: string;
+  /** Record a request to retire the source's documents (default keep them). */
+  delete_documents?: boolean;
+}
+
+export interface KnowledgeSourceRemoveOutput {
+  name: string;
+  documents_pending?: number;
+}
+
+export interface KnowledgeSourceRotateInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+  /** The source name. */
+  name: string;
+  /** The replacement credential, of the same form as add's; stored encrypted, never returned. */
+  credential: string;
+}
+
+export interface KnowledgeSourceRotateOutput {
+  name: string;
+  probe?: KnowledgeSourceProbe;
+  rotated_at?: string;
+}
+
+export interface KnowledgeSourceSyncNowInput {
+  /** The org. */
+  org: string;
+  /** The repository's trunk code namespace. */
+  namespace: string;
+  /** The source name. */
+  name: string;
+  /** Ask for a pass that lists every document, not only those changed since the last pass. */
+  full?: boolean;
+}
+
+export interface KnowledgeSourceSyncNowOutput {
+  name: string;
+  enabled?: boolean;
 }
 
 export interface KnowledgeSynthesizeInput {
@@ -3442,6 +3929,13 @@ export interface KnowledgeSynthesizeInput {
   max_windows?: number;
 }
 
+export interface CitedChunk {
+  source_uri: string;
+  chunk_idx: number;
+  revision?: number;
+  locator?: Record<string, unknown> | null;
+}
+
 export interface KnowledgeSynthesizeOutput {
   answer: string;
   windows: number;
@@ -3449,6 +3943,8 @@ export interface KnowledgeSynthesizeOutput {
   documents: number;
   reduce_rounds: number;
   citations?: string[];
+  cited_chunks?: CitedChunk[];
+  unsupported_citations?: string[];
   truncated?: boolean;
   abstain?: boolean;
   abstain_reason?: string;
@@ -6523,25 +7019,6 @@ export interface NamespaceAuditFinding {
   remedy: string;
 }
 
-export interface FindingEvidence {
-  memory_key: string;
-  memory_id: string;
-  version: number;
-  content_sha256: string;
-  agent: string;
-  user_id: string;
-  session_id: string;
-  memory_type: string;
-  source_class: string;
-  updated_at: string; // date-time
-}
-
-export interface ReportCoverage {
-  rules_run?: string[];
-  rules_skipped?: string[];
-  complete: boolean;
-}
-
 export interface NamespaceAuditOutput {
   org: string;
   namespace: string;
@@ -7206,7 +7683,7 @@ export interface NamespaceTuneInput {
 
 export interface TuneProposal {
   id: string;
-  target: "extraction_instructions.request" | "namespace.category" | "namespace.guide";
+  target: "extraction_instructions.request" | "namespace.category" | "namespace.guide" | "settings.knowledge_chunking" | "settings.document_extractors_json";
   scope: string;
   title: string;
   rationale: string;
@@ -7219,6 +7696,8 @@ export interface TuneProposal {
   effect?: "future";
   historical: string;
   apply: TuneApply;
+  apply_also?: TuneApply[];
+  preview?: ChunkingPreview | null;
   limits?: string;
 }
 
@@ -7227,14 +7706,46 @@ export interface TuneEvidence {
   supporting_count?: number;
   supporting?: FindingEvidence[];
   counter_count?: number | null;
+  documents?: string[];
 }
 
 export interface TuneApply {
   op: string;
+  via?: "op" | "admin_route" | "environment";
   args: Record<string, unknown>;
   args_complete?: boolean;
   required_role: string;
   guard: string;
+}
+
+export interface ChunkingPreview {
+  before: ChunkStats;
+  after: ChunkStats;
+}
+
+export interface ChunkStats {
+  size: number;
+  stride: number;
+  chunks: number;
+  min_chars: number;
+  median_chars: number;
+  p90_chars: number;
+  max_chars: number;
+  sections: number;
+  sections_cut: number;
+  max_input_tokens: number;
+  over_input_limit?: number | null;
+}
+
+export interface ChunkingSample {
+  cap: number;
+  population?: number | null;
+  documents: number;
+  unread: number;
+  load_cap: number;
+  embedder_model: string;
+  input_token_limit?: number | null;
+  current: ChunkStats;
 }
 
 export interface NamespaceTuneOutput {
@@ -7246,6 +7757,7 @@ export interface NamespaceTuneOutput {
   categories_registered?: number | null;
   extraction_policy?: string | null;
   extraction_policy_unavailable?: string;
+  chunking?: ChunkingSample | null;
   skipped?: string[];
   model_used?: boolean;
 }
@@ -9344,10 +9856,21 @@ export type OpName =
   | "knowledge.dedup_resolve"
   | "knowledge.delete"
   | "knowledge.get"
+  | "knowledge.ingest"
+  | "knowledge.ingest_cancel"
+  | "knowledge.ingest_status"
+  | "knowledge.inspect"
   | "knowledge.list"
   | "knowledge.outline"
   | "knowledge.reads"
   | "knowledge.search"
+  | "knowledge.source.add"
+  | "knowledge.source.check"
+  | "knowledge.source.inspect"
+  | "knowledge.source.list"
+  | "knowledge.source.remove"
+  | "knowledge.source.rotate"
+  | "knowledge.source.sync_now"
   | "knowledge.synthesize"
   | "knowledge.update_metadata"
   | "knowledge.upsert"
@@ -9687,10 +10210,21 @@ export interface OpMap {
   "knowledge.dedup_resolve": { input: KnowledgeDedupResolveInput; output: KnowledgeDedupResolveOutput };
   "knowledge.delete": { input: KnowledgeDeleteInput; output: KnowledgeDeleteOutput };
   "knowledge.get": { input: KnowledgeGetInput; output: KnowledgeGetOutput };
+  "knowledge.ingest": { input: KnowledgeIngestInput; output: KnowledgeIngestOutput };
+  "knowledge.ingest_cancel": { input: KnowledgeIngestCancelInput; output: KnowledgeIngestCancelOutput };
+  "knowledge.ingest_status": { input: KnowledgeIngestStatusInput; output: KnowledgeIngestStatusOutput };
+  "knowledge.inspect": { input: KnowledgeInspectInput; output: KnowledgeInspectOutput };
   "knowledge.list": { input: KnowledgeListInput; output: KnowledgeListOutput };
   "knowledge.outline": { input: KnowledgeOutlineInput; output: KnowledgeOutlineOutput };
   "knowledge.reads": { input: KnowledgeReadsInput; output: KnowledgeReadsOutput };
   "knowledge.search": { input: KnowledgeSearchInput; output: KnowledgeSearchOutput };
+  "knowledge.source.add": { input: KnowledgeSourceAddInput; output: KnowledgeSourceAddOutput };
+  "knowledge.source.check": { input: KnowledgeSourceCheckInput; output: KnowledgeSourceCheckOutput };
+  "knowledge.source.inspect": { input: KnowledgeSourceInspectInput; output: KnowledgeSourceInspectOutput };
+  "knowledge.source.list": { input: KnowledgeSourceListInput; output: KnowledgeSourceListOutput };
+  "knowledge.source.remove": { input: KnowledgeSourceRemoveInput; output: KnowledgeSourceRemoveOutput };
+  "knowledge.source.rotate": { input: KnowledgeSourceRotateInput; output: KnowledgeSourceRotateOutput };
+  "knowledge.source.sync_now": { input: KnowledgeSourceSyncNowInput; output: KnowledgeSourceSyncNowOutput };
   "knowledge.synthesize": { input: KnowledgeSynthesizeInput; output: KnowledgeSynthesizeOutput };
   "knowledge.update_metadata": { input: KnowledgeUpdateMetadataInput; output: KnowledgeUpdateMetadataOutput };
   "knowledge.upsert": { input: KnowledgeUpsertInput; output: KnowledgeUpsertOutput };
@@ -10030,10 +10564,21 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.dedup_resolve", group: "knowledge", method: "dedupResolve", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.delete", group: "knowledge", method: "delete", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "knowledge.get", group: "knowledge", method: "get", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 30, audit: false, readOnly: true },
+  { name: "knowledge.ingest", group: "knowledge", method: "ingest", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: false },
+  { name: "knowledge.ingest_cancel", group: "knowledge", method: "ingestCancel", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: false },
+  { name: "knowledge.ingest_status", group: "knowledge", method: "ingestStatus", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: true },
+  { name: "knowledge.inspect", group: "knowledge", method: "inspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 4000, audit: false, readOnly: true },
   { name: "knowledge.list", group: "knowledge", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "knowledge.outline", group: "knowledge", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "knowledge.reads", group: "knowledge", method: "reads", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "knowledge.search", group: "knowledge", method: "search", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 250, audit: false, readOnly: true },
+  { name: "knowledge.source.add", group: "knowledge", method: "sourceAdd", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "knowledge.source.check", group: "knowledge", method: "sourceCheck", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
+  { name: "knowledge.source.inspect", group: "knowledge", method: "sourceInspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
+  { name: "knowledge.source.list", group: "knowledge", method: "sourceList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
+  { name: "knowledge.source.remove", group: "knowledge", method: "sourceRemove", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
+  { name: "knowledge.source.rotate", group: "knowledge", method: "sourceRotate", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "knowledge.source.sync_now", group: "knowledge", method: "sourceSyncNow", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 300, audit: true, readOnly: false },
   { name: "knowledge.synthesize", group: "knowledge", method: "synthesize", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
   { name: "knowledge.update_metadata", group: "knowledge", method: "updateMetadata", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: true, readOnly: false },
   { name: "knowledge.upsert", group: "knowledge", method: "upsert", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: false },
@@ -10115,8 +10660,8 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.touch", group: "memory", method: "touch", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: false },
   { name: "memory.unlock", group: "memory", method: "unlock", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 40, audit: true, readOnly: false },
   { name: "memory.unpin", group: "memory", method: "unpin", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 40, audit: true, readOnly: false },
-  { name: "memory.update", group: "memory", method: "update", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 120, audit: true, readOnly: false },
-  { name: "memory.update_by_id", group: "memory", method: "updateById", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: false },
+  { name: "memory.update", group: "memory", method: "update", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 170, audit: false, readOnly: false },
+  { name: "memory.update_by_id", group: "memory", method: "updateById", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 130, audit: false, readOnly: false },
   { name: "memory.verify", group: "memory", method: "verify", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "memory_schema.approve", group: "memory_schema", method: "approve", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 120, audit: true, readOnly: false },
   { name: "memory_schema.list", group: "memory_schema", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false, readOnly: true },
@@ -10149,7 +10694,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "namespace.snapshot", group: "namespace", method: "snapshot", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
   { name: "namespace.summary", group: "namespace", method: "summary", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 300, audit: false, readOnly: true },
   { name: "namespace.taxonomy", group: "namespace", method: "taxonomy", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
-  { name: "namespace.tune", group: "namespace", method: "tune", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 5000, audit: false, readOnly: true },
+  { name: "namespace.tune", group: "namespace", method: "tune", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 8000, audit: false, readOnly: true },
   { name: "namespace.validate", group: "namespace", method: "validate", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "observe.crystallize", group: "observe", method: "crystallize", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 2000, audit: false, readOnly: false },
   { name: "observe.record", group: "observe", method: "record", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: false },
@@ -10249,4 +10794,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 340;
+export const GENERATED_OP_COUNT = 351;

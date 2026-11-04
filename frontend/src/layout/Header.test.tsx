@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "../test/rtl";
+import { act, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry } from "../api";
@@ -105,6 +105,27 @@ it("mounts no dialog while closed, and one when New → Document is chosen", asy
   await userEvent.click(screen.getByRole("button", { name: "New" }));
   await userEvent.click(await screen.findByRole("menuitem", { name: /Document/ }));
   expect(await screen.findByRole("dialog")).toBeInTheDocument();
+});
+
+// The header's Add adds to the header's namespace: a Library that moves to a collection
+// (Back) closes it, and offers no Document while it shows one.
+it("closes its Add document when the Library moves to a collection, and offers none there", async () => {
+  listMine.mockResolvedValue(jwtOnly);
+  useStore.setState({
+    libraryElsewhere: false,
+    whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] },
+  });
+  render(<Header />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toBeEnabled());
+  await userEvent.click(screen.getByRole("button", { name: "New" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: /Document/ }));
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  act(() => useStore.setState({ libraryElsewhere: true }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await userEvent.click(screen.getByRole("button", { name: "New" }));
+  expect(await screen.findByRole("menuitem", { name: /Memory/ })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: /Document/ })).toBeNull();
+  useStore.setState({ libraryElsewhere: false });
 });
 
 // The New menu is a real menu: arrow keys move between items, Escape closes it and puts

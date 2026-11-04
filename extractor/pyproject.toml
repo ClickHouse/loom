@@ -8,7 +8,9 @@ authors = [{ name = "ClickHouse, Inc." }]
 urls = { Repository = "https://github.com/ClickHouse/loom" }
 classifiers = ["Private :: Do Not Upload"]
 dependencies = [
-  "sqlglot>=30.27,<31", # imports sqlglot.tokenizer_core, which a major may move
+  "cryptography>=50,<51", # pypdf's AES: a PDF encrypted with an owner password alone opens
+  "pypdf>=6.21,<7",
+  "sqlglot>=30.27,<31",   # imports sqlglot.tokenizer_core, which a major may move
   "starlette>=1.7",
   "uvicorn>=0.54",
 ]

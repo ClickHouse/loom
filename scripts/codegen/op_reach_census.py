@@ -66,12 +66,14 @@ def _files(root: Path, rel: str, suffixes: tuple[str, ...]) -> list[Path]:
     if not base.exists():
         return []
     # Excluded directories are matched below `base` only: a checkout that
-    # itself sits under a `tests` directory still scans every file.
+    # itself sits under a `tests` directory still scans every file. A test kept
+    # beside its source (the dashboard's `*.test.tsx`) is skipped by its name.
     return sorted(
         p
         for p in base.rglob("*")
         if p.is_file()
         and p.suffix in suffixes
+        and ".test." not in p.name
         and not {"tests", "__pycache__"} & set(p.relative_to(base).parts)
     )
 

@@ -52,10 +52,9 @@ def test_prompts_carry_task_tags_and_citations() -> None:
     rp = cs.reduce_prompt("Who left?", ["The butler left [doc://a#3]"], final=True)
     assert rp.endswith("Answer the task from these notes:") and "NOTES 1:" in rp
     assert "Merge these notes" in cs.reduce_prompt("t", ["a", "b"], final=False)
-    assert cs.citations("x [doc://a#3] y [doc://a#3] z [doc://b#0-4] [bad tag]") == [
-        "doc://a#3",
-        "doc://b#0-4",
-    ]
+    read = {("doc://a", 3), ("doc://b", 0), ("doc://b", 4)}
+    text = "x [doc://a#3] y [doc://a#3] z [doc://b#0-4] [bad tag]"
+    assert cs.ground_citations(text, read)[1] == ["doc://a#3", "doc://b#0-4"]
 
 
 class _LLM:
@@ -73,21 +72,30 @@ class _LLM:
         return SimpleNamespace(text="merged notes [doc://a#0-1]")
 
 
-@pytest.mark.asyncio
-async def test_handler_maps_every_window_then_reduces(monkeypatch: pytest.MonkeyPatch) -> None:
-    import server.knowledge.app.synthesize as kh
-    import server.llm.client as llm_client
-    from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
+def _patch_reads(monkeypatch: pytest.MonkeyPatch, rows_for: Any) -> None:
+    """knowledge.synthesize under no cost cap, reading `rows_for(uri)` for each document."""
     from server.knowledge.store import chunks as knowledge_repo
 
     async def _over_cap(org: str, ns: str) -> bool:
         return False
+
+    async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):
+        return rows_for(uri)
 
     monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
     monkeypatch.setattr(
         "server.knowledge.app.document_reads.get_embedder",
         lambda: SimpleNamespace(model_name="fake"),
     )
+    monkeypatch.setattr(knowledge_repo, "list_for_doc", _list)
+
+
+@pytest.mark.asyncio
+async def test_handler_maps_every_window_then_reduces(monkeypatch: pytest.MonkeyPatch) -> None:
+    import server.knowledge.app.synthesize as kh
+    import server.llm.client as llm_client
+    from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
+
     rows = [
         SimpleNamespace(
             chunk_idx=0, content="a" * 500, chunk_metadata=json.dumps({"section_path": ["s1"]})
@@ -100,10 +108,7 @@ async def test_handler_maps_every_window_then_reduces(monkeypatch: pytest.Monkey
         ),
     ]
 
-    async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):
-        return rows if uri == "doc://a" else []
-
-    monkeypatch.setattr(knowledge_repo, "list_for_doc", _list)
+    _patch_reads(monkeypatch, lambda uri: rows if uri == "doc://a" else [])
     llm = _LLM()
     monkeypatch.setattr(llm_client, "get_llm_client", lambda: llm)
     out = await kh.handle_knowledge_synthesize(
@@ -139,22 +144,9 @@ async def test_handler_folds_hierarchically_and_honours_max_windows(
     import server.knowledge.app.synthesize as kh
     import server.llm.client as llm_client
     from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
-    from server.knowledge.store import chunks as knowledge_repo
 
-    async def _over_cap(org: str, ns: str) -> bool:
-        return False
-
-    monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
-    monkeypatch.setattr(
-        "server.knowledge.app.document_reads.get_embedder",
-        lambda: SimpleNamespace(model_name="fake"),
-    )
     rows = [SimpleNamespace(chunk_idx=i, content="x" * 1900, chunk_metadata="{}") for i in range(6)]
-
-    async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):
-        return rows
-
-    monkeypatch.setattr(knowledge_repo, "list_for_doc", _list)
+    _patch_reads(monkeypatch, lambda uri: rows)
 
     class _Long(_LLM):
         async def complete(self, system: str, user: str, max_tokens: int = 1024, **kw: Any):
@@ -200,3 +192,175 @@ def test_registered() -> None:
     from server.operations.registry import OPERATIONS_BY_NAME
 
     assert OPERATIONS_BY_NAME["knowledge.synthesize"].idempotent
+
+
+def test_a_citation_counts_only_when_it_names_chunks_that_were_read() -> None:
+    read = {("doc://a", 0), ("doc://a", 1), ("doc://a", 2), ("doc://b", 0)}
+    assert cs.cites_what_was_read("doc://a#1", read)
+    assert cs.cites_what_was_read("doc://a#0-2", read)
+    assert not cs.cites_what_was_read("doc://a#7", read)  # never shown
+    assert not cs.cites_what_was_read("doc://a#2-7", read)  # a range past what was read
+    assert not cs.cites_what_was_read("doc://a#2-1", read)  # a backwards range
+    assert not cs.cites_what_was_read("doc://c#0", read)  # a document not named
+    # a window spanning two documents is cited as a list: every part must be read
+    assert cs.cites_what_was_read("doc://a#2,doc://b#0", read)
+    assert not cs.cites_what_was_read("doc://a#2,doc://b#1", read)
+    # a source holding '#' splits at its last one
+    assert cs.cites_what_was_read("doc://a#frag#0", {("doc://a#frag", 0)})
+    # a tag with no item names nothing read
+    assert not cs.cites_what_was_read("", read)
+    assert not cs.cites_what_was_read("bad tag", read)
+    # only a list of items is a tag: prose around one is not
+    assert not cs.cites_what_was_read("see doc://a#1", read)
+    assert not cs.cites_what_was_read("doc://a#1x", read)
+
+
+_LONG_INDEX = "[doc#" + "9" * 5000 + "]"
+
+# (answer as written, the answer grounded, kept, removed), over chunks 0 and 1 of doc://a
+_GROUNDING_CASES = {
+    "unread-removed": (
+        "Refunds take 14 days [doc://a#1] [doc://a#9], or 30 [doc://z#0].",
+        ("Refunds take 14 days [doc://a#1], or 30.", ["doc://a#1"], ["doc://a#9", "doc://z#0"]),
+    ),
+    "no-tags": ("No tags at all.", ("No tags at all.", [], [])),
+    "only-unread-is-empty": ("[doc://z#0]", ("", [], ["doc://z#0"])),
+    # a bracket with anything but citations in it is prose, left as written
+    "prose-pr": ("fixed in [PR #42]", ("fixed in [PR #42]", [], [])),
+    "prose-bare-index": ("see [#1]", ("see [#1]", [], [])),
+    "prose-items": ("[items #2, #3]", ("[items #2, #3]", [], [])),
+    "prose-words": ("[see doc://a#9]", ("[see doc://a#9]", [], [])),
+    # a list separated by ';' is a citation, checked part by part
+    "semicolon-list": (
+        "x [doc://a#0; doc://a#1]",
+        ("x [doc://a#0; doc://a#1]", ["doc://a#0; doc://a#1"], []),
+    ),
+    # a range is kept; a removed citation takes the tab before it
+    "range-and-tab": (
+        "a [doc://a#0-1]\t[doc://z#3].",
+        ("a [doc://a#0-1].", ["doc://a#0-1"], ["doc://z#3"]),
+    ),
+    # a non-ASCII blank is a blank: the bracket is prose
+    "nbsp-is-prose": ("[see\u00a0doc#1]", ("[see\u00a0doc#1]", [], [])),
+    # a long run of blanks before a removed citation is removed in one scan
+    "long-blank-run": ("x" + " " * 40000 + "[doc://z#0]", ("x", [], ["doc://z#0"])),
+    # a removal that closes an outer bracket into a citation checks that one too
+    "nested-closes-outer": (
+        "see [doc://q#7[doc://z#0]] now",
+        ("see now", [], ["doc://z#0", "doc://q#7"]),
+    ),
+    # past the pass cap, a citation formed by the last removal is left as written
+    "pass-cap": ("[q#9" * 9 + "]" * 9, ("[q#9]", [], ["q#9"])),
+    # of nested brackets the innermost is read
+    "innermost-read": ("[[doc://a#1]]", ("[[doc://a#1]]", ["doc://a#1"], [])),
+    # an index past nine digits names no chunk, and is never parsed
+    "long-index": (_LONG_INDEX, ("", [], [_LONG_INDEX[1:-1]])),
+    "ten-digit-index": ("x [doc://a#1234567890]", ("x", [], ["doc://a#1234567890"])),
+    # a non-ASCII digit is no index: the bracket is prose
+    "non-ascii-digit": ("[doc://a#\u0661,doc://a#1]", ("[doc://a#\u0661,doc://a#1]", [], [])),
+    # a padded tag is named without its padding
+    "padded": ("x [ doc://a#1]", ("x [ doc://a#1]", ["doc://a#1"], [])),
+    # blanks around a separator do not make a second citation
+    "spaced-list-once": (
+        "[doc://a#0,doc://a#1] [doc://a#0, doc://a#1]",
+        ("[doc://a#0,doc://a#1] [doc://a#0, doc://a#1]", ["doc://a#0,doc://a#1"], []),
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"), list(_GROUNDING_CASES.values()), ids=list(_GROUNDING_CASES)
+)
+def test_grounding_removes_the_tags_of_unread_chunks_from_the_answer(
+    text: str, expected: tuple[str, list[str], list[str]]
+) -> None:
+    assert cs.ground_citations(text, {("doc://a", 0), ("doc://a", 1)}) == expected
+
+
+def _patch_corpus(monkeypatch: pytest.MonkeyPatch, rows: list[Any], answer: list[str]) -> None:
+    """knowledge.synthesize over `rows` (every named document has them) with an LLM that
+    writes notes and then `answer[0]` as the final answer."""
+    import server.llm.client as llm_client
+
+    class _Final(_LLM):
+        async def complete(self, system: str, user: str, max_tokens: int = 1024, **kw: Any):
+            self.calls.append((system, user, max_tokens))
+            if "Answer the task from these notes" in user:
+                return SimpleNamespace(text=answer[0])
+            return SimpleNamespace(text="notes")
+
+    _patch_reads(monkeypatch, lambda uri: rows)
+    monkeypatch.setattr(llm_client, "get_llm_client", _Final)
+
+
+@pytest.mark.asyncio
+async def test_the_handler_keeps_only_supported_citations_and_abstains_on_an_empty_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.knowledge.app.synthesize as kh
+    from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
+
+    rows = [SimpleNamespace(chunk_idx=i, content="x" * 1900, chunk_metadata="{}") for i in range(3)]
+    answer = ["From [doc://a#0] and [doc://a#2], not [doc://a#5]."]
+    _patch_corpus(monkeypatch, rows, answer)
+    inp = KnowledgeSynthesizeInput(
+        org="o", namespace="n", source_uris=["doc://a"], task="t", window_chars=2000, max_windows=2
+    )
+    out = await kh.handle_knowledge_synthesize(inp)
+    # two windows of one chunk each were read: chunk 2 and chunk 5 were not
+    assert out.truncated and out.chunks_read == 2
+    assert out.citations == ["doc://a#0"]
+    assert out.unsupported_citations == ["doc://a#2", "doc://a#5"]
+    assert out.answer == "From [doc://a#0] and, not." and not out.abstain
+
+    # nothing written, only unread citations, or only what removing them left behind
+    for empty in ("   ", "[doc://a#5]", "[doc://a#5].", "- [doc://a#5]\n- [doc://a#9]"):
+        answer[0] = empty
+        out = await kh.handle_knowledge_synthesize(inp)
+        assert out.abstain and out.abstain_reason == "empty_answer" and out.answer == ""
+
+
+@pytest.mark.asyncio
+async def test_a_window_spanning_two_documents_keeps_its_citation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two short documents share a window, which `Window.cite` names as a comma list:
+    an answer citing that tag cites chunks the passes read."""
+    import server.knowledge.app.synthesize as kh
+    from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
+
+    rows = [SimpleNamespace(chunk_idx=0, content="short", chunk_metadata="{}")]
+    _patch_corpus(monkeypatch, rows, ["Both say short [doc://a#0,doc://b#0]."])
+    out = await kh.handle_knowledge_synthesize(
+        KnowledgeSynthesizeInput(
+            org="o", namespace="n", source_uris=["doc://a", "doc://b"], task="t", window_chars=2000
+        )
+    )
+    assert out.windows == 1
+    assert out.citations == ["doc://a#0,doc://b#0"] and out.unsupported_citations == []
+    assert out.answer == "Both say short [doc://a#0,doc://b#0]."
+
+
+@pytest.mark.asyncio
+async def test_unread_citations_are_removed_before_the_answer_is_cut(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removed citations take no room in `max_answer_chars`; a kept citation the cut
+    halves is not listed in `citations`."""
+    import server.knowledge.app.synthesize as kh
+    from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
+
+    rows = [SimpleNamespace(chunk_idx=0, content="short", chunk_metadata="{}")]
+    junk = " ".join(f"[doc://a#{i}]" for i in range(1, 40))  # 39 unread, about 470 chars
+    answer = [f"Refunds take two weeks {junk} [doc://a#0]."]
+    _patch_corpus(monkeypatch, rows, answer)
+    inp = KnowledgeSynthesizeInput(
+        org="o", namespace="n", source_uris=["doc://a"], task="t", max_answer_chars=200
+    )
+    out = await kh.handle_knowledge_synthesize(inp)
+    assert out.answer == "Refunds take two weeks [doc://a#0]."
+    assert out.citations == ["doc://a#0"] and len(out.unsupported_citations) == 39
+
+    answer[0] = "a" * 190 + " [doc://a#0]."  # the cut lands inside the kept citation
+    out = await kh.handle_knowledge_synthesize(inp)
+    assert out.answer.endswith(" [doc://a#…") and out.citations == []

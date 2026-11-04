@@ -84,3 +84,18 @@ async def test_knowledge_search_filters_by_tags(agent) -> None:
     uris = {h.source_uri for h in hits}
     assert "github://pr/300" in uris
     assert "github://pr/301" not in uris
+
+
+@pytest.mark.asyncio
+async def test_knowledge_search_names_the_reranker_and_refuses_a_url(agent) -> None:
+    """`rerank="none"` reports no reranker; a URL is never a reranker a caller may name."""
+    from loom.errors import ValidationError
+
+    await agent.knowledge.add("Refunds are available within 14 days.", source_uri="doc://r")
+    body = {"org": agent.org, "namespace": agent.namespace, "query": "refunds", "top_k": 3}
+    out = await agent.transport.post("/v1/knowledge.search", {**body, "rerank": "none"})
+    assert out["results"] and out["reranked_by"] == ""
+    with pytest.raises(ValidationError):
+        await agent.transport.post(
+            "/v1/knowledge.search", {**body, "rerank": "https://example.com/rerank"}
+        )

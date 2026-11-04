@@ -20,11 +20,9 @@ export interface TokenClaims {
   session: string | null;
 }
 
-/** The token's own org / namespaces / subject, read without verification —
- *  they steer which reads start early, never what the person may see; the
- *  server answers every read against the verified token. Null for a missing
- *  or unparseable token (proxy mode, garbage, no payload). */
-export function claimsFromToken(jwt: string | null | undefined): TokenClaims | null {
+/** A token's payload, decoded without verification; null for a missing or unparseable
+ *  token (proxy mode, garbage, no payload). */
+export function tokenPayload(jwt: string | null | undefined): Record<string, unknown> | null {
   if (!jwt) return null;
   const parts = jwt.split(".");
   if (parts.length < 2 || !parts[1]) return null;
@@ -33,17 +31,26 @@ export function claimsFromToken(jwt: string | null | undefined): TokenClaims | n
     const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
     const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
     const json: unknown = JSON.parse(new TextDecoder().decode(bytes));
-    if (!isRecord(json)) return null;
-    const org = typeof json.org === "string" && json.org ? json.org : null;
-    const namespaces = Array.isArray(json.namespaces)
-      ? (json.namespaces as unknown[]).filter((n): n is string => typeof n === "string")
-      : [];
-    const subject = typeof json.sub === "string" ? json.sub : null;
-    const session = typeof json.sid === "string" && json.sid ? json.sid : null;
-    return { org, namespaces, subject, session };
+    return isRecord(json) ? json : null;
   } catch {
     return null;
   }
+}
+
+/** The token's own org / namespaces / subject, read without verification —
+ *  they steer which reads start early, never what the person may see; the
+ *  server answers every read against the verified token. Null for a missing
+ *  or unparseable token (proxy mode, garbage, no payload). */
+export function claimsFromToken(jwt: string | null | undefined): TokenClaims | null {
+  const json = tokenPayload(jwt);
+  if (!json) return null;
+  const org = typeof json.org === "string" && json.org ? json.org : null;
+  const namespaces = Array.isArray(json.namespaces)
+    ? (json.namespaces as unknown[]).filter((n): n is string => typeof n === "string")
+    : [];
+  const subject = typeof json.sub === "string" ? json.sub : null;
+  const session = typeof json.sid === "string" && json.sid ? json.sid : null;
+  return { org, namespaces, subject, session };
 }
 
 /** The session key for where a single sign-on started, `{ path, at }`: the sign-in gate
