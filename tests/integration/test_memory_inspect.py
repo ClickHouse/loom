@@ -92,14 +92,20 @@ async def test_inspect_splits_own_from_others_and_changes_nothing(
             {"agent": "bot", "user_id": "u1", "session_id": "s1", "memory_key": "u1/pref"},
         )
 
-        def rows() -> tuple[int, int]:
-            """Each row's latest version (FINAL): a merge leaves this as it was, and a
-            new row or revision changes it."""
-            n, v = ch_client.query(
-                "SELECT count(), max(version) FROM loom.memory FINAL WHERE org = {org:String}",
-                parameters={"org": ORG},
-            ).result_rows[0]
-            return int(n), int(v)
+        def rows() -> list[tuple[Any, ...]]:
+            """Each row's latest version (FINAL), so a merge leaves it as it was: the
+            fields a write would change, not `version` or `entities`, which the entity
+            extractor rewrites."""
+            return [
+                tuple(r)
+                for r in ch_client.query(
+                    "SELECT agent, user_id, session_id, memory_key, memory_id, content_sha256, status,"
+                    " pinned, tags, tombstoned_at, actor, source_class, reinforcement_count"
+                    " FROM loom.memory FINAL WHERE org = {org:String}"
+                    " ORDER BY agent, user_id, session_id, memory_key",
+                    parameters={"org": ORG},
+                ).result_rows
+            ]
 
         before = rows()
         agent = await post("memory.inspect", {"subject": "agent", "id": "bot"})

@@ -27,6 +27,21 @@ from tests.integration._resources import unique_org  # noqa: E402
 ORG = unique_org("kinspect")
 
 
+def _memory_rows(ch_client: Any) -> list[tuple[Any, ...]]:
+    """Each row's latest version (FINAL), so a merge leaves it as it was: the fields a
+    write would change, not `version` or `entities`, which the entity extractor rewrites."""
+    return [
+        tuple(r)
+        for r in ch_client.query(
+            "SELECT agent, user_id, session_id, memory_key, memory_id, content_sha256, status,"
+            " pinned, tags, tombstoned_at, actor, source_class, reinforcement_count"
+            " FROM loom.memory FINAL WHERE org = {org:String}"
+            " ORDER BY agent, user_id, session_id, memory_key",
+            parameters={"org": ORG},
+        ).result_rows
+    ]
+
+
 @pytest.mark.asyncio
 async def test_inspect_reports_formats_revisions_chunks_and_decisions(
     control_plane_url: str, mint_test_token: Any, ch_client: Any
@@ -161,11 +176,7 @@ async def test_inspect_reports_formats_revisions_chunks_and_decisions(
             },
         )
 
-        # FINAL: a merge between the two reads collapses versions with no write.
-        before = ch_client.query(
-            "SELECT count(), max(version) FROM loom.memory FINAL WHERE org = {org:String}",
-            parameters={"org": ORG},
-        ).result_rows
+        before = _memory_rows(ch_client)
         out = await post("knowledge.inspect", {"sample_limit": 3}, viewer)
 
     assert out["skipped"] == [], out["skipped"]
@@ -240,11 +251,7 @@ async def test_inspect_reports_formats_revisions_chunks_and_decisions(
     assert old["chunks"]["models"] == ["retired-model"] and old["retired_versions"] == 1
     assert listed["https://wiki.example/pages/plan.html?v=2"]["source_scheme"] == "https"
 
-    after = ch_client.query(
-        "SELECT count(), max(version) FROM loom.memory FINAL WHERE org = {org:String}",
-        parameters={"org": ORG},
-    ).result_rows
-    assert after == before
+    assert _memory_rows(ch_client) == before
 
 
 @pytest.mark.asyncio
