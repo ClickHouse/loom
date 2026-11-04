@@ -1286,9 +1286,10 @@ def test_a_rerun_comes_only_after_an_uncertain_insert_has_settled(world: World) 
     """A run that gave up on an uncertain document insert leaves the job's lease
     to expire. Its last `held` check is inside the claimed block, the lease
     renewed within half its TTL before it, and the send comes within the
-    block's bound of that check, so no other worker takes the job until the insert has landed
-    or stopped: a carried send starts within `_TRANSIT_S`, runs within a
-    claimed statement's limit, and commits within `_RELEASE_MARGIN_S` more."""
+    block's bound of that check, so no other worker takes the job until the
+    insert has landed or stopped: a carried send starts within `_TRANSIT_S`,
+    runs within a claimed statement's limit, and commits within
+    `_RELEASE_MARGIN_S` more."""
     from server.core import leases, rmt_carry
 
     earliest_takeover = ingest_run.JOB_LEASE_S / 2 - ingest_run._SOURCE_CLAIM_S * leases._WORK_SHARE
