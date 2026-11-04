@@ -52,10 +52,20 @@ PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale score <taskset> --out
 ```
 
 Each run creates its own orgs, so the server runs with auth off (as the dev setup starts
-it), or the token covers every org: `loom mint-token --org '*' --namespaces '*'` writes
-and reads them, and erasing them at the end needs an org-wide admin
-(`--platform-admin`); a writer token's erasure is refused and the logged
-`loom namespaces-gc` command finishes it.
+it), or the token covers every org. For the writes:
+
+```bash
+loom mint-token --subject <name> --org '*' --namespaces '*' --roles writer
+```
+
+Erasing the namespaces at the end needs an org-wide admin:
+
+```bash
+loom mint-token --subject sa:<name> --org '*' --platform-admin --ttl-days 1
+```
+
+With a writer token the erasure is refused, and the run prints the `loom namespaces-gc`
+command that finishes it.
 
 The server is one this run started, with real providers and the server's environment in
 the shell: arm 4 runs `loom decisions extract` in a child process, on the model those

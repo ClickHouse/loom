@@ -20,6 +20,7 @@ import httpx
 from bench._http import post_json
 from bench.bench_namespaces import (
     erase_bench_namespaces_sync,
+    gc_command,
     register_body,
     remember_bench_namespace,
 )
@@ -148,9 +149,19 @@ class Loom:
         self._post("/v1/namespace.register", body)
         remember_bench_namespace(org, namespace)
 
-    def erase(self, namespaces: list[str]) -> None:
+    def erase(self, namespaces: list[str]) -> bool:
+        """Erase each namespace; True when every erasure was accepted. A refused one is
+        reported on stderr with the command that erases it."""
+        accepted = True
         for ns in namespaces:
-            erase_bench_namespaces_sync(self._post, org=self.orgs[ns], namespaces=[ns])
+            org = self.orgs[ns]
+            if not erase_bench_namespaces_sync(self._post, org=org, namespaces=[ns]):
+                accepted = False
+                print(
+                    f"erasure of {org}/{ns} refused; erase it with: {gc_command(org, [ns])}",
+                    file=sys.stderr,
+                )
+        return accepted
 
     def server_spend(self, namespaces: list[str], since: date) -> float:
         """USD the server spent on model and embedding calls in these namespaces' orgs

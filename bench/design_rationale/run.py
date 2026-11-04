@@ -770,8 +770,7 @@ def run(
                     f"setup failed; erase what it wrote with: {erase_command(cfg, loom, ns)}",
                     file=sys.stderr,
                 )
-            else:
-                loom.erase(owned(cfg, ns))
+            elif loom.erase(owned(cfg, ns)):
                 state["erased"] = True
             raise
         save_json(state_path, state)
@@ -797,8 +796,8 @@ def run(
             )
         raise
     finally:
-        if finished and not cfg.keep_namespaces:
-            loom.erase(owned(cfg, ns))
+        # A refused erasure leaves the run unerased: the next invocation tries again.
+        if finished and not cfg.keep_namespaces and loom.erase(owned(cfg, ns)):
             state["erased"] = True
         save_json(state_path, state)
     return finished

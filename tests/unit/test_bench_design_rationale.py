@@ -461,6 +461,7 @@ class FakeLoom:
         self.registered: list[tuple[str, float]] = []
         self.erased: list[str] = []
         self.fail_on_upsert = fail_on_upsert
+        self.refuse_erase = False
         self.interrupt_upsert = interrupt_upsert
         # The files the fake extraction puts on its rows, as a spelled-out path would.
         self.extract_files: list[str] = []
@@ -476,7 +477,10 @@ class FakeLoom:
         self.registered.append((namespace, cap_usd))
 
     def erase(self, namespaces):
+        if self.refuse_erase:
+            return False
         self.erased += namespaces
+        return True
 
     def server_spend(self, namespaces, since):
         return sum(self.spend.get(org, 0.0) for org in {self.orgs[ns] for ns in namespaces})
@@ -1450,3 +1454,26 @@ def test_judge_accuracy_against_humans_leaves_out_what_a_detector_decided():
         {"answer": "B1/arm0/s2", "field": "detector_fired", "value": True},
     ]
     assert score.judge_vs_human(ts, judged, labels) == {"items": 2, "accuracy": 1.0, "kappa": 1.0}
+
+
+def test_a_refused_erasure_is_tried_again_on_the_next_run(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    cfg = _config(out, arms=[0, 3], k=1, judge_orders=1)
+    loom = FakeLoom()
+    loom.refuse_erase = True
+    assert run.run(ts, cfg, loom, model, [model], ledger) is True
+    state = json.loads((out / "state.json").read_text())
+    assert not state.get("erased") and loom.erased == []
+    loom.refuse_erase = False
+    assert run.run(ts, cfg, loom, model, [model], ledger) is True
+    assert json.loads((out / "state.json").read_text())["erased"] and len(loom.erased) == 2
+
+
+def test_a_refused_erasure_prints_the_command_that_finishes_it(capsys):
+    loom = _mock_loom(lambda request: httpx.Response(403, json={"detail": "not an admin"}))
+    assert loom.erase(["ns"]) is False
+    assert "erasure of org/ns refused; erase it with: loom namespaces-gc" in capsys.readouterr().err
