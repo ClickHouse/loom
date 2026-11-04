@@ -126,8 +126,9 @@ async def handle_admin_users(input: AdminUsersInput) -> AdminUsersOutput:
         grants = by_subject[subj]
         info = contact_map.get(subj, {})
         contact = str(info.get("contact_email", ""))
-        # The login rule: a handle entry matches the subject, an email entry a verified
-        # address only.
+        # The rule an SSO sign-in applies (`platform_roles`): a handle entry matches the
+        # subject, an email entry a verified address only. A password sign-in carries no
+        # verified email, so a linked account listed by email is admin over SSO only.
         verified = str(info.get("verified_email", ""))
         is_admin = platform_roles(subj, verified_email=verified) == ["platform_admin"]
         # Service-account filter: subjects without a contact_email AND
