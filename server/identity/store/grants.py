@@ -394,19 +394,22 @@ async def stored_spellings(
     namespace: str,
     spellings: list[str],
     *,
+    live: bool = True,
     ch: _CHClient | None = None,
 ) -> list[str]:
-    """The subjects the live rows on (org, namespace) are stored under that match one
-    of `spellings` in any case, as the gate matches them."""
+    """The subjects the rows on (org, namespace) are stored under that match one of
+    `spellings` in any case, as the gate matches them: the live rows, or every row
+    ever written when `live` is False."""
     if not spellings:
         return []
     ch = ch or _default_client()
+    live_only = "AND revoked_at IS NULL" if live else ""
     rows = await ch.query_all(
-        """
+        f"""
         SELECT DISTINCT subject FROM loom.namespace_grants FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND has(arrayMap(s -> lower(s), {subs:Array(String)}), lower(subject))
-          AND revoked_at IS NULL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND has(arrayMap(s -> lower(s), {{subs:Array(String)}}), lower(subject))
+          {live_only}
         ORDER BY subject
         LIMIT 64
         """,

@@ -362,3 +362,28 @@ async def test_a_refresh_keeps_platform_admin_by_a_verified_email_only(
     listed = {"carol@corp.example", "bob@corp.example"}
     monkeypatch.setattr(type(settings), "platform_admins_set", property(lambda _s: listed))
     assert await login.refreshed_roles(subject, ORG, ["platform_admin"]) == roles
+
+
+@pytest.mark.asyncio
+async def test_revoking_an_address_again_takes_nothing_more(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The address's own row goes; a retry finds it revoked and does not fall back
+    # to the row of the unverified account naming it, which is that account's own.
+    from server.identity.api.models_grants import GrantsRevokeInput
+    from server.identity.app import grants as grants_app
+    from server.identity.store import grants as grants_repo
+
+    kept = KeptCH(tmp_path, *SETUP, ddl("service_accounts"), ddl("acl_versions"))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
+    monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
+    body = GrantsRevokeInput(org=ORG, namespace="team-x", subject="bob@corp.example")
+    assert (await grants_app.handle_grants_revoke(body)).revoked is True
+    assert (await grants_app.handle_grants_revoke(body)).revoked is False
+    live = await kept.query_all(
+        "SELECT subject FROM loom.namespace_grants FINAL WHERE org = {org:String}"
+        " AND namespace = 'team-x' AND revoked_at IS NULL",
+        {"org": ORG},
+    )
+    subjects = {r["subject"] for r in live}
+    assert "mallory" in subjects and "bob@corp.example" not in subjects

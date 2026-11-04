@@ -153,26 +153,29 @@ async def _write(
     from server.auth import aliases
     from server.core import grant_cache
 
-    try:
-        await ch.insert(
-            TABLE,
-            [
-                {
-                    "email": email.strip().lower(),
-                    "org": org,
-                    "namespace": namespace,
-                    "linked": linked,
-                    "linked_by": by,
-                    "linked_at": now,
-                    "version": version,
-                }
-                for org, namespace in accounts
-            ],
-        )
-    finally:
-        # A link verifies the account's email, which ties it to the owner's grants
-        # (`server.auth.aliases`): an unlink must not leave a cached tie admitting,
-        # even when its reply is lost after the row landed.
-        for org in sorted({org for org, _ in accounts}):
-            aliases.invalidate_org(org)
-            await grant_cache.changed(org)
+    # A link verifies the account's email, which ties it to the owner's grants
+    # (`server.auth.aliases`): an unlink must not leave a cached tie admitting,
+    # even when its reply is lost after the row landed.
+    orgs = sorted({org for org, _ in accounts})
+    async with AsyncExitStack() as announced:
+        for org in orgs:
+            await announced.enter_async_context(grant_cache.announced(org))
+        try:
+            await ch.insert(
+                TABLE,
+                [
+                    {
+                        "email": email.strip().lower(),
+                        "org": org,
+                        "namespace": namespace,
+                        "linked": linked,
+                        "linked_by": by,
+                        "linked_at": now,
+                        "version": version,
+                    }
+                    for org, namespace in accounts
+                ],
+            )
+        finally:
+            for org in orgs:
+                aliases.invalidate_org(org)

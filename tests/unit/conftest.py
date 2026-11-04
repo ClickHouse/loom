@@ -915,13 +915,15 @@ def _no_revocations_left_behind() -> Iterator[None]:
 @pytest.fixture
 def no_directory_ties(monkeypatch: pytest.MonkeyPatch) -> None:
     """A revoke reads the spellings the directory ties to its subject (none here),
-    and the rows stored under them (each as given)."""
+    and the rows stored under them (each as given, and none revoked)."""
 
     async def _alone(org: str, subject: str, ch: Any) -> list[str]:
         return [subject]
 
-    async def _as_given(org: str, ns: str, spellings: list[str], **_: Any) -> list[str]:
-        return list(dict.fromkeys(spellings))
+    async def _as_given(
+        org: str, ns: str, spellings: list[str], *, live: bool = True, **_: Any
+    ) -> list[str]:
+        return list(dict.fromkeys(spellings)) if live else []  # no revoked rows
 
     monkeypatch.setattr("server.auth.aliases.read_aliases", _alone)
     monkeypatch.setattr("server.identity.store.grants.stored_spellings", _as_given)
