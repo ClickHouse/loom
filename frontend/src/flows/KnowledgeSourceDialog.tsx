@@ -23,6 +23,7 @@ import {
 import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import {
+  credentialLabel,
   emptySourceForm,
   INCLUDE_OPTIONS,
   normalisedName,
@@ -46,8 +47,6 @@ interface DialogProps {
   org: string;
   namespace: string;
 }
-
-const CREDENTIAL_LABEL = "Service account key (JSON; stored encrypted, never shown again)";
 
 /** What a probe found: the count and up to five titles. */
 function ProbeResult({ probe, lead }: { probe: KnowledgeSourceProbe; lead: string }) {
@@ -168,7 +167,7 @@ export function AddSourceDialog({
         </div>
       </fieldset>
       <PasswordField
-        label={CREDENTIAL_LABEL}
+        label={credentialLabel(form.kind)}
         value={form.credential}
         autoComplete="new-password"
         onChange={(v) => set("credential", v)}
@@ -293,8 +292,9 @@ export function RotateSourceDialog({
   org,
   namespace,
   name,
+  kind,
   onRotated,
-}: DialogProps & { name: string; onRotated: () => void }) {
+}: DialogProps & { name: string; kind: string; onRotated: () => void }) {
   const [credential, setCredential] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -317,7 +317,7 @@ export function RotateSourceDialog({
       onOpenChange={onOpenChange}
       width={460}
       title={`Rotate the credential · ${name}`}
-      description="The new key is checked against the folders before it replaces the old one; a key that fails changes nothing."
+      description="The new key is checked against the source before it replaces the old one; a key that fails changes nothing."
       footer={
         <>
           <CancelButton />
@@ -334,7 +334,7 @@ export function RotateSourceDialog({
       }
     >
       <PasswordField
-        label={CREDENTIAL_LABEL}
+        label={credentialLabel(kind)}
         value={credential}
         autoComplete="new-password"
         onChange={setCredential}

@@ -84,10 +84,20 @@ export interface KnowledgeSourceSyncNowResult {
 export const SYNC_OFF = "Sync is off on this deployment: sources are stored and checked, but nothing pulls from them.";
 
 /** What each kind reads, in the words the card uses. */
-const KIND_LABEL: Record<string, string> = { gdrive: "shared folder" };
+const KIND_LABEL: Record<string, string> = { gdrive: "shared folder", linear: "project documents" };
 
 export function kindLabel(kind: string): string {
   return KIND_LABEL[kind] ?? kind;
+}
+
+/** The credential field's label for a kind; the add form serves `gdrive` only. */
+const CREDENTIAL_LABEL: Record<string, string> = {
+  gdrive: "Service account key (JSON; stored encrypted, never shown again)",
+  linear: "Read-only API key (stored encrypted, never shown again)",
+};
+
+export function credentialLabel(kind: string): string {
+  return CREDENTIAL_LABEL[kind] ?? "Credential (stored encrypted, never shown again)";
 }
 
 export type SyncTone = "ok" | "warn" | "danger" | "muted";

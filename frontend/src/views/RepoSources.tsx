@@ -1,11 +1,11 @@
 /**
- * A repository's document sources on its card: the shared folders its documents are
- * pulled from, each with its last sync. They live on the repository's trunk code
- * namespace, the docs namespace, so a reader of the repository sees them and its
- * maintainers manage them: Add a source, Check, Sync now, Rotate credential, Retire.
- * Read once when the card is opened (a folded card asks nothing); the dialogs load on
- * first use. The counts are information only: nothing waits for a person to confirm a
- * row.
+ * A repository's document sources on its card: the shared folders and project document
+ * stores its documents are pulled from, each with its last sync. They live on the
+ * repository's trunk code namespace, the docs namespace, so a reader of the repository
+ * sees them and its maintainers manage them: Add a source (a shared folder), Check, Sync
+ * now, Rotate credential, Retire. Read once when the card is opened (a folded card asks
+ * nothing); the dialogs load on first use. The counts are information only: nothing
+ * waits for a person to confirm a row.
  */
 import { lazy, Suspense, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
@@ -232,6 +232,7 @@ export function RepoSourcesList({
               org={org}
               namespace={docsNamespace}
               name={acting.source.name}
+              kind={acting.source.kind}
               onOpenChange={close}
               onRotated={() => {
                 toast(`Replaced the credential of ${acting.source.name}`, "ok");

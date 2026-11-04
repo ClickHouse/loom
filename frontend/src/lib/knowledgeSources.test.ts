@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  credentialLabel,
   emptySourceForm,
+  kindLabel,
   folderIds,
   probeCount,
   retiredMessage,
@@ -118,5 +120,15 @@ describe("retiredMessage", () => {
     expect(retiredMessage("d", true, 3, false)).toBe(
       "Retired d; its 3 documents are retired once sync is on for this deployment",
     );
+  });
+});
+
+describe("kind words", () => {
+  it("names each served kind and its credential, and an unknown one by its wire name", () => {
+    expect(kindLabel("gdrive")).toBe("shared folder");
+    expect(kindLabel("linear")).toBe("project documents");
+    expect(kindLabel("other")).toBe("other");
+    expect(credentialLabel("linear")).toMatch(/^Read-only API key/);
+    expect(credentialLabel("other")).toMatch(/^Credential/);
   });
 });

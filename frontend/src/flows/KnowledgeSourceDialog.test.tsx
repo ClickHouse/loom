@@ -165,7 +165,16 @@ describe("RotateSourceDialog", () => {
       rotated_at: "2026-11-01T00:00:00Z",
     });
     const onRotated = vi.fn();
-    render(<RotateSourceDialog open onOpenChange={() => {}} {...NS} name="design-docs" onRotated={onRotated} />);
+    render(
+      <RotateSourceDialog
+        open
+        onOpenChange={() => {}}
+        {...NS}
+        name="design-docs"
+        kind="gdrive"
+        onRotated={onRotated}
+      />,
+    );
     const rotate = screen.getByRole("button", { name: "Rotate" });
     expect(rotate).toBeDisabled();
     const field = screen.getByLabelText(/^Service account key/);
@@ -180,7 +189,9 @@ describe("RotateSourceDialog", () => {
 
   it("shows a refused key without echoing it", async () => {
     vi.mocked(rotateKnowledgeSource).mockRejectedValue(refused());
-    render(<RotateSourceDialog open onOpenChange={() => {}} {...NS} name="design-docs" onRotated={() => {}} />);
+    render(
+      <RotateSourceDialog open onOpenChange={() => {}} {...NS} name="design-docs" kind="gdrive" onRotated={() => {}} />,
+    );
     fireEvent.change(screen.getByLabelText(/^Service account key/), { target: { value: KEY } });
     fireEvent.click(screen.getByRole("button", { name: "Rotate" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("refused the credential");
