@@ -8,11 +8,14 @@ runs no workers); then status, get, outline, search and download read it back.
   original downloads byte for byte.
 - A second ingest of the source is revision 2; one that expects revision 0
   fails `revision_conflict` and leaves revision 2 serving.
+- A PDF with a page of one image fails `incomplete_extraction`; with
+  `allow_partial` it publishes as `partial`, its chunks citing their pages.
 - An upload whose bytes contradict its name is stored, typed by its name, and its
   job fails with the extractor's code; an ingest of an unknown upload is 404.
 
-The job sends originals to the extractor the settings route SQL and TOML to
-(`extractors.endpoint_for`); the tests that publish skip without one.
+The job sends originals to the extractor the settings route each format to; the
+tests that publish skip unless a configured one declares SQL, TOML and PDF
+(`extractors.available_formats`).
 """
 
 from __future__ import annotations
@@ -25,18 +28,21 @@ from typing import Any
 import httpx
 import pytest
 
+from tests.fixtures.office_files import pdf
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
 
 
 @pytest.fixture
-def extractor_routed() -> None:
-    """Skips unless an extractor is routed for SQL and TOML, as the worker asks."""
-    from server.knowledge.app.extractors import endpoint_for
+async def extractor_routed() -> None:
+    """Skips unless a configured extractor declares SQL, TOML and PDF, as the
+    worker asks before it sends an original."""
+    from server.knowledge.app.extractors import available_formats
 
-    if not (endpoint_for("sql", "") and endpoint_for("toml", "")):
-        pytest.skip("no document extractor is routed for sql and toml")
+    declared = await available_formats()
+    if not all(fmt in declared for fmt in ("sql", "toml", "pdf")):
+        pytest.skip("no configured document extractor declares sql, toml and pdf")
 
 
 SQL = (
@@ -197,13 +203,60 @@ async def test_revisions_count_up_and_an_expected_revision_guards_the_publish(
     assert meta["locator"]["line_start"] == 1 and "server.port" in keys
 
 
+@pytest.mark.usefixtures("extractor_routed")
+@pytest.mark.asyncio
+async def test_a_pdf_with_an_image_page_publishes_only_when_partial_is_allowed(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    org, ns, uri = unique_org("ingest-pdf"), "docs", "repo://handbook.pdf"
+    data = pdf(["Escalation\nPage the on-call engineer.", None], [("Escalation", 0, [])])
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
+        states = []
+        for allow_partial in (False, True):
+            up = (await _upload(c, org, ns, data, "handbook.pdf")).json()
+            job = await _op(
+                c,
+                "knowledge.ingest",
+                org=org,
+                namespace=ns,
+                upload_id=up["upload_id"],
+                source_uri=uri,
+                allow_partial=allow_partial,
+            )
+            await _work(org, ns, job["ingestion_id"])
+            status = await _op(
+                c,
+                "knowledge.ingest_status",
+                org=org,
+                namespace=ns,
+                ingestion_id=job["ingestion_id"],
+            )
+            states.append((status["state"], status["error_code"]))
+        assert states == [("failed", "incomplete_extraction"), ("partial", "")]
+        assert status["coverage"]["unit"] == "pages"
+        assert [f["unit"] for f in status["coverage"]["failed"]] == ["page 2"]
+        doc = await _op(c, "knowledge.get", org=org, namespace=ns, source_uri=uri)
+        assert (doc["revision"], doc["format"]) == (1, "pdf")
+
+    rows = ch_client.query(
+        "SELECT chunk_metadata FROM loom.chunks WHERE org = {org:String} AND namespace = {ns:String}"
+        " AND source_uri = {uri:String}",
+        parameters={"org": org, "ns": ns, "uri": uri},
+    ).result_rows
+    metas = [json.loads(r[0]) for r in rows]
+    assert [(m["locator"], m["section_path"]) for m in metas] == [
+        ({"page_start": 1, "page_end": 1}, ["Escalation"])
+    ]
+
+
 @pytest.mark.asyncio
 async def test_a_mislabelled_upload_is_stored_and_the_extractor_refuses_it(
     control_plane_url: str,
 ) -> None:
     """The server types an upload by its name and never reads the bytes: plain
     text named .pdf is a pdf upload, and the job fails with the extractor's code
-    (no configured extractor takes pdf), publishing nothing."""
+    (the extractor finds no PDF in it; with none that declares pdf, the format
+    is unavailable), publishing nothing."""
     org, ns = unique_org("ingest-refuse"), "docs"
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
         up = await _upload(c, org, ns, b"plain words, not a PDF", "report.pdf")
@@ -220,7 +273,12 @@ async def test_a_mislabelled_upload_is_stored_and_the_extractor_refuses_it(
         status = await _op(
             c, "knowledge.ingest_status", org=org, namespace=ns, ingestion_id=job["ingestion_id"]
         )
-        assert (status["state"], status["error_code"]) == ("failed", "format_unavailable")
+        from server.knowledge.app.extractors import available_formats
+
+        # An extractor that takes pdf reads the bytes; with none, the format is unavailable.
+        declared = await available_formats()
+        refused = "format_mismatch" if "pdf" in declared else "format_unavailable"
+        assert (status["state"], status["error_code"]) == ("failed", refused)
         r = await c.post(
             "/v1/knowledge.get",
             json={"org": org, "namespace": ns, "source_uri": "repo://report.pdf"},

@@ -15,7 +15,9 @@ from server.knowledge.app import extractors
 
 async def main() -> None:
     formats = await extractors.available_formats()
-    assert set(formats) == {"markdown", "html", "text", "sql", "toml"}, formats
+    assert set(formats) == {"markdown", "html", "text", "sql", "toml", "pdf", "docx", "pptx"}, (
+        formats
+    )
     artifact = await extractors.extract(b"[server]\nport = 7777\n", name="loom.toml")
     assert [b.text for b in artifact.blocks] == ["[server]", "server.port = 7777"], artifact
     assert artifact.coverage.complete, artifact.coverage
@@ -23,4 +25,4 @@ async def main() -> None:
 
 if __name__ == "__main__":  # `python -` runs it as __main__ too
     asyncio.run(main())
-    print("extractor: reached, declared five formats, extraction checked")
+    print("extractor: reached, declared eight formats, extraction checked")

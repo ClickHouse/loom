@@ -136,6 +136,9 @@ async def test_capabilities_declare_each_parsed_format_and_its_options() -> None
         "text": ["encoding"],
         "sql": ["encoding", "sql_dialect"],
         "toml": ["encoding"],
+        "pdf": [],
+        "docx": [],
+        "pptx": [],
     }
 
 
@@ -164,7 +167,9 @@ async def test_an_extraction_runs_in_a_child_and_returns_the_artifact() -> None:
 @pytest.mark.parametrize(
     ("params", "body", "code"),
     [
-        ({"format": "pdf", "name": "a.pdf"}, b"%PDF-1.7", "format_unavailable"),
+        ({"format": "csv", "name": "a.csv"}, b"a,b\n", "format_unavailable"),
+        ({"format": "pdf", "name": "a.pdf"}, b"%PDF-1.7", "corrupt"),
+        ({"format": "pdf", "name": "a.pdf", "encoding": "utf-8"}, b"%PDF-1.7", "invalid_option"),
         ({"format": "markdown", "name": "a.md", "sql_dialect": "x"}, b"# a", "invalid_option"),
         ({"format": "markdown", "name": "a.md"}, b"%PDF-1.7\n", "format_mismatch"),
         ({"format": "text", "name": "a.txt"}, b"caf\xe9", "encoding"),
@@ -291,14 +296,17 @@ async def test_a_child_that_fails_before_its_parser_runs_is_a_500(
     assert (r.status_code, r.json()["error"]["code"]) == (500, "extractor_error")
 
 
-def test_the_service_and_the_test_environment_pin_one_sqlglot() -> None:
+def test_the_service_and_the_test_environment_pin_its_parsers_alike() -> None:
     import tomllib
 
     root = Path(__file__).resolve().parents[2]
     server = tomllib.loads((root / "pyproject.toml").read_text())
     own = tomllib.loads((root / "extractor" / "pyproject.toml").read_text())
-    sqlglot = [d for d in own["project"]["dependencies"] if d.startswith("sqlglot")]
-    assert sqlglot == server["project"]["optional-dependencies"]["extractor"]
+    # What the service runs on, not what it parses with, is not in the test extra.
+    parsers = [
+        d for d in own["project"]["dependencies"] if not d.startswith(("starlette", "uvicorn"))
+    ]
+    assert parsers == server["project"]["optional-dependencies"]["extractor"]
 
 
 def test_the_image_locks_what_the_tests_ran() -> None:

@@ -50,13 +50,15 @@ BlockType = Literal[
 class Locator:
     """Where a block sits in the original revision. Only the fields that apply
     to the format are set; `to_dict` drops the rest. A format that needs
-    another field (a page, a cell range) adds it with its parser."""
+    another field (a cell range) adds it with its parser."""
 
     line_start: int = 0  # 1-based, inclusive
     line_end: int = 0
     char_start: int = -1  # 0-based offset into the decoded text
     char_end: int = -1  # exclusive
     key_path: str = ""  # TOML `server.limits.max_rows`
+    page_start: int = 0  # a PDF's pages or a PPTX's slides, 1-based, inclusive
+    page_end: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -194,6 +196,54 @@ class Lines:
     def start(self, index: int) -> int:
         """The offset where the 0-based line `index` starts."""
         return self._newlines[index - 1] + 1 if index else 0
+
+
+class Blocks:
+    """Accumulates blocks with a heading stack, giving each block its section
+    path and the id of the heading it sits under."""
+
+    def __init__(self) -> None:
+        self.blocks: list[Block] = []
+        self._stack: list[tuple[int, str, str]] = []  # (depth, title, block id)
+
+    def heading(self, depth: int, title: str, loc: Locator, **attrs: object) -> None:
+        while self._stack and self._stack[-1][0] >= depth:
+            self._stack.pop()
+        parent = self._stack[-1][2] if self._stack else ""
+        bid = f"b{len(self.blocks)}"
+        # The whole title: `within_contract` cuts a path entry to the contract's bound
+        # and marks the cut. The heading block keeps all of it, and a long one is
+        # chunked like any long block.
+        self._stack.append((depth, title, bid))
+        self.blocks.append(
+            Block(
+                id=bid,
+                type="heading",
+                text=title,
+                locator=loc,
+                section_path=tuple(t for _, t, _ in self._stack),
+                parent=parent,
+                depth=depth,
+                attrs=dict(attrs),
+            )
+        )
+
+    def close_sections(self) -> None:
+        """The blocks added next sit under no heading (a slide with no title)."""
+        self._stack.clear()
+
+    def add(self, type_: BlockType, text: str, loc: Locator, **attrs: object) -> None:
+        self.blocks.append(
+            Block(
+                id=f"b{len(self.blocks)}",
+                type=type_,
+                text=text,
+                locator=loc,
+                section_path=tuple(t for _, t, _ in self._stack),
+                parent=self._stack[-1][2] if self._stack else "",
+                attrs=dict(attrs),
+            )
+        )
 
 
 def on_python(version: str) -> str:

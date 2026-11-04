@@ -129,8 +129,10 @@ def main(argv: list[str]) -> int:
     no_dump()
     no_sockets()
     _limit(limits["memory_bytes"], limits["cpu_s"])
-    # sqlglot warns once per statement it falls back on; coverage records those.
+    # sqlglot warns once per statement it falls back on, pypdf on each repair it
+    # makes; coverage records what was lost.
     logging.getLogger("sqlglot").setLevel(logging.ERROR)
+    logging.getLogger("pypdf").setLevel(logging.ERROR)
     req: dict[str, Any] = json.loads(sys.stdin.buffer.readline())
     data = sys.stdin.buffer.read()
     opts = req["options"]

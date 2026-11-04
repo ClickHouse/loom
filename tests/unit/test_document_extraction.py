@@ -118,7 +118,7 @@ def test_decode_is_strict_and_honours_byte_order_marks_and_declared_encodings() 
 
 def test_a_known_format_this_build_does_not_parse_is_unavailable_not_text() -> None:
     with pytest.raises(ExtractionError) as e:
-        extract(b"%PDF-1.7 ...", "a.pdf")
+        extract(b"a,b\n1,2\n", "a.csv")
     assert e.value.code == "format_unavailable"
 
 
