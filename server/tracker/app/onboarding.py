@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,26 +49,26 @@ _READ_ACCESS = frozenset(
         "SHOW COLUMNS",
         "SHOW DICTIONARIES",
         "DICTGET",
-        # a temp table for a JOIN
-        "CREATE TEMPORARY TABLE",
-        "CREATE ARBITRARY TEMPORARY TABLE",
+        "CREATE TEMPORARY TABLE",  # a temp table for a JOIN
     }
 )
 _PASSES_ON = (" WITH GRANT OPTION", " WITH ADMIN OPTION")
+# a quoted name (a column, role or user), which may hold `(`, `,` or ` ON `
+_QUOTED = re.compile(r"`(?:[^`\\]|\\.)*`|\"(?:[^\"\\]|\\.)*\"")
+# an access type with an optional column list: `SELECT`, `SELECT(a, b)`
+_ACCESS_TYPE = re.compile(r"([A-Za-z ]+?)\s*(?:\([^()]*\))?")
 
 
-def _access_types(types: str) -> list[str]:
-    """`SELECT(a, b), SHOW TABLES` -> ["SELECT(a, b)", "SHOW TABLES"]: split on
-    the commas outside a column list."""
-    out, depth, cur = [], 0, ""
-    for ch in types:
+def _split(text: str, masked: str) -> list[str]:
+    """Split `text` on the commas outside parentheses, reading the positions
+    from `masked` (the same text with every quoted name blanked out)."""
+    out, depth, start = [], 0, 0
+    for i, ch in enumerate(masked):
         depth += (ch == "(") - (ch == ")")
         if ch == "," and depth == 0:
-            out.append(cur.strip())
-            cur = ""
-        else:
-            cur += ch
-    out.append(cur.strip())
+            out.append(text[start:i].strip())
+            start = i + 1
+    out.append(text[start:].strip())
     return [t for t in out if t]
 
 
@@ -84,35 +85,37 @@ async def _vet(host: str) -> tuple[str, str]:
 class GrantReview:
     grants: list[str] = field(default_factory=list)  # the raw SHOW GRANTS lines
     roles: list[str] = field(default_factory=list)  # roles granted (opaque)
-    write_types: list[str] = field(default_factory=list)  # what makes it not read-only
+    refused: list[str] = field(default_factory=list)  # what makes it not read-only
 
     @property
     def read_only(self) -> bool:
-        return not self.write_types
+        return not self.refused
 
 
 def review_grants(lines: list[str]) -> GrantReview:
     """Parse `SHOW GRANTS` output: `GRANT <types> ON <scope> TO <user>` lines
-    name access types; `GRANT <role>[, …] TO <user>` lines name roles."""
+    name access types; `GRANT <role>[, …] TO <user>` lines name roles;
+    `REVOKE` lines only narrow a grant. Any other line is refused."""
     rev = GrantReview(grants=[str(x) for x in lines])
     for raw in lines:
         line = " ".join(str(raw).split())
-        upper = line.upper()
+        masked = _QUOTED.sub(lambda m: "_" * len(m.group()), line)
+        upper = masked.upper()
         if not line or upper.startswith("REVOKE "):
-            continue  # a partial revoke only narrows a grant
-        if not upper.startswith("GRANT "):
-            rev.write_types.append(line)
             continue
-        passes_on = [p.strip() for p in _PASSES_ON if p in upper]
-        rev.write_types.extend(passes_on)
-        body = line[6:]
-        if " ON " not in body:
-            roles = body.split(" TO ", 1)[0]
-            rev.roles.extend(r.strip() for r in roles.split(",") if r.strip())
+        if not upper.startswith("GRANT ") or "`" in masked or '"' in masked:
+            rev.refused.append(line)
             continue
-        for t in _access_types(body.split(" ON ", 1)[0]):
-            if t.upper().split("(")[0].strip() not in _READ_ACCESS:
-                rev.write_types.append(t)
+        rev.refused.extend(p.strip() for p in _PASSES_ON if p in upper)
+        on, to = upper.find(" ON "), upper.find(" TO ")
+        if on < 0 or 0 <= to < on:
+            end = to if to >= 0 else len(line)
+            rev.roles.extend(_split(line[6:end], masked[6:end]))
+            continue
+        for t in _split(line[6:on], masked[6:on]):
+            name = _ACCESS_TYPE.fullmatch(_QUOTED.sub("_", t))
+            if name is None or name.group(1).strip().upper() not in _READ_ACCESS:
+                rev.refused.append(t)
     return rev
 
 

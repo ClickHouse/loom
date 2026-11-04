@@ -222,16 +222,16 @@ def _cfg(monkeypatch):
 
 def test_grant_review_names_write_access_and_roles() -> None:
     rev = ob.review_grants(RO_GRANTS)
-    assert rev.read_only and rev.roles == ["analyst"] and rev.write_types == []
+    assert rev.read_only and rev.roles == ["analyst"] and rev.refused == []
     rev = ob.review_grants(["GRANT SELECT, INSERT ON loom_qa.* TO u", "GRANT ALL ON *.* TO u"])
-    assert not rev.read_only and rev.write_types == ["INSERT", "ALL"]
+    assert not rev.read_only and rev.refused == ["INSERT", "ALL"]
     rev = ob.review_grants(
         [
             "GRANT ALTER TABLE, DROP TABLE ON loom_qa.* TO u",
             "GRANT CREATE TEMPORARY TABLE ON *.* TO u",
         ]
     )
-    assert rev.write_types == ["ALTER TABLE", "DROP TABLE"]
+    assert rev.refused == ["ALTER TABLE", "DROP TABLE"]
     assert ob.review_grants(["GRANT CREATE TEMPORARY TABLE ON *.* TO u"]).read_only
 
 
@@ -242,12 +242,22 @@ def test_grant_review_refuses_what_it_cannot_classify_as_read_only() -> None:
         "GRANT analyst TO u WITH ADMIN OPTION",
         "GRANT SHOW NAMED COLLECTIONS ON *.* TO u",
         "GRANT SOME FUTURE TYPE ON *.* TO u",
+        "GRANT CREATE ARBITRARY TEMPORARY TABLE ON *.* TO u",
+        "GRANT SELECT(`a(`), INSERT ON db.t TO u",
+        "GRANT SELECT(`x ON y`), INSERT ON db.t TO u",
+        "GRANT SELECT(`a) INSERT`) ON db.t TO `u",
     ]
     for line in refused:
         assert not ob.review_grants([line]).read_only, line
     rev = ob.review_grants(["GRANT SELECT(id, title), SHOW TABLES ON loom_qa.t TO u"])
-    assert rev.read_only and rev.write_types == []
+    assert rev.read_only and rev.refused == []
     assert ob.review_grants(["GRANT analyst TO u", "REVOKE SELECT ON loom_qa.x FROM u"]).read_only
+    rev = ob.review_grants(
+        ["GRANT SELECT(`a, b`, `c ON d`) ON db.t TO `loom-ro`", "GRANT `my, role` TO `loom-ro`"]
+    )
+    assert rev.read_only and rev.roles == ["`my, role`"]
+    rev = ob.review_grants(["GRANT analyst TO u WITH ADMIN OPTION"])
+    assert rev.roles == ["analyst"] and rev.refused == ["WITH ADMIN OPTION"]
 
 
 @pytest.mark.asyncio
