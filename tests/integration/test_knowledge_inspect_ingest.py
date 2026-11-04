@@ -36,24 +36,21 @@ BAD_TOML = b"a = = 1\n[x\n"
 
 
 async def _work(job_id: str, c: httpx.AsyncClient, org: str, ns: str) -> dict[str, Any]:
-    """Worker passes in this process until the job has run once (another namespace's due
-    job may take a pass), then its status."""
+    """Run the job once in this process, as a worker pass that took it does (a pass
+    takes one job of the whole queue, which other tests' jobs share), then its status."""
     from server.core.ch import get_client
-    from server.knowledge.workers import ingest
+    from server.knowledge.app import ingest_run
+    from server.knowledge.store import ingestions
 
     ch = get_client()
     await ch.connect()
     try:
-        for _ in range(10):
-            await ingest.run_pass()
-            status = await _op(
-                c, "knowledge.ingest_status", org=org, namespace=ns, ingestion_id=job_id
-            )
-            if status["attempts"] or status["state"] != "pending":
-                return status
+        job = await ingestions.get_ingestion(org, ns, job_id)
+        assert job is not None, job_id
+        await ingest_run.take_and_run(job)
     finally:
         await ch.disconnect()
-    raise AssertionError(f"job {job_id} did not run")
+    return await _op(c, "knowledge.ingest_status", org=org, namespace=ns, ingestion_id=job_id)
 
 
 async def _end(c: httpx.AsyncClient, org: str, ns: str, job_ids: list[str]) -> None:
