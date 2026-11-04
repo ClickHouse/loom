@@ -84,7 +84,7 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
 
 async def _reader_actors(org: str, me: str) -> list[str]:
     """Every actor spelling of the caller's principal: `me`, plus the same kind over each
-    spelling the directory ties to the subject (login handle and contact email,
+    spelling the directory ties to the subject (login handle and verified email,
     auth.aliases — the rule grants fold by), so one person reads one history."""
     if not me:
         return []

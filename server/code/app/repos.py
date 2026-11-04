@@ -349,7 +349,7 @@ async def _repo_directory_state(auth: Any) -> tuple[_Keyed, _Keyed, _Keyed, _Key
         async def _aliases() -> list[str]:
             if not subject:
                 return []
-            # The login handle and the contact email
+            # The login handle and the verified email
             # are one person; a grant under either spelling is the caller's
             from server.auth.aliases import subject_aliases
 

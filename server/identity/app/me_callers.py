@@ -116,7 +116,7 @@ def remember_caller(request: Request, subject: str, org: str) -> None:
 
 
 async def subject_aliases_of(org: str, subject: str) -> list[str]:
-    """Every spelling the directory ties to the caller (login handle + contact email), so a
+    """Every spelling the directory ties to the caller (login handle + verified email), so a
     grant under either spelling counts."""
     from server.auth.aliases import subject_aliases
 
