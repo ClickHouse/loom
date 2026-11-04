@@ -196,6 +196,15 @@ const CHUNK_CHECKS = [
   "chunks_under_other_model",
   "mixed_live_versions",
 ];
+// store.INGEST_CHECKS, skipped together when the job read fails; extraction_incomplete reads
+// the coverage and is skipped on its own.
+const JOB_CHECKS = [
+  "ingest_backlog",
+  "extractor_unavailable",
+  "ingest_missing_access",
+  "ingest_content_rejected",
+  "ingest_failed_on_server",
+];
 
 function ChunkSection({ result }: { result: KnowledgeInspection }) {
   const c = result.chunks;
@@ -225,8 +234,7 @@ function ChunkSection({ result }: { result: KnowledgeInspection }) {
       <FindingGroups
         findings={result.findings}
         noun="document"
-        readFailed={checksSkipped(result, CHUNK_CHECKS)}
-        what="chunk"
+        notRun={checksSkipped(result, CHUNK_CHECKS) ? ["The chunk checks did not run."] : []}
       />
     </section>
   );
@@ -264,6 +272,14 @@ function IngestionSection({ result, notes }: { result: KnowledgeInspection; note
           )}
         </p>
       )}
+      {/* A read of its own: when it fails the count stands and nothing is listed. */}
+      {i.without_document_listed.length === 0 &&
+        (i.without_document ?? 0) > 0 &&
+        readFailed(result, "ingestions.without_document") && (
+          <p className="text-xs text-text-muted" data-testid="docs-without-document-unlisted">
+            Sources with a job and no live document ({fmtInt(i.without_document)}): not listed.
+          </p>
+        )}
       {i.without_document_listed.length > 0 && (
         <div>
           <p className="text-xs text-text-muted">Sources with a job and no live document ({n(i.without_document)}):</p>
@@ -292,30 +308,33 @@ function IngestionSection({ result, notes }: { result: KnowledgeInspection; note
       <FindingGroups
         findings={result.ingest_findings}
         noun="source"
-        readFailed={i.sources === null && x.documents === null}
-        what="job"
+        notRun={[
+          ...(checksSkipped(result, JOB_CHECKS) ? ["The job checks did not run."] : []),
+          ...(checksSkipped(result, ["extraction_incomplete"]) ? ["The extraction coverage check did not run."] : []),
+        ]}
       />
     </section>
   );
 }
 
-/** Findings, one group per kind; a check that found nothing is listed on one line. */
+/** Findings, one group per kind; a check that found nothing is listed on one line, and the
+ *  checks the server skipped (their read failed) are said not to have run. */
 function FindingGroups({
   findings,
   noun,
-  readFailed,
-  what,
+  notRun,
 }: {
   findings: Array<DocumentFinding | IngestFinding>;
   noun: string;
-  readFailed: boolean;
-  what: string;
+  notRun: string[];
 }) {
-  if (findings.length === 0) {
-    return readFailed ? <p className="text-text-muted">The {what} checks did not run.</p> : null;
-  }
   return (
     <div className="space-y-3">
+      {notRun.map((line) => (
+        <p key={line} className="text-text-muted">
+          {line}
+        </p>
+      ))}
       {KIND_GROUP.map(({ kind, label }) => {
         const mine = findings.filter((f) => f.kind === kind);
         if (mine.length === 0) return null;
@@ -346,6 +365,7 @@ function FindingGroups({
 function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFinding; noun: string }) {
   const head = `finding-${f.code}`;
   const ids = "ingestion_ids" in f ? f.ingestion_ids : [];
+  const ingested = new Set("ingested_samples" in f ? f.ingested_samples : []);
   const more = f.count - f.samples.length;
   return (
     <li className="pane-card space-y-1.5" aria-labelledby={head} data-code={f.code} data-kind={f.kind}>
@@ -360,6 +380,8 @@ function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFi
         {plural(f.count, noun)}
         {f.population !== null && ` of ${fmtInt(f.population)}`} ({Math.round(f.share * 100)}%)
         {"without_document" in f && f.without_document > 0 && ` · ${fmtInt(f.without_document)} with no live document`}
+        {/* The remedy differs: a text document is written again, an ingested one ingested again. */}
+        {"ingested" in f && f.ingested > 0 && ` · ${fmtInt(f.ingested)} published by knowledge.ingest`}
       </p>
       <p className="text-xs text-text-muted">{f.detail}</p>
       {f.samples.length > 0 && (
@@ -368,6 +390,7 @@ function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFi
             <li key={uri} className="text-xs">
               <span className="font-mono break-all">{uri}</span>
               {ids[k] && <span className="text-text-muted"> · job {ids[k]}</span>}
+              {ingested.has(uri) && <span className="text-text-muted"> · published by knowledge.ingest</span>}
             </li>
           ))}
         </ul>
@@ -399,9 +422,12 @@ function JobLine({ jobs }: { jobs: SourceJobs }) {
   );
 }
 
-/** The listing and its jobs have no field a failed read leaves null, and the server writes
- *  nothing but a failed read under their names in `skipped` ("listed: TimeoutError"). */
-function readFailed(result: KnowledgeInspection, section: "listed" | "listed.jobs"): boolean {
+/** The listings and the listed jobs have no field a failed read leaves null, and the server
+ *  writes nothing but a failed read under their names in `skipped` ("listed: TimeoutError"). */
+function readFailed(
+  result: KnowledgeInspection,
+  section: "listed" | "listed.jobs" | "ingestions.without_document",
+): boolean {
   return result.skipped.some((s) => s.startsWith(`${section}: `));
 }
 

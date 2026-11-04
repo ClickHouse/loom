@@ -1466,9 +1466,10 @@ describe("Assistant: documents", () => {
     expect(within(result).getByTestId("docs-searchable")).toHaveTextContent(
       "11 of 12 live chunks searchable under text-embedding-3-small · without a vector: 1",
     );
-    expect(within(result).getByRole("listitem", { name: "Chunks with no vector" })).toHaveTextContent(
-      "1 document of 2 (50%)",
-    );
+    const unembedded = within(result).getByRole("listitem", { name: "Chunks with no vector" });
+    expect(unembedded).toHaveTextContent("1 document of 2 (50%)");
+    expect(unembedded).not.toHaveTextContent("published by knowledge.ingest");
+    expect(within(result).queryByText(/checks? did not run/)).toBeNull();
     expect(within(result).getByTestId("docs-decisions-total")).toHaveTextContent(
       "Decided: 3 (1 confirmed, 2 unconfirmed, 0 source changed, 0 with an outcome) · Proposed: none",
     );
@@ -1558,7 +1559,78 @@ describe("Assistant: documents", () => {
     const result = await pickDocuments();
     expect(within(result).queryByRole("status")).toBeNull();
     expect(within(result).getByText("The knowledge.ingest jobs could not be read.")).toBeInTheDocument();
+    // Only the job read failed: its five checks did not run; the coverage check did.
+    expect(within(result).getByText("The job checks did not run.")).toBeInTheDocument();
+    expect(within(result).queryByText("The extraction coverage check did not run.")).toBeNull();
+    expect(within(result).getByText(/Checked, none found: Extraction incomplete/)).toBeInTheDocument();
+  });
+
+  it("says the coverage check did not run when only the coverage read failed", async () => {
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      extraction: { documents: null, incomplete: null, lost: [] },
+      ingest_findings: KNOWLEDGE.ingest_findings.filter((f) => f.code !== "extraction_incomplete"),
+      coverage: {
+        rules_run: ALL_CHECKS.filter((c) => c !== "extraction_incomplete"),
+        rules_skipped: ["extraction_incomplete"],
+        complete: false,
+      },
+      skipped: ["extraction: TimeoutError"],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).getByText("The extraction coverage check did not run.")).toBeInTheDocument();
     expect(within(result).queryByText("The job checks did not run.")).toBeNull();
+    expect(within(result).getByText(/Checked, none found: Backlog/)).toBeInTheDocument();
+  });
+
+  it("says the sources with no live document were not listed when that read failed", async () => {
+    const queued = firstIngestQueued();
+    inspectKnowledge.mockResolvedValueOnce({
+      ...queued,
+      ingestions: { ...queued.ingestions, without_document_listed: [] },
+      skipped: ["ingestions.without_document: TimeoutError"],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).getByTestId("docs-without-document-unlisted")).toHaveTextContent(
+      "Sources with a job and no live document (1): not listed.",
+    );
+    expect(within(result).queryByRole("list", { name: "Sources with a job and no live document" })).toBeNull();
+  });
+
+  it("marks the chunk-check samples knowledge.ingest published, whose remedy is to ingest again", async () => {
+    // The spec also has a live chunk with no vector: 2 of the 2 live documents, 1 ingested.
+    const [spec, notes] = KNOWLEDGE.listed;
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      chunks: {
+        ...KNOWLEDGE.chunks,
+        searchable: 10,
+        unembedded: 2,
+        by_model: [{ model: "text-embedding-3-small", live: 12, embedded: 10 }],
+      },
+      listed: [{ ...spec, chunks: spec.chunks && { ...spec.chunks, searchable: 7, unembedded: 1 } }, notes],
+      findings: KNOWLEDGE.findings.map((f) =>
+        f.code === "unembedded_chunks"
+          ? {
+              ...f,
+              count: 2,
+              share: 1,
+              samples: [SPEC, NOTES],
+              ingested: 1,
+              ingested_samples: [SPEC],
+            }
+          : f,
+      ),
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    const card = within(result).getByRole("listitem", { name: "Chunks with no vector" });
+    expect(card).toHaveTextContent("2 documents of 2 (100%) · 1 published by knowledge.ingest");
+    const samples = within(within(card).getByRole("list", { name: /Samples of/ })).getAllByRole("listitem");
+    expect(samples[0]).toHaveTextContent(`${SPEC} · published by knowledge.ingest`);
+    expect(samples[1]).not.toHaveTextContent("published by knowledge.ingest");
   });
 
   it("says there is no live document to list while a first ingest is queued", async () => {
@@ -1617,6 +1689,7 @@ describe("Assistant: documents", () => {
     const result = await pickDocuments();
     expect(within(result).getByText("The chunk checks did not run.")).toBeInTheDocument();
     expect(within(result).getByText("The job checks did not run.")).toBeInTheDocument();
+    expect(within(result).getByText("The extraction coverage check did not run.")).toBeInTheDocument();
     expect(within(result).getByText("The extraction coverage could not be read.")).toBeInTheDocument();
     expect(within(result).queryByTestId("docs-extraction-note")).toBeNull();
   });
