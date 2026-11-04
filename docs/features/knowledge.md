@@ -449,7 +449,7 @@ text) and `section_path`, `similarity`, `lexical_score`, `score` (the fused rank
 hybrid mode) and, on a fan-out, the `namespace` it came from. A citation names what it
 read: `revision` is the document revision the chunk was written as and `format` its
 document's format. A chunk of an [ingested file](#ingesting-files) also carries its
-`block_type` and its `locator` (its lines, a key path), so a caller opens the passage in
+`block_type` and its `locator` (its lines, a key path, a PDF's pages or a deck's slides), so a caller opens the passage in
 the source.
 
 **Exact keys.** An extracted file's chunks carry the names their blocks define or read
