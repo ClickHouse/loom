@@ -124,12 +124,10 @@ export function DocumentInspection({ result }: { result: KnowledgeInspection }) 
 
       <section aria-labelledby="docs-memories" className="space-y-1 text-sm">
         <SectionHeading id="docs-memories" level={3} label="Memories shaped like documents" />
+        {/* The server sends each of the audit's two checks, a clean one at count 0, or names it
+            in `skipped` ("memory_findings.<code>: <reason>"): none sent means none was read. */}
         {result.memory_findings.length === 0 ? (
-          <p className="text-text-muted">
-            {result.skipped.some((s) => s.startsWith("memory_findings"))
-              ? "namespace.audit's checks were not read; the reason is listed below."
-              : "namespace.audit reported none."}
-          </p>
+          <p className="text-text-muted">namespace.audit's checks were not read; the reason is listed below.</p>
         ) : (
           <ul className="space-y-1" aria-label="namespace.audit findings on memories">
             {result.memory_findings.map((f) => (

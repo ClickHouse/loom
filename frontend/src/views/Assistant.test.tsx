@@ -26,10 +26,10 @@ import { Assistant } from "./Assistant";
 // number holds exactly: the page never prints it.
 const NS_VERSION = Number("1762156800123456789");
 
-// The Assistant page reads only on a click, through three read-only ops, and never
-// applies a draft: it renders what namespace.inventory, memory.inspect and namespace.tune
-// answer, with what they could not read said so. The fixtures are the shapes the server
-// sends.
+// The Assistant page reads only on a click, through four read-only ops, and never
+// applies a draft: it renders what namespace.inventory, memory.inspect, knowledge.inspect
+// and namespace.tune answer, with what they could not read said so. The fixtures are the
+// shapes the server sends.
 
 const INVENTORY: NamespaceInventory = {
   scope: { org: "dev", namespace: "team", read_scope: "namespace", user_id: null, session_id: null },
@@ -132,8 +132,18 @@ const CITED = {
   updated_at: "2026-11-01T10:00:00",
 };
 
+/** A memory draft as the current server sends it: the write is an op, nothing follows it,
+ *  no preview, no documents cited. A server a release behind leaves these fields out. */
+const served = (p: TuneProposal): TuneProposal => ({
+  ...p,
+  evidence: { ...p.evidence, documents: [] },
+  apply: { ...p.apply, via: "op" },
+  apply_also: [],
+  preview: null,
+});
+
 // A category draft cites the tagged rows and counts those another category holds.
-const CATEGORY: TuneProposal = {
+const CATEGORY: TuneProposal = served({
   id: "2ef4b21f4c7eb774",
   target: "namespace.category",
   scope: "namespace dev/team",
@@ -158,14 +168,14 @@ const CATEGORY: TuneProposal = {
       "None: registering a name that exists updates that category, so read namespace.list_categories again just before applying.",
   },
   limits: "A tag used for two meanings would need two categories, not one.",
-};
+});
 
 // _guide_lines appends the prefixes an existing guide leaves out.
 const GUIDE_CURRENT = "# team\n\n## Key layout\n\n- `notes/…`: 9 rows\n";
 const GUIDE_PROPOSED = `${GUIDE_CURRENT}\n## Key layout\n\n- \`billing/…\`: 12 rows\n`;
 
 // A guide draft cites no row and counts none; here the writers could not be read.
-const GUIDE: TuneProposal = {
+const GUIDE: TuneProposal = served({
   id: "12b965a8ed32f1da",
   target: "namespace.guide",
   scope: "namespace dev/team",
@@ -195,10 +205,10 @@ const GUIDE: TuneProposal = {
       "expected_revision: a guide written since the draft refuses the write and answers with its current text to merge into.",
   },
   limits: "The draft lists what the rows show, not what they mean; a person writes what each prefix and tag is for.",
-};
+});
 
 // The extraction draft answers audit findings and reaches the agents extraction wrote for.
-const INSTRUCTIONS: TuneProposal = {
+const INSTRUCTIONS: TuneProposal = served({
   id: "67a699bd202bbfee",
   target: "extraction_instructions.request",
   scope: "each memory.set_from_messages request into dev/team that sends them",
@@ -225,7 +235,7 @@ const INSTRUCTIONS: TuneProposal = {
   },
   limits:
     "Each writer has to send them; a request without them extracts as before. The flagged counts include rows written by hand (memory.set), which never pass through extraction; a row counts as extraction's by its source trace. They are not drafted as the operator extraction policy: a policy overrides every other instruction and turns off the recovery passes that keep preferences, costs, ages and corrections.",
-};
+});
 
 const TUNE: NamespaceTune = {
   org: "dev",
@@ -236,6 +246,8 @@ const TUNE: NamespaceTune = {
   categories_registered: 1,
   extraction_policy: null,
   extraction_policy_unavailable: "only an org admin reads the operator extraction policy",
+  // No live document: nothing sampled.
+  chunking: null,
   skipped: ["audit.telemetry_unavailable: window within the ledger lag"],
   model_used: false,
 };
@@ -374,6 +386,38 @@ const NO_JOBS: KnowledgeInspection["ingestions"] = {
   without_document_listed: [],
 };
 
+/** namespace.audit's two checks on memories shaped like documents (inspect.py
+ *  MEMORY_FINDING_CODES), each sent when it ran, a clean one as `info` at count 0, over the
+ *  namespace's 40 searchable rows. The detail and remedy are the audit's. */
+const memoryFindings = (oversized: number, episodic: number): KnowledgeInspection["memory_findings"] => [
+  {
+    code: "oversized_values",
+    kind: "usage_heuristic",
+    severity: oversized ? "warning" : "info",
+    rule_version: 1,
+    source_op: "namespace.audit",
+    count: oversized,
+    share: oversized / 40,
+    detail:
+      "Searchable rows longer than the memory value advisory (30000 chars): a document, not a memory, and past the embedder's cap it is never embedded at all.",
+    remedy:
+      "Store the document with `knowledge.upsert` and write a one-paragraph memory row under the same key that points at it. See docs/guides/investigation-agent-memory.md.",
+  },
+  {
+    code: "episodic_blobs",
+    kind: "usage_heuristic",
+    severity: episodic ? "warning" : "info",
+    rule_version: 1,
+    source_op: "namespace.audit",
+    count: episodic,
+    share: episodic / 40,
+    detail:
+      "Episodic rows longer than 50000 chars: a checkpoint or a run dump stored as a memory row, versioned on every rewrite.",
+    remedy:
+      "Park it with `context.offload` (a summary plus a TTL) and keep the run ledger as a short episodic row keyed by run id. See docs/guides/investigation-agent-memory.md.",
+  },
+];
+
 const KNOWLEDGE: KnowledgeInspection = {
   org: "dev",
   namespace: "team",
@@ -464,19 +508,7 @@ const KNOWLEDGE: KnowledgeInspection = {
   ingest_findings: INGEST_CODES.map(([c, k]) =>
     c === "extraction_incomplete" ? ingestFinding(c, k, 1, [[SPEC, ""]]) : ingestFinding(c, k, 1),
   ),
-  memory_findings: [
-    {
-      code: "oversized_values",
-      kind: "usage_heuristic",
-      severity: "warning",
-      rule_version: 1,
-      source_op: "namespace.audit",
-      count: 2,
-      share: 0.05,
-      detail: "Rows over the value size a memory should hold.",
-      remedy: "Move them to documents.",
-    },
-  ],
+  memory_findings: memoryFindings(2, 0),
   skipped: [],
 };
 
@@ -502,7 +534,7 @@ const emptyNamespace = (): KnowledgeInspection => ({
   ingestions: NO_JOBS,
   extraction: { documents: 0, incomplete: 0, lost: [] },
   ingest_findings: cleanIngest(0, 0),
-  memory_findings: [],
+  memory_findings: memoryFindings(0, 0),
 });
 
 /** The documents read failed: its totals, groups and newest write are null or empty, and
@@ -576,13 +608,19 @@ const documentsCut = (): KnowledgeInspection => {
   const groups: Group[] = [
     ["markdown", "https", 1, 1] as Group,
     ["pdf", "https", 1, 0] as Group,
-    ...Array.from({ length: MAX_GROUPS - 1 }, (_, i): [string, string, number, number] => [
+    ...Array.from({ length: MAX_GROUPS }, (_, i): [string, string, number, number] => [
       `f${i % 25}`,
       `s${Math.floor(i / 25)}`,
       0,
       1,
     ]),
-  ].slice(0, MAX_GROUPS);
+  ]
+    // store.document_groups: live DESC, deleted DESC, doc_format, source_scheme.
+    .sort(
+      (a, b) =>
+        b[2] - a[2] || b[3] - a[3] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0),
+    )
+    .slice(0, MAX_GROUPS);
   return {
     ...KNOWLEDGE,
     documents: {
@@ -628,8 +666,9 @@ const PENDING: IngestJob = {
   ingestion_id: "ing-2",
   state: "pending",
   ended_at: null,
-  updated_at: "2026-11-01T09:00:00",
-  next_attempt_at: "2026-11-01T09:00:30",
+  updated_at: JOB.queued_at,
+  // A job knowledge.ingest queues is due at once (store/ingestions.py).
+  next_attempt_at: JOB.queued_at,
   attempts: 0,
 };
 
@@ -653,12 +692,39 @@ const firstIngestQueued = (): KnowledgeInspection => ({
 });
 
 // How a job that one check counts looks: its state, failure class and error code.
-const HIT_JOB: Record<string, { state: string; failure_class: string; error_code: string }> = {
-  ingest_backlog: { state: "pending", failure_class: "", error_code: "" },
-  extractor_unavailable: { state: "failed", failure_class: "extractor_unavailable", error_code: "format_unavailable" },
-  ingest_missing_access: { state: "failed", failure_class: "missing_access", error_code: "original_gone" },
-  ingest_content_rejected: { state: "failed", failure_class: "bad_content", error_code: "corrupt" },
-  ingest_failed_on_server: { state: "failed", failure_class: "retries_exhausted", error_code: "retries_exhausted" },
+// A failed job keeps the stage it last ran; retries_exhausted used up
+// knowledge_ingest_max_attempts (default 5).
+type HitJob = Pick<IngestJob, "state" | "stage" | "attempts" | "failure_class" | "error_code">;
+const HIT_JOB: Record<string, HitJob> = {
+  ingest_backlog: { state: "pending", stage: "", attempts: 0, failure_class: "", error_code: "" },
+  extractor_unavailable: {
+    state: "failed",
+    stage: "parse",
+    attempts: 1,
+    failure_class: "extractor_unavailable",
+    error_code: "format_unavailable",
+  },
+  ingest_missing_access: {
+    state: "failed",
+    stage: "parse",
+    attempts: 1,
+    failure_class: "missing_access",
+    error_code: "original_gone",
+  },
+  ingest_content_rejected: {
+    state: "failed",
+    stage: "parse",
+    attempts: 1,
+    failure_class: "bad_content",
+    error_code: "corrupt",
+  },
+  ingest_failed_on_server: {
+    state: "failed",
+    stage: "embed",
+    attempts: 5,
+    failure_class: "retries_exhausted",
+    error_code: "retries_exhausted",
+  },
 };
 const HIT_SOURCES = ["https://example.com/a.pdf", "https://example.com/b.pdf", "https://example.com/c.pdf"];
 
@@ -674,8 +740,9 @@ const oneIngestHit = (code: string): KnowledgeInspection => {
       ...JOB,
       ingestion_id: `ing-h${k}`,
       ...hit,
+      updated_at: open ? JOB.queued_at : JOB.updated_at,
       ended_at: open ? null : JOB.ended_at,
-      next_attempt_at: open ? "2026-11-01T09:00:30" : null,
+      next_attempt_at: open ? JOB.queued_at : null,
     });
   });
   const [spec, notes] = KNOWLEDGE.listed;
@@ -1223,6 +1290,29 @@ describe("Assistant: review changes", () => {
     expect(await axeViolations(container)).toEqual([]);
   });
 
+  it("renders a draft from a server a release behind, which sends no via, apply_also, preview or documents", async () => {
+    const legacy = ({
+      apply: { via: _via, ...apply },
+      apply_also: _also,
+      preview: _preview,
+      evidence,
+      ...p
+    }: TuneProposal) => {
+      const { documents: _documents, ...rest } = evidence;
+      return { ...p, evidence: rest, apply } as TuneProposal;
+    };
+    const { chunking: _chunking, ...old } = TUNE;
+    tuneNamespace.mockResolvedValueOnce({ ...old, proposals: TUNE.proposals.map(legacy) });
+    render(<Assistant />);
+    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    const review = await screen.findByTestId("assistant-review");
+    const card = within(review).getByRole("listitem", { name: /Register a category for the tag/ });
+    expect(within(card).getByText("namespace.register_category")).toBeInTheDocument();
+    expect(within(card).getByText("Arguments:")).toBeInTheDocument();
+    expect(within(card).queryByTestId("proposal-also")).toBeNull();
+    expect(within(review).queryByTestId("tune-sample")).toBeNull();
+  });
+
   it("shows a guide draft's revision and arguments, and says when the writers could not be read", async () => {
     render(<Assistant />);
     await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
@@ -1530,6 +1620,37 @@ describe("Assistant: documents", () => {
     expect(within(result).queryByTestId("docs-extraction-note")).toBeNull();
   });
 
+  it("lists the audit's memory checks it read, beside the one it names as skipped", async () => {
+    const reason = "memory_findings.episodic_blobs: not reported by namespace.audit";
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      memory_findings: KNOWLEDGE.memory_findings.filter((f) => f.code === "oversized_values"),
+      skipped: [reason],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    const list = within(result).getByRole("list", { name: "namespace.audit findings on memories" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(list).toHaveTextContent("oversized_values 2 rows");
+    expect(within(result).getByTestId("docs-skipped")).toHaveTextContent(reason);
+  });
+
+  it("says the audit's memory checks were not read under a read scope bound to one user", async () => {
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      memory_findings: [],
+      skipped: [
+        "memory_findings: namespace.audit reads every user's rows; not run under a read scope bound to one user or session",
+      ],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(
+      within(result).getByText("namespace.audit's checks were not read; the reason is listed below."),
+    ).toBeInTheDocument();
+    expect(within(result).queryByRole("list", { name: "namespace.audit findings on memories" })).toBeNull();
+  });
+
   it("offers documents to a token pinned to one user, which the server answers in scope", async () => {
     const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
     localStorage.setItem("loom_token_v1", `${b64({ alg: "HS256" })}.${b64({ sub: "ada", read_user_id: "ada" })}.sig`);
@@ -1599,14 +1720,24 @@ const STATS = (size: number, stride: number, chunks: number, cut: number, tokens
   over_input_limit: 0,
 });
 
-// server/knowledge/app/tune.py _chunking_proposal: settings.set through the admin route,
-// the stride after it.
+// server/knowledge/app/tune.py, word for word where the draft carries the server's text.
+const TUNE_SCOPE = "every namespace of this deployment (a deployment setting)";
+const SETTING_GUARD = "expected: the change is refused when the value in force is no longer the drafted current one.";
+// Sent whenever the namespace has a live document or a chunk sample (tune.py DECISIONS_SKIPPED).
+const DECISIONS_SKIPPED =
+  "decision_extraction: no instruction is drafted: loom decisions extract and the source sync's mining build their prompt from fixed text, and no request, namespace or org setting carries instructions for them";
+const SAMPLED = Array.from({ length: 30 }, (_, i) => `https://example.com/handbook/${String(i).padStart(2, "0")}.md`);
+
+// The sections-cut rule: 30 sampled documents, 18 of 40 sections cut at size 1000 (more
+// than a quarter), and 1500 still cutting too many, so 2000 is drafted with the stride's
+// ratio kept. 12 documents have a cut section; the draft cites the first sample_limit (5).
 const CHUNKING: TuneProposal = {
-  id: "c1",
+  id: "9c0d3a71e5b24f68",
   target: "settings.knowledge_chunking",
-  scope: "every namespace of this deployment (a deployment setting)",
+  scope: TUNE_SCOPE,
   title: "Cut documents into chunks of 2000 characters",
-  rationale: "Of 30 documents of dev/team cut again at the current values, the size cuts 18 of 40 sections.",
+  rationale:
+    "Of 30 documents of dev/team cut again at the current values, the size cuts 18 of 40 sampled sections into more chunks than their structure makes, so a search hit returns part of a section. At size 2000 and stride 1600 the same sample makes 64 chunks (now 120), cuts 2 of 40 sections (now 18) and its largest embedding input is 560 tokens (now 300). The stride keeps its ratio to the size.",
   current: "LOOM_KNOWLEDGE_CHUNK_SIZE=1000, LOOM_KNOWLEDGE_CHUNK_STRIDE=800",
   proposed: "LOOM_KNOWLEDGE_CHUNK_SIZE=2000, LOOM_KNOWLEDGE_CHUNK_STRIDE=1600",
   current_revision: null,
@@ -1615,19 +1746,20 @@ const CHUNKING: TuneProposal = {
     supporting_count: 12,
     supporting: [],
     counter_count: 18,
-    documents: ["https://example.com/spec.pdf"],
+    documents: SAMPLED.slice(0, 5),
   },
   affected_agents: ["claude-code"],
   affected_agents_total: 1,
   effect: "future",
-  historical: "Documents already stored keep their chunks.",
+  historical:
+    "Documents already stored keep their chunks. A text document is cut again by loom rechunk --org <org> --namespace <namespace> --apply; an ingested one only by a new knowledge.ingest of its original (loom rechunk would turn it into a text document). Each is a separate action with its own approval.",
   apply: {
     op: "settings.set",
     via: "admin_route",
     args: { name: "knowledge_chunk_size", value: 2000, expected: 1000 },
     args_complete: true,
     required_role: "platform_admin",
-    guard: "expected: the change is refused when the value in force is no longer the drafted current one.",
+    guard: SETTING_GUARD,
   },
   apply_also: [
     {
@@ -1636,23 +1768,30 @@ const CHUNKING: TuneProposal = {
       args: { name: "knowledge_chunk_stride", value: 1600, expected: 800 },
       args_complete: true,
       required_role: "platform_admin",
-      guard: "expected: the change is refused when the value in force is no longer the drafted current one.",
+      guard: SETTING_GUARD,
     },
   ],
   preview: { before: STATS(1000, 800, 120, 18, 300), after: STATS(2000, 1600, 64, 2, 560) },
-  limits: "The settings are the deployment's.",
+  limits:
+    "The settings are the deployment's: every namespace's next writes are cut at them, and the evidence is this namespace's sample. A longer chunk keeps more of a section in one vector and a shorter one less; what either does to search quality is not measured here, which a paired search benchmark shows. Until both settings are set, a write uses a stride of at most the size.",
 };
 
-// _routes: an environment variable with placeholders to fill in.
+const ROUTE_SERVICE = 'LOOM_DOCUMENT_EXTRACTORS_JSON["docx"]';
+const ROUTES_PROPOSED = { docx: "<as set>", pdf: `<the URL ${ROUTE_SERVICE} names>` };
+
+// _routes: two pdf sources failed format_unavailable with no extractor configured for pdf
+// (no default URL, no pdf route); the service a docx route names declares pdf. Five pdf
+// documents were extracted whole before, by a route since removed.
 const ROUTES: TuneProposal = {
-  id: "r1",
+  id: "4f1e8b2c7a903d56",
   target: "settings.document_extractors_json",
-  scope: "every namespace of this deployment (a deployment setting)",
+  scope: TUNE_SCOPE,
   title: "Route pdf to an extractor that declares it",
-  rationale: "pdf: 2 sources failed format_unavailable; no extractor is configured for it.",
-  current: "{}",
+  rationale: `pdf: 2 sources failed format_unavailable; no extractor is configured for it; the service ${ROUTE_SERVICE} names declares pdf. Counts are dev/team's.`,
+  current: '{"docx": "<as set>"}',
   current_revision: null,
-  proposed: '{"pdf": "<the URL LOOM_DOCUMENT_EXTRACTOR_URL names>"}',
+  // Python's json.dumps: ", " and ": " between items.
+  proposed: `{"docx": "<as set>", "pdf": "<the URL LOOM_DOCUMENT_EXTRACTORS_JSON[\\"docx\\"] names>"}`,
   evidence: {
     finding_codes: ["extractor_unavailable"],
     supporting_count: 2,
@@ -1660,29 +1799,33 @@ const ROUTES: TuneProposal = {
     counter_count: 5,
     documents: ["https://example.com/a.pdf", "https://example.com/b.pdf"],
   },
-  affected_agents: [],
-  affected_agents_total: 0,
+  affected_agents: ["claude-code"],
+  affected_agents_total: 1,
   effect: "future",
-  historical: "Sources already ingested keep their extraction.",
+  historical:
+    "Sources already ingested keep their extraction, and a failed job does not run again: each is re-extracted only by uploading its original again and running knowledge.ingest, a separate action with its own approval.",
   apply: {
     op: "LOOM_DOCUMENT_EXTRACTORS_JSON",
     via: "environment",
-    args: { LOOM_DOCUMENT_EXTRACTORS_JSON: { pdf: "<the URL LOOM_DOCUMENT_EXTRACTOR_URL names>" } },
+    args: { LOOM_DOCUMENT_EXTRACTORS_JSON: ROUTES_PROPOSED },
     args_complete: false,
     required_role: "platform_admin",
-    guard: "None: an environment setting has no revision.",
+    guard:
+      "None: an environment setting has no revision; compare the deployment's value with `current` before setting it. It is in force once each server and worker restarts.",
   },
   apply_also: [],
   preview: null,
-  limits: "A URL is not shown.",
+  limits:
+    "A URL is not shown, as an extractor URL can carry a credential: each placeholder names the setting whose URL it is, and `<as set>` keeps a route as the deployment has it. A service's capabilities name the formats it takes, not what it keeps: ingest one listed source through the new route and read its coverage (knowledge.inspect) before relying on it. A format's own route wins over a media-type route (`application/pdf`), so the drafted route also takes the sources a media-type route sends elsewhere now.",
 };
 
+// namespace_tune_document_sample (default 50), MAX_SAMPLE_CHARS (8 Mi).
 const SAMPLE = {
-  cap: 200,
+  cap: 50,
   population: 30,
   documents: 30,
   unread: 0,
-  load_cap: 20_000_000,
+  load_cap: 8 * 1024 * 1024,
   embedder_model: "text-embedding-3-small",
   input_token_limit: 8191,
   current: STATS(1000, 800, 120, 18, 300),
@@ -1690,12 +1833,17 @@ const SAMPLE = {
 
 describe("Assistant: document drafts", () => {
   it("shows a chunking draft's before and after on the sample, its cap, and the admin route that applies it", async () => {
-    tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [CHUNKING], chunking: SAMPLE });
+    tuneNamespace.mockResolvedValueOnce({
+      ...TUNE,
+      proposals: [CHUNKING],
+      chunking: SAMPLE,
+      skipped: [...TUNE.skipped, DECISIONS_SKIPPED],
+    });
     const { container } = render(<Assistant />);
     await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByTestId("tune-sample")).toHaveTextContent(
-      "Document sample: 30 of 30 live documents re-chunked at the current values (cap 200",
+      "Document sample: 30 of 30 live documents re-chunked at the current values (cap 50",
     );
     expect(within(review).getByTestId("tune-sample")).toHaveTextContent("input limit 8,191 tokens");
     const card = within(review).getByRole("listitem", { name: /Cut documents into chunks of 2000/ });
@@ -1705,9 +1853,9 @@ describe("Assistant: document drafts", () => {
     expect(cut).toHaveTextContent("18 of 40");
     expect(cut).toHaveTextContent("2 of 40");
     expect(within(card).getByText(/12 supporting · 18 sampled documents it does not flag/)).toBeInTheDocument();
-    expect(within(card).getByRole("list", { name: /Documents cited for/ })).toHaveTextContent(
-      "https://example.com/spec.pdf",
-    );
+    const cited = within(card).getByRole("list", { name: /Documents cited for/ });
+    expect(within(cited).getAllByRole("listitem")).toHaveLength(5);
+    expect(cited).toHaveTextContent(SAMPLED[4]);
     expect(within(card).getAllByText("POST /v1/admin/settings.set")).toHaveLength(2);
     expect(within(card).getByTestId("proposal-args")).toHaveTextContent('"name": "knowledge_chunk_size"');
     expect(within(card).getByTestId("proposal-also-args")).toHaveTextContent('"name": "knowledge_chunk_stride"');
@@ -1721,7 +1869,13 @@ describe("Assistant: document drafts", () => {
   });
 
   it("shows an extractor route set in the environment, with its placeholders to fill in and the restart", async () => {
-    tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [ROUTES], chunking: null });
+    // The namespace's documents were not sampled (read failed), so no chunking sample.
+    tuneNamespace.mockResolvedValueOnce({
+      ...TUNE,
+      proposals: [ROUTES],
+      chunking: null,
+      skipped: [...TUNE.skipped, "chunking: TimeoutError", DECISIONS_SKIPPED],
+    });
     render(<Assistant />);
     await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
     const review = await screen.findByTestId("assistant-review");

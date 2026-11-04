@@ -118,31 +118,47 @@ const INVENTORY = {
 const TAG = "billing-and-invoicing-for-enterprise-accounts";
 const LONG_URI = `https://example.com/${"specs/".repeat(30)}billing.pdf`;
 
-function stats(size: number, stride: number, cut: number) {
-  return {
-    size,
-    stride,
-    chunks: 120,
-    min_chars: 40,
-    median_chars: size - 200,
-    p90_chars: size,
-    max_chars: size,
-    sections: 40,
-    sections_cut: cut,
-    max_input_tokens: size / 4,
-    over_input_limit: 0,
-  };
-}
+// The chunking draft's sample: the spec and the deck cut again at size 12000. The deck's
+// chunks were written at size 6000 under the earlier embedder, whose limit they fit; cut at
+// 12000 for gemini-embedding-001 (2048 tokens) two of its inputs are over, so the
+// over-the-limit rule drafts the largest smaller size that fits, 6000 (9000 is still over).
+const CUT_NOW = {
+  size: 12000,
+  stride: 9600,
+  chunks: 10,
+  min_chars: 120,
+  median_chars: 900,
+  p90_chars: 11200,
+  max_chars: 12000,
+  sections: 11,
+  sections_cut: 1,
+  max_input_tokens: 3050,
+  over_input_limit: 2,
+};
+const CUT_PROPOSED = {
+  size: 6000,
+  stride: 4800,
+  chunks: 12,
+  min_chars: 120,
+  median_chars: 1000,
+  p90_chars: 6000,
+  max_chars: 6000,
+  sections: 11,
+  sections_cut: 1,
+  max_input_tokens: 1530,
+  over_input_limit: 0,
+};
 
 // knowledge.inspect as the server builds it (server/knowledge/app/inspect.py), with long
 // URIs, titles and format names. Two live documents, both listed: the spec, ingested and
 // published partial, with an unembedded chunk; a slide deck from a source sync, its chunks
 // under an older embedding model. Four job sources: the spec, a first ingest queued, one
-// whose extractor is unavailable and one whose file was rejected.
+// whose extractor is unavailable (an xlsx the default extractor does not declare) and one
+// whose file was rejected.
 const longUri = (name: string) => `https://example.com/${"specs/".repeat(30)}${name}`;
 const DECK_URI = longUri("quarterly-review.pptx");
 const QUEUED_URI = longUri("queued-first-ingest.pdf");
-const NO_EXTRACTOR_URI = longUri("scanned-contract.tiff");
+const NO_EXTRACTOR_URI = longUri("budget-model.xlsx");
 const REJECTED_URI = longUri("corrupt-export.pdf");
 
 const DETAIL =
@@ -202,9 +218,10 @@ const job = (id: string, state: string, failure_class = "", error_code = "") => 
   error_code,
   failure_class,
   queued_at: "2026-11-01T09:00:00",
-  updated_at: "2026-11-01T09:01:00",
+  updated_at: state === "pending" ? "2026-11-01T09:00:00" : "2026-11-01T09:01:00",
   ended_at: state === "pending" ? null : "2026-11-01T09:01:00",
-  next_attempt_at: state === "pending" ? "2026-11-01T09:00:30" : null,
+  // A queued job is due at once.
+  next_attempt_at: state === "pending" ? "2026-11-01T09:00:00" : null,
   stalled: false,
 });
 
@@ -250,18 +267,19 @@ const KNOWLEDGE = {
     ],
     by_source_scheme: [{ name: "https", live: 2, deleted: 1 }],
     // The spec's first revision, and two of the deleted deck's; the live deck is unnumbered.
+    // Retired: the spec's first version and the deleted deck's three.
     earlier_revisions: 3,
     unnumbered: 1,
     retired_versions: 4,
   },
   chunks: {
-    embedder_model: "text-embedding-3-small",
+    embedder_model: "gemini-embedding-001",
     live: 12,
     searchable: 7,
     unembedded: 1,
     by_model: [
-      { model: "text-embedding-3-small", live: 8, embedded: 7 },
-      { model: "a-much-older-embedding-model-name", live: 4, embedded: 4 },
+      { model: "gemini-embedding-001", live: 8, embedded: 7 },
+      { model: "text-embedding-3-small", live: 4, embedded: 4 },
     ],
   },
   decisions: {
@@ -289,7 +307,7 @@ const KNOWLEDGE = {
         min_chars: 120,
         median_chars: 900,
         max_chars: 1200,
-        models: ["text-embedding-3-small"],
+        models: ["gemini-embedding-001"],
       },
       decisions: { decided: stage, proposed: stage },
       extraction: { unit: "pages", total: 10, extracted: 9, failed: 1, lost: ["section_path"], complete: false },
@@ -304,17 +322,19 @@ const KNOWLEDGE = {
       revision: 0,
       ingestion_id: "",
       ingested_at: "2026-10-30T09:00:00",
-      retired_versions: 3,
+      // Never rewritten: the retired versions are the deleted deck's.
+      retired_versions: 0,
+      // Written at size 6000 under the earlier embedder.
       chunks: {
         live: 4,
         searchable: 0,
         unembedded: 0,
         other_model: 4,
         versions: 0,
-        min_chars: 200,
-        median_chars: 600,
-        max_chars: 900,
-        models: ["a-much-older-embedding-model-name"],
+        min_chars: 2000,
+        median_chars: 5000,
+        max_chars: 6000,
+        models: ["text-embedding-3-small"],
       },
       decisions: { decided: none, proposed: none },
       extraction: null,
@@ -357,12 +377,14 @@ const KNOWLEDGE = {
     cancelled: 0,
     oldest_open_queued_at: QUEUED_JOB.queued_at,
     worker_enabled: true,
-    extractor_configured: false,
+    // LOOM_DOCUMENT_EXTRACTOR_URL, and a pptx route.
+    extractor_configured: true,
+    // Newest queued first, then by URI (store.sources_without_document): queued together.
     without_document_listed: [
-      sourceJobs(QUEUED_URI, QUEUED_JOB),
       sourceJobs(NO_EXTRACTOR_URI, NO_EXTRACTOR_JOB),
       sourceJobs(REJECTED_URI, REJECTED_JOB),
-    ],
+      sourceJobs(QUEUED_URI, QUEUED_JOB),
+    ].sort((a, b) => (a.source_uri < b.source_uri ? -1 : 1)),
   },
   extraction: { documents: 1, incomplete: 1, lost: [{ name: "section_path", live: 1, deleted: 0 }] },
   ingest_findings: [
@@ -382,8 +404,10 @@ const KNOWLEDGE = {
       source_op: "namespace.audit",
       count: 2,
       share: 0.05,
-      detail: "Rows over the value size a memory should hold.",
-      remedy: "Move them to documents.",
+      detail:
+        "Searchable rows longer than the memory value advisory (30000 chars): a document, not a memory, and past the embedder's cap it is never embedded at all.",
+      remedy:
+        "Store the document with `knowledge.upsert` and write a one-paragraph memory row under the same key that points at it. See docs/guides/investigation-agent-memory.md.",
     },
   ],
   skipped: ["memory_findings.episodic_blobs: not reported by namespace.audit"],
@@ -420,6 +444,7 @@ const TUNE = {
           },
         ],
         counter_count: 4,
+        documents: [],
       },
       affected_agents: ["a-very-long-agent-name-from-a-client-config"],
       affected_agents_total: 3,
@@ -431,36 +456,40 @@ const TUNE = {
         args: { org: "dev", namespace: "personal-alice", name: TAG, description: `Rows tagged \`${TAG}\`.` },
         args_complete: true,
         required_role: "writer",
+        via: "op",
         guard:
           "None: registering a name that exists updates that category, so read namespace.list_categories again just before applying.",
       },
+      apply_also: [],
+      preview: null,
       limits: "A tag used for two meanings would need two categories, not one.",
     },
     {
-      id: "c1",
+      id: "9c0d3a71e5b24f68",
       target: "settings.knowledge_chunking",
       scope: "every namespace of this deployment (a deployment setting)",
-      title: "Cut documents into chunks of 2000 characters",
+      title: "Cut documents into chunks of 6000 characters",
       rationale:
-        "Of 30 documents of dev/personal-alice cut again at the current values, the size cuts 18 of 40 sections into more chunks than their structure makes, so a search hit returns part of a section.",
-      current: "LOOM_KNOWLEDGE_CHUNK_SIZE=1000, LOOM_KNOWLEDGE_CHUNK_STRIDE=800",
+        "Of 2 documents of dev/personal-alice cut again at the current values, 2 of 10 sampled chunks have an embedding input over gemini-embedding-001's 2048-token limit (the largest is 3050), which the provider refuses, so a write cut like them fails. At size 6000 and stride 4800 the same sample makes 12 chunks (now 10), cuts 1 of 11 sections (now 1) and its largest embedding input is 1530 tokens (now 3050). The stride keeps its ratio to the size.",
+      current: "LOOM_KNOWLEDGE_CHUNK_SIZE=12000, LOOM_KNOWLEDGE_CHUNK_STRIDE=9600",
       current_revision: null,
-      proposed: "LOOM_KNOWLEDGE_CHUNK_SIZE=2000, LOOM_KNOWLEDGE_CHUNK_STRIDE=1600",
+      proposed: "LOOM_KNOWLEDGE_CHUNK_SIZE=6000, LOOM_KNOWLEDGE_CHUNK_STRIDE=4800",
       evidence: {
         finding_codes: [],
-        supporting_count: 12,
+        supporting_count: 1,
         supporting: [],
-        counter_count: 18,
-        documents: [LONG_URI],
+        counter_count: 1,
+        documents: [DECK_URI],
       },
-      affected_agents: [],
-      affected_agents_total: 0,
+      affected_agents: ["a-very-long-agent-name-from-a-client-config"],
+      affected_agents_total: 1,
       effect: "future",
-      historical: "Documents already stored keep their chunks.",
+      historical:
+        "Documents already stored keep their chunks. A text document is cut again by loom rechunk --org <org> --namespace <namespace> --apply; an ingested one only by a new knowledge.ingest of its original (loom rechunk would turn it into a text document). Each is a separate action with its own approval.",
       apply: {
         op: "settings.set",
         via: "admin_route",
-        args: { name: "knowledge_chunk_size", value: 2000, expected: 1000 },
+        args: { name: "knowledge_chunk_size", value: 6000, expected: 12000 },
         args_complete: true,
         required_role: "platform_admin",
         guard: "expected: the change is refused when the value in force is no longer the drafted current one.",
@@ -469,63 +498,78 @@ const TUNE = {
         {
           op: "settings.set",
           via: "admin_route",
-          args: { name: "knowledge_chunk_stride", value: 1600, expected: 800 },
+          args: { name: "knowledge_chunk_stride", value: 4800, expected: 9600 },
           args_complete: true,
           required_role: "platform_admin",
           guard: "expected: the change is refused when the value in force is no longer the drafted current one.",
         },
       ],
-      preview: { before: stats(1000, 800, 18), after: stats(2000, 1600, 2) },
-      limits: "The settings are the deployment's: every namespace's next writes are cut at them.",
+      preview: { before: CUT_NOW, after: CUT_PROPOSED },
+      limits:
+        "The settings are the deployment's: every namespace's next writes are cut at them, and the evidence is this namespace's sample. A longer chunk keeps more of a section in one vector and a shorter one less; what either does to search quality is not measured here, which a paired search benchmark shows. Until both settings are set, a write uses a stride of at most the size.",
     },
     {
-      id: "r1",
+      id: "4f1e8b2c7a903d56",
       target: "settings.document_extractors_json",
       scope: "every namespace of this deployment (a deployment setting)",
-      title: "Route pdf to an extractor that declares it",
-      rationale: "pdf: 2 sources failed format_unavailable; no extractor is configured for it.",
-      current: "{}",
+      title: "Route xlsx to an extractor that declares it",
+      rationale:
+        'xlsx: 1 source failed format_unavailable; they go to LOOM_DOCUMENT_EXTRACTOR_URL, which does not declare it; the service LOOM_DOCUMENT_EXTRACTORS_JSON["pptx"] names declares xlsx. Counts are dev/personal-alice\'s.',
+      current: '{"pptx": "<as set>"}',
       current_revision: null,
-      proposed: '{"pdf": "<the URL LOOM_DOCUMENT_EXTRACTOR_URL names>"}',
+      proposed: '{"pptx": "<as set>", "xlsx": "<the URL LOOM_DOCUMENT_EXTRACTORS_JSON[\\"pptx\\"] names>"}',
       evidence: {
         finding_codes: ["extractor_unavailable"],
-        supporting_count: 2,
+        supporting_count: 1,
         supporting: [],
+        // No xlsx document was extracted whole.
         counter_count: 0,
-        documents: [LONG_URI],
+        documents: [NO_EXTRACTOR_URI],
       },
-      affected_agents: [],
-      affected_agents_total: 0,
+      affected_agents: ["a-very-long-agent-name-from-a-client-config"],
+      affected_agents_total: 1,
       effect: "future",
-      historical: "Sources already ingested keep their extraction.",
+      historical:
+        "Sources already ingested keep their extraction, and a failed job does not run again: each is re-extracted only by uploading its original again and running knowledge.ingest, a separate action with its own approval.",
       apply: {
         op: "LOOM_DOCUMENT_EXTRACTORS_JSON",
         via: "environment",
-        args: { LOOM_DOCUMENT_EXTRACTORS_JSON: { pdf: "<the URL LOOM_DOCUMENT_EXTRACTOR_URL names>" } },
+        args: {
+          LOOM_DOCUMENT_EXTRACTORS_JSON: {
+            pptx: "<as set>",
+            xlsx: '<the URL LOOM_DOCUMENT_EXTRACTORS_JSON["pptx"] names>',
+          },
+        },
         args_complete: false,
         required_role: "platform_admin",
-        guard: "None: an environment setting has no revision; compare the deployment's value with `current`.",
+        guard:
+          "None: an environment setting has no revision; compare the deployment's value with `current` before setting it. It is in force once each server and worker restarts.",
       },
       apply_also: [],
       preview: null,
-      limits: "A URL is not shown, as an extractor URL can carry a credential.",
+      limits:
+        "A URL is not shown, as an extractor URL can carry a credential: each placeholder names the setting whose URL it is, and `<as set>` keeps a route as the deployment has it. A service's capabilities name the formats it takes, not what it keeps: ingest one listed source through the new route and read its coverage (knowledge.inspect) before relying on it. A format's own route wins over a media-type route (`application/pdf`), so the drafted route also takes the sources a media-type route sends elsewhere now.",
     },
   ],
+  // namespace_tune_document_sample (default 50) and MAX_SAMPLE_CHARS (8 Mi).
   chunking: {
-    cap: 200,
-    population: 30,
-    documents: 30,
+    cap: 50,
+    population: 2,
+    documents: 2,
     unread: 0,
-    load_cap: 20000000,
-    embedder_model: "text-embedding-3-small",
-    input_token_limit: 8191,
-    current: stats(1000, 800, 18),
+    load_cap: 8 * 1024 * 1024,
+    embedder_model: "gemini-embedding-001",
+    input_token_limit: 2048,
+    current: CUT_NOW,
   },
   guide_revision: 2,
   categories_registered: 1,
   extraction_policy: "",
   extraction_policy_unavailable: "",
-  skipped: ["audit.telemetry_unavailable: window within the ledger lag"],
+  skipped: [
+    "audit.telemetry_unavailable: window within the ledger lag",
+    "decision_extraction: no instruction is drafted: loom decisions extract and the source sync's mining build their prompt from fixed text, and no request, namespace or org setting carries instructions for them",
+  ],
   model_used: false,
 };
 
