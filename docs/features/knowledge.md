@@ -614,8 +614,9 @@ bounds the listed documents and every finding's samples.
     407).
   - `ingest_content_rejected` (`contract_violation`): the extractor refused the file, or
     the server refused what it made of it (`incomplete_extraction` without
-    `allow_partial`, `no_text`, `too_large`, or `resource_limit` for an artifact over
-    `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES`). The earlier revision, if any, still
+    `allow_partial`, `no_text`, `too_large`). `resource_limit`: the extractor passed its
+    own memory or output limit, or its artifact was over
+    `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES`. The earlier revision, if any, still
     serves.
   - `ingest_failed_on_server` (`system_state`): the job failed on the server's side,
     neither the file's nor the extractor's fault: a store or embedder outage that used up

@@ -180,6 +180,15 @@ SETUP = [
     _doc("files/reindexed.md", ingested_at="2026-01-01 00:00:00"),
     _job("files/reindexed.md", 23, "failed", age_s=300, updated_s=200, error_code="encoding"),
     _doc("files/reindexed.md", version=2),
+    # A job that failed at S.400 and a document row written in the same second S (stored as
+    # whole seconds): the write may have come after the job, and it does not replace it.
+    "INSERT INTO loom.documents (org, namespace, source_uri, content, version, ingested_at) "
+    "VALUES ('o', 'ns', 'files/same.md', 'text', 1, toDateTime(now()) - 100)",
+    "INSERT INTO loom.knowledge_ingestions (org, namespace, ingestion_id, source_uri, "
+    "upload_id, sha256, state, error_code, created_at, updated_at, next_attempt_at, version) "
+    f"VALUES ('o', 'ns', '{_id(24)}', 'files/same.md', '{_id(924)}', '{'a' * 64}', 'failed', "
+    "'encoding', now64(3) - 200, toDateTime64(toDateTime(now()) - 100, 3) + "
+    "toIntervalMillisecond(400), now64(3), 1)",
     "INSERT INTO loom.knowledge_ingest_cancels (org, namespace, ingestion_id, requested_at) "
     f"VALUES ('o', 'ns', '{_id(17)}', now64(3) - toIntervalSecond(30)), "
     # Another namespace's cancel of the same id is not this job's.
@@ -206,7 +215,7 @@ def _samples(row: dict[str, Any], code: str) -> dict[str, str]:
 
 def test_the_namespace_jobs_are_counted_by_state_under_final() -> None:
     h = _go(store.ingestion_health("o", "ns", lease_s=LEASE_S, ch=_Local()))
-    assert int(h["sources"]) == 20
+    assert int(h["sources"]) == 21
     # fixed, removed and reindexed: each document row was written or deleted after the job.
     assert int(h["replaced"]) == 3
     # queued, down, retry, token, gone, bad, store, exhausted, defect, rerun, cancelled, and
@@ -216,7 +225,7 @@ def test_the_namespace_jobs_are_counted_by_state_under_final() -> None:
     got = {k: int(h[k]) for k in ("pending", "processing", "ready", "failed", "cancelled")}
     # Job 3's pending row is folded away by its processing one; the pending job with a
     # cancel is cancelled.
-    assert got == {"pending": 4, "processing": 2, "ready": 2, "failed": 12, "cancelled": 2}
+    assert got == {"pending": 4, "processing": 2, "ready": 2, "failed": 13, "cancelled": 2}
     assert int(h["stalled"]) == 1 and int(h["partial"]) == 0
     assert int(h["open_jobs"]) == 6
 
@@ -247,6 +256,7 @@ def test_each_state_is_its_own_finding() -> None:
     assert _samples(h, "ingest_content_rejected") == {
         "files/bad.sql": _id(9),
         "files/meta.md": _id(22),
+        "files/same.md": _id(24),
     }
     assert _samples(h, "ingest_failed_on_server") == {
         "files/exhausted.md": _id(14),
@@ -405,6 +415,7 @@ def test_a_failure_a_later_write_replaced_is_no_finding() -> None:
                 "files/meta.md",
                 "files/reindexed.md",
                 "files/conf.toml",
+                "files/same.md",
             ],
             lease_s=LEASE_S,
             ch=_Local(),
@@ -419,9 +430,11 @@ def test_a_failure_a_later_write_replaced_is_no_finding() -> None:
         int(by["files/removed.md"]["replaced"]),
         int(by["files/removed.md"]["has_document"]),
     ) == (1, 0)
-    # A job that ended in the second its document row was written is not replaced: the
-    # columns count seconds, so its failure stands.
+    # A document row written before its job ended does not replace it.
     assert int(by["docs/a.md"]["replaced"]) == 0
+    # Nor one written in the second the job ended: ingested_at counts whole seconds, so a
+    # write in that second is not told after the job, and its failure stands.
+    assert int(by["files/same.md"]["replaced"]) == 0
     # A reindex rewrote the document after the failure: a write that replaced it.
     assert int(by["files/reindexed.md"]["replaced"]) == 1
     # The job that published a document ended after the row it wrote.

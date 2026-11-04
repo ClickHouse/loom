@@ -210,13 +210,16 @@ _INGEST_CHECKS: dict[str, tuple[RuleContract, str, str]] = {
         "Sources whose job failed on the file itself: the extractor refused it "
         "(format_mismatch, encoding, corrupt, unsupported_format, too_large, ...), or the "
         "server refused what it made of it (incomplete_extraction without allow_partial, "
-        "no_text, more chunks than knowledge_ingest_max_chunks, resource_limit for an "
-        "artifact over LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES). Search serves the "
-        "source's earlier revision, if it has one.",
+        "no_text, more chunks than knowledge_ingest_max_chunks). resource_limit: the "
+        "extractor passed its own memory or output limit, or its artifact was over "
+        "LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES. Search serves the source's earlier "
+        "revision, if it has one.",
         "Read the job's error_code with knowledge.ingest_status; fix the file or its "
         "options (format, encoding, sql_dialect), pass allow_partial to publish an "
-        "incomplete extraction, or raise LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES or "
-        "LOOM_KNOWLEDGE_INGEST_MAX_CHUNKS, and " + _REINGEST + ".",
+        "incomplete extraction, or raise the limit it passed: the extractor's own "
+        "(LOOM_EXTRACTOR_MEMORY_MB, LOOM_EXTRACTOR_MAX_ARTIFACT_BYTES on the extractor "
+        "service), LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES for an artifact over the "
+        "server's cap, or LOOM_KNOWLEDGE_INGEST_MAX_CHUNKS; then " + _REINGEST + ".",
     ),
     "ingest_failed_on_server": (
         RuleContract(
