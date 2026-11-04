@@ -449,8 +449,8 @@ text) and `section_path`, `similarity`, `lexical_score`, `score` (the fused rank
 hybrid mode) and, on a fan-out, the `namespace` it came from. A citation names what it
 read: `revision` is the document revision the chunk was written as and `format` its
 document's format. A chunk of an [ingested file](#ingesting-files) also carries its
-`block_type` and its `locator` (its lines, a key path, a PDF's pages or a deck's slides), so a caller opens the passage in
-the source.
+`block_type` and its `locator` (its lines, a key path, a PDF's pages or a deck's
+slides), so a caller opens the passage in the source.
 
 **Exact keys.** An extracted file's chunks carry the names their blocks define or read
 (the tables and columns a SQL statement creates and reads, a TOML key path). In hybrid
@@ -759,13 +759,12 @@ vector) and publishes the next **revision** of the source: chunks first, then th
 document row, then the earlier version's chunks retired. A document row carries its
 `revision`, `format`, `parser` and `coverage`, which `knowledge.get` returns; each
 chunk's `chunk_metadata` carries its `locator` (line span, char span, TOML key path, PDF
-page or deck slide span) and
-block ids, and its `keys` the exact names it defines or reads. Text writes
-(`knowledge.add`, `upsert`) number revisions too. Ingests of one source run one at a
-time, in the order they were asked, so `expected_revision` guards an ingest against
-another; a text write takes no such claim, so one that races a write of the same source
-can reuse its revision number, and the later version wins (an ingest a later write of
-the source overtook, a text write, a metadata edit or a delete, fails
+page or deck slide span) and block ids, and its `keys` the exact names it defines or
+reads. Text writes (`knowledge.add`, `upsert`) number revisions too. Ingests of one
+source run one at a time, in the order they were asked, so `expected_revision` guards an
+ingest against another; a text write takes no such claim, so one that races a write of
+the same source can reuse its revision number, and the later version wins (an ingest a
+later write of the source overtook, a text write, a metadata edit or a delete, fails
 `revision_conflict`).
 
 `knowledge.ingest_status` follows a job: `pending`, `processing` (with its `stage`:
