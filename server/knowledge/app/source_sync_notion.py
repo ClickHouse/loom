@@ -79,12 +79,15 @@ class _Turn:
     # Known child pages: child page id -> the id of the page it was found on. A child
     # is forgotten in three ways only: its page is read and no longer holds it; a
     # complete full turn's lookup finds it gone (and retires its document); or a
-    # complete full turn read it as not found or trashed and it holds no document.
+    # complete full turn read it as not found or trashed and it holds no document. A
+    # child the store refuses (403) stays known: it waits like a file's trouble.
     known: dict[str, str] = field(default_factory=dict)
+    # The source's stored revisions, by page id.
+    stored: dict[str, dict[str, str]] = field(default_factory=dict)
     # The pages this turn handles, in order; a child found during the turn is appended.
     items: list[dict[str, Any]] = field(default_factory=list)
     ids: set[str] = field(default_factory=set)
-    # Known children this turn found out of sight: not found, refused (403) or trashed.
+    # Known children this turn found gone: not found or trashed.
     absent: set[str] = field(default_factory=set)
 
     def add(self, page: dict[str, Any]) -> None:
@@ -113,7 +116,10 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         for k, v in (stored_children if isinstance(stored_children, dict) else {}).items()
         if notion.valid_id(str(k))
     }
-    t = _Turn(src, token, result, known=known)
+    stored = {
+        d["file_id"]: d for d in await store.source_revisions(src.org, src.namespace, src.name)
+    }
+    t = _Turn(src, token, result, known=known, stored=stored)
     result.kind_state["child_pages"] = t.known
     listed_at = _now()
     try:
@@ -125,14 +131,12 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     trusted = result.full and result.complete
     if trusted:
         _drop_out_of_scope(t)
-        result.waits = {k: v for k, v in result.waits.items() if k in t.ids}
+        # A known child that waits is not listed while the store refuses it.
+        result.waits = {k: v for k, v in result.waits.items() if k in t.ids or k in t.known}
     # The stamp trails the listing by 150 s, the shared minute plus the settle margin,
     # so a database page read within the margin is listed again by the next turn.
     newest = max((f["modifiedTime"] for f in t.items), default="")
     result.newest = sync.capped(newest, listed_at - timedelta(seconds=_SETTLE_S))
-    stored = {
-        d["file_id"]: d for d in await store.source_revisions(src.org, src.namespace, src.name)
-    }
     # Changed pages first: a pass bound spent on settling re-reads delays no edit.
     t.items.sort(key=lambda f: not _changed(f, stored.get(f["id"])))
     for f in t.items:  # a child found while syncing is appended and handled too
@@ -197,10 +201,26 @@ def _ends_turn(e: notion.NotionError) -> bool:
     return isinstance(e, notion.RateLimited) or e.status == 401
 
 
-def _out_of_sight(e: notion.NotionError) -> bool:
-    """The page is not one the integration can see: not found, or refused for it alone
-    (403, a page no longer shared with the integration)."""
-    return isinstance(e, notion.NotFound) or e.status == 403
+# The wait reason of a known child the store refuses (403).
+_CHILD_REFUSED = "child_http_403"
+
+
+def _child_refused(t: _Turn, child_id: str, e: notion.NotionError) -> None:
+    """A known child the store refuses (403): a refused permission says nothing of
+    whether the page still exists, so the child stays known and its document is kept.
+    It waits like a file's trouble, keyed by its stored revision: the turn fails for
+    the passes a file may wait, then the child is counted unconverted and no longer
+    holds the turn (or the source's retirements) back."""
+    stored = t.stored.get(child_id)
+    f = {"id": child_id, "modifiedTime": stored["source_revision"] if stored else ""}
+    sync.wait(f, t.result, _CHILD_REFUSED, sync.client_error(e))
+
+
+def _read_again(t: _Turn, child_id: str) -> None:
+    """A known child readable again: its refusal wait no longer applies."""
+    entry = t.result.waits.get(child_id)
+    if isinstance(entry, list) and len(entry) == 3 and entry[2] == _CHILD_REFUSED:
+        del t.result.waits[child_id]
 
 
 def _fail_turn(result: sync.TurnResult, e: notion.NotionError) -> None:
@@ -261,12 +281,16 @@ async def _list(t: _Turn, edited_after: str) -> None:
     for child_id in list(t.known):
         try:
             page = await notion.page(t.token, child_id)
+        except notion.NotFound:
+            t.absent.add(child_id)  # a full turn's lookup decides
+            continue
         except notion.NotionError as e:
-            if _out_of_sight(e):
-                t.absent.add(child_id)  # a full turn's lookup decides
+            if e.status == 403:
+                _child_refused(t, child_id, e)
             else:
                 _container_failed(t.result, e)
             continue
+        _read_again(t, child_id)
         if page.get("in_trash"):
             t.absent.add(child_id)
         else:
@@ -308,17 +332,18 @@ async def _page_gone(t: _Turn, page_id: str) -> bool | None:
 
 
 async def _lookup(t: _Turn, page_id: str) -> bool | None:
-    """Whether the store says the page is gone: not found or refused (403: no longer
-    shared with the integration), in the trash, or under none of the listed pages,
-    listed databases and pages this turn listed. A lookup that fails otherwise retires
-    nothing; a rate limit or a 401 is the turn's, and None stops the retiring."""
+    """Whether the store says the page is gone: not found, in the trash, or under none
+    of the listed pages, listed databases and pages this turn listed. A refusal (403)
+    or another failure retires nothing; a rate limit or a 401 is the turn's, and None
+    stops the retiring."""
     try:
         page = await notion.page(t.token, page_id)
     except notion.NotionError as e:
         if _ends_turn(e):
             _fail_turn(t.result, e)
             return None
-        return _out_of_sight(e)
+        # Only a 404 says the page is gone; a refusal (403) or a failure keeps it.
+        return isinstance(e, notion.NotFound)
     if page.get("in_trash"):
         return True
     item = _item(page)
@@ -464,9 +489,9 @@ def _record_children(
 async def _add_new_children(t: _Turn, children: list[str]) -> None:
     """List the children a read page holds that this turn has not, so they are synced
     in this turn. A rate limit or a refused token ends the turn (its status says so).
-    A child that cannot be read now stays known and is read next turn; any failure
-    other than not found leaves the turn incomplete, so a failed or cut turn forgets no
-    child it could not read."""
+    A child that cannot be read now stays known and is read next turn: a refused one
+    (403) waits like a file's trouble, and any other failure but not found leaves the
+    turn incomplete, so a failed or cut turn forgets no child it could not read."""
     for child in children:
         try:
             page = await notion.page(t.token, child)
@@ -474,11 +499,14 @@ async def _add_new_children(t: _Turn, children: list[str]) -> None:
             if _ends_turn(e):
                 _fail_turn(t.result, e)
                 return
-            if _out_of_sight(e):
+            if isinstance(e, notion.NotFound):
                 t.absent.add(child)
+            elif e.status == 403:
+                _child_refused(t, child, e)
             else:
                 t.result.fail("failed", sync.client_error(e))
             continue
+        _read_again(t, child)
         if page.get("in_trash"):
             t.absent.add(child)
         else:

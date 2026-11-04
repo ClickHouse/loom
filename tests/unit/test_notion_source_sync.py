@@ -331,20 +331,20 @@ def test_a_full_listing_retires_a_page_the_store_reports_gone(world: _Store) -> 
     assert kept_uri not in world.docs
 
 
+@pytest.mark.parametrize("status", [404, 403])
 @pytest.mark.parametrize("lost", ["database", "page"])
 def test_a_lost_page_or_database_writes_the_rest_and_retires_nothing(
-    world: _Store, lost: str
+    world: _Store, lost: str, status: int
 ) -> None:
     _run()
     world.rows = [ROW2]
     world.pages[ROW1] = {**world.pages[ROW1], "in_trash": True}
-    world.answers[f"/databases/{DB}" if lost == "database" else f"/pages/{PAGE}"] = httpx.Response(
-        404
-    )
+    path = f"/databases/{DB}" if lost == "database" else f"/pages/{PAGE}"
+    world.answers[path] = httpx.Response(status)
     stamp = world.states["wiki"]["state_value"]
     _run(full=True)
     assert len(world.docs) == 3 and world.audits == []
-    assert _detail(world)["status"] == "failed" and "http_404" in _detail(world)["error"]
+    assert _detail(world)["status"] == "failed" and f"http_{status}" in _detail(world)["error"]
     assert world.states["wiki"]["state_value"] == stamp
 
 
@@ -1153,25 +1153,60 @@ def test_marks_wrap_a_run_s_text_and_keep_the_spaces_around_it() -> None:
     assert md == "We keep **bold**  *text* `code` end."
 
 
-@pytest.mark.parametrize("where", ["known child", "lookup"])
-def test_a_page_the_integration_lost_access_to_is_out_of_sight_like_a_404(
-    world: _Store, where: str
-) -> None:
+def _with_children(world: _Store, *children: str) -> None:
+    """The one listed page holding `children`, all of them synced once."""
     _only_the_page(world)
-    world.blocks[PAGE] = [_para("Parent."), _child_page(CHILD)]
-    world.pages[CHILD] = _page(
-        CHILD, "2026-01-04T00:00:00.000Z", title="Child", parent_of=_under(PAGE)
-    )
+    world.blocks[PAGE] = [_para("Parent."), *(_child_page(c) for c in children)]
+    for child in children:
+        world.pages[child] = _page(
+            child, "2026-01-04T00:00:00.000Z", title=child[:4], parent_of=_under(PAGE)
+        )
     _run()
-    child_uri = _uri(world, CHILD)
-    if where == "lookup":
-        # The child left the known set (its page was read without it), and its lookup is refused.
-        world.blocks[PAGE] = [_para("Parent.")]
-        world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
-        _run()
-    world.answers[f"/pages/{CHILD}"] = httpx.Response(403)
+
+
+def test_known_children_the_store_refuses_are_kept_and_stay_known(world: _Store) -> None:
+    _with_children(world, CHILD, GRANDCHILD)
+    for child in (CHILD, GRANDCHILD):
+        world.answers[f"/pages/{child}"] = httpx.Response(403)
     _run(full=True)
     detail = _detail(world)
-    assert detail["status"] == "ok"  # not a failed turn
-    assert child_uri not in world.docs and detail["child_pages"] == {}
-    assert [a["subject"]["source_uri"] for a in world.audits] == [child_uri]
+    assert detail["status"] == "failed" and "http_403" in detail["error"]
+    assert _uri(world, CHILD) in world.docs and _uri(world, GRANDCHILD) in world.docs
+    assert world.audits == []
+    assert detail["child_pages"] == {CHILD: PAGE, GRANDCHILD: PAGE}
+
+
+def test_a_refused_child_is_given_up_and_no_longer_blocks_retirement(world: _Store) -> None:
+    _with_children(world, CHILD, GRANDCHILD)
+    world.answers[f"/pages/{CHILD}"] = httpx.Response(403)
+    gone_uri = _uri(world, GRANDCHILD)
+    del world.pages[GRANDCHILD]  # gone for good: answers 404
+    for _ in range(2):  # the refused child holds the turn while it waits
+        _run(full=True)
+        assert _detail(world)["status"] == "failed"
+        assert gone_uri in world.docs
+    _run(full=True)  # given up: counted unconverted, and the turn completes
+    detail = _detail(world)
+    assert detail["status"] == "ok" and detail["unconverted_reasons"] == {"child_http_403": 1}
+    assert gone_uri not in world.docs  # the 404 child is retired
+    assert [a["subject"]["source_uri"] for a in world.audits] == [gone_uri]
+    assert _uri(world, CHILD) in world.docs and CHILD in detail["child_pages"]
+    # Readable again, the child syncs as usual.
+    del world.answers[f"/pages/{CHILD}"]
+    world.pages[CHILD] = _page(
+        CHILD, "2026-02-01T00:00:00.000Z", title="Back", parent_of=_under(PAGE)
+    )
+    world.blocks[CHILD] = [_para("Readable again.")]
+    _run()
+    assert world.docs[_uri(world, CHILD)]["input"].content == "Readable again."
+
+
+def test_a_new_child_the_store_refuses_waits_and_stays_known(world: _Store) -> None:
+    _only_the_page(world)
+    world.blocks[PAGE] = [_para("Parent."), _child_page(CHILD)]
+    world.answers[f"/pages/{CHILD}"] = httpx.Response(403)
+    _run()
+    detail = _detail(world)
+    assert detail["status"] == "failed" and "http_403" in detail["error"]
+    assert detail["child_pages"] == {CHILD: PAGE}
+    assert detail["file_waits"][CHILD][1:] == [1, "child_http_403"]
