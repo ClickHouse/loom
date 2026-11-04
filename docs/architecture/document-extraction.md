@@ -4,10 +4,11 @@ An uploaded original is parsed into one shape, the extraction artifact, by an ex
 its own dependencies, never the Loom server. The server sends the original's bytes to the service its format is routed
 to, reads the artifact back as untrusted input, and cuts structural chunks from its blocks, so a SQL statement, a TOML
 key and a Markdown section are all cited by a locator into the source. Loom ships a reference extractor
-(`extractor/loom_extractor/`) for Markdown, HTML, plain text, SQL and TOML; an operator can run another behind the same
-[wire contract](../reference/extractor-contract.md). `knowledge.ingest` extracts an uploaded original this way
-([ingestion](#ingestion)), and the document-source sync calls it for the PDFs and `.pptx` files a registered folder
-holds ([syncing a source](../features/knowledge.md#syncing-a-source)); `knowledge.add` takes text the caller extracted.
+(`extractor/loom_extractor/`) for Markdown, HTML, plain text, SQL, TOML, PDF, DOCX and PPTX; an operator can run another
+behind the same [wire contract](../reference/extractor-contract.md). `knowledge.ingest` extracts an uploaded original
+this way ([ingestion](#ingestion)), and the document-source sync calls it for the PDFs and `.pptx` files a registered
+folder holds ([syncing a source](../features/knowledge.md#syncing-a-source)); `knowledge.add` takes text the caller
+extracted.
 
 ## The service boundary
 
@@ -16,11 +17,11 @@ holds ([syncing a source](../features/knowledge.md#syncing-a-source)); `knowledg
 | Loom server       | the contract (`server/knowledge/domain/extract/`), the checks on what an extractor returns, format routing, the structural chunker and the client (`server/knowledge/app/extractors.py`) |
 | Extractor service | format detection, strict decoding and every parser; no Loom token, no database credential and no bucket access: it gets bytes and returns JSON                                           |
 
-Parsing a file means running a parser over input an uploader controls. Keeping that out of the server's process keeps
-a parser defect, a pathological input or a parser's dependencies away from the process that holds ClickHouse
-credentials, signing keys and tenant data, and lets an operator swap in their own utility for a format.
-`tests/unit/test_package_contracts.py` checks that no server module imports the extractor or sqlglot, and that the
-knowledge plane imports no parser library.
+Parsing a file means running a parser over input an uploader controls. Keeping that out of the server's process keeps a
+parser defect, a pathological input or a parser's dependencies away from the process that holds ClickHouse credentials,
+signing keys and tenant data, and lets an operator swap in their own utility for a format.
+`tests/unit/test_package_contracts.py` checks that no server module imports the extractor, sqlglot or pypdf, and that
+the knowledge plane imports no parser library.
 
 **Routing.** The server names the format from what the caller says (a declared format, else the file extension, else the
 media type, else `text`) without reading the bytes, and sends the original to the service
@@ -80,13 +81,13 @@ denies those. The service refuses to start on an architecture its socket filter 
 
 ## The artifact
 
-| Part       | Holds                                                                                                                                                                         |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `blocks`   | the source's structure in order: `heading`, `paragraph`, `list`, `code`, `sql_statement`, `toml_table`, `toml_key`, ...; each with its text, locator, section path and parent |
-| `coverage` | the unit the format is made of (`lines`, `statements`, `keys`, `chars`), how many there are, how many extracted, each failed unit with its reason, and each capability lost   |
-| `warnings` | facts a reader should see, such as an ambiguous SQL dialect                                                                                                                   |
-| `options`  | the overrides the parse ran with (`sql_dialect` for SQL only, `encoding` by its codec name)                                                                                   |
-| `attrs`    | format facts (`dialect`, `dialect_source`, `dialect_candidates`; an HTML page's `title`)                                                                                      |
+| Part       | Holds                                                                                                                                                                                                        |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `blocks`   | the source's structure in order: `heading`, `paragraph`, `list`, `code`, `sql_statement`, `toml_table`, `toml_key`, ...; each with its text, locator, section path and parent                                |
+| `coverage` | the unit the format is made of (`lines`, `statements`, `keys`, `chars`, `pages`, `paragraphs`, `slides`), how many there are, how many extracted, each failed unit with its reason, and each capability lost |
+| `warnings` | facts a reader should see, such as an ambiguous SQL dialect                                                                                                                                                  |
+| `options`  | the overrides the parse ran with (`sql_dialect` for SQL only, `encoding` by its codec name)                                                                                                                  |
+| `attrs`    | format facts (`dialect`, `dialect_source`, `dialect_candidates`; an HTML page's or a PDF's `title`; a PDF's `pages`, a deck's `slides`)                                                                      |
 
 A block's `id` is `b<ordinal>`, stable within its artifact. `keys` are the exact names a reader can look the block up
 by: the objects a SQL statement creates, writes and reads, and its columns (for a statement sqlglot cannot parse, every
@@ -96,14 +97,16 @@ form.
 
 A locator sets only the fields that apply: `line_start`/`line_end` (1-based) on every text format,
 `char_start`/`char_end` (offsets into the decoded text) on Markdown, plain text, SQL and the text blocks of an invalid
-TOML file, and `key_path` for TOML. A Markdown heading's span covers its source line or lines, markup included, while
-its text is the cleaned title, so a window of a long heading cites the heading's whole span. A format that needs another
-field (a page, a cell range) adds it with its parser.
+TOML file, `key_path` for TOML, and `page_start`/`page_end` (1-based) for a PDF's pages and a PPTX deck's slides. A
+DOCX has no pages of its own (pagination is the renderer's), so its blocks carry no locator and a citation names their
+section path. A Markdown heading's span covers its source line or lines, markup included, while its text is the cleaned
+title, so a window of a long heading cites the heading's whole span. A chunk cut from several blocks spans their lines,
+characters and pages. A format that needs another field (a cell range) adds it with its parser.
 
 The artifact is serialized as sorted, compact JSON with a `schema_version` and addressed by the SHA-256 of those bytes.
 A parser or option change produces a new artifact of the same source revision; an artifact is never edited. A reader
 refuses a `schema_version` it does not know. `parser_version` names what a parse depends on: sqlglot's version for SQL,
-and the Python version for HTML and TOML, whose parsers ship with it.
+pypdf's for PDF, and the Python version for HTML and TOML, whose parsers ship with it.
 
 ## Formats in the reference extractor
 
@@ -115,14 +118,17 @@ declared encoding, and a UTF-8 byte-order mark is dropped when the text is UTF-8
 declared byte-order codec (`utf-16-le`). An undecodable byte is an `encoding` failure naming its offset, and a NUL byte
 in undeclared UTF-8 text (behind a byte-order mark or not) is binary; neither is replaced and indexed.
 
-| Format                              | Parser                                                                | Blocks                                                                       |
-| ----------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Markdown                            | a block parser after CommonMark's heading, fence and HTML-block rules | headings, paragraphs, lists, fenced code, front matter                       |
-| Plain text                          | a paragraph splitter                                                  | one paragraph per run of non-blank lines (a `#` line is text, not a heading) |
-| HTML                                | the standard library's parser                                         | headings, paragraphs, list items, table cells, quotes, definitions, `pre`    |
-| SQL                                 | `sqlglot`, never executed                                             | one block per statement                                                      |
-| TOML                                | `tomllib` and a line scanner                                          | one block per table header and per key                                       |
-| PDF, DOCX, PPTX, XLSX, CSV, Parquet | none in this build                                                    | none: detected and reported `format_unavailable`                             |
+| Format             | Parser                                                                | Blocks                                                                       |
+| ------------------ | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Markdown           | a block parser after CommonMark's heading, fence and HTML-block rules | headings, paragraphs, lists, fenced code, front matter                       |
+| Plain text         | a paragraph splitter                                                  | one paragraph per run of non-blank lines (a `#` line is text, not a heading) |
+| HTML               | the standard library's parser                                         | headings, paragraphs, list items, table cells, quotes, definitions, `pre`    |
+| SQL                | `sqlglot`, never executed                                             | one block per statement                                                      |
+| TOML               | `tomllib` and a line scanner                                          | one block per table header and per key                                       |
+| PDF                | `pypdf`, its text layer                                               | paragraphs by page; headings from the outline                                |
+| DOCX               | the standard library's zip and XML readers                            | headings, paragraphs, lists, tables, footnotes and endnotes                  |
+| PPTX               | the standard library's zip and XML readers                            | per slide: its title as a heading, each text shape, tables, speaker notes    |
+| XLSX, CSV, Parquet | none in this build                                                    | none: detected and reported `format_unavailable`                             |
 
 **Markdown.** Headings are ATX, setext and one-line `<hN>`. A paragraph over a setext underline (indented up to three
 spaces) is one heading; a list item, a quote or a thematic break over `---` is not. A fenced block keeps its body's
@@ -192,6 +198,37 @@ integer outside signed 64 bits among them, is kept as paragraph blocks with `cov
 reason, which names the line or the key path where it can. A key's `attrs.value` is the JSON value, except that a date
 or time is its ISO text and an infinite or NaN float its text (`inf`, `nan`), whatever its `value_type`.
 
+**PDF.** pypdf reads each page's text layer in its reading order; a page's text is split at blank lines, and a page with
+none is one paragraph. The outline (the bookmarks) gives the headings: each entry, in outline order, is a heading block
+on the page it points to, at the first line after the previous heading's that holds its title, or right after that
+heading when no line does. A table is read as its text, row by row as the page lays it out. A page with no text that
+draws an image (an image object, one in a form, or one inline in its content) is a failed unit: its text needs OCR,
+which the reference extractor does not run, so a PDF with such a page is not complete and is published only with
+`allow_partial`; a scan whose pages carry some text (a stamped number) is read as that text. A page pypdf cannot read is
+a failed unit, not the file; a failed page's outline headings still open their sections. A character a font's map gives
+no Unicode character (a lone surrogate) is read as U+FFFD, with a warning naming its page. A PDF that opens only with a
+password is `unsupported_format`.
+
+**DOCX and PPTX.** Both are zips of XML parts, read with the standard library: no third-party XML or image library runs
+on a hostile file. A part must be stored or deflated (the methods OOXML writes) and declare at most 256 MiB
+uncompressed; it is inflated only up to what it declares, so a zip bomb stops there. A part that declares a DOCTYPE (in
+any encoding) is refused, so no entity is expanded. A part that cannot be read (damaged, over the bound, not XML, in an
+encoding the XML parser does not read) fails the unit it belongs to: a slide, a slide's notes, the styles, the
+footnotes; the document part itself fails the file as `corrupt`. A DOCX heading is a paragraph of a `Heading N` or
+`Title` style, or one with an outline level of its own or along its style's `basedOn` chain, the nearest one set
+deciding (level 9, body text, is no heading whatever the style); a numbered paragraph or a `List` style is a list item,
+and a run of them is one list block. Inserted text is read, and a tracked deletion (its runs, rows and cells) and moved
+text at its old place are not; a content control's or a custom XML element's text is read in place, in the body, a
+table's rows and its cells, and an alternate-content choice once. Headers, footers and comments are not the body and are
+not read; footnotes and endnotes follow the body (`attrs.note`). An embedded document (`altChunk`) is a failed unit, as
+is a document of pictures (in its body or its tables) and no text. A PPTX deck is read in its slide order (the
+presentation's slide list, not the parts' names): a slide's title is a heading its other blocks sit under, each text
+shape (grouped ones in place, and a shape in alternate content through its first choice) is a block, and the speaker
+notes are a block marked `attrs.notes`; a hidden slide (`show` false) is read and marked `attrs.hidden`. A slide whose
+pictures, charts, diagrams or embedded objects carry all it shows, with no text, is a failed unit. So is a slide id
+whose relationship names no slide part, and a slide nested deeper than the reader walks. A table, in either format, is
+one block, a row per line with its cells joined by a pipe, and `attrs.table` its `rows` and `columns`.
+
 **Contract bounds.** Before it answers, the reference extractor fits every block to the contract's bounds: a key over
 1,024 characters is left out and the first 10,000 kept, and the section path keeps its first 64 entries, each cut to 500
 characters. A block it cut is marked (`attrs.keys_truncated`, `attrs.section_truncated`) and the artifact's
@@ -251,14 +288,15 @@ longest ago first), and a run cut off at that deadline or by a stopped process c
 
 ## Dependencies
 
-The reference extractor's parsers need `sqlglot` for SQL and the standard library otherwise. They are installed with the
-service (`extractor/pyproject.toml`), and in a development environment by the `extractor` extra; the server's image
-carries none of them. Its image (`extractor/Dockerfile`, `ghcr.io/clickhouse/loom-extractor`) installs the package and
-its locked dependencies (`extractor/uv.lock`) into a venv root owns and runs the service as a user that owns nothing in
-it, so no file on a child's `sys.path` is writable to the child. The compose stack and the Helm chart run it apart from
-the server: Compose on an internal network shared with the server alone, the chart behind a NetworkPolicy that admits
-only Loom's pods and allows no egress, with no credential but its token; on either, an extraction makes no socket while
-it runs alone (`LOOM_EXTRACTOR_CONCURRENCY` 1, the default) ([deployment](../operations/deployment.md#container-images),
+The reference extractor's parsers need `sqlglot` for SQL, `pypdf` (and `cryptography`, for a PDF encrypted with AES) for
+PDF, and the standard library otherwise. They are installed with the service (`extractor/pyproject.toml`), and in a
+development environment by the `extractor` extra; the server's image carries none of them. Its image
+(`extractor/Dockerfile`, `ghcr.io/clickhouse/loom-extractor`) installs the package and its locked dependencies
+(`extractor/uv.lock`) into a venv root owns and runs the service as a user that owns nothing in it, so no file on a
+child's `sys.path` is writable to the child. The compose stack and the Helm chart run it apart from the server: Compose
+on an internal network shared with the server alone, the chart behind a NetworkPolicy that admits only Loom's pods and
+allows no egress, with no credential but its token; on either, an extraction makes no socket while it runs alone
+(`LOOM_EXTRACTOR_CONCURRENCY` 1, the default) ([deployment](../operations/deployment.md#container-images),
 [Kubernetes](../operations/kubernetes.md#document-extractor)).
 
 ## Invariants

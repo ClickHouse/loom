@@ -1,0 +1,650 @@
+"""The reference extractor's PDF, DOCX and PPTX parsers, over files built here
+byte by byte, and the server reading what they produce."""
+
+from __future__ import annotations
+
+import io
+import json
+import zipfile
+from typing import Any
+
+import pytest
+from pypdf import PdfWriter
+
+from loom_extractor import ExtractionError, Options, extract
+from loom_extractor.artifact import Artifact
+from server.knowledge.domain.extract import InvalidArtifact, parse_artifact, structural
+from tests.fixtures.office_files import FORM_IMAGE, FORM_INLINE_IMAGE, INLINE_IMAGE, pdf
+
+_W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+_P = (
+    'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+    'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+)
+_MC = 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def _zip(parts: dict[str, str | bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, xml in parts.items():
+            z.writestr(name, xml)
+    return buf.getvalue()
+
+
+def _rels(*rels: tuple[str, str, str]) -> str:
+    body = "".join(
+        f'<Relationship Id="{i}" Type="{_REL}/{t}" Target="{target}"/>' for i, t, target in rels
+    )
+    return f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{body}</Relationships>'
+
+
+def _wp(text: str, style: str = "", extra: str = "") -> str:
+    ppr = f'<w:pPr><w:pStyle w:val="{style}"/>{extra}</w:pPr>' if style or extra else ""
+    return f"<w:p>{ppr}<w:r><w:t>{text}</w:t></w:r></w:p>"
+
+
+def _docx(body: str, *, footnotes: str = "") -> bytes:
+    styles = (
+        f"<w:styles {_W}>"
+        '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Rubric"><w:name w:val="Rubric"/>'
+        '<w:basedOn w:val="Chapter"/></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Chapter"><w:name w:val="Chapter"/>'
+        '<w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style>'
+        "</w:styles>"
+    )
+    parts = {
+        "word/document.xml": f"<w:document {_W} {_MC}><w:body>{body}</w:body></w:document>",
+        "word/styles.xml": styles,
+    }
+    if footnotes:
+        parts["word/footnotes.xml"] = f"<w:footnotes {_W}>{footnotes}</w:footnotes>"
+    return _zip(parts)
+
+
+def _texts(a: Artifact) -> list[tuple[str, str, tuple[str, ...]]]:
+    return [(b.type, b.text, b.section_path) for b in a.blocks]
+
+
+def test_docx_headings_lists_tables_and_notes_read_in_document_order() -> None:
+    tracked = (
+        "<w:p><w:r><w:t>Kept </w:t></w:r><w:ins><w:r><w:t>inserted</w:t></w:r></w:ins>"
+        "<w:del><w:r><w:delText>co</w:delText><w:noBreakHyphen/><w:tab/>"
+        "<w:delText>op</w:delText></w:r></w:del>"
+        # A tracked move keeps its text in ordinary runs at both places.
+        "<w:moveFrom><w:r><w:t> moved</w:t></w:r></w:moveFrom>"
+        "<w:moveTo><w:r><w:t> moved</w:t></w:r></w:moveTo></w:p>"
+    )
+    boxed = (
+        "<w:p><w:r><mc:AlternateContent><mc:Choice><w:t>Box text</w:t></mc:Choice>"
+        "<mc:Fallback><w:t>Box text</w:t></mc:Fallback></mc:AlternateContent></w:r></w:p>"
+    )
+    gone = "<w:del><w:r><w:delText>retired</w:delText></w:r></w:del>"
+    deleted_cell = '<w:tc><w:tcPr><w:cellDel w:id="1"/></w:tcPr>' + _wp("Was") + "</w:tc>"
+    deleted_row = f'<w:tr><w:trPr><w:del w:id="2"/></w:trPr><w:tc><w:p>{gone}</w:p></w:tc></w:tr>'
+    table = (
+        "<w:tbl><w:tr><w:tc>"
+        + _wp("System")
+        + "</w:tc><w:tc>"
+        + _wp("Owner")
+        + "</w:tc>"
+        + deleted_cell
+        + "</w:tr><w:tr><w:tc>"
+        + _wp("billing")
+        + "</w:tc><w:tc>"
+        + _wp("finance")
+        + "</w:tc></w:tr>"
+        + deleted_row
+        + "</w:tbl>"
+    )
+    body = (
+        _wp("Data policy", "Heading1")
+        + _wp("Customer data stays in region.")
+        + _wp("Retention", "Heading2")
+        + _wp("Export on request", extra="<w:numPr/>")
+        + _wp("Delete on request", "ListBullet")
+        + tracked
+        + "<w:sdt><w:sdtContent>"
+        + _wp("Inside a control")
+        + "</w:sdtContent></w:sdt>"
+        + boxed
+        + _wp("Appendix", "Rubric")  # an outline level through its basedOn chain
+        + table
+        + _wp("   ")
+    )
+    notes = (
+        '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:t>---</w:t></w:r></w:p></w:footnote>'
+        '<w:footnote w:id="1">' + _wp("See the audit log.") + "</w:footnote>"
+    )
+    a = extract(_docx(body, footnotes=notes), "policy.docx")
+    policy, retention, appendix = ("Data policy",), ("Data policy", "Retention"), ("Appendix",)
+    assert _texts(a) == [
+        ("heading", "Data policy", policy),
+        ("paragraph", "Customer data stays in region.", policy),
+        ("heading", "Retention", retention),
+        ("list", "Export on request\nDelete on request", retention),
+        ("paragraph", "Kept inserted moved", retention),
+        ("paragraph", "Inside a control", retention),
+        ("paragraph", "Box text", retention),
+        ("heading", "Appendix", appendix),
+        ("paragraph", "System | Owner\nbilling | finance", appendix),
+        ("paragraph", "See the audit log.", appendix),
+    ]
+    assert a.blocks[8].attrs == {"table": {"rows": 2, "columns": 2}}
+    assert a.blocks[9].attrs == {"note": "footnote"}
+    assert [b.depth for b in a.blocks if b.type == "heading"] == [1, 2, 1]
+    assert a.coverage.to_dict()["complete"] and a.coverage.unit == "paragraphs"
+    assert a.coverage.total == 11  # ten body units with text and one footnote
+
+
+def _slide(shapes: str, show: str = "") -> str:
+    return f"<p:sld {_P}{show}><p:cSld><p:spTree>{shapes}</p:spTree></p:cSld></p:sld>"
+
+
+def _sp(text: str, ph: str | None = None) -> str:
+    nv = f'<p:nvPr><p:ph type="{ph}"/></p:nvPr>' if ph else "<p:nvPr/>"
+    paras = "".join(f"<a:p><a:r><a:t>{line}</a:t></a:r></a:p>" for line in text.split("\n"))
+    return f"<p:sp><p:nvSpPr>{nv}</p:nvSpPr><p:txBody>{paras}</p:txBody></p:sp>"
+
+
+def _pptx() -> bytes:
+    table = (
+        "<p:graphicFrame><a:graphic><a:graphicData><a:tbl>"
+        "<a:tr><a:tc><a:txBody><a:p><a:r><a:t>Region</a:t></a:r></a:p></a:txBody></a:tc>"
+        "<a:tc><a:txBody><a:p><a:r><a:t>Growth</a:t></a:r></a:p></a:txBody></a:tc></a:tr>"
+        "</a:tbl></a:graphicData></a:graphic></p:graphicFrame>"
+    )
+    notes = f"<p:notes {_P}><p:cSld><p:spTree>{_sp('1', 'sldNum')}{_sp('Mention EMEA.', 'body')}</p:spTree></p:cSld></p:notes>"
+    parts = {
+        "ppt/presentation.xml": (
+            f"<p:presentation {_P}><p:sldIdLst>"
+            '<p:sldId id="256" r:id="rB"/><p:sldId id="257" r:id="rA"/><p:sldId id="258" r:id="rC"/>'
+            '<p:sldId id="259" r:id="rD"/></p:sldIdLst></p:presentation>'
+        ),
+        "ppt/_rels/presentation.xml.rels": _rels(
+            ("rA", "slide", "slides/slide1.xml"),
+            ("rB", "slide", "slides/slide2.xml"),
+            ("rC", "slide", "slides/slide3.xml"),
+            ("rD", "slide", "slides/slide4.xml"),
+        ),
+        # The deck's order is the id list's, not the part names'.
+        "ppt/slides/slide2.xml": _slide(
+            _sp("Revenue grew\nCosts flat")
+            + _sp("Quarterly review", "title")
+            + f"<p:grpSp>{_sp('Grouped note')}</p:grpSp>"
+            + table
+        ),
+        "ppt/slides/_rels/slide2.xml.rels": _rels(
+            ("n1", "notesSlide", "../notesSlides/notesSlide1.xml")
+        ),
+        "ppt/notesSlides/notesSlide1.xml": notes,
+        "ppt/slides/slide1.xml": _slide(_sp("Untitled body"), show=' show="0"'),
+        "ppt/slides/slide3.xml": _slide("<p:pic/>"),
+        "ppt/slides/slide4.xml": _slide(""),
+    }
+    return _zip(parts)
+
+
+def test_pptx_slides_read_in_deck_order_with_titles_tables_notes_and_hidden_slides() -> None:
+    a = extract(_pptx(), "deck.pptx")
+    title = ("Quarterly review",)
+    assert _texts(a) == [
+        ("heading", "Quarterly review", title),
+        ("paragraph", "Revenue grew\nCosts flat", title),
+        ("paragraph", "Grouped note", title),
+        ("paragraph", "Region | Growth", title),
+        ("paragraph", "Mention EMEA.", title),
+        ("paragraph", "Untitled body", ()),  # no title: under no heading
+    ]
+    assert [b.locator.page_start for b in a.blocks] == [1, 1, 1, 1, 1, 2]
+    assert a.blocks[3].attrs == {"table": {"rows": 1, "columns": 2}}
+    assert a.blocks[4].attrs == {"notes": True}
+    assert a.blocks[5].attrs == {"hidden": True}
+    # A slide of pictures alone is a failed unit; an empty slide is not.
+    assert a.coverage.to_dict() == {
+        "unit": "slides",
+        "total": 4,
+        "extracted": 3,
+        "failed": [
+            {"unit": "slide 3", "reason": "no text: its pictures, charts or diagrams are not read"}
+        ],
+        "lost": [],
+        "complete": False,
+    }
+
+
+def test_pdf_pages_are_cited_by_page_and_the_outline_gives_their_sections() -> None:
+    data = pdf(
+        ["Intro\nFirst line\nDetails\nDetail text", "Scope\nScope text", None],
+        [("Intro", 0, [("Details", 0)]), ("Scope", 1, [])],
+    )
+    a = extract(data, "report.pdf")
+    assert _texts(a) == [
+        ("heading", "Intro", ("Intro",)),
+        ("paragraph", "First line", ("Intro",)),
+        ("heading", "Details", ("Intro", "Details")),
+        ("paragraph", "Detail text", ("Intro", "Details")),
+        ("heading", "Scope", ("Scope",)),
+        ("paragraph", "Scope text", ("Scope",)),
+    ]
+    assert [b.locator.to_dict() for b in a.blocks][3:5] == [
+        {"page_start": 1, "page_end": 1},
+        {"page_start": 2, "page_end": 2},
+    ]
+    assert a.attrs == {"pages": 3}
+    assert a.parser_version.startswith("1+pypdf")
+    # The image-only page needs OCR: the extraction says so and is not complete.
+    assert (a.coverage.unit, a.coverage.total, a.coverage.extracted) == ("pages", 3, 2)
+    assert a.coverage.failed[0].unit == "page 3" and "OCR" in a.coverage.failed[0].reason
+
+
+@pytest.mark.parametrize("scan", [FORM_IMAGE, INLINE_IMAGE, FORM_INLINE_IMAGE])
+def test_a_pdf_page_drawing_its_image_through_a_form_or_inline_needs_ocr_too(scan: str) -> None:
+    a = extract(pdf(["Text", scan], []), "scan.pdf")
+    assert [f.unit for f in a.coverage.failed] == ["page 2"]
+
+
+def test_a_pdf_heading_whose_title_is_on_no_line_opens_its_page() -> None:
+    a = extract(pdf(["Body only"], [("Overview", 0, [])]), "a.pdf")
+    assert _texts(a) == [
+        ("heading", "Overview", ("Overview",)),
+        ("paragraph", "Body only", ("Overview",)),
+    ]
+
+
+def test_a_pdf_encrypted_with_an_owner_password_alone_is_read() -> None:
+    w = PdfWriter()
+    w.append(io.BytesIO(pdf(["Readable text"], [])))
+    w.encrypt(user_password="", owner_password="owner", algorithm="AES-256")
+    buf = io.BytesIO()
+    w.write(buf)
+    assert [b.text for b in extract(buf.getvalue(), "a.pdf").blocks] == ["Readable text"]
+
+
+def test_an_encrypted_pdf_is_unsupported_and_a_broken_one_corrupt() -> None:
+    w = PdfWriter()
+    w.add_blank_page(100, 100)
+    w.encrypt(user_password="secret", algorithm="RC4-128")
+    buf = io.BytesIO()
+    w.write(buf)
+    with pytest.raises(ExtractionError) as e:
+        extract(buf.getvalue(), "a.pdf")
+    assert e.value.code == "unsupported_format" and "password" in str(e.value)
+    with pytest.raises(ExtractionError) as e:
+        extract(b"%PDF-1.7\n" + b"\x00" * 64, "a.pdf")
+    assert e.value.code == "corrupt"
+
+
+def test_a_binary_format_takes_no_encoding() -> None:
+    with pytest.raises(ExtractionError) as e:
+        extract(_docx(_wp("x")), "a.docx", Options(encoding="latin-1"))
+    assert e.value.code == "invalid_option"
+
+
+@pytest.mark.parametrize(
+    "xml",
+    [
+        f'<!DOCTYPE w:document [<!ENTITY e "boom">]><w:document {_W}><w:body>&e;</w:body></w:document>',
+        f"<w:document {_W}><w:body>",
+    ],
+)
+def test_a_part_with_a_doctype_or_that_is_not_xml_is_corrupt(xml: str) -> None:
+    with pytest.raises(ExtractionError) as e:
+        extract(_zip({"word/document.xml": xml}), "a.docx")
+    assert e.value.code == "corrupt"
+
+
+def test_a_doctype_in_a_utf16_part_is_refused_too() -> None:
+    xml = f'<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE x [<!ENTITY e "boom">]><w:document {_W}/>'
+    with pytest.raises(ExtractionError) as e:
+        extract(_zip({"word/document.xml": xml.encode("utf-16")}), "a.docx")
+    assert e.value.code == "corrupt"
+
+
+def test_the_server_reads_page_spans_and_a_chunk_spans_its_blocks_pages() -> None:
+    a = extract(pdf(["One", "Two"], []), "a.pdf")
+    parsed = parse_artifact(a.to_json(), fmt="pdf", max_bytes=1 << 20)
+    assert [b.locator.page_start for b in parsed.blocks] == [1, 2]
+    chunks = structural.chunk_artifact(parsed, size=1000, stride=1000)
+    assert [(c.text, c.locator.to_dict()) for c in chunks] == [
+        ("One\n\nTwo", {"page_start": 1, "page_end": 2})
+    ]
+
+
+@pytest.mark.parametrize(
+    "loc", [{"page_start": 2, "page_end": 1}, {"page_start": 1}, {"page_end": 3}]
+)
+def test_the_server_refuses_a_page_span_that_is_not_a_range(loc: dict[str, int]) -> None:
+    d = json.loads(extract(pdf(["One"], []), "a.pdf").to_json())
+    d["blocks"][0]["locator"] = loc
+    with pytest.raises(InvalidArtifact, match="page_start..page_end"):
+        parse_artifact(json.dumps(d).encode(), fmt="pdf", max_bytes=1 << 20)
+
+
+def test_a_pdf_characters_lone_surrogate_reads_as_a_replacement_and_a_warning() -> None:
+    """A font whose character map gives `A` a lone surrogate costs that character,
+    not the page or the file: the server reads the artifact."""
+    a = extract(pdf(["AB"], [], broken_cmap=True), "a.pdf")
+    assert [b.text for b in a.blocks] == ["�B"]
+    assert a.warnings == ("page 1: a character its font maps to a lone surrogate reads U+FFFD",)
+    assert a.coverage.complete
+    parse_artifact(a.to_json(), fmt="pdf", max_bytes=1 << 20)
+
+
+def test_a_form_named_many_times_is_searched_for_an_image_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom_extractor import pdffile
+
+    # These dictionaries hold no content stream to scan for an inline image.
+    monkeypatch.setattr(pdffile, "_draws_inline_image", lambda contents, reader: False)
+
+    visits = 0
+
+    class _Dict(dict):  # a pypdf dictionary: resolves to itself
+        def get_object(self) -> _Dict:
+            return self
+
+        def get(self, key: object, default: object = None) -> object:
+            nonlocal visits
+            if key == "/Resources":
+                visits += 1
+            return super().get(key, default)
+
+    form = _Dict({"/Subtype": "/Form"})
+    form["/Resources"] = _Dict({"/XObject": _Dict({f"/F{i}": form for i in range(50)})})
+    page = _Dict({"/Resources": form["/Resources"]})
+    assert pdffile._has_image(page, None) is False
+    assert visits <= 2  # the page and the form once, not 50 ** depth
+
+
+def _docx_parts(body: str) -> dict[str, str | bytes]:
+    return {"word/document.xml": f"<w:document {_W}><w:body>{body}</w:body></w:document>"}
+
+
+def test_docx_rows_and_cells_inside_content_controls_are_read() -> None:
+    row = (
+        "<w:tr><w:tc>"
+        + _wp("a")
+        + "</w:tc><w:sdt><w:sdtContent><w:tc>"
+        + _wp("b")
+        + "</w:tc></w:sdtContent></w:sdt></w:tr>"
+    )
+    table = f"<w:tbl><w:sdt><w:sdtContent>{row}</w:sdtContent></w:sdt><w:customXml>{row}</w:customXml></w:tbl>"
+    a = extract(_zip(_docx_parts(f"<w:customXml>{_wp('Intro')}</w:customXml>{table}")), "a.docx")
+    assert [b.text for b in a.blocks] == ["Intro", "a | b\na | b"]
+    assert a.blocks[1].attrs == {"table": {"rows": 2, "columns": 2}}
+
+
+@pytest.mark.parametrize(
+    ("body", "unit"),
+    [
+        (_wp("Text") + "<w:altChunk/>", "embedded document"),
+        ("<w:p><w:r><w:drawing/></w:r></w:p>", "document"),
+    ],
+)
+def test_docx_content_it_does_not_read_is_a_failed_unit(body: str, unit: str) -> None:
+    a = extract(_zip(_docx_parts(body)), "a.docx")
+    assert [f.unit for f in a.coverage.failed] == [unit] and not a.coverage.complete
+
+
+def test_a_docx_drawing_beside_text_is_no_failure_and_an_odd_outline_level_no_heading() -> None:
+    body = "<w:p><w:r><w:drawing/></w:r></w:p>" + _wp("Text", extra='<w:outlineLvl w:val="²"/>')
+    a = extract(_zip(_docx_parts(body)), "a.docx")
+    assert [(b.type, b.text) for b in a.blocks] == [("paragraph", "Text")]
+    assert a.coverage.complete
+
+
+def test_a_pptx_shape_in_alternate_content_is_read_once_and_a_chart_slide_fails() -> None:
+    alt = (
+        f'<mc:AlternateContent {_MC}><mc:Choice Requires="a14">{_sp("Equation")}</mc:Choice>'
+        f"<mc:Fallback>{_sp('Equation')}</mc:Fallback></mc:AlternateContent>"
+    )
+    chart = "<p:graphicFrame><a:graphic><a:graphicData/></a:graphic></p:graphicFrame>"
+    parts = {
+        "ppt/presentation.xml": (
+            f'<p:presentation {_P}><p:sldIdLst><p:sldId id="256" r:id="r1"/>'
+            '<p:sldId id="257" r:id="r2"/></p:sldIdLst></p:presentation>'
+        ),
+        "ppt/_rels/presentation.xml.rels": _rels(
+            ("r1", "slide", "slides/slide1.xml"), ("r2", "slide", "slides/slide2.xml")
+        ),
+        "ppt/slides/slide1.xml": _slide(alt),
+        "ppt/slides/slide2.xml": _slide(chart),
+    }
+    a = extract(_zip(parts), "deck.pptx")
+    assert [b.text for b in a.blocks] == ["Equation"]
+    assert [f.unit for f in a.coverage.failed] == ["slide 2"]
+
+
+def _deck(slides: dict[str, str]) -> dict[str, str | bytes]:
+    ids = "".join(f'<p:sldId id="{256 + i}" r:id="r{i}"/>' for i in range(len(slides)))
+    return {
+        "ppt/presentation.xml": f"<p:presentation {_P}><p:sldIdLst>{ids}</p:sldIdLst></p:presentation>",
+        "ppt/_rels/presentation.xml.rels": _rels(
+            *((f"r{i}", "slide", f"slides/{name}") for i, name in enumerate(slides))
+        ),
+        **{f"ppt/slides/{name}": xml for name, xml in slides.items()},
+    }
+
+
+def test_a_damaged_or_oversized_slide_part_fails_that_slide_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom_extractor import ooxml
+
+    parts = _deck(
+        {"a.xml": _slide(_sp("Fine")), "b.xml": "not xml", "c.xml": _slide(_sp("x" * 3000))}
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, xml in parts.items():
+            # A method OOXML does not use: refused for that part.
+            method = zipfile.ZIP_BZIP2 if name.endswith("a.xml") else zipfile.ZIP_DEFLATED
+            z.writestr(name, xml, compress_type=method)
+    monkeypatch.setattr(ooxml, "MAX_PART_BYTES", 2000)
+    a = extract(buf.getvalue(), "deck.pptx")
+    reasons = {f.unit: f.reason for f in a.coverage.failed}
+    assert set(reasons) == {"slide 1", "slide 2", "slide 3"}, reasons
+    assert "method" in reasons["slide 1"] and "not XML" in reasons["slide 2"]
+    assert "over 2000 bytes" in reasons["slide 3"]
+
+
+def test_a_slide_part_with_a_bad_checksum_fails_that_slide_alone() -> None:
+    data = bytearray(_zip(_deck({"a.xml": _slide(_sp("Fine")), "b.xml": _slide(_sp("Gone"))})))
+    with zipfile.ZipFile(io.BytesIO(bytes(data))) as z:
+        info = z.getinfo("ppt/slides/b.xml")
+    # Flip a byte of the entry's data, past its local header.
+    at = info.header_offset + 30 + len(info.filename) + len(info.extra) + 2
+    data[at] ^= 0xFF
+    a = extract(bytes(data), "deck.pptx")
+    assert [b.text for b in a.blocks] == ["Fine"]
+    assert [f.unit for f in a.coverage.failed] == ["slide 2"]
+
+
+def test_docx_styles_or_notes_that_cannot_be_read_fail_that_unit_not_the_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom_extractor import ooxml
+
+    parts = {
+        **_docx_parts(_wp("Body text")),
+        "word/styles.xml": "not xml",
+        "word/footnotes.xml": f"<w:footnotes {_W}>" + "x" * 3000 + "</w:footnotes>",
+    }
+    monkeypatch.setattr(ooxml, "MAX_PART_BYTES", 2000)
+    a = extract(_zip(parts), "a.docx")
+    assert [b.text for b in a.blocks] == ["Body text"]
+    assert [f.unit for f in a.coverage.failed] == ["styles", "footnotes"]
+
+
+def test_a_docx_of_pictures_in_a_table_and_no_text_fails() -> None:
+    table = "<w:tbl><w:tr><w:tc><w:p><w:r><w:drawing/></w:r></w:p></w:tc></w:tr></w:tbl>"
+    a = extract(_zip(_docx_parts(table)), "a.docx")
+    assert [f.unit for f in a.coverage.failed] == ["document"]
+
+
+def test_a_slide_keeps_its_text_when_its_notes_cannot_be_read_and_show_false_is_hidden() -> None:
+    parts = _deck({"a.xml": _slide(_sp("Kept"), show=' show="false"')})
+    parts["ppt/slides/_rels/a.xml.rels"] = _rels(("n", "notesSlide", "../notesSlides/n.xml"))
+    parts["ppt/notesSlides/n.xml"] = "not xml"
+    a = extract(_zip(parts), "deck.pptx")
+    assert [(b.text, b.attrs) for b in a.blocks] == [("Kept", {"hidden": True})]
+    assert [f.unit for f in a.coverage.failed] == ["slide 1 notes"]
+    assert (a.coverage.total, a.coverage.extracted) == (1, 0)
+
+
+def _patched(data: bytes, name: str, patch: Any) -> bytes:
+    """`data` with `patch(buffer, info)` applied to entry `name`'s headers."""
+    buf = bytearray(data)
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        info = z.getinfo(name)
+    patch(buf, info)
+    return bytes(buf)
+
+
+def test_a_part_that_inflates_past_its_declared_size_or_names_itself_badly_fails_its_slide() -> (
+    None
+):
+    import struct
+
+    deck = _zip(_deck({"a.xml": _slide(_sp("Fine")), "b.xml": _slide(_sp("y" * 4000))}))
+
+    def shrink(buf: bytearray, info: zipfile.ZipInfo) -> None:
+        # Declare 100 bytes uncompressed, in the local header and the directory.
+        struct.pack_into("<I", buf, info.header_offset + 22, 100)
+        name = info.filename.encode()
+        at = buf.find(b"PK\x01\x02")
+        while buf[at + 46 : at + 46 + len(name)] != name:
+            at = buf.find(b"PK\x01\x02", at + 1)
+        struct.pack_into("<I", buf, at + 24, 100)
+
+    def bad_name(buf: bytearray, info: zipfile.ZipInfo) -> None:
+        # The local header claims a UTF-8 name and holds a byte that is not UTF-8.
+        flags = struct.unpack_from("<H", buf, info.header_offset + 6)[0]
+        struct.pack_into("<H", buf, info.header_offset + 6, flags | 0x800)
+        buf[info.header_offset + 30] = 0xFF
+
+    for patch in (shrink, bad_name):
+        a = extract(_patched(deck, "ppt/slides/b.xml", patch), "deck.pptx")
+        assert [b.text for b in a.blocks] == ["Fine"], patch.__name__
+        assert [f.unit for f in a.coverage.failed] == ["slide 2"], patch.__name__
+
+
+def test_a_part_in_an_encoding_the_xml_parser_does_not_read_fails_its_slide() -> None:
+    sjis = '<?xml version="1.0" encoding="shift_jis"?>' + _slide(_sp("x"))
+    a = extract(_zip(_deck({"a.xml": _slide(_sp("Fine")), "b.xml": sjis})), "deck.pptx")
+    assert [b.text for b in a.blocks] == ["Fine"] and [f.unit for f in a.coverage.failed] == [
+        "slide 2"
+    ]
+
+
+def test_two_outline_entries_of_one_title_on_a_page_are_two_headings() -> None:
+    nested = [("Overview", 0, [("Overview", 0)])]
+    a = extract(pdf(["Overview\nA\nOverview\nB"], nested), "a.pdf")
+    assert [(b.type, b.depth, b.text) for b in a.blocks] == [
+        ("heading", 1, "Overview"),
+        ("paragraph", 0, "A"),
+        ("heading", 2, "Overview"),
+        ("paragraph", 0, "B"),
+    ]
+    once = extract(pdf(["Overview\nA"], nested), "a.pdf")
+    assert [(b.type, b.depth) for b in once.blocks] == [
+        ("heading", 1),
+        ("heading", 2),
+        ("paragraph", 0),
+    ]
+
+
+def test_a_subsection_before_a_later_sibling_on_one_page_keeps_its_place() -> None:
+    a = extract(pdf(["A\nx\nA1\ny\nB\nz"], [("A", 0, [("A1", 0)]), ("B", 0, [])]), "a.pdf")
+    assert [(b.type, b.text, b.section_path) for b in a.blocks] == [
+        ("heading", "A", ("A",)),
+        ("paragraph", "x", ("A",)),
+        ("heading", "A1", ("A", "A1")),
+        ("paragraph", "y", ("A", "A1")),
+        ("heading", "B", ("B",)),
+        ("paragraph", "z", ("B",)),
+    ]
+
+
+def test_a_hidden_slides_title_is_marked_hidden_too() -> None:
+    a = extract(
+        _zip(_deck({"a.xml": _slide(_sp("Only a title", "title"), show=' show="0"')})), "d.pptx"
+    )
+    assert [(b.type, b.attrs) for b in a.blocks] == [("heading", {"hidden": True})]
+
+
+def test_a_failed_pages_outline_headings_still_open_their_sections() -> None:
+    """A scanned divider page that starts chapter B: the text after it is B's."""
+    a = extract(pdf(["A text", None, "more"], [("A", 0, []), ("B", 1, [])]), "a.pdf")
+    assert [(b.type, b.text, b.section_path) for b in a.blocks] == [
+        ("heading", "A", ("A",)),
+        ("paragraph", "A text", ("A",)),
+        ("heading", "B", ("B",)),
+        ("paragraph", "more", ("B",)),
+    ]
+    assert [f.unit for f in a.coverage.failed] == ["page 2"]
+
+
+def test_a_slide_id_whose_relationship_is_missing_is_a_failed_slide() -> None:
+    parts = _deck({"a.xml": _slide(_sp("Fine"))})
+    parts["ppt/presentation.xml"] = parts["ppt/presentation.xml"].replace(
+        "</p:sldIdLst>", '<p:sldId id="300" r:id="gone"/></p:sldIdLst>'
+    )
+    a = extract(_zip(parts), "deck.pptx")
+    assert [b.text for b in a.blocks] == ["Fine"]
+    assert (a.coverage.total, a.coverage.extracted) == (2, 1)
+    assert [f.unit for f in a.coverage.failed] == ["slide 2"]
+
+
+def test_an_outline_level_too_long_for_a_number_is_no_level_and_costs_nothing_else() -> None:
+    long = "9" * 5000
+    parts = {
+        **_docx_parts(_wp("Chapter", "Odd") + _wp("Body", extra=f'<w:outlineLvl w:val="{long}"/>')),
+        "word/styles.xml": (
+            f'<w:styles {_W}><w:style w:type="paragraph" w:styleId="Odd"><w:name w:val="Odd"/>'
+            f'<w:pPr><w:outlineLvl w:val="{long}"/></w:pPr></w:style></w:styles>'
+        ),
+    }
+    a = extract(_zip(parts), "a.docx")
+    assert [(b.type, b.text) for b in a.blocks] == [("paragraph", "Chapter"), ("paragraph", "Body")]
+    assert a.coverage.complete
+
+
+def test_an_outline_level_of_body_text_is_no_heading_on_a_style_or_a_paragraph() -> None:
+    styles = (
+        f"<w:styles {_W}>"
+        '<w:style w:type="paragraph" w:styleId="Chapter"><w:name w:val="Chapter"/>'
+        '<w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="NoToc"><w:name w:val="NoToc"/>'
+        '<w:basedOn w:val="Chapter"/><w:pPr><w:outlineLvl w:val="9"/></w:pPr></w:style>'
+        "</w:styles>"
+    )
+    body = (
+        _wp("One", "Chapter")
+        + _wp("Kept out of the contents", "NoToc")
+        + _wp("Body text here", "Chapter", extra='<w:outlineLvl w:val="9"/>')
+    )
+    a = extract(_zip({**_docx_parts(body), "word/styles.xml": styles}), "a.docx")
+    assert [(b.type, b.text, b.section_path) for b in a.blocks] == [
+        ("heading", "One", ("One",)),
+        ("paragraph", "Kept out of the contents", ("One",)),
+        ("paragraph", "Body text here", ("One",)),
+    ]
+
+
+def test_a_slide_nested_past_what_the_walk_reads_fails_that_slide_alone() -> None:
+    deep = "<p:grpSp>" * 3000 + _sp("Too deep") + "</p:grpSp>" * 3000
+    a = extract(_zip(_deck({"a.xml": _slide(_sp("Fine")), "b.xml": _slide(deep)})), "deck.pptx")
+    assert [b.text for b in a.blocks] == ["Fine"]
+    assert [f.unit for f in a.coverage.failed] == ["slide 2"]
+
+
+def test_a_docx_whose_only_picture_was_deleted_is_no_pictures_only_document() -> None:
+    a = extract(_zip(_docx_parts("<w:p><w:del><w:r><w:drawing/></w:r></w:del></w:p>")), "a.docx")
+    assert a.blocks == () and a.coverage.failed == ()

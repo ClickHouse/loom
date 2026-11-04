@@ -239,6 +239,6 @@ def test_the_server_parses_no_original_and_the_extractor_reads_no_server_code() 
     """Every original is parsed in an extractor service (extractor/loom_extractor/);
     the server reads only the artifact it returns. The knowledge plane also uses
     no parser library of its own."""
-    assert not _importers(SERVER, ("loom_extractor", "sqlglot"))
-    assert not _importers(SERVER / "knowledge", ("tomllib", "html.parser"))
+    assert not _importers(SERVER, ("loom_extractor", "sqlglot", "pypdf"))
+    assert not _importers(SERVER / "knowledge", ("tomllib", "html.parser", "zipfile", "xml"))
     assert not _importers(ROOT / "extractor", ("server",))

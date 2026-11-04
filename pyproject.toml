@@ -104,7 +104,9 @@ ingest = [
 # The reference extractor's parsers (extractor/loom_extractor/), for its tests in this
 # environment. The server never imports them; the service installs extractor/pyproject.toml.
 extractor = [
-  "sqlglot>=30.27,<31", # imports sqlglot.tokenizer_core, which a major may move
+  "cryptography>=50,<51", # pypdf's AES: a PDF encrypted with an owner password alone opens
+  "pypdf>=6.21,<7",
+  "sqlglot>=30.27,<31",   # imports sqlglot.tokenizer_core, which a major may move
 ]
 # `loom export-analytics` uploads to S3 under an assumed role, and
 # LOOM_DOCUMENT_OBJECT_STORE=s3 keeps document originals in a bucket; ships in the image.

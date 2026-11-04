@@ -129,13 +129,15 @@ def _locator(d: dict[str, Any], path: str) -> Locator:
         char_start=_int(d, "char_start", path, default=-1),
         char_end=_int(d, "char_end", path, default=-1),
         key_path=_str(d, "key_path", path, default=""),
+        page_start=_int(d, "page_start", path, default=0),
+        page_end=_int(d, "page_end", path, default=0),
     )
-    if (
-        loc.line_start < 0
-        or loc.line_end < loc.line_start
-        or (loc.line_start == 0) != (loc.line_end == 0)
+    for name, start, end in (
+        ("line", loc.line_start, loc.line_end),
+        ("page", loc.page_start, loc.page_end),
     ):
-        raise _fail(path, "line_start..line_end is not a 1-based range")
+        if start < 0 or end < start or (start == 0) != (end == 0):
+            raise _fail(path, f"{name}_start..{name}_end is not a 1-based range")
     if (
         loc.char_start < -1
         or loc.char_end < loc.char_start

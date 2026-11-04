@@ -449,8 +449,8 @@ text) and `section_path`, `similarity`, `lexical_score`, `score` (the fused rank
 hybrid mode) and, on a fan-out, the `namespace` it came from. A citation names what it
 read: `revision` is the document revision the chunk was written as and `format` its
 document's format. A chunk of an [ingested file](#ingesting-files) also carries its
-`block_type` and its `locator` (its lines, a key path), so a caller opens the passage in
-the source.
+`block_type` and its `locator` (its lines, a key path, a PDF's pages or a deck's
+slides), so a caller opens the passage in the source.
 
 **Exact keys.** An extracted file's chunks carry the names their blocks define or read
 (the tables and columns a SQL statement creates and reads, a TOML key path). In hybrid
@@ -758,13 +758,13 @@ them (an input this namespace already embedded under the same model keeps its st
 vector) and publishes the next **revision** of the source: chunks first, then the
 document row, then the earlier version's chunks retired. A document row carries its
 `revision`, `format`, `parser` and `coverage`, which `knowledge.get` returns; each
-chunk's `chunk_metadata` carries its `locator` (line span, char span, TOML key path) and
-block ids, and its `keys` the exact names it defines or reads. Text writes
-(`knowledge.add`, `upsert`) number revisions too. Ingests of one source run one at a
-time, in the order they were asked, so `expected_revision` guards an ingest against
-another; a text write takes no such claim, so one that races a write of the same source
-can reuse its revision number, and the later version wins (an ingest a later write of
-the source overtook, a text write, a metadata edit or a delete, fails
+chunk's `chunk_metadata` carries its `locator` (line span, char span, TOML key path, PDF
+page or deck slide span) and block ids, and its `keys` the exact names it defines or
+reads. Text writes (`knowledge.add`, `upsert`) number revisions too. Ingests of one
+source run one at a time, in the order they were asked, so `expected_revision` guards an
+ingest against another; a text write takes no such claim, so one that races a write of
+the same source can reuse its revision number, and the later version wins (an ingest a
+later write of the source overtook, a text write, a metadata edit or a delete, fails
 `revision_conflict`).
 
 `knowledge.ingest_status` follows a job: `pending`, `processing` (with its `stage`:
@@ -804,7 +804,8 @@ process that stopped, runs again from its start and counts the attempt. A job th
 or is cancelled, publishes nothing, so the earlier revision keeps serving.
 `knowledge.ingest_cancel` stops a pending job at once and a running one before it
 publishes; a job past its publish check finishes. The reference extractor reads Markdown,
-HTML, plain text, SQL and TOML; another format fails `format_unavailable` until an
+HTML, plain text, SQL, TOML, PDF (its text layer: a scanned page needs OCR, so the job
+needs `allow_partial`), DOCX and PPTX; another format fails `format_unavailable` until an
 extractor that declares it is configured. `knowledge.update_metadata` with `reindex=true`
 refuses an ingested document (its chunks come from the artifact): ingest it again to
 re-index it. A chunk's context (the title, description and section breadcrumb both search
