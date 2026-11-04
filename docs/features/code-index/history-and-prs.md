@@ -49,7 +49,9 @@ touched its span, their linked issues and reverts, and the review comments insid
 `code.blame_range` takes a `path`, a line range (at most 400 lines) and a window as
 release versions (`from_version`, `to_version`) or commit shas. It combines the PR
 ledger's file lists in the window (a floor) with `git blame -w -M -L` on the mirror,
-each blamed commit mapped to its PR.
+each blamed commit mapped to its PR. On a release-branch namespace it also reads the
+trunk namespace's ledger, and a release version resolves to its branch namespace's
+indexed head; either is used only when the caller may read that namespace.
 
 - `stage: "introduced"` (default) demotes backports, reverts and whitespace- or
   rename-only touches, and promotes a PR that names the enclosing function, drew a

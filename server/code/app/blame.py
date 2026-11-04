@@ -37,6 +37,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from server.code.api.models_history import CodeBlameRangeOutput
+from server.code.app import search_fanout as fanout
 from server.code.app.common import (
     new_trace_run_id,
     require_code_intel,
@@ -165,7 +166,8 @@ async def _resolve_ref(
             return "", ""
     if kind == "minor":
         branch_ns = next((c.namespace for c in siblings if c.git_branch == value), "")
-        if branch_ns:
+        # A sibling the caller cannot read resolves through the mirror's ref instead.
+        if branch_ns and (await fanout.readable_subset(org, [branch_ns]))[0]:
             head = await _namespace_head(repo, org, branch_ns)
             if head:
                 return head, "namespace_head"
@@ -383,7 +385,9 @@ async def _ledger_leg(
     mine = next((c for c in siblings if c.namespace == ns), None)
     trunk = trunk_entry(mine, siblings) if mine is not None else None
     if trunk is not None:
-        namespaces.append(trunk.namespace)
+        # The transport gated `ns` only; the trunk is read only when the caller may read it.
+        readable, _skipped = await fanout.readable_subset(org, [trunk.namespace])
+        namespaces.extend(readable)
     since = datetime.fromtimestamp(w.from_time, tz=UTC).replace(tzinfo=None)
     until = datetime.fromtimestamp(w.to_time, tz=UTC).replace(tzinfo=None)
     # Each namespace's rows must name its own branch (a backport filed under the master
