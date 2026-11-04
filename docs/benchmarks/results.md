@@ -63,7 +63,8 @@ public measurement, so a product capability is never presented as a measured res
 ### Models
 
 Every benchmark server ran with the deployment's model settings, recorded field by field in
-`bench/results/models.json` (`python -m bench.models_used`).
+`bench/results/models.json` (`python -m bench.models_used`), except where a section says its
+run does not record them.
 
 | Job                                                             | Model                            |
 | --------------------------------------------------------------- | -------------------------------- |
