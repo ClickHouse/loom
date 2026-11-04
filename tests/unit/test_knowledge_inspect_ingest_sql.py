@@ -15,6 +15,7 @@ that lost structure, and a text document carries none.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -25,6 +26,9 @@ from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
 LEASE_S = 120.0
+# One second for both rows of the same-second case, so the two statements cannot straddle a
+# second boundary; recent, because the jobs table expires old rows.
+SAME_SECOND = (datetime.now(UTC) - timedelta(seconds=100)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _id(n: int) -> str:
@@ -182,12 +186,11 @@ SETUP = [
     _doc("files/reindexed.md", version=2),
     # A job that failed at S.400 and a document row written in the same second S (stored as
     # whole seconds): the write may have come after the job, and it does not replace it.
-    "INSERT INTO loom.documents (org, namespace, source_uri, content, version, ingested_at) "
-    "VALUES ('o', 'ns', 'files/same.md', 'text', 1, toDateTime(now()) - 100)",
+    _doc("files/same.md", ingested_at=SAME_SECOND),
     "INSERT INTO loom.knowledge_ingestions (org, namespace, ingestion_id, source_uri, "
     "upload_id, sha256, state, error_code, created_at, updated_at, next_attempt_at, version) "
     f"VALUES ('o', 'ns', '{_id(24)}', 'files/same.md', '{_id(924)}', '{'a' * 64}', 'failed', "
-    "'encoding', now64(3) - 200, toDateTime64(toDateTime(now()) - 100, 3) + "
+    f"'encoding', now64(3) - 200, toDateTime64('{SAME_SECOND}', 3) + "
     "toIntervalMillisecond(400), now64(3), 1)",
     "INSERT INTO loom.knowledge_ingest_cancels (org, namespace, ingestion_id, requested_at) "
     f"VALUES ('o', 'ns', '{_id(17)}', now64(3) - toIntervalSecond(30)), "
