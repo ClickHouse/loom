@@ -334,8 +334,8 @@ arguments."` followed by each field error, every unknown key with the field
   `retry_after_s`.
 - **Access.** A role failure answers `AUTH_INSUFFICIENT` with `required_role`; a
   namespace the token neither names nor holds a grant on answers
-  `NAMESPACE_NOT_ACCESSIBLE`. On a code or tracker namespace the refusal says
-  how to get access.
+  `NAMESPACE_NOT_ACCESSIBLE`. On a code or tracker namespace, or a shared
+  collection (not someone else's personal one), the refusal says how to get access.
 - **Transport errors** stay JSON-RPC errors: parse error `-32700`, invalid
   request `-32600` (with the HTTP 401), method not found `-32601`, unsupported
   protocol version `-32022`, and a server fault `-32000 "tool execution

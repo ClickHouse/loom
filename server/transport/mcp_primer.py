@@ -16,6 +16,7 @@ import time
 import uuid
 from typing import Any
 
+from server.auth.fanout import knowledge_search_reads_collections
 from server.code.domain.scope import current_code_scope
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.transport._common import begin_call, bind_request
@@ -210,7 +211,7 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
     primer never asks for a call the client cannot make."""
     listed = {op.name: op.mcp_tool_name for op in listed_ops(toolset)}
     out: dict[str, str | None] = {}
-    for name in ("context.pack", "memory.set", "knowledge.add", "mentor.guide"):
+    for name in ("context.pack", "memory.set", "knowledge.add", "mentor.guide", "collection.list"):
         if name in listed:
             out[name] = f"`{listed[name]}`"
         elif loom_op_reachable(OPERATIONS_BY_NAME[name], toolset):
@@ -239,7 +240,9 @@ def _write_rules(tool: dict[str, str | None]) -> str:
         "readable key (`<scope>/<kind>/<id>`): send text or the object, "
         "never `json.dumps` twice or base64; a document or anything over "
         f"~2 KB goes to {doc}; leases and pointers go to "
-        "working memory; a revision rewrites the same key.\n\n"
+        "working memory; a revision rewrites the same key. A document "
+        f"for a shared collection (`col-…`) goes to {doc} with the "
+        "collection's name as `namespace`.\n\n"
     )
 
 
@@ -314,7 +317,18 @@ async def _loom_primer_text(
         "documents I've uploaded, or 'what is X' / 'what do I know "
         "about Y':\n"
         "   a. Call `loom_search` once. It searches memory, profile, "
-        "knowledge, and conversations server-side in one round trip.\n"
+        "knowledge (your namespaces' documents"
+        + (
+            " and the collections you can read"
+            + (
+                f"; {tool['collection.list']} names those collections"
+                if tool["collection.list"]
+                else ""
+            )
+            if knowledge_search_reads_collections()
+            else ""
+        )
+        + "), and conversations server-side in one round trip.\n"
         "   b. If it returns nothing relevant, fall through to "
         "native memory / past-conversation context — don't surface "
         "'not in Loom' as a final answer.\n\n"
@@ -495,7 +509,14 @@ async def _coding_instructions(
         )
         profile += "Don't re-fetch — it's been delivered."
     save = tool["memory.set"]
-    memory = "Recall before answering from memory: call `loom_search` once. " + (
+    memory = (
+        "Recall before answering from memory: call `loom_search` once"
+        + (
+            "; it also reads the collections you can read. "
+            if knowledge_search_reads_collections()
+            else ". "
+        )
+    ) + (
         f"On a remember/save intent call {save} with one plain-text claim per readable "
         "key (`<scope>/<kind>/<id>`)."
         if save
