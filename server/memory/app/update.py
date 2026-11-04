@@ -634,7 +634,8 @@ async def _record_revision(
         event_type=op,
         org=memory_row["org"],
         namespace=memory_row["namespace"],
-        actor=memory_row["actor"],
+        # The caller, as memory.set's row names it; never the earlier writer.
+        actor=app_provenance.writer_actor() or "-",
         # Hashes and ids, never the value; the verdict the write was checked with.
         subject={
             "memory_key": memory_row["memory_key"],
@@ -655,7 +656,7 @@ async def _write_revision(
 ) -> MemoryUpdateByIdOutput:
     """The write half shared by memory.update_by_id and memory.update:
     lock, expiry/revive, hash precondition, char cap, blacklist, one new
-    version row, embedding refresh. `input` carries value / tags / concepts /
+    version row, its audit row, embedding refresh. `input` carries value / tags / concepts /
     if_match_sha256 / char_limit / revive (and, for memory.update, confidence)."""
     import server.memory.store as memory_repo
 
@@ -781,8 +782,8 @@ async def _write_revision(
             return_exceptions=True,
         )
         if not isinstance(memory_done, BaseException):
-            # The row is in: announce it even when the rest of the write fails; a retry
-            # writes and announces a new version.
+            # The row is in: audit and announce it even when the rest of the write fails;
+            # a retry writes, audits and announces a new version.
             await _record_revision(
                 memory_row,
                 op=op,

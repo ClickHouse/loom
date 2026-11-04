@@ -600,3 +600,35 @@ async def test_a_revision_that_is_not_conflict_checked_is_audited_with_no_verdic
     assert out.updated
     [audit_row] = _audit_rows(ch)
     assert json.loads(audit_row["subject"])["verdict"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token", [True, False], ids=["token", "no-token"])
+async def test_a_revisions_audit_row_names_the_caller_not_the_earlier_writer(
+    audited, token: bool
+) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.domain import trust
+    from server.operations.base import Role
+
+    ch = audited([_cand(_ID_A)], _row(actor="human:alice"))
+    if token:
+        set_current_auth(
+            AuthInfo(
+                subject="bob",
+                org="test",
+                namespaces=("personal",),
+                roles=(Role.WRITER,),
+                is_service_account=False,
+            )
+        )
+    try:
+        out = await update_mod.handle_memory_update(
+            MemoryUpdateInput(org="test", namespace="personal", memory_key="deploy_day", value="x")
+        )
+    finally:
+        set_current_auth(None)
+    assert out.updated
+    [row] = _audit_rows(ch)
+    assert row["actor"] == (trust.actor_for("bob", is_service_account=False) if token else "-")
