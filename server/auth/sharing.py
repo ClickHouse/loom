@@ -351,6 +351,7 @@ async def check(auth: AuthInfo, required_role: Role, org: str, namespace: str) -
     if auth.creator:
         notes.append(f"its creator must hold at least {role_name} there too")
     raise PermissionError(
-        f"{bare}: {', and '.join(notes)}; collection.list (through loom_op over MCP, or the "
-        "dashboard's Library) lists the ones you can read"
+        # The gate knows no transport: the MCP screen says how its connection reaches the op.
+        f"{bare}: {', and '.join(notes)}; collection.list (or the dashboard's Library) lists "
+        "the ones you can read"
     )

@@ -257,10 +257,8 @@ def test_a_refusal_points_at_the_library_and_confirms_nothing(
             asyncio.run(sharing.check(_user("alice"), Role.VIEWER, ORG, name))
         messages.append(str(refused.value).replace(name, "<name>"))
     assert "a grant of at least viewer" in messages[0]
-    assert (
-        "collection.list (through loom_op over MCP, or the dashboard's Library) lists the ones"
-        in messages[0]
-    )
+    # No tool route: the gate knows no transport (an assistant connection has no loom_op).
+    assert "collection.list (or the dashboard's Library) lists the ones you can read" in messages[0]
     assert messages[0] == messages[1], "an existing and a missing collection read the same"
     # Someone else's personal collection takes no grant: no advice to ask for one.
     with pytest.raises(PermissionError) as refused:
