@@ -182,6 +182,18 @@ async def verified_spellings(org: str, subject: str, *, ch: object | None = None
         return await read_aliases(org, subject, ch)
 
 
+async def verified_holder(org: str, subject: str, *, ch: object | None = None) -> bool:
+    """Whether an active account is `subject` by its handle or its verified email,
+    read past a link another process just made: a login handle that is itself an
+    email counts. Raises when the directory cannot be read."""
+    from server.core.ch import own_write_reads
+
+    if not has_aliases(subject):
+        return False
+    with own_write_reads():
+        return bool(await _rows(org, subject, ch))
+
+
 __all__ = [
     "canonical_subject",
     "invalidate",
@@ -189,5 +201,6 @@ __all__ = [
     "read_aliases",
     "spellings",
     "subject_aliases",
+    "verified_holder",
     "verified_spellings",
 ]

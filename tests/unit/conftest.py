@@ -925,5 +925,12 @@ def no_directory_ties(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> list[str]:
         return [] if rows == "all" else list(dict.fromkeys(spellings))  # no revoked rows
 
+    async def _holder(org: str, subject: str, **_: Any) -> bool:
+        # Held when a verified tie is read, through whatever a test reads it by.
+        from server.auth import aliases
+
+        return len(await aliases.read_aliases(org, subject, None)) > 1
+
     monkeypatch.setattr("server.auth.aliases.read_aliases", _alone)
+    monkeypatch.setattr("server.auth.aliases.verified_holder", _holder)
     monkeypatch.setattr("server.identity.store.grants.stored_spellings", _as_given)

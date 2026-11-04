@@ -217,6 +217,29 @@ async def test_an_unlink_whose_reply_is_lost_still_drops_the_cached_ties(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("address", "held"),
+    [
+        ("bob@corp.example", False),  # named by mallory only, unverified
+        ("carol@corp.example", True),  # u-carol's verified email
+        ("Gina@Corp.example", True),  # an SSO account whose handle is the address
+        ("frank@corp.example", False),  # its SSO account is deactivated
+    ],
+)
+async def test_an_address_is_held_by_a_verified_account_or_a_handle_that_is_it(
+    monkeypatch: pytest.MonkeyPatch, address: str, held: bool
+) -> None:
+    client = _CH(
+        *SETUP,
+        "INSERT INTO loom.namespaces (org, namespace, owner_email, contact_email,"
+        " password_hash, active, created_at, updated_at) VALUES"
+        f" ('{ORG}', 'gina', 'gina@corp.example', 'gina@corp.example', '', 1, now(), now())",
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: client)
+    assert await aliases.verified_holder(ORG, address) is held
+
+
+@pytest.mark.asyncio
 async def test_revoking_the_address_reaches_the_tokens_its_squatter_made(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
