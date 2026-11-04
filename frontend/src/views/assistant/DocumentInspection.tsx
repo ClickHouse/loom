@@ -273,13 +273,11 @@ function IngestionSection({ result, notes }: { result: KnowledgeInspection; note
         </p>
       )}
       {/* A read of its own: when it fails the count stands and nothing is listed. */}
-      {i.without_document_listed.length === 0 &&
-        (i.without_document ?? 0) > 0 &&
-        readFailed(result, "ingestions.without_document") && (
-          <p className="text-xs text-text-muted" data-testid="docs-without-document-unlisted">
-            Sources with a job and no live document ({fmtInt(i.without_document)}): not listed.
-          </p>
-        )}
+      {readFailed(result, "ingestions.without_document") && (
+        <p className="text-xs text-text-muted" data-testid="docs-without-document-unlisted">
+          Sources with a job and no live document ({fmtInt(i.without_document)}): not listed.
+        </p>
+      )}
       {i.without_document_listed.length > 0 && (
         <div>
           <p className="text-xs text-text-muted">Sources with a job and no live document ({n(i.without_document)}):</p>
@@ -366,6 +364,8 @@ function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFi
   const head = `finding-${f.code}`;
   const ids = "ingestion_ids" in f ? f.ingestion_ids : [];
   const ingested = new Set("ingested_samples" in f ? f.ingested_samples : []);
+  // The server samples the ingested documents apart, so some may not be in `samples`.
+  const ingestedOnly = [...ingested].filter((uri) => !f.samples.includes(uri));
   const more = f.count - f.samples.length;
   return (
     <li className="pane-card space-y-1.5" aria-labelledby={head} data-code={f.code} data-kind={f.kind}>
@@ -394,6 +394,11 @@ function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFi
             </li>
           ))}
         </ul>
+      )}
+      {ingestedOnly.length > 0 && (
+        <p className="text-xs text-text-muted">
+          Also published by knowledge.ingest: <span className="font-mono break-all">{ingestedOnly.join(", ")}</span>
+        </p>
       )}
       {!f.samples_complete && more > 0 && <p className="text-xs text-text-muted">and {fmtInt(more)} more not listed</p>}
       <p className="text-xs text-text">What to do: {f.remedy}</p>

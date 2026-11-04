@@ -1633,6 +1633,35 @@ describe("Assistant: documents", () => {
     expect(samples[1]).not.toHaveTextContent("published by knowledge.ingest");
   });
 
+  it("names the ingested samples the server sampled apart from the first matches", async () => {
+    // Seven live documents miss a vector; the first five matches are text writes, so the
+    // ingested one is only in `ingested_samples` (the server samples the two lists apart).
+    const text = [1, 2, 3, 4, 5].map((k) => `files/note-${k}.md`);
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      documents: { ...KNOWLEDGE.documents, live: 7 },
+      findings: KNOWLEDGE.findings.map((f) =>
+        f.code === "unembedded_chunks"
+          ? {
+              ...f,
+              count: 7,
+              share: 1,
+              population: 7,
+              samples: text,
+              samples_complete: false,
+              ingested: 1,
+              ingested_samples: [SPEC],
+            }
+          : { ...f, population: 7 },
+      ),
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    const card = within(result).getByRole("listitem", { name: "Chunks with no vector" });
+    expect(card).toHaveTextContent(`Also published by knowledge.ingest: ${SPEC}`);
+    expect(card).toHaveTextContent("and 2 more not listed");
+  });
+
   it("says there is no live document to list while a first ingest is queued", async () => {
     inspectKnowledge.mockResolvedValueOnce(firstIngestQueued());
     render(<Assistant />);
