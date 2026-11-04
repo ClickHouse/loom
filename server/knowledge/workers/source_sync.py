@@ -30,5 +30,9 @@ def outcome(result: PassResult) -> dict[str, int | bool]:
         "unconverted": result.unconverted,
         "skipped": result.skipped,
         "failed": result.failed,
+        "extracted": result.extracted,
+        "flagged_pinned": result.flagged_pinned,
+        "unextracted": result.unextracted,
+        "extract_deferred": result.extract_deferred,
         "cut": result.cut,
     }

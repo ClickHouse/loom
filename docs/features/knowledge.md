@@ -54,8 +54,12 @@ the operations reference.
 | `knowledge.delete`          | writer | Supersede a document and its chunks.                                                   |
 | `knowledge.bulk_delete`     | writer | The same for up to 500 `source_uris`.                                                  |
 | `knowledge.reads`           | viewer | How often agents opened each document over the last `days` (1–30).                     |
+| `knowledge.inspect`         | viewer | A report on the namespace's documents ([below](#inspecting-a-namespaces-documents)).   |
 | `knowledge.dedup_list`      | admin  | Documents (and, optionally, chunks) of the namespace with identical content hashes.    |
 | `knowledge.dedup_resolve`   | admin  | Supersede one side of a duplicate pair.                                                |
+| `knowledge.ingest`          | writer | Extract an uploaded file and publish it as a document revision (a job).                |
+| `knowledge.ingest_status`   | viewer | A job's state, stage, coverage, warnings, failure and published revision.              |
+| `knowledge.ingest_cancel`   | writer | Stop a job before it publishes.                                                        |
 
 `knowledge.search` and `knowledge.reads` are hidden from MCP: neither is listed, and
 `loom_op` refuses them too. An agent reaches the knowledge plane through
@@ -71,12 +75,23 @@ Markdown built from its text, and the `X-Loom-Download-Source` header says `blob
 A repository's maintainers register the document sources Loom pulls the repository's
 documents from. A source lives on the repository's trunk code namespace, the one its
 documents live in, so whoever reads the repository sees where its documents come from,
-and only the namespace's admins change that. The one kind served is `gdrive`, a shared
+and only the namespace's admins change that. Two kinds are served: `gdrive`, a shared
 folder of docs, slides, decks and PDFs, read with a service account the folders are
-shared to read-only; its credential is the account's JSON key. The
+shared to read-only, whose credential is the account's JSON key; `linear`, the
+documents of a project tracker's projects, read with a read-only API key of an account
+that sees the projects; and `recording`, the transcripts of a meeting store's
+recordings ([recordings](#a-recording-source)). The
 `knowledge_source_sync` worker pulls each source's files into the repository's
 documents ([syncing](#syncing-a-source)); `list` says whether this deployment runs it
 (`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
+
+On the dashboard, an opened repository on the Repositories page shows its sources under
+Docs: each source's kind, last sync and counts, to anyone who reads the repository. The
+namespace's admins also get Add a source (a dry-run check first; Add sends only the form
+that passed), Check, Sync now, Rotate credential and Retire. The page adds `gdrive`
+sources; a `linear` or `recording` source is added with `knowledge.source.add` and then
+shows and is managed there like any other. The key is typed into a password field and is never shown
+again.
 
 | Operation                                                                                   | Role   | Does                                                                                                       |
 | ------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------- |
@@ -90,19 +105,24 @@ documents ([syncing](#syncing-a-source)); `list` says whether this deployment ru
 
 A source's `config` holds ids and filters, never a host or a URL: `gdrive` takes
 `folder_ids` (1 to 20) and `include` (any of `docs`, `slides`, `pdf`, `pptx`; all by
-default). The store's API hosts are fixed in the server, so a registered source cannot
-point the server at another host. The credential is sealed at rest under its own
-purpose (`loom secrets reseal` covers it), held in memory only for a probe, never
-returned by any op and never written to an audit row. `add` records the namespace,
-name, kind, config and `dry_run`; `rotate` the namespace and name; `remove` and
-`sync_now` their input (namespace, name, `confirm` and `delete_documents`, or `full`).
-`check` is admin-only because its probe spends the source's rate limit.
+default); `linear` takes `project_ids` (1 to 20 project UUIDs); `recording` takes
+`provider` (`meet` or `zoom`) and `ids` (1 to 20 meeting space ids for `meet`, numeric
+meeting ids for `zoom`). The store's API hosts
+are fixed in the server, so a registered source cannot point the server at another host.
+The credential is sealed at rest under its own purpose (`loom secrets reseal` covers
+it), held in memory only for a probe, never returned by any op and never written to an
+audit row. `add` records the namespace, name, kind, config and `dry_run`; `rotate` the
+namespace and name; `remove` and `sync_now` their input (namespace, name, `confirm` and
+`delete_documents`, or `full`). `check` is admin-only because its probe spends the
+source's rate limit.
 
-A probe exchanges the key for a read-only token, checks every folder together (one
-call each) and lists the included files of all folders in one call, the first 1000 at
-most. It is bounded as a whole by `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` (default
-20 s); past it `add` and `rotate` answer `SOURCE_UNREACHABLE` and `check` answers
-`reachable: false`.
+A `gdrive` probe exchanges the key for a read-only token, checks every folder together
+(one call each) and lists the included files of all folders in one call, the first 1000
+at most. A `linear` probe reads the first page (50 documents) of every project together,
+so a project the key's account cannot see refuses the probe. A `recording` probe
+exchanges its credential, reads each id and counts the recordings it lists. Each is
+bounded as a whole by `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` (default 20 s); past it `add` and
+`rotate` answer `SOURCE_UNREACHABLE` and `check` answers `reachable: false`.
 
 Every write of a namespace's sources (`add`, `rotate`, `remove`, `sync_now`, and the
 retirement in `code.repo.remove`) is serialized by a lease, so a write's checks still
@@ -145,23 +165,23 @@ are gone; one whose documents were kept refuses it with `SOURCE_DOCUMENTS_KEPT` 
 they are deleted (`knowledge.delete`). A removed source with no documents frees its
 name at once.
 
-| Code                    | When                                                                                                                                               |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NOT_A_CODE_NAMESPACE`  | `add`, `check`, `rotate` or `sync_now` names a namespace that is not a repository's trunk code namespace.                                          |
-| `BAD_NAME`              | The name is not 2-32 lower-case letters, digits, `-` or `_`, starting with a letter.                                                               |
-| `BAD_KIND`              | The kind is not one the server serves.                                                                                                             |
-| `BAD_CONFIG`            | The config has an unknown key, a malformed folder id or an unknown `include` value.                                                                |
-| `SOURCE_EXISTS`         | The namespace has an active source of that name.                                                                                                   |
-| `SOURCE_QUOTA`          | The namespace has `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` active sources (default 8).                                                           |
-| `NO_ROOT_SECRET`        | The deployment has no `LOOM_JWT_SECRET`, so a credential cannot be stored.                                                                         |
-| `CREDENTIAL_REFUSED`    | The credential is not a service account key, or the store refused it; nothing is stored.                                                           |
-| `SOURCE_UNREACHABLE`    | A folder is not shared with the account or is not a folder, the store failed or rate-limited the probe, or the probe timed out; nothing is stored. |
-| `SOURCE_DELETE_PENDING` | `add` names a removed source whose documents are still waiting to be retired.                                                                      |
-| `SOURCE_DOCUMENTS_KEPT` | `add` names a removed source whose kept documents are still live; delete them first.                                                               |
-| `SOURCE_REPLACED`       | `rotate` or `sync_now`'s source was removed and added again during the call (409); act on the current source.                                      |
-| `SOURCE_TAGS_LOCKED`    | A write that keeps the sync worker as a document's author changes its `source:*` tags.                                                             |
-| `SOURCE_NOT_FOUND`      | No active source of that name in the namespace (404).                                                                                              |
-| `CONFIRM_REQUIRED`      | `remove`'s `confirm` is not the source's name.                                                                                                     |
+| Code                    | When                                                                                                                                                      |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NOT_A_CODE_NAMESPACE`  | `add`, `check`, `rotate` or `sync_now` names a namespace that is not a repository's trunk code namespace.                                                 |
+| `BAD_NAME`              | The name is not 2-32 lower-case letters, digits, `-` or `_`, starting with a letter.                                                                      |
+| `BAD_KIND`              | The kind is not one the server serves.                                                                                                                    |
+| `BAD_CONFIG`            | The config has an unknown key, a malformed folder, project, space or meeting id, an unknown `include` value or an unknown `provider`.                     |
+| `SOURCE_EXISTS`         | The namespace has an active source of that name.                                                                                                          |
+| `SOURCE_QUOTA`          | The namespace has `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` active sources (default 8).                                                                  |
+| `NO_ROOT_SECRET`        | The deployment has no `LOOM_JWT_SECRET`, so a credential cannot be stored.                                                                                |
+| `CREDENTIAL_REFUSED`    | The credential is not of the kind's form, or the store refused it; nothing is stored.                                                                     |
+| `SOURCE_UNREACHABLE`    | A folder, project, space or meeting is not visible to the account, the store failed or rate-limited the probe, or the probe timed out; nothing is stored. |
+| `SOURCE_DELETE_PENDING` | `add` names a removed source whose documents are still waiting to be retired.                                                                             |
+| `SOURCE_DOCUMENTS_KEPT` | `add` names a removed source whose kept documents are still live; delete them first.                                                                      |
+| `SOURCE_REPLACED`       | `rotate` or `sync_now`'s source was removed and added again during the call (409); act on the current source.                                             |
+| `SOURCE_TAGS_LOCKED`    | A write that keeps the sync worker as a document's author changes its `source:*` tags.                                                                    |
+| `SOURCE_NOT_FOUND`      | No active source of that name in the namespace (404).                                                                                                     |
+| `CONFIRM_REQUIRED`      | `remove`'s `confirm` is not the source's name.                                                                                                            |
 
 A probe's error names the HTTP status (`http_403`), never the store's response text.
 
@@ -219,7 +239,7 @@ left, its delete request is cleared.
 
 The stamp moves only when every listed file was handled. A turn cut short (a rate limit,
 a failure, the pass bound) is listed again on the next pass, and the files it wrote are
-skipped by revision. One pass fetches, writes and retires at most
+skipped by revision. One pass fetches, writes, retires and mines at most
 `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` documents (default 40) across all
 sources, so a large folder's first sync spans several passes.
 
@@ -242,18 +262,132 @@ Trouble with one file is that file's:
   gives it up again), and on a full sync request (`sync_now(full=true)` or
   `loom knowledge sync --full`), which resets the waits once per request.
 
+### Mining decisions
+
+After every source's turn, the same pass mines for decisions each of the source's
+documents whose stored revision is not the one last mined for it, oldest first, with
+the extraction `loom decisions extract --apply` runs
+([extract decisions from a document](tasks-and-decisions.md#extract-decisions-from-a-document)).
+The revision a document was mined at is recorded only once its extraction is done, so a
+document written by a turn that failed or was stopped is mined on a later pass, as is
+one synced while no extraction ran. The rows
+go to the source's namespace, the repository's trunk code namespace, each citing its
+document in `source_resource_id`, written through `decision.record` as agent
+`loom-decisions` with the actor `worker:knowledge-source-sync` and the audit row the
+transport would write.
+
+Nobody has to confirm a row: an unpinned extracted row is served as it is, and a later
+write of the document revises or retires the extractor's own rows. A pinned or attested
+row, or one with a recorded outcome, is never rewritten: it is tagged `source-changed`
+and counted `flagged_pinned`, and `loom decisions extract` without `--apply` prints the
+body a maintainer may record instead.
+
+The model calls bill the source's namespace (operation `worker.knowledge_source_sync`
+in `loom.agent_events`). Before each document the pass reads the namespace's spend: one
+whose spend on these calls in the last 24 hours reached
+`LOOM_KNOWLEDGE_SOURCE_SYNC_CAP_SHARE` (default 0.25) of its daily cost cap, or the whole
+cap, is left for a later pass; a cap that cannot be read counts as reached. An org whose
+model calls are switched off, a namespace whose calls the inference gateway refuses or
+asks to wait, for an embedding too (left for the time the gateway names), and every org
+while the switch cannot be read are left the same way, with no try counted. A deployment
+with no usable model mines nothing. A source left for a later pass shows why in
+`extract_error`: `over_cap`, `switched_off`, `switch_unread`, `no_model`, `held`,
+`held:<code>` or `pass_bound` (the pass had no time or document left for it).
+
+Each decision's writes run whole with their audit row: a pass cancelled mid-write
+finishes the write it is in, and shutdown waits for it. Before each write the run checks
+that its pass is not stopped and that it still holds the source's lease; when either
+ends, it stops there, keeps what it wrote, retires nothing, and the document is mined
+again on a later pass.
+
+A document whose extraction fails stays pending for three tries on the same revision,
+then is counted `unextracted` and left until the sync writes it again. The reasons:
+`not_run` (it could not run on the document, such as one with no chunks for the current
+embedding model), `refused` (a read or a write it needed was refused for a reason of the
+moment, such as a busy key, or failed) and `failed:<error>`. A write refused for a
+reason every run would meet (a blacklisted decision, a pinned peer it contradicts, a
+body the op does not take) is not a failure: the document is mined with its other
+decisions. A document's model reads stop 30 seconds before the pass's deadline, with
+nothing written (`out_of_time`), and it goes first among its source's documents on the
+next pass; one that runs out of time with three quarters of a pass's read time or more
+is given up on at once (`too_large_for_pass`): the worker does not mine a document that
+large, and `loom decisions extract` runs it with no deadline. A document is not started
+with less than a minute of read time left. A document retired, or held by another writer
+since, is not mined.
+
 A source's `sync` in `list` and `inspect` shows what its last turn did:
 
-| Field                    | Meaning                                                                                                                                                                                                                                               |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                                                                                                                                        |
-| `last_synced_at`         | When the last turn ended.                                                                                                                                                                                                                             |
-| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                                                                                             |
-| `documents_seen`         | Files the turn listed.                                                                                                                                                                                                                                |
-| `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                                                                                       |
-| `unconverted`, `skipped` | Files it did not write: the store gave no https link, no extractor, refused or too large, or given up after three passes on the same revision; another writer's document at the address.                                                              |
-| `unconverted_reasons`    | Why, by count: `no_address` (the store gave no https link), `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`. |
-| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text; for a turn that did not fail, why it is incomplete (`pass bound reached`, `listing: incomplete search`).                                                      |
+| Field                    | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `last_synced_at`         | When the last turn ended.                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                                                                                                                                                                                                                                                                                                                          |
+| `documents_seen`         | Files (or a project's documents, or recordings) the turn listed.                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `unconverted`, `skipped` | Files it did not write: the store gave no https link, no extractor, refused or too large, a recording with no transcript yet, or given up after three passes on the same revision; another writer's document at the address.                                                                                                                                                                                                                                                       |
+| `unconverted_reasons`    | Why, by count: `no_address` (the store gave no https link), `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`, `no_transcript` (a recording with no finished transcript), `transcript_off_host`; for a project's documents also `not_found`, `graphql_<type>` and `no_document` or `no_data` (the answer lacked the document, or any data). |
+| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text; for a turn that did not fail, why it is incomplete (`pass bound reached`, `listing: incomplete search`).                                                                                                                                                                                                                                                                                   |
+| `pending_extract`        | Documents whose stored revision is not yet mined for decisions, as of the last pass.                                                                                                                                                                                                                                                                                                                                                                                               |
+| `last_extracted_at`      | When the last mining turn ended.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `extracted`              | Documents that turn mined, each with or without a decision.                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `flagged_pinned`         | Decision rows it tagged `source-changed` rather than rewriting them: pinned, attested, or with a recorded outcome.                                                                                                                                                                                                                                                                                                                                                                 |
+| `unextracted`            | Documents it gave up on: three failed tries, or too large for a pass.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `extract_error`          | Why an extraction failed in the last mining turn (`not_run`, `refused`, `out_of_time`, `too_large_for_pass`, `failed:<error>`), or why documents wait (`over_cap`, `switched_off`, `switch_unread`, `no_model`, `held`, `held:<code>`, `pass_bound`).                                                                                                                                                                                                                              |
+
+### A recording source
+
+A `recording` source reads transcripts, never audio or video, and nothing in Loom
+transcribes. Neither store's listing says whether a recording has a transcript, so each
+recording not stored yet costs one check. A recording without a finished transcript is
+counted `unconverted` under `no_transcript`, not as an error: until a day after the
+meeting it is checked again whenever a listing has it, at none of the pass bound, so
+its transcript is written once the store has one; after that it is given up on, like a
+refused file, and checked once more on each periodic full listing and on a full sync
+request. A transcript whose download link is not on the store's own hosts is given up
+on under `transcript_off_host`, and the token is never sent there.
+
+| `provider` | `ids`               | Credential                                                                                                                                                                   | A recording                                                                                                                         |
+| ---------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `meet`     | meeting space ids   | An OAuth `authorized_user` JSON file (`client_id`, `client_secret`, `refresh_token`) of a user who can see the spaces, granted the `meetings.space.readonly` scope only.     | One ended conference record of a space; its transcripts' entries, once every transcript's file is generated (`FILE_GENERATED`).     |
+| `zoom`     | numeric meeting ids | A server-to-server app's JSON (`account_id`, `client_id`, `client_secret`), with the read-only meeting and recording scopes only (`meeting:read…`, `cloud_recording:read…`). | One ended instance of a meeting; the `TRANSCRIPT` file (WebVTT) of its cloud recording, downloaded from the store's own hosts only. |
+
+The transcript becomes one `# mm:ss–mm:ss: <first words>` section per five minutes of
+the meeting, timed from its start, so a chunk and its citation name the minute; inside a
+section each speaker turn is a paragraph `<speaker>: <text>`. The document's address is
+the store's API address of the recording, its title `Meeting <start time>` (`meet`) or
+`Meeting <meeting id> <start time>` (`zoom`), its
+`ingested_format` `transcript`, and its revision the meeting's end (`meet`) or the
+instance's start (`zoom`): a stored transcript is not fetched again. An incremental
+listing reaches a day behind the stamp, since a store finishes a transcript some time
+after the meeting; the periodic full listing finds a later one. A `zoom` full listing
+(and probe) reads the instances that started in the last 30 days, as `meet` keeps
+conference records for 30 days, so the old instances of a long recurring meeting cost
+no check; documents written from older instances stay. A space or meeting the
+account no longer sees, or may not read, ends the turn `failed` with its status
+(`space <id>: http_404` or `http_403`) and retires nothing, while the other ids'
+recordings are written. A probe of such an id fails: `add` and `rotate` answer
+`SOURCE_UNREACHABLE` naming it, and `check` answers `reachable: false` with that summary.
+
+A credential whose token answer holds any scope beyond reads (for `meet`, anything but
+`meetings.space.readonly`; for `zoom`, any scope that is not `<resource>:read…`), or
+names no scope, is refused: `add` and `rotate` answer `CREDENTIAL_REFUSED`, `check`
+answers `reachable: false` with that summary, and a turn ends `credential_invalid`, so a
+stored credential can never change the store.
+
+A recording its store no longer lists retires nothing: both stores delete recordings
+and transcripts on their own retention schedule (a conference record after 30 days), so
+absence is not the writer asking. A recording's document goes with
+`remove(delete_documents=true)` or `knowledge.delete`; while the store still lists it, a
+full listing writes it again.
+
+Speaker names are text of the transcript like any other, under the same rules as every
+document: the document is written as the sync worker with `user_id` `-`, so a
+namespace's erasure removes it and an erasure scoped to one user does not; a speaker's
+words are removed with `knowledge.delete` of the document (and at the store, or the next
+full listing writes them again). Decision records mined from a transcript
+(by the sync's [mining](#mining-decisions), or `loom decisions extract`) can quote a speaker too; deleting the transcript leaves them,
+and `memory.delete` of each decision's row (which retires its record) or the
+namespace's erasure removes them.
 
 `loom knowledge sync --org O --namespace <trunk namespace> [--source NAME] [--full]` runs
 one such pass over one namespace's sources now, in-process, and leaves a manual
@@ -261,6 +395,34 @@ one such pass over one namespace's sources now, in-process, and leaves a manual
 request, as `sync_now(full=true)` does; run again while that request is unfinished, it
 goes on with it, so repeated runs work through a large folder rather than starting
 over.
+
+### Syncing a project's documents
+
+A `linear` source's turn follows the rules above, with three differences. Every turn
+reads each project's whole document list (ids, titles, stamps and links, 50 to a page,
+every page), since a project's list is small; there is no incremental listing, and
+`full` only grants given-up documents their retry. A changed document is fetched on its
+own (its content is Markdown already, `ingested_format` `markdown`, with no original)
+and is bounded by `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES`; its revision is its
+`updatedAt` and its address its link without the query. The link carries the title, so
+a renamed document is written at its new address and its old one retired.
+
+A document is retired only when the list was read whole, every project on every page,
+and the tracker, asked about that document, answers its own not-found error or reports
+it trashed, archived or in none of the source's projects; an answer that only lacks the
+document, or a lookup that fails, retires nothing. A project the key's account cannot
+see, any other failure on a list page, an answer that carries a GraphQL error beside its
+data and a page that promises another without a cursor leave the turn `failed` and
+retire nothing, while the other projects' documents are still written. The API reports
+most failures as GraphQL errors, often with HTTP 200 or 400, so a turn reads the errors'
+type as well as the status: a `429` or an error typed `RATELIMITED` is `rate_limited`, a
+`401` or an authentication error is `credential_invalid`, and either ends the turn. A
+document the tracker no longer finds (`not_found`), one over the size bound and one it
+refuses (`graphql_<type>` for a GraphQL error typed `FORBIDDEN`, `INVALID_INPUT`,
+`FEATURE_NOT_ACCESSIBLE` or `USER_ERROR`; `http_<status>` for a `4xx` with no type)
+are given up on their revision at once; any other GraphQL error, whatever its status, a
+`5xx`, a timeout and an answer without the document (`no_document`) make it wait. List
+pages are paced half a second apart.
 
 ## Searching
 
@@ -353,6 +515,70 @@ opts out), and routes a summary-shaped question to `knowledge.synthesize` when t
 knowledge search concentrates on a few documents. See
 [search and ask](./memory/search-and-ask.md).
 
+## Inspecting a namespace's documents
+
+`knowledge.inspect` (viewer) reports what a namespace's documents are, which of their
+versions search serves, and what was extracted from them. It reads what is stored, never
+parses a document and writes nothing. It is in the [assistant
+toolset](../reference/mcp.md#the-assistant-toolset). `sample_limit` (0–100, default 20)
+bounds the listed documents and every finding's samples.
+
+- **`documents`**: live and deleted (`knowledge.delete`) documents by format (the row's
+  `format`, which `knowledge.ingest` sets, else the `ingested_format` a source sync
+  records in its metadata (`transcript`, `markdown`, `slides`, or the extractor's `pdf`
+  or `pptx`), else the stored content type, else the extension of the original filename
+  or the `source_uri` path) and by `source_uri` scheme, and the newest ingest. A
+  document row holds only its current version, and its `revision` numbers it (1, 2,
+  ...): `earlier_revisions` sums the revisions before each current one, and `unnumbered`
+  counts rows no write numbered (`revision` 0). An earlier revision's text is known only
+  through its retired chunks. `retired_versions` counts those chunk versions: the ones a
+  later write or a delete replaced, and every `knowledge.ingest` attempt that inserted
+  chunks and never published (failed, cancelled, or beaten by a later write), which no
+  revision numbers.
+- **`chunks`**: the live chunks per embedding model, how many carry a vector, and
+  `searchable`, the ones under the server's model (`embedder_model`) with a vector:
+  `knowledge.search` reads no others.
+- **`listed`**: the newest live documents, each with its version, its `revision`, the
+  `ingestion_id` of the `knowledge.ingest` job that published it (empty for a text
+  write), its retired versions, its live chunks (searchable, unembedded, under another
+  model, distinct versions, characters per chunk) and its decisions. `listed_complete`
+  says whether the list holds every live document.
+- **`decisions`**: the live decision rows whose `source_resource_id` cites a section of
+  a document (`knowledge:<namespace>/<source_uri>#<section>`, as
+  `loom decisions extract` writes it), per listed document and for the namespace. A
+  citation of `doc#v2#Intro` counts for the document `doc#v2`, never for `doc`. Each
+  stage is counted apart: `decided`, and `proposed` (a decision recorded with
+  `stage="proposed"`, tagged `decision:proposed`). Within a stage, the rows are counted
+  as confirmed (pinned or attested; for a proposal that backs its wording, not a
+  choice), unconfirmed, tagged `source-changed`, and with a recorded outcome. Rows the
+  extractor wrote into a repository's namespace are not counted.
+- **`findings`**: one per check, in the shape of the [audit's
+  findings](./namespaces-and-sharing.md#reading-a-namespaces-health), a clean check at
+  `info` with count 0. `documents_without_chunks`, `unembedded_chunks` and
+  `chunks_under_other_model` are `system_state`: the server's own state.
+  `mixed_live_versions` is a `usage_heuristic`: live chunks of two versions of one
+  document, which `knowledge.add` on an existing `source_uri` leaves and
+  `knowledge.upsert` does not; a `knowledge.ingest` publish passes through it too,
+  briefly, or until the job's next run when it could not confirm its insert. Each
+  finding names the documents `knowledge.ingest` published apart (`ingested`,
+  `ingested_samples`). A text document is repaired with `knowledge.upsert` or
+  `loom rechunk --source-uri <uri>`; an ingested one with `knowledge.ingest` of its
+  original (`GET /v1/knowledge.download` serves it), since a text write re-cuts its
+  rendered text and clears its format, parser, coverage and ingestion. For
+  `mixed_live_versions` on an ingested document, a job of the source still processing at
+  its publish stage settles the state on its next run, so it is re-ingested only when no
+  ingest of the source is open.
+- **`memory_findings`**: `namespace.audit`'s `oversized_values` and `episodic_blobs`,
+  memory rows that may belong in documents, cited by code and count. `mentor.brief`
+  reports the same shape for one agent as `documents_as_memories`.
+- **`skipped`**: each section that could not be read, as `section: reason`. Its fields
+  are null or empty, not zero.
+
+Documents are the namespace's under any read scope, as every `knowledge.*` read serves
+them. Under a token narrowed to one user or session, the decisions count only the rows
+inside that scope, and `memory_findings` is skipped, since the audit reads every user's
+rows.
+
 ## Replacing, editing and deleting
 
 | You want to                            | Use                                                     | What happens                                                                                          |
@@ -412,6 +638,89 @@ which Loom's do not use, so a replica behind a write could call its object unnam
 the min age well above the floor there (the 3600 default leaves about 45 minutes), or send
 every Loom process to one replica. `loom doctor` warns about this topology
 (`replica_consistency`).
+
+## Ingesting files
+
+`knowledge.add` takes text the caller extracted. A file Loom should extract goes in two
+steps, so the bytes never travel as base64 inside JSON and extraction never holds a
+request open:
+
+1. **`POST /v1/knowledge.upload?org=&namespace=&filename=`** with the file as the raw
+   body (writer role; `sha256=` and `content_type=` optional). The bytes are stored as an
+   original (where originals are stored, below) and the answer is a `201` with the
+   scoped `upload_id`, `sha256`, `size`, the `format` its name and `content_type` give
+   and `expires_at` (`LOOM_KNOWLEDGE_UPLOAD_TTL_SECONDS`, a day by default). A body over
+   `LOOM_KNOWLEDGE_UPLOAD_MAX_BYTES` (64 MiB) is `413`, bytes that do not hash to the
+   `sha256` sent are `422 CHECKSUM_MISMATCH`, and a legacy Office name (`.doc`, `.xls`,
+   `.ppt`) is `415 UNSUPPORTED_FILE`, before anything is stored. The server does not
+   read the bytes to type them: content that is another format than its name is refused
+   at ingest (`format_mismatch`).
+2. **`knowledge.ingest`** with that `upload_id` and the `source_uri` to publish under
+   (title, description, tags, metadata as for `knowledge.add`). Only the caller who
+   uploaded the file can ingest it. Options say what a file cannot: `format`,
+   `encoding`, `sql_dialect`. `expected_revision` publishes only over that revision
+   (0: no live document), and `allow_partial` publishes an extraction that lost part of
+   its source instead of failing it. The answer is the job's `ingestion_id`, `pending`.
+
+The `knowledge_ingest` worker then sends the original's bytes to the extractor service
+its format is routed to, which returns the extraction artifact the server checks as
+untrusted input ([document extraction](../architecture/document-extraction.md)); the
+server parses nothing itself. It stores the artifact, cuts structural chunks, embeds
+them (an input this namespace already embedded under the same model keeps its stored
+vector) and publishes the next **revision** of the source: chunks first, then the
+document row, then the earlier version's chunks retired. A document row carries its
+`revision`, `format`, `parser` and `coverage`, which `knowledge.get` returns; each
+chunk's `chunk_metadata` carries its `locator` (line span, char span, TOML key path) and
+block ids, and its `keys` the exact names it defines or reads. Text writes
+(`knowledge.add`, `upsert`) number revisions too. Ingests of one source run one at a
+time, in the order they were asked, so `expected_revision` guards an ingest against
+another; a text write takes no such claim, so one that races a write of the same source
+can reuse its revision number, and the later version wins (an ingest a later write of
+the source overtook, a text write, a metadata edit or a delete, fails
+`revision_conflict`).
+
+`knowledge.ingest_status` follows a job: `pending`, `processing` (with its `stage`:
+`parse`, `embed`, `publish`), then `ready`, `partial`, `failed` or `cancelled`, with the
+coverage, the parser's warnings, the chunks and revision published, and `retrieval`
+(`ready` once the document is searchable). A job's record is kept for 30 days after its
+last change, an upload's for 7 days after it expires. A failed job names why in
+`error_code`:
+
+| `error_code`            | Means                                                                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `format_unavailable`    | no configured extractor takes the format (none routed, it does not declare it, or it answers `format_unavailable`)                      |
+| `unsupported_format`    | an `options.format` Loom does not know, or bytes of no format the extractor reads                                                       |
+| `format_mismatch`       | the declared or named format is not what the bytes are                                                                                  |
+| `corrupt`               | the file is damaged, or the extractor's parser fails on it                                                                              |
+| `timeout`               | the extraction took longer than the extractor allows                                                                                    |
+| `resource_limit`        | the extraction passed the extractor's memory or output limit, or the artifact the server's `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES` |
+| `encoding`              | the text is not valid in its encoding; declare it in `options.encoding`                                                                 |
+| `invalid_option`        | an unknown encoding or SQL dialect                                                                                                      |
+| `incomplete_extraction` | coverage is incomplete and `allow_partial` was off                                                                                      |
+| `no_text`               | the file holds no text to index                                                                                                         |
+| `too_large`             | the original is over the extractor's `max_bytes`, or it cut more chunks than `LOOM_KNOWLEDGE_INGEST_MAX_CHUNKS`                         |
+| `revision_conflict`     | the live revision is not `expected_revision`, or a later write of the source landed after this ingest began to publish                  |
+| `original_gone`         | the upload's bytes are no longer stored                                                                                                 |
+| `retries_exhausted`     | the extractor, a provider or a store failed `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS` times (`retrying` before)                              |
+| `invalid_artifact`      | the extractor answered with an artifact that breaks the contract                                                                        |
+| `refused`               | the extractor refused the source with a `4xx` that names no contract code                                                               |
+| `internal`              | a defect; the log line has it                                                                                                           |
+
+A transient failure (an extractor that cannot be reached, times out, or answers a `5xx`,
+`408`, `429` or another status that is neither a result nor a refusal; a provider or a
+store outage) puts the job back with a doubling delay (at most an hour); a source the
+extractor refuses, or an artifact that breaks the contract, fails at once with its code. A
+pass runs one due job, one source's jobs in order and namespaces in turn, and is cancelled
+after `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS` (15 minutes); a job cut off there, or by a
+process that stopped, runs again from its start and counts the attempt. A job that fails,
+or is cancelled, publishes nothing, so the earlier revision keeps serving.
+`knowledge.ingest_cancel` stops a pending job at once and a running one before it
+publishes; a job past its publish check finishes. The reference extractor reads Markdown,
+HTML, plain text, SQL and TOML; another format fails `format_unavailable` until an
+extractor that declares it is configured. `knowledge.update_metadata` with `reindex=true`
+refuses an ingested document (its chunks come from the artifact): ingest it again to
+re-index it. A chunk's context (the title, description and section breadcrumb both search
+legs read) is filled as for `knowledge.add`.
 
 ## Where originals are stored
 

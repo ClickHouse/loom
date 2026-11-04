@@ -15,7 +15,7 @@ from server.transport.body_limit import CODE, BodyLimitMiddleware
 LIMIT = 1024
 
 
-def _app(limit: int = LIMIT) -> FastAPI:
+def _app(limit: int = LIMIT, own_limit: tuple[str, ...] = ()) -> FastAPI:
     app = FastAPI()
     seen: dict[str, int] = {"bytes": 0}
 
@@ -25,7 +25,7 @@ def _app(limit: int = LIMIT) -> FastAPI:
         seen["bytes"] = len(body)
         return {"n": len(body)}
 
-    app.add_middleware(BodyLimitMiddleware, max_bytes=limit)
+    app.add_middleware(BodyLimitMiddleware, max_bytes=limit, own_limit=own_limit)
     app.state.seen = seen
     return app
 
@@ -90,3 +90,9 @@ def test_main_app_registers_the_cap_from_settings():
     assert settings.max_request_bytes == 32 * 1024 * 1024
     src = open("server/main.py", encoding="utf-8").read()
     assert "BodyLimitMiddleware" in src and "settings.max_request_bytes" in src
+
+
+def test_a_path_that_bounds_its_own_body_passes_through_whole():
+    c = TestClient(_app(own_limit=("/echo",)))
+    r = c.post("/echo", content=b"x" * (LIMIT * 4))
+    assert r.status_code == 200 and r.json()["n"] == LIMIT * 4

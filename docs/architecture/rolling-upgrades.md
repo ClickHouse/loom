@@ -13,13 +13,14 @@ schema. These rules keep that safe. The operator procedure is in
    N-1 booting on N's schema logs one WARNING naming the migrations it does not carry
    (`server/boot.py::warn_newer_schema`) and serves.
 2. **A version row keeps columns its build does not know.** `loom.memory`,
-   `loom.shared`, `loom.memory_embeddings`, `loom.session_summaries` and
-   `loom.entity_summaries` are `ReplacingMergeTree(version)`: the newest row replaces
-   the whole previous one. Before each insert into them, `ch.insert` fills every stored
-   column outside its build's row builder from the newest stored version of the row's
-   key (`server/core/rmt_carry.py`), so N-1's touch, revision or tombstone keeps the
-   values N wrote to N's new columns. This costs a cached lookup while every build agrees
-   with the schema, and one extra keyed read per insert while a newer column exists.
+   `loom.shared`, `loom.memory_embeddings`, `loom.session_summaries`,
+   `loom.entity_summaries` and `loom.documents` are `ReplacingMergeTree(version)`: the
+   newest row replaces the whole previous one. Before each insert into them, `ch.insert`
+   fills every stored column outside its build's row builder from the newest stored
+   version of the row's key (`server/core/rmt_carry.py`), so N-1's touch, revision or
+   tombstone keeps the values N wrote to N's new columns. This costs a cached lookup
+   while every build agrees with the schema, and one extra keyed read per insert while a
+   newer column exists.
    - Each process checks `loom._migrations` and the carried tables' metadata time
      every 2 s in the background and then re-reads the column lists.
    - A write that took the lists before the `ALTER` would still drop the column. So
@@ -296,6 +297,14 @@ schema. These rules keep that safe. The operator procedure is in
     or of a saga it resumes. No gate holds the rollout: the cost is the actor named on
     those audit rows, nothing is lost or refused, and it ends once no N-1 replica serves.
     The mixed-version gate does not check this rule.
+28. **A new document-source kind** (`recording` in `loom.knowledge_sources.kind`): N-1
+    refuses to add one (`BAD_KIND`) and lists and inspects one like any source. Its
+    `check` and `rotate` of one fail with a server error, since it has no probe for the
+    kind. An N-1 sync worker that takes a recording source's turn reads it as a shared
+    folder: the credential is not a service account key, so the turn ends
+    `credential_invalid` before any request and retires nothing, and the next turn by N
+    writes the real status. No gate holds the rollout: the cost is that status, shown
+    until N's turn, and it ends once no N-1 replica serves.
 
 ## What checks them
 

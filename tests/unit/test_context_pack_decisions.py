@@ -95,11 +95,11 @@ def test_decision_hits_render_as_their_own_section(monkeypatch: pytest.MonkeyPat
                 "realized_outcome": "p95 under budget",
                 "success": True,
                 "made_at": "2026-09-01T10:00:00",
+                "stage": "decided",
             }
         }
 
     monkeypatch.setattr("server.memory.app.decision._decision_records", _records)
-    monkeypatch.setattr("server.core.ch.get_client", lambda: object())
 
     out = asyncio.run(
         handle_context_pack(
@@ -130,7 +130,6 @@ def test_record_fetch_failure_falls_back_to_the_excerpt(monkeypatch: pytest.Monk
         raise RuntimeError("records table missing")
 
     monkeypatch.setattr("server.memory.app.decision._decision_records", _boom)
-    monkeypatch.setattr("server.core.ch.get_client", lambda: object())
 
     out = asyncio.run(
         handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="q"))
@@ -212,12 +211,28 @@ def test_a_decision_whose_reasoning_is_its_outcome_gives_no_because(
     ban = "Client-side retries only; no server retry setting."
 
     async def _records(ch: Any, org: str, ns: str, keys: list[str]) -> dict[str, Any]:
-        return {"d1": {"scenario": "where requests are retried", "outcome": ban, "reasoning": ban}}
+        rec = {"scenario": "where requests are retried", "outcome": ban, "reasoning": ban}
+        return {"d1": {**rec, "stage": "decided"}}
 
     monkeypatch.setattr("server.memory.app.decision._decision_records", _records)
-    monkeypatch.setattr("server.core.ch.get_client", lambda: object())
     out = asyncio.run(
         handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="retries"))
     )
     dec = out.sections["decisions"]
     assert f"→ decided: {ban}" in dec and "because" not in dec
+
+
+def test_a_proposed_decision_renders_as_proposed(monkeypatch: pytest.MonkeyPatch) -> None:
+    _dead_other_sections(monkeypatch)
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search_stub([_DECISION]))
+
+    async def _records(ch: Any, org: str, ns: str, keys: list[str]) -> dict[str, Any]:
+        # The record read says which decisions their writers recorded as proposed.
+        return {"d1": {"scenario": "pick a store", "outcome": "Postgres", "stage": "proposed"}}
+
+    monkeypatch.setattr("server.memory.app.decision._decision_records", _records)
+    out = asyncio.run(
+        handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="store"))
+    )
+    dec = out.sections["decisions"]
+    assert "→ proposed: Postgres" in dec and "decided" not in dec

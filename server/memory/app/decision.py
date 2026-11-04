@@ -46,6 +46,7 @@ from server.memory.domain.decision_schema import (
     DECISION_TAG,
     FAILURE_TAG,
     OUTCOME_KNOWN_TAG,
+    PROPOSED_TAG,
     SCHEMA_FIELDS,
     SCHEMA_NAME,
     SUCCESS_TAG,
@@ -65,6 +66,7 @@ from server.memory.store import (
     MemoryRow,
     WriterRecord,
     active_decision_records,
+    active_record,
     get_by_key,
     live_writer_record,
     next_version,
@@ -104,7 +106,7 @@ async def ensure_schema(org: str, namespace: str) -> None:
 async def _decision_records(
     ch: Any, org: str, namespace: str, keys: list[str]
 ) -> dict[str, dict[str, Any]]:
-    """Active decision records by key: {memory_key: record_json + made_at}."""
+    """Active decision records by key: {memory_key: record_json + made_at + stage}."""
     if not keys:
         return {}
     rows = await active_decision_records(org, namespace, keys, ch=ch)
@@ -112,6 +114,7 @@ async def _decision_records(
     for r in rows:
         rec = svc.parse_record_json(r.record_json)
         rec["made_at"] = r.created_at.isoformat()
+        rec["stage"] = svc.stage_of(r.proposed, rec)
         out[r.memory_key] = rec
     return out
 
@@ -132,6 +135,7 @@ def _row(key: str, rec: dict[str, Any], similarity: float = 0.0) -> Any:
         realized_outcome=str(rec.get("realized_outcome") or ""),
         success=bool(succ) if isinstance(succ, bool) else None,
         made_at=str(rec.get("made_at") or ""),
+        stage=rec["stage"],
         similarity=float(similarity),
     )
 
@@ -139,9 +143,10 @@ def _row(key: str, rec: dict[str, Any], similarity: float = 0.0) -> Any:
 # ------------------------------------------------------------------ tags
 
 
-# The tags a decision's memory row is written with (`_decision_tags`); on an outcome's
-# rewrite these are rebuilt, with the server's labels, and every other tag is the caller's.
-_REBUILT_TAGS = (DECISION_TAG, OUTCOME_KNOWN_TAG, SUCCESS_TAG, FAILURE_TAG)
+# The server-set tags an outcome's rewrite drops from the row before rebuilding: those of
+# `_decision_tags`, and the stage tag, since an outcome records that the decision was acted
+# on. The caller's tags are kept as the row carries them.
+_OUTCOME_DROPPED_TAGS = (DECISION_TAG, OUTCOME_KNOWN_TAG, SUCCESS_TAG, FAILURE_TAG, PROPOSED_TAG)
 
 
 def _category_tag(category: str) -> str:
@@ -267,7 +272,8 @@ async def _checked_statement(
     (statement, sensitivity, attribute labels to add). A blacklisted decision raises."""
     from server.memory.app.blacklist_guard import enforce_on_insert
 
-    statement = memory_value(payload)
+    # The stage rides the row's tag, not the record.
+    statement = memory_value(payload, proposed=PROPOSED_TAG in tags)
     try:
         # Every field: the statement leaves out the category, maker and run, and memory.set
         # checks only it.
@@ -291,10 +297,21 @@ async def _checked_statement(
 async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOutput:
     from server.memory.app.ops import handle_memory_link
 
+    empty = svc.fields_without_key_text(input.category, input.scenario)
+    if empty:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "MISSING_IDENTITY_FIELD",
+                "message": f"category and scenario need a letter or digit to key on: {empty}",
+                "fields": empty,
+            },
+        )
     ch = get_client()
     await ensure_schema(input.org, input.namespace)
     key = svc.decision_key(input.category, input.scenario)
-    prior = await _decision_records(ch, input.org, input.namespace, [key])
+    # superseded_prior needs only whether an active record exists.
+    prior = await active_record(input.org, input.namespace, SCHEMA_NAME, key, ch=ch)
     made_at = (input.valid_at or _now()).isoformat()
     payload: dict[str, Any] = {
         "category": input.category.strip(),
@@ -307,7 +324,11 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         "run_id": named(input.run_id),
         "made_at": made_at,
     }
-    tags = [*_decision_tags(payload["category"]), *[t for t in input.tags if t]]
+    # A caller's own decision:proposed tag never stands in for the stage.
+    # Compared as a later tags-only write stores it: in lower case.
+    caller_tags = [t for t in input.tags if t and t.strip().lower() != PROPOSED_TAG]
+    stage_tags = [PROPOSED_TAG] if input.stage == "proposed" else []
+    tags = [*_decision_tags(payload["category"]), *caller_tags, *stage_tags]
     try:
         record_id = await _write_decision(
             org=input.org,
@@ -366,7 +387,7 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
     return DecisionRecordOutput(
         memory_key=key,
         record_id=record_id,
-        superseded_prior=key in prior,
+        superseded_prior=prior is not None,
         edges_written=edges,
         next=(
             f"decision {key} recorded. When the outcome is known, call "
@@ -472,10 +493,11 @@ def _outcome_payload(input: DecisionOutcomeInput, writer: WriterRecord) -> dict[
 
 
 def _outcome_tags(row: MemoryRow, payload: dict[str, Any]) -> list[str]:
-    """The decision tags rebuilt for the outcome, then the caller's tags the row carries;
-    the server's sensitivity and attribute labels are worked out again on the write."""
+    """The decision tags rebuilt for the outcome, then the caller's tags the row carries,
+    without the stage tag (an outcome means the decision was acted on); the server's
+    sensitivity and attribute labels are worked out again on the write."""
     category = str(payload.get("category") or "")
-    rebuilt = {*_REBUILT_TAGS, _category_tag(category)}
+    rebuilt = {*_OUTCOME_DROPPED_TAGS, _category_tag(category)}
     server_labels = (SENSITIVITY_TAG_PREFIX, ATTRIBUTE_TAG_PREFIX)
     kept = [t for t in row.tags if t not in rebuilt and not t.startswith(server_labels)]
     success = payload.get("success")

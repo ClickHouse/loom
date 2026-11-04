@@ -865,17 +865,30 @@ async def tombstone_documents_by_user(
 # live document shares (two documents with the same bytes share one row), read
 # from the record of their uploads (`loom.blob_uploads`: a document version that
 # named one may since have been replaced and merged away) and from their
-# documents, so bytes whose catalog row never landed are found too.
+# documents, originals and extraction artifacts alike, so bytes whose catalog
+# row never landed are found too.
 _USERS_OWN_ORIGINALS = (
     "SELECT DISTINCT namespace, sha FROM ("
     " SELECT namespace, toString(sha256) AS sha FROM loom.blob_uploads"
     " WHERE org = {org:String} AND user_id = {uid:String}"
     " UNION ALL SELECT namespace, blob_path AS sha FROM loom.documents"
-    " WHERE org = {org:String} AND user_id = {uid:String} AND blob_path != '')"
+    " WHERE org = {org:String} AND user_id = {uid:String} AND blob_path != ''"
+    " UNION ALL SELECT namespace, artifact_sha256 AS sha FROM loom.documents"
+    " WHERE org = {org:String} AND user_id = {uid:String} AND artifact_sha256 != '')"
+    # Not one another writer still needs: the original or artifact of their live
+    # document, an original their unexpired upload or open ingest job holds.
     " WHERE (namespace, sha) NOT IN ("
     " SELECT namespace, blob_path FROM loom.documents FINAL"
     " WHERE org = {org:String} AND user_id != {uid:String} AND blob_path != ''"
-    " AND superseded_at IS NULL)"
+    " AND superseded_at IS NULL"
+    " UNION ALL SELECT namespace, artifact_sha256 FROM loom.documents FINAL"
+    " WHERE org = {org:String} AND user_id != {uid:String} AND artifact_sha256 != ''"
+    " AND superseded_at IS NULL"
+    " UNION ALL SELECT namespace, toString(sha256) FROM loom.knowledge_uploads"
+    " WHERE org = {org:String} AND user_id != {uid:String} AND expires_at > now64(3)"
+    " UNION ALL SELECT namespace, toString(sha256) FROM loom.knowledge_ingestions FINAL"
+    " WHERE org = {org:String} AND user_id != {uid:String}"
+    " AND state IN ('pending', 'processing'))"
 )
 # The catalog rows of those originals, by the pairs bound: reading the subquery
 # again could name rows whose objects the step did not delete.
@@ -1121,3 +1134,37 @@ async def stamp_blobs_erased(
         params={"org": org, "ns": namespaces_of(namespace)},
         ch=ch,
     )
+
+
+# The ingestion tables (`loom.knowledge_uploads`, `loom.knowledge_ingestions`,
+# `loom.knowledge_ingest_cancels`): a file name, a title, a description and
+# metadata, and who asked, so they go with the documents of the scope.
+_INGESTION_TABLES = (
+    "loom.knowledge_uploads",
+    "loom.knowledge_ingestions",
+    "loom.knowledge_ingest_cancels",
+)
+
+
+async def delete_ingestions_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    n = 0
+    for table in _INGESTION_TABLES:
+        n += await delete_scoped(table, org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch)
+    return n
+
+
+async def delete_ingestions_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
+    n = 0
+    for table in _INGESTION_TABLES:
+        n += await count_then_mutate(
+            table,
+            count_where=ORG_UID,
+            mutation="DELETE",
+            mutation_where=ORG_UID,
+            params={"org": org, "uid": user_id},
+            final=False,
+            ch=ch,
+        )
+    return n

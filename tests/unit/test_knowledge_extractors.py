@@ -119,7 +119,8 @@ async def test_with_no_service_configured_nothing_is_extracted(
 
 
 async def test_a_format_its_service_does_not_declare_is_unavailable(hosts: _Hosts) -> None:
-    with pytest.raises(extractors.ExtractorUnavailable, match="does not declare"):
+    # A FormatUnavailable, which is an ExtractorUnavailable: configuration, not an outage.
+    with pytest.raises(extractors.FormatUnavailable, match="does not declare"):
         await extractors.extract(b"%PDF-1.7", name="a.pdf")
     assert await extractors.available_formats() == {
         f: "http://ref" for f in ("markdown", "html", "text", "sql", "toml")

@@ -25,6 +25,17 @@ async def test_a_lease_is_one_key_taken_and_released() -> None:
     assert ch.keys == {}
 
 
+async def test_a_lease_left_to_expire_keeps_its_key_after_its_block() -> None:
+    """A holder that cannot tell whether its last write lands stops renewing
+    and leaves the key to its TTL: leaving the block deletes nothing."""
+    ch = FakeLockTable()
+    lease = await leases.take("job", ttl_s=60, ch=ch)
+    assert lease is not None
+    async with lease.renewed():
+        lease.let_expire()
+    assert ch.holder("job") == lease.holder
+
+
 async def test_a_held_key_is_read_not_inserted_against() -> None:
     """An INSERT of a held key is a KEEPER_EXCEPTION in the server's log, every poll."""
     ch = FakeLockTable()

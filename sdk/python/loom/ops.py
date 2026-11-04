@@ -166,6 +166,10 @@ OpName = Literal[
     "knowledge.dedup_resolve",
     "knowledge.delete",
     "knowledge.get",
+    "knowledge.ingest",
+    "knowledge.ingest_cancel",
+    "knowledge.ingest_status",
+    "knowledge.inspect",
     "knowledge.list",
     "knowledge.outline",
     "knowledge.reads",
@@ -516,6 +520,10 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.dedup_resolve",
     "knowledge.delete",
     "knowledge.get",
+    "knowledge.ingest",
+    "knowledge.ingest_cancel",
+    "knowledge.ingest_status",
+    "knowledge.inspect",
     "knowledge.list",
     "knowledge.outline",
     "knowledge.reads",
@@ -2260,6 +2268,54 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "stable",
         30,
+        False,
+        True,
+    ),
+    "knowledge.ingest": OpSpec(
+        "knowledge.ingest",
+        "KnowledgeIngestInput",
+        "KnowledgeIngestBody",
+        "KnowledgeIngestOutput",
+        False,
+        "writer",
+        "experimental",
+        60,
+        False,
+        False,
+    ),
+    "knowledge.ingest_cancel": OpSpec(
+        "knowledge.ingest_cancel",
+        "KnowledgeIngestCancelInput",
+        "KnowledgeIngestCancelBody",
+        "KnowledgeIngestCancelOutput",
+        True,
+        "writer",
+        "experimental",
+        60,
+        False,
+        False,
+    ),
+    "knowledge.ingest_status": OpSpec(
+        "knowledge.ingest_status",
+        "KnowledgeIngestStatusInput",
+        "KnowledgeIngestStatusBody",
+        "KnowledgeIngestStatusOutput",
+        True,
+        "viewer",
+        "experimental",
+        40,
+        False,
+        True,
+    ),
+    "knowledge.inspect": OpSpec(
+        "knowledge.inspect",
+        "KnowledgeInspectInput",
+        "KnowledgeInspectBody",
+        "KnowledgeInspectOutput",
+        True,
+        "viewer",
+        "experimental",
+        4000,
         False,
         True,
     ),
@@ -7701,6 +7757,7 @@ class CollectionEntry(TypedDict, total=False):
     parent: Required[str]
     personal: Required[bool]
     role: Required[str]
+    description: NotRequired[str]
 
 
 class CollectionMoveInput(TypedDict, total=False):
@@ -8882,6 +8939,7 @@ class DecisionRow(TypedDict, total=False):
     realized_outcome: NotRequired[str]
     success: NotRequired[Optional[bool]]
     made_at: NotRequired[str]
+    stage: NotRequired[Literal["decided", "proposed"]]
     similarity: NotRequired[float]
 
 
@@ -8956,6 +9014,7 @@ class DecisionRecordInput(TypedDict, total=False):
     outcome: Required[str]
     alternatives: NotRequired[list[str]]
     confidence: NotRequired[float]
+    stage: NotRequired[Literal["decided", "proposed"]]
     decision_maker: NotRequired[str]
     caused_by: NotRequired[list[str]]
     influenced_by: NotRequired[list[str]]
@@ -8979,6 +9038,7 @@ class DecisionRecordBody(TypedDict, total=False):
     outcome: Required[str]
     alternatives: NotRequired[list[str]]
     confidence: NotRequired[float]
+    stage: NotRequired[Literal["decided", "proposed"]]
     decision_maker: NotRequired[str]
     caused_by: NotRequired[list[str]]
     influenced_by: NotRequired[list[str]]
@@ -9979,6 +10039,298 @@ class KnowledgeGetOutput(TypedDict, total=False):
     ingested_at: NotRequired[Optional[str]]
     superseded: NotRequired[Optional[bool]]
     doc_id: NotRequired[Optional[str]]
+    revision: NotRequired[Optional[int]]
+    format: NotRequired[Optional[str]]
+    parser: NotRequired[Optional[str]]
+    coverage: NotRequired[Optional[dict[str, Any]]]
+
+
+class KnowledgeIngestInput(TypedDict, total=False):
+    "Extract an uploaded file (the extractor service parses it, the server"
+
+    org: Required[str]
+    namespace: Required[str]
+    upload_id: Required[str]
+    source_uri: Required[str]
+    title: NotRequired[str]
+    description: NotRequired[str]
+    tags: NotRequired[list[str]]
+    metadata: NotRequired[dict[str, Any]]
+    expected_revision: NotRequired[Optional[int]]
+    allow_partial: NotRequired[bool]
+    options: NotRequired["KnowledgeIngestOptions"]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
+
+
+class KnowledgeIngestOptions(TypedDict, total=False):
+    format: NotRequired[str]
+    encoding: NotRequired[str]
+    sql_dialect: NotRequired[str]
+
+
+class KnowledgeIngestBody(TypedDict, total=False):
+    "Extract an uploaded file (the extractor service parses it, the server"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    upload_id: Required[str]
+    source_uri: Required[str]
+    title: NotRequired[str]
+    description: NotRequired[str]
+    tags: NotRequired[list[str]]
+    metadata: NotRequired[dict[str, Any]]
+    expected_revision: NotRequired[Optional[int]]
+    allow_partial: NotRequired[bool]
+    options: NotRequired["KnowledgeIngestOptions"]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
+
+
+class KnowledgeIngestOutput(TypedDict, total=False):
+    ingestion_id: Required[str]
+    state: Required[str]
+    source_uri: Required[str]
+    namespace: NotRequired[str]
+
+
+class KnowledgeIngestCancelInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    ingestion_id: Required[str]
+
+
+class KnowledgeIngestCancelBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    ingestion_id: Required[str]
+
+
+class KnowledgeIngestCancelOutput(TypedDict, total=False):
+    found: Required[bool]
+    state: NotRequired[str]
+    cancelled: NotRequired[bool]
+
+
+class KnowledgeIngestStatusInput(TypedDict, total=False):
+    "A knowledge.ingest job's state, stage, coverage, failure and published"
+
+    org: Required[str]
+    namespace: Required[str]
+    ingestion_id: Required[str]
+
+
+class KnowledgeIngestStatusBody(TypedDict, total=False):
+    "A knowledge.ingest job's state, stage, coverage, failure and published"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    ingestion_id: Required[str]
+
+
+class KnowledgeIngestStatusOutput(TypedDict, total=False):
+    found: Required[bool]
+    ingestion_id: Required[str]
+    source_uri: NotRequired[str]
+    state: NotRequired[str]
+    stage: NotRequired[str]
+    attempts: NotRequired[int]
+    error_code: NotRequired[str]
+    error_message: NotRequired[str]
+    format: NotRequired[str]
+    coverage: NotRequired[Optional[dict[str, Any]]]
+    warnings: NotRequired[list[str]]
+    chunks: NotRequired[int]
+    revision: NotRequired[int]
+    expected_revision: NotRequired[Optional[int]]
+    filename: NotRequired[str]
+    retrieval: NotRequired[str]
+    cancel_requested: NotRequired[bool]
+    created_at: NotRequired[Optional[str]]
+    updated_at: NotRequired[Optional[str]]
+
+
+class KnowledgeInspectInput(TypedDict, total=False):
+    "Report a namespace's documents, read-only."
+
+    org: Required[str]
+    namespace: Required[str]
+    sample_limit: NotRequired[int]
+
+
+class KnowledgeInspectBody(TypedDict, total=False):
+    "Report a namespace's documents, read-only."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    sample_limit: NotRequired[int]
+
+
+class KnowledgeInspectOutput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    computed_at: Required[str]  # date-time as ISO-8601 text
+    documents: Required["DocumentTotals"]
+    chunks: Required["ChunkTotals"]
+    decisions: Required["DecisionTotals"]
+    listed: NotRequired[list["InspectDocument"]]
+    listed_complete: NotRequired[bool]
+    findings: NotRequired[list["DocumentFinding"]]
+    coverage: Required["ReportCoverage"]
+    memory_findings: NotRequired[list["MemoryFindingRef"]]
+    skipped: NotRequired[list[str]]
+
+
+class DocumentTotals(TypedDict, total=False):
+    "The namespace's documents, one row each (its current version)."
+
+    live: NotRequired[Optional[int]]
+    deleted: NotRequired[Optional[int]]
+    newest_ingested_at: NotRequired[Optional[str]]
+    by_format: NotRequired[list["DocumentCount"]]
+    by_source_scheme: NotRequired[list["DocumentCount"]]
+    earlier_revisions: NotRequired[Optional[int]]
+    unnumbered: NotRequired[Optional[int]]
+    retired_versions: NotRequired[Optional[int]]
+
+
+class DocumentCount(TypedDict, total=False):
+    name: Required[str]
+    live: Required[int]
+    deleted: Required[int]
+
+
+class ChunkTotals(TypedDict, total=False):
+    "The namespace's live chunks (of live versions)."
+
+    embedder_model: NotRequired[str]
+    live: NotRequired[Optional[int]]
+    searchable: NotRequired[Optional[int]]
+    unembedded: NotRequired[Optional[int]]
+    by_model: NotRequired[list["ChunkModelCount"]]
+
+
+class ChunkModelCount(TypedDict, total=False):
+    model: Required[str]
+    live: Required[int]
+    embedded: Required[int]
+
+
+class DecisionTotals(TypedDict, total=False):
+    "Decision rows that cite the namespace's documents."
+
+    definition: Required[str]
+    all_documents: NotRequired[Optional["DocumentDecisions"]]
+
+
+class DocumentDecisions(TypedDict, total=False):
+    "Decision rows citing one document, or every document, by stage."
+
+    decided: Required["DecisionStage"]
+    proposed: Required["DecisionStage"]
+
+
+class DecisionStage(TypedDict, total=False):
+    "The decision rows of one stage."
+
+    total: Required[int]
+    confirmed: Required[int]
+    unconfirmed: Required[int]
+    source_changed: Required[int]
+    outcome_known: Required[int]
+
+
+class InspectDocument(TypedDict, total=False):
+    "One live document."
+
+    source_uri: Required[str]
+    title: Required[str]
+    format: Required[str]
+    source_scheme: Required[str]
+    version: Required[int]
+    revision: Required[int]
+    ingestion_id: NotRequired[str]
+    ingested_at: Required[str]  # date-time as ISO-8601 text
+    retired_versions: NotRequired[Optional[int]]
+    chunks: NotRequired[Optional["DocumentChunks"]]
+    decisions: NotRequired[Optional["DocumentDecisions"]]
+
+
+class DocumentChunks(TypedDict, total=False):
+    "One document's live chunks."
+
+    live: Required[int]
+    searchable: Required[int]
+    unembedded: Required[int]
+    other_model: Required[int]
+    versions: Required[int]
+    min_chars: Required[int]
+    median_chars: Required[int]
+    max_chars: Required[int]
+    models: NotRequired[list[str]]
+
+
+class DocumentFinding(TypedDict, total=False):
+    "A finding on the namespace's documents and chunks."
+
+    kind: Required[Literal["contract_violation", "usage_heuristic", "system_state"]]
+    rule_version: Required[int]
+    source_op: Required[str]
+    window_seconds: NotRequired[Optional[int]]
+    population: NotRequired[Optional[int]]
+    sample_limit: Required[int]
+    samples_complete: Required[bool]
+    evidence: NotRequired[list["FindingEvidence"]]
+    exceptions: NotRequired[str]
+    uncertainty: NotRequired[str]
+    code: Required[str]
+    severity: Required[Literal["info", "warning"]]
+    count: Required[int]
+    share: Required[float]
+    samples: NotRequired[list[str]]
+    ingested: NotRequired[int]
+    ingested_samples: NotRequired[list[str]]
+    detail: Required[str]
+    remedy: Required[str]
+
+
+class FindingEvidence(TypedDict, total=False):
+    "One live revision a finding's sample names, read once the report's checks have run."
+
+    memory_key: Required[str]
+    memory_id: Required[str]
+    version: Required[int]
+    content_sha256: Required[str]
+    agent: Required[str]
+    user_id: Required[str]
+    session_id: Required[str]
+    memory_type: Required[str]
+    source_class: Required[str]
+    updated_at: Required[str]  # date-time as ISO-8601 text
+
+
+class ReportCoverage(TypedDict, total=False):
+    "Which rules a report ran and which it skipped."
+
+    rules_run: NotRequired[list[str]]
+    rules_skipped: NotRequired[list[str]]
+    complete: Required[bool]
+
+
+class MemoryFindingRef(TypedDict, total=False):
+    "A namespace.audit finding on memory rows shaped like documents."
+
+    code: Required[str]
+    kind: Required[str]
+    severity: Required[str]
+    rule_version: Required[int]
+    source_op: Required[str]
+    count: Required[int]
+    share: Required[float]
+    detail: Required[str]
+    remedy: Required[str]
 
 
 class KnowledgeListInput(TypedDict, total=False):
@@ -10202,7 +10554,7 @@ class KnowledgeSourceProbe(TypedDict, total=False):
 
 
 class KnowledgeSourceCheckInput(TypedDict, total=False):
-    "Probe a registered document source with its stored credential now (folder"
+    "Probe a registered document source with its stored credential now (a check"
 
     org: Required[str]
     namespace: Required[str]
@@ -10210,7 +10562,7 @@ class KnowledgeSourceCheckInput(TypedDict, total=False):
 
 
 class KnowledgeSourceCheckBody(TypedDict, total=False):
-    "Probe a registered document source with its stored credential now (folder"
+    "Probe a registered document source with its stored credential now (a check"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -10266,6 +10618,12 @@ class KnowledgeSourceSync(TypedDict, total=False):
     unconverted_reasons: NotRequired[dict[str, int]]
     skipped: NotRequired[int]
     error: NotRequired[str]
+    pending_extract: NotRequired[int]
+    last_extracted_at: NotRequired[str]
+    extracted: NotRequired[int]
+    flagged_pinned: NotRequired[int]
+    unextracted: NotRequired[int]
+    extract_error: NotRequired[str]
 
 
 class KnowledgeSourceDocument(TypedDict, total=False):
@@ -15018,29 +15376,6 @@ class NamespaceAuditFinding(TypedDict, total=False):
     samples: NotRequired[list[dict[str, Any]]]
     detail: Required[str]
     remedy: Required[str]
-
-
-class FindingEvidence(TypedDict, total=False):
-    "One live revision a finding's sample names, read once the report's checks have run."
-
-    memory_key: Required[str]
-    memory_id: Required[str]
-    version: Required[int]
-    content_sha256: Required[str]
-    agent: Required[str]
-    user_id: Required[str]
-    session_id: Required[str]
-    memory_type: Required[str]
-    source_class: Required[str]
-    updated_at: Required[str]  # date-time as ISO-8601 text
-
-
-class ReportCoverage(TypedDict, total=False):
-    "Which rules a report ran and which it skipped."
-
-    rules_run: NotRequired[list[str]]
-    rules_skipped: NotRequired[list[str]]
-    complete: Required[bool]
 
 
 class NamespaceBrowseInput(TypedDict, total=False):

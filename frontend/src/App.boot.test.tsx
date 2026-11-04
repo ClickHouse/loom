@@ -276,6 +276,39 @@ describe("boot order", () => {
     await until(() => useStore.getState().identity?.namespace === "joined");
     expect(useStore.getState().identity?.namespace).toBe("joined");
   });
+
+  it("opens the Library on a code namespace, reading only the collections it lists", async () => {
+    const CODE = "code-repo";
+    localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [CODE], roles: ["ADMIN"] }));
+    localStorage.setItem("loom_kinds_v1", JSON.stringify({ [CODE]: "code" }));
+    window.history.replaceState(null, "", "/library");
+    const order: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const path = url
+          .replace(/^https?:\/\/[^/]+/, "")
+          .split("?")[0]
+          .replace("/v1/", "");
+        order.push(path);
+        if (path === "whoami")
+          return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [CODE], roles: ["ADMIN"] });
+        if (path === "namespace.list_mine")
+          return json({ ...GENERIC, rows: [{ ...MINE[0], namespace: CODE, kind: "code" }] });
+        if (path === "collection.list")
+          return json({
+            collections: [{ namespace: "col-q3", parent: "", personal: false, role: "writer", description: "" }],
+            next_cursor: null,
+          });
+        return json(GENERIC);
+      }),
+    );
+    render(<App />);
+    await until(() => order.includes("collection.list"));
+    expect(await screen.findByText("Pick a collection")).toBeInTheDocument();
+    expect(order).not.toContain("knowledge.list");
+  });
 });
 
 // A link names its namespace (`?namespace=`): one the account can read opens for this tab
@@ -342,6 +375,43 @@ describe("a link's namespace", () => {
     expect(calls.filter((c) => c.path === "memory.list").every((c) => c.body?.namespace === "joined")).toBe(true);
     expect(localStorage.getItem("loom_namespace_v1")).toBe(NS);
     expect(savedDefault()).toBe(false);
+  });
+
+  it("opens a Library link to a collection on the reader's own namespace, though the sender's denies them", async () => {
+    window.history.replaceState(null, "", "/library?namespace=group-b-shared&collection=col-q3");
+    serve(MINE);
+    // The reader holds a grant on the collection itself.
+    const serveRest = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/v1/collection.list"))
+        return json({
+          collections: [{ namespace: "col-q3", parent: "", personal: false, role: "viewer", description: "" }],
+          next_cursor: null,
+        });
+      return serveRest ? serveRest(input, init) : json(GENERIC);
+    });
+    render(<App />);
+    await until(() => useStore.getState().identity !== null && useStore.getState().view === "knowledge");
+    expect(useStore.getState()).toMatchObject({ identity: { namespace: NS }, deniedNamespace: null });
+    expect(screen.queryByRole("heading", { level: 1, name: "No access to group-b-shared" })).toBeNull();
+    // The Library then asks collection.list whether the reader can open the collection.
+    await until(() => vi.mocked(fetch).mock.calls.some(([u]) => String(u).includes("/v1/collection.list")));
+    await until(() =>
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([u, init]) => String(u).includes("knowledge.list") && String(init?.body).includes("col-q3")),
+    );
+    expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-q3");
+    expect(new URLSearchParams(window.location.search).get("namespace")).toBe(NS);
+  });
+
+  it("still says no access when the link's collection is no collection's name", async () => {
+    window.history.replaceState(null, "", "/library?namespace=group-b-shared&collection=x");
+    serve(MINE);
+    render(<App />);
+    await until(() => screen.queryByRole("heading", { level: 1, name: "No access to group-b-shared" }) !== null);
+    expect(useStore.getState().deniedNamespace).toBe("group-b-shared");
   });
 
   it("says it has no access to one the account cannot read, reads nothing there, and saves nothing", async () => {

@@ -819,6 +819,22 @@
               "body",
               "options"
             ],
+            "ingest": [
+              "body",
+              "options"
+            ],
+            "ingest_cancel": [
+              "body",
+              "options"
+            ],
+            "ingest_status": [
+              "body",
+              "options"
+            ],
+            "inspect": [
+              "body",
+              "options"
+            ],
             "list": [
               "body",
               "options"
@@ -2207,6 +2223,7 @@
           "outcome",
           "alternatives",
           "confidence",
+          "stage",
           "decision_maker",
           "caused_by",
           "influenced_by",

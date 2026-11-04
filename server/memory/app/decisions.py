@@ -19,7 +19,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from server.memory.domain.decision_schema import SCHEMA_FIELDS, SCHEMA_NAME
+from server.memory.domain.decision_schema import SCHEMA_FIELDS, SCHEMA_NAME, Stage
 from server.memory.domain.decision_statement import alternatives, collapse_ws
 from server.memory.domain.files import detect_value_files
 
@@ -40,6 +40,15 @@ def decision_key(category: str, scenario: str) -> str:
     from server.memory.domain.record_identity import canonical_record_key
 
     return canonical_record_key(SCHEMA_NAME, {"category": category, "scenario": scenario})
+
+
+def fields_without_key_text(category: str, scenario: str) -> list[str]:
+    """The identity fields with no letter or digit to build the key from: punctuation,
+    symbols or marks alone."""
+    from server.memory.domain.record_identity import canonical_value
+
+    fields = {"category": category, "scenario": scenario}
+    return [name for name, value in fields.items() if not canonical_value(name, value)]
 
 
 def _wide(ch: str) -> bool:
@@ -139,6 +148,18 @@ def decision_files(payload: dict[str, Any]) -> list[str] | None:
     outcome's); None when it names none, so a re-record keeps the row's files."""
     texts = [str(payload.get(f) or "") for f in _TEXT_FIELDS] + alternatives(payload)
     return detect_value_files("\n".join(texts)) or None
+
+
+def has_outcome(record: dict[str, Any]) -> bool:
+    """decision.outcome recorded what happened: the decision was acted on, and a re-record
+    or a delete would lose the outcome."""
+    return bool(str(record.get("realized_outcome") or "").strip())
+
+
+def stage_of(tagged_proposed: bool, record: dict[str, Any]) -> Stage:
+    """The stage a decision reads at: proposed when its row is tagged so and no outcome is
+    recorded (an outcome means it was acted on)."""
+    return "proposed" if tagged_proposed and not has_outcome(record) else "decided"
 
 
 def parse_record_json(raw: Any) -> dict[str, Any]:

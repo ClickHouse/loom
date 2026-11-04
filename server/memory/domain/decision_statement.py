@@ -57,9 +57,10 @@ def states_reason(payload: dict[str, Any]) -> bool:
     return bool(reasoning) and reasoning.casefold() != outcome.casefold()
 
 
-def memory_value(payload: dict[str, Any]) -> str:
+def memory_value(payload: dict[str, Any], *, proposed: bool = False) -> str:
     """The decision as one statement, the scenario as a sentence then the outcome and
-    the reason, for the memory row that search embeds and memory.for_file shows.
+    the reason, for the memory row that search embeds and memory.for_file shows. A
+    `proposed` decision reads "Proposed <outcome>", so no reader takes it for one made.
 
     The category is left out: it is on the record and in the row's tag. Nothing parses
     this text.
@@ -72,7 +73,8 @@ def memory_value(payload: dict[str, Any]) -> str:
     outcome = _part(payload.get("outcome"))
     reasoning = _part(payload.get("reasoning")) if stated else ""
     reasoning = _LEADING_BECAUSE.sub("", reasoning)
-    text = f"Decided {outcome} because {reasoning}" if reasoning else f"Decided {outcome}"
+    verb = "Proposed" if proposed else "Decided"
+    text = f"{verb} {outcome} because {reasoning}" if reasoning else f"{verb} {outcome}"
     parts.append(_sentence(text))
     rejected = [_part(a) for a in alternatives(payload)]
     if rejected:

@@ -224,7 +224,8 @@ def test_list_and_inspect_return_config_and_sync_never_the_credential(
             {
                 "requested_at": "t",
                 "full": True,
-                "pending_extract": ["u"],
+                "pending_extract": 1,
+                "mined": {"https://x/mined": "r1"},
                 "status": "ok",
                 "changed": 2,
                 "full_listed_at": "t0",
@@ -239,12 +240,13 @@ def test_list_and_inspect_return_config_and_sync_never_the_credential(
     assert listed.enabled
     sync = listed.sources[0].sync.model_dump()
     assert (sync["requested_at"], sync["status"], sync["changed"]) == ("t", "ok", 2)
-    assert set(sync) == set(domain.SYNC_FIELDS)
+    # The pending count is shown, never the mined documents' addresses.
+    assert set(sync) == set(domain.SYNC_FIELDS) and sync["pending_extract"] == 1
     body = KnowledgeSourceInspectInput(org=ORG, namespace=NS, name="design-decks")
     seen = asyncio.run(app.handle_knowledge_source_inspect(body))
     assert seen.documents[0].source_uri == "https://x/1"
     for text in (listed.model_dump_json(), seen.model_dump_json()):
-        assert "credential" not in text and SECRET not in text and "pending_extract" not in text
+        assert "credential" not in text and SECRET not in text and "x/mined" not in text
 
 
 def test_unknown_sources_are_not_found(fake: _Store) -> None:

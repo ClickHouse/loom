@@ -97,3 +97,24 @@ describe("HeaderSearch namespace switch", () => {
     expect(screen.queryByText(/navigate · /)).toBeNull();
   });
 });
+
+describe("HeaderSearch's more documents", () => {
+  it("opens the header namespace's Library, never the collection the Library shows", async () => {
+    const api = await import("../api");
+    vi.mocked(api.listKnowledge).mockResolvedValue({
+      rows: Array.from({ length: 12 }, (_, i) => ({
+        source_uri: `d${i}`,
+        title: `policy ${i}`,
+        chunk_count: 1,
+        tags: [],
+      })),
+    } as never);
+    history.replaceState(null, "", "/library?namespace=team&collection=col-a");
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "policy");
+    await user.click(await screen.findByRole("button", { name: /more documents/ }));
+    expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+    expect(location.pathname).toBe("/library");
+  });
+});

@@ -197,6 +197,10 @@ async def handle_knowledge_get(input: KnowledgeGetInput) -> KnowledgeGetOutput:
         ingested_at=row.ingested_at,
         superseded=row.superseded_at is not None,
         doc_id=row.doc_id,
+        revision=row.revision,
+        format=row.format or None,
+        parser=row.parser or None,
+        coverage=json.loads(row.coverage) if row.coverage else None,
     )
 
 

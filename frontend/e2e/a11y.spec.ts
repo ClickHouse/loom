@@ -411,14 +411,17 @@ test.describe("open overlays", () => {
     expect(await violations(page)).toEqual([]);
   });
 
-  test("a collection's details and the New collection dialog", async ({ page }) => {
-    await open(page, "/admin/collections");
-    await page.getByRole("button", { name: "col-handbook", exact: true }).click();
-    const details = page.getByRole("dialog", { name: "col-handbook" });
-    await expect(details.getByRole("heading", { name: "Documents" })).toBeVisible();
+  test("the Library's collections, a collection's menu and the New collection dialog", async ({ page }) => {
+    await open(page, "/library");
+    await page.getByRole("button", { name: "Show the documents of" }).click();
+    await expect(page.locator("[cui-select-item]").first()).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+    await page.getByText("col-handbook · Team handbook").last().click();
+    await expect(page).toHaveURL(/collection=col-handbook/);
+    await page.getByRole("button", { name: "Actions for col-handbook" }).click();
+    await expect(page.getByRole("menuitem", { name: "Members" })).toBeVisible();
     expect(await violations(page)).toEqual([]);
     await page.keyboard.press("Escape");
-    await expect(details).toBeHidden();
     await page.getByRole("button", { name: "New collection" }).click();
     await expect(page.getByRole("dialog", { name: "New collection" })).toBeVisible();
     expect(await violations(page)).toEqual([]);

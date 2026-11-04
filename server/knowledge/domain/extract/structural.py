@@ -41,6 +41,20 @@ class StructuralChunk:
     def breadcrumb(self) -> str:
         return SEPARATOR.join(self.section_path)
 
+    @property
+    def meta(self) -> dict[str, object]:
+        """What a chunk row stores in `chunk_metadata`: the section the outline
+        reads, and the blocks and locator a citation reads."""
+        out: dict[str, object] = {
+            "block_ids": list(self.block_ids),
+            "block_type": self.block_type,
+            "locator": self.locator.to_dict(),
+        }
+        if self.section_path:
+            out["section_path"] = list(self.section_path)
+            out["section_depth"] = len(self.section_path)
+        return out
+
 
 def _merge(locs: list[Locator]) -> Locator:
     """The span covering `locs`; a field kept only when every part agrees

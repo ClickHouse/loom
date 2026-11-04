@@ -21,6 +21,7 @@ opt-in; one you leave unconfigured does nothing. They fall into three groups:
 | Any Agent-Skills client                               | the `loom` and `loom-code` skills, no hooks             | `skills/loom/`, `skills/loom-code/`: [below](#coding-agents)                               |
 | Aider, Continue, OpenCode, JetBrains AI               | transcript capture template                             | `integrations/generic/`: [below](#transcript-capture-hooks)                                |
 | Agents that only use shell grep                       | the grep shim                                           | `integrations/grep-shim/`: [grep-shim.md](grep-shim.md)                                    |
+| LibreChat v0.8.8                                      | chat client on the assistant toolset, per-user token    | `integrations/librechat/`: [librechat.md](librechat.md)                                    |
 | LangGraph, Strands Agents                             | Python SDK memory adapters; needs the framework         | `loom.integrations.langgraph`, `loom.integrations.strands`: [frameworks.md](frameworks.md) |
 | Agent orchestrators                                   | shared MCP mount                                        | [frameworks.md](frameworks.md)                                                             |
 | AX (sandboxed agent tasks)                            | Workspace manifest: MCP config, `AGENTS.md`, run budget | `integrations/ax/`: [README](../../../integrations/ax/README.md)                           |

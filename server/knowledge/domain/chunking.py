@@ -60,6 +60,11 @@ class Chunk:
         return SEPARATOR.join(self.section_path)
 
     @property
+    def keys(self) -> tuple[str, ...]:
+        """A text chunk has no exact lookup keys."""
+        return ()
+
+    @property
     def meta(self) -> dict[str, object]:
         if not self.section_path:
             return {}

@@ -57,7 +57,7 @@ def test_startup_pack_zero_query_recall(monkeypatch: pytest.MonkeyPatch) -> None
 
             return _boom
 
-    monkeypatch.setattr("server.core.ch.get_client", lambda: _DeadCH())
+    monkeypatch.setattr("server.core.ch._ch", _DeadCH())
 
     async def _no_search(*a: Any, **k: Any) -> Any:  # must NOT be reached
         calls["search"] += 1
@@ -115,7 +115,7 @@ def test_startup_recall_reads_the_identity_sentinel_as_unset(
 
             return _boom
 
-    monkeypatch.setattr("server.core.ch.get_client", lambda: _DeadCH())
+    monkeypatch.setattr("server.core.ch._ch", _DeadCH())
     asyncio.run(
         handle_context_pack(
             ContextPackInput(
@@ -159,7 +159,7 @@ def test_startup_recall_leaves_transcripts_out_before_its_limit(
 
             return _boom
 
-    monkeypatch.setattr("server.core.ch.get_client", lambda: _DeadCH())
+    monkeypatch.setattr("server.core.ch._ch", _DeadCH())
     for session_id, excluded in (("-", list(excluded_from_unfiltered_search())), ("s1", [])):
         seen.clear()
         asyncio.run(
@@ -200,7 +200,7 @@ def test_task_mode_without_query_recalls_nothing(monkeypatch: pytest.MonkeyPatch
 
             return _boom
 
-    monkeypatch.setattr("server.core.ch.get_client", lambda: _DeadCH())
+    monkeypatch.setattr("server.core.ch._ch", _DeadCH())
 
     out = asyncio.run(
         handle_context_pack(
