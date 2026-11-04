@@ -245,8 +245,8 @@ async def source_revisions(
     ch: _CHClient | None = None,
 ) -> list[dict[str, str]]:
     """Each live document of the source: its address, the store's file id it came
-    from, the revision stamp of the ingested copy and when it was read (`read_at`,
-    "" for a kind that keeps none). One statement, a tag filter
+    from, the revision stamp of the ingested copy, when it was read (`read_at`, ""
+    for a kind that keeps none) and the hash of its title and text. One statement, a tag filter
     over the namespace's key prefix like `source_documents`.
 
     With `searchable_only`, only a version whose chunks are live counts: a write cut
@@ -264,7 +264,7 @@ async def source_revisions(
     rows = await (ch or _default_client()).query_all(
         "SELECT source_uri, JSONExtractString(metadata, 'ingested_from') AS file_id, "
         "JSONExtractString(metadata, 'source_revision') AS source_revision, "
-        "JSONExtractString(metadata, 'read_at') AS read_at "
+        "JSONExtractString(metadata, 'read_at') AS read_at, content_sha256 "
         "FROM loom.documents FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
         "AND actor = {actor:String} AND superseded_at IS NULL "
@@ -277,6 +277,7 @@ async def source_revisions(
             "file_id": str(r.get("file_id") or ""),
             "source_revision": str(r.get("source_revision") or ""),
             "read_at": str(r.get("read_at") or ""),
+            "content_sha256": str(r.get("content_sha256") or ""),
         }
         for r in rows
     ]

@@ -18,6 +18,7 @@ import pytest
 
 from server.clients import notion
 from server.core import leases
+from server.core.hashing import sha256_document_text
 from server.core.secrets_at_rest import seal
 from server.knowledge.app import source_probes, source_sync, source_sync_notion, writes
 from server.knowledge.app import sources as source_ops
@@ -83,6 +84,7 @@ class _Store:
         # A response, or a callable that answers, by request path.
         self.answers: dict[str, Any] = {}
         self.incomplete = False
+        self.upserts = 0
         # The clock a turn reads; later than every revision here unless a test moves it.
         self.now = datetime(2026, 3, 1, tzinfo=UTC)
 
@@ -113,6 +115,7 @@ class _Store:
                 "file_id": d["metadata"]["ingested_from"],
                 "source_revision": d["metadata"]["source_revision"],
                 "read_at": d["metadata"].get("read_at", ""),
+                "content_sha256": sha256_document_text(f"{d['input'].title}\n{d['input'].content}"),
             }
             for uri, d in self.docs.items()
             if d["actor"] == SYNC_WORKER_ACTOR and f"source:{name}" in d["tags"]
@@ -209,6 +212,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _Store:
     monkeypatch.setattr(documents, "get_one", _get_one)
 
     async def _upsert(inp: Any) -> Any:
+        w.upserts += 1
         w.docs[inp.source_uri] = {
             "actor": pipeline_actor_var.get(),
             "tags": list(inp.tags),
@@ -1034,3 +1038,31 @@ def test_the_pacer_forgets_only_integrations_no_longer_waiting(
     # The waiting integration still waits its turn, then queues one pace later.
     assert waits == pytest.approx([10.0], abs=0.05)
     assert queue[waiting] == pytest.approx(now + 10.35, abs=0.05)
+
+
+def test_a_same_text_read_again_is_neither_written_nor_mined_and_still_settles(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mined = _mock_mining(monkeypatch)
+    _only_the_page(world)
+    world.now = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)  # 30 s after the revision
+    _run()
+    assert world.upserts == 1 and len(mined) == 1
+    # Read again before the revision settled, with the same text: no write, no mining.
+    world.now = datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
+    world.requests.clear()
+    _run()
+    assert [p for p in _paths(world) if p.startswith("/blocks/")] == [f"/blocks/{PAGE}/children"]
+    assert world.upserts == 1 and len(mined) == 1
+    assert _detail(world)["unchanged_reads"] == {
+        PAGE: ["2026-01-01T00:00:00.000Z", "2026-01-01T00:05:00.000Z"]
+    }
+    # That read settled the page: the next turn fetches nothing.
+    world.requests.clear()
+    _run()
+    assert not [p for p in _paths(world) if p.startswith("/blocks/")]
+    # A new revision drops the recorded read and writes the page.
+    world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
+    world.blocks[PAGE] = [_para("New text.")]
+    _run()
+    assert world.upserts == 2 and _detail(world)["unchanged_reads"] == {}

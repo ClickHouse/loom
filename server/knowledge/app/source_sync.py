@@ -78,7 +78,6 @@ import contextlib
 import dataclasses
 import functools
 import logging
-import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -511,13 +510,10 @@ def stamp_of(at: datetime) -> str:
     return at.strftime("%Y-%m-%dT%H:%M:%S.") + f"{at.microsecond // 1000:03d}Z"
 
 
-# A stamp as every store reports it and `stamp_of` writes it (RFC 3339, UTC).
-_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z")
-
-
 def valid_stamp(stamp: str) -> bool:
-    """Whether a stored stamp is one a store reported or `stamp_of` wrote."""
-    return bool(_STAMP_RE.fullmatch(stamp))
+    """Whether a stored stamp is one a store reported or `stamp_of` wrote: RFC 3339,
+    UTC, the one form every store's stamps take (the folder client's check)."""
+    return gdrive.valid_stamp(stamp)
 
 
 async def _folders_visible(token: str, folders: list[str], turn: TurnResult) -> bool:

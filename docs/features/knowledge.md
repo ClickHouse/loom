@@ -109,27 +109,27 @@ A source's `config` holds ids and filters, never a host or a URL: `gdrive` takes
 `folder_ids` (1 to 20) and `include` (any of `docs`, `slides`, `pdf`, `pptx`; all by
 default); `linear` takes `project_ids` (1 to 20 project UUIDs); `notion` takes
 `page_ids` and `database_ids`, 1 to 20 ids in all, each 32 hex digits with or without
-dashes (stored dashed, lower case); `recording` takes `provider` (`meet` or `zoom`)
-and `ids` (1 to 20 meeting space ids for `meet`, numeric meeting ids for `zoom`). The
-store's API hosts
-are fixed in the server, so a registered source cannot point the server at another host.
-The credential is sealed at rest under its own purpose (`loom secrets reseal` covers
-it), held in memory only for a probe, never returned by any op and never written to an
-audit row. `add` records the namespace, name, kind, config and `dry_run`; `rotate` the
-namespace and name; `remove` and `sync_now` their input (namespace, name, `confirm` and
-`delete_documents`, or `full`). `check` is admin-only because its probe spends the
-source's rate limit.
+dashes (stored dashed, lower case); `recording` takes `provider` (`meet` or `zoom`) and
+`ids` (1 to 20 meeting space ids for `meet`, numeric meeting ids for `zoom`). The
+store's API hosts are fixed in the server, so a registered source cannot point the
+server at another host. The credential is sealed at rest under its own purpose (`loom
+secrets reseal` covers it), held in memory only for a probe, never returned by any op
+and never written to an audit row. `add` records the namespace, name, kind, config and
+`dry_run`; `rotate` the namespace and name; `remove` and `sync_now` their input
+(namespace, name, `confirm` and `delete_documents`, or `full`). `check` is admin-only
+because its probe spends the source's rate limit.
 
 A `gdrive` probe exchanges the key for a read-only token, checks every folder together
 (one call each) and lists the included files of all folders in one call, the first 1000
 at most. A `linear` probe reads the first page (50 documents) of every project together,
-so a project the key's account cannot see refuses the probe. A `notion` probe reads
-each listed page and database in turn (one in the trash refuses) and counts the first
-100 pages of the first data source of up to three databases, so a probe of 20 ids stays
-well inside its bound at the store's pace; `more` says the count leaves pages out. A
+so a project the key's account cannot see refuses the probe. A `notion` probe reads each
+listed page and database in turn (one in the trash refuses) and counts the first 100
+pages of the first data source of up to three databases, so a probe of 20 ids stays well
+inside its bound at the store's pace; `more` says the count leaves pages out. A
 `recording` probe exchanges its credential, reads each id and counts the recordings it
-lists. Each is bounded as a whole by `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` (default 20 s); past it `add` and
-`rotate` answer `SOURCE_UNREACHABLE` and `check` answers `reachable: false`.
+lists. Each is bounded as a whole by `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` (default 20
+s); past it `add` and `rotate` answer `SOURCE_UNREACHABLE` and `check` answers
+`reachable: false`.
 
 Every write of a namespace's sources (`add`, `rotate`, `remove`, `sync_now`, and the
 retirement in `code.repo.remove`) is serialized by a lease, so a write's checks still
@@ -279,18 +279,20 @@ last edit time and its address the page URL the store reports, so a renamed page
 to its new address and the document at the old one is retired. A page whose stored copy
 has the listed revision is skipped only when that copy was read 90 seconds or more after
 the revision; one read sooner is read again, so an edit made just before or after a read
-is not lost to an equal stamp or a clock skew. A changed page's blocks are read, nested
-blocks included, at most 300 requests a page, and turned into Markdown one to one:
-headings, paragraphs, bulleted and numbered lists, to-dos (`- [x]`), quotes and callouts
-as `>` quotes, code fenced with its language, tables as Markdown tables (the first row
-as the header row), bookmarks and embeds as links, toggles, columns and synced blocks
-with their children inline, and a run of images or videos as `> [image-only: N pictures,
-rationale not extracted]` followed by their captions. Left out and counted by type in
-the document's metadata (`skipped_blocks`): a child database, a file, a PDF, a link that
-is not an https address, a synced copy whose original is not shared with the
-integration, and any type the converter does not map. `ingested_format` is `blocks`, and
-`read_at` is when the page was read; a copy read again at the same revision is mined for
-decisions again ([mining](#mining-decisions)).
+is not lost to an equal stamp or a clock skew. A page read again whose title and text
+are the stored copy's is not written again, so it is neither embedded nor mined again;
+the read is kept in the source's sync state, so the page settles. A changed page's
+blocks are read, nested blocks included, at most 300 requests a page, and turned into
+Markdown one to one: headings, paragraphs, bulleted and numbered lists, to-dos (`-
+[x]`), quotes and callouts as `>` quotes, code fenced with its language, tables as
+Markdown tables (the first row as the header row), bookmarks and embeds as links,
+toggles, columns and synced blocks with their children inline, and a run of images or
+videos as `> [image-only: N pictures, rationale not extracted]` followed by their
+captions. Left out and counted by type in the document's metadata (`skipped_blocks`): a
+child database, a file, a PDF, a link that is not an https address, a synced copy whose
+original is not shared with the integration, and any type the converter does not map.
+`ingested_format` is `blocks`, and `read_at` is when the page was read; a copy written
+again at the same revision is mined for decisions again ([mining](#mining-decisions)).
 
 A child page is a document of its own. The child pages a read page holds are kept in the
 source's sync state, at most 200 per source (more are counted in their parent's

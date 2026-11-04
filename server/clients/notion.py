@@ -31,8 +31,8 @@ API_VERSION = "2026-03-11"
 PAGE_PACE_S = 0.35  # not a setting: the store's limit, the same on every deployment
 # Results per listing page.
 _PAGE_SIZE = 100  # not a setting: the most the store hands out
-# A timestamp as the store reports it (RFC 3339, UTC). A stamp goes into a query's
-# filter, so nothing else is let through.
+# A timestamp as the store reports it (RFC 3339, UTC). Kept here, not shared: it
+# guards this client's own query filter, so nothing else reaches the request body.
 _STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z")
 # An id in the store's dashed form, the form a source's config stores.
 _ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")

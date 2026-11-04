@@ -32,6 +32,7 @@ from typing import Any
 
 from server.clients import notion
 from server.core.errors import ValidationError
+from server.core.hashing import sha256_document_text
 from server.core.secrets_at_rest import unseal
 from server.knowledge.app import source_sync as sync
 from server.knowledge.domain import convert
@@ -81,6 +82,10 @@ class _Turn:
     # The pages this turn handles, in order; a child found during the turn is appended.
     items: list[dict[str, Any]] = field(default_factory=list)
     ids: set[str] = field(default_factory=set)
+    # Pages read again before their revision settled whose text was the stored one:
+    # page id -> [revision, read_at]. Kept in the sync state instead of rewriting the
+    # document, so such a page settles without a write, an embedding or a mining.
+    reads: dict[str, list[str]] = field(default_factory=dict)
     # Known children whose read this turn answered not found or trashed.
     unanswered: set[str] = field(default_factory=set)
 
@@ -110,8 +115,15 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         for k, v in (stored_children if isinstance(stored_children, dict) else {}).items()
         if notion.valid_id(str(k))
     }
-    t = _Turn(src, token, result, known=known)
+    stored_reads = detail.get("unchanged_reads")
+    reads = {
+        str(k): [str(v[0]), str(v[1])]
+        for k, v in (stored_reads if isinstance(stored_reads, dict) else {}).items()
+        if isinstance(v, list) and len(v) == 2
+    }
+    t = _Turn(src, token, result, known=known, reads=reads)
     result.kind_state["child_pages"] = t.known
+    result.kind_state["unchanged_reads"] = t.reads
     listed_at = _now()
     try:
         await _list(t, "" if result.full else stamp)
@@ -131,6 +143,11 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         if not await _sync_page(t, f, stored.get(f["id"]), run):
             break
     result.documents_seen = len(t.items)
+    # Only the reads of pages still listed at the same revision matter.
+    revisions = {f["id"]: f["modifiedTime"] for f in t.items}
+    for page_id, (revision, _) in list(t.reads.items()):
+        if revisions.get(page_id) != revision:
+            del t.reads[page_id]
     if trusted and result.complete:
         addresses = {f["id"]: sync.source_uri_of(f) for f in t.items}
         listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
@@ -323,24 +340,29 @@ async def _sync_page(
 ) -> bool:
     """Handle one listed page; False when the turn must stop listing."""
     uri = sync.source_uri_of(f)
-    if (
-        prior
-        and prior["source_uri"] == uri
-        and not _settled(f["modifiedTime"], prior.get("read_at", ""))
-    ):
+    stored = prior
+    read_at = prior.get("read_at", "") if prior else ""
+    entry = t.reads.get(f["id"])
+    if entry and entry[0] == f["modifiedTime"]:
+        read_at = max(read_at, entry[1])
+    if prior and prior["source_uri"] == uri and not _settled(f["modifiedTime"], read_at):
         # Read too soon after its revision: a later edit may share the stamp, so the
         # stored copy does not let the page be skipped.
         prior = None
-    fetch_and_write = functools.partial(_fetch_and_write, t, f, uri)
+    fetch_and_write = functools.partial(_fetch_and_write, t, f, uri, stored)
     if not await sync.sync_item(t.src, f, uri, prior, run, t.result, fetch_and_write):
         return False
     # A rate limit or a refused token while listing the page's new children.
     return t.result.status not in ("rate_limited", "credential_invalid")
 
 
-async def _fetch_and_write(t: _Turn, f: dict[str, Any], uri: str) -> str:
+async def _fetch_and_write(
+    t: _Turn, f: dict[str, Any], uri: str, stored: dict[str, str] | None
+) -> str:
     """Read one page's blocks, record its child pages, convert and write them:
-    `written`, `waiting`, `given_up` or `stop`, as `sync.sync_item` expects."""
+    `written`, `unchanged` (the stored copy at this revision has this text, so only
+    the read is recorded), `waiting`, `given_up` or `stop`, as `sync.sync_item`
+    expects."""
     result = t.result
     read_at = _now()
     try:
@@ -367,12 +389,26 @@ async def _fetch_and_write(t: _Turn, f: dict[str, Any], uri: str) -> str:
         outcome = sync.give_up(f, result, "no_text")
     elif len(content.encode()) > int(settings.knowledge_source_sync_max_file_bytes):
         outcome = sync.give_up(f, result, "too_large")
+    elif _same_copy(stored, f, uri, content):
+        t.reads[f["id"]] = [f["modifiedTime"], sync.stamp_of(read_at)]
+        outcome = "unchanged"
     else:
+        t.reads.pop(f["id"], None)
         outcome = await _write(t, f, uri, content, skipped, read_at)
     # A rate limit or a refused token here ends the turn after this page's outcome,
     # so a written page's old address is still retired (`_sync_page`).
     await _add_new_children(t, found)
     return outcome
+
+
+def _same_copy(stored: dict[str, str] | None, f: dict[str, Any], uri: str, content: str) -> bool:
+    """Whether the stored copy is this page at this revision with this title and text,
+    hashed as the document store hashes them."""
+    if not stored or stored["source_uri"] != uri:
+        return False
+    if stored["source_revision"] != f["modifiedTime"]:
+        return False
+    return stored.get("content_sha256") == sha256_document_text(f"{f['name']}\n{content}")
 
 
 async def _write(
