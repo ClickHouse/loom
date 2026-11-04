@@ -3445,11 +3445,11 @@ export interface KnowledgeSourceAddInput {
   namespace: string;
   /** Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. */
   name: string;
-  /** The source kind; `gdrive` is the one kind served. */
+  /** The source kind: `gdrive` (a shared folder) or `linear` (a project tracker's project documents). */
   kind: string;
-  /** The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}. */
+  /** The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: {project_ids: */
   config: Record<string, unknown>;
-  /** The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only); stored encrypted, never returned. */
+  /** The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an acc */
   credential: string;
   /** Probe and write nothing. */
   dry_run?: boolean;
@@ -3574,7 +3574,7 @@ export interface KnowledgeSourceRotateInput {
   namespace: string;
   /** The source name. */
   name: string;
-  /** The replacement credential (gdrive: a service account's JSON key); stored encrypted, never returned. */
+  /** The replacement credential (gdrive: a service account's JSON key; linear: an API key); stored encrypted, never returned. */
   credential: string;
 }
 

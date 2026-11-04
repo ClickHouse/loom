@@ -269,9 +269,9 @@ Register a document source on a repository's trunk code namespace: a kind, the i
 | `org` | `str` | required | The org. |
 | `namespace` | `str` | required | The repository's trunk code namespace. |
 | `name` | `str` | required | Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. |
-| `kind` | `str` | required | The source kind; `gdrive` is the one kind served. |
-| `config` | `dict[str, Any]` | required | The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}. |
-| `credential` | `str` | required | The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only); stored encrypted, never returned. |
+| `kind` | `str` | required | The source kind: `gdrive` (a shared folder) or `linear` (a project tracker's project documents). |
+| `config` | `dict[str, Any]` | required | The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: {project_ids: [1-20 project ids, UUIDs]}. |
+| `credential` | `str` | required | The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an account that sees the projects); stored encrypted, never returned. |
 | `dry_run` | `bool` | `False` | Probe and write nothing. |
 
 | Output field | Type | Meaning |
@@ -285,7 +285,7 @@ Register a document source on a repository's trunk code namespace: a kind, the i
 
 ## `knowledge.source.check`
 
-Probe a registered document source with its stored credential now (folder checks and a listing), nothing written.
+Probe a registered document source with its stored credential now (a check and a listing of each folder or project), nothing written.
 
 `POST /v1/knowledge.source.check` · MCP `loom_knowledge_source_check` · role `admin` · idempotent · not listed under the MCP `all` toolset
 
@@ -299,8 +299,8 @@ Probe a registered document source with its stored credential now (folder checks
 | --- | --- | --- |
 | `name` | `str` | The source checked. |
 | `reachable` | `bool` | False when the probe failed; `summary` says why. |
-| `documents` | `int` | Documents the source lists now, the first 1000 at most. |
-| `more` | `bool` | True when more than 1000 documents match, so `documents` is a lower bound. |
+| `documents` | `int` | Documents the source lists now: the first 1000 at most (gdrive), the first page of each project (linear). |
+| `more` | `bool` | True when more documents match than were listed, so `documents` is a lower bound. |
 | `sample` | `list[str]` | Up to five document titles, most recently changed first. |
 | `summary` | `str` | One line: what was found, or why it failed. |
 | `checked_at` | `str` | When the probe ran, ISO UTC. |
@@ -373,7 +373,7 @@ Replace a registered document source's credential.
 | `org` | `str` | required | The org. |
 | `namespace` | `str` | required | The repository's trunk code namespace. |
 | `name` | `str` | required | The source name. |
-| `credential` | `str` | required | The replacement credential (gdrive: a service account's JSON key); stored encrypted, never returned. |
+| `credential` | `str` | required | The replacement credential (gdrive: a service account's JSON key; linear: an API key); stored encrypted, never returned. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

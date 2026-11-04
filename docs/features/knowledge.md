@@ -71,9 +71,11 @@ Markdown built from its text, and the `X-Loom-Download-Source` header says `blob
 A repository's maintainers register the document sources Loom pulls the repository's
 documents from. A source lives on the repository's trunk code namespace, the one its
 documents live in, so whoever reads the repository sees where its documents come from,
-and only the namespace's admins change that. The one kind served is `gdrive`, a shared
+and only the namespace's admins change that. Two kinds are served: `gdrive`, a shared
 folder of docs, slides, decks and PDFs, read with a service account the folders are
-shared to read-only; its credential is the account's JSON key. The
+shared to read-only, whose credential is the account's JSON key; and `linear`, the
+documents of a project tracker's projects, read with a read-only API key of an account
+that sees the projects. The
 `knowledge_source_sync` worker pulls each source's files into the repository's
 documents ([syncing](#syncing-a-source)); `list` says whether this deployment runs it
 (`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
@@ -90,19 +92,21 @@ documents ([syncing](#syncing-a-source)); `list` says whether this deployment ru
 
 A source's `config` holds ids and filters, never a host or a URL: `gdrive` takes
 `folder_ids` (1 to 20) and `include` (any of `docs`, `slides`, `pdf`, `pptx`; all by
-default). The store's API hosts are fixed in the server, so a registered source cannot
-point the server at another host. The credential is sealed at rest under its own
-purpose (`loom secrets reseal` covers it), held in memory only for a probe, never
-returned by any op and never written to an audit row. `add` records the namespace,
-name, kind, config and `dry_run`; `rotate` the namespace and name; `remove` and
-`sync_now` their input (namespace, name, `confirm` and `delete_documents`, or `full`).
-`check` is admin-only because its probe spends the source's rate limit.
+default); `linear` takes `project_ids` (1 to 20 project UUIDs). The store's API hosts
+are fixed in the server, so a registered source cannot point the server at another host.
+The credential is sealed at rest under its own purpose (`loom secrets reseal` covers
+it), held in memory only for a probe, never returned by any op and never written to an
+audit row. `add` records the namespace, name, kind, config and `dry_run`; `rotate` the
+namespace and name; `remove` and `sync_now` their input (namespace, name, `confirm` and
+`delete_documents`, or `full`). `check` is admin-only because its probe spends the
+source's rate limit.
 
-A probe exchanges the key for a read-only token, checks every folder together (one
-call each) and lists the included files of all folders in one call, the first 1000 at
-most. It is bounded as a whole by `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` (default
-20 s); past it `add` and `rotate` answer `SOURCE_UNREACHABLE` and `check` answers
-`reachable: false`.
+A `gdrive` probe exchanges the key for a read-only token, checks every folder together
+(one call each) and lists the included files of all folders in one call, the first 1000
+at most. A `linear` probe reads the first page (50 documents) of every project together,
+so a project the key's account cannot see refuses the probe. Either is bounded as a
+whole by `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` (default 20 s); past it `add` and
+`rotate` answer `SOURCE_UNREACHABLE` and `check` answers `reachable: false`.
 
 Every write of a namespace's sources (`add`, `rotate`, `remove`, `sync_now`, and the
 retirement in `code.repo.remove`) is serialized by a lease, so a write's checks still
@@ -145,23 +149,23 @@ are gone; one whose documents were kept refuses it with `SOURCE_DOCUMENTS_KEPT` 
 they are deleted (`knowledge.delete`). A removed source with no documents frees its
 name at once.
 
-| Code                    | When                                                                                                                                               |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NOT_A_CODE_NAMESPACE`  | `add`, `check`, `rotate` or `sync_now` names a namespace that is not a repository's trunk code namespace.                                          |
-| `BAD_NAME`              | The name is not 2-32 lower-case letters, digits, `-` or `_`, starting with a letter.                                                               |
-| `BAD_KIND`              | The kind is not one the server serves.                                                                                                             |
-| `BAD_CONFIG`            | The config has an unknown key, a malformed folder id or an unknown `include` value.                                                                |
-| `SOURCE_EXISTS`         | The namespace has an active source of that name.                                                                                                   |
-| `SOURCE_QUOTA`          | The namespace has `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` active sources (default 8).                                                           |
-| `NO_ROOT_SECRET`        | The deployment has no `LOOM_JWT_SECRET`, so a credential cannot be stored.                                                                         |
-| `CREDENTIAL_REFUSED`    | The credential is not a service account key, or the store refused it; nothing is stored.                                                           |
-| `SOURCE_UNREACHABLE`    | A folder is not shared with the account or is not a folder, the store failed or rate-limited the probe, or the probe timed out; nothing is stored. |
-| `SOURCE_DELETE_PENDING` | `add` names a removed source whose documents are still waiting to be retired.                                                                      |
-| `SOURCE_DOCUMENTS_KEPT` | `add` names a removed source whose kept documents are still live; delete them first.                                                               |
-| `SOURCE_REPLACED`       | `rotate` or `sync_now`'s source was removed and added again during the call (409); act on the current source.                                      |
-| `SOURCE_TAGS_LOCKED`    | A write that keeps the sync worker as a document's author changes its `source:*` tags.                                                             |
-| `SOURCE_NOT_FOUND`      | No active source of that name in the namespace (404).                                                                                              |
-| `CONFIRM_REQUIRED`      | `remove`'s `confirm` is not the source's name.                                                                                                     |
+| Code                    | When                                                                                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `NOT_A_CODE_NAMESPACE`  | `add`, `check`, `rotate` or `sync_now` names a namespace that is not a repository's trunk code namespace.                                 |
+| `BAD_NAME`              | The name is not 2-32 lower-case letters, digits, `-` or `_`, starting with a letter.                                                      |
+| `BAD_KIND`              | The kind is not one the server serves.                                                                                                    |
+| `BAD_CONFIG`            | The config has an unknown key, a malformed folder or project id or an unknown `include` value.                                            |
+| `SOURCE_EXISTS`         | The namespace has an active source of that name.                                                                                          |
+| `SOURCE_QUOTA`          | The namespace has `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` active sources (default 8).                                                  |
+| `NO_ROOT_SECRET`        | The deployment has no `LOOM_JWT_SECRET`, so a credential cannot be stored.                                                                |
+| `CREDENTIAL_REFUSED`    | The credential is not a service account key or an API key, or the store refused it; nothing is stored.                                    |
+| `SOURCE_UNREACHABLE`    | A folder or project is not visible to the account, the store failed or rate-limited the probe, or the probe timed out; nothing is stored. |
+| `SOURCE_DELETE_PENDING` | `add` names a removed source whose documents are still waiting to be retired.                                                             |
+| `SOURCE_DOCUMENTS_KEPT` | `add` names a removed source whose kept documents are still live; delete them first.                                                      |
+| `SOURCE_REPLACED`       | `rotate` or `sync_now`'s source was removed and added again during the call (409); act on the current source.                             |
+| `SOURCE_TAGS_LOCKED`    | A write that keeps the sync worker as a document's author changes its `source:*` tags.                                                    |
+| `SOURCE_NOT_FOUND`      | No active source of that name in the namespace (404).                                                                                     |
+| `CONFIRM_REQUIRED`      | `remove`'s `confirm` is not the source's name.                                                                                            |
 
 A probe's error names the HTTP status (`http_403`), never the store's response text.
 
@@ -244,16 +248,16 @@ Trouble with one file is that file's:
 
 A source's `sync` in `list` and `inspect` shows what its last turn did:
 
-| Field                    | Meaning                                                                                                                                                                                                                                               |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                                                                                                                                        |
-| `last_synced_at`         | When the last turn ended.                                                                                                                                                                                                                             |
-| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                                                                                             |
-| `documents_seen`         | Files the turn listed.                                                                                                                                                                                                                                |
-| `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                                                                                       |
-| `unconverted`, `skipped` | Files it did not write: the store gave no https link, no extractor, refused or too large, or given up after three passes on the same revision; another writer's document at the address.                                                              |
-| `unconverted_reasons`    | Why, by count: `no_address` (the store gave no https link), `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`. |
-| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text; for a turn that did not fail, why it is incomplete (`pass bound reached`, `listing: incomplete search`).                                                      |
+| Field                    | Meaning                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `requested_at`           | A `sync_now` request no turn has finished yet.                                                                                                                                                                                                                                                                                                                                                   |
+| `last_synced_at`         | When the last turn ended.                                                                                                                                                                                                                                                                                                                                                                        |
+| `status`                 | `ok`, `rate_limited` (the next pass retries), `credential_invalid` (the stored key no longer opens or is refused: rotate it) or `failed`.                                                                                                                                                                                                                                                        |
+| `documents_seen`         | Files (or a project's documents) the turn listed.                                                                                                                                                                                                                                                                                                                                                |
+| `changed`, `removed`     | Documents it wrote and retired.                                                                                                                                                                                                                                                                                                                                                                  |
+| `unconverted`, `skipped` | Files it did not write: the store gave no https link, no extractor, refused or too large, or given up after three passes on the same revision; another writer's document at the address.                                                                                                                                                                                                         |
+| `unconverted_reasons`    | Why, by count: `no_address` (the store gave no https link), `no_extractor`, `too_large`, `http_<status>`, `unreachable`, `extraction_failed:<code>`, `extractor_unavailable`, `fetch_failed:<error>`, `write_refused:<code>`, `write_failed:<error>`; for a project's documents also `not_found`, `graphql_<type>` and `no_document` or `no_data` (the answer lacked the document, or any data). |
+| `error`                  | What failed and its HTTP status (`listing: http_500`), never the store's response text; for a turn that did not fail, why it is incomplete (`pass bound reached`, `listing: incomplete search`).                                                                                                                                                                                                 |
 
 `loom knowledge sync --org O --namespace <trunk namespace> [--source NAME] [--full]` runs
 one such pass over one namespace's sources now, in-process, and leaves a manual
@@ -261,6 +265,34 @@ one such pass over one namespace's sources now, in-process, and leaves a manual
 request, as `sync_now(full=true)` does; run again while that request is unfinished, it
 goes on with it, so repeated runs work through a large folder rather than starting
 over.
+
+### Syncing a project's documents
+
+A `linear` source's turn follows the rules above, with three differences. Every turn
+reads each project's whole document list (ids, titles, stamps and links, 50 to a page,
+every page), since a project's list is small; there is no incremental listing, and
+`full` only grants given-up documents their retry. A changed document is fetched on its
+own (its content is Markdown already, `ingested_format` `markdown`, with no original)
+and is bounded by `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES`; its revision is its
+`updatedAt` and its address its link without the query. The link carries the title, so
+a renamed document is written at its new address and its old one retired.
+
+A document is retired only when the list was read whole, every project on every page,
+and the tracker, asked about that document, answers its own not-found error or reports
+it trashed, archived or in none of the source's projects; an answer that only lacks the
+document, or a lookup that fails, retires nothing. A project the key's account cannot
+see, any other failure on a list page, an answer that carries a GraphQL error beside its
+data and a page that promises another without a cursor leave the turn `failed` and
+retire nothing, while the other projects' documents are still written. The API reports
+most failures as GraphQL errors, often with HTTP 200 or 400, so a turn reads the errors'
+type as well as the status: a `429` or an error typed `RATELIMITED` is `rate_limited`, a
+`401` or an authentication error is `credential_invalid`, and either ends the turn. A
+document the tracker no longer finds (`not_found`), one over the size bound and one it
+refuses (`graphql_<type>` for a GraphQL error typed `FORBIDDEN`, `INVALID_INPUT`,
+`FEATURE_NOT_ACCESSIBLE` or `USER_ERROR`; `http_<status>` for a `4xx` with no type)
+are given up on their revision at once; any other GraphQL error, whatever its status, a
+`5xx`, a timeout and an answer without the document (`no_document`) make it wait. List
+pages are paced half a second apart.
 
 ## Searching
 

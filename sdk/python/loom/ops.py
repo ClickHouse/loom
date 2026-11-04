@@ -10206,7 +10206,7 @@ class KnowledgeSourceProbe(TypedDict, total=False):
 
 
 class KnowledgeSourceCheckInput(TypedDict, total=False):
-    "Probe a registered document source with its stored credential now (folder"
+    "Probe a registered document source with its stored credential now (a check"
 
     org: Required[str]
     namespace: Required[str]
@@ -10214,7 +10214,7 @@ class KnowledgeSourceCheckInput(TypedDict, total=False):
 
 
 class KnowledgeSourceCheckBody(TypedDict, total=False):
-    "Probe a registered document source with its stored credential now (folder"
+    "Probe a registered document source with its stored credential now (a check"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
