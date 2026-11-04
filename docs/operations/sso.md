@@ -101,10 +101,11 @@ link --email <their provider address> --org <org> --namespace <ns>` shows
   refuses an old address that still holds live grants of its own (when the old
   address is linked, grant them to the account's subject and revoke them first;
   when it was never verified, they admit no one, so revoke them) or a pending
-  request to join (reject it), and an address another account already names. When that is a
-  JIT account an earlier SSO sign-in made, `loom claim-release` it first: its
-  memories stay behind in it (carry them over with `namespace.snapshot` and
-  `namespace.restore`), and grants made to it must be made again.
+  request to join (reject it), and an address another account already names.
+  When that is a JIT account an earlier SSO sign-in made, `loom claim-release`
+  it first: its memories stay behind in it (carry them over with
+  `namespace.snapshot` and `namespace.restore`), and grants made to it must be
+  made again.
 - `loom sso unlink --email <email> --apply` takes a link back: grants stored
   under the address (written before the link) stop admitting the account.
   Grants made while it was linked are stored under the login handle and stay;

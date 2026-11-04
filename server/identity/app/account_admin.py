@@ -299,7 +299,8 @@ async def _carry_revoked(revoked: list[dict[str, Any]], owner: str, by: str) -> 
 
 
 async def unlink(email: str, org: str = "", *, by: str) -> list[tuple[str, str]]:
-    """Stop new SSO sign-ins with `email` reaching its linked accounts (in `org`)."""
+    """Stop new SSO sign-ins with `email` reaching its linked accounts (in `org`),
+    and the grants stored under `email` admitting them."""
     accounts = [a for a in await sso_links.linked(email) if org in ("", a[0])]
     await sso_links.unlink(email, accounts, by)
     for account_org, namespace in accounts:

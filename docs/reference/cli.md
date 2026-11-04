@@ -297,7 +297,7 @@ python scripts/codegen/docs_reference.py
 | `loom sso` | Carry password accounts over to single sign-on. |  |
 | `loom sso adopt` | Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. | `--domain`, `--org`, `--skip`, `--keep-tokens`, `--apply`, `--dry-run` |
 | `loom sso link` | Let one person's SSO sign-ins reach their password account registered under another address (a personal one, a +tag). | `--email`, `--org`, `--namespace`, `--apply`, `--dry-run` |
-| `loom sso unlink` | Undo the links of one email. | `--email`, `--apply`, `--dry-run` |
+| `loom sso unlink` | Undo the links of one email: its grants stop admitting the accounts. | `--email`, `--apply`, `--dry-run` |
 | `loom sso password-link` | Print a one-time link (valid for LOOM_PASSWORD_LINK_TTL_SECONDS, a day by default) that sets the password of an email's SSO accounts, for after single sign-on is turned off. | `--email`, `--org` |
 | `loom bot` | Bots and CI jobs that sign in with a key or their CI's identity. |  |
 | `loom bot create` | Register a bot: its namespaces, and a key (--generate-key or --public-key) and/or a CI trust (--issuer, --audience, --claim). | `--name`, `--org`, `--namespace-role`, `--generate-key`, `--public-key`, `--issuer`, `--audience`, `--claim`, `--jwks-uri`, `--max-token-age`, `--max-access-token-ttl`, `--max-agents`, `--agent-claim`, `--platform-admin`, `--replace` |

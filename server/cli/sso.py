@@ -63,7 +63,9 @@ def register_sso_cli(sub: Any) -> None:
     p_link.add_argument("--namespace", required=True, help="the account's namespace")
     add_apply_flags(p_link, writes="change its email and link it")
     p_link.set_defaults(func=_cmd_link)
-    p_unlink = sso.add_parser("unlink", help="Undo the links of one email.")
+    p_unlink = sso.add_parser(
+        "unlink", help="Undo the links of one email: its grants stop admitting the accounts."
+    )
     p_unlink.add_argument("--email", required=True)
     add_apply_flags(p_unlink, writes="remove the links")
     p_unlink.set_defaults(func=_cmd_unlink)
@@ -162,7 +164,8 @@ def _cmd_unlink(args: argparse.Namespace) -> int:
             return 0
         await account_admin.unlink(args.email, by=_by())
         print(
-            f"unlinked {len(accounts)} account(s): new SSO sign-ins no longer reach them; "
+            f"unlinked {len(accounts)} account(s): new SSO sign-ins no longer reach them, "
+            f"and grants under {args.email} stop admitting them; "
             "end open sessions with `loom revoke-token --subject <subject>`"
         )
         return 0

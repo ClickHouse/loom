@@ -244,8 +244,8 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   mint that was never granted to the subject keeps its claim; revoke the token for that.
 - **A grant under an email reaches the account only once the email is verified.** An SSO
   account's email is verified (the identity provider vouched for it), and so is one linked
-  to its password account (`loom sso adopt`, or its owner proving the password from an SSO
-  sign-in). A self-signup email is not: whoever typed the address first does not hold the
+  to its password account (`loom sso adopt`, `loom sso link`, a password link, or its
+  owner proving the password from an SSO sign-in). A self-signup email is not: whoever typed the address first does not hold the
   grants written under it, which still cap that account's claims. Grant a self-signup
   account under its login handle.
 - **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.

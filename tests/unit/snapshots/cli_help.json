@@ -313,7 +313,7 @@
  ],
  "loom sso": [
   "usage: loom sso [-h] {adopt,link,unlink,password-link} ...",
-  "positional arguments: {adopt,link,unlink,password-link} adopt Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. Vouches that the domain's addresses are the provider's people. Dry run unless --apply. link Let one person's SSO sign-ins reach their password account registered under another address (a personal one, a +tag). The account keeps its subject, grants, namespaces and tokens; its contact email becomes --email. unlink Undo the links of one email. password-link Print a one-time link (valid for LOOM_PASSWORD_LINK_TTL_SECONDS, a day by default) that sets the password of an email's SSO accounts, for after single sign-on is turned off.",
+  "positional arguments: {adopt,link,unlink,password-link} adopt Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. Vouches that the domain's addresses are the provider's people. Dry run unless --apply. link Let one person's SSO sign-ins reach their password account registered under another address (a personal one, a +tag). The account keeps its subject, grants, namespaces and tokens; its contact email becomes --email. unlink Undo the links of one email: its grants stop admitting the accounts. password-link Print a one-time link (valid for LOOM_PASSWORD_LINK_TTL_SECONDS, a day by default) that sets the password of an email's SSO accounts, for after single sign-on is turned off.",
   "options: -h, --help show this help message and exit"
  ],
  "loom sso adopt": [

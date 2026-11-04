@@ -72,7 +72,8 @@ async def reached_by_sso(emails: list[str]) -> set[str]:
 
 
 async def link(email: str, accounts: list[tuple[str, str]], linked_by: str) -> None:
-    """Let an SSO sign-in with `email` reach each (org, namespace)."""
+    """Let an SSO sign-in with `email` reach each (org, namespace), and the grants
+    stored under `email` admit it (the email is verified)."""
     await _write(email, accounts, linked_by, linked=1)
 
 
@@ -138,7 +139,8 @@ async def reaching(email: str) -> list[tuple[str, str]]:
 
 
 async def unlink(email: str, accounts: list[tuple[str, str]], linked_by: str) -> None:
-    """Stop SSO sign-ins with `email` reaching `accounts`."""
+    """Stop SSO sign-ins with `email` reaching `accounts`, and the grants stored
+    under `email` admitting them."""
     await _write(email, accounts, linked_by, linked=0)
 
 
