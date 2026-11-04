@@ -523,8 +523,9 @@ class TaskUpdateOutput(BaseModel):
 class TaskReassignInput(_Caller):
     # The unfinished task to move; it is cancelled in its current inbox.
     task_id: str
-    # The destination; it must accept the task's disclosure, and its policy for the
-    # original poster decides `todo` or `triage`.
+    # The destination; the caller must be able to post to it (as for task.create), it
+    # must accept the task's disclosure, and its policy for the original poster
+    # decides `todo` or `triage`.
     to_inbox: str
     # Why; stored on both the cancelled task and the replacement.
     reason: str = Field(min_length=1, max_length=2000)

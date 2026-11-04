@@ -828,6 +828,11 @@ async def handle_task_reassign(input: TaskReassignInput) -> TaskReassignOutput:
     if task["status"] in TERMINAL:
         raise await _state_conflict("TASK_TERMINAL", task, want="it is already finished")
     dest = await _load_inbox(input.org, input.to_inbox)
+    # The caller posts into the destination, so it passes the gate task.create applies.
+    if not await _poster_may_post(dest, _caller_subject(), input.agent):
+        if not await _in_scope(input.org, dest["owner_namespace"], write=False):
+            raise _err(404, "RESOURCE_NOT_FOUND", f"inbox {input.to_inbox!r} is not registered")
+        raise _err(403, "AUTH_INSUFFICIENT", "this principal may not post to that inbox")
     if dest["inbox"] == task["inbox"]:
         raise _invalid("the task is already in that inbox")
     if task["disclosure"] not in set(dest.get("accept_disclosure") or []):
