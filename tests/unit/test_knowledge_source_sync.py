@@ -1894,7 +1894,7 @@ def test_a_run_stopped_mid_write_records_nothing_and_is_mined_next_pass(world: _
     world.mine_answer = _lost
     _two_docs(world)
     asyncio.run(source_sync.run_sync())
-    # One try, then the leg stops: no state write under a lost lease, nothing settled.
+    # One try, then the source's turn stops: no state write under a lost lease, nothing settled.
     assert [uri for uri, _, _ in world.mined] == [DOC1]
     assert "mined" not in _detail(world)
     world.lease.held, world.mine_answer = True, None
