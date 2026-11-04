@@ -866,3 +866,21 @@ async def test_failed_sources_with_and_without_an_extractor_are_told_apart(docs:
         'LOOM_DOCUMENT_EXTRACTORS_JSON["application/pdf"], which does not declare it; '
         "1 has no extractor configured;" in p.rationale
     ), p.rationale
+
+
+async def test_failed_sources_of_two_routed_services_take_a_plural_verb(docs: Docs) -> None:
+    # Two media types of pdf go to two services, neither of which declares pdf.
+    x, y, t = "http://x:8080", "http://y:8080", "http://pdf-t:8080"
+    docs.routed = {("pdf", "application/pdf"): x, ("pdf", "application/x-pdf"): y, "pdf": ""}
+    docs.services = [
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["application/pdf"]', x, frozenset()),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["application/x-pdf"]', y, frozenset()),
+        Service('LOOM_DOCUMENT_EXTRACTORS_JSON["docx"]', t, frozenset({"pdf", "docx"})),
+    ]
+    docs.unavailable = [
+        _pdf_job("files/a.pdf", "application/pdf"),
+        _pdf_job("files/b.pdf", "application/x-pdf"),
+    ]
+    out, _ = await _drafts()
+    (p,) = _target(out, "settings.document_extractors_json")
+    assert "which do not declare it" in p.rationale, p.rationale

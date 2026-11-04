@@ -557,7 +557,8 @@ def _judge_format(
     # '' is no service: no default URL and no route for the format.
     unrouted = len(stuck.get("", []))
     routed = {u: v for u, v in stuck.items() if u}
-    named = f"{_names(services, set(routed))}, which does not declare it"
+    verb = "does" if len(routed) == 1 else "do"
+    named = f"{_names(services, set(routed))}, which {verb} not declare it"
     if not routed:
         goes_to = "no extractor is configured for it"
     elif not unrouted:
