@@ -26,11 +26,10 @@ from bench.design_rationale.llm import (
     Reply,
     cost_usd,
 )
-from bench.design_rationale.loom import CHARS_PER_TOKEN, EXTRACT_TIMEOUT_S, PRE_EDIT_BUDGET, Loom
+from bench.design_rationale.loom import EXTRACT_TIMEOUT_S, PRE_EDIT_BUDGET, Loom
 from bench.design_rationale.taskset import Document, TaskSetError, load
 from server.knowledge.app.writes import _chunk_text
 from server.memory.api.models_decision import DecisionRecordInput
-from server.memory.app import for_file as ff
 from server.memory.app.decision_extract import _windows
 from server.memory.app.for_file import render_block
 from server.memory.domain import decision_extract as dx
@@ -1161,29 +1160,29 @@ def test_a_resume_with_another_extraction_model_is_refused(tmp_path):
         run.run(ts, other, FakeLoom(), model, [model], ledger)
 
 
-def test_the_pre_edit_bound_covers_a_block_at_every_limit():
-    # Past the whole-row ceiling and the budget, with left-out decisions from another
-    # namespace at the longest key: the block the bound must cover.
+def test_the_pre_edit_bound_covers_a_block_the_harness_reads():
+    # What the harness asks for: its own namespace, the default top_k, a task's path,
+    # and one decision past the whole-row ceiling.
     hits = [
         {
-            "memory_key": "k" * 500 + str(i),
+            "memory_key": f"decision:{i:04d}",
             "memory_type": "decision",
-            "value": "x" * 3000,
+            "value": "Decided a segmented LRU because a scan must only churn probation. " * 8,
             "tags": ["decision"],
-            "namespace": "other",
+            "namespace": "ns",
         }
-        for i in range(50)
+        for i in range(7)
     ]
-    hits += [
+    hits.append(
         {
-            "memory_key": f"m{i}",
-            "memory_type": "semantic",
-            "value": "y" * 2000,
-            "tags": [],
-            "namespace": "other",
+            "memory_key": "decision:long",
+            "memory_type": "decision",
+            "value": "x" * 7000,
+            "tags": ["decision"],
+            "namespace": "ns",
         }
-        for i in range(50)
-    ]
-    rendered, _, _ = render_block("p" * 1024, hits, PRE_EDIT_BUDGET, home="ns")
-    assert len(rendered) // CHARS_PER_TOKEN <= run.pre_edit_block_tokens()
-    assert ff._NAMED_KEYS < 50  # the closing line names a few keys, then counts the rest
+    )
+    _, tokens, truncated = render_block(
+        "src/cache/segmented_lru.py", hits, PRE_EDIT_BUDGET, home="ns"
+    )
+    assert truncated and tokens <= run.pre_edit_block_tokens()

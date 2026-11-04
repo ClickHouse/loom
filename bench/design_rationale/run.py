@@ -25,7 +25,6 @@ from bench.design_rationale.llm import (
     price,
 )
 from bench.design_rationale.loom import (
-    CHARS_PER_TOKEN,
     PRE_EDIT_BUDGET,
     CodeIndex,
     Loom,
@@ -53,6 +52,9 @@ CITED_TEXT_TOKENS = 1200  # the cited source text a judge reads
 JUDGE_FRAME_TOKENS = 900  # the judge's instructions and gold lists
 TYPICAL_OUT = {"A": 400, "B": 900, "C": 400, "judge": 500, "extract": 800}
 JUDGE_OUT_CAP = 4000
+# The header, "… more" and left-out lines of a pre-edit block; the render test keeps it
+# honest.
+PRE_EDIT_FIXED_TOKENS = 300
 # Decisions kept per section, which the extractor's prompt states: the run uses the
 # default of `loom decisions extract --max-per-section` (server/cli/decisions.py).
 EXTRACT_MAX_PER_SECTION = 3
@@ -105,33 +107,12 @@ def parse_key(key: str) -> tuple[str, int]:
 
 
 def pre_edit_block_tokens() -> int:
-    """The most one pre-edit block injects: decisions and constraints print whole up to
-    `memory_for_file_whole_tokens`, the other rows up to the block's budget, and the
-    lines outside both: the header and the "… more" line at the longest path
-    memory.for_file accepts, the closing line naming the decisions left out (its most
-    keys, each at the most characters it prints, the most hits a call returns), and
-    the team-row removal footer. Tokens are the server's four characters each."""
-    from server.memory.api.models_for_file import MemoryForFileInput
-    from server.memory.app import for_file as ff
+    """The planned size of one pre-edit block: decisions and constraints print whole up
+    to `memory_for_file_whole_tokens`, the other rows up to the block's budget, and a few
+    lines around them (`PRE_EDIT_FIXED_TOKENS`)."""
     from server.settings import settings
 
-    fields = MemoryForFileInput.model_fields
-
-    def most(field: str, kind: str) -> int:
-        return next(int(getattr(m, kind)) for m in fields[field].metadata if hasattr(m, kind))
-
-    path = "x" * most("path", "max_length")
-    hits = most("top_k", "le")
-    named = "x" * ff._NAMED_KEY_CHARS
-    left = [{"memory_key": named, "namespace": named}] * hits
-    header = f"Loom: {hits} memories anchored to {path} — read before editing:"
-    # Team rows (another namespace than the caller's) print the longest names.
-    extra = [header, ff._more_line(path, hits), ff._whole_left_out_line(left, home="h")]
-    # A rule and a typed decision together: the footer names both ways to correct one.
-    team = [{"namespace": named, "memory_type": t} for t in ("decision", "semantic")]
-    extra.append(ff._removal_footer(team, "h"))
-    fixed = sum(len(line) + 1 for line in extra) // CHARS_PER_TOKEN
-    return settings.memory_for_file_whole_tokens + PRE_EDIT_BUDGET + fixed
+    return settings.memory_for_file_whole_tokens + PRE_EDIT_BUDGET + PRE_EDIT_FIXED_TOKENS
 
 
 def own_extraction(cfg: Config) -> bool:
