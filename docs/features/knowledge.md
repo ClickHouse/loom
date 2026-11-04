@@ -525,8 +525,8 @@ Search finds a passage; three other reads cover the rest of the work with a long
   citation of anything else (a chunk past `max_windows`, an index that does not exist,
   another document) is removed from `answer` and listed in `unsupported_citations`,
   since following it would read something the answer did not come from.
-  `cited_chunks` lists each chunk the kept citations name, with its document's
-  `revision` and, for an ingested file, its `locator`. A bracket
+  `cited_chunks` lists each chunk the kept citations name, with the document
+  `revision` the chunk was written as and, for an ingested file, its `locator`. A bracket
   holding anything else, or naming a source with a blank, comma or semicolon, is prose
   and stays as written (of nested brackets, the innermost is read). An answer that is
   empty (no letter or digit) as written or once those citations are removed abstains

@@ -161,3 +161,42 @@ async def test_format_and_block_type_filters_keep_only_those_chunks(
         assert statements and {(u, b) for u, _, b in statements} == {
             ("repo://retention.sql", "sql_statement")
         }
+
+
+@pytest.mark.asyncio
+async def test_a_prose_question_is_not_pulled_to_columns_that_share_its_words(
+    control_plane_url: str,
+) -> None:
+    """SQL chunks' keys include their columns, which are often common words (`status`,
+    `name`, `value`): a prose question using those words still finds the document
+    that answers it first, since only identifier-shaped terms are keys."""
+    sql = (
+        b"CREATE TABLE orders (id UInt64, status String, name String, value Float64)"
+        b" ENGINE = MergeTree ORDER BY id;\n\n"
+        b"SELECT status, count() FROM orders GROUP BY status;\n"
+    )
+    org, ns = unique_org("structural-prose"), f"docs-{uuid.uuid4().hex[:6]}"
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
+        await _ingest(c, org, ns, sql, "orders.sql")
+        await _op(
+            c,
+            "knowledge.add",
+            org=org,
+            namespace=ns,
+            source_uri="kb://refunds",
+            title="Refund policy",
+            content=(
+                "The status of a refund request shows whether finance approved it; the"
+                " customer name and the order value are copied onto the refund."
+            ),
+        )
+        found = await _op(
+            c,
+            "knowledge.search",
+            org=org,
+            namespace=ns,
+            query="what does the status of a refund request show",
+            namespace_scope="this",
+        )
+        assert found["results"][0]["source_uri"] == "kb://refunds"
+        assert all(not r["keys_matched"] for r in found["results"])

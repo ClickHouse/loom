@@ -65,8 +65,13 @@ def test_a_query_names_its_identifier_shaped_terms_as_written_and_lowercased() -
         "userId",
         "userid",
     ]
-    # A plain word is a column as often as the word a question means; alone it is a lookup.
+    # A plain word or an acronym is a column as often as the word a question means;
+    # alone it is a lookup.
     assert query_keys("what does the status of a refund show") == []
+    assert query_keys("which table holds the user ID and its TTL") == []
+    # A dash joins the segments of a dotted path, and only those.
+    assert query_keys("what is pool.max-size set to") == ["pool.max-size"]
+    assert query_keys("a well-known limit") == []
     assert query_keys("sessions") == ["sessions"] and query_keys("Events") == ["Events", "events"]
     assert query_keys("a 1 2 x") == [] and query_keys("") == []
     assert len(query_keys(" ".join(f"term_{i}" for i in range(100)))) == MAX_QUERY_KEYS
