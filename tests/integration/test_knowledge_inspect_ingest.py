@@ -47,7 +47,7 @@ async def _work(job_id: str, c: httpx.AsyncClient, org: str, ns: str) -> dict[st
     try:
         job = await ingestions.get_ingestion(org, ns, job_id)
         assert job is not None, job_id
-        await ingest_run.take_and_run(job)
+        assert await ingest_run.take_and_run(job) is not None, f"job {job_id} did not run"
     finally:
         await ch.disconnect()
     return await _op(c, "knowledge.ingest_status", org=org, namespace=ns, ingestion_id=job_id)

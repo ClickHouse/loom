@@ -10,6 +10,7 @@ runs no workers); then status, get, outline, search and download read it back.
   fails `revision_conflict` and leaves revision 2 serving.
 - An upload whose bytes contradict its name is stored, typed by its name, and its
   job fails with the extractor's code; an ingest of an unknown upload is 404.
+- The queue a worker pass reads offers each namespace its oldest open job.
 
 The job sends originals to the extractor the settings route SQL and TOML to
 (`extractors.endpoint_for`); the tests that publish skip without one.
@@ -81,7 +82,7 @@ async def _work(org: str, ns: str, ingestion_id: str) -> None:
     try:
         job = await ingestions.get_ingestion(org, ns, ingestion_id)
         assert job is not None, ingestion_id
-        await ingest_run.take_and_run(job)
+        assert await ingest_run.take_and_run(job) is not None, f"job {ingestion_id} did not run"
     finally:
         await ch.disconnect()
 
@@ -226,6 +227,45 @@ async def test_a_mislabelled_upload_is_stored_and_the_extractor_refuses_it(
             json={"org": org, "namespace": ns, "source_uri": "repo://report.pdf"},
         )
         assert r.status_code == 200 and r.json().get("found") is False, r.text
+
+
+@pytest.mark.asyncio
+async def test_the_queue_offers_each_namespace_its_oldest_open_job(control_plane_url: str) -> None:
+    """What a worker pass reads (`ingestions.due`), for this test's org alone: one
+    candidate per namespace, the oldest open job of its sources; a later ingest of a
+    source waits behind the earlier one. The jobs are cancelled and ended after, so
+    none is left on the shared queue."""
+    from server.core.ch import get_client
+    from server.knowledge.app import ingest_run
+    from server.knowledge.store import ingestions
+
+    org = unique_org("ingest-due")
+    jobs: list[tuple[str, str]] = []  # (namespace, ingestion id)
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
+        for ns, uri in [("a", "one"), ("a", "one"), ("a", "two"), ("b", "one")]:
+            up = (await _upload(c, org, ns, SQL, "q.sql")).json()
+            job = await _op(
+                c,
+                "knowledge.ingest",
+                org=org,
+                namespace=ns,
+                upload_id=up["upload_id"],
+                source_uri=f"repo://{uri}.sql",
+            )
+            jobs.append((ns, job["ingestion_id"]))
+        ch = get_client()
+        await ch.connect()
+        try:
+            # The whole queue's due jobs, then this org's: the limit is the queue's.
+            due = await ingestions.due(100_000, stale_after_s=60)
+            for ns, job_id in jobs:
+                await _op(c, "knowledge.ingest_cancel", org=org, namespace=ns, ingestion_id=job_id)
+                job = await ingestions.get_ingestion(org, ns, job_id)
+                assert job is not None and await ingest_run.take_and_run(job) == "cancelled"
+        finally:
+            await ch.disconnect()
+    offered = sorted((j["namespace"], j["ingestion_id"]) for j in due if j["org"] == org)
+    assert offered == [jobs[0], jobs[3]]
 
 
 @pytest.mark.asyncio
