@@ -318,8 +318,9 @@ class TaskCreateInput(_Caller):
     origin: str = Field(default="", max_length=512)
     # The task this one follows from (a task id); None for a top-level task.
     parent_task_id: str | None = None
-    # A retry with the same key into the same inbox returns the first task with
-    # `created=false`; "" never deduplicates.
+    # A retry by the same poster with the same key into the same inbox returns the
+    # first task with `created=false`; another poster's same key stores its own task;
+    # "" never deduplicates.
     idempotency_key: str = Field(default="", max_length=256)
     # Dev mode only (no token): who is posting.
     from_subject: str = Field(default="", max_length=256)

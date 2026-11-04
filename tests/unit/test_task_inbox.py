@@ -112,6 +112,7 @@ class FakeRepo:
         return max(repo.next_version(), int(floor) + 1)
 
     resolve_policy = staticmethod(repo.resolve_policy)
+    create_key_digest = staticmethod(repo.create_key_digest)
 
     def __init__(self) -> None:
         self.inboxes: dict[tuple[str, str], dict[str, Any]] = {}
@@ -161,10 +162,15 @@ class FakeRepo:
         row = self.tasks.get(str(task_id))
         return None if row is None or row["org"] != org or row.get("is_deleted") else dict(row)
 
-    async def fetch_task_by_idempotency_key(self, org, inbox, key):
+    async def fetch_task_by_idempotency_key(self, org, inbox, subject, key):
         await asyncio.sleep(0)  # a racing create runs meanwhile
         for r in self.tasks.values():
-            if r["org"] == org and r["inbox"] == inbox and r.get("idempotency_key") == key:
+            if (r["org"], r["inbox"], r["from_subject"], r.get("idempotency_key")) == (
+                org,
+                inbox,
+                subject,
+                key,
+            ):
                 return dict(r)
         return None
 
@@ -174,7 +180,7 @@ class FakeRepo:
     async def insert_created_task(self, row):
         # Storage dedups the key's create token: a second task under the key is dropped.
         prior = await self.fetch_task_by_idempotency_key(
-            row["org"], row["inbox"], row["idempotency_key"]
+            row["org"], row["inbox"], row["from_subject"], row["idempotency_key"]
         )
         if prior is not None:
             return prior
@@ -513,6 +519,20 @@ async def test_idempotency_key_returns_the_first_task(fake: FakeRepo) -> None:
 
 
 @pytest.mark.asyncio
+async def test_another_posters_idempotency_key_stores_its_own_task(fake: FakeRepo) -> None:
+    await _register(fake)
+    fake.inboxes[(ORG, "private-bot")]["posters"] = ["sa:public-bot", "sa:other-bot"]
+    a = await _post(fake, idempotency_key="k1", brief={"objective": "a's secret"})
+    b = await _post(
+        fake, idempotency_key="k1", from_subject="sa:other-bot", brief={"objective": "b's"}
+    )
+    assert a.created and b.created and a.task.task_id != b.task.task_id
+    assert b.task.from_subject == "sa:other-bot" and b.task.brief == {"objective": "b's"}
+    again = await _post(fake, idempotency_key="k1", from_subject="sa:other-bot")
+    assert not again.created and again.task.task_id == b.task.task_id
+
+
+@pytest.mark.asyncio
 async def test_a_create_cut_off_before_its_lease_row_is_claimable_after_one_reconcile(
     fake: FakeRepo,
 ) -> None:
@@ -578,7 +598,7 @@ async def test_a_create_that_lost_the_insert_race_leaves_the_event_to_the_winner
     a = await _post(fake, idempotency_key="k1")
     fake.events.clear()
 
-    async def missed(org, inbox, key):
+    async def missed(org, inbox, subject, key):
         return None  # the loser's lease ran out, so its lookup ran before the winner stored
 
     winner = dict(fake.tasks[a.task.task_id])

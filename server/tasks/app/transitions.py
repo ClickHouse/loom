@@ -5,7 +5,6 @@ and reassign."""
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import time
 import uuid
@@ -100,10 +99,10 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
         )
     if input.parent_task_id and not repo.is_uuid(input.parent_task_id):
         raise _invalid("parent_task_id is not a task id")
-    async with _one_create_per_key(input):
+    async with _one_create_per_key(input, subject):
         if input.idempotency_key:
             prior = await repo.fetch_task_by_idempotency_key(
-                input.org, input.inbox, input.idempotency_key
+                input.org, input.inbox, subject, input.idempotency_key
             )
             if prior is not None:
                 return await _prior_task(prior)
@@ -153,16 +152,16 @@ async def _backfill_created_event(prior: TaskRow) -> None:
 
 
 @asynccontextmanager
-async def _one_create_per_key(input: TaskCreateInput) -> AsyncIterator[None]:
-    """Creates with one idempotency key run one at a time across replicas, from
+async def _one_create_per_key(input: TaskCreateInput, subject: str) -> AsyncIterator[None]:
+    """Creates with one poster's idempotency key run one at a time across replicas, from
     the lookup to the insert, so a retry that waited finds the task the first one
     stored. 409 while another create keeps the key past the wait, 503 when the
     lease store does not answer (as for a memory key's write lock)."""
     if not input.idempotency_key:
         yield
         return
-    ident = "\x1f".join((input.org, input.inbox, input.idempotency_key))
-    name = "task.create/" + hashlib.sha256(ident.encode()).hexdigest()[:40]
+    digest = repo.create_key_digest(input.org, input.inbox, subject, input.idempotency_key)
+    name = "task.create/" + digest[:40]
     async with leases.holding(name, ttl_s=60, wait_s=10) as held:
         if not held:
             raise PreconditionFailedError(

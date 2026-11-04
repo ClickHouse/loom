@@ -23,6 +23,7 @@ from server.core.leases import ClaimExpired
 from server.tasks.api import models_task as wire
 from server.tasks.app import inboxes, transitions
 from server.tasks.store import repo
+from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("LOOM_CH_HOST"),
@@ -359,26 +360,60 @@ async def test_racing_deliveries_store_one(ch: Any, monkeypatch: pytest.MonkeyPa
     assert len(events) == 1
 
 
+@pytest.mark.asyncio
+async def test_another_posters_create_with_the_key_is_not_dropped_by_its_token(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The key's dedup token names the poster: another poster's task under the same key
+    # lands on its first insert, and the first poster's task stays as it was.
+    org, body = await _registered("itest-poster")
+    first = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    stored = await repo.fetch_task(org, first.task.task_id)
+    assert stored is not None
+    other = {
+        **stored,
+        "task_id": str(uuid.uuid4()),
+        "from_subject": "sa:other-poster",
+        "version": int(stored["version"]) + 1,
+    }
+    insert, tokens = repo.insert_task_version, []
+
+    async def counted(*args: Any, **kwargs: Any) -> None:
+        tokens.append(kwargs.get("dedup_token", ""))
+        await insert(*args, **kwargs)
+
+    monkeypatch.setattr(repo, "insert_task_version", counted)
+    answered = await repo.insert_created_task(other)  # type: ignore[arg-type]
+
+    assert str(answered["task_id"]) == other["task_id"]
+    assert len(tokens) == 1  # not dropped and inserted again under a fresh token
+    assert sorted(await _live_tasks(ch, org)) == sorted([first.task.task_id, other["task_id"]])
+    landed = await repo.fetch_task(org, other["task_id"])
+    assert landed is not None
+    assert {**landed, "task_id": str(landed["task_id"])} == other
+    own = await repo.fetch_task_by_idempotency_key(org, "bot", str(stored["from_subject"]), "k1")
+    assert own is not None and str(own["task_id"]) == first.task.task_id
+
+
 # ---- the previous build beside this one (rolling upgrade) ----------------------------
 #
-# The previous build takes no lease. Its create looks the key up, inserts the task, logs
-# the created event and writes the lease row; its delivery checks for the event and
-# inserts it. It names a dedup token, but its client writes a fresh random one over it
-# for every insert, so storage never drops its rows as repeats. Pausing that build
-# mid-request takes hooks it does not have, so these tests make its exact inserts
-# (a random token each) beside this build's call. Neither build keeps the other's row
-# out: a race gives two tasks, as two replicas of the previous build already can.
+# The previous build's create looks the key up, inserts the task, logs the created event
+# and writes the lease row. It names its lease and dedup token without the poster, so
+# neither ever matches this build's. Pausing that build mid-request takes hooks it does
+# not have, so these tests make its create's inserts beside this build's call: the task
+# row under that build's own key token, its event under the task's created token.
+# Neither build's create keeps the other's task out: a race gives two tasks.
 
 _OLD_SETTINGS = {"async_insert": 0, "wait_for_async_insert": 1}
 
 
-def _old_token() -> dict[str, Any]:
-    """The previous build's insert settings: its client's random per-insert token."""
-    return {**_OLD_SETTINGS, "insert_deduplication_token": uuid.uuid4().hex}
+def _old_key_token(org: str) -> dict[str, Any]:
+    """The previous build's task insert settings: its key token, named without the poster."""
+    return {**_OLD_SETTINGS, "insert_deduplication_token": f"task.create:{org}:bot:k1"}
 
 
 async def _registered(prefix: str) -> tuple[str, dict[str, Any]]:
-    org = f"{prefix}-{uuid.uuid4().hex[:8]}"
+    org = unique_org(prefix)
     ident = {"org": org, "namespace": "private", "agent": "admin"}
     await inboxes.handle_inbox_register(
         wire.InboxRegisterInput(
@@ -420,7 +455,7 @@ async def _old_build_create(ch: Any, org: str, namespace: str) -> str:
         title="one task",
         brief="{}",
         from_agent="poster",
-        from_subject="poster",
+        from_subject="",  # the subject this build stamps for a dev-mode create
         origin="",
         idempotency_key="k1",
         owner="",
@@ -433,7 +468,7 @@ async def _old_build_create(ch: Any, org: str, namespace: str) -> str:
     )
     seq = await repo.server_version(0)
     row = _new_version(task, seq)  # type: ignore[arg-type]
-    await ch.insert("loom.tasks", [dict(row)], settings=_old_token())
+    await ch.insert("loom.tasks", [dict(row)], settings=_old_key_token(org))
     event = {
         "org": org,
         "inbox": "bot",
@@ -445,7 +480,7 @@ async def _old_build_create(ch: Any, org: str, namespace: str) -> str:
         "to_status": "todo",
         "actor": "process:poster",
         "agent": "poster",
-        "from_subject": "poster",
+        "from_subject": "",
         "fence": 0,
         "version": seq,
         "reason": "",
@@ -453,7 +488,12 @@ async def _old_build_create(ch: Any, org: str, namespace: str) -> str:
         "note": "",
         "ts": now,
     }
-    await ch.insert("loom.task_events", [event], settings=_old_token())
+    created_token = f"task.created:{org}:{task_id}"
+    await ch.insert(
+        "loom.task_events",
+        [event],
+        settings={**_OLD_SETTINGS, "insert_deduplication_token": created_token},
+    )
     backend = await repo.lease_backend()
     await backend.ensure_row(task_id, org, "bot", 0)
     return task_id
@@ -520,6 +560,16 @@ async def test_this_builds_create_after_an_old_builds_keeps_its_own_task_claimab
 
 
 @pytest.mark.asyncio
+async def test_this_builds_retry_finds_the_task_an_old_builds_create_stored(ch: Any) -> None:
+    # One poster's create landed on the old build; its retry on this build finds it.
+    org, body = await _registered("itest-mixed")
+    old = await _old_build_create(ch, org, "private")
+    retried = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    assert not retried.created and retried.task.task_id == old
+    assert await _live_tasks(ch, org) == [old]
+
+
+@pytest.mark.asyncio
 async def test_a_create_whose_lease_ran_out_answers_the_task_stored_meanwhile(ch: Any) -> None:
     # Two creates of this build: the first one's lease ran out before its insert, and
     # the second one stored the key's task meanwhile. The key's token drops the first
@@ -534,66 +584,6 @@ async def test_a_create_whose_lease_ran_out_answers_the_task_stored_meanwhile(ch
 
     assert str(answered["task_id"]) == stored.task.task_id
     assert await _live_tasks(ch, org) == [stored.task.task_id]
-
-
-async def _old_build_delivery(ch: Any, watch: Any) -> None:
-    """The previous build's delivery once its check found no event: the ready event
-    under a random token."""
-    from server.code.app import watches as svc
-    from server.code.store import coverage_watches as wrepo
-
-    task_id = wrepo.event_id(watch.org, watch.namespace, watch.commit_sha, watch.inbox)
-    row = svc._event_row(watch, task_id, [], await repo.server_version(0))
-    await ch.insert("loom.task_events", [row], settings=_old_token())
-
-
-async def _ready_events(ch: Any, watch: Any) -> int:
-    from server.code.store import coverage_watches as wrepo
-
-    task_id = wrepo.event_id(watch.org, watch.namespace, watch.commit_sha, watch.inbox)
-    rows = await ch.query_all(
-        "SELECT seq FROM loom.task_events WHERE org = {org:String} AND task_id = {tid:UUID} "
-        "SETTINGS select_sequential_consistency = 1",
-        params={"org": watch.org, "tid": task_id},
-    )
-    return len(rows)
-
-
-@pytest.mark.asyncio
-async def test_an_old_builds_delivery_after_this_builds_posts_a_second_event(ch: Any) -> None:
-    from server.code.app import watches as svc
-    from server.code.store import coverage_watches as wrepo
-
-    org = f"itest-mixed-{uuid.uuid4().hex[:8]}"
-    watch = svc.new_watch(org, "code", "c" * 40, "bot", "poster")
-    await wrepo.insert_watch_version(watch)
-    emitted, _ = await svc.deliver(watch, {"tiers": []})
-    await _old_build_delivery(ch, watch)
-    assert emitted and await _ready_events(ch, watch) == 2
-
-
-@pytest.mark.asyncio
-async def test_this_builds_delivery_after_an_old_builds_reports_its_own_event(
-    ch: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.code.app import watches as svc
-    from server.code.store import coverage_watches as wrepo
-
-    org = f"itest-mixed-{uuid.uuid4().hex[:8]}"
-    watch = svc.new_watch(org, "code", "d" * 40, "bot", "poster")
-    await wrepo.insert_watch_version(watch)
-    check, old = wrepo.ready_event_exists, []
-
-    async def old_build_lands_after_the_check(*args: Any, **kwargs: Any) -> bool:
-        found = await check(*args, **kwargs)
-        if not old:
-            old.append(await _old_build_delivery(ch, watch))
-        return found
-
-    monkeypatch.setattr(wrepo, "ready_event_exists", old_build_lands_after_the_check)
-    emitted, _ = await svc.deliver(watch, {"tiers": []})
-    # Both events landed, so this delivery reports the one it stored.
-    assert emitted and await _ready_events(ch, watch) == 2
 
 
 async def _cancelled_mid_insert(
