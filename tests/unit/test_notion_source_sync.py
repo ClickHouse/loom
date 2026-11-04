@@ -1358,3 +1358,47 @@ def test_an_unreadable_block_of_a_re_read_page_keeps_its_children(
     detail = _detail(world)
     assert detail["child_pages"] == {CHILD: PAGE}
     assert _uri(world, CHILD) in world.docs and world.audits == []
+
+
+@pytest.mark.parametrize(("status", "state"), [(429, "rate_limited"), (401, "credential_invalid")])
+def test_a_walk_rate_limited_or_refused_ends_the_turn(
+    world: _Store, status: int, state: str
+) -> None:
+    uri = _moved_under_a_column(world, None)
+    world.answers[f"/blocks/{COLUMN_OF}"] = httpx.Response(status)
+    _run(full=True)
+    assert _detail(world)["status"] == state
+    assert uri in world.docs and world.audits == []
+
+
+def test_a_walk_past_its_bound_keeps_the_child(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(source_sync_notion, "_MAX_BLOCK_HOPS", 2)
+    deeper = "34343434-3434-4434-8434-343434343434"
+    uri = _moved_under_a_column(world, _under_block(TOGGLE))
+    world.block_parents[TOGGLE] = _under_block(deeper)
+    world.block_parents[deeper] = _under(OUTSIDE)  # three hops away: past the bound
+    _run(full=True)
+    assert uri in world.docs and world.audits == []
+
+
+def test_a_walk_that_reaches_the_workspace_retires_the_child(world: _Store) -> None:
+    uri = _moved_under_a_column(world, {"type": "workspace", "workspace": True})
+    _run(full=True)
+    assert uri not in world.docs and [a["subject"]["source_uri"] for a in world.audits] == [uri]
+
+
+@pytest.mark.parametrize(
+    "parent",
+    [
+        {"type": "database_id", "database_id": DB},  # not a parent the walk follows
+        {"type": "page_id", "page_id": "not-an-id"},
+    ],
+)
+def test_a_walk_with_an_unexpected_parent_keeps_the_child(
+    world: _Store, parent: dict[str, Any]
+) -> None:
+    uri = _moved_under_a_column(world, parent)
+    _run(full=True)
+    assert uri in world.docs and world.audits == []

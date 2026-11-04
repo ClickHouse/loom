@@ -19,8 +19,10 @@ a full turn's lookup retires its document. A listed page, database or data sourc
 the integration no longer sees, or a database in the trash, fails the turn and
 retires nothing, while the pages it still sees are written. A document is retired
 only after a complete full listing lacks its page and a lookup of that page finds
-it gone, in the trash, or under none of the listed pages, listed databases and
-known children.
+it gone: not found, in the trash, or under none of the listed pages, listed
+databases, pages the turn listed and children the store refused this turn (for a
+page under a block whose holding page is unknown, after walking the block's parents
+to that page).
 """
 
 from __future__ import annotations
@@ -384,9 +386,11 @@ async def _lookup(t: _Turn, page_id: str) -> bool | None:
 
 async def _block_page(t: _Turn, block_id: str) -> str | None:
     """The page a block sits in, walking its parents up (at most `_MAX_BLOCK_HOPS`
-    requests): its id, "" when the walk reaches no page (the workspace, or a block the
-    store reports not found), or None when it cannot tell (another failure, an
-    unexpected parent, the bound). A rate limit or a 401 is raised."""
+    requests): its id, "" when the walk reaches no page of the source, or None when it
+    cannot tell (another failure, an unexpected parent, the bound). The workspace is
+    no page; and a block the store answers 404 for is not shared with the integration,
+    while every block under the listed pages and databases is, so the page is outside
+    the source. A rate limit or a 401 is raised."""
     for _ in range(_MAX_BLOCK_HOPS):
         if not notion.valid_id(block_id):
             return None
@@ -400,7 +404,8 @@ async def _block_page(t: _Turn, block_id: str) -> str | None:
             return None
         parent = block.get("parent") or {}
         if parent.get("type") == "page_id":
-            return str(parent.get("page_id") or "")
+            page_id = str(parent.get("page_id") or "")
+            return page_id if notion.valid_id(page_id) else None
         if parent.get("type") == "workspace":
             return ""
         if parent.get("type") != "block_id":
