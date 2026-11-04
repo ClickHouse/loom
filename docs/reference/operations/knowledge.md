@@ -365,7 +365,7 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 | `uri_prefix` | `list[str]` | *(computed)* | Directory scope: only chunks whose source_uri starts with one of these prefixes. |
 | `session_ids` | `list[str]` | *(computed)* | Only chunks of documents written in one of these sessions (a chat's own attachments, an agent run's output). |
 | `source_classes` | `list[str]` | *(computed)* | Only chunks of these classes, e.g. ["asserted"] for what people and their agents wrote as their own, without what an agent derived or fetched. |
-| `formats` | `list[str]` | *(computed)* | Only chunks of documents in these formats: the `format` `knowledge.ingest` records and `knowledge.get` returns (`sql`, `toml`, `markdown`, ...), or '' for a text write's documents (a source sync's among them), for which `knowledge.get`… |
+| `formats` | `list[str]` | *(computed)* | Only chunks of documents in these formats: an ingested file's `format` (`sql`, `toml`, `markdown`, ...), or '' for every other document, a synced one included whatever `knowledge.inspect` names it (`knowledge.get` returns null for those). |
 | `block_types` | `list[str]` | *(computed)* | Only chunks of these block types (`sql_statement`, `toml_table`, `toml_key`, `heading`, `paragraph`, `code`, `mixed`, ...). |
 | `rerank` | `str` | `''` | Reranker for the fused head: "" = the deployment default (LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT), "none" = off, "builtin:openai[:<model>]", "builtin:cohere[:<model>]" or an endpoint name in LOOM_RERANK_ENDPOINTS_JSON (no URL). |
 

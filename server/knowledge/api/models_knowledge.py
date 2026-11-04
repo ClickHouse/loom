@@ -209,11 +209,10 @@ class KnowledgeSearchInput(BaseModel):
     # agents wrote as their own, without what an agent derived or fetched.
     # Empty = every class.
     source_classes: list[str] = Field(default_factory=list, max_length=8)
-    # Only chunks of documents in these formats: the `format` `knowledge.ingest` records
-    # and `knowledge.get` returns (`sql`, `toml`, `markdown`, ...), or '' for a text write's
-    # documents (a source sync's among them), for which `knowledge.get` returns null.
-    # A chunk written before formats were recorded is ''; so is a synced document that
-    # `knowledge.inspect`'s `by_format` names `markdown` or `pdf`. Empty = every format.
+    # Only chunks of documents in these formats: an ingested file's `format` (`sql`,
+    # `toml`, `markdown`, ...), or '' for every other document, a synced one included
+    # whatever `knowledge.inspect` names it (`knowledge.get` returns null for those).
+    # A chunk written before formats were recorded is ''. Empty = every format.
     formats: list[Annotated[str, Field(max_length=32)]] = Field(default_factory=list, max_length=16)
     # Only chunks of these block types (`sql_statement`, `toml_table`, `toml_key`,
     # `heading`, `paragraph`, `code`, `mixed`, ...). Empty = every type; text a caller
