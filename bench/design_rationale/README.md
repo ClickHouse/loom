@@ -184,5 +184,7 @@ decided are left out, and `detector_fired` labels are never counted. `score` wri
 also writes the aggregates without the per-task rows or document ids, with the task set's
 counts (documents, revisions, revised documents, tasks by kind and subtype, tasks with
 gold rows), the run's flags with K and the judge orders and repeats, and its spend by
-ledger stage and the answers' cost per arm, the file a published result commits. The run
+ledger stage (a last ledger row an interrupt cut short is left out and counted) and the
+answers' cost per arm (their tokens at the current price table), the file a published
+result commits. The run
 directory holds the task set's content: keep it out of the repository.

@@ -19,7 +19,7 @@ from statistics import mean
 from typing import Any
 
 from bench.bootstrap import paired_bootstrap
-from bench.design_rationale.llm import Ledger, cost_usd, price
+from bench.design_rationale.llm import cost_usd, price
 from bench.design_rationale.taskset import TaskSet, parse_key, surface_key
 
 # z(0.975) + z(0.80): the effect a two-sided 5% test detects with 80% power is this many
@@ -577,7 +577,18 @@ def summary(ts: TaskSet, metrics: dict[str, Any], out_dir: Path) -> dict[str, An
         "tasks_with_gold_rows": sum(1 for _, t in ts.all_tasks() if t["gold_rows"]),
     }
     by_stage: dict[str, float] = defaultdict(float)
-    for row in Ledger(out_dir / "ledger.jsonl", math.inf).rows():
+    ledger = out_dir / "ledger.jsonl"
+    lines = ledger.read_text().splitlines() if ledger.exists() else []
+    dropped = 0
+    for i, line in enumerate(lines):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            # Read only: the last row an interrupt cut short is left out and counted.
+            if i < len(lines) - 1:
+                raise
+            dropped = 1
+            continue
         by_stage[row["stage"]] += row["usd"]
     priced = price(flags["reader"]) is not None
     answer_usd: dict[int, float] = defaultdict(float)
@@ -606,6 +617,7 @@ def summary(ts: TaskSet, metrics: dict[str, Any], out_dir: Path) -> dict[str, An
         "spend_usd": {
             "by_stage": {k: round(v, 4) for k, v in sorted(by_stage.items())},
             "total": round(sum(by_stage.values()), 4),
+            "ledger_rows_dropped": dropped,
             "answers_by_arm": {
                 arm: {"answers": n, "usd": round(answer_usd[arm], 4) if priced else None}
                 for arm, n in sorted(answer_n.items())

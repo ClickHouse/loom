@@ -305,6 +305,10 @@ def test_the_no_claim_share_counts_a_answers_whose_passes_made_no_claim():
         "passes": [*unreadable["passes"], *entry([claim])["passes"]],
     }
     assert score.a_answers_without_claims(ts, judged) == {0: round(1 / 3, 4)}
+    # An answer whose only pass is unreadable is not scored at all.
+    only = {**entry([])["passes"][0]["verdict"], "claims": False}
+    judged[f"{tid}/arm0/s4"] = {"citations": [], "detectors": [], "passes": [{"verdict": only}]}
+    assert score.a_answers_without_claims(ts, judged) == {0: round(1 / 3, 4)}
 
 
 def test_a_verdict_without_its_keys_is_unreadable_not_a_pass():
@@ -1415,6 +1419,27 @@ def test_score_writes_the_summary_without_per_task_rows(tmp_path):
     # Scoring again regenerates the same file.
     assert main([*argv, "--summary", str(path)]) == 0
     assert path.read_text() == first
+
+
+def test_the_summary_reads_a_cut_ledger_without_rewriting_it(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.jsonl", 1.0)
+    model = _fake_model(ledger)
+    run.run(ts, _config(out, arms=[0], k=1, judge_orders=1), FakeLoom(), model, [model], ledger)
+    total = round(sum(r["usd"] for r in ledger.rows()), 4)
+    path = out / "ledger.jsonl"
+    whole = path.read_text()
+    path.write_text(whole + '{"stage": "answer", "usd": 0.')  # an interrupt cut this row
+    before = path.read_text()
+    spend = score.summary(ts, score.score(ts, out), out)["spend_usd"]
+    assert path.read_text() == before
+    assert spend["ledger_rows_dropped"] == 1 and spend["total"] == total
+    # A broken row before the last is not an interrupt: refused.
+    path.write_text('{"stage": "answer", "usd": 0.\n' + whole)
+    with pytest.raises(json.JSONDecodeError):
+        score.summary(ts, score.score(ts, out), out)
 
 
 def test_the_summary_of_an_unpriced_reader_has_no_answer_cost(tmp_path):

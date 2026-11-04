@@ -674,7 +674,9 @@ Arm 1 injects 1.83 times arm 3's tokens. By ledger stage the run spent 0.099 USD
 answers, 0.321 on 2,100 judge passes and 0.004 on the server's own model and embedding
 calls. For extraction the ledger charges an upper bound once per document before its
 extraction run, 0.173 USD in all: the extraction's model calls cost at most 0.173, and its
-write embeddings are not recorded. The ledger does not split judging by arm.
+write embeddings are not recorded. The ledger does not split spend by arm: the answers'
+cost per arm is their recorded tokens priced at the current price table, and judging is
+not split.
 
 **Reading.** Resolved against zero (the interval's lower bound above it, or its upper
 bound below it): the gold rows (arm 3) raise A precision and recall and B avoidance and

@@ -41,6 +41,7 @@
       "server": 0.0037
     },
     "total": 0.5969,
+    "ledger_rows_dropped": 0,
     "answers_by_arm": {
       "0": {
         "answers": 105,
