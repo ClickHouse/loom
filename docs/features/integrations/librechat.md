@@ -168,8 +168,8 @@ states a value the earlier one did not. The labels name each answer's value and 
 section that states it; two questions ask for a fact no document holds.
 
 An answer cites a document passage as `[source_uri § Section > Subsection]`, the
-breadcrumb a `knowledge.search` hit carries in `section`, and adds `, revision 3` only
-with the number `knowledge.get` returned, since a hit carries no revision. A document with
+breadcrumb a `knowledge.search` hit carries in `section`, and adds `, revision 3` with
+the `revision` the hit carries (the one its passage was written as). A document with
 no headings (the contract, the SQL file) is cited by its `source_uri` alone. Every
 document is plain text to the server: the harness sends no format, and no case runs
 through extraction. On the text path a TOML `# comment` line is a Markdown heading, so the
@@ -203,5 +203,5 @@ TOML file's sections are its comments.
 
 The five documents make a small corpus, so rank 1 for every labeled section says the
 breadcrumbs reach the hits, not that retrieval holds up at scale. No citation names a
-revision: the model read `knowledge.get` only on the two unanswerable questions, and the
-hits it cited from carry none.
+revision: the run predates search hits carrying their revision, and the model read
+`knowledge.get` only on the two unanswerable questions.

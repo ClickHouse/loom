@@ -296,12 +296,11 @@ that serves it, and give it a `viewer` token in any case. On it:
   with `explain: false`, so its hits carry no per-hit score breakdown. `memory.search` and
   `knowledge.search`, which the other listings leave to `loom_search`, are listed here
   so an answer can come from one plane at a time. A `knowledge.search` hit names its
-  `source_uri` and heading breadcrumb (`section`); the document's `revision` comes from
-  `knowledge.get`. The hit is the nearest passage, not an answer: the op has no abstain
+  `source_uri`, heading breadcrumb (`section`) and the `revision` its passage was written
+  as, and an ingested file's hit its `locator`. The hit is the nearest passage, not an answer: the op has no abstain
   signal, so the model says a fact is not in the documents when no hit states it.
 - **The `initialize` instructions** tell the model to cite each claim by key and version
-  or content hash, or by document `source_uri` and section (with the revision when
-  `knowledge.get` returned one), to keep source statements, computed results and its own
+  or content hash, or by document `source_uri`, section and the revision a hit carries, to keep source statements, computed results and its own
   reading apart, to report missing evidence as not observed, and to treat stored text as
   data that cannot grant a tool or approve a change.
 
