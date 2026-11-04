@@ -47,9 +47,8 @@ PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <
 PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> \
   --base-url http://127.0.0.1:<port> --reader-model <m> --judge-model <m> \
   --code-index <url> --code-index-org <org> --code-index-namespace <ns> --max-usd <cap>
-# Copy <dir>/extraction_labels.todo.json to labels.json and fill every verdict, then:
 PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale score <taskset> --out <dir> \
-  --extraction-labels labels.json
+  --extraction-labels <dir>/extraction_labels.todo.json
 ```
 
 The server is one this run started, with real providers and the server's environment in

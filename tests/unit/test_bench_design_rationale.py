@@ -1277,3 +1277,29 @@ def test_scoring_with_the_unfilled_label_sheet_fails_clearly(tmp_path, capsys):
     code = main(["score", str(EXAMPLE), "--out", str(out), "--extraction-labels", str(sheet)])
     assert code == 2
     assert "fill each row's verdict first" in capsys.readouterr().err
+
+
+def test_a_ledger_line_cut_short_by_an_interrupt_is_dropped(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    ledger = Ledger(path, 1.0)
+    ledger.record_usd("server", 0.25)
+    with path.open("a") as f:
+        f.write('{"stage": "answer", "usd": 0.')  # the process died here
+    resumed = Ledger(path, 1.0)
+    assert resumed.spent() == 0.25
+    resumed.record_usd("server", 0.5)
+    assert [r["usd"] for r in Ledger(path, 1.0).rows()] == [0.25, 0.5]
+
+
+def test_save_json_leaves_the_old_file_whole_when_a_write_fails(tmp_path, monkeypatch):
+    path = tmp_path / "answers.json"
+    run.save_json(path, {"A1/arm0/s1": {"text": "kept"}})
+
+    def broken(self, text, *args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_text", broken)
+    with pytest.raises(OSError):
+        run.save_json(path, {"A1/arm0/s1": {"text": "lost"}})
+    monkeypatch.undo()
+    assert json.loads(path.read_text()) == {"A1/arm0/s1": {"text": "kept"}}

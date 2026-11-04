@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -49,14 +50,36 @@ def cost_usd(model: str, tokens_in: int, tokens_out: int) -> float:
     return tokens_in / 1000 * p[0] + tokens_out / 1000 * p[1]
 
 
+def write_atomic(path: Path, text: str) -> None:
+    """Write `text` to `path` through a sibling temp file and a rename, so an interrupt
+    mid-write leaves the old file whole."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
 class Ledger:
     """One JSON line per call in `<out>/ledger.jsonl`; spend survives a resumed run."""
 
     def __init__(self, path: Path, max_usd: float):
         self.path = path
         self.max_usd = max_usd
+        self._drop_partial_last_line()
         # Read once; every row this ledger appends adds to it.
         self._spent = float(sum(r["usd"] for r in self.rows()))
+
+    def _drop_partial_last_line(self) -> None:
+        """An interrupt mid-append leaves a last line cut short: drop it, so the rows
+        parse and the next append starts a line of its own."""
+        if not self.path.exists():
+            return
+        lines = [line for line in self.path.read_text().splitlines() if line]
+        if not lines:
+            return
+        try:
+            json.loads(lines[-1])
+        except json.JSONDecodeError:
+            write_atomic(self.path, "".join(line + "\n" for line in lines[:-1]))
 
     def rows(self) -> list[dict[str, Any]]:
         if not self.path.exists():

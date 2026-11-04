@@ -312,8 +312,7 @@ def cmd_score(a: argparse.Namespace) -> int:
     labels = json.loads(a.extraction_labels.read_text()) if a.extraction_labels else None
     try:
         metrics = scorer.score(ts, a.out, human=human, extraction_labels=labels)
-    except ValueError as e:
-        # An unfilled or mistyped verdict in the human-judged file.
+    except scorer.LabelError as e:
         return _fail(f"{a.extraction_labels}: {e}; fill each row's verdict first")
     print(scorer.report(metrics))
     return 0

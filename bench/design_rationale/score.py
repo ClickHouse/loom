@@ -409,6 +409,10 @@ def judge_vs_human(
 VERDICTS = ("correct", "partly", "wrong", "misleading")
 
 
+class LabelError(ValueError):
+    """A human-judged extraction row whose verdict is empty or not one of `VERDICTS`."""
+
+
 def extraction_precision(
     ts: TaskSet, labels: list[dict[str, Any]], state: dict[str, Any]
 ) -> dict[str, Any]:
@@ -420,7 +424,7 @@ def extraction_precision(
     per: dict[str, list[str]] = defaultdict(list)
     for lab in labels:
         if lab["verdict"] not in VERDICTS:
-            raise ValueError(f"verdict {lab['verdict']!r} is not one of {VERDICTS}")
+            raise LabelError(f"verdict {lab['verdict']!r} is not one of {VERDICTS}")
         per[lab["document"]].append(lab["verdict"])
     docs: dict[str, Any] = {}
     for doc_id in sorted(set(per) | {g.document for g in ts.gold.values()}):

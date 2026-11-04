@@ -24,6 +24,7 @@ from bench.design_rationale.llm import (
     cost_usd,
     parse_json,
     price,
+    write_atomic,
 )
 from bench.design_rationale.loom import (
     PRE_EDIT_BUDGET,
@@ -98,7 +99,7 @@ def load_json(path: Path) -> dict[str, Any]:
 
 
 def save_json(path: Path, obj: Any) -> None:
-    path.write_text(json.dumps(obj, indent=1, ensure_ascii=False))
+    write_atomic(path, json.dumps(obj, indent=1, ensure_ascii=False))
 
 
 def pre_edit_block_tokens() -> int:
