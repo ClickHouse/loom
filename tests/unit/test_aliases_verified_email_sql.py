@@ -89,6 +89,14 @@ SETUP = (
 )
 
 
+# An SSO account whose login handle is its address.
+_GINA = (
+    "INSERT INTO loom.namespaces (org, namespace, owner_email, contact_email,"
+    " password_hash, active, created_at, updated_at) VALUES"
+    f" ('{ORG}', 'gina', 'gina@corp.example', 'gina@corp.example', '', 1, now(), now())"
+)
+
+
 class _CH(LocalCH):
     async def query_one(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> Any:
         rows = await self.query_all(sql, params)
@@ -232,14 +240,6 @@ async def test_an_address_is_held_by_a_verified_account_or_a_handle_that_is_it(
     client = _CH(*SETUP, _GINA)
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
     assert (await aliases.verified_tie(ORG, address))[1] is held
-
-
-# An SSO account whose login handle is its address.
-_GINA = (
-    "INSERT INTO loom.namespaces (org, namespace, owner_email, contact_email,"
-    " password_hash, active, created_at, updated_at) VALUES"
-    f" ('{ORG}', 'gina', 'gina@corp.example', 'gina@corp.example', '', 1, now(), now())"
-)
 
 
 @pytest.mark.asyncio

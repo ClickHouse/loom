@@ -250,8 +250,9 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   that account's claims. Grant a self-signup account under its login handle, the namespace
   it signed up with. A `grants.revoke` of an address no verified account holds, and that
   never held a row of its own on the namespace, takes the rows stored under each
-  unverified account naming it, and the grants there of the tokens those accounts made,
-  unless that account still holds an active grant of its own there.
+  unverified account naming it, and the grants there of the tokens those accounts made.
+  When the address held a row of its own there, its revoke also takes the grants of the
+  tokens those accounts made there, unless one still holds an active grant of its own.
 - **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.
   With self-signup (`LOOM_IDENTITY_PROVIDER=trust-network`) the first principal to claim a
   name owns it; `loom claim-release --org <org> --namespace <ns>` revokes its grants,

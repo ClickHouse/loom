@@ -177,12 +177,7 @@ async def canonical_subject(org: str, subject: str, *, ch: object | None = None)
 async def verified_spellings(org: str, subject: str, *, ch: object | None = None) -> list[str]:
     """`read_aliases` read past a link or release another process just made: the
     subject alone when it has no aliases. Raises when the directory cannot be read."""
-    from server.core.ch import own_write_reads
-
-    if not has_aliases(subject):
-        return [subject]
-    with own_write_reads():
-        return await read_aliases(org, subject, ch)
+    return (await verified_tie(org, subject, ch=ch))[0]
 
 
 async def verified_tie(
