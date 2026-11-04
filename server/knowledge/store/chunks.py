@@ -86,6 +86,8 @@ def build_chunk_rows(
     tags: list[str],
     metadata: str,
     doc_version: int,
+    revision: int,
+    doc_format: str,
     embedding_model: str,
     embedding_dim: int,
     now: datetime,
@@ -94,8 +96,9 @@ def build_chunk_rows(
     """One ingestion's loom.chunks rows, every column set: each chunk with its
     context (`chunk_context`) and vector, the sha256 of the text the vector was
     computed from (`embedding_text`), the document's tags and metadata (JSON),
-    its own section metadata, exact keys and content hash (what upsert's
-    duplicate count and the dedup report match on), and the document's
+    its own section metadata with the document revision and format it is written
+    as (what a search hit and a citation name), exact keys and content hash (what
+    upsert's duplicate count and the dedup report match on), and the document's
     provenance (`author`: agent, user_id, session_id, source_class) that search
     returns and filters on."""
     return [
@@ -108,7 +111,9 @@ def build_chunk_rows(
             "context": context,
             "tags": tags,
             "doc_metadata": metadata,
-            "chunk_metadata": json.dumps(chunk.meta, sort_keys=True),
+            "chunk_metadata": json.dumps(
+                {**chunk.meta, "revision": revision, "format": doc_format}, sort_keys=True
+            ),
             "ingested_at": now,
             "doc_superseded_at": None,
             "doc_version": doc_version,

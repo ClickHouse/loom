@@ -252,12 +252,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Results are point-in-time. RE-CALL on repeat questions — "
         "documents can change between turns; don't replay an earlier "
         "answer."
-        " Ranking is hybrid by default: vector similarity fused with a BM25 "
-        "lexical leg by reciprocal rank (`search_mode` = hybrid | semantic | "
-        "lexical; `lexical_weight` 0-1 tunes the fusion). One hit per "
-        "section by default (`collapse_sections`; `siblings_folded` says how "
-        "many chunks it stands for). Hits carry "
-        "`section` (heading breadcrumb) and `score`."
+        " Ranking is hybrid by default: vector similarity, a BM25 lexical leg "
+        "and an exact-key leg (identifier-shaped terms such as `orders_daily` "
+        "against the names a chunk defines or reads) fused by reciprocal rank "
+        "(`search_mode` = hybrid | semantic | lexical; `lexical_weight` 0-1 "
+        "tunes the fusion). One hit per section by default "
+        "(`collapse_sections`; `siblings_folded` says how many chunks it "
+        "stands for). Hits carry `section` (heading breadcrumb), `score`, the "
+        "`revision` the passage was written as and, for an ingested file, its "
+        "`locator`; `formats` and `block_types` narrow them."
     ),
     "knowledge.upsert": (
         "WHAT: Add-or-replace a document by `source_uri`. Same shape "
@@ -2270,9 +2273,10 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "knowledge.search": (
         "Search the namespace's documents. Hits carry the document's `source_uri`, its "
-        "`section` breadcrumb and a score: cite the source_uri and section, and the "
-        "`revision` when you read the document with loom_knowledge_get. A hit is the nearest "
-        "passage, not an answer: when no hit states the fact, say it is not in the "
+        "`section` breadcrumb, the `revision` the passage was written as, a score and, for "
+        "an ingested file, a `locator` (its lines or key path): cite the source_uri, "
+        "section and revision (a revision of 0 was not recorded: cite none). A hit is the "
+        "nearest passage, not an answer: when no hit states the fact, say it is not in the "
         "documents. Memories are searched with loom_memory_search."
     ),
     "knowledge.list": (

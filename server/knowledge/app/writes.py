@@ -258,6 +258,8 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         input.source_uri,
         include_superseded=True,
     )
+    # The document row and every chunk row record the same revision.
+    revision = next_revision(prior)
     uploader = author["user_id"]  # the writer's, even when the document keeps its author
     writer = author["actor"]
     author = _author_for(prior, input.content, author, _fresh_sha(input))
@@ -295,7 +297,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
             blob_size=blob_size,
             blob_content_type=blob_content_type,
             original_filename=original_filename,
-            revision=next_revision(prior),
+            revision=revision,
         )
     )
 
@@ -311,6 +313,8 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         tags=input.tags,
         metadata=json.dumps(input.metadata, sort_keys=True),
         doc_version=version,
+        revision=revision,
+        doc_format="",
         embedding_model=embedder.model_name,
         embedding_dim=embedder.dim,
         now=now,
@@ -362,6 +366,8 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
         input.source_uri,
         include_superseded=True,
     )
+    # The document row and every chunk row record the same revision.
+    revision = next_revision(prior)
     uploader = author["user_id"]  # the writer's, even when the document keeps its author
     writer = author["actor"]
     author = _author_for(prior, input.content, author, _fresh_sha(input))
@@ -389,7 +395,7 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
         blob_size=blob_size,
         blob_content_type=blob_content_type,
         original_filename=original_filename,
-        revision=next_revision(prior),
+        revision=revision,
     )
 
     from server.knowledge.store import chunks as knowledge_repo
@@ -406,6 +412,8 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
             tags=input.tags,
             metadata=json.dumps(input.metadata, sort_keys=True),
             doc_version=version,
+            revision=revision,
+            doc_format="",
             embedding_model=embedder.model_name,
             embedding_dim=embedder.dim,
             now=now,
@@ -642,6 +650,7 @@ async def handle_knowledge_bulk_add(
     for entry, entry_author in zip(input.entries, authors, strict=True):
         doc_id = str(uuid.uuid4())
         version = _nano_version()
+        revision = next_revision(priors.get(entry.source_uri))
         chunks = _chunk_text(entry.content)
         prior = _original_of(priors.get(entry.source_uri), entry_author)
         prior = prior if documents_repo.serves_original(prior) else None
@@ -664,7 +673,7 @@ async def handle_knowledge_bulk_add(
                 blob_size=prior.blob_size if prior else 0,
                 blob_content_type=prior.blob_content_type if prior else "",
                 original_filename=prior.original_filename if prior else "",
-                revision=next_revision(priors.get(entry.source_uri)),
+                revision=revision,
             )
         )
 
@@ -681,6 +690,8 @@ async def handle_knowledge_bulk_add(
                 tags=entry.tags,
                 metadata=json.dumps(entry.metadata, sort_keys=True),
                 doc_version=version,
+                revision=revision,
+                doc_format="",
                 embedding_model=embedder.model_name,
                 embedding_dim=embedder.dim,
                 now=now,

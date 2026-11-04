@@ -123,7 +123,7 @@ async def lexical_stats(
 ) -> tuple[float, list[float]]:
     """(avgdl, idfs aligned with `tokens`) for the lexical leg over
     `namespaces`; (0.0, []) on a cold corpus or a failed read, which leaves the
-    vector leg alone."""
+    vector leg (and, in hybrid mode, the exact-key leg)."""
     try:
         n_docs, avgdl = await corpus_stats(
             ch, org=org, namespaces=namespaces, embedding_model=embedding_model

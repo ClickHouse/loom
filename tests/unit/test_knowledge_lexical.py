@@ -13,6 +13,16 @@ import pytest
 from server.knowledge.app.search import ChunkHit, HybridSearchQuery, fuse_rrf, lexical_search
 
 
+@pytest.fixture(autouse=True)
+def _no_keyed_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No chunk carries exact keys here: the exact-key leg finds none."""
+
+    async def _none(*a: Any, **k: Any) -> list[Any]:
+        return []
+
+    monkeypatch.setattr("server.knowledge.app.search.keys_search", _none)
+
+
 class StubCH:
     def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []

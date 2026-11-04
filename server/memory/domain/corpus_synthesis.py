@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,10 @@ class CorpusChunk:
     idx: int
     text: str
     section_path: tuple[str, ...] = ()
+    # The document revision the chunk was written as (0 when it records none), and
+    # where an extracted file's chunk sits in the source (lines, a key path, ...).
+    revision: int = 0
+    locator: dict[str, Any] | None = None
 
 
 @dataclass
@@ -155,6 +160,20 @@ def cites_what_was_read(tag: str, read: set[tuple[str, int]]) -> bool:
         if not (a <= b and (source, a) in read and (source, b) in read):
             return False
     return True
+
+
+def cited_chunks(tags: Sequence[str], read: set[tuple[str, int]]) -> list[tuple[str, int]]:
+    """The (source, idx) chunks the grounded citation `tags` (`ground_citations`' kept
+    ones) name, each once, in the order first cited: every chunk of a `source#a-b`
+    range the passes read."""
+    out: dict[tuple[str, int], None] = {}
+    for tag in tags:
+        for m in _ITEM_PARTS.finditer(tag):
+            source, a, b = m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))
+            for idx in range(a, b + 1):
+                if (source, idx) in read:
+                    out.setdefault((source, idx), None)
+    return list(out)
 
 
 def ground_citations(answer: str, read: set[tuple[str, int]]) -> tuple[str, list[str], list[str]]:

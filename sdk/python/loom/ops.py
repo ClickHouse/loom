@@ -10566,6 +10566,8 @@ class KnowledgeSearchInput(TypedDict, total=False):
     uri_prefix: NotRequired[list[str]]
     session_ids: NotRequired[list[str]]
     source_classes: NotRequired[list[str]]
+    formats: NotRequired[list[str]]
+    block_types: NotRequired[list[str]]
     rerank: NotRequired[str]
 
 
@@ -10585,6 +10587,8 @@ class KnowledgeSearchBody(TypedDict, total=False):
     uri_prefix: NotRequired[list[str]]
     session_ids: NotRequired[list[str]]
     source_classes: NotRequired[list[str]]
+    formats: NotRequired[list[str]]
+    block_types: NotRequired[list[str]]
     rerank: NotRequired[str]
 
 
@@ -10617,6 +10621,11 @@ class SearchHit(TypedDict, total=False):
     agent: NotRequired[str]
     session_id: NotRequired[str]
     source_class: NotRequired[str]
+    revision: NotRequired[int]
+    format: NotRequired[str]
+    block_type: NotRequired[str]
+    locator: NotRequired[Optional[dict[str, Any]]]
+    keys_matched: NotRequired[list[str]]
 
 
 class KnowledgeSourceAddInput(TypedDict, total=False):
@@ -10871,11 +10880,19 @@ class KnowledgeSynthesizeOutput(TypedDict, total=False):
     documents: Required[int]
     reduce_rounds: Required[int]
     citations: NotRequired[list[str]]
+    cited_chunks: NotRequired[list["CitedChunk"]]
     unsupported_citations: NotRequired[list[str]]
     truncated: NotRequired[bool]
     abstain: NotRequired[bool]
     abstain_reason: NotRequired[str]
     model: NotRequired[str]
+
+
+class CitedChunk(TypedDict, total=False):
+    source_uri: Required[str]
+    chunk_idx: Required[int]
+    revision: NotRequired[int]
+    locator: NotRequired[Optional[dict[str, Any]]]
 
 
 class KnowledgeUpdateMetadataInput(TypedDict, total=False):

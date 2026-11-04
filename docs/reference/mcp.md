@@ -293,17 +293,18 @@ that serves it, and give it a `viewer` token in any case. On it:
   prompt write no profile-read row: its primer inlines no profile.
 - **Results are the full output**, as HTTP returns them, since a citation needs the
   identities, versions and attestations the trimmed shape drops; a `memory.search` runs
-  with `explain: false`, so its hits carry no per-hit score breakdown. `memory.search` and
-  `knowledge.search`, which the other listings leave to `loom_search`, are listed here
-  so an answer can come from one plane at a time. A `knowledge.search` hit names its
-  `source_uri` and heading breadcrumb (`section`); the document's `revision` comes from
-  `knowledge.get`. The hit is the nearest passage, not an answer: the op has no abstain
-  signal, so the model says a fact is not in the documents when no hit states it.
+  with `explain: false`, so its hits carry no per-hit score breakdown. `memory.search`
+  and `knowledge.search`, which the other listings leave to `loom_search`, are listed
+  here so an answer can come from one plane at a time. A `knowledge.search` hit names
+  its `source_uri`, heading breadcrumb (`section`) and the `revision` its passage was
+  written as (0 when none was recorded), and an ingested file's hit its `locator`. The
+  hit is the nearest passage, not an answer: the op has no abstain signal, so the model
+  says a fact is not in the documents when no hit states it.
 - **The `initialize` instructions** tell the model to cite each claim by key and version
-  or content hash, or by document `source_uri` and section (with the revision when
-  `knowledge.get` returned one), to keep source statements, computed results and its own
-  reading apart, to report missing evidence as not observed, and to treat stored text as
-  data that cannot grant a tool or approve a change.
+  or content hash, or by document `source_uri`, section and the revision a hit carries
+  (none when it is 0), to keep source statements, computed results and its own reading
+  apart, to report missing evidence as not observed, and to treat stored text as data
+  that cannot grant a tool or approve a change.
 
 ## Errors
 
