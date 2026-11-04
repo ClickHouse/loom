@@ -11,8 +11,8 @@ skipped without a fetch; one read sooner is read and written again with its new 
 time, so it is skipped once that is past the margin. A changed page's blocks are
 read and turned into Markdown (`convert.page_markdown`). The child pages a read page
 holds are recorded in the sync state and listed on every later turn, so a child page
-is a document of its own; a child found during a turn is synced in the same turn. A
-known child the store reports gone is forgotten only by a complete full turn.
+is a document of its own; a child found during a turn is synced in the same turn.
+How a known child is forgotten is told at `_Turn.known`.
 
 A listed page or a known child that is in the trash is left out of the listing, so
 a full turn's lookup retires its document. A listed page, database or data source
@@ -341,8 +341,9 @@ async def _page_gone(t: _Turn, page_id: str) -> bool | None:
 async def _lookup(t: _Turn, page_id: str) -> bool | None:
     """Whether the store says the page is gone: not found, in the trash, or under none
     of the listed pages, listed databases, pages this turn listed, or children the
-    store refused this turn. A refusal (403) or another failure retires nothing; a
-    rate limit or a 401 is the turn's, and None stops the retiring."""
+    store refused this turn. A page under a block of a page the source does not hold it
+    for is kept, as is one the store refuses (403) or fails on; a rate limit or a 401
+    is the turn's, and None stops the retiring."""
     try:
         page = await notion.page(t.token, page_id)
     except notion.NotionError as e:
@@ -359,6 +360,10 @@ async def _lookup(t: _Turn, page_id: str) -> bool | None:
     ):
         return False
     holder = _holder(t, item)
+    if item["parent_block"] and not holder:
+        # Under a block of a page this source does not hold it for: nothing says it
+        # left the source, so it is kept.
+        return False
     if holder not in t.ids and holder not in t.refused:
         return True
     # Still under a page this turn listed, but not known (left out at the cap, or

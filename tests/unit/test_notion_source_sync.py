@@ -1262,3 +1262,51 @@ def test_a_child_inside_an_unreadable_synced_copy_stays_known(world: _Store) -> 
     _run(full=True)
     assert _detail(world)["child_pages"] == {CHILD: PAGE}
     assert _uri(world, CHILD) in world.docs and world.audits == []
+
+
+def test_an_unknown_child_under_a_block_of_a_listed_page_is_kept(world: _Store) -> None:
+    other_column = "12121212-1212-4212-8212-121212121212"
+    world.sources[0] = _source(config={"page_ids": [PAGE, ROW2], "database_ids": []})
+    world.pages[ROW2] = _page(ROW2, "2026-01-02T00:00:00.000Z", title="Other")
+    world.blocks[ROW2] = [_para("Other.")]
+    world.blocks[PAGE] = [_para("Parent."), _child_page(CHILD)]
+    world.pages[CHILD] = _page(
+        CHILD, "2026-01-04T00:00:00.000Z", title="Child", parent_of=_under(PAGE)
+    )
+    _run()
+    # The child moves under a column of the other listed page; that page is not read
+    # again, and the first one is read without it.
+    world.pages[CHILD] = {**world.pages[CHILD], "parent": _under_block(other_column)}
+    world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
+    world.blocks[PAGE] = [_para("Parent.")]
+    _run()
+    assert CHILD not in _detail(world)["child_pages"]
+    _run(full=True)
+    assert _uri(world, CHILD) in world.docs and world.audits == []
+
+
+def test_a_page_past_its_request_bound_keeps_the_children_it_held(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _with_children(world, CHILD)
+    monkeypatch.setattr(source_sync_notion, "_MAX_BLOCK_REQUESTS", 1)
+    world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
+    world.blocks[PAGE] = [_para("Has children.", id=ROW1, has_children=True), _child_page(CHILD)]
+    _run(full=True)
+    detail = _detail(world)
+    assert detail["unconverted_reasons"] == {"too_large": 1}
+    assert detail["child_pages"] == {CHILD: PAGE} and _uri(world, CHILD) in world.docs
+
+
+@pytest.mark.parametrize("status", [403, 404])
+def test_an_unreadable_block_of_a_re_read_page_keeps_its_children(
+    world: _Store, status: int
+) -> None:
+    _with_children(world, CHILD)
+    world.pages[PAGE] = _page(PAGE, "2026-02-01T00:00:00.000Z", title="Design notes")
+    world.blocks[PAGE] = [_para("Toggle.", id=ROW1, has_children=True), _child_page(CHILD)]
+    world.answers[f"/blocks/{ROW1}/children"] = httpx.Response(status)
+    _run(full=True)
+    detail = _detail(world)
+    assert detail["child_pages"] == {CHILD: PAGE}
+    assert _uri(world, CHILD) in world.docs and world.audits == []

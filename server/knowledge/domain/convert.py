@@ -348,7 +348,7 @@ def child_page_ids(blocks: list[dict[str, Any]]) -> list[str]:
 
 def unreadable_blocks(blocks: list[dict[str, Any]]) -> bool:
     """Whether any of `blocks` or their children could not be read (`unreadable`), so
-    the child pages it held are not all known."""
+    the child pages they hold are not all known."""
     for block in blocks:
         if not isinstance(block, dict):
             continue
@@ -386,7 +386,7 @@ __all__ = [
     "description_of",
     "drop_number_runs",
     "page_markdown",
-    "unreadable_blocks",
     "presentation_markdown",
     "slide_markdown",
+    "unreadable_blocks",
 ]
