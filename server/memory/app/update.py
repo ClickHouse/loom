@@ -616,11 +616,19 @@ async def _update_live_row(
 
 
 # Its own function: _write_revision is at the function-length gate's 50 statements.
-async def _record_revision(memory_row: dict[str, Any], *, op: str, verdict: str) -> None:
+async def _record_revision(
+    memory_row: dict[str, Any], *, op: str, conflict_result: Any, duplicate_of_id: str
+) -> None:
     """The version row is in: its one hash-only audit row, then the `memory.revised`
     event, noted as the "webhook" budget shape when it sent outbox rows."""
     from server.core.logging_config import request_id_var
     from server.observability import audit
+
+    # As memory.set records it: a version written as a duplicate says so; no check
+    # ran (the row is not embedded) leaves it empty.
+    verdict = conflict_result.verdict if conflict_result is not None else ""
+    if duplicate_of_id:
+        verdict = "duplicate"
 
     await audit.emit(
         event_type=op,
@@ -778,10 +786,8 @@ async def _write_revision(
             await _record_revision(
                 memory_row,
                 op=op,
-                # As memory.set records it: a row written as a duplicate says so.
-                verdict="duplicate"
-                if duplicate_of_id
-                else (conflict_result.verdict if conflict_result is not None else ""),
+                conflict_result=conflict_result,
+                duplicate_of_id=duplicate_of_id,
             )
         for done in [memory_done, *others_done]:
             if isinstance(done, BaseException):

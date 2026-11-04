@@ -582,3 +582,21 @@ async def test_a_revision_written_as_a_duplicate_is_audited_as_one(
     assert out.updated and out.duplicate_of == _ID_B
     [row] = _audit_rows(ch)
     assert json.loads(row["subject"])["verdict"] == "duplicate"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "row", [_row(memory_type="episodic"), _row(sensitivity="high")], ids=["episodic", "high"]
+)
+async def test_a_revision_that_is_not_conflict_checked_is_audited_with_no_verdict(
+    audited, row: MemoryRow
+) -> None:
+    import json
+
+    ch = audited([_cand(_ID_A)], row)
+    out = await update_mod.handle_memory_update(
+        MemoryUpdateInput(org="test", namespace="personal", memory_key="deploy_day", value="x")
+    )
+    assert out.updated
+    [audit_row] = _audit_rows(ch)
+    assert json.loads(audit_row["subject"])["verdict"] == ""
