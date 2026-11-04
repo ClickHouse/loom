@@ -6,9 +6,9 @@ keep a coding agent from re-proposing rejected options, and whether the agent an
 `python -m bench.design_rationale --help`; this page holds the arms, the task-set schema
 and the outputs.
 
-The real task set is private material and is never committed. The harness reads a task
-set from the directory given on the command line; `example/` is a small synthetic one
-(an invented thumbnail service) that the unit tests run end to end.
+The real task set is private material and is never committed. The harness reads a task set
+from the directory given on the command line; `example/` is a small synthetic one (an
+invented thumbnail service) that the unit tests run end to end.
 
 ## Arms
 

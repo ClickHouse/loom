@@ -580,44 +580,47 @@ before serving the cache on it.
 
 ### Design decisions from design documents
 
-`bench/design_rationale/` asks a coding agent three kinds of task about code its team's design
-documents describe: why questions (A), change requests whose obvious move is an option the
-documents rejected or a constraint they set (B), and questions about a statement a later
-revision reversed or about code no document covers (C). Each arm shows the agent different
-design knowledge: nothing (0), the whole document through `knowledge.get` (1), the document as
-knowledge through the knowledge hits of `loom_search` (2), hand-written gold decision rows
-through the pre-edit block and the memory section of `loom_search` (3), and the rows
-`loom decisions extract --apply` mined from the same documents, through the same surfaces (4).
-Arm 4 approximates the sync leg: documents ingested as the sync writes them, mined by the same
-extraction function. Extracted rows get files from a read-only code index of the ClickHouse
-repository, so arm 4 reads the pre-edit block too.
+`bench/design_rationale/` asks a coding agent three kinds of task about code its team's
+design documents describe: why questions (A), change requests whose obvious move is an
+option the documents rejected or a constraint they set (B), and questions about a
+statement a later revision reversed or about code no document covers (C). Each arm shows
+the agent different design knowledge: nothing (0), the whole document through
+`knowledge.get` (1), the document as knowledge through the knowledge hits of `loom_search`
+(2), hand-written gold decision rows through the pre-edit block and the memory section of
+`loom_search` (3), and the rows `loom decisions extract --apply` mined from the same
+documents, through the same surfaces (4). Arm 4 approximates the sync leg: documents
+ingested as a document source's sync writes them, mined by the same extraction function.
+Extracted rows get files from a read-only code index of the ClickHouse repository, so arm
+4 reads the pre-edit block too.
 
 The task set is private: five design documents for the ClickHouse repository, four of them
 revised once for the supersession tasks; 10 A, 15 B and 10 C tasks (5 supersession, 5
-abstention). The C revisions and abstention questions are synthetic. Each task is answered 3
-times per arm; each answer is judged in both orders and twice per order.
+abstention). The C revisions and abstention questions are synthetic. Each task is answered
+3 times per arm; each answer is judged in both orders and twice per order.
 
-| Arm | A precision | A recall | A misleading | B avoids | B satisfies | C passes | C states current | Citation precision | Citation recall |
-| --- | ----------: | -------: | -----------: | -------: | ----------: | -------: | ---------------: | -----------------: | --------------: |
-| 0   |        34.0 |     38.2 |         70.8 |     15.6 |        12.2 |     99.2 |             16.7 |                  - |             0.0 |
-| 1   |        84.5 |     90.7 |         30.0 |      6.7 |         6.7 |     84.2 |             98.3 |               83.9 |            85.5 |
-| 2   |        82.6 |     75.9 |         35.8 |     33.9 |        33.9 |     95.0 |            100.0 |               86.2 |            76.7 |
-| 3   |        95.8 |     89.2 |          8.3 |     85.9 |        80.4 |     98.3 |            100.0 |               85.2 |            93.5 |
-| 4   |        66.7 |     45.6 |         18.3 |     60.0 |        57.8 |     94.2 |             20.0 |               83.2 |            69.3 |
+| Arm | A precision | A recall | A misleading | A abstains | B avoids | B satisfies | C passes | C states current | Citation precision | Citation recall |
+| --- | ----------: | -------: | -----------: | ---------: | -------: | ----------: | -------: | ---------------: | -----------------: | --------------: |
+| 0   |        34.0 |     38.2 |         70.8 |      100.0 |     15.6 |        12.2 |     99.2 |             16.7 |                  - |             0.0 |
+| 1   |        84.5 |     90.7 |         30.0 |       23.3 |      6.7 |         6.7 |     84.2 |             98.3 |               83.9 |            85.5 |
+| 2   |        82.6 |     75.9 |         35.8 |       40.0 |     33.9 |        33.9 |     95.0 |            100.0 |               86.2 |            76.7 |
+| 3   |        95.8 |     89.2 |          8.3 |        6.7 |     85.9 |        80.4 |     98.3 |            100.0 |               85.2 |            93.5 |
+| 4   |        66.7 |     45.6 |         18.3 |       73.3 |     60.0 |        57.8 |     94.2 |             20.0 |               83.2 |            69.3 |
 
-Percentages. A precision and recall are argument-level against the gold arguments; A misleading
-is the share of answers that would steer an engineer wrong. B avoids: no rejected option
-proposed (deterministic detectors first, the judge for the rest); B satisfies: no gold
-constraint broken. C passes: a supersession answer does not present a reversed statement as
-the current design, an abstention answer says no decision is recorded and invents none.
-No arm served a reversed statement as current. C states current, averaged over the
-supersession tasks: 17% in arm 0, 98% in arm 1, 100% in arms 2 and 3, and 20% in arm 4.
+Percentages. A precision and recall are argument-level against the gold arguments, and A
+precision is over the answers that made a claim; A abstains is the share of A answers
+saying no recorded decision covers the question (in whole or in part); A misleading is the
+share of answers that would steer an engineer wrong. B avoids: no rejected option proposed
+(deterministic detectors first, the judge for the rest); B satisfies: no gold constraint
+broken, no rejected option detected, and the rubric passed where the task has one. C
+passes: a supersession answer does not present a reversed statement as the current design,
+an abstention answer says no decision is recorded and invents none. No arm served a
+reversed statement as current. C states current is averaged over the 5 supersession tasks.
 Abstention tasks failed (no abstention, or an invented rationale), averaged over the
 abstention tasks: 2% in arm 0, 32% in arm 1, 10% in arm 2, 3% in arm 3 and 12% in arm 4.
 
 Paired per task, bootstrap over documents, 95% interval, and the minimum detectable effect
-taken from that interval. With five clusters the bootstrap intervals and the MDEs taken from
-them understate the uncertainty:
+taken from that interval. With five clusters the bootstrap intervals and the MDEs taken
+from them understate the uncertainty:
 
 | Treatment vs reference | Kind | Metric    | n (clusters) | Delta | 95% interval   |  MDE |
 | ---------------------- | ---- | --------- | -----------: | ----: | -------------- | ---: |
@@ -652,7 +655,8 @@ them understate the uncertainty:
 | 2 vs 3                 | B    | satisfies |       15 (5) | -46.5 | -61.6 .. -29.8 | 22.7 |
 | 2 vs 3                 | C    | passed    |       10 (5) |  -3.3 | -9.3 .. +0.0   |  6.6 |
 
-Arm 4's A precision has 9 tasks: on one task every answer abstained and made no claim to grade.
+Arm 4's A precision has 9 tasks: on one task every answer abstained and made no claim to
+grade.
 
 | Arm | Injected tokens per task (mean, max) | Pre-edit calls | Pre-edit max | Answers' cost, 105 answers (USD) |
 | --- | -----------------------------------: | -------------: | -----------: | -------------------------------: |
@@ -662,40 +666,46 @@ Arm 4's A precision has 9 tasks: on one task every answer abstained and made no 
 | 3   |                         1,003, 2,201 |             71 |          663 |                            0.021 |
 | 4   |                             366, 849 |             71 |          272 |                            0.011 |
 
-Arm 1 injects 1.83 times arm 3's tokens. By ledger stage the run spent 0.099 USD on answers,
-0.321 on 2,100 judge passes and 0.004 on the server's own model calls. For extraction the
-ledger charges an upper bound once per document before its extraction run, 0.173 USD in all,
-so the extraction spent at most 0.173 and the run at most 0.597 USD. The ledger does not split
-judging by arm.
+Arm 1 injects 1.83 times arm 3's tokens. By ledger stage the run spent 0.099 USD on
+answers, 0.321 on 2,100 judge passes and 0.004 on the server's own model calls. For
+extraction the ledger charges an upper bound once per document before its extraction run,
+0.173 USD in all, so the extraction spent at most 0.173 and the run at most 0.597 USD. The
+ledger does not split judging by arm.
 
-**Reading.** Resolved against zero (the interval's lower bound above it, or its upper bound
-below it): the gold rows (arm 3) raise A precision and recall and B avoidance and satisfaction
-over no design knowledge. Extracted rows (arm 4) raise B avoidance and satisfaction and A
-precision over arm 0, and fall below the gold rows on A precision, A recall, B avoidance and
-C. The whole document in context (arm 1) raises A precision and recall over arm 0, but its B
-avoidance is not resolved against arm 0 (-8.9, -18.2 .. +6.7) and falls below the gold rows
-by 79 points; it also fails more C tasks than arm 0 and arm 3. A hypothesis, not tested
-here: a decision row names the rejected option as rejected, and a whole document does not.
+**Reading.** Resolved against zero (the interval's lower bound above it, or its upper
+bound below it): the gold rows (arm 3) raise A precision and recall and B avoidance and
+satisfaction over no design knowledge. Extracted rows (arm 4) raise B avoidance and
+satisfaction over arm 0, and A precision over the answers that made a claim (arm 4
+abstained on 73% of A answers), and fall below the gold rows on A precision, A recall, B
+avoidance and C. The whole document in context (arm 1) raises A precision and recall over
+arm 0, but its B avoidance is not resolved against arm 0 (-8.9, -18.2 .. +6.7) and falls
+below the gold rows by 79 points; it also fails more C tasks than arm 0 and arm 3. A
+hypothesis, not tested here: a decision row names the rejected option as rejected, and a
+whole document does not.
 
 **Treatment check.** Of the 30 tasks with gold rows, arm 3's pre-edit block served 27 and
-search served 29; arm 4's pre-edit block served 5 and search 30. Extraction wrote 32
-rows across the documents and their revisions, 14 with files, with no extraction failure and
-no failed code lookup.
+search served 29 (a task counts when it served one of its own gold rows); arm 4's pre-edit
+block served 5 and search 30 (a task counts when it served any extracted row). Extraction
+wrote 32 rows across the documents and their revisions, 14 with files, with no extraction
+failure and no failed code lookup.
 
-**Judge stability.** Verdicts agreed across the two orders on 93.4% of 498 answers and across
-repeats on 97.2% of 500. 70 of 2,100 judge passes were unreadable (3 answers unscored).
+**Judge stability.** Verdicts agreed across the two orders on 93.4% of 498 answers and
+across repeats on 97.2% of 500. 70 of 2,100 judge passes were unreadable (3 answers
+unscored).
 
-**Limits.** One reader and one judge model; no second judge and no human-labelled slice, so
-judge accuracy and kappa are not measured. Extraction precision is not measured (no row was
-labelled). No patch is applied and no test runs, so change-task pass rate is not measured.
-The task set is private: the numbers are reproducible only by a holder of the set.
+**Limits.** One reader and one judge model; no second judge and no human-labelled slice,
+so judge accuracy and kappa are not measured. Extraction precision is not measured (no row
+was labelled). No patch is applied and no test runs, so change-task pass rate is not
+measured. The task set is private: the numbers are reproducible only by a holder of the
+set.
 
 - **Models:** reader, judge and extraction `gpt-6-luna`; the server's embeddings
   `text-embedding-3-large` (the [models table](#models)).
-- **Artifacts:** `bench/results/design_rationale.summary.json`, written by `score --summary`:
-  the per-arm metrics, comparisons, injected tokens, treatment check, judge agreement and
-  unreadable passes, the run's flags (arms, models, window, K) and its spend by ledger stage
-  and the answers' cost per arm; the per-task rows, which name private tasks, are left out.
+- **Artifacts:** `bench/results/design_rationale.summary.json`, written by
+  `score --summary`: the per-arm metrics, comparisons, injected tokens, treatment check,
+  judge agreement and unreadable passes, the run's flags (arms, models, window, K) and its
+  spend by ledger stage and the answers' cost per arm; the per-task rows, which name
+  private tasks, are left out.
 - **Reproduce:**
   `PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> --out <dir> --base-url <server> --reader-model gpt-6-luna --judge-model gpt-6-luna --code-index <url> --code-index-org <org> --code-index-namespace <code namespace> --extract-model gpt-6-luna --k 3 --max-usd 9`,
   then `... score <taskset> --out <dir> --summary bench/results/design_rationale.summary.json`.

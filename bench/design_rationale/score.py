@@ -531,7 +531,7 @@ def summary(metrics: dict[str, Any], out_dir: Path) -> dict[str, Any]:
     answers' cost per arm (None for a reader the price table does not list)."""
     state = json.loads((out_dir / "state.json").read_text())
     answers = json.loads((out_dir / "answers.json").read_text())
-    flags = state.get("flags") or {}
+    flags = state["flags"]
     by_stage: dict[str, float] = defaultdict(float)
     ledger = out_dir / "ledger.jsonl"
     for line in ledger.read_text().splitlines() if ledger.exists() else []:

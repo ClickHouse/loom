@@ -1347,6 +1347,8 @@ def test_score_writes_the_summary_without_per_task_rows(tmp_path):
     assert summary["extraction"]["documents"]
     for doc_id in ts.documents:
         assert doc_id not in first
+    for _, task in ts.all_tasks():
+        assert task["id"] not in first
     spend = summary["spend_usd"]
     assert spend["total"] == round(sum(r["usd"] for r in ledger.rows()), 4)
     assert spend["answers_by_arm"]["0"]["answers"] == 2 * len(list(ts.all_tasks()))
