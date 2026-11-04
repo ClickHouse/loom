@@ -81,7 +81,8 @@ Every benchmark server ran with the deployment's model settings, recorded field 
 The reader and the judge of each benchmark are the bench's own and are named in its
 section; they are pinned independently of the server's models. A reasoning model in the
 bench (reader or judge) runs at the lowest reasoning effort it accepts unless its section
-says otherwise. SWE-bench file localization names its own models.
+says otherwise. SWE-bench file localization and the design-rationale bench name their own
+models.
 
 ### LoCoMo conversational QA
 
@@ -714,9 +715,9 @@ set.
 - **Models:** reader, judge and extraction `gpt-6-luna`, in the summary's run flags; the
   extraction model is the LLM model the server settings of the harness's environment
   resolve (`LOOM_LLM_MODEL`), and `run` refuses an `--extract-model` that differs. The run
-  does not record the server's own models; the server was started with the [models
-  table](#models)'s embeddings (`text-embedding-3-large`). It ran from source on its own
-  ClickHouse, with auth and background workers off.
+  does not record the server's own models, nor the revision of the code index arm 4's code
+  names were looked up in. The server ran from source on its own ClickHouse, with auth and
+  background workers off.
 - **Artifacts:** `bench/results/design_rationale.summary.json`, written by
   `score --summary`: the per-arm metrics, comparisons, injected tokens, treatment check,
   judge agreement, unreadable passes and the A answers with no claim, the task set's

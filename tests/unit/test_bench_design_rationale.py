@@ -336,6 +336,7 @@ def test_a_verdict_with_a_bool_where_a_list_goes_is_unreadable():
     assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": [], "gold_covered": True})
     assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": [], "gold_covered": 0})
     assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": False})
+    assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": ["x"]})
     assert not score.readable("A", ts.tasks["A"][0], {**a, "claims": 0})
     assert not score.readable("B", task, {**good, "cites": False})
     assert not score.readable("B", task, {**good, "cites_support": 0})
