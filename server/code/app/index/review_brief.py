@@ -159,53 +159,129 @@ class DiffFacts:
     settings: list[tuple[str, str]] = field(default_factory=list)  # (name, source)
 
 
+@dataclass
+class HunkLine:
+    """One line inside a hunk: `marker` is `+`, `-` or ` `, `old_no` its old-side line
+    number (`-` and ` ` lines), the paths those of the file it is in."""
+
+    old_path: str
+    new_path: str
+    marker: str
+    body: str
+    old_no: int
+
+
+@dataclass
+class Hunks:
+    """A unified diff read hunk by hunk: the new-side paths in diff order, every line
+    inside a hunk, and whether a hunk's header miscounted its lines."""
+
+    paths: list[str] = field(default_factory=list)
+    lines: list[HunkLine] = field(default_factory=list)
+    malformed: bool = False
+
+
+_HUNK_HEADER = re.compile(r"@@ -(\d+)(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+# What may follow a hunk whose counted lines ran out.
+_AFTER_HUNK = ("diff ", "@@", "\\")
+
+
+@dataclass
+class _Cursor:
+    """Where a walk of a diff is: the file it is in and what is left of the hunk."""
+
+    old_path: str = ""
+    new_path: str = ""
+    old_left: int = 0
+    new_left: int = 0
+    old_no: int = 0
+    ended: bool = False  # a hunk's counts just ran out
+
+    def in_hunk(self) -> bool:
+        return self.old_left > 0 or self.new_left > 0
+
+
+def read_hunks(diff: str) -> Hunks:
+    """Walk `diff` hunk by hunk, counting each hunk's lines off its `@@ -a,b +c,d @@`
+    header, so a file header (with or without `a/` and `b/`) is never read as a line and
+    a line that looks like one (`--- x` removing a SQL comment) is. Lines split on `\\n`
+    only. `malformed` when a header miscounts: lines go on after its counts ran out, or
+    the next file starts, or the diff ends, before they did."""
+    out = Hunks()
+    cur = _Cursor()
+    lines = diff.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()  # the newline that ends the last line
+    for line in lines:
+        if cur.in_hunk() and _hunk_line(out, cur, line):
+            continue
+        _between_hunks(out, cur, line)
+    if cur.in_hunk():
+        out.malformed = True  # the diff ended inside a hunk
+    return out
+
+
+def _hunk_line(out: Hunks, cur: _Cursor, line: str) -> bool:
+    """Read one line inside a hunk; False when it ends the hunk early (the next file
+    starts, or a line no hunk can hold), so the caller reads it as a header."""
+    if line.startswith("\\"):
+        return True  # "\ No newline at end of file"
+    marker = line[:1] or " "
+    if line.startswith("diff --git ") or marker not in "+- ":
+        out.malformed = True
+        cur.old_left = cur.new_left = 0
+        return False
+    out.lines.append(HunkLine(cur.old_path, cur.new_path, marker, line[1:], cur.old_no))
+    if marker != "+":
+        cur.old_left -= 1
+        cur.old_no += 1
+    if marker != "-":
+        cur.new_left -= 1
+    if cur.old_left < 0 or cur.new_left < 0:
+        out.malformed = True
+    cur.ended = not cur.in_hunk()
+    return True
+
+
+def _between_hunks(out: Hunks, cur: _Cursor, line: str) -> None:
+    """Read one line outside a hunk: a file header, a hunk header, or anything else."""
+    if cur.ended and line.startswith("\\"):
+        return  # "\ No newline at end of file" after the hunk's last line
+    if cur.ended and line and not line.startswith(_AFTER_HUNK):
+        out.malformed = True  # lines go on after the counts ran out
+    cur.ended = False
+    if line.startswith("--- "):
+        p = line[4:].strip()
+        cur.old_path = "" if p == "/dev/null" else (p[2:] if p.startswith("a/") else p)
+    elif line.startswith("+++ "):
+        p = line[4:].strip()
+        cur.new_path = "" if p == "/dev/null" else (p[2:] if p.startswith("b/") else p)
+        if cur.new_path and cur.new_path not in out.paths:
+            out.paths.append(cur.new_path)
+    elif line.startswith("@@"):
+        m = _HUNK_HEADER.match(line)
+        if m is None:
+            out.malformed = True
+            return
+        cur.old_no = int(m.group(1))
+        cur.old_left = int(m.group(2) if m.group(2) is not None else 1)
+        cur.new_left = int(m.group(3) if m.group(3) is not None else 1)
+        cur.ended = not cur.in_hunk()
+
+
 def parse_diff(diff: str) -> DiffFacts:
-    """One pass over the unified diff. Deleted lines are tracked by their
-    OLD-side number through each hunk (`-` lines advance the old cursor,
-    context lines too, `+` lines do not) and folded into runs, so the blame
-    section reads exactly what the PR removed — the lines to blame — not the
-    hunk's span with its context."""
-    facts = DiffFacts()
-    old_path = new_path = ""
-    old_cursor = 0
-    in_hunk = False
+    """One pass over the unified diff's hunks (`read_hunks`). Deleted lines are tracked
+    by their OLD-side number and folded into runs, so the blame section reads exactly
+    what the PR removed — the lines to blame — not the hunk's span with its context."""
+    hunks = read_hunks(diff)
+    facts = DiffFacts(paths=list(hunks.paths))
     seen_settings: dict[str, str] = {}
-    for line in diff.splitlines():
-        if line.startswith("diff --git "):
-            in_hunk = False
+    for h in hunks.lines:
+        if h.marker == " ":
             continue
-        if line.startswith("--- "):
-            p = line[4:].strip()
-            old_path = "" if p == "/dev/null" else (p[2:] if p.startswith("a/") else p)
-            in_hunk = False
-            continue
-        if line.startswith("+++ "):
-            p = line[4:].strip()
-            new_path = "" if p == "/dev/null" else (p[2:] if p.startswith("b/") else p)
-            if new_path and new_path not in facts.paths:
-                facts.paths.append(new_path)
-            in_hunk = False
-            continue
-        if line.startswith("@@"):
-            m = re.match(r"@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@", line)
-            in_hunk = bool(m)
-            old_cursor = int(m.group(1)) if m else 0
-            continue
-        if not in_hunk:
-            continue
-        if line.startswith("\\"):
-            continue  # "\ No newline at end of file"
-        marker = line[:1]
-        if marker == " " or line == "":
-            old_cursor += 1
-            continue
-        if marker == "-":
-            if old_path:
-                _add_deleted(facts.deleted.setdefault(old_path, []), old_cursor)
-            old_cursor += 1
-        elif marker != "+":
-            continue
-        for name, source in _setting_names(line[1:], marker=marker, path=new_path or old_path):
+        if h.marker == "-" and h.old_path:
+            _add_deleted(facts.deleted.setdefault(h.old_path, []), h.old_no)
+        for name, source in _setting_names(h.body, marker=h.marker, path=h.new_path or h.old_path):
             seen_settings.setdefault(name, source)
     facts.settings = list(seen_settings.items())
     return facts
@@ -470,7 +546,6 @@ def blame_verdict(rows: list[dict[str, Any]], *, ranges: int) -> str:
 _REJECTED = re.compile(r"\bRejected:(.*)", re.S)
 _APPLIES_TO = "Applies to "
 _SETTING_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+")
-_HUNK = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 
 
 def checked_names(text: str, *, constraint: bool) -> list[str]:
@@ -488,30 +563,10 @@ def checked_names(text: str, *, constraint: bool) -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def added_text(diff: str) -> str:
-    """The lines a unified diff adds, without their `+`: only lines inside a hunk, counted
-    off its `@@ -a,b +c,d @@` header, so no file header (with or without `a/` and `b/`
-    prefixes) is read as one."""
-    added: list[str] = []
-    old_left = new_left = 0
-    for line in diff.splitlines():
-        if old_left <= 0 and new_left <= 0:
-            m = _HUNK.match(line)
-            if m:
-                old_left = int(m.group(1) if m.group(1) is not None else 1)
-                new_left = int(m.group(2) if m.group(2) is not None else 1)
-            continue
-        if line.startswith("\\"):
-            continue  # "\ No newline at end of file"
-        if line.startswith("+"):
-            added.append(line[1:])
-            new_left -= 1
-        elif line.startswith("-"):
-            old_left -= 1
-        else:
-            old_left -= 1
-            new_left -= 1
-    return "\n".join(added)
+def added_text(diff: str) -> tuple[str, bool]:
+    """(the lines a unified diff adds without their `+`, whether a hunk miscounted)."""
+    hunks = read_hunks(diff)
+    return "\n".join(h.body for h in hunks.lines if h.marker == "+"), hunks.malformed
 
 
 def names_in(added: str, names: list[str]) -> list[str]:
@@ -537,12 +592,13 @@ def rationale_section(
     """The `rationale` section over the rows `decisions_for_paths` read and the PR's diff
     (None: it could not be read). A row whose checked names the diff adds says `check`;
     one whose checked names it does not add says `clear`, or `unknown` when the diff was
-    cut, the row's value was cut at the read (a name may lie past either cut) or the diff
-    could not be read; one with nothing to check says ''. Constraints first, `check` rows
-    first among them, whole rows up to `code_review_brief_rationale_tokens` (the first
-    always); the verdict reads every row: check | unknown | clear | none (no row has
-    anything to check)."""
-    added = added_text(diff) if diff is not None else None
+    cut or a hunk of it miscounted its lines, the row's value was cut at the read (a name
+    may lie past any of these) or the diff could not be read; one with nothing to check
+    says ''. `check` rows first, then constraints, then the rest, whole rows up to
+    `code_review_brief_rationale_tokens` (the first always); the verdict reads every row:
+    check | unknown | clear | none (no row has anything to check)."""
+    added, malformed = added_text(diff) if diff is not None else (None, False)
+    malformed = malformed and not diff_cut  # a cut diff ends inside a hunk anyway
     rows = []
     for d in decisions:
         constraint = "constraint" in d["tags"]
@@ -553,7 +609,7 @@ def rationale_section(
             verdict = ""
         elif found:
             verdict = "check"
-        elif added is None or diff_cut or value_cut:
+        elif added is None or diff_cut or malformed or value_cut:
             verdict = "unknown"
         else:
             verdict = "clear"
@@ -568,7 +624,7 @@ def rationale_section(
         if found:
             row["names"] = found
         rows.append(row)
-    rows.sort(key=lambda r: (r["kind"] != "constraint", r["verdict"] != "check"))
+    rows.sort(key=lambda r: (r["verdict"] != "check", r["kind"] != "constraint"))
     verdicts = {r["verdict"] for r in rows}
     verdict = next((v for v in ("check", "unknown", "clear") if v in verdicts), "none")
     causes = []
@@ -576,6 +632,8 @@ def rationale_section(
         causes.append("diff_unread")
     if diff_cut:
         causes.append("diff_cut")
+    if malformed:
+        causes.append("diff_malformed")
     if any(d.get("value_truncated") for d in decisions):
         causes.append("value_cut")
     if paths_left > 0:
@@ -648,6 +706,8 @@ __all__ = [
     "TIER_BUDGET_TOKENS",
     "BriefInputs",
     "DiffFacts",
+    "HunkLine",
+    "Hunks",
     "added_text",
     "apply_budget",
     "canonical",
@@ -657,6 +717,7 @@ __all__ = [
     "names_in",
     "parse_diff",
     "rationale_section",
+    "read_hunks",
     "serve",
     "source_stems",
     "tier_sections",

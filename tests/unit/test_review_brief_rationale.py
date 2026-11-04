@@ -54,13 +54,14 @@ def test_checked_names_read_rejected_options_and_a_constraints_settings() -> Non
 
 
 def test_names_in_matches_added_lines_as_whole_words() -> None:
-    added = rb.added_text(DIFF)
+    added, malformed = rb.added_text(DIFF)
+    assert not malformed
     assert "flush" not in added and "+++" not in added
     assert rb.names_in(added, ["DB::SpillingHashSet"]) == ["DB::SpillingHashSet"]
     assert rb.names_in(added, ["DB::HashSet", "ExternalDistinctTransform"]) == []
     # an added line that starts with `++` is still an added line
     hunk = "@@ -1,0 +1,1 @@\n+++counter_value;\n"
-    assert rb.names_in(rb.added_text(hunk), ["counter_value"]) == ["counter_value"]
+    assert rb.names_in(rb.added_text(hunk)[0], ["counter_value"]) == ["counter_value"]
 
 
 def test_added_text_reads_hunks_only_whatever_the_header_prefixes() -> None:
@@ -80,8 +81,48 @@ def test_added_text_reads_hunks_only_whatever_the_header_prefixes() -> None:
         "@@ -0,0 +1 @@\n"
         "+new\n"
     )
-    assert rb.added_text(diff) == "+++ added line\nnew"
-    assert rb.names_in(rb.added_text(diff), ["DB::SpillingHashSet"]) == []
+    assert rb.added_text(diff) == ("+++ added line\nnew", False)
+    assert rb.names_in(rb.added_text(diff)[0], ["DB::SpillingHashSet"]) == []
+
+
+HEAD = "diff --git a/src/a.cpp b/src/a.cpp\n--- a/src/a.cpp\n+++ b/src/a.cpp\n"
+
+
+def test_a_hunk_header_that_miscounts_is_malformed() -> None:
+    # undercount: the header counts one added line, two follow
+    under = HEAD + "@@ -1,0 +1,1 @@\n+first\n+SpillingHashSet second;\n"
+    assert rb.added_text(under) == ("first", True)
+    # overcount: the header counts three, the next file's header comes after two
+    over = HEAD + "@@ -1,0 +1,3 @@\n+one\n+two\n" + HEAD + "@@ -1,0 +1,1 @@\n+three\n"
+    assert rb.added_text(over) == ("one\ntwo\nthree", True)
+    # overcount at the end of the diff
+    assert rb.added_text(HEAD + "@@ -1,0 +1,2 @@\n+one\n") == ("one", True)
+    # a well-counted diff of two files is not
+    good = HEAD + "@@ -1,0 +1,1 @@\n+one\n" + HEAD + "@@ -1,1 +1,1 @@\n-x\n+two\n"
+    assert rb.added_text(good) == ("one\ntwo", False)
+
+
+def test_a_form_feed_inside_an_added_line_does_not_split_it() -> None:
+    diff = HEAD + "@@ -1,0 +1,2 @@\n+page\x0cbreak\n+SpillingHashSet s;\n"
+    assert rb.added_text(diff) == ("page\x0cbreak\nSpillingHashSet s;", False)
+
+
+def test_parse_diff_reads_a_removed_sql_comment_as_a_removed_line() -> None:
+    # removing `-- note` gives `--- note`: a line of the hunk, not the next file's header
+    path = "tests/queries/0_stateless/03999_x.sql"
+    diff = (
+        f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+        "@@ -3,2 +3,1 @@\n--- note\n SET max_threads = 1;\n"
+    )
+    facts = rb.parse_diff(diff)
+    assert facts.paths == [path] and facts.deleted == {path: [(3, 3)]}
+
+
+def test_a_malformed_diff_that_shows_no_name_is_unknown() -> None:
+    spill = _row("design/spill", DECISION, ["decision"])
+    under = HEAD + "@@ -1,0 +1,1 @@\n+first\n+SpillingHashSet second;\n"
+    sec = rb.rationale_section([spill], under)
+    assert sec["verdict"] == "unknown" and sec["causes"] == ["diff_malformed"]
 
 
 def test_section_says_check_for_a_row_whose_rejected_option_the_diff_adds() -> None:
@@ -92,12 +133,13 @@ def test_section_says_check_for_a_row_whose_rejected_option_the_diff_adds() -> N
     ]
     sec = rb.rationale_section(rows, DIFF)
     assert sec["verdict"] == "check" and sec["epistemic"] == "lower_bound"
+    # `check` rows first, then constraints, then the rest
     assert [(r["memory_key"], r["kind"], r["verdict"]) for r in sec["rows"]] == [
-        ("design/ratio", "constraint", "clear"),
         ("design/spill", "decision", "check"),
+        ("design/ratio", "constraint", "clear"),
         ("design/plain", "decision", ""),
     ]
-    spill = sec["rows"][1]
+    spill = sec["rows"][0]
     assert spill["names"] == ["DB::SpillingHashSet"] and spill["pinned"] is True
     assert spill["code_state"] == "changed" and spill["line"].startswith("- design/spill")
     assert sec["rows_total"] == 3 and not sec["truncated"] and sec["causes"] == []
@@ -128,6 +170,17 @@ def test_a_cut_diff_or_a_cut_value_that_shows_no_name_is_unknown() -> None:
     cut_row = _row("design/long", "Decided Z because W. Rejected: a plain…", ["decision"])
     sec = rb.rationale_section([{**cut_row, "value_truncated": True}], DIFF)
     assert sec["rows"][0]["verdict"] == "unknown" and sec["causes"] == ["value_cut"]
+
+
+def test_a_check_row_is_never_trimmed_behind_long_constraints() -> None:
+    long = "- " + "x" * 300
+    rows = [
+        _row(f"design/c{i}", CONSTRAINT, ["decision", "constraint"], line=long) for i in range(3)
+    ]
+    rows.append(_row("design/spill", DECISION, ["decision"], line=long))
+    sec = rb.rationale_section(rows, DIFF)
+    assert sec["truncated"] and sec["rows"][0]["memory_key"] == "design/spill"
+    assert sec["rows"][0]["verdict"] == "check"
 
 
 def test_section_keeps_whole_rows_within_its_budget_and_the_verdict_reads_every_row() -> None:

@@ -727,6 +727,31 @@ async def test_rationale_is_read_on_every_call_and_never_stored(
 
 
 @pytest.mark.asyncio
+async def test_rationale_reads_no_diff_when_no_row_names_anything_to_check(
+    wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.app import memory_links
+    from server.memory.app import code_plane_reads
+
+    async def _decisions(org: str, trunk: str, paths: Any, *, limit: int) -> list[dict[str, Any]]:
+        row = {"memory_key": "design/plain", "tags": ["decision"], "pinned": False}
+        return [
+            row | {"code_state": "", "line": "- design/plain: Decided Z.", "text": "Decided Z."}
+        ]
+
+    async def _diff(*a: Any, **kw: Any) -> tuple[str, bool]:
+        raise AssertionError("read a diff with nothing to check")
+
+    monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
+    monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _decisions)
+    monkeypatch.setattr(h, "_pr_diff", _diff)
+    wired["repo"] = _HandlerRepo(stored=None)
+    out = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354))
+    sec = out.sections["rationale"]
+    assert sec["verdict"] == "none" and sec["rows"][0]["memory_key"] == "design/plain"
+
+
+@pytest.mark.asyncio
 async def test_rationale_reads_the_paths_and_rows_its_settings_allow(
     wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
