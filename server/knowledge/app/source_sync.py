@@ -630,8 +630,9 @@ async def sync_item(
     address is skipped; one given up on this revision is unconverted; one at an
     address another writer holds is skipped; `before_fetch` (a kind's own checks)
     may settle it; then it costs one of the pass bound and `fetch_and_write` runs,
-    answering `written`, `waiting`, `given_up` or `stop`. A written item that moved
-    to a new address has its old one retired."""
+    answering `written`, `unchanged` (fetched, but the stored copy already holds it:
+    nothing written), `waiting`, `given_up` or `stop`. A written item that moved to a
+    new address has its old one retired."""
     file_id = str(f["id"])
     revision = str(f.get("modifiedTime") or "")
     if not uri.startswith("https://"):

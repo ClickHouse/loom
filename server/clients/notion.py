@@ -75,7 +75,7 @@ def valid_id(value: str) -> bool:
     return bool(_ID_RE.fullmatch(value))
 
 
-def valid_stamp(stamp: str) -> bool:
+def _valid_stamp(stamp: str) -> bool:
     """Whether `stamp` is a timestamp as the store reports it."""
     return bool(_STAMP_RE.fullmatch(stamp))
 
@@ -163,7 +163,7 @@ def data_source_ids(db: dict[str, Any]) -> list[str]:
 
 
 def _query_body(edited_after: str) -> dict[str, Any]:
-    if edited_after and not valid_stamp(edited_after):
+    if edited_after and not _valid_stamp(edited_after):
         raise ValueError("edited_after is not a timestamp")
     body: dict[str, Any] = {
         "page_size": _PAGE_SIZE,
@@ -202,7 +202,7 @@ async def query_pages(
     token: str, data_source_id: str, *, edited_after: str = ""
 ) -> tuple[list[dict[str, Any]], bool]:
     """Every page of a database's data source, oldest edit first, or only those edited
-    after `edited_after` (a `valid_stamp`), and whether the store returned them all:
+    after `edited_after` (a stamp the store issued), and whether the store returned them all:
     False when it says its result is incomplete. A failure on any listing page
     raises, so every page was read."""
     body = _query_body(edited_after)
@@ -298,6 +298,5 @@ __all__ = [
     "query_pages",
     "title_of",
     "valid_id",
-    "valid_stamp",
     "valid_token",
 ]

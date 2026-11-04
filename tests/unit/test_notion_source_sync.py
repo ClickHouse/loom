@@ -18,7 +18,7 @@ import pytest
 
 from server.clients import notion
 from server.core import leases
-from server.core.hashing import sha256_document_text
+from server.core.hashing import sha256_text
 from server.core.secrets_at_rest import seal
 from server.knowledge.app import source_probes, source_sync, source_sync_notion, writes
 from server.knowledge.app import sources as source_ops
@@ -115,7 +115,7 @@ class _Store:
                 "file_id": d["metadata"]["ingested_from"],
                 "source_revision": d["metadata"]["source_revision"],
                 "read_at": d["metadata"].get("read_at", ""),
-                "content_sha256": sha256_document_text(f"{d['input'].title}\n{d['input'].content}"),
+                "text_sha256": d["metadata"].get("text_sha256", ""),
             }
             for uri, d in self.docs.items()
             if d["actor"] == SYNC_WORKER_ACTOR and f"source:{name}" in d["tags"]
@@ -270,6 +270,8 @@ def test_a_first_turn_writes_every_listed_page_and_database_page(world: _Store) 
         "ingested_from": PAGE,
         "ingested_format": "blocks",
         "read_at": "2026-03-01T00:00:00.000Z",
+        # Exactly what was written: title, Markdown and the blocks left out.
+        "text_sha256": sha256_text("Design notes\nText of 1111.\n{}"),
     }
     # The token goes in the header only, with the API version the shapes follow.
     assert all(r.headers["Authorization"] == f"Bearer {TOKEN}" for r in world.requests)
@@ -1066,3 +1068,51 @@ def test_a_same_text_read_again_is_neither_written_nor_mined_and_still_settles(
     world.blocks[PAGE] = [_para("New text.")]
     _run()
     assert world.upserts == 2 and _detail(world)["unchanged_reads"] == {}
+
+
+def test_a_database_page_s_recorded_read_survives_incremental_turns(world: _Store) -> None:
+    world.sources[0] = _source(config={"page_ids": [], "database_ids": [DB]})
+    world.rows = [ROW1]
+    world.now = datetime(2026, 1, 2, 0, 0, 30, tzinfo=UTC)  # 30 s after its revision
+    _run(full=True)
+    world.now = datetime(2026, 1, 2, 0, 5, tzinfo=UTC)
+    _run()  # listed again (the stamp trails the revision), same text: the read is kept
+    assert ROW1 in _detail(world)["unchanged_reads"]
+    _run()  # not listed: edited before the stamp, and its read stays
+    assert ROW1 in _detail(world)["unchanged_reads"]
+    world.requests.clear()
+    _run(full=True)
+    assert not [p for p in _paths(world) if p.startswith("/blocks/")]
+    assert world.upserts == 1
+
+
+def test_a_full_turn_drops_the_read_of_a_page_it_did_not_list(world: _Store) -> None:
+    world.sources[0] = _source(config={"page_ids": [], "database_ids": [DB]})
+    world.rows = [ROW1]
+    world.now = datetime(2026, 1, 2, 0, 0, 30, tzinfo=UTC)
+    _run(full=True)
+    world.now = datetime(2026, 1, 2, 0, 5, tzinfo=UTC)
+    _run()
+    world.rows = []
+    _run(full=True)
+    assert _detail(world)["unchanged_reads"] == {}
+
+
+@pytest.mark.parametrize("change", ["whitespace", "left out blocks", "no stored hash"])
+def test_a_re_read_that_differs_only_in_detail_is_written_again(world: _Store, change: str) -> None:
+    _only_the_page(world)
+    code = {"type": "code", "code": {"rich_text": _rt("a b"), "language": "sql"}}
+    world.blocks[PAGE] = [code]
+    world.now = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
+    _run()
+    if change == "whitespace":
+        world.blocks[PAGE] = [
+            {"type": "code", "code": {"rich_text": _rt("a  b"), "language": "sql"}}
+        ]
+    elif change == "left out blocks":
+        world.blocks[PAGE] = [code, {"type": "pdf", "pdf": {}}]
+    else:
+        del world.docs[_uri(world, PAGE)]["metadata"]["text_sha256"]
+    world.now = datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
+    _run()
+    assert world.upserts == 2

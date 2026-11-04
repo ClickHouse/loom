@@ -25,6 +25,7 @@ known children.
 from __future__ import annotations
 
 import functools
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -32,7 +33,7 @@ from typing import Any
 
 from server.clients import notion
 from server.core.errors import ValidationError
-from server.core.hashing import sha256_document_text
+from server.core.hashing import sha256_text
 from server.core.secrets_at_rest import unseal
 from server.knowledge.app import source_sync as sync
 from server.knowledge.domain import convert
@@ -143,11 +144,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         if not await _sync_page(t, f, stored.get(f["id"]), run):
             break
     result.documents_seen = len(t.items)
-    # Only the reads of pages still listed at the same revision matter.
-    revisions = {f["id"]: f["modifiedTime"] for f in t.items}
-    for page_id, (revision, _) in list(t.reads.items()):
-        if revisions.get(page_id) != revision:
-            del t.reads[page_id]
+    _prune_reads(t, whole=trusted and result.complete)
     if trusted and result.complete:
         addresses = {f["id"]: sync.source_uri_of(f) for f in t.items}
         listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
@@ -173,6 +170,18 @@ async def _forget_unlisted_without_documents(t: _Turn) -> None:
     for child_id in list(t.known):
         if child_id in t.unanswered and child_id not in held:
             t.known.pop(child_id)
+
+
+def _prune_reads(t: _Turn, *, whole: bool) -> None:
+    """Drop the recorded reads that no longer apply: a page listed at another
+    revision, and after a complete full turn (`whole`) a page it did not list. An
+    incremental turn lists only the database pages edited after the stamp, so a page
+    it did not list keeps its read."""
+    revisions = {f["id"]: f["modifiedTime"] for f in t.items}
+    for page_id, (revision, _) in list(t.reads.items()):
+        listed = revisions.get(page_id)
+        if (listed is not None and listed != revision) or (listed is None and whole):
+            del t.reads[page_id]
 
 
 def _item(page: dict[str, Any]) -> dict[str, Any]:
@@ -389,7 +398,7 @@ async def _fetch_and_write(
         outcome = sync.give_up(f, result, "no_text")
     elif len(content.encode()) > int(settings.knowledge_source_sync_max_file_bytes):
         outcome = sync.give_up(f, result, "too_large")
-    elif _same_copy(stored, f, uri, content):
+    elif _same_copy(stored, f, uri, _exact_hash(f, content, skipped)):
         t.reads[f["id"]] = [f["modifiedTime"], sync.stamp_of(read_at)]
         outcome = "unchanged"
     else:
@@ -401,14 +410,21 @@ async def _fetch_and_write(
     return outcome
 
 
-def _same_copy(stored: dict[str, str] | None, f: dict[str, Any], uri: str, content: str) -> bool:
-    """Whether the stored copy is this page at this revision with this title and text,
-    hashed as the document store hashes them."""
+def _exact_hash(f: dict[str, Any], content: str, skipped: dict[str, int]) -> str:
+    """A hash of exactly what a write stores for the page: its title, its Markdown as
+    written (whitespace included) and the blocks left out."""
+    left_out = json.dumps(skipped, sort_keys=True)
+    return sha256_text(f"{f['name']}\n{content}\n{left_out}")
+
+
+def _same_copy(stored: dict[str, str] | None, f: dict[str, Any], uri: str, exact: str) -> bool:
+    """Whether the stored copy is this page at this revision with exactly this title,
+    text and left-out blocks. A copy written without the hash is not the same."""
     if not stored or stored["source_uri"] != uri:
         return False
     if stored["source_revision"] != f["modifiedTime"]:
         return False
-    return stored.get("content_sha256") == sha256_document_text(f"{f['name']}\n{content}")
+    return bool(stored["text_sha256"]) and stored["text_sha256"] == exact
 
 
 async def _write(
@@ -420,7 +436,10 @@ async def _write(
     read_at: datetime,
 ) -> str:
     await sync.require_current(t.src)
-    metadata: dict[str, Any] = {"read_at": sync.stamp_of(read_at)}
+    metadata: dict[str, Any] = {
+        "read_at": sync.stamp_of(read_at),
+        "text_sha256": _exact_hash(f, content, skipped),
+    }
     if skipped:
         metadata["skipped_blocks"] = skipped
     try:
