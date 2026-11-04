@@ -125,19 +125,24 @@ def review_grants(lines: list[str]) -> GrantReview:
     return rev
 
 
+_ESCAPES = {"t": "\t", "n": "\n", "r": "\r", "0": "\0"}
+
+
 def _unquote(name: str) -> str:
     if len(name) > 1 and name[0] == name[-1] and name[0] in '`"':
-        return name[1:-1].replace("\\" + name[0], name[0]).replace("\\\\", "\\")
+        return re.sub(r"\\(.)", lambda m: _ESCAPES.get(m[1], m[1]), name[1:-1])
     return name
 
 
 def review_roles(rev: GrantReview, enabled: list[dict[str, Any]]) -> None:
     """Add to `rev.refused` what `system.enabled_roles` shows that `SHOW GRANTS`
-    cannot: a granted role that is not a default role (its chain is not
-    enabled, so neither it nor its roles can be checked), and an admin option
-    on any role in the chain, nested ones included."""
+    cannot: a granted role that is not enabled (not a default role, so its
+    chain cannot be checked, or a name that does not read back), and an admin
+    option on any role in the chain, nested ones included."""
     names = {str(r.get("role_name")) for r in enabled}
-    rev.refused.extend(f"{r} (not a default role)" for r in rev.roles if _unquote(r) not in names)
+    rev.refused.extend(
+        f"{r} (not among the enabled roles)" for r in rev.roles if _unquote(r) not in names
+    )
     rev.refused.extend(
         f"WITH ADMIN OPTION ({r.get('role_name')})" for r in enabled if r.get("with_admin_option")
     )
