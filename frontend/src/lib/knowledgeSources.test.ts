@@ -127,8 +127,10 @@ describe("kind words", () => {
   it("names each served kind and its credential, and an unknown one by its wire name", () => {
     expect(kindLabel("gdrive")).toBe("shared folder");
     expect(kindLabel("linear")).toBe("project documents");
+    expect(kindLabel("recording")).toBe("meeting transcripts");
     expect(kindLabel("other")).toBe("other");
     expect(credentialLabel("linear")).toMatch(/^Read-only API key/);
+    expect(credentialLabel("recording")).toMatch(/^Read-only credential/);
     expect(credentialLabel("other")).toMatch(/^Credential/);
   });
 });

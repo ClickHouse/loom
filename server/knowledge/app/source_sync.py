@@ -1,11 +1,11 @@
 """The sync of registered document sources into their repositories' documents:
 one pass over every active source, run by the `knowledge_source_sync` worker and
 by `loom knowledge sync`. A folder's turn is below; each other kind has its own
-turn module (`source_sync_linear`), chosen by `_turn_of`, which builds on the
-public helpers here: `Pass` and `TurnResult`, `start_waits`, `full_due` and
-`capped` for a turn's start and stamp, `sync_item` for one listed item, with
-`give_up`, `wait` and `require_current` for its fetch, `write_document`,
-`retire_absent` and `retire`, and `client_error`.
+turn module (`source_sync_linear`, `source_sync_recording`), chosen by `_turn_of`,
+which builds on the public helpers here: `Pass` and `TurnResult`, `start_waits`,
+`full_due` and `capped` for a turn's start and stamp, `sync_item` for one listed
+item, with `give_up`, `wait` and `require_current` for its fetch,
+`write_document`, `retire_absent` and `retire`, and `client_error`.
 
 A pass reads the active sources and drops those whose namespace is inactive or no
 longer a repository's trunk. Sources a maintainer asked to sync (`sync_now`) go
@@ -326,11 +326,15 @@ async def _sync_one(
 
 def _turn_of(kind: str) -> Callable[..., Awaitable[TurnResult]]:
     """The turn function of a source kind; this module's `_turn` reads a folder."""
+    # Imported here: a kind's module builds on this one's helpers.
     if kind == "linear":
-        # Imported here: the kind's module builds on this one's helpers.
         from server.knowledge.app import source_sync_linear
 
         return source_sync_linear.turn
+    if kind == "recording":
+        from server.knowledge.app import source_sync_recording
+
+        return source_sync_recording.turn
     return _turn
 
 

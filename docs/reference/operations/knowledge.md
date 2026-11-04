@@ -355,9 +355,9 @@ Register a document source on a repository's trunk code namespace: a kind, the i
 | `org` | `str` | required | The org. |
 | `namespace` | `str` | required | The repository's trunk code namespace. |
 | `name` | `str` | required | Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. |
-| `kind` | `str` | required | The source kind: `gdrive` (a shared folder) or `linear` (a project tracker's project documents). |
-| `config` | `dict[str, Any]` | required | The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: {project_ids: [1-20 project ids, UUIDs]}. |
-| `credential` | `str` | required | The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an account that sees the projects); stored encrypted, never returned. |
+| `kind` | `str` | required | The source kind: `gdrive` (a shared folder), `linear` (a project tracker's project documents) or `recording` (a meeting store's transcripts). |
+| `config` | `dict[str, Any]` | required | The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx] (default all)}; linear: {project_ids: [1-20 project ids, UUIDs]}; recording: {provider: meet \| zoom, ids: [1-20… |
+| `credential` | `str` | required | The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an account that sees the projects; recording: for meet, an authorized_user JSON file… |
 | `dry_run` | `bool` | `False` | Probe and write nothing. |
 
 | Output field | Type | Meaning |
@@ -459,7 +459,7 @@ Replace a registered document source's credential.
 | `org` | `str` | required | The org. |
 | `namespace` | `str` | required | The repository's trunk code namespace. |
 | `name` | `str` | required | The source name. |
-| `credential` | `str` | required | The replacement credential (gdrive: a service account's JSON key; linear: an API key); stored encrypted, never returned. |
+| `credential` | `str` | required | The replacement credential, of the same form as add's; stored encrypted, never returned. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
