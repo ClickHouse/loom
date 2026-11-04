@@ -395,16 +395,22 @@ async def stored_spellings(
     spellings: list[str],
     *,
     live: bool = True,
+    active: bool = False,
     ch: _CHClient | None = None,
 ) -> list[str]:
     """The subjects the rows on (org, namespace) are stored under that match one of
     `spellings` in any case, as the gate matches them: the rows not revoked (a
-    pending request too, as `find_any_grant` reads them), or every row ever
-    written when `live` is False."""
+    pending request too, as `find_any_grant` reads them), only the active rows
+    that admit when `active`, or every row ever written when `live` is False."""
     if not spellings:
         return []
     ch = ch or _default_client()
-    live_only = "AND revoked_at IS NULL" if live else ""
+    if active:
+        live_only = f"AND {LIVE_GRANT}"
+    elif live:
+        live_only = "AND revoked_at IS NULL"
+    else:
+        live_only = ""
     rows = await ch.query_all(
         f"""
         SELECT DISTINCT subject FROM loom.namespace_grants FINAL

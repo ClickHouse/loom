@@ -155,7 +155,7 @@ async def cascade_revoke_to_created_tokens(
     account holds (`unheld`), those are every spelling a revocation reaches
     (`aliases.spellings`), an unverified pair too (the tokens an unverified
     account made while the address's grant admitted it), less any account that
-    still holds a grant of its own there; otherwise the verified ones only,
+    still holds an active grant of its own there; otherwise the verified ones only,
     since an unverified account naming the email may be someone else's. Returns
     tokens touched."""
     if ch is None:
@@ -169,11 +169,12 @@ async def cascade_revoke_to_created_tokens(
             creators = [
                 c
                 for c in await spellings(org, subject, ch=ch)
-                # An account naming the address that still holds a grant of its own
-                # here keeps its tokens' grants: they may be what that grant gave.
+                # An account naming the address that still holds an active grant of
+                # its own here keeps its tokens' grants: they may be what that grant
+                # gave. A pending request admits nothing, so it keeps nothing.
                 if c.lower() == subject.lower()
                 or not await grants_repo.stored_spellings(
-                    org, namespace, await verified_spellings(org, c, ch=ch), ch=ch
+                    org, namespace, await verified_spellings(org, c, ch=ch), active=True, ch=ch
                 )
             ]
         else:

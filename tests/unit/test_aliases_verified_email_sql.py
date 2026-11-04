@@ -312,12 +312,14 @@ async def test_revoking_a_verified_person_leaves_a_squatters_tokens(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("own_status", ["active", "pending"])
 async def test_revoking_an_address_leaves_the_tokens_of_an_account_with_its_own_grant(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    own_status: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # On team-x mallory holds a grant under her handle as well as one under the
     # address she typed. Revoking the address takes its row; her tokens there may be
-    # what her own grant gave, so they keep their grants.
+    # what her own grant gave, so they keep their grants. A pending request of her
+    # own admits nothing, so it keeps nothing.
     from server.identity.api.models_grants import GrantsRevokeInput
     from server.identity.app import grants as grants_app
     from server.identity.store import grants as grants_repo
@@ -330,6 +332,9 @@ async def test_revoking_an_address_leaves_the_tokens_of_an_account_with_its_own_
         "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
         f" ('{ORG}', 'bot', 'sa:m-bot', 'mallory')",
         _grant("team-x", "sa:m-bot"),
+        "INSERT INTO loom.namespace_grants (org, namespace, subject, role, status,"
+        " granted_at, granted_by, version) VALUES"
+        f" ('{ORG}', 'team-x', 'mallory', 'viewer', '{own_status}', now(), 'admin', 2)",
     )
     monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
     monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
@@ -341,7 +346,8 @@ async def test_revoking_an_address_leaves_the_tokens_of_an_account_with_its_own_
         {"org": ORG},
     )
     subjects = {r["subject"] for r in live}
-    assert {"mallory", "sa:m-bot"} <= subjects and "bob@corp.example" not in subjects
+    assert "mallory" in subjects and "bob@corp.example" not in subjects
+    assert ("sa:m-bot" in subjects) is (own_status == "active")
 
 
 @pytest.mark.asyncio
