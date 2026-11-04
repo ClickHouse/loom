@@ -80,17 +80,18 @@ _REFRESH_APPEND = r"\bREFRESH\b[^(]*\bAPPEND\b"
 
 
 def memory_rows(client: Any, org: str) -> list[tuple[Any, ...]]:
-    """Each of the org's loom.memory rows at its latest version (FINAL), as the fields a
-    write changes: a "wrote nothing" check compares two of these. A merge leaves it as
-    it was, and so does the entity extractor, which rewrites only `version` and
-    `entities`; a write a caller meant stamps `updated_at`."""
+    """Each of the org's loom.memory rows at its latest version (FINAL), as its identity
+    and the fields a write changes, for a "wrote nothing" check that compares two of
+    these. A merge leaves it as it was, and so does the entity extractor, which
+    rewrites only `version` and `entities`."""
     return [
         tuple(r)
         for r in client.query(
-            "SELECT agent, user_id, session_id, memory_key, memory_id, content_sha256, status,"
-            " pinned, tags, tombstoned_at, actor, source_class, reinforcement_count, updated_at"
+            "SELECT namespace, agent, user_id, session_id, memory_key, memory_id,"
+            " content_sha256, status, pinned, tags, tombstoned_at, expires_at, on_expire,"
+            " actor, source_class, reinforcement_count, updated_at"
             " FROM loom.memory FINAL WHERE org = {org:String}"
-            " ORDER BY agent, user_id, session_id, memory_key",
+            " ORDER BY namespace, agent, user_id, session_id, memory_key",
             parameters={"org": org},
         ).result_rows
     ]
