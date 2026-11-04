@@ -161,18 +161,13 @@ async def cascade_revoke_to_created_tokens(
         from server.core.ch import get_client
 
         ch = get_client()
-    from server.auth.aliases import read_aliases, spellings
-    from server.core.ch import own_write_reads
-    from server.core.principals import has_aliases
+    from server.auth.aliases import spellings, verified_spellings
 
     try:
         if "@" in named:
             creators = await spellings(org, subject, ch=ch)
-        elif has_aliases(subject):
-            with own_write_reads():  # a link another process just made
-                creators = await read_aliases(org, subject, ch)
         else:
-            creators = [subject]
+            creators = await verified_spellings(org, subject, ch=ch)
     except Exception as e:  # noqa: BLE001 — the tokens made under the exact subject still go
         log.warning("token grant cascade: spellings of %r unread: %s", subject, e)
         creators = [subject]

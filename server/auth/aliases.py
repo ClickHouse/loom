@@ -156,16 +156,23 @@ async def canonical_subject(org: str, subject: str, *, ch: object | None = None)
     spelling as given when the directory ties nothing to it. Read uncached,
     so a link or release another process just made cannot strand the grant;
     a failed read raises rather than guess."""
-    from server.core.ch import own_write_reads
-
-    if not has_aliases(subject) or "@" not in subject:
+    if "@" not in subject:
         return subject
-    with own_write_reads():
-        spellings = await read_aliases(org, subject, ch)
-    for alias in spellings:
+    for alias in await verified_spellings(org, subject, ch=ch):
         if "@" not in alias:
             return alias
     return subject
+
+
+async def verified_spellings(org: str, subject: str, *, ch: object | None = None) -> list[str]:
+    """`read_aliases` read past a link or release another process just made: the
+    subject alone when it has no aliases. Raises when the directory cannot be read."""
+    from server.core.ch import own_write_reads
+
+    if not has_aliases(subject):
+        return [subject]
+    with own_write_reads():
+        return await read_aliases(org, subject, ch)
 
 
 __all__ = [
@@ -175,4 +182,5 @@ __all__ = [
     "read_aliases",
     "spellings",
     "subject_aliases",
+    "verified_spellings",
 ]

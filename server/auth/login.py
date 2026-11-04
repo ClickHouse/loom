@@ -292,7 +292,7 @@ async def refreshed_roles(subject: str, org: str, roles: list[str]) -> list[str]
         """.replace("{verified}", VERIFIED_EMAIL_SQL),
         params={"org": org, "sub": subject},
     )
-    row = row or {}  # the aggregate answers one row, with no account a count of 0
+    row = row or {}  # typed optional; the aggregate answers one row, a count of 0 for none
     if not int(row.get("accounts") or 0):
         return None
     if "platform_admin" not in roles:

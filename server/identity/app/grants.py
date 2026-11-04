@@ -342,14 +342,9 @@ async def _live_grant_rows(org: str, namespace: str, subject: str) -> list[tuple
     (`aliases.spellings`): a grant for it stored under an unverified account's
     handle. A handle never falls back to its unverified email, which may name
     someone else's grant."""
-    from server.auth.aliases import read_aliases, spellings
-    from server.core.ch import own_write_reads
-    from server.core.principals import has_aliases
+    from server.auth.aliases import spellings, verified_spellings
 
-    verified = [subject]
-    if has_aliases(subject):
-        with own_write_reads():  # a link another process just made
-            verified = await read_aliases(org, subject, None)
+    verified = await verified_spellings(org, subject)
     found = await _rows_under(org, namespace, verified)
     if found or "@" not in subject:
         return found
