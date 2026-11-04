@@ -147,16 +147,16 @@ async def revoke_token_grants(
 
 
 async def cascade_revoke_to_created_tokens(
-    org: str, namespace: str, subject: str, *, named: str, ch: Any = None
+    org: str, namespace: str, subject: str, *, unheld: bool, ch: Any = None
 ) -> int:
-    """A person's grant on ``namespace``, stored under `subject`, was revoked by
-    a revoke that named `named`: revoke the grants every live token they created
-    holds there, under the stored subject's spellings. When the revoke named an
-    address no verified account holds, those are every spelling a revocation
-    reaches (`aliases.spellings`), an unverified pair too (the tokens an
-    unverified account made while the address's grant admitted it); otherwise
-    the verified ones only, since an unverified account naming the email may be
-    someone else's. Returns tokens touched."""
+    """A person's grant on ``namespace``, stored under `subject`, was revoked:
+    revoke the grants every live token they created holds there, under the
+    stored subject's spellings. When the revoke named an address no verified
+    account holds (`unheld`), those are every spelling a revocation reaches
+    (`aliases.spellings`), an unverified pair too (the tokens an unverified
+    account made while the address's grant admitted it); otherwise the verified
+    ones only, since an unverified account naming the email may be someone
+    else's. Returns tokens touched."""
     if ch is None:
         from server.core.ch import get_client
 
@@ -164,11 +164,6 @@ async def cascade_revoke_to_created_tokens(
     from server.auth.aliases import spellings, verified_spellings
 
     try:
-        # An address no verified account holds: what its grant admitted may have
-        # been an unverified account's.
-        unheld = "@" in named and not any(
-            "@" not in s for s in await verified_spellings(org, named, ch=ch)
-        )
         if unheld:
             creators = await spellings(org, subject, ch=ch)
         else:

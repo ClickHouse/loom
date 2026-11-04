@@ -98,7 +98,7 @@ Remove a subject's grant on a namespace.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `subject` | `str` | required | Whose grant to revoke (handle, email, `sub`): verified spellings' rows go, pending ones are rejected; an address no verified account holds that never held a row here takes unverified accounts' rows. |
+| `subject` | `str` | required | Whose grant to revoke: a login handle, an email or a service-account `sub`; the person's row under each verified spelling goes, and a pending request is rejected. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

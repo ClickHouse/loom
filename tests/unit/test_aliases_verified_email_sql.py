@@ -236,7 +236,7 @@ async def test_revoking_the_address_reaches_the_tokens_its_squatter_made(
     monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
     monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
     touched = await token_grants.cascade_revoke_to_created_tokens(
-        ORG, "team-y", "bob@corp.example", named="bob@corp.example", ch=kept
+        ORG, "team-y", "bob@corp.example", unheld=True, ch=kept
     )
     assert touched == 1
     live = await kept.query_all(
@@ -267,7 +267,7 @@ async def test_revoking_a_handle_leaves_the_tokens_its_unverified_email_names(
     monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
     assert (
         await token_grants.cascade_revoke_to_created_tokens(
-            ORG, "team-x", "mallory", named="mallory", ch=kept
+            ORG, "team-x", "mallory", unheld=False, ch=kept
         )
         == 0
     )
@@ -433,7 +433,7 @@ async def test_a_revoke_takes_the_rows_its_spellings_reach(
     from server.identity.app import grants as grants_app
 
     monkeypatch.setattr(grants, "_default_client", lambda: ch)
-    rows = await grants_app._live_grant_rows(ORG, namespace, subject)
+    rows, _ = await grants_app._live_grant_rows(ORG, namespace, subject)
     assert sorted(stored for stored, _ in rows) == found
 
 
@@ -483,3 +483,23 @@ async def test_revoking_an_address_again_takes_nothing_more(
     )
     subjects = {r["subject"] for r in live}
     assert "mallory" in subjects and "bob@corp.example" not in subjects
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("namespace", "email", "held"),
+    [
+        # Carol's address is u-carol's verified email: held elsewhere.
+        ("mallory3", "carol@corp.example", True),
+        # Bob's is named only by mallory, unverified.
+        ("mallory", "bob@corp.example", False),
+        # u-frank is deactivated: his address is held by no active account.
+        ("someone", "frank@corp.example", False),
+    ],
+)
+async def test_an_old_address_is_held_elsewhere_only_by_a_verified_account(
+    ch: _CH, namespace: str, email: str, held: bool
+) -> None:
+    from server.identity.app import account_admin
+
+    assert await account_admin._verified_elsewhere(ORG, namespace, email) is held

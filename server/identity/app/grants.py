@@ -333,24 +333,28 @@ async def handle_grants_pending_for_me(
     )
 
 
-async def _live_grant_rows(org: str, namespace: str, subject: str) -> list[tuple[str, GrantState]]:
+async def _live_grant_rows(
+    org: str, namespace: str, subject: str
+) -> tuple[list[tuple[str, GrantState]], bool]:
     """The (stored subject, row) pairs a revoke of `subject` takes: the live row
     under each spelling the gate admits the person by, matched in any case. An
-    address no verified account holds and that never held a row here also takes
-    the live rows of the unverified accounts naming it (`aliases.spellings`)."""
+    address no verified account holds (`unheld`, returned beside the rows) and
+    that never held a row here also takes the live rows of the unverified
+    accounts naming it (`aliases.spellings`)."""
     from server.auth.aliases import spellings, verified_spellings
 
     verified = await verified_spellings(org, subject)
+    # A verified account holding the address is the person: an unverified
+    # account naming it too is someone else, whose rows and tokens stay.
+    unheld = "@" in subject and not any("@" not in s for s in verified)
     found = await _rows_under(org, namespace, verified)
-    if found or "@" not in subject or any("@" not in s for s in verified):
-        # A verified account holding the address is the person: an unverified
-        # account naming it too is someone else, whose rows stay.
-        return found
+    if found or not unheld:
+        return found, unheld
     if await grants_repo.stored_spellings(org, namespace, verified, live=False):
-        return []  # revoked already: a retry takes nothing more
+        return [], unheld  # revoked already: a retry takes nothing more
     seen = {s.lower() for s in verified}
     others = [s for s in await spellings(org, subject) if s.lower() not in seen]
-    return await _rows_under(org, namespace, others)
+    return await _rows_under(org, namespace, others), unheld
 
 
 async def _rows_under(
@@ -381,7 +385,7 @@ async def revoke_grant(
     """`grants.revoke`; `may_take` raises for a row this caller must not
     revoke, checked before any change and again on the row read under the
     grant's claim. Every live row of the person's (`_live_grant_rows`) goes."""
-    rows = await _live_grant_rows(input.org, input.namespace, input.subject)
+    rows, unheld = await _live_grant_rows(input.org, input.namespace, input.subject)
     if may_take is not None:
         for _, row in rows:
             may_take(row)
@@ -398,7 +402,7 @@ async def revoke_grant(
         # lands: a later row refused fails the call, and the op's own audit row is
         # written only for a call that succeeds.
         audited = subject != input.subject or len(rows) > 1
-        now = await _revoke_row(input, subject, row, may_take, audited=audited)
+        now = await _revoke_row(input, subject, row, may_take, audited=audited, unheld=unheld)
         revoked_at = now or revoked_at
     if revoked_at is None:
         return GrantsRevokeOutput(revoked=False)
@@ -436,6 +440,7 @@ async def _revoke_row(
     may_take: Callable[[GrantState], None] | None,
     *,
     audited: bool,
+    unheld: bool,
 ) -> datetime | None:
     """Revoke the row stored under `subject`, under its claim, and the grants of the
     tokens it minted there; when it was revoked, or None when nothing was."""
@@ -466,7 +471,7 @@ async def _revoke_row(
 
     try:
         await token_grants.cascade_revoke_to_created_tokens(
-            input.org, input.namespace, subject, named=input.subject
+            input.org, input.namespace, subject, unheld=unheld
         )
     except Exception as e:  # noqa: BLE001 - the revoke itself succeeded
         log.warning(
