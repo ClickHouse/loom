@@ -32,10 +32,7 @@ pytestmark = pytest.mark.usefixtures("ch_target_required")
 
 @pytest.fixture
 def extractor_routed() -> None:
-    """The tests that publish send SQL and TOML originals to an extractor; without one
-    routed for them every job fails `format_unavailable`, which only the
-    mislabelled-upload test expects. Asked as the worker asks (`endpoint_for`), from
-    the settings: the environment, `.env` or the settings file."""
+    """Skips unless an extractor is routed for SQL and TOML, as the worker asks."""
     from server.knowledge.app.extractors import endpoint_for
 
     if not (endpoint_for("sql", "") and endpoint_for("toml", "")):
