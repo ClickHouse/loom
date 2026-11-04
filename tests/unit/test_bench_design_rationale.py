@@ -1279,7 +1279,7 @@ def test_scoring_with_the_unfilled_label_sheet_fails_clearly(tmp_path, capsys):
     assert "fill each row's verdict first" in capsys.readouterr().err
 
 
-def test_a_ledger_line_cut_short_by_an_interrupt_is_dropped(tmp_path):
+def test_a_ledger_line_cut_short_by_an_interrupt_is_dropped(tmp_path, capsys):
     path = tmp_path / "ledger.jsonl"
     ledger = Ledger(path, 1.0)
     ledger.record_usd("server", 0.25)
@@ -1287,6 +1287,7 @@ def test_a_ledger_line_cut_short_by_an_interrupt_is_dropped(tmp_path):
         f.write('{"stage": "answer", "usd": 0.')  # the process died here
     resumed = Ledger(path, 1.0)
     assert resumed.spent() == 0.25
+    assert "undercounts by one call" in capsys.readouterr().err
     resumed.record_usd("server", 0.5)
     assert [r["usd"] for r in Ledger(path, 1.0).rows()] == [0.25, 0.5]
 
@@ -1303,3 +1304,26 @@ def test_save_json_leaves_the_old_file_whole_when_a_write_fails(tmp_path, monkey
         run.save_json(path, {"A1/arm0/s1": {"text": "lost"}})
     monkeypatch.undo()
     assert json.loads(path.read_text()) == {"A1/arm0/s1": {"text": "kept"}}
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_a_whole_ledger_row_without_its_newline_is_kept(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    path.write_text('{"stage": "server", "usd": 0.25}')  # written whole, newline lost
+    ledger = Ledger(path, 1.0)
+    assert ledger.spent() == 0.25
+    ledger.record_usd("server", 0.5)
+    assert [r["usd"] for r in Ledger(path, 1.0).rows()] == [0.25, 0.5]
+
+
+def test_removed_and_added_lines_that_look_like_headers_are_lines():
+    diff = (
+        "--- a/src/q.sql\n+++ b/src/q.sql\n@@ -1,2 +1,2 @@\n"
+        "--- drop the old index\n+++ keep the new one\n"
+    )
+    files = detectors.diff_files(diff)
+    assert list(files) == ["src/q.sql"]
+    assert files["src/q.sql"] == {"-": ["-- drop the old index"], "+": ["++ keep the new one"]}
+    # A second file after a hunk: its header pair is followed by its own hunk.
+    two = diff + "--- a/src/r.sql\n+++ b/src/r.sql\n@@ -1 +1 @@\n-old\n+new\n"
+    assert detectors.diff_files(two)["src/r.sql"] == {"-": ["old"], "+": ["new"]}

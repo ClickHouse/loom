@@ -19,19 +19,35 @@ def extract_diff(text: str) -> str:
 
 
 def diff_files(diff: str) -> Diff:
-    """path -> {"+": added lines, "-": removed lines} of a unified diff."""
+    """path -> {"+": added lines, "-": removed lines} of a unified diff. Inside a hunk a
+    removed `-- comment` line reads `--- comment` and an added `++x` line `+++x`, so
+    there a `--- ` and `+++ ` pair is a file header only when a `@@` line follows it;
+    outside a hunk any `--- `/`+++ ` line is one (a model's diff may give either alone)."""
     files: Diff = {}
     current = None
-    for line in diff.splitlines():
-        if line.startswith(("+++ ", "--- ")):
+    in_hunk = False
+    lines = diff.splitlines()
+    for i, line in enumerate(lines):
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        after = lines[i + 2] if i + 2 < len(lines) else ""
+        header = line.startswith(("--- ", "+++ ")) and (
+            not in_hunk
+            or (line.startswith("--- ") and nxt.startswith("+++ ") and after.startswith("@@"))
+        )
+        if header:
+            in_hunk = False
             path = re.sub(r"^[ab]/", "", line[4:].strip().split("\t")[0])
             if path != "/dev/null":
                 current = files.setdefault(path, {"+": [], "-": []})
             continue
         if line.startswith("diff --git "):
+            in_hunk = False
             m = re.match(r"diff --git a/(\S+) b/(\S+)", line)
             if m:
                 current = files.setdefault(m.group(2), {"+": [], "-": []})
+            continue
+        if line.startswith("@@"):
+            in_hunk = True
             continue
         if current is not None and line and line[0] in "+-":
             current[line[0]].append(line[1:])

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -54,8 +55,12 @@ def write_atomic(path: Path, text: str) -> None:
     """Write `text` to `path` through a sibling temp file and a rename, so an interrupt
     mid-write leaves the old file whole."""
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(text)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 class Ledger:
@@ -69,17 +74,27 @@ class Ledger:
         self._spent = float(sum(r["usd"] for r in self.rows()))
 
     def _drop_partial_last_line(self) -> None:
-        """An interrupt mid-append leaves a last line cut short: drop it, so the rows
-        parse and the next append starts a line of its own."""
+        """An interrupt mid-append leaves a last line cut short, or a whole row without
+        its newline: drop a cut row (and say so, the ledger then undercounts by one
+        call), keep a whole one, and end the file in a newline so the next append starts
+        a line of its own."""
         if not self.path.exists():
             return
-        lines = [line for line in self.path.read_text().splitlines() if line]
-        if not lines:
+        text = self.path.read_text()
+        if not text or text.endswith("\n"):
             return
+        head, _, last = text.rpartition("\n")
         try:
-            json.loads(lines[-1])
+            json.loads(last)
         except json.JSONDecodeError:
-            write_atomic(self.path, "".join(line + "\n" for line in lines[:-1]))
+            print(
+                f"{self.path}: dropped a row an interrupt cut short; the ledger "
+                "undercounts by one call",
+                file=sys.stderr,
+            )
+            write_atomic(self.path, head + "\n" if head else "")
+            return
+        write_atomic(self.path, text + "\n")
 
     def rows(self) -> list[dict[str, Any]]:
         if not self.path.exists():

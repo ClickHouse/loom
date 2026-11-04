@@ -137,7 +137,9 @@ from `cost.summary` after each stage), `extract_<doc>.log` and
 refused in advance: what stops the server itself is each namespace's daily cost cap, set
 to `--max-usd` at registration. The extraction CLI binds no cost accumulator, so neither
 its model calls nor the embeddings of its writes reach `cost.summary`; the ledger's
-estimate, model calls only, is their only record.
+estimate, model calls only, is their only record. The run files are written through a
+temp file and a rename; a ledger row an interrupt cut short is dropped when the ledger
+opens, with a warning that the ledger undercounts by one call.
 
 A run the spend cap stops, in its setup or later, keeps its namespaces, resumes on the
 same `--out` (exit code 1), and prints the `loom namespaces-gc` command that erases them
