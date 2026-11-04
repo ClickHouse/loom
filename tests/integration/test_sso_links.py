@@ -293,8 +293,9 @@ async def test_a_link_rebinds_the_addresses_at_once(
     ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Grants are written under the subject an address resolves to, read from
-    # the directory: the old address must stop reaching the person and the new
-    # one start, unwaited. This process's alias cache is dropped too.
+    # the directory: the new, linked address must start reaching the person,
+    # unwaited. This process's alias cache is dropped too. The personal address
+    # was never verified (a password account's, unlinked), so it reaches no one.
     from server.auth import aliases
     from server.identity.app import account_admin
     from server.settings import settings
@@ -305,7 +306,7 @@ async def test_a_link_rebinds_the_addresses_at_once(
     owner = f"ash-{uuid.uuid4().hex[:6]}"
     namespace = await _password_account(ch, org, personal, owner=owner)
     with own_write_reads():
-        assert await aliases.canonical_subject(org, personal) == owner
+        assert await aliases.canonical_subject(org, personal) == personal
         assert await aliases.canonical_subject(org, work) == work
 
     await account_admin.link_account(work, org, namespace, by="op")
