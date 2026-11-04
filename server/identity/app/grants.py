@@ -396,12 +396,12 @@ async def revoke_grant(
         await _refuse_last_admin(input, also_going=admins - 1)
     revoked_at = None
     for subject, row in rows:
-        now = await _revoke_row(input, subject, row, may_take)
+        # A row under another spelling, or one of several, is audited as its write
+        # lands: a later row refused fails the call, and the op's own audit row is
+        # written only for a call that succeeds.
+        audited = subject != input.subject or len(rows) > 1
+        now = await _revoke_row(input, subject, row, may_take, audited=audited)
         revoked_at = now or revoked_at
-        if now is not None and (subject != input.subject or len(rows) > 1):
-            # Audited as each lands: a later row refused fails the call, and
-            # the op's own audit row is written only for a call that succeeds.
-            await _audit_stored_row(input, subject)
     if revoked_at is None:
         return GrantsRevokeOutput(revoked=False)
     return GrantsRevokeOutput(revoked=True, revoked_at=revoked_at)
@@ -412,6 +412,7 @@ async def _audit_stored_row(input: GrantsRevokeInput, subject: str) -> None:
     another spelling, or one of several, gets one of its own, so the log shows
     whose grant went."""
     from server.auth.context import current_auth
+    from server.core.logging_config import request_id_var
     from server.observability import audit
 
     auth = current_auth()
@@ -419,8 +420,9 @@ async def _audit_stored_row(input: GrantsRevokeInput, subject: str) -> None:
         "grants.revoke",
         org=input.org,
         namespace=input.namespace,
-        actor=auth.subject if auth is not None and auth.subject else "admin",
+        actor=auth.subject if auth is not None and auth.subject else "anonymous",
         subject={"subject": subject, "named": input.subject},
+        request_id=request_id_var.get() or "",
     )
 
 
@@ -429,6 +431,8 @@ async def _revoke_row(
     subject: str,
     row: GrantState,
     may_take: Callable[[GrantState], None] | None,
+    *,
+    audited: bool = False,
 ) -> datetime | None:
     """Revoke the row stored under `subject`, under its claim, and the grants of the
     tokens it minted there; when it was revoked, or None when nothing was."""
@@ -438,7 +442,7 @@ async def _revoke_row(
             return None
         if may_take is not None:
             may_take(row)
-        return row, await _write_revoke(input, subject, row)
+        return row, await _write_revoke(input, subject, row, audited=audited)
 
     done = None
     latest: GrantState | None = row
@@ -532,25 +536,32 @@ async def _refuse_last_admin(
         )
 
 
-async def _write_revoke(input: GrantsRevokeInput, subject: str, row: GrantState) -> datetime:
+async def _write_revoke(
+    input: GrantsRevokeInput, subject: str, row: GrantState, *, audited: bool = False
+) -> datetime:
     """`grants.revoke`'s write, under the grant's claim. Refuses to revoke a
-    namespace's last active admin."""
+    namespace's last active admin. An `audited` row gets its own audit row even
+    when the reply is lost: the row may have landed, and a retry finds nothing."""
     if _active_admin(row):
         await _refuse_last_admin(input)
     now = datetime.now(UTC).replace(tzinfo=None)
-    await grants_repo.insert_row(
-        {
-            "org": input.org,
-            "namespace": input.namespace,
-            "subject": subject,
-            "role": row.role,
-            "status": row.status or "active",
-            "granted_at": now,
-            "granted_by": row.granted_by,
-            "revoked_at": now,
-            "version": _version(),
-        }
-    )
+    try:
+        await grants_repo.insert_row(
+            {
+                "org": input.org,
+                "namespace": input.namespace,
+                "subject": subject,
+                "role": row.role,
+                "status": row.status or "active",
+                "granted_at": now,
+                "granted_by": row.granted_by,
+                "revoked_at": now,
+                "version": _version(),
+            }
+        )
+    finally:
+        if audited:
+            await _audit_stored_row(input, subject)
     return now
 
 

@@ -232,6 +232,42 @@ async def test_revoke_by_email_revokes_the_canonical_row(monkeypatch: pytest.Mon
 
 
 @pytest.mark.asyncio
+async def test_a_row_taken_under_another_spelling_is_audited_when_its_reply_is_lost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The row under mallory's handle may have landed; a retry would find nothing,
+    # so its audit row is written whether the insert answered or not.
+    from server.identity.api.models_grants import GrantsRevokeInput
+
+    audited: list[Any] = []
+
+    async def _spellings(org: str, subject: str, **_: Any) -> list[str]:
+        return [subject, "mallory"]
+
+    async def _find_any(org: str, ns: str, sub: str, **_: Any) -> GrantState | None:
+        return GrantState.from_row(_row("writer")) if sub == "mallory" else None
+
+    async def _lost(row: dict[str, Any], **_: Any) -> None:
+        raise TimeoutError("reply lost")
+
+    async def _emit(event_type: str, **kw: Any) -> str:
+        audited.append((event_type, kw["subject"]))
+        return ""
+
+    monkeypatch.setattr("server.auth.aliases.spellings", _spellings)
+    monkeypatch.setattr(grants_repo, "find_any_grant", _find_any)
+    monkeypatch.setattr(grants_repo, "insert_row", _lost)
+    monkeypatch.setattr("server.observability.audit.emit", _emit)
+    from server.core.errors import BackendUnavailableError
+
+    with pytest.raises(BackendUnavailableError):  # the grant's claim reports the timeout
+        await grants_mod.handle_grants_revoke(
+            GrantsRevokeInput(org="o", namespace="ns", subject="bob@corp.example")
+        )
+    assert audited == [("grants.revoke", {"subject": "mallory", "named": "bob@corp.example"})]
+
+
+@pytest.mark.asyncio
 async def test_revoke_by_email_reaches_a_row_under_an_unverified_accounts_handle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

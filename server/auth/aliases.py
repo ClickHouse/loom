@@ -153,7 +153,7 @@ async def spellings(org: str, subject: str, *, ch: object | None = None) -> list
 async def canonical_subject(org: str, subject: str, *, ch: object | None = None) -> str:
     """The login handle for a human spelling (the row's `owner_email`), so a
     new grant is written under the one subject every read folds onto; the
-    spelling as given when the directory ties nothing to it. Read uncached,
+    spelling as given when the directory ties no verified account to it. Read uncached,
     so a link or release another process just made cannot strand the grant;
     a failed read raises rather than guess."""
     if "@" not in subject:
