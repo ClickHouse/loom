@@ -611,7 +611,7 @@ class TrackerSourceAddInput(BaseModel):
     credential, and the tracker namespaces that read it. Any signed-in person of
     the org may; they become the namespaces' first admin. Before anything is
     written the host must resolve to a public address, the credential must
-    hold no write access, and the schema must meet the contract — each
+    hold read access only, and the schema must meet the contract — each
     refusal names what to fix. The password is stored encrypted, never
     returned."""
 
@@ -656,8 +656,7 @@ class TrackerSourceAddOutput(BaseModel):
     namespaces: list[dict[str, Any]] = Field(default_factory=list)
     # The record-contract report (`ok`, missing tables and columns, type mismatches, …).
     contract: dict[str, Any] = Field(default_factory=dict)
-    # roles the credential holds (opaque to the read-only check; shown so the
-    # registrant can judge them)
+    # Roles the credential holds; the read-only check reads their grants too.
     roles: list[str] = Field(default_factory=list)
     # `admin` when the caller becomes the namespaces' first admin; "" with auth off.
     my_role: str = ""
@@ -728,7 +727,7 @@ class TrackerSourceInspectOutput(BaseModel):
     database: str
     # [{table, engine, rows, columns: [{name, type}]}]
     tables: list[dict[str, Any]] = Field(default_factory=list)
-    # Roles the credential holds, shown so the caller can judge them.
+    # Roles the credential holds; the read-only check reads their grants too.
     roles: list[str] = Field(default_factory=list)
     # {mode: views|mapping, roles: {logical: table}, fields: {logical: {column: {from,
     #  confidence}}}, mapping: mapping.SourceMapping JSON | None}

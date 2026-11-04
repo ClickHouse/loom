@@ -333,6 +333,11 @@ _JOB_FIELDS = {
     # Processing, and not updated within the job's lease: its worker stopped.
     "stalled": "job_state = 'processing' "
     "AND job_updated_at <= now64(3) - toIntervalMillisecond({lease_ms:UInt64})",
+    # What the format it was extracted as is read from: knowledge.ingest's `format`
+    # option, the file name and the media type (server.core.document_formats.format_of).
+    "filename": "filename",
+    "content_type": "toString(content_type)",
+    "declared_format": "JSONExtractString(options, 'format')",
 }
 _STATES = ("pending", "processing", "ready", "partial", "failed", "cancelled")
 
@@ -345,7 +350,7 @@ def _jobs(where: str) -> str:
     stored one."""
     return f"""
         SELECT source_uri, ingestion_id, created_at, next_attempt_at, attempts,
-               toString(stage) AS stage, error_message,
+               toString(stage) AS stage, error_message, filename, content_type, options,
                state = 'pending' AND ingestion_id IN (
                    SELECT ingestion_id FROM {CANCELS}
                    WHERE org = {{org:String}} AND namespace = {{ns:String}}
@@ -494,4 +499,65 @@ async def sources_without_document(
             "lease_ms": _lease_ms(lease_s),
             "lim": limit,
         },
+    )
+
+
+# The most sources `format_unavailable_sources` returns.
+MAX_FORMAT_SOURCES = 1000  # not a setting: a bound on one report's rows, flagged when reached
+
+
+async def format_unavailable_sources(
+    org: str, namespace: str, *, lease_s: float, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The sources whose current job (the open one, else the newest) failed or waits
+    because no configured extractor takes its format (error_code format_unavailable), no
+    write having replaced it: each with that job's id and what its format is read from
+    (filename, content_type, declared_format), at most MAX_FORMAT_SOURCES + 1 (one more
+    means cut)."""
+    current = {n: _CURRENT.format(n) for n in ("ingestion_id", "filename", "content_type")}
+    return await (ch or _default_client()).query_all(
+        f"""
+        SELECT j.source_uri AS source_uri, {current["ingestion_id"]} AS ingestion_id,
+               {current["filename"]} AS filename, {current["content_type"]} AS content_type,
+               {_CURRENT.format("declared_format")} AS declared_format
+        FROM ({_per_source("")}) AS j
+        WHERE NOT j.replaced AND {_CURRENT.format("error_code")} = 'format_unavailable'
+        ORDER BY source_uri
+        LIMIT {{cap:UInt32}}
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "open": list(OPEN_STATES),
+            "lease_ms": _lease_ms(lease_s),
+            "cap": MAX_FORMAT_SOURCES + 1,
+        },
+    )
+
+
+async def extraction_by_format(
+    org: str, namespace: str, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """Per format of the live documents an extraction published (a coverage on the row):
+    how many, how many are incomplete with up to MAX_SAMPLES URIs, and the capabilities
+    their coverage lost (`lost`, distinct, sorted), and the media types of the originals
+    behind the incomplete extractions and behind the complete ones (`incomplete_types`,
+    `complete_types`, distinct, sorted: a media-type route may have sent them), most
+    incomplete first, at most MAX_GROUPS + 1 formats (one more means cut)."""
+    return await (ch or _default_client()).query_all(
+        f"""
+        SELECT {FORMAT_SQL} AS doc_format, count() AS documents,
+               countIf({_INCOMPLETE}) AS incomplete,
+               groupArrayIf({MAX_SAMPLES})(source_uri, {_INCOMPLETE}) AS incomplete_uris,
+               arraySort(groupUniqArrayArray({_LOST})) AS lost,
+               arraySort(groupUniqArrayIf(toString(blob_content_type), {_INCOMPLETE}))
+                   AS incomplete_types,
+               arraySort(groupUniqArrayIf(toString(blob_content_type), NOT {_INCOMPLETE}))
+                   AS complete_types
+        {_DOCS} AND superseded_at IS NULL AND coverage != ''
+        GROUP BY doc_format
+        ORDER BY incomplete DESC, doc_format
+        LIMIT {{cap:UInt32}}
+        """,
+        params={"org": org, "ns": namespace, "cap": MAX_GROUPS + 1},
     )

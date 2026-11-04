@@ -3839,7 +3839,7 @@ OPS: dict[str, OpSpec] = {
         True,
         "viewer",
         "experimental",
-        5000,
+        8000,
         False,
         True,
     ),
@@ -16410,6 +16410,7 @@ class NamespaceTuneOutput(TypedDict, total=False):
     categories_registered: NotRequired[Optional[int]]
     extraction_policy: NotRequired[Optional[str]]
     extraction_policy_unavailable: NotRequired[str]
+    chunking: NotRequired[Optional["ChunkingSample"]]
     skipped: NotRequired[list[str]]
     model_used: NotRequired[bool]
 
@@ -16417,7 +16418,13 @@ class NamespaceTuneOutput(TypedDict, total=False):
 class TuneProposal(TypedDict, total=False):
     id: Required[str]
     target: Required[
-        Literal["extraction_instructions.request", "namespace.category", "namespace.guide"]
+        Literal[
+            "extraction_instructions.request",
+            "namespace.category",
+            "namespace.guide",
+            "settings.knowledge_chunking",
+            "settings.document_extractors_json",
+        ]
     ]
     scope: Required[str]
     title: Required[str]
@@ -16431,6 +16438,8 @@ class TuneProposal(TypedDict, total=False):
     effect: NotRequired[Literal["future"]]
     historical: Required[str]
     apply: Required["TuneApply"]
+    apply_also: NotRequired[list["TuneApply"]]
+    preview: NotRequired[Optional["ChunkingPreview"]]
     limits: NotRequired[str]
 
 
@@ -16441,16 +16450,54 @@ class TuneEvidence(TypedDict, total=False):
     supporting_count: NotRequired[int]
     supporting: NotRequired[list["FindingEvidence"]]
     counter_count: NotRequired[Optional[int]]
+    documents: NotRequired[list[str]]
 
 
 class TuneApply(TypedDict, total=False):
     "The ordinary write that would apply a proposal, for a person to approve."
 
     op: Required[str]
+    via: NotRequired[Literal["op", "admin_route", "environment"]]
     args: Required[dict[str, Any]]
     args_complete: NotRequired[bool]
     required_role: Required[str]
     guard: Required[str]
+
+
+class ChunkingPreview(TypedDict, total=False):
+    "The same document sample cut at the current values and at the proposed ones."
+
+    before: Required["ChunkStats"]
+    after: Required["ChunkStats"]
+
+
+class ChunkStats(TypedDict, total=False):
+    "What a document sample is cut into at one chunk size and stride, by the chunker each"
+
+    size: Required[int]
+    stride: Required[int]
+    chunks: Required[int]
+    min_chars: Required[int]
+    median_chars: Required[int]
+    p90_chars: Required[int]
+    max_chars: Required[int]
+    sections: Required[int]
+    sections_cut: Required[int]
+    max_input_tokens: Required[int]
+    over_input_limit: NotRequired[Optional[int]]
+
+
+class ChunkingSample(TypedDict, total=False):
+    "The namespace's documents re-chunked in process at the current values: no model is"
+
+    cap: Required[int]
+    population: NotRequired[Optional[int]]
+    documents: Required[int]
+    unread: Required[int]
+    load_cap: Required[int]
+    embedder_model: Required[str]
+    input_token_limit: NotRequired[Optional[int]]
+    current: Required["ChunkStats"]
 
 
 class NamespaceValidateInput(TypedDict, total=False):

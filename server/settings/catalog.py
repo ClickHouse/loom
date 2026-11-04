@@ -3701,6 +3701,9 @@ class NamespaceSettings(BaseModel):
     # Largest value (bytes) namespace.audit, namespace.validate and memory.inspect read
     # to cite a row's content hash; a larger row is cited with none. 0 = cite no hash.
     namespace_report_hash_max_bytes: Annotated[int, LIVE] = Field(default=65536, ge=0, le=2**32 - 1)
+    # Most live documents namespace.tune re-chunks in process to judge the chunk size and
+    # stride, picked by a hash of their source_uri; the report states the cap.
+    namespace_tune_document_sample: Annotated[int, LIVE] = Field(default=50, ge=1, le=1000)
     # Seconds a namespace's relation cardinalities (one or many) are cached for the
     # triple writer.
     namespace_ontology_cardinality_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
@@ -5726,8 +5729,14 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # The audit, then three reads of the namespace's rows (agents, plain tags, key
     # prefixes), the categories, guide and policy, two reads for the extraction draft
     # (its writers, and which cited rows it wrote), one of the drafted tags' spellings,
-    # and three per category draft (`max_category_proposals`, default 5).
-    "namespace.tune": 5000,
+    # and three per category draft (`max_category_proposals`, default 5). Then the
+    # document drafts: four document reads (counts, writers, the sample, the per-format
+    # coverage) and the per-source job read, one artifact read per sampled ingested
+    # document (`namespace_tune_document_sample`, default 50), the sample (at most 8 Mi
+    # characters of text and artifact in all) cut in process up to six times, and, when a
+    # format fails, every extractor's capabilities read at once (5 s in all, cached for a
+    # minute).
+    "namespace.tune": 8000,
     "namespace.browse": 120,
     "namespace.cancel_request": 80,
     "namespace.delete": 60,

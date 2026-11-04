@@ -533,7 +533,12 @@ describe("Add a tracker", () => {
 
   it("a refusal lands beside the check it belongs to", async () => {
     vi.mocked(addTrackerSource).mockRejectedValueOnce(
-      new ApiError({ status: 422, code: "CREDENTIAL_NOT_READONLY", message: "'loom_ro' holds write access (INSERT)" }),
+      new ApiError({
+        status: 422,
+        code: "CREDENTIAL_NOT_READONLY",
+        message:
+          "'loom_ro' holds more than read access (INSERT); loom takes a read-only user: create one with SELECT only, on the tables you map (or the views) and system.columns.",
+      }),
     );
     render(
       <RegisterTrackerSourceDialog open org="dev" repo="Acme/kj" onOpenChange={() => {}} onRegistered={() => {}} />,
@@ -544,9 +549,21 @@ describe("Add a tracker", () => {
     await waitFor(() => expect(within(checks).getByText(/The user can only read/)).toHaveTextContent("failed"));
     expect(within(checks).getByText(/Reach abc.clickhouse.cloud/)).toHaveTextContent("passed");
     expect(
-      within(checks).getByText(/holds write access \(INSERT\) — create a user with SELECT only/),
+      within(checks).getByText(/holds more than read access \(INSERT\); loom takes a read-only user/),
     ).toBeInTheDocument();
     expect(within(checks).getByText(/Loom can read rows/)).toHaveTextContent("not checked");
+  });
+
+  it("a passing check names the roles the user holds, which the check found read-only", async () => {
+    vi.mocked(addTrackerSource).mockResolvedValueOnce(result({ ...MAPPED, roles: ["analyst"] }));
+    render(
+      <RegisterTrackerSourceDialog open org="dev" repo="Acme/kj" onOpenChange={() => {}} onRegistered={() => {}} />,
+    );
+    await toMap();
+    fireEvent.click(screen.getByRole("button", { name: /^Check$/ }));
+    const checks = await screen.findByRole("list", { name: "Checks" });
+    const roles = await within(checks).findByText(/It also holds the roles/);
+    expect(roles).toHaveTextContent("It also holds the roles analyst, which grant read access only.");
   });
 
   it("a connection loom cannot read stays on Connect with the reason", async () => {

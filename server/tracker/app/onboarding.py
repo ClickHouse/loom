@@ -9,9 +9,13 @@ guardrails are rules, not a person's approval:
   unless the deployment allows private hosts (a dev stack). The probe
   connects to the address it validated, so a second lookup cannot swap in
   another;
-- **the credential is read-only**: `SHOW GRANTS` for the user names no write
-  access type (INSERT, ALTER, CREATE, DROP, …); roles are opaque and are
-  reported back so the registrant can see them;
+- **the credential is read-only**: every access type `SHOW GRANTS` and
+  `SHOW GRANTS FINAL` name for the user, its roles' grants included, is one a
+  read-only user holds (SELECT, SHOW, dictGet, a temporary table), and none is
+  granted WITH GRANT OPTION or WITH ADMIN OPTION; a type the check does not
+  know is refused. Every granted role must be a default role, so that
+  `system.enabled_roles` shows the whole role chain and any admin option in
+  it. The roles are reported back so the registrant can see them;
 - **the schema meets the record contract**: the same `describe` + `diff`
   the boot gate runs, through the supplied credential, before anything is
   written — the report is the refusal.
@@ -24,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,47 +39,39 @@ from server.tracker.store.source import qa_intel
 
 log = logging.getLogger("loom.tracker.onboarding")
 
-# access types that write, manage access or run the server: never for loom
-_WRITE_ACCESS = frozenset(
+# The access types a read-only user may hold; any other type is refused.
+# Compared upper-case: `SHOW GRANTS` spells some in mixed case.
+_READ_ACCESS = frozenset(
     {
-        "INSERT",
-        "ALTER",
-        "CREATE",
-        "DROP",
-        "TRUNCATE",
-        "OPTIMIZE",
-        "KILL",
-        "SYSTEM",
-        "ALL",
-        "ACCESS MANAGEMENT",
-        "BACKUP",
-        "UNDROP",
-        "MOVE",
-        "SET DEFINER",
-        "NAMED COLLECTION",
-        "GRANT OPTION",
-        "ADMIN OPTION",
-        "displaySecretsInShowAndSelect",
-        "TABLE ENGINE",
-        "SOURCES",
-        "FILE",
-        "URL",
-        "REMOTE",
-        "MONGO",
-        "MYSQL",
-        "POSTGRES",
-        "SQLITE",
-        "ODBC",
-        "JDBC",
-        "HDFS",
-        "S3",
-        "AZURE",
-        "HIVE",
-        "REDIS",
+        "SELECT",
+        "SHOW",
+        "SHOW DATABASES",
+        "SHOW TABLES",
+        "SHOW COLUMNS",
+        "SHOW DICTIONARIES",
+        "DICTGET",
+        "CREATE TEMPORARY TABLE",  # a temp table for a JOIN
     }
 )
-# the one CREATE a read-only user legitimately holds (a temp table for a JOIN)
-_ALLOWED_CREATE = frozenset({"CREATE TEMPORARY TABLE", "CREATE ARBITRARY TEMPORARY TABLE"})
+_ENABLED_ROLES = "SELECT role_name, with_admin_option FROM system.enabled_roles"
+# a quoted name (a column, role or user), which may hold `(`, `,` or ` ON `
+_QUOTED = re.compile(r"`(?:[^`\\]|\\.)*`|\"(?:[^\"\\]|\\.)*\"")
+_QUOTED_OR_SPACE = re.compile(_QUOTED.pattern + r"|\s+")
+# an access type with an optional column list: `SELECT`, `SELECT(a, b)`
+_ACCESS_TYPE = re.compile(r"([A-Za-z ]+?)\s*(?:\([^()]*\))?")
+
+
+def _split(text: str, masked: str) -> list[str]:
+    """Split `text` on the commas outside parentheses, reading the positions
+    from `masked` (the same text with every quoted name blanked out)."""
+    out, depth, start = [], 0, 0
+    for i, ch in enumerate(masked):
+        depth += (ch == "(") - (ch == ")")
+        if ch == "," and depth == 0:
+            out.append(text[start:i].strip())
+            start = i + 1
+    out.append(text[start:].strip())
+    return [t for t in out if t]
 
 
 async def host_refusal(host: str) -> str:
@@ -88,42 +85,95 @@ async def _vet(host: str) -> tuple[str, str]:
 
 @dataclass
 class GrantReview:
-    grants: list[str] = field(default_factory=list)  # the raw SHOW GRANTS lines
-    roles: list[str] = field(default_factory=list)  # roles granted (opaque)
-    write_types: list[str] = field(default_factory=list)  # what makes it not read-only
+    roles: list[str] = field(default_factory=list)  # roles granted, reported back
+    refused: list[str] = field(default_factory=list)  # what makes it not read-only
+    # granted roles missing from the enabled roles, whose grants go unseen
+    not_enabled: list[str] = field(default_factory=list)
 
     @property
     def read_only(self) -> bool:
-        return not self.write_types
+        return not self.refused and not self.not_enabled
+
+    def refusal(self, user: str) -> str:
+        """The sentences that say why `user` is not read-only and what to do."""
+        why = []
+        if self.refused:
+            why.append(
+                f"{user!r} holds more than read access ({', '.join(self.refused[:4])}); loom "
+                "takes a read-only user: create one with SELECT only, on the tables you map (or "
+                "the views) and system.columns."
+            )
+        if self.not_enabled:
+            why.append(
+                f"{user!r} holds roles that are not default roles "
+                f"({', '.join(self.not_enabled[:4])}), so loom cannot check what they grant. "
+                f"Run: SET DEFAULT ROLE ALL TO {_sql_name(user)}"
+            )
+        return " ".join(why)
 
 
-def review_grants(lines: list[str]) -> GrantReview:
-    """Parse `SHOW GRANTS` output: `GRANT <types> ON <scope> TO <user>` lines
-    name access types; `GRANT <role>[, …] TO <user>` lines name roles."""
-    rev = GrantReview(grants=[str(x) for x in lines])
+def review_grants(lines: list[str], enabled: list[dict[str, Any]]) -> GrantReview:
+    """Review `SHOW GRANTS` output and the `system.enabled_roles` rows.
+
+    `GRANT <types> ON <scope> TO <user>` lines name access types; `GRANT
+    <role>[, …] TO <user>` lines name roles; `REVOKE` lines only narrow a
+    grant. Any other line is refused. The enabled roles show what the lines
+    cannot: a granted role that is not enabled (not a default role, so its
+    chain cannot be checked) and an admin option on any role in the chain,
+    nested ones included."""
+    rev = GrantReview()
     for raw in lines:
-        line = " ".join(str(raw).split())
-        if not line.upper().startswith("GRANT "):
+        # whitespace collapses outside quoted names only, which keep theirs
+        line = _QUOTED_OR_SPACE.sub(lambda m: " " if m[0].isspace() else m[0], str(raw)).strip()
+        masked = _QUOTED.sub(lambda m: "_" * len(m.group()), line)
+        upper = masked.upper()
+        if not line or upper.startswith("REVOKE "):
             continue
-        body = line[6:]
-        if " ON " not in body:
-            roles = body.split(" TO ", 1)[0]
-            rev.roles.extend(r.strip() for r in roles.split(",") if r.strip())
+        unparsed = "`" in masked or '"' in masked or upper.count(" ON ") > 1
+        if not upper.startswith("GRANT ") or unparsed:
+            rev.refused.append(line)
             continue
-        types = body.split(" ON ", 1)[0]
-        for t in (x.strip() for x in types.split(",")):
-            tu = t.upper()
-            if not t or tu in _ALLOWED_CREATE:
-                continue
-            head = tu.split("(")[0].strip()
-            words = head.split()
-            if (
-                head in _WRITE_ACCESS
-                or words[0] in _WRITE_ACCESS
-                or (len(words) > 1 and " ".join(words[:2]) in _WRITE_ACCESS)
-            ):
-                rev.write_types.append(t)
+        on, to = upper.find(" ON "), upper.find(" TO ")
+        end = on if on >= 0 else to
+        names = _split(line[6:end], masked[6:end]) if end >= 0 else []
+        if not names:
+            rev.refused.append(line)
+            continue
+        if on < 0:
+            rev.roles.extend(_unquote(r) for r in names)
+            if " WITH ADMIN OPTION" in upper:
+                rev.refused.extend(f"WITH ADMIN OPTION ({_unquote(r)})" for r in names)
+            continue
+        if " WITH GRANT OPTION" in upper:
+            rev.refused.append("WITH GRANT OPTION")
+        for t in names:
+            name = _ACCESS_TYPE.fullmatch(_QUOTED.sub("_", t))
+            if name is None or name.group(1).strip().upper() not in _READ_ACCESS:
+                rev.refused.append(t)
+    enabled_names = {str(r.get("role_name")) for r in enabled}
+    rev.not_enabled.extend(r for r in rev.roles if r not in enabled_names)
+    rev.refused.extend(
+        f"WITH ADMIN OPTION ({r.get('role_name')})" for r in enabled if r.get("with_admin_option")
+    )
+    # FINAL repeats the direct grants, and a direct role's option shows twice
+    rev.refused = list(dict.fromkeys(rev.refused))
     return rev
+
+
+_ESCAPES = {"t": "\t", "n": "\n", "r": "\r", "0": "\0", "b": "\b", "f": "\f"}
+
+
+def _sql_name(name: str) -> str:
+    """`name` as SQL takes it: bare when it is a plain identifier, else quoted."""
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        return name
+    return "`" + name.replace("\\", "\\\\").replace("`", "\\`") + "`"
+
+
+def _unquote(name: str) -> str:
+    if len(name) > 1 and name[0] == name[-1] and name[0] in '`"':
+        return re.sub(r"\\(.)", lambda m: _ESCAPES.get(m[1], m[1]), name[1:-1])
+    return name
 
 
 class ProbeError(RuntimeError):
@@ -219,17 +269,24 @@ async def probe_credential(
         return [dict(zip(res.column_names, r, strict=True)) for r in res.result_rows]
 
     try:
+        # The direct grants name the roles, FINAL adds what those roles grant
+        # and the enabled roles carry the admin options of the whole chain
+        answers: dict[str, list[dict[str, Any]]] = {}
         try:
-            grant_rows = await asyncio.wait_for(query("SHOW GRANTS"), timeout=timeout_s)
+            for sql in ("SHOW GRANTS", "SHOW GRANTS FINAL", _ENABLED_ROLES):
+                answers[sql] = await asyncio.wait_for(query(sql), timeout=timeout_s)
         except Exception as e:
             if _is_readonly_mode(e):
                 raise ReadonlyModeError(
                     f"{user!r} has readonly = 1, which refuses the per-query settings loom sends "
                     "(readonly = 2 and a timeout on every read), so nothing could be read. "
-                    f"Run: ALTER USER {user} SETTINGS readonly = 2 — it still allows SELECT only."
+                    f"Run: ALTER USER {_sql_name(user)} SETTINGS readonly = 2 — it still allows "
+                    "SELECT only."
                 ) from e
-            raise ProbeError(f"SHOW GRANTS refused for {user!r}: {e}") from e
+            raise ProbeError(f"{sql} refused for {user!r}: {str(e) or type(e).__name__}") from e
+        grant_rows = answers["SHOW GRANTS"] + answers["SHOW GRANTS FINAL"]
         lines = [str(next(iter(r.values()))) for r in grant_rows if r]
+        grants = review_grants(lines, answers[_ENABLED_ROLES])
         tables: list[dict[str, Any]] = []
         if inspect:
             tables = await _inspect_tables(query, database, timeout_s)
@@ -250,9 +307,7 @@ async def probe_credential(
             await client.close()
         except Exception:  # noqa: BLE001 — a failed close must not mask the probe's result
             pass
-    return ProbeResult(
-        grants=review_grants(lines), described=described, unreadable=unreadable, tables=tables
-    )
+    return ProbeResult(grants=grants, described=described, unreadable=unreadable, tables=tables)
 
 
 _INSPECT_MAX_TABLES = 200
