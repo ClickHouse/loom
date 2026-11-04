@@ -1436,10 +1436,14 @@ def test_the_summary_reads_a_cut_ledger_without_rewriting_it(tmp_path):
     spend = score.summary(ts, score.score(ts, out), out)["spend_usd"]
     assert path.read_text() == before
     assert spend["ledger_rows_dropped"] == 1 and spend["total"] == total
-    # A broken row before the last is not an interrupt: refused.
-    path.write_text('{"stage": "answer", "usd": 0.\n' + whole)
-    with pytest.raises(json.JSONDecodeError):
-        score.summary(ts, score.score(ts, out), out)
+    # A broken row before the last, or a broken last row that ends in a newline, is
+    # not an interrupt mid-append: refused. A blank line is skipped.
+    for text in ('{"stage": "answer", "usd": 0.\n' + whole, whole + '{"usd": 0.\n'):
+        path.write_text(text)
+        with pytest.raises(json.JSONDecodeError):
+            score.summary(ts, score.score(ts, out), out)
+    path.write_text(whole + "\n")
+    assert score.summary(ts, score.score(ts, out), out)["spend_usd"]["total"] == total
 
 
 def test_the_summary_of_an_unpriced_reader_has_no_answer_cost(tmp_path):

@@ -699,9 +699,9 @@ wrote 32 rows across the documents and their revisions, 14 with files, with no e
 failure and no failed code lookup.
 
 **Judge stability.** The headline verdict (A misleading, B avoids, C passed) agreed across
-the two orders on 93.4% of 498 answers and across repeats on 97.2% of 500; a change answer
-a detector decided is left out. 70 of 2,100 judge passes were unreadable (3 answers
-unscored).
+the two orders on 93.4% of 498 answers and across repeats on 97.2% of 500; an answer whose
+compared pass is unreadable, and a change answer a detector decided, are left out. 70 of
+2,100 judge passes were unreadable (3 answers unscored).
 
 **Limits.** One reader and one judge model; no second judge and no human-labelled slice,
 so judge accuracy and kappa are not measured. Extraction precision is not measured (no row
@@ -710,7 +710,8 @@ measured. The task set is private: the numbers are reproducible only by a holder
 set.
 
 - **Models:** reader, judge and extraction `gpt-6-luna`; the server's embeddings
-  `text-embedding-3-large` (the [models table](#models)).
+  `text-embedding-3-large` (the [models table](#models)). The server ran from source on
+  its own ClickHouse, with auth and background workers off.
 - **Artifacts:** `bench/results/design_rationale.summary.json`, written by
   `score --summary`: the per-arm metrics, comparisons, injected tokens, treatment check,
   judge agreement, unreadable passes and the A answers with no claim, the task set's

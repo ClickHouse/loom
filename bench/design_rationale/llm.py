@@ -63,6 +63,30 @@ def write_atomic(path: Path, text: str) -> None:
         raise
 
 
+def cut_last_line(text: str) -> bool:
+    """Whether a ledger file's last line is a row an interrupt cut short: the file does
+    not end in a newline and its last line is not JSON."""
+    if not text or text.endswith("\n"):
+        return False
+    try:
+        json.loads(text.rpartition("\n")[2])
+    except json.JSONDecodeError:
+        return True
+    return False
+
+
+def read_ledger(path: Path) -> tuple[list[dict[str, Any]], int]:
+    """(rows, rows dropped) of a ledger file, read without changing it: a last row an
+    interrupt cut short is left out and counted, blank lines are skipped, and any other
+    line that is not JSON raises."""
+    text = path.read_text() if path.exists() else ""
+    cut = cut_last_line(text)
+    lines = text.splitlines()
+    if cut:
+        lines = lines[:-1]
+    return [json.loads(line) for line in lines if line], int(cut)
+
+
 class Ledger:
     """One JSON line per call in `<out>/ledger.jsonl`; spend survives a resumed run."""
 
@@ -83,10 +107,8 @@ class Ledger:
         text = self.path.read_text()
         if not text or text.endswith("\n"):
             return
-        head, _, last = text.rpartition("\n")
-        try:
-            json.loads(last)
-        except json.JSONDecodeError:
+        if cut_last_line(text):
+            head = text.rpartition("\n")[0]
             print(
                 f"{self.path}: dropped a row an interrupt cut short; the ledger "
                 "undercounts by one call",
