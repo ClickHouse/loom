@@ -3458,6 +3458,8 @@ export interface InspectDocument {
   retired_versions?: number | null;
   chunks?: DocumentChunks | null;
   decisions?: DocumentDecisions | null;
+  extraction?: ExtractionCoverage | null;
+  jobs?: SourceJobs | null;
 }
 
 export interface DocumentChunks {
@@ -3470,6 +3472,39 @@ export interface DocumentChunks {
   median_chars: number;
   max_chars: number;
   models?: string[];
+}
+
+export interface ExtractionCoverage {
+  unit: string;
+  total: number;
+  extracted: number;
+  failed: number;
+  lost?: string[];
+  complete: boolean;
+}
+
+export interface SourceJobs {
+  source_uri: string;
+  jobs: number;
+  open_jobs: number;
+  open_ingestion_id?: string;
+  latest: IngestJob;
+  current: IngestJob;
+  replaced?: boolean;
+}
+
+export interface IngestJob {
+  ingestion_id: string;
+  state: string;
+  stage: string;
+  attempts: number;
+  error_code: string;
+  failure_class: "" | "extractor_unavailable" | "missing_access" | "bad_content" | "retrying" | "retries_exhausted" | "revision_conflict" | "cancelled" | "internal";
+  queued_at: string; // date-time
+  updated_at: string; // date-time
+  ended_at?: string | null;
+  next_attempt_at?: string | null;
+  stalled?: boolean;
 }
 
 export interface DocumentFinding {
@@ -3513,6 +3548,51 @@ export interface ReportCoverage {
   complete: boolean;
 }
 
+export interface IngestionTotals {
+  sources?: number | null;
+  without_document?: number | null;
+  replaced?: number | null;
+  pending?: number | null;
+  processing?: number | null;
+  stalled?: number | null;
+  ready?: number | null;
+  partial?: number | null;
+  failed?: number | null;
+  cancelled?: number | null;
+  oldest_open_queued_at?: string | null;
+  worker_enabled: boolean;
+  extractor_configured?: boolean | null;
+  without_document_listed?: SourceJobs[];
+}
+
+export interface ExtractionTotals {
+  documents?: number | null;
+  incomplete?: number | null;
+  lost?: DocumentCount[];
+}
+
+export interface IngestFinding {
+  kind: "contract_violation" | "usage_heuristic" | "system_state";
+  rule_version: number;
+  source_op: string;
+  window_seconds?: number | null;
+  population?: number | null;
+  sample_limit: number;
+  samples_complete: boolean;
+  evidence?: FindingEvidence[];
+  exceptions?: string;
+  uncertainty?: string;
+  code: string;
+  severity: "info" | "warning";
+  count: number;
+  share: number;
+  samples?: string[];
+  ingestion_ids?: string[];
+  without_document?: number;
+  detail: string;
+  remedy: string;
+}
+
 export interface MemoryFindingRef {
   code: string;
   kind: string;
@@ -3536,6 +3616,9 @@ export interface KnowledgeInspectOutput {
   listed_complete?: boolean;
   findings?: DocumentFinding[];
   coverage: ReportCoverage;
+  ingestions: IngestionTotals;
+  extraction: ExtractionTotals;
+  ingest_findings?: IngestFinding[];
   memory_findings?: MemoryFindingRef[];
   skipped?: string[];
 }

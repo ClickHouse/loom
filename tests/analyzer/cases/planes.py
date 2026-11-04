@@ -960,8 +960,9 @@ _INSPECT_ID = "00000000-0000-0000-0000-000000000001"
 
 
 async def _knowledge_inspect_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
-    """Every read `knowledge.inspect` makes: the documents, chunks and retired ingestions,
-    and the decision rows under the whole namespace or a narrowed scope."""
+    """Every read `knowledge.inspect` makes: the documents, chunks, retired ingestions,
+    extraction coverage and knowledge.ingest jobs, and the decision rows under the whole
+    namespace or a narrowed scope."""
     from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
     from server.knowledge.store import inspect as store
     from server.memory.store.document_decisions import decisions_by_document
@@ -979,6 +980,10 @@ async def _knowledge_inspect_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     await store.document_chunks(ORG, NS, ["docs/a.md"], "fake-ngram-1024", ch=ch)
     await store.document_retired_versions(ORG, NS, ["docs/a.md"], ch=ch)
     await store.longer_document_uris(ORG, NS, ["docs/a.md"], ch=ch)
+    await store.extraction_health(ORG, NS, ch=ch)
+    await store.ingestion_health(ORG, NS, lease_s=120.0, ch=ch)
+    await store.source_jobs(ORG, NS, ["docs/a.md"], lease_s=120.0, ch=ch)
+    await store.sources_without_document(ORG, NS, limit=20, lease_s=120.0, ch=ch)
     await decisions_by_document(ORG, NS, ["docs/a.md"], scope=scope, ch=ch)
 
 

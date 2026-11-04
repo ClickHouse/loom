@@ -270,6 +270,9 @@ Report a namespace's documents, read-only.
 | `listed_complete` | `bool` | True when `listed` holds every live document and the count was read. |
 | `findings` | `list[DocumentFinding]` | One per check that ran over the documents and chunks; a clean check is an `info` finding with count 0. |
 | `coverage` | `ReportCoverage` | Which document checks ran and which were skipped. |
+| `ingestions` | `IngestionTotals` | knowledge.ingest jobs by state, and the sources with a job and no live document (a first ingest, or one after a delete, queued or failed). |
+| `extraction` | `ExtractionTotals` | What the extractor kept of the live ingested documents. |
+| `ingest_findings` | `list[IngestFinding]` | One per ingestion and extraction check that ran: a backlog, an extractor unavailable, missing access, content the extractor rejected, jobs that failed on the server's side, extractions that lost structure. |
 | `memory_findings` | `list[MemoryFindingRef]` | namespace.audit's `oversized_values` and `episodic_blobs`, the memory rows that may belong in documents; mentor.brief reports the same shape per agent as `documents_as_memories`. |
 | `skipped` | `list[str]` | Sections not read, as "section: reason"; their fields are null or empty, not zero. |
 

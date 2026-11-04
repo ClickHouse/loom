@@ -5560,9 +5560,11 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.ingest": 60,
     "knowledge.ingest_cancel": 60,
     "knowledge.ingest_status": 40,
-    # Nine reads: eight of the documents, chunks and retired ingestions (one a join) and one
-    # of the decision rows; then namespace.audit in process (sample_limit 0) for its memory
-    # findings.
+    # Thirteen reads: eight of the documents, chunks and retired ingestions (one a join), one
+    # of the extractions' coverage, three of the knowledge.ingest jobs (each a GROUP BY
+    # source over the namespace's job rows, which reads its cancels, joined to its document
+    # rows) and one of the decision rows; then namespace.audit in process (sample_limit 0)
+    # for its memory findings.
     "knowledge.inspect": 4000,
     "knowledge.list": 150,
     "knowledge.outline": 80,
