@@ -187,7 +187,7 @@ export type SourceKind = (typeof SOURCE_KINDS)[number];
 
 /** What the form says about each kind: the choice, the dialog's description, and what a
  *  passed check read. */
-const KIND_FORM: Record<SourceKind, { choice: string; about: string; reads: string; noCredential: string }> = {
+export const KIND_FORM: Record<SourceKind, { choice: string; about: string; reads: string; noCredential: string }> = {
   gdrive: {
     choice: "Shared folder",
     about:
@@ -219,14 +219,6 @@ const KIND_FORM: Record<SourceKind, { choice: string; about: string; reads: stri
 };
 
 export const KIND_OPTIONS = SOURCE_KINDS.map((k) => ({ value: k, label: KIND_FORM[k].choice }));
-
-export function kindAbout(kind: SourceKind): string {
-  return KIND_FORM[kind].about;
-}
-
-export function kindReads(kind: SourceKind): string {
-  return KIND_FORM[kind].reads;
-}
 
 /** The file kinds a shared folder's `include` takes, with the words the form shows. */
 export const INCLUDE_OPTIONS = [
@@ -334,8 +326,9 @@ export function pageIds(text: string): string[] {
       const hexes = p.toLowerCase().replace(/-/g, "");
       return PAGE_ID_RE.test(hexes) ? hexes : p;
     }
+    // The id is the whole segment, or what follows the title's last `-`.
     const segment = (p.split(/[?#]/)[0] ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
-    return /([0-9a-f]{32})$/.exec(segment.toLowerCase().replace(/-/g, ""))?.[1] ?? p;
+    return /(?:^|-)([0-9a-f]{32})$/.exec(segment.toLowerCase())?.[1] ?? p;
   });
 }
 
@@ -407,7 +400,7 @@ export function sourceConfig(f: SourceForm): Record<string, unknown> {
   }
 }
 
-/** Whether anything but the name and kind was typed, so the problems list can wait. */
+/** Whether anything but the kind was typed, so the problems list can wait. */
 export function sourceFormTouched(f: SourceForm): boolean {
   return [f.name, f.folders, f.projects, f.pages, f.databases, f.meetings, f.credential].some((v) => v !== "");
 }

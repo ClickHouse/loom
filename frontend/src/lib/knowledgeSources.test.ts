@@ -137,6 +137,9 @@ describe("the add form's other kinds", () => {
     expect(pageIds(`https://pages.example/team/${DATABASE}?v=${PAGE}`)).toEqual([DATABASE]);
     // Kept as typed, so the problem names it: an id one digit long is not cut to 32.
     expect(pageIds(`${PAGE}0`)).toEqual([`${PAGE}0`]);
+    // A link whose id is mistyped one digit long is not cut to another id.
+    expect(pageIds(`https://pages.example/team/Home-${PAGE}0`)).toEqual([`https://pages.example/team/Home-${PAGE}0`]);
+    expect(pageIds(`https://pages.example/team/${PAGE}0`)).toEqual([`https://pages.example/team/${PAGE}0`]);
     const f = { ...named, kind: "notion" as const, pages: PAGE, databases: DATABASE.toUpperCase() };
     expect(sourceFormProblems(f)).toEqual([]);
     expect(sourceAddBody("o", "code-x", f, true).config).toEqual({ page_ids: [PAGE], database_ids: [DATABASE] });

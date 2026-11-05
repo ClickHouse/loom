@@ -28,9 +28,8 @@ import {
   credentialLabel,
   emptySourceForm,
   INCLUDE_OPTIONS,
+  KIND_FORM,
   KIND_OPTIONS,
-  kindAbout,
-  kindReads,
   normalisedName,
   probeCount,
   RECORDING_PROVIDERS,
@@ -213,7 +212,7 @@ export function AddSourceDialog({
       onOpenChange={onOpenChange}
       width={560}
       title={`Add a document source · ${repo}`}
-      description={kindAbout(form.kind)}
+      description={KIND_FORM[form.kind].about}
       footer={
         <>
           <CancelButton />
@@ -262,7 +261,7 @@ export function AddSourceDialog({
         </ul>
       )}
       {checked && passed && (
-        <ProbeResult probe={checked.probe} lead={`${kindReads(form.kind)}: ${normalisedName(form.name)} lists`} />
+        <ProbeResult probe={checked.probe} lead={`${KIND_FORM[form.kind].reads}: ${normalisedName(form.name)} lists`} />
       )}
       {checked && !passed && <p className="text-xs text-text-muted">The form changed since the check: check again.</p>}
       {error && <ErrorNote>{error}</ErrorNote>}

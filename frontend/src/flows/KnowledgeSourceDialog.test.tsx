@@ -1,10 +1,9 @@
 /**
  * Adding a document source checks first — `knowledge.source.add(dry_run)`, nothing
- * stored — and Add sends exactly the form that passed, each kind with its own config. A
- * key is typed into a password
- * field, and no toast, error or text on the page ever carries it. Check probes on open
- * and stops when the dialog closes; Sync now records a request; Retire needs the typed
- * name and keeps the documents unless asked.
+ * stored — and Add sends exactly the form that passed, each kind with its own config.
+ * A key is typed into a password field, and no toast, error or text on the page ever
+ * carries it. Check probes on open and stops when the dialog closes; Sync now records a
+ * request; Retire needs the typed name and keeps the documents unless asked.
  */
 import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
@@ -293,17 +292,17 @@ describe("AddSourceDialog's kinds", () => {
     expect(screen.getByLabelText(/^Read-only credential/)).toHaveValue("");
   });
 
-  it("shows the server's refusal of a config as it comes back", async () => {
-    vi.mocked(addKnowledgeSource).mockRejectedValue(
-      new ApiError({ status: 400, code: "BAD_CONFIG", message: "config.ids: '1' is not a meeting id (digits)" }),
-    );
+  it("shows the server's refusal as it comes back", async () => {
+    // What the server answers when the account cannot see the space.
+    const message = "the source could not be listed: space abc: http_404; check the id and that the account can see it";
+    vi.mocked(addKnowledgeSource).mockRejectedValue(new ApiError({ status: 400, code: "SOURCE_UNREACHABLE", message }));
     renderAdd();
     fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
     fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
     await typeInto(/^Meeting spaces/, "abc");
     fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: KEY } });
     fireEvent.click(screen.getByRole("button", { name: "Check" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("config.ids: '1' is not a meeting id (digits)");
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
     expectKeyNowhere();
   });
