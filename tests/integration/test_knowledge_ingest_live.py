@@ -710,3 +710,56 @@ async def test_a_workbooks_sheets_are_datasets_each_sampled_past_its_rejected_ro
     assert one["rows"] == [{"k": "a", "v": 1}, {"k": "c", "v": 3}]
     assert (two["sheet"], two["row_count"]) == ("Two", 3)
     assert two["rows"] == [{"k": "x", "v": 10}, {"k": "y", "v": 20}]
+
+
+@pytest.mark.usefixtures("extractor_routed")
+@pytest.mark.asyncio
+async def test_a_parquet_file_is_a_typed_dataset_its_decimals_exact(control_plane_url: str) -> None:
+    import io
+    from decimal import Decimal
+
+    from server.knowledge.app.extractors import available_formats
+
+    if "parquet" not in await available_formats():
+        pytest.skip("no configured document extractor declares parquet")
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    amounts = [Decimal("99999999999999999999.123456789"), Decimal("0.100000000")]
+    buf = io.BytesIO()
+    pq.write_table(
+        pa.table(
+            {"team": ["platform", "search"], "amount": pa.array(amounts, pa.decimal128(38, 9))}
+        ),
+        buf,
+    )
+    org, ns, uri = unique_org("ingest-pq"), "docs", "repo://budget.parquet"
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
+        up = await _upload(c, org, ns, buf.getvalue(), "budget.parquet")
+        assert up.status_code == 201, up.text
+        assert up.json()["format"] == "parquet"
+        job = await _op(
+            c, "knowledge.ingest", org=org, namespace=ns, upload_id=up.json()["upload_id"],
+            source_uri=uri,
+        )  # fmt: skip
+        await _work(org, ns, job["ingestion_id"])
+        status = await _op(
+            c, "knowledge.ingest_status", org=org, namespace=ns, ingestion_id=job["ingestion_id"]
+        )
+        assert (status["state"], status["format"]) == ("ready", "parquet")
+        got = await _op(c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri,
+                        sample_rows=2)  # fmt: skip
+        hits = await _op(c, "knowledge.search", org=org, namespace=ns, query="platform amount",
+                         namespace_scope="this", search_mode="lexical")  # fmt: skip
+    (d,) = got["datasets"]
+    assert [(x["name"], x["type"]) for x in d["columns"]] == [
+        ("team", "string"),
+        ("amount", "number"),
+    ]
+    assert d["schema_state"] == "inferred" and d["row_count"] == 2
+    # Past 2^53 and fractional, an exact decimal goes out as its text.
+    assert d["rows"] == [
+        {"team": "platform", "amount": "99999999999999999999.123456789"},
+        {"team": "search", "amount": 0.1},
+    ]
+    hit = next(h for h in hits["results"] if "platform" in h["content"])
+    assert hit["format"] == "parquet" and hit["locator"] == {"row_start": 1, "row_end": 2}

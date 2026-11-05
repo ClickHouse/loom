@@ -70,7 +70,7 @@ _DURATION = re.compile(r"(-?)(\d+):([0-5]\d):([0-5]\d(?:\.\d+)?)")
 
 def dataset_ids(source_uri: str, tables: Sequence[Table]) -> list[str]:
     """Each table's id, the same in every revision of its source: a sheet by its
-    name, a CSV file's one table by its id, and a sheet that holds more than one
+    name, a CSV or Parquet file's one table by its id, and a sheet that holds more than one
     table by its name and the table's id."""
     sheets = Counter(t.locator.sheet for t in tables if t.locator.sheet)
     keys = [
@@ -141,8 +141,9 @@ def infer(table: Table, overrides: dict[str, DatasetType] | None = None) -> Sche
     its type) or else by the extractor (`mixed` as `string`), and given the
     next free slot of its type's kinds. The clarifications are what an
     override did not answer: a mixed column, a generated name, a repeated name
-    (renamed by `column_names`), a header that
-    reads as data (with no override: an approval answers it), and, for each
+    (renamed by `column_names`), a header that reads as data (with no
+    override: an approval answers it; not of a table whose names are no row of
+    its source, `header_rows` 0), and, for each
     type, the columns no slot holds. The per-column ones stop at
     MAX_COLUMN_CLARIFICATIONS; a column's `inferred` type says the rest."""
     overrides = overrides or {}
@@ -177,7 +178,8 @@ def infer(table: Table, overrides: dict[str, DatasetType] | None = None) -> Sche
         detail = f"{len(names)} {type_name} column(s) past the slots, not stored: {shown}"
         asks.append(Clarification("past_capacity", "", detail))
     named = [c.name for c in table.columns if not _GENERATED.fullmatch(c.name)]
-    if not overrides and named and all(_reads_as_data(n) for n in named):
+    # A table whose names are no row of its source (a Parquet schema) has no first row to doubt.
+    if table.header_rows and not overrides and named and all(_reads_as_data(n) for n in named):
         asks.append(
             Clarification(
                 "header_like_data",

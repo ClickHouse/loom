@@ -1,7 +1,10 @@
-"""A sheet or a CSV file's rows as a table, and as the blocks its rows are
-searched by: one block per run of rows (ROWS_PER_BLOCK, BLOCK_CHARS), each row
-a line of `column: value` pairs, cited by its sheet and rows (a table with no
-rows under its header is one block of the header row). A column's type is what
+"""A sheet's, a CSV file's or a Parquet file's rows as a table, and as the
+blocks its rows are searched by: one block per run of rows (ROWS_PER_BLOCK,
+BLOCK_CHARS), each row a line of `column: value` pairs, cited by its sheet and
+rows, each block starting and ending at a row with text (a Parquet row whose
+values were all left out has none). A header with no row of text under it is
+one block of the header row, when it names a column, at row 0 when the names
+are no row of the file, as a Parquet file's schema. A column's type is what
 every value it holds is, over the values that are not empty or errors.
 
 One `Budget` bounds what all of an artifact's tables hold. A source collects
@@ -120,15 +123,17 @@ class Rows:
     header: list[Cell]
     # A row is a map of column to its non-empty cells, so what it holds is what the budget counts.
     rows: list[tuple[int, dict[int, Cell]]] = field(default_factory=list)
+    # The header's row in the source; 0 for a source whose names are no row of it
+    # (a Parquet file's schema), whose rows count from 1.
     header_row: int = 1
     more: int = 0
     more_from: int = 0
     first_column: int = 0  # the source's column the table starts at, from 0
 
-    def count(self, number: int) -> None:
-        """Count row `number` without holding it."""
+    def count(self, number: int, n: int = 1) -> None:
+        """Count rows `number` on (`n` of them) without holding them."""
         self.more_from = self.more_from or number
-        self.more += 1
+        self.more += n
 
     def add(self, number: int, cells: dict[int, Cell], budget: Budget) -> None:
         """Collect row `number` when the budget allows, else count it."""
@@ -278,17 +283,26 @@ def table(
         reason = f"{counted(more, 'row')} past what one artifact holds"
         fail(budget, failed, f"{name} rows {more_from}-", reason)
     columns = tuple(Column(names[i], _type([r[i] for _, r in grid])) for i in range(width))
+    written = False
     for run in blocks:
-        loc = Locator(sheet=sheet, row_start=run[0][0], row_end=run[-1][0])
-        acc.add("paragraph", "\n".join(line for _, line in run), loc, table_id=tid)
-    if not grid:
-        # A header with nothing under it (a sheet of one note) is still text to find.
+        # A row whose values were all left out has no line: the block holds none
+        # of it, and starts and ends at a row with text.
+        lines = [(n, line) for n, line in run if line]
+        if lines:
+            loc = Locator(sheet=sheet, row_start=lines[0][0], row_end=lines[-1][0])
+            acc.add("paragraph", "\n".join(line for _, line in lines), loc, table_id=tid)
+            written = True
+    if not written and head:
+        # A header with nothing under it to read (a sheet of one note, a Parquet
+        # column of bytes) is still text to find; one of no names is no text.
         if len(head) + CHUNK_FLOOR > budget.text:
             fail(budget, failed, name, "its header is past what one artifact holds")
             return None, failed
         budget.text -= len(head) + CHUNK_FLOOR
         loc = Locator(sheet=sheet, row_start=rows.header_row, row_end=rows.header_row)
         acc.add("paragraph", head, loc, table_id=tid)
+    # The rows the table came from: its header row, or with none, its first row.
+    first = rows.header_row or (grid[0][0] if grid else 0)
     last = grid[-1][0] if grid else rows.header_row
     return (
         Table(
@@ -296,8 +310,8 @@ def table(
             name=name,
             columns=columns,
             rows=tuple(tuple(c.value for c in r) for _, r in grid),
-            header_rows=1,
-            locator=Locator(sheet=sheet, row_start=rows.header_row, row_end=last),
+            header_rows=1 if rows.header_row else 0,
+            locator=Locator(sheet=sheet, row_start=first, row_end=last),
         ),
         failed,
     )

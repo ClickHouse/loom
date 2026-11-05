@@ -105,6 +105,7 @@ ingest = [
 # environment. The server never imports them; the service installs extractor/pyproject.toml.
 extractor = [
   "cryptography>=50,<51", # pypdf's AES: a PDF encrypted with an owner password alone opens
+  "pyarrow>=26,<27",      # Parquet: a major may change what its decoder accepts, reviewed before a bump
   "pypdf>=6.21,<7",
   "sqlglot>=30.27,<31",   # imports sqlglot.tokenizer_core, which a major may move
 ]
@@ -215,6 +216,11 @@ exclude = ["tests/"]
 # Protocols.
 [[tool.mypy.overrides]]
 module = ["fastembed", "fastembed.*", "lemmagen3", "tiktoken", "tiktoken.*"]
+ignore_missing_imports = true
+
+# pyarrow ships no type information; the extractor's Parquet reader types what it reads as Any.
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
 ignore_missing_imports = true
 
 # google-re2 ships no type information; server/core/caller_regex.py types its result as Any.

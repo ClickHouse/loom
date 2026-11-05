@@ -141,6 +141,7 @@ async def test_capabilities_declare_each_parsed_format_and_its_options() -> None
         "docx": [],
         "pptx": [],
         "xlsx": [],
+        "parquet": [],
     }
 
 
@@ -166,10 +167,33 @@ async def test_an_extraction_runs_in_a_child_and_returns_the_artifact() -> None:
     ]
 
 
+async def test_a_parquet_file_is_read_in_a_child_under_its_limits() -> None:
+    """pyarrow runs in the child as every parser does: its memory, CPU and
+    process limits and its socket filter, with one thread."""
+    import io
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    buf = io.BytesIO()
+    pq.write_table(pa.table({"k": ["a", "b"], "v": [1, 2]}), buf)
+    async with _client() as c:
+        r = await c.post(
+            "/v1/extract",
+            params={"format": "parquet", "name": "t.parquet"},
+            content=buf.getvalue(),
+            headers=AUTH,
+        )
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["format"] == "parquet" and d["coverage"]["complete"] is True
+    assert [t["rows"] for t in d["tables"]] == [[["a", 1], ["b", 2]]]
+
+
 @pytest.mark.parametrize(
     ("params", "body", "code"),
     [
-        ({"format": "parquet", "name": "a.parquet"}, b"PAR1PAR1", "format_unavailable"),
+        ({"format": "parquet", "name": "a.parquet"}, b"PAR1PAR1", "corrupt"),
         ({"format": "pdf", "name": "a.pdf"}, b"%PDF-1.7", "corrupt"),
         ({"format": "pdf", "name": "a.pdf", "encoding": "utf-8"}, b"%PDF-1.7", "invalid_option"),
         ({"format": "markdown", "name": "a.md", "sql_dialect": "x"}, b"# a", "invalid_option"),
@@ -265,7 +289,8 @@ async def test_a_child_sees_no_environment_and_cannot_write_files(
     r = await _extract()
     names, wrote = json.loads(r.json()["error"]["message"])
     assert TOKEN not in r.text and "LOOM_EXTRACTOR_TOKEN" not in names
-    assert set(names) <= {"PYTHONPATH", "PATH", "LC_ALL", "LC_CTYPE"} and wrote == "no"
+    native = {"OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "ARROW_DEFAULT_MEMORY_POOL"}
+    assert set(names) <= {"PYTHONPATH", "PATH", "LC_ALL", "LC_CTYPE", *native} and wrote == "no"
 
 
 async def test_a_child_that_crashes_refuses_the_source_as_corrupt(

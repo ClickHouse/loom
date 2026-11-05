@@ -124,6 +124,18 @@ async def _read_capped(
     return None if out is None else bytes(out)
 
 
+# The native readers' own threads and allocators, held to what the child's
+# address-space limit allows: Arrow's default pool reserves arenas the system
+# allocator does not, and where numpy is installed beside pyarrow (a
+# development environment; the image has none) pyarrow loads it, whose OpenBLAS
+# reserves a buffer per thread.
+_NATIVE_ENV = {
+    "OPENBLAS_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "ARROW_DEFAULT_MEMORY_POOL": "system",
+}
+
+
 async def _tail(stream: asyncio.StreamReader) -> bytes:
     tail = b""
     while chunk := await stream.read(_READ_CHUNK):
@@ -133,9 +145,10 @@ async def _tail(stream: asyncio.StreamReader) -> bytes:
 
 async def run_child(config: Config, data: bytes, request: dict[str, object]) -> bytes:
     """The artifact JSON of one extraction, or _Refused. The child runs in `/`
-    with no environment beyond what Python needs to find this package, no
-    directory of its own on `sys.path` (`-P`), and only its limits on its
-    command line; the request and the bytes go on stdin."""
+    with no environment beyond what Python needs to find this package and the
+    native libraries' settings (`_NATIVE_ENV`), no directory of its own on
+    `sys.path` (`-P`), and only its limits on its command line; the request
+    and the bytes go on stdin."""
     limits = {
         "memory_bytes": config.memory_mb * 1024 * 1024,
         "cpu_s": max(1, int(config.timeout_s)),
@@ -152,7 +165,7 @@ async def run_child(config: Config, data: bytes, request: dict[str, object]) -> 
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd="/",
-        env={"PYTHONPATH": _PACKAGE_ROOT, "PATH": os.defpath, "LC_ALL": "C.UTF-8"},
+        env={"PYTHONPATH": _PACKAGE_ROOT, "PATH": os.defpath, "LC_ALL": "C.UTF-8", **_NATIVE_ENV},
         start_new_session=True,
     )
     stdin, stdout, stderr = proc.stdin, proc.stdout, proc.stderr

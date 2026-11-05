@@ -4,10 +4,10 @@
 second: a name that claims a format its bytes do not have is refused, never
 read as something else. `extract` decodes text strictly (UTF-8, UTF-16 or
 UTF-32 by its byte-order mark, or a declared encoding; no lossy replacement of
-undecodable bytes) and runs the format's parser; a PDF, DOCX, PPTX or XLSX
-parser reads the bytes themselves. Every failure is an `ExtractionError` with
-a typed `code`, so an unsupported, corrupt or mislabelled file is reported as
-such rather than ingested as binary noise.
+undecodable bytes) and runs the format's parser; a PDF, DOCX, PPTX, XLSX or
+Parquet parser reads the bytes themselves. Every failure is an
+`ExtractionError` with a typed `code`, so an unsupported, corrupt or
+mislabelled file is reported as such rather than ingested as binary noise.
 
 Pure and I/O-free.
 """
@@ -15,6 +15,7 @@ Pure and I/O-free.
 from __future__ import annotations
 
 import codecs
+import importlib.util
 import io
 import zipfile
 from dataclasses import dataclass, replace
@@ -25,6 +26,7 @@ from loom_extractor.artifact import Artifact, within_contract
 from loom_extractor.csvfile import extract_csv
 from loom_extractor.docxfile import extract_docx
 from loom_extractor.ooxml import PartError
+from loom_extractor.parquetfile import ParquetError, extract_parquet
 from loom_extractor.pdffile import EncryptedPdf, extract_pdf
 from loom_extractor.pptxfile import extract_pptx
 from loom_extractor.sql import UnknownDialect, extract_sql
@@ -32,11 +34,33 @@ from loom_extractor.text import extract_text
 from loom_extractor.tomlfile import extract_toml
 from loom_extractor.xlsxfile import StrictWorkbook, extract_xlsx
 
-# Every format a source can be, and whether this build parses it.
-PARSED_FORMATS = ("markdown", "html", "text", "sql", "toml", "csv", "pdf", "docx", "pptx", "xlsx")
-# Formats read from their bytes: no encoding applies.
-BINARY_PARSED = ("pdf", "docx", "pptx", "xlsx")
-KNOWN_FORMATS = (*PARSED_FORMATS, "parquet")
+# Every format a source can be.
+KNOWN_FORMATS = (
+    "markdown",
+    "html",
+    "text",
+    "sql",
+    "toml",
+    "csv",
+    "pdf",
+    "docx",
+    "pptx",
+    "xlsx",
+    "parquet",
+)
+
+
+def parsed_formats(has_pyarrow: bool) -> tuple[str, ...]:
+    """The formats a build parses: Parquet is read with pyarrow, an install of
+    its own, so a build without it reads every other format and does not
+    declare this one."""
+    return tuple(f for f in KNOWN_FORMATS if has_pyarrow or f != "parquet")
+
+
+PARSED_FORMATS = parsed_formats(importlib.util.find_spec("pyarrow") is not None)
+# The formats read from their bytes (no encoding applies; one this build does
+# not parse is refused before that matters).
+BINARY_PARSED = ("pdf", "docx", "pptx", "xlsx", "parquet")
 
 _EXTENSIONS = {
     "md": "markdown",
@@ -62,7 +86,6 @@ _EXTENSIONS = {
 # Legacy Office formats, refused by name; their content is recognised too, so
 # they are never read as text.
 _LEGACY = {"doc", "xls", "ppt"}
-_BINARY = ("pdf", "docx", "pptx", "xlsx", "parquet")
 
 
 class ExtractionError(Exception):
@@ -131,7 +154,7 @@ def detect_format(data: bytes, filename: str, declared: str = "") -> str:
         if by_name and by_name != by_content:
             raise ExtractionError("format_mismatch", f"the file is {by_content}, not {by_name}")
         return by_content
-    if by_name in _BINARY:
+    if by_name in BINARY_PARSED:
         raise ExtractionError("format_mismatch", f"the file is not a {by_name} file")
     return by_name or "text"
 
@@ -194,7 +217,7 @@ def extract(data: bytes, filename: str, options: Options | None = None) -> Artif
     if fmt in BINARY_PARSED:
         if opts.encoding:
             raise ExtractionError("invalid_option", f"{fmt} takes no encoding")
-        return within_contract(_parse_binary(data, fmt))
+        return within_contract(_parse_binary(data, fmt, filename))
     artifact = within_contract(_parse(decode(data, opts.encoding), fmt, opts, filename))
     if opts.encoding:
         # The codec's own name, so `utf8` and `UTF-8` address one artifact.
@@ -216,14 +239,16 @@ def _parse(text: str, fmt: str, opts: Options, filename: str) -> Artifact:
     return extract_text(text, fmt)
 
 
-def _parse_binary(data: bytes, fmt: str) -> Artifact:
+def _parse_binary(data: bytes, fmt: str, filename: str) -> Artifact:
     try:
         if fmt == "pdf":
             return extract_pdf(data)
         if fmt == "xlsx":
             return extract_xlsx(data)
+        if fmt == "parquet":
+            return extract_parquet(data, filename)  # pyarrow loads only when one is read
         return extract_docx(data) if fmt == "docx" else extract_pptx(data)
     except (EncryptedPdf, StrictWorkbook) as e:
         raise ExtractionError("unsupported_format", str(e)) from e
-    except (PyPdfError, PartError, zipfile.BadZipFile) as e:
+    except (PyPdfError, PartError, ParquetError, zipfile.BadZipFile) as e:
         raise ExtractionError("corrupt", f"not a readable {fmt} file: {e}"[:300]) from e

@@ -5,7 +5,8 @@ artifact back from. Loom parses no original in its own process; this service
 does, one extraction per non-dumpable child process under memory, CPU and time
 limits, and holds no Loom or database credential. Linux only.
 
-It parses Markdown, HTML, plain text, SQL, TOML, CSV, PDF, DOCX, PPTX and XLSX.
+It parses Markdown, HTML, plain text, SQL, TOML, CSV, PDF, DOCX, PPTX, XLSX
+and, when pyarrow is installed, Parquet.
 Another extractor (for a format this one does not parse, or a utility an
 operator prefers) serves the same wire contract:
 [extractor contract](../docs/reference/extractor-contract.md).

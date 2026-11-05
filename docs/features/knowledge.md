@@ -884,30 +884,32 @@ there, or by a process that stopped, runs again from its start and counts the at
 job that fails, or is cancelled, publishes nothing, so the earlier revision keeps
 serving. `knowledge.ingest_cancel` stops a pending job at once and a running one before
 it publishes; a job past its publish check finishes. The reference extractor reads
-Markdown, HTML, plain text, SQL, TOML, CSV, PDF (its text layer: a scanned page needs
-OCR, so the job needs `allow_partial`), DOCX, PPTX and XLSX (a table of each sheet, and
-its rows as passages; any unit of a CSV or XLSX the extractor could not read, or a
-capability it lost, such as a table cut at its budget or a workbook saved without its
-formulas' values, makes the job partial, and it needs `allow_partial`: see
-[tables](../architecture/document-extraction.md#formats-in-the-reference-extractor));
+Markdown, HTML, plain text, SQL, TOML, CSV, PDF (its text layer: a scanned page needs OCR,
+so the job needs `allow_partial`), DOCX, PPTX, XLSX (a table of each sheet, and its rows
+as passages) and Parquet (a table, a decimal's digits kept; its dataset holds them as
+[Datasets](#datasets) says); any unit of a tabular file the extractor could not read, or a
+capability it lost, such as a table cut at its budget, a workbook saved without its
+formulas' values or a Parquet column of bytes, makes the job partial, and it needs
+`allow_partial`: see
+[tables](../architecture/document-extraction.md#formats-in-the-reference-extractor);
 another format fails `format_unavailable` until an extractor that declares it is
-configured. `knowledge.update_metadata` with `reindex=true` refuses an
-ingested document (its chunks come from the artifact): ingest it again to re-index it. A
-chunk's context (the title, description and section breadcrumb both search legs read) is
-filled as for `knowledge.add`.
+configured. `knowledge.update_metadata` with `reindex=true` refuses an ingested document
+(its chunks come from the artifact): ingest it again to re-index it. A chunk's context
+(the title, description and section breadcrumb both search legs read) is filled as for
+`knowledge.add`.
 
 ## Datasets
 
-An ingested CSV or XLSX file's tables are also typed **datasets**: each sheet (a CSV file's
-one table) with a schema and its rows as typed values, published with the revision that
-holds them. `knowledge.dataset_get` (viewer) returns the live revision's datasets of a
-source (`dataset_id` for one): each with its `columns` (`name`, the `type` its values are
-held as, what the extractor `inferred`, and `stored`), its `schema_state`, the
-`clarifications` it needs, `row_count`, `rejected_rows` with the first of them and why,
-`complete` (false unless the extraction kept every value of the table:
-[datasets](../architecture/document-extraction.md#datasets)), the `snapshot_id` serving it and, with
-`sample_rows` (up to 50), its first rows: those of the first 20 datasets of the source, so
-a workbook of more sheets reads the others by `dataset_id`.
+An ingested CSV, XLSX or Parquet file's tables are also typed **datasets**: each sheet (a
+CSV or Parquet file's one table) with a schema and its rows as typed values, published
+with the revision that holds them. `knowledge.dataset_get` (viewer) returns the live
+revision's datasets of a source (`dataset_id` for one): each with its `columns` (`name`,
+the `type` its values are held as, what the extractor `inferred`, and `stored`), its
+`schema_state`, the `clarifications` it needs, `row_count`, `rejected_rows` with the first
+of them and why, `complete` (false unless the extraction kept every value of the table:
+[datasets](../architecture/document-extraction.md#datasets)), the `snapshot_id` serving it
+and, with `sample_rows` (up to 50), its first rows: those of the first 20 datasets of the
+source, so a workbook of more sheets reads the others by `dataset_id`.
 
 | `schema_state`        | Means                                                               |
 | --------------------- | ------------------------------------------------------------------- |
@@ -915,18 +917,20 @@ a workbook of more sheets reads the others by `dataset_id`.
 | `needs_clarification` | a column or the header needs an answer (below) before it is trusted |
 | `approved`            | a writer approved the schema with `knowledge.dataset_approve`       |
 
-| Clarification      | Means                                                                        |
-| ------------------ | ---------------------------------------------------------------------------- |
-| `mixed_types`      | the column holds values of more than one type; it is held as text            |
-| `generated_name`   | the header cell is empty, so the column is named `column N`                  |
-| `duplicate_name`   | the header repeats a name, so the column is named `<name> (2)`, `(3)`, ...   |
-| `header_like_data` | every column name reads as a number or a date: the first row may be data     |
-| `past_capacity`    | every slot of a type is taken, so the columns of it past them are not stored |
+| Clarification      | Means                                                                                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `mixed_types`      | the column holds values of more than one type; it is held as text                                                      |
+| `generated_name`   | the header cell is empty, so the column is named `column N`                                                            |
+| `duplicate_name`   | the header repeats a name, so the column is named `<name> (2)`, `(3)`, ...                                             |
+| `header_like_data` | every column name reads as a number or a date: the first row may be data (not when `header_rows` is 0, as for Parquet) |
+| `past_capacity`    | every slot of a type is taken, so the columns of it past them are not stored                                           |
 
 A column's type is `string`, `number`, `bool`, `date`, `datetime`, `time` or `duration`
 (in seconds). A row with a cell error (`#DIV/0!`) or a value its column's type cannot hold
 is rejected and counted, never stored half typed. A dataset holds up to 24 text or time,
-32 number or duration, 8 date or date-time and 8 boolean columns.
+32 number or duration, 8 date or date-time and 8 boolean columns. The first 24 number or
+duration columns hold a value to nine decimal places (a value with more is rounded there),
+the rest a double.
 
 `knowledge.dataset_approve` (writer, audited) approves a dataset's schema. It names the
 `snapshot_id` the caller reviewed (`409 PRECONDITION_FAILED` once another serves) and, in

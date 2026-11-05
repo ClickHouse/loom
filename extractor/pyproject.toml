@@ -9,6 +9,7 @@ urls = { Repository = "https://github.com/ClickHouse/loom" }
 classifiers = ["Private :: Do Not Upload"]
 dependencies = [
   "cryptography>=50,<51", # pypdf's AES: a PDF encrypted with an owner password alone opens
+  "pyarrow>=26,<27",      # Parquet: a major may change what its decoder accepts, reviewed before a bump
   "pypdf>=6.21,<7",
   "sqlglot>=30.27,<31",   # imports sqlglot.tokenizer_core, which a major may move
   "starlette>=1.7",

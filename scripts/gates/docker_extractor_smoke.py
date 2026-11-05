@@ -26,6 +26,7 @@ async def main() -> None:
         "docx",
         "pptx",
         "xlsx",
+        "parquet",
     }, formats
     artifact = await extractors.extract(b"[server]\nport = 7777\n", name="loom.toml")
     assert [b.text for b in artifact.blocks] == ["[server]", "server.port = 7777"], artifact
@@ -34,4 +35,4 @@ async def main() -> None:
 
 if __name__ == "__main__":  # `python -` runs it as __main__ too
     asyncio.run(main())
-    print("extractor: reached, declared ten formats, extraction checked")
+    print("extractor: reached, declared eleven formats, extraction checked")

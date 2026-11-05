@@ -216,7 +216,10 @@ def _value(v: Any) -> Any:
             n = int(v)
             return n if abs(n) < _JS_SAFE else str(n)
         f = float(v)
-        return f if Decimal(repr(f)) == v else str(v.normalize())
+        if Decimal(repr(f)) == v:
+            return f
+        # Its exact digits, trailing zeros dropped: normalize() would round to 28.
+        return format(v, "f").rstrip("0")  # a fraction: a digit is left past the point
     return v
 
 
