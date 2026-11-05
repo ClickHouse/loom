@@ -49,6 +49,17 @@ def test_a_reply_reads_as_a_plan_a_question_or_neither() -> None:
     # A reply cut at its output cap says it was incomplete, not that it lacked a key.
     cut_off = '{"plan": {"where": [{"column": {"dataset": "d", "column": "x"}, "op": "eq"'
     assert "was not JSON" in ap.read_proposal(cut_off).unreadable
+    # Prose braces before a cut reply do not hide the error in the reply itself.
+    told = ap.read_proposal("Counting {orders}: " + cut_off).unreadable
+    assert "was not JSON" in told and "property name" not in told
+    # A key of the wrong type is told back as such, not as missing.
+    for text, why in (
+        ('{"plan": "count the rows"}', '"plan" must be an object'),
+        ('{"plan": null}', '"plan" must be an object'),
+        ('{"ambiguous": ""}', '"ambiguous" must be the question'),
+        ('{"ambiguous": 5}', '"ambiguous" must be the question'),
+    ):
+        assert why in ap.read_proposal(text).unreadable
     asked = ap.read_proposal('{"ambiguous": "Which currency is amount in?"}')
     assert (asked.plan, asked.ask) == (None, "Which currency is amount in?")
     for text, why in (
@@ -73,8 +84,10 @@ def test_the_prompt_lists_each_dataset_and_says_why_a_plan_was_refused() -> None
         and '- o: "orders.csv" (5 rows); columns: "amount" (number)' in prompt
     )
     assert "refused" not in prompt
-    assert "Your last plan was refused: no column 'amt'" in ap.plan_prompt(
-        "t", schemas, "no column 'amt'"
+    retry = ap.plan_prompt("t", schemas, "no column 'amt'", '{"plan": {"select": ["amt"]}}')
+    # The refused reply is shown with its reason, so the model corrects what it sent.
+    assert (
+        'Your last reply: {"plan": {"select": ["amt"]}}\nIt was refused: no column \'amt\'' in retry
     )
 
 
@@ -369,7 +382,7 @@ async def test_a_refused_plan_is_proposed_again_once_with_why_then_abstains(
     llm = _LLM(["not json", PLAN], answer="Total [knowledge.query#1]")
     stores = Stores(monkeypatch, llm)
     out = await _synthesize()
-    assert "Your last plan was refused: the reply held no JSON object" in llm.calls[1][1]
+    assert "It was refused: the reply held no JSON object" in llm.calls[1][1]
     assert out.calculations and not out.abstain
     # A plan the wire model refuses and one the schemas refuse: both are told back.
     llm = _LLM([json.dumps({"plan": {"aggregates": [{"fn": "median", "name": "m"}]}}), PLAN])

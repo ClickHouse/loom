@@ -212,15 +212,16 @@ async def _calculate(
     schemas = await _schemas(input)
     if isinstance(schemas, KnowledgeSynthesizeOutput):
         return schemas
-    refused = ""
+    refused = last = ""
     for _ in range(_PLAN_TRIES):
         with llm_stage("knowledge_synthesize_plan"):
             res = await llm.complete(
                 ap.PLAN_SYSTEM,
-                ap.plan_prompt(input.task, schemas, refused),
+                ap.plan_prompt(input.task, schemas, refused, last),
                 max_tokens=llm_max_tokens("knowledge_synthesize_plan"),
             )
-        proposal = ap.read_proposal(getattr(res, "text", "") or "")
+        last = getattr(res, "text", "") or ""
+        proposal = ap.read_proposal(last)
         if proposal.ask:
             return _abstain("ambiguous", ap.cut(proposal.ask, ap.MAX_REASON_CHARS), model)
         if proposal.plan is None:

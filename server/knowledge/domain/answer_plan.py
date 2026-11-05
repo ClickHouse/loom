@@ -15,6 +15,7 @@ Pure and I/O-free.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -53,6 +54,11 @@ PLAN_SYSTEM = (
 )
 
 
+_DECODER = json.JSONDecoder()
+# A `{` that opens a JSON object: one followed by a key, or by `}`.
+_OPENS_OBJECT = re.compile(r'\{\s*["}]')
+
+
 @dataclass(frozen=True)
 class Proposal:
     """A model's reply: a `plan` (the query fields, datasets excluded), or what it
@@ -63,13 +69,20 @@ class Proposal:
     unreadable: str = ""
 
 
-def plan_prompt(task: str, schemas: Sequence[Mapping[str, Any]], refused: str = "") -> str:
+def plan_prompt(
+    task: str, schemas: Sequence[Mapping[str, Any]], refused: str = "", last: str = ""
+) -> str:
     """The plan call's prompt: the task, each dataset's alias, columns and row
-    count, and, on a second try, why the first plan was refused."""
+    count, and, on a second try, the reply that was refused (`last`) and why, so
+    the model corrects what it sent rather than guessing at it from the reason."""
     room = MAX_PROMPT_SCHEMA_CHARS // max(1, len(schemas))
     described = "\n".join(_described(s, room) for s in schemas)
-    why = cut(refused, MAX_REASON_CHARS)
-    retry = f"\n\nYour last plan was refused: {why}\nPropose a corrected plan." if refused else ""
+    retry = (
+        f"\n\nYour last reply: {cut(last, MAX_REASON_CHARS)}\n"
+        f"It was refused: {cut(refused, MAX_REASON_CHARS)}\nPropose a corrected plan."
+        if refused
+        else ""
+    )
     return f"QUESTION: {task}\n\nDATASETS (alias: name; columns):\n{described}{retry}\n\nJSON:"
 
 
@@ -122,12 +135,17 @@ def read_proposal(text: str) -> Proposal:
     if start < 0:
         return Proposal(unreadable="the reply held no JSON object")
     obj: Any = None
-    error = ""
+    # The error worth telling back is the first in an object (a reply cut at its
+    # output cap ends mid-object), not one in a `{word}` of prose before it.
+    object_error = prose_error = ""
     while start >= 0:
         try:
-            found, _ = json.JSONDecoder().raw_decode(text, start)
+            found, _ = _DECODER.raw_decode(text, start)
         except json.JSONDecodeError as e:
-            error = error or e.msg
+            if _OPENS_OBJECT.match(text, start):
+                object_error = object_error or e.msg
+            else:
+                prose_error = prose_error or e.msg
         else:
             if isinstance(found, dict) and ("plan" in found or "ambiguous" in found):
                 obj = found
@@ -135,14 +153,16 @@ def read_proposal(text: str) -> Proposal:
         start = text.find("{", start + 1)
     if obj is None:
         # A reply cut at its output cap is incomplete JSON, not one with neither key.
-        if error:
-            return Proposal(unreadable=f"the reply was not JSON: {error}")
+        if object_error or prose_error:
+            return Proposal(unreadable=f"the reply was not JSON: {object_error or prose_error}")
         return Proposal(unreadable='the reply had neither "plan" nor "ambiguous"')
-    if isinstance(obj.get("ambiguous"), str) and obj["ambiguous"].strip():
-        return Proposal(ask=obj["ambiguous"].strip())
-    plan = obj.get("plan")
+    if "ambiguous" in obj:
+        if isinstance(obj["ambiguous"], str) and obj["ambiguous"].strip():
+            return Proposal(ask=obj["ambiguous"].strip())
+        return Proposal(unreadable='"ambiguous" must be the question to ask, as a string')
+    plan = obj["plan"]
     if not isinstance(plan, dict):
-        return Proposal(unreadable='the reply had neither "plan" nor "ambiguous"')
+        return Proposal(unreadable='"plan" must be an object of the fields listed')
     # The datasets are the caller's: a plan cannot add or swap one.
     return Proposal(
         plan={k: v for k, v in plan.items() if k not in ("datasets", "org", "namespace")}
