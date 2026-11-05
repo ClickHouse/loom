@@ -34,6 +34,9 @@ MAX_KEYS = 10_000
 MAX_KEY_CHARS = 1024
 MAX_SECTION_DEPTH = 64
 MAX_SECTION_CHARS = 500
+# And on a table: its columns (a spreadsheet's widest sheet) and each column name.
+MAX_COLUMNS = 16_384
+MAX_COLUMN_CHARS = 500
 
 BlockType = Literal[
     "heading",
@@ -49,8 +52,7 @@ BlockType = Literal[
 @dataclass(frozen=True)
 class Locator:
     """Where a block sits in the original revision. Only the fields that apply
-    to the format are set; `to_dict` drops the rest. A format that needs
-    another field (a cell range) adds it with its parser."""
+    to the format are set; `to_dict` drops the rest."""
 
     line_start: int = 0  # 1-based, inclusive
     line_end: int = 0
@@ -59,6 +61,9 @@ class Locator:
     key_path: str = ""  # TOML `server.limits.max_rows`
     page_start: int = 0  # a PDF's pages or a PPTX's slides, 1-based, inclusive
     page_end: int = 0
+    sheet: str = ""  # an XLSX sheet's name
+    row_start: int = 0  # a sheet's or a CSV file's rows, 1-based, inclusive, the header counted
+    row_end: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -145,6 +150,50 @@ class Coverage:
         }
 
 
+# The type of a table's column: what every value it holds is, `mixed` when they differ.
+ColumnType = Literal["string", "number", "bool", "date", "datetime", "time", "duration", "mixed"]
+
+
+@dataclass(frozen=True)
+class Column:
+    name: str
+    type: ColumnType
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "type": self.type}
+
+
+@dataclass(frozen=True)
+class Table:
+    """A sheet or a CSV file's rows as values: each row a list as long as
+    `columns`, each value a JSON scalar (a date as ISO text, a cell error as
+    `{"error": "#DIV/0!"}`). `locator` names its sheet and the rows its values
+    came from; `header_rows` how many rows above them named the columns."""
+
+    id: str
+    name: str
+    columns: tuple[Column, ...]
+    rows: tuple[tuple[Any, ...], ...]
+    header_rows: int = 1
+    locator: Locator = field(default_factory=Locator)
+    attrs: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "columns": [c.to_dict() for c in self.columns],
+            "rows": [list(r) for r in self.rows],
+            "header_rows": self.header_rows,
+        }
+        loc = self.locator.to_dict()
+        if loc:
+            out["locator"] = loc
+        if self.attrs:
+            out["attrs"] = self.attrs
+        return out
+
+
 @dataclass(frozen=True)
 class Artifact:
     """A source revision's normalized extraction. `parser` and `parser_version`
@@ -160,9 +209,11 @@ class Artifact:
     warnings: tuple[str, ...] = ()
     options: dict[str, Any] = field(default_factory=dict)
     attrs: dict[str, Any] = field(default_factory=dict)
+    # A tabular source's values, beside the blocks its rows are searched by.
+    tables: tuple[Table, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "schema_version": SCHEMA_VERSION,
             "format": self.format,
             "parser": self.parser,
@@ -173,6 +224,9 @@ class Artifact:
             "warnings": list(self.warnings),
             "blocks": [b.to_dict() for b in self.blocks],
         }
+        if self.tables:
+            out["tables"] = [t.to_dict() for t in self.tables]
+        return out
 
     def to_json(self) -> bytes:
         return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":")).encode()

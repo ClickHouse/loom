@@ -436,7 +436,7 @@ def test_an_extractor_that_cannot_be_reached_leaves_the_job_to_retry(
     ("data", "filename", "over", "code"),
     [
         (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1old", "old.bin", {}, "unsupported_format"),
-        (b"a,b\n1,2\n", "a.csv", {}, "format_unavailable"),
+        (b"PAR1 not read PAR1", "a.parquet", {}, "format_unavailable"),
         (b"%PDF-1.7 ...", "a.pdf", {}, "corrupt"),
         ("café".encode("latin-1"), "a.md", {}, "encoding"),
         (

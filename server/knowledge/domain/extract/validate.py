@@ -4,7 +4,9 @@ parts agree with each other, and refuses it otherwise. Nothing an extractor
 returns is chunked, embedded or published before it passes here.
 
 Checked: the size before decoding, the schema version, the format asked for,
-each block's type, a unique id and a parent that is an earlier block, at most
+each block's type, a unique id and a parent that is an earlier block, each
+table's unique id, at most MAX_COLUMNS typed columns of MAX_COLUMN_CHARS and
+rows as long as its columns of scalar values or cell errors, at most
 MAX_KEYS keys of MAX_KEY_CHARS and MAX_SECTION_DEPTH section entries of
 MAX_SECTION_CHARS per block, locator spans that are ranges, coverage counts
 within their total, a `complete` flag that matches the counts, strings that are
@@ -23,6 +25,8 @@ import math
 from typing import Any, get_args
 
 from server.knowledge.domain.extract.artifact import (
+    MAX_COLUMN_CHARS,
+    MAX_COLUMNS,
     MAX_KEY_CHARS,
     MAX_KEYS,
     MAX_SECTION_CHARS,
@@ -31,12 +35,16 @@ from server.knowledge.domain.extract.artifact import (
     Artifact,
     Block,
     BlockType,
+    Column,
+    ColumnType,
     Coverage,
     Failure,
     Locator,
+    Table,
 )
 
 _BLOCK_TYPES = frozenset(get_args(BlockType))
+_COLUMN_TYPES = frozenset(get_args(ColumnType))
 # Deeper JSON in `attrs` or `options` is refused before code that walks it sees it.
 _MAX_NESTING = 16  # not a setting: a bound on hostile input
 _PATH_KEY = 40  # not a setting: the characters of a key an error path names
@@ -131,10 +139,16 @@ def _locator(d: dict[str, Any], path: str) -> Locator:
         key_path=_str(d, "key_path", path, default=""),
         page_start=_int(d, "page_start", path, default=0),
         page_end=_int(d, "page_end", path, default=0),
+        sheet=_str(d, "sheet", path, default=""),
+        row_start=_int(d, "row_start", path, default=0),
+        row_end=_int(d, "row_end", path, default=0),
     )
+    if len(loc.sheet) > MAX_SECTION_CHARS:
+        raise _fail(f"{path}.sheet", f"is over the {MAX_SECTION_CHARS} characters allowed")
     for name, start, end in (
         ("line", loc.line_start, loc.line_end),
         ("page", loc.page_start, loc.page_end),
+        ("row", loc.row_start, loc.row_end),
     ):
         if start < 0 or end < start or (start == 0) != (end == 0):
             raise _fail(path, f"{name}_start..{name}_end is not a 1-based range")
@@ -172,6 +186,59 @@ def _block(d: dict[str, Any], path: str, seen: set[str]) -> Block:
         depth=depth,
         # Once here, so every chunk cut from the block can share the tuple.
         keys=tuple(dict.fromkeys(_strs(d, "keys", path, most=MAX_KEYS, chars=MAX_KEY_CHARS))),
+        attrs=_obj(d, "attrs", path),
+    )
+
+
+def _value(v: Any, path: str, i: int, j: int) -> Any:
+    """A table value, row `i` column `j`: a JSON scalar, or a cell error
+    `{"error": "<text>"}`. Its path is spelled only when it fails."""
+    if v is None or isinstance(v, (int, float, bool)):
+        return v
+    text = v["error"] if isinstance(v, dict) and set(v) == {"error"} else v
+    if isinstance(text, str):
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError as e:
+            raise _fail(f"{path}.rows[{i}][{j}]", "is not valid Unicode") from e
+        return v
+    raise _fail(f"{path}.rows[{i}][{j}]", "is not a scalar or a cell error")
+
+
+def _table(d: dict[str, Any], path: str) -> Table:
+    raw_columns = d.get("columns")
+    if not isinstance(raw_columns, list) or len(raw_columns) > MAX_COLUMNS:
+        raise _fail(f"{path}.columns", f"is not a list of at most {MAX_COLUMNS}")
+    columns = []
+    for i, c in enumerate(raw_columns):
+        c = _record(c, f"{path}.columns[{i}]")
+        name, kind = (
+            _str(c, "name", f"{path}.columns[{i}]"),
+            _str(c, "type", f"{path}.columns[{i}]"),
+        )
+        if len(name) > MAX_COLUMN_CHARS:
+            raise _fail(f"{path}.columns[{i}].name", f"is over {MAX_COLUMN_CHARS} characters")
+        if kind not in _COLUMN_TYPES:
+            raise _fail(f"{path}.columns[{i}].type", f"{kind[:40]!r} is not a column type")
+        columns.append(Column(name, kind))  # type: ignore[arg-type]  # checked above
+    raw_rows = d.get("rows")
+    if not isinstance(raw_rows, list):
+        raise _fail(f"{path}.rows", "is not a list")
+    rows = []
+    for i, r in enumerate(raw_rows):
+        if not isinstance(r, list) or len(r) != len(columns):
+            raise _fail(f"{path}.rows[{i}]", f"is not a list of {len(columns)} values")
+        rows.append(tuple(_value(v, path, i, j) for j, v in enumerate(r)))
+    header_rows = _int(d, "header_rows", path, default=1)
+    if header_rows < 0:
+        raise _fail(f"{path}.header_rows", "is negative")
+    return Table(
+        id=_str(d, "id", path),
+        name=_str(d, "name", path),
+        columns=tuple(columns),
+        rows=tuple(rows),
+        header_rows=header_rows,
+        locator=_locator(_record(d.get("locator", {}), f"{path}.locator"), f"{path}.locator"),
         attrs=_obj(d, "attrs", path),
     )
 
@@ -252,6 +319,14 @@ def parse_artifact(data: bytes, *, fmt: str, max_bytes: int) -> Artifact:
         block = _block(_record(b, f"blocks[{i}]"), f"blocks[{i}]", seen)
         seen.add(block.id)
         blocks.append(block)
+    raw_tables = d.get("tables", [])
+    if not isinstance(raw_tables, list):
+        raise _fail("artifact.tables", "is not a list")
+    tables = tuple(
+        _table(_record(t, f"tables[{i}]"), f"tables[{i}]") for i, t in enumerate(raw_tables)
+    )
+    if len({t.id for t in tables}) != len(tables) or any(not t.id for t in tables):
+        raise _fail("artifact.tables", "holds an empty or repeated id")
     return Artifact(
         format=fmt,
         parser=parser,
@@ -261,4 +336,5 @@ def parse_artifact(data: bytes, *, fmt: str, max_bytes: int) -> Artifact:
         warnings=_strs(d, "warnings", "artifact"),
         options=_obj(d, "options", "artifact"),
         attrs=_obj(d, "attrs", "artifact"),
+        tables=tables,
     )

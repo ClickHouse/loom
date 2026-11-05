@@ -58,11 +58,13 @@ class StructuralChunk:
 
 def _merge(locs: list[Locator]) -> Locator:
     """The span covering `locs`; a field kept only when every part agrees
-    (one key path) or it is a range (lines, chars, pages)."""
+    (one key path, one sheet) or it is a range (lines, chars, pages, rows)."""
     lines = [x for x in locs if x.line_start]
     chars = [x for x in locs if x.char_start >= 0]
     pages = [x for x in locs if x.page_start]
+    rows = [x for x in locs if x.row_start]
     paths = {x.key_path for x in locs}
+    sheets = {x.sheet for x in locs}
     return Locator(
         line_start=min((x.line_start for x in lines), default=0),
         line_end=max((x.line_end for x in lines), default=0),
@@ -71,6 +73,9 @@ def _merge(locs: list[Locator]) -> Locator:
         key_path=paths.pop() if len(paths) == 1 else "",
         page_start=min((x.page_start for x in pages), default=0),
         page_end=max((x.page_end for x in pages), default=0),
+        sheet=sheets.pop() if len(sheets) == 1 else "",
+        row_start=min((x.row_start for x in rows), default=0),
+        row_end=max((x.row_end for x in rows), default=0),
     )
 
 

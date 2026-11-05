@@ -148,7 +148,8 @@ class _SearchHit(BaseModel):
     # For a chunk of an extracted file: its blocks' type (`sql_statement`, `toml_table`,
     # `paragraph`, `mixed`, ...) and where it sits in the source (`line_start`,
     # `line_end`, a key path, `page_start`/`page_end` for a PDF's pages or a deck's
-    # slides). '' and None for text a caller extracted.
+    # slides, `sheet` and `row_start`/`row_end` for a sheet's or a CSV file's rows).
+    # '' and None for text a caller extracted.
     block_type: str = ""
     locator: dict[str, Any] | None = None
     # The query's identifier-shaped terms this chunk defines or reads (a table, a TOML

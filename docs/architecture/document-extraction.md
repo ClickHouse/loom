@@ -4,11 +4,11 @@ An uploaded original is parsed into one shape, the extraction artifact, by an ex
 its own dependencies, never the Loom server. The server sends the original's bytes to the service its format is routed
 to, reads the artifact back as untrusted input, and cuts structural chunks from its blocks, so a SQL statement, a TOML
 key and a Markdown section are all cited by a locator into the source. Loom ships a reference extractor
-(`extractor/loom_extractor/`) for Markdown, HTML, plain text, SQL, TOML, PDF, DOCX and PPTX; an operator can run another
-behind the same [wire contract](../reference/extractor-contract.md). `knowledge.ingest` extracts an uploaded original
-this way ([ingestion](#ingestion)), and the document-source sync calls it for the PDFs and `.pptx` files a registered
-folder holds ([syncing a source](../features/knowledge.md#syncing-a-source)); `knowledge.add` takes text the caller
-extracted.
+(`extractor/loom_extractor/`) for Markdown, HTML, plain text, SQL, TOML, CSV, PDF, DOCX, PPTX and XLSX; an operator can
+run another behind the same [wire contract](../reference/extractor-contract.md). `knowledge.ingest` extracts an uploaded
+original this way ([ingestion](#ingestion)), and the document-source sync calls it for the PDFs and `.pptx` files a
+registered folder holds ([syncing a source](../features/knowledge.md#syncing-a-source)); `knowledge.add` takes text the
+caller extracted.
 
 ## The service boundary
 
@@ -49,10 +49,12 @@ schema version, the format asked for, each block's type, a unique id and a paren
 10,000 keys of 1,024 characters and 64 section-path entries of 500 characters per block (so the chunks cut from a long
 block share its keys and per-chunk work stays linear), locator spans that are ranges, coverage counts within their
 total, strings that are valid Unicode, numbers that are JSON (no `NaN` or `Infinity`; signed 64-bit integers (-2^63 to
-2^63-1), other numbers within a double) and nesting depth in `attrs` and `options` (16; the reference TOML parser leaves
-out the `attrs.value` of a value nested deeper than 8, whose text the block keeps). `complete` is recomputed from the
-counts, failures and losses, and an artifact whose flag disagrees is refused. A field the contract does not name is
-dropped. The server addresses the artifact by the SHA-256 of its own serialization, not the service's bytes.
+2^63-1), other numbers within a double), each table's shape (a unique id, at most 16,384 typed columns named in at most
+500 characters, rows as long as its columns of scalars or cell errors, and a sheet and rows that are a locator), and
+nesting depth in `attrs` and `options` (16; the reference TOML parser leaves out the `attrs.value` of a value nested
+deeper than 8, whose text the block keeps). `complete` is recomputed from the counts, failures and losses, and an
+artifact whose flag disagrees is refused. A field the contract does not name is dropped. The server addresses the
+artifact by the SHA-256 of its own serialization, not the service's bytes.
 
 **Isolation in the reference extractor.** Every `/v1` call carries `Authorization: Bearer <token>`; the service
 refuses to start without a token of at least 16 characters. Each extraction runs in a child process, and before the
@@ -81,13 +83,14 @@ denies those. The service refuses to start on an architecture its socket filter 
 
 ## The artifact
 
-| Part       | Holds                                                                                                                                                                                                        |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `blocks`   | the source's structure in order: `heading`, `paragraph`, `list`, `code`, `sql_statement`, `toml_table`, `toml_key`, ...; each with its text, locator, section path and parent                                |
-| `coverage` | the unit the format is made of (`lines`, `statements`, `keys`, `chars`, `pages`, `paragraphs`, `slides`), how many there are, how many extracted, each failed unit with its reason, and each capability lost |
-| `warnings` | facts a reader should see, such as an ambiguous SQL dialect                                                                                                                                                  |
-| `options`  | the overrides the parse ran with (`sql_dialect` for SQL only, `encoding` by its codec name)                                                                                                                  |
-| `attrs`    | format facts (`dialect`, `dialect_source`, `dialect_candidates`; an HTML page's or a PDF's `title`; a PDF's `pages`, a deck's `slides`)                                                                      |
+| Part       | Holds                                                                                                                                                                                                                |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `blocks`   | the source's structure in order: `heading`, `paragraph`, `list`, `code`, `sql_statement`, `toml_table`, `toml_key`, ...; each with its text, locator, section path and parent                                        |
+| `tables`   | the tabular sources' tables: each a name, typed columns, its rows of values, a header row count and a locator (CSV and XLSX)                                                                                         |
+| `coverage` | the unit the format is made of (`lines`, `statements`, `keys`, `chars`, `pages`, `paragraphs`, `slides`, `rows`), how many there are, how many extracted, each failed unit with its reason, and each capability lost |
+| `warnings` | facts a reader should see, such as an ambiguous SQL dialect                                                                                                                                                          |
+| `options`  | the overrides the parse ran with (`sql_dialect` for SQL only, `encoding` by its codec name)                                                                                                                          |
+| `attrs`    | format facts (`dialect`, `dialect_source`, `dialect_candidates`; an HTML page's or a PDF's `title`; a PDF's `pages`, a deck's `slides`, a workbook's `sheets`)                                                       |
 
 A block's `id` is `b<ordinal>`, stable within its artifact. `keys` are the exact names a reader can look the block up
 by: the objects a SQL statement creates, writes and reads, and its columns (for a statement sqlglot cannot parse, every
@@ -97,16 +100,18 @@ form.
 
 A locator sets only the fields that apply: `line_start`/`line_end` (1-based) on every text format,
 `char_start`/`char_end` (offsets into the decoded text) on Markdown, plain text, SQL and the text blocks of an invalid
-TOML file, `key_path` for TOML, and `page_start`/`page_end` (1-based) for a PDF's pages and a PPTX deck's slides. A
-DOCX has no pages of its own (pagination is the renderer's), so its blocks carry no locator and a citation names their
-section path. A Markdown heading's span covers its source line or lines, markup included, while its text is the cleaned
-title, so a window of a long heading cites the heading's whole span. A chunk cut from several blocks spans their lines,
-characters and pages. A format that needs another field (a cell range) adds it with its parser.
+TOML file, `key_path` for TOML, `page_start`/`page_end` (1-based) for a PDF's pages and a PPTX deck's slides, and
+`sheet` and `row_start`/`row_end` (the header counted) for a workbook's sheets and a CSV file's rows. A DOCX has no
+pages of its own (pagination is the renderer's), so its blocks carry no locator and a citation names their section path.
+A Markdown heading's span covers its source line or lines, markup included, while its text is the cleaned title, so a
+window of a long heading cites the heading's whole span. A chunk cut from several blocks spans their lines, characters,
+pages and rows, and keeps a sheet when all of them name one.
 
 The artifact is serialized as sorted, compact JSON with a `schema_version` and addressed by the SHA-256 of those bytes.
 A parser or option change produces a new artifact of the same source revision; an artifact is never edited. A reader
 refuses a `schema_version` it does not know. `parser_version` names what a parse depends on: sqlglot's version for SQL,
-pypdf's for PDF, and the Python version for HTML and TOML, whose parsers ship with it.
+pypdf's for PDF, and the Python version for HTML, TOML, CSV and XLSX, whose parsers ship with it (`csv` and its sniffer;
+`datetime.fromisoformat` for an XLSX date written as text).
 
 ## Formats in the reference extractor
 
@@ -118,17 +123,19 @@ declared encoding, and a UTF-8 byte-order mark is dropped when the text is UTF-8
 declared byte-order codec (`utf-16-le`). An undecodable byte is an `encoding` failure naming its offset, and a NUL byte
 in undeclared UTF-8 text (behind a byte-order mark or not) is binary; neither is replaced and indexed.
 
-| Format             | Parser                                                                | Blocks                                                                       |
-| ------------------ | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Markdown           | a block parser after CommonMark's heading, fence and HTML-block rules | headings, paragraphs, lists, fenced code, front matter                       |
-| Plain text         | a paragraph splitter                                                  | one paragraph per run of non-blank lines (a `#` line is text, not a heading) |
-| HTML               | the standard library's parser                                         | headings, paragraphs, list items, table cells, quotes, definitions, `pre`    |
-| SQL                | `sqlglot`, never executed                                             | one block per statement                                                      |
-| TOML               | `tomllib` and a line scanner                                          | one block per table header and per key                                       |
-| PDF                | `pypdf`, its text layer                                               | paragraphs by page; headings from the outline                                |
-| DOCX               | the standard library's zip and XML readers                            | headings, paragraphs, lists, tables, footnotes and endnotes                  |
-| PPTX               | the standard library's zip and XML readers                            | per slide: its title as a heading, each text shape, tables, speaker notes    |
-| XLSX, CSV, Parquet | none in this build                                                    | none: detected and reported `format_unavailable`                             |
+| Format     | Parser                                                                | Blocks                                                                       |
+| ---------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Markdown   | a block parser after CommonMark's heading, fence and HTML-block rules | headings, paragraphs, lists, fenced code, front matter                       |
+| Plain text | a paragraph splitter                                                  | one paragraph per run of non-blank lines (a `#` line is text, not a heading) |
+| HTML       | the standard library's parser                                         | headings, paragraphs, list items, table cells, quotes, definitions, `pre`    |
+| SQL        | `sqlglot`, never executed                                             | one block per statement                                                      |
+| TOML       | `tomllib` and a line scanner                                          | one block per table header and per key                                       |
+| PDF        | `pypdf`, its text layer                                               | paragraphs by page; headings from the outline                                |
+| DOCX       | the standard library's zip and XML readers                            | headings, paragraphs, lists, tables, footnotes and endnotes                  |
+| PPTX       | the standard library's zip and XML readers                            | per slide: its title as a heading, each text shape, tables, speaker notes    |
+| CSV        | the standard library's `csv`                                          | one table; its rows as blocks of up to 20 rows                               |
+| XLSX       | the standard library's zip and XML readers                            | per sheet: a table, its name as a heading, its rows as blocks of up to 20    |
+| Parquet    | none in this build                                                    | none: detected and reported `format_unavailable`                             |
 
 **Markdown.** Headings are ATX, setext and one-line `<hN>`. A paragraph over a setext underline (indented up to three
 spaces) is one heading; a list item, a quote or a thematic break over `---` is not. A fenced block keeps its body's
@@ -211,23 +218,89 @@ password is `unsupported_format`.
 
 **DOCX and PPTX.** Both are zips of XML parts, read with the standard library: no third-party XML or image library runs
 on a hostile file. A part must be stored or deflated (the methods OOXML writes) and declare at most 256 MiB
-uncompressed; it is inflated only up to what it declares, so a zip bomb stops there. A part that declares a DOCTYPE (in
-any encoding) is refused, so no entity is expanded. A part that cannot be read (damaged, over the bound, not XML, in an
-encoding the XML parser does not read) fails the unit it belongs to: a slide, a slide's notes, the styles, the
-footnotes; the document part itself fails the file as `corrupt`. A DOCX heading is a paragraph of a `Heading N` or
-`Title` style, or one with an outline level of its own or along its style's `basedOn` chain, the nearest one set
-deciding (level 9, body text, is no heading whatever the style); a numbered paragraph or a `List` style is a list item,
-and a run of them is one list block. Inserted text is read, and a tracked deletion (its runs, rows and cells) and moved
-text at its old place are not; a content control's or a custom XML element's text is read in place, in the body, a
-table's rows and its cells, and an alternate-content choice once. Headers, footers and comments are not the body and are
-not read; footnotes and endnotes follow the body (`attrs.note`). An embedded document (`altChunk`) is a failed unit, as
-is a document of pictures (in its body or its tables) and no text. A PPTX deck is read in its slide order (the
-presentation's slide list, not the parts' names): a slide's title is a heading its other blocks sit under, each text
-shape (grouped ones in place, and a shape in alternate content through its first choice) is a block, and the speaker
-notes are a block marked `attrs.notes`; a hidden slide (`show` false) is read and marked `attrs.hidden`. A slide whose
-pictures, charts, diagrams or embedded objects carry all it shows, with no text, is a failed unit. So is a slide id
-whose relationship names no slide part, and a slide nested deeper than the reader walks. A table, in either format, is
-one block, a row per line with its cells joined by a pipe, and `attrs.table` its `rows` and `columns`.
+uncompressed, and a package's parts at most 512 MiB in all; a part is inflated only up to what it declares, so a zip
+bomb stops there. A part that declares a DOCTYPE (in any encoding) is refused, so no entity is expanded. A part that
+cannot be read (damaged, over the bound, not XML, in an encoding the XML parser does not read) fails the unit it belongs
+to: a slide, a slide's notes, the styles, the footnotes; the document part itself fails the file as `corrupt`. A DOCX
+heading is a paragraph of a `Heading N` or `Title` style, or one with an outline level of its own or along its style's
+`basedOn` chain, the nearest one set deciding (level 9, body text, is no heading whatever the style); a numbered
+paragraph or a `List` style is a list item, and a run of them is one list block. Inserted text is read, and a tracked
+deletion (its runs, rows and cells) and moved text at its old place are not; a content control's or a custom XML
+element's text is read in place, in the body, a table's rows and its cells, and an alternate-content choice once.
+Headers, footers and comments are not the body and are not read; footnotes and endnotes follow the body (`attrs.note`).
+An embedded document (`altChunk`) is a failed unit, as is a document of pictures (in its body or its tables) and no
+text. A PPTX deck is read in its slide order (the presentation's slide list, not the parts' names): a slide's title is a
+heading its other blocks sit under, each text shape (grouped ones in place, and a shape in alternate content through its
+first choice) is a block, and the speaker notes are a block marked `attrs.notes`; a hidden slide (`show` false) is read
+and marked `attrs.hidden`. A slide whose pictures, charts, diagrams or embedded objects carry all it shows, with no
+text, is a failed unit. So is a slide id whose relationship names no slide part, and a slide nested deeper than the
+reader walks. A table, in either format, is one block, a row per line with its cells joined by a pipe, and `attrs.table`
+its `rows` and `columns`.
+
+**Tables (CSV, XLSX).** A tabular source is `tables` in the artifact: each a header (the first row with a value), its
+columns typed by every value they hold (`string`, `number`, `bool`, `date`, `datetime`, `time`, `duration`, or `mixed`;
+empty cells and errors do not count; a column of dates and date-times is `datetime`), and its rows of values. The same
+rows are blocks, twenty to a block and at most 1,000 characters (a longer row is a block alone, under a chunk's default
+1,500 characters, so a chunk cites the rows it holds), each row a line of `column: value` pairs, cited by sheet and
+rows, so the lexical and vector legs search them like any passage; a header with no rows under it is a block of its own.
+A column's name is at most 500 characters of its header cell (one cut shorter is a failed unit, `<table> header`). A
+float's row text is what a sheet shows, to 15 significant digits (`0.1+0.2` reads `0.3`), and the table keeps its exact
+value. A number that is no JSON number (an integer past signed 64 bits, an infinity, a NaN) is read as a float or as
+text, and a value no other rule reads (a style index of 5,000 digits, a date rounded past year 9999) reads as a number
+or as text, never failing the file.
+
+**CSV.** The delimiter is sniffed from the whole lines of the file's first 64 KiB (a comma, semicolon, tab or pipe; a
+tab, with no quoting, for a `.tsv` name; a tab-separated file sent with no such name is sniffed, so it reads quotes as
+CSV does); a field is quoted with `"`, its quotes doubled, whatever the sniffer guesses, and a value is text unless it
+is written as a plain number, an ISO date or an ISO date and time (its zone kept). A row holds only its non-empty
+fields. A field over a megabyte, a record over 8 MiB, or quoting the reader cannot close, fails the rows from there on.
+
+**XLSX.** The workbook, its styles, its shared strings and its worksheets are read as they inflate, never held as a
+tree; the workbook's relationships are read whole, from a part of at most 4 MiB (past it, or not XML, the file is
+refused as `corrupt`: no sheet can be found without them), and name the shared strings and styles. A cell naming a
+shared string the workbook does not hold reads empty, and the artifact loses `shared_strings`. A sheet's name is at most
+500 characters (one cut shorter is a failed unit, `sheet names`). Worksheets are read in the workbook's order (a chart
+or dialog sheet holds no cells; a macro sheet, or a sheet of any other kind, is not read and fails alone), each a table;
+a Strict Open XML workbook is refused as `unsupported_format`; a sheet whose relationship names no part fails alone. A
+cell is read as the workbook holds it: a shared or inline string without its phonetic reading (one of only whitespace is
+empty, as a CSV field is), a number, a bool, an error as `{"error": "#DIV/0!"}`, or a date when its number format is one
+(built-in formats 14-17 and 22, East Asian Excel's 27-31, 36 and 50-58, or a custom code of at most 255 characters,
+Excel's own bound, with a date letter), from the 1900 system with Excel's 1900-02-29 read as text, or the 1904 one, to
+the nearest second. A time-of-day format reads as a `time`, and an elapsed-time format such as `[h]:mm` as a `duration`.
+A formula reads as its cached value; one with none reads empty, and the artifact loses `formula_values`. A value over a
+megabyte, inline or shared, and one past column 16,384, is left out and counted, as is a cell written twice at one
+position (its earlier value lost). A merged range's first value fills each of its cells, so a header merged over columns
+names each; it fills no row past the last one held, and a merge that would add rows past those a table holds stops there
+and is a failed unit. A row or cell that names no position takes the one after the one before it. A hidden sheet is read
+and marked `attrs.hidden`, and a damaged sheet, or one whose root is no worksheet (another namespace), fails alone;
+shared strings or styles that cannot be read to their end keep what was read, and the artifact loses `shared_strings` or
+`number_formats`.
+
+**Bounds.** One budget bounds all of an artifact's tables, in three parts: what a source holds, the bytes its tables
+write, and the text they index. A source holds at most 1,000,000 non-empty cells in all, merged cells included, their
+text within 256 MiB counted at four bytes a character, and 100,000 rows a table; a merge too large for the cells left is
+skipped and leaves them to the rest, and a workbook reads at most 1,000,000 merged ranges, a bound on the time they take
+(past it, each is counted as not spread, unread). Laying the rows out spends at most 40 MiB, counted as the artifact's
+JSON spells it: each row's values, nulls included, its block line with the column names, escapes included, each block's
+own fields and sheet name, and the failed units; and the text the table blocks hold is at most 12 M characters, each
+block charged 760 more, since a block indexes to at most one chunk (blocks under one heading pack into fewer) and one
+longer than a chunk to one per stride, so an artifact's tables index to at most 15,800 chunks, under the 20,000 a source
+publishes by default; a sheet whose table does not fit leaves no heading behind. These budgets assume the defaults: a
+deployment that raises the extractor's 64 MiB input bound (a CSV is read in time proportional to its size, 34 s for 64
+MiB of blank lines, against the child's 120 s) may see a large CSV run out of CPU time, and one that lowers the
+extractor's answer bound below about 41 MiB, or the server's chunk size, chunk stride (below 760 characters) or chunk
+cap, refuses a large table (`resource_limit`, `too_large`) rather than cutting it. The rows past any of them are a
+failed unit, counted, their cells only checked for a value, and never laid out; a header past the bytes fails its table,
+and once the budget is spent (its cells, bytes or text) the sheets after it are one failed unit, never read; what is
+left of the cells still spreads the merges of the sheet the cut is in, so a merged header names its columns. A
+workbook's parts inflate to at most 512 MiB in all, as a DOCX's do (a streamed part is read up to that total whatever
+size it declares, and cut there, the rows read before standing; a tag of more than 16 MiB, its attributes included,
+nesting past 64 deep, or more than 4,096 distinct element and attribute names, or one over 1,024 characters, cuts its
+part alone the same way), and hold at most 25 M elements in all, which bounds the time it is read for; the sheet the
+bound runs out in keeps the rows read before it. A workbook is read for its first 10,000 sheets (the rest one failed
+unit) and 65,536 styles and number formats (past them, the artifact loses `number_formats`), and its shared strings hold
+at most 256 MiB, each counted at four bytes a character and the object it takes (`lost: shared_strings` past it). A
+sheet of 100,000 by 20 numbers (62 MB inflated, 4 MB zipped) extracts in about 9 seconds under the child's limits.
 
 **Contract bounds.** Before it answers, the reference extractor fits every block to the contract's bounds: a key over
 1,024 characters is left out and the first 10,000 kept, and the section path keeps its first 64 entries, each cut to 500
