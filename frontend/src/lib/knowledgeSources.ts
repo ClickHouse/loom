@@ -294,13 +294,17 @@ const MEETING_ID_RE: Record<RecordingProvider, RegExp> = {
 // Each kind takes 1 to 20 ids; a page store's pages and databases count together.
 const MAX_IDS = 20;
 
-/** The pieces of what was typed, one per line or comma-separated, duplicates dropped. */
-function pieces(text: string, normal: (piece: string) => string): string[] {
+// What separates the ids typed into a field: any space, comma or line break; a meeting
+// id is shown with spaces inside it, so its field splits on commas and lines only.
+const ANY_SPACE = /[\s,]+/;
+const LINES = /[\r\n,]+/;
+
+/** The pieces of what was typed, each normalised, empty ones and duplicates dropped. */
+function pieces(text: string, separators: RegExp, normal: (piece: string) => string): string[] {
   const out: string[] = [];
-  for (const piece of text.split(/[\s,]+/)) {
-    if (!piece) continue;
+  for (const piece of text.split(separators)) {
     const value = normal(piece);
-    if (!out.includes(value)) out.push(value);
+    if (value && !out.includes(value)) out.push(value);
   }
   return out;
 }
@@ -308,19 +312,20 @@ function pieces(text: string, normal: (piece: string) => string): string[] {
 /** The folder ids in what was typed: a bare id, or the id after `/folders/` in a pasted
  *  folder link. Duplicates are dropped, the order kept. */
 export function folderIds(text: string): string[] {
-  return pieces(text, (p) => /\/folders\/([^/?#]+)/.exec(p)?.[1] ?? p);
+  return pieces(text, ANY_SPACE, (p) => /\/folders\/([^/?#]+)/.exec(p)?.[1] ?? p);
 }
 
 /** Project ids, lower-cased as the server stores them. */
 export function projectIds(text: string): string[] {
-  return pieces(text, (p) => p.toLowerCase());
+  return pieces(text, ANY_SPACE, (p) => p.toLowerCase());
 }
 
 /** A page store id from a bare id with or without dashes, or from a pasted link the id
  *  that ends its last path segment (`Title-<id>`; the `?v=` view id is not the
- *  database's). With `peek`, a link with a `p=` (the page a peek link opens) gives
- *  that page, never the database in its path. Lower-case without dashes; the server
- *  stores it dashed. A piece that is neither is kept as typed, so the form can name it. */
+ *  database's). With `peek` (the pages field), a link with a `p=` (the page a peek link
+ *  opens) gives that page, and a database link (a `v=` without `p=`) is kept as typed.
+ *  Lower-case without dashes; the server stores it dashed. A piece that is neither is
+ *  kept as typed, so the form can name it. */
 function pageStoreId(piece: string, peek: boolean): string {
   if (!piece.includes("/")) {
     const hexes = piece.toLowerCase().replace(/-/g, "");
@@ -331,24 +336,33 @@ function pageStoreId(piece: string, peek: boolean): string {
     const hexes = page.toLowerCase().replace(/-/g, "");
     return PAGE_ID_RE.test(hexes) ? hexes : piece;
   }
+  if (peek && isDatabaseLink(piece)) return piece;
   // The id is the whole segment, or what follows the title's last `-`.
   const segment = (piece.split(/[?#]/)[0] ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
   return /(?:^|-)([0-9a-f]{32})$/.exec(segment.toLowerCase())?.[1] ?? piece;
 }
 
+/** A link to a database's view: a `v=` and no `p=`. */
+function isDatabaseLink(piece: string): boolean {
+  return /[?&]v=/.test(piece) && !/[?&]p=/.test(piece);
+}
+
 /** Page ids; a peek link gives the page it opens. */
 export function pageIds(text: string): string[] {
-  return pieces(text, (p) => pageStoreId(p, true));
+  return pieces(text, ANY_SPACE, (p) => pageStoreId(p, true));
 }
 
 /** Database ids; a peek link gives its database, never the page it opens. */
 export function databaseIds(text: string): string[] {
-  return pieces(text, (p) => pageStoreId(p, false));
+  return pieces(text, ANY_SPACE, (p) => pageStoreId(p, false));
 }
 
-/** Meeting space ids (a `spaces/` prefix dropped) or meeting ids. */
+/** Meeting space ids (a `spaces/` prefix dropped), or meeting ids with the spaces they
+ *  are shown with dropped (`812 3456 7890`). */
 export function meetingIds(text: string, provider: RecordingProvider): string[] {
-  return pieces(text, (p) => (provider === "meet" ? p.replace(/^spaces\//, "") : p));
+  return provider === "meet"
+    ? pieces(text, ANY_SPACE, (p) => p.replace(/^spaces\//, ""))
+    : pieces(text, LINES, (p) => p.replace(/\s+/g, ""));
 }
 
 export function normalisedName(name: string): string {
@@ -379,7 +393,9 @@ function configProblems(f: SourceForm): string[] {
       const all = [...pages, ...databases];
       if (all.length === 0) return ["Add at least one page or database."];
       const problems = all.length > MAX_IDS ? [`At most ${MAX_IDS} pages and databases in all.`] : [];
-      const bad = all.filter((id) => !PAGE_ID_RE.test(id));
+      const linked = pages.filter(isDatabaseLink);
+      if (linked.length > 0) problems.push(`A database link: paste it under Databases: ${linked.join(", ")}.`);
+      const bad = all.filter((id) => !PAGE_ID_RE.test(id) && !linked.includes(id));
       if (bad.length > 0) problems.push(`Not an id (32 hex digits): ${bad.join(", ")}.`);
       return problems;
     }

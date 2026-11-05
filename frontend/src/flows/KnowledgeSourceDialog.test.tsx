@@ -263,6 +263,34 @@ describe("AddSourceDialog's kinds", () => {
     expect(await axeViolations(document.body)).toEqual([]);
   });
 
+  it("adds a meeting store's spaces with a meet credential", async () => {
+    renderAdd();
+    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
+    await typeInto(/^Meeting spaces/, "spaces/abc-DEF_1");
+    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: KEY } });
+    await checkAndAdd(/The credential reads the meetings: standups lists 12 documents/);
+    expect(sentBody(0)).toMatchObject({
+      kind: "recording",
+      config: { provider: "meet", ids: ["abc-DEF_1"] },
+      credential: KEY,
+    });
+    expectKeyNowhere();
+  });
+
+  it("clears an error on screen when the provider changes", async () => {
+    vi.mocked(addKnowledgeSource).mockRejectedValue(refused());
+    renderAdd();
+    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
+    await typeInto(/^Meeting spaces/, "abc");
+    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: KEY } });
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("refused the credential");
+    fireEvent.click(screen.getByRole("radio", { name: "zoom" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("a check of one kind does not pass the form once the kind changes", async () => {
     vi.mocked(addKnowledgeSource).mockImplementation(async (_id, _f, dryRun) => addResult(dryRun));
     renderAdd();
