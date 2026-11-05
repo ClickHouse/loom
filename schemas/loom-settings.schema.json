@@ -4308,7 +4308,7 @@
           "default": 200,
           "minimum": 1,
           "type": "integer",
-          "description": "Body length (chars) for bodies=\"excerpt\" (the MCP search default)."
+          "description": "Body length (chars) for bodies=\"excerpt\" (the MCP search default); a decision or constraint row keeps its stored excerpt."
         },
         "memory_search_fact_codes_fetch_multiplier": {
           "default": 3.0,

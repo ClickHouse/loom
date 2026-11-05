@@ -68,7 +68,12 @@ from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.app import decisions as svc
 from server.memory.domain import decision_extract as dx
 from server.memory.domain.corpus_synthesis import CorpusChunk, Window, windows
-from server.memory.domain.decision_schema import PROPOSED_TAG, SOURCE_CHANGED_TAG, Stage
+from server.memory.domain.decision_schema import (
+    CONSTRAINT_TAG,
+    PROPOSED_TAG,
+    SOURCE_CHANGED_TAG,
+    Stage,
+)
 from server.memory.domain.decision_statement import alternatives, collapse_ws, memory_value
 from server.memory.domain.files import detect_value_files, normalize_files
 from server.memory.domain.trust import confirmed, row_content_sha256, verification_state
@@ -92,7 +97,6 @@ log = logging.getLogger(__name__)
 # a key written from another would be a second live row beside the first.
 EXTRACTOR_AGENT = "loom-decisions"
 DESIGN_DOC_TAG = "source-kind:design_doc"
-CONSTRAINT_TAG = "constraint"
 # A model's reading of a document, ranked below a row someone wrote directly.
 EXTRACTED_CONFIDENCE = 0.5
 _PAGE = 500

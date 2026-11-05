@@ -10,6 +10,9 @@ SCHEMA_NAME = "decision"
 # The tags a decision's memory row carries: its marker, and after decision.outcome the
 # outcome-known mark and its success or failure.
 DECISION_TAG = "decision"
+# A rule a reader must see in full: a ban, an invariant, a stated limit (a diet, an
+# allergy).
+CONSTRAINT_TAG = "constraint"
 OUTCOME_KNOWN_TAG = "decision:outcome-known"
 SUCCESS_TAG = "decision:success"
 FAILURE_TAG = "decision:failure"
@@ -26,6 +29,12 @@ Stage = Literal["decided", "proposed"]
 def is_decision(memory_type: str, tags: Collection[str]) -> bool:
     """A row typed `decision`, or tagged so."""
     return memory_type == SCHEMA_NAME or DECISION_TAG in tags
+
+
+def is_whole_row(memory_type: str, tags: Collection[str]) -> bool:
+    """A decision or a constraint: read in full, never by its first sentence, so the
+    pre-edit block prints it whole and a search excerpt serves it as stored."""
+    return is_decision(memory_type, tags) or CONSTRAINT_TAG in tags
 
 
 # category + scenario identify a decision: re-deciding the same scenario supersedes the

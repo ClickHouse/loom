@@ -20,10 +20,13 @@ from server.memory.api.models_for_file import (
 )
 from server.memory.domain.code_change import STATE_RANK, worst
 from server.memory.domain.decision_schema import (
+    CONSTRAINT_TAG,
+    DECISION_TAG,
     FAILURE_TAG,
     SCHEMA_NAME,
     SOURCE_CHANGED_TAG,
     is_decision,
+    is_whole_row,
 )
 from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import row_verification
@@ -57,7 +60,10 @@ _FILE_MATCH = (
 # A decision or constraint prints whole, so it is read up to the block's ceiling at twelve
 # stored bytes a character (`whole_bytes`, an escaped surrogate pair each) and the rendered
 # line decides whether it fits; every other row up to the 600 bytes its capped line shows.
-_WHOLE_ROW = "(memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))"
+# The SQL twin of `is_whole_row`, from the same constants.
+_WHOLE_ROW = (
+    f"(memory_type = '{SCHEMA_NAME}' OR hasAny(tags, ['{DECISION_TAG}', '{CONSTRAINT_TAG}']))"
+)
 _READ_BYTES = f"if({_WHOLE_ROW}, {{whole_bytes:UInt32}}, {_VALUE_BYTES})"
 
 _SELECT = f"""
@@ -79,9 +85,9 @@ WHERE org = {{org:String}} AND namespace = {{ns:String}}
   AND (length({{tags:Array(String)}}) = 0 OR hasAny(tags, {{tags:Array(String)}}))
   AND ({{whole_only:UInt8}} = 0 OR {_WHOLE_ROW})
 """
-_ORDER = """
-ORDER BY has(tags, 'constraint') DESC, pinned DESC, confidence DESC, updated_at DESC
-LIMIT {lim:UInt32}
+_ORDER = f"""
+ORDER BY has(tags, '{CONSTRAINT_TAG}') DESC, pinned DESC, confidence DESC, updated_at DESC
+LIMIT {{lim:UInt32}}
 """
 _FILES_SQL = f"{_SELECT}  AND arrayExists(f -> {_FILE_MATCH}, files){_ORDER}"
 _LINKED_SQL = f"{_SELECT}  AND memory_id IN {{linked:Array(UUID)}}{_ORDER}"
@@ -164,7 +170,7 @@ def _is_decision(hit: dict[str, Any]) -> bool:
 
 def _is_whole(hit: dict[str, Any]) -> bool:
     """A decision or a constraint: printed whole, outside the token budget."""
-    return _is_decision(hit) or "constraint" in (hit.get("tags") or [])
+    return is_whole_row(str(hit.get("memory_type") or ""), hit.get("tags") or [])
 
 
 def _body(hit: dict[str, Any], *, decision: bool, whole: bool = True) -> str:
@@ -199,7 +205,7 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
 def _marker(hit: dict[str, Any], *, show_decision: bool) -> str:
     """` [constraint, decision]`: the row's kinds. `decision` is added only when
     `show_decision`; a team line leaves it out because its head says `Decision`."""
-    kinds = [t for t in (hit.get("tags") or []) if t in ("constraint", "gotcha")]
+    kinds = [t for t in (hit.get("tags") or []) if t in (CONSTRAINT_TAG, "gotcha")]
     if show_decision:
         kinds.append("decision")
     return f" [{', '.join(kinds)}]" if kinds else ""
@@ -542,7 +548,7 @@ def _order_key(r: dict[str, Any]) -> tuple[Any, ...]:
     confidence, then newest."""
     conf = r.get("confidence")
     return (
-        "constraint" not in (r.get("tags") or []),
+        CONSTRAINT_TAG not in (r.get("tags") or []),
         not r.get("pinned"),
         -(float(conf) if conf is not None else 1.0),
         -_stamp(r),

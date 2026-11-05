@@ -3321,7 +3321,8 @@ class MemorySearchSettings(BaseModel):
     # "what" -> "What"). One read of the namespace beside the embed (100-300 ms
     # for 40k rows), reused for a minute; fail-open. 0 = off.
     memory_search_query_spelling_max_words: Annotated[int, LIVE] = Field(default=6, ge=0)
-    # Body length (chars) for bodies="excerpt" (the MCP search default).
+    # Body length (chars) for bodies="excerpt" (the MCP search default); a decision or
+    # constraint row keeps its stored excerpt.
     memory_search_excerpt_chars: Annotated[int, LIVE] = Field(default=200, ge=1)
     # Above this top_k a search that pinned no `bodies` serves excerpts, and
     # per-hit explanation / score_components ride only under `explain: true`.

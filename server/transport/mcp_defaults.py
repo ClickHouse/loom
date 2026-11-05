@@ -54,7 +54,8 @@ def coerce_search_arguments(arguments: dict[str, Any]) -> None:
     an unknown `recipe` the server's default, an unknown `bodies` an excerpt,
     any scope but `this` the fan-out, a `tags` that is not a list none, and a
     `page` handle trimmed to its bound. Bodies default to a 200-character
-    excerpt over MCP (`memory.get` returns a full body on demand)."""
+    excerpt over MCP, a decision or constraint as stored (`memory.get` returns
+    a full body on demand)."""
     from typing import get_args
 
     from server.memory.api.models_loom_search import SearchInput

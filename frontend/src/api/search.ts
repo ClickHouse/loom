@@ -49,7 +49,8 @@ export async function searchMemory(
     namespace_scope?: SearchScope;
     agent?: string;
     // How much of each hit's body to carry: "excerpt" is the first ~200
-    // chars (the Graph panel's two-line clamp); the server default is "full".
+    // chars, a decision or constraint as stored (the Graph panel clamps to two
+    // lines); the server default is "full".
     bodies?: "full" | "excerpt" | "none";
     // Pin the per-hit `explanation` / `score_components` on (or off) at any
     // k; unset follows the server's k ≤ 15 default.

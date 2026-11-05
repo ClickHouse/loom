@@ -10,6 +10,7 @@ from typing import Any
 from server.core.tag_sql import TagFilter
 from server.identity.app.request_scope import request_scope
 from server.memory.app.search_tag_filter import request_hard_tags as _request_hard_tags
+from server.memory.app.search_tag_filter import stamp_row_tags
 
 log = logging.getLogger(__package__)
 
@@ -109,7 +110,8 @@ async def _prepend_tier(hits: list[Any], input: Any, tier: str) -> list[Any]:
         who = [getattr(r, c, None) for c in ("agent", "user_id", "session_id")]
         if None not in who:
             hit._row_identity = (str(who[0]), str(who[1]), str(who[2]))
-        tier_rows.append(hit)
+        # `_apply_bodies` reads them: a constraint keeps its excerpt.
+        tier_rows.append(stamp_row_tags(hit, getattr(r, "tags", None)))
     # the tiers join after the pool's code annotation: theirs is read here
     from server.memory.app.code_link_reads import annotate_hits
 
