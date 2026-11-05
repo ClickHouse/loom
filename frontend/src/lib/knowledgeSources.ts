@@ -319,8 +319,8 @@ export function projectIds(text: string): string[] {
 /** A page store id from a bare id with or without dashes, or from a pasted link the id
  *  that ends its last path segment (`Title-<id>`; the `?v=` view id is not the
  *  database's). With `peek`, a link with a `p=` (the page a peek link opens) gives
- *  that page, never the database in its path. Lower-case without dashes; the server stores it dashed. A piece that is
- *  neither is kept as typed, so the form can name it. */
+ *  that page, never the database in its path. Lower-case without dashes; the server
+ *  stores it dashed. A piece that is neither is kept as typed, so the form can name it. */
 function pageStoreId(piece: string, peek: boolean): string {
   if (!piece.includes("/")) {
     const hexes = piece.toLowerCase().replace(/-/g, "");

@@ -79,7 +79,7 @@ function ProbeResult({ probe, lead }: { probe: KnowledgeSourceProbe; lead: strin
 type SetField = <K extends keyof SourceForm>(key: K, value: SourceForm[K]) => void;
 
 /** The chosen kind's ids and filters, as the server's config for that kind takes them. */
-function SourceFields({ form, set }: { form: SourceForm; set: SetField }) {
+function SourceFields({ form, set, busy }: { form: SourceForm; set: SetField; busy: boolean }) {
   switch (form.kind) {
     case "gdrive":
       return (
@@ -144,6 +144,7 @@ function SourceFields({ form, set }: { form: SourceForm; set: SetField }) {
         <>
           <ChoiceGroup
             label="Provider"
+            disabled={busy}
             value={form.provider}
             onChange={(v) => set("provider", v)}
             options={RECORDING_PROVIDERS}
@@ -245,8 +246,16 @@ export function AddSourceDialog({
         onChange={(v) => set("name", v)}
         autoFocus
       />
-      <ChoiceGroup label="Kind" inline value={form.kind} onChange={(v) => set("kind", v)} options={KIND_OPTIONS} />
-      <SourceFields form={form} set={set} />
+      {/* Locked while a call runs, so its answer lands on the form it was sent for. */}
+      <ChoiceGroup
+        label="Kind"
+        inline
+        disabled={busy !== null}
+        value={form.kind}
+        onChange={(v) => set("kind", v)}
+        options={KIND_OPTIONS}
+      />
+      <SourceFields form={form} set={set} busy={busy !== null} />
       <PasswordField
         label={credentialLabel(form.kind)}
         value={form.credential}

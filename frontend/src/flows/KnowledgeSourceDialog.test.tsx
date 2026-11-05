@@ -292,6 +292,22 @@ describe("AddSourceDialog's kinds", () => {
     expect(screen.getByLabelText(/^Read-only credential/)).toHaveValue("");
   });
 
+  it("locks the kind and the provider while a check runs", async () => {
+    let answer: (v: ReturnType<typeof addResult>) => void = () => {};
+    vi.mocked(addKnowledgeSource).mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+    renderAdd();
+    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
+    await typeInto(/^Meeting spaces/, "abc");
+    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: KEY } });
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    expect(screen.getByRole("radio", { name: "Pages" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "zoom" })).toBeDisabled();
+    await act(async () => answer(addResult(true)));
+    expect(screen.getByRole("radio", { name: "Pages" })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: "zoom" })).toBeEnabled();
+  });
+
   it("shows the server's refusal of a config as it comes back", async () => {
     const message = "config.project_ids: at most 20 projects";
     vi.mocked(addKnowledgeSource).mockRejectedValue(new ApiError({ status: 400, code: "BAD_CONFIG", message }));
