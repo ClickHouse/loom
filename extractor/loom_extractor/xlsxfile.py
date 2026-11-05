@@ -708,7 +708,7 @@ def extract_xlsx(data: bytes) -> Artifact:
     tables: list[Table] = []
     failed: list[Failure] = []
     total = kept = 0
-    damaged = book.more  # a sheet not read is one unit: its rows are unknown
+    unread_sheets = book.more  # each sheet not read is one unit: its rows are unknown
     # Units name sheets by their position in the workbook, chart sheets counted.
     if book.more:
         reason = f"{counted(book.more, 'sheet')} past {MAX_SHEETS}"
@@ -718,7 +718,7 @@ def extract_xlsx(data: bytes) -> Artifact:
         fail(budget, failed, "sheet names", reason)
     if book.cut:  # the sheets the workbook names after the cut: one unit, their count unknown
         fail(budget, failed, f"sheets {named + 1}-", book.cut)
-        damaged += 1
+        unread_sheets += 1
     if shared.long:
         reason = f"{counted(shared.long, 'value')} over {MAX_VALUE_CHARS} characters, read empty"
         fail(budget, failed, "shared strings", reason)
@@ -728,12 +728,12 @@ def extract_xlsx(data: bytes) -> Artifact:
             # Cut by the package's bounds, or past the artifact's budget.
             reason = reader.exhausted or f"{counted(left, 'sheet')} past what one artifact holds"
             fail(budget, failed, f"sheets {pos}-", reason)
-            damaged += left
+            unread_sheets += left
             break
         if not part:
             reason = f"{kind} sheets are not read" if kind else "its relationship names no part"
             fail(budget, failed, f"sheet {name}", reason)
-            damaged += 1
+            unread_sheets += 1
             continue
         # The merged ranges it read stay counted: their time is spent either way.
         before = budget.cells, budget.held, budget.cut, reader.uncalculated, reader.unshared
@@ -743,7 +743,7 @@ def extract_xlsx(data: bytes) -> Artifact:
             # Its rows, and what they counted, are not kept.
             budget.cells, budget.held, budget.cut, reader.uncalculated, reader.unshared = before
             fail(budget, failed, f"sheet {name}", str(e))
-            damaged += 1
+            unread_sheets += 1
             continue
         for f in lost:
             fail(budget, failed, f.unit, f.reason)
@@ -771,7 +771,7 @@ def extract_xlsx(data: bytes) -> Artifact:
         blocks=tuple(acc.blocks),
         coverage=Coverage(
             "rows",
-            total + damaged,
+            total + unread_sheets,
             kept,
             failed=tuple(failed),
             lost=tuple(

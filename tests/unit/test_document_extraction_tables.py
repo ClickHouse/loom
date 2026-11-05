@@ -3,8 +3,10 @@ table and as the row blocks it is searched by, and the server reading both."""
 
 from __future__ import annotations
 
+import gc
 import io
 import json
+import weakref
 import zipfile
 from typing import Any
 
@@ -1358,9 +1360,6 @@ def test_a_streamed_part_leaves_its_handler_to_be_freed_at_once(
 ) -> None:
     """With no garbage collection, the handler is freed when the stream ends: the
     parser does not hold it in a cycle (a sheet's merges kept alive otherwise)."""
-    import gc
-    import weakref
-
     if cut:
         monkeypatch.setattr(ooxml, "MAX_DEPTH", 2)
     rows = sheet({1: [cell("A1", "h", t="str")], 2: [cell("A2", 1)]})

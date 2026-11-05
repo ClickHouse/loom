@@ -15,8 +15,8 @@ runs no workers); then status, get, outline, search and download read it back.
   job fails with the extractor's code; an ingest of an unknown upload is 404.
 
 The job sends originals to the extractor the settings route each format to; the
-tests that publish skip unless a configured one declares SQL, TOML and PDF
-(`extractors.available_formats`).
+tests that publish skip unless a configured one declares SQL, TOML and PDF, and
+the CSV one CSV too (`extractors.available_formats`).
 """
 
 from __future__ import annotations
