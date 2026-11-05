@@ -14,6 +14,7 @@ import pytest
 from server.knowledge.app import writes as kh
 from server.knowledge.app.writes import _content_sha256
 from server.knowledge.store import chunks as knowledge_repo
+from server.knowledge.store import datasets as datasets_repo
 from server.knowledge.store import documents as documents_repo
 from server.knowledge.store.documents import DocumentRow
 from tests.unit.schema_ddl import column_names
@@ -157,6 +158,12 @@ def test_delete_tombstones_carry_every_column(monkeypatch) -> None:
     monkeypatch.setattr(knowledge_repo, "mark_docs_superseded", _noop)
     monkeypatch.setattr(documents_repo, "get_one", _get_one)
     monkeypatch.setattr(documents_repo, "get_many_by_uris", _get_many)
+    retired: list[dict[str, int]] = []
+
+    async def _forget(org, ns, through, **kw):
+        retired.append(dict(through))
+
+    monkeypatch.setattr(datasets_repo, "forget_published", _forget)
 
     asyncio.run(
         kh.handle_knowledge_delete(KnowledgeDeleteInput(org="o", namespace="n", source_uri="doc-a"))
@@ -167,6 +174,7 @@ def test_delete_tombstones_carry_every_column(monkeypatch) -> None:
         )
     )
     assert len(rows) == 2
+    assert retired == [{"doc-a": doc.version}] * 2  # each delete's datasets, at the read version
     for row in rows:
         assert row["superseded_at"] is not None
         for col in ("description", "content_sha256", "blob_path", "blob_size", "blob_erased_at"):

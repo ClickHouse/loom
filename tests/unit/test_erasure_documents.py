@@ -24,8 +24,9 @@ class StubCH:
         self.execute_calls: list[tuple[str, dict[str, Any]]] = []
 
     async def query_one(self, sql, params=None):
-        if any(t in sql for t in ("loom.knowledge_uploads", "loom.knowledge_ingest")):
-            return {"n": 0}  # the ingestion tables: nothing in scope here
+        ingestion = ("loom.knowledge_uploads", "loom.knowledge_ingest", "loom.dataset")
+        if any(t in sql for t in ingestion):
+            return {"n": 0}  # the ingestion and dataset tables: nothing in scope here
         if "location != ''" in sql:  # originals in an object store: none here
             return {"stored": 0, "elsewhere": 0}
         self.query_one_calls.append((sql, params or {}))

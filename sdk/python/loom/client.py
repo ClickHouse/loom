@@ -1224,6 +1224,24 @@ class KnowledgeOps:
             await self._agent.call("knowledge.bulk_delete", body, **options),
         )
 
+    async def dataset_approve(
+        self, body: _ops.KnowledgeDatasetApproveBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeDatasetApproveOutput:
+        """`knowledge.dataset_approve`."""
+        return cast(
+            "_ops.KnowledgeDatasetApproveOutput",
+            await self._agent.call("knowledge.dataset_approve", body, **options),
+        )
+
+    async def dataset_get(
+        self, body: _ops.KnowledgeDatasetGetBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeDatasetGetOutput:
+        """`knowledge.dataset_get`."""
+        return cast(
+            "_ops.KnowledgeDatasetGetOutput",
+            await self._agent.call("knowledge.dataset_get", body, **options),
+        )
+
     async def dedup_list(
         self, body: _ops.KnowledgeDedupListBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeDedupListOutput:

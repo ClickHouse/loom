@@ -15,6 +15,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -67,10 +68,27 @@ class World:
     lease_held: bool = True  # the job lease as `held` reads it
     lose_lease_in_claim: bool = False  # the job lease is lost once the claim is taken
     fail_retire_older: Exception | None = None  # raised once, by the next older-chunks retire
+    in_claim: Any = None  # runs as the source's claim is taken
+    fail_dataset_rows: int = 0  # dataset row inserts that land before one fails
     log: list[str] = field(default_factory=list)
     stored_vectors: dict[str, list[float]] = field(default_factory=dict)
     embedded: list[str] = field(default_factory=list)
     fail_embed: Exception | None = None
+    catalog: list[dict[str, Any]] = field(default_factory=list)  # loom.datasets version rows
+    dataset_rows: list[dict[str, Any]] = field(default_factory=list)
+    forgotten: list[tuple[str, int, int]] = field(default_factory=list)  # (uri, before, only)
+
+    def served(self, uri: str, doc_version: int) -> list[dict[str, Any]]:
+        """The catalog as FINAL reads it at `doc_version`."""
+        latest: dict[str, dict[str, Any]] = {}
+        for r in self.catalog:
+            if r["source_uri"] == uri and r["doc_version"] == doc_version:
+                if (
+                    r["dataset_id"] not in latest
+                    or r["version"] > latest[r["dataset_id"]]["version"]
+                ):
+                    latest[r["dataset_id"]] = r
+        return list(latest.values())
 
     def retire_source(self, uri: str, before_version: int | None = None) -> None:
         """Every chunk version of the source (older than `before_version`) is
@@ -108,6 +126,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
     from server.core.vectors import codes_state
     from server.knowledge.store import blobs
     from server.knowledge.store import chunks as chunks_repo
+    from server.knowledge.store import datasets as datasets_repo
     from server.knowledge.store import documents as documents_repo
 
     async def insert_ingestion(row: dict[str, Any], **_: Any) -> None:
@@ -213,6 +232,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
 
     @asynccontextmanager
     async def holding(name: str, **k: Any) -> Any:
+        if w.in_claim is not None:
+            w.in_claim()
         if w.lose_lease_in_claim:
             w.lease_held = False
         try:
@@ -238,7 +259,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
     monkeypatch.setattr(chunks_repo, "insert_chunks", insert_chunks)
 
     async def count_active_for_doc(org: str, ns: str, uri: str, **_: Any) -> int:
-        return sum(1 for c in w.chunks if c["source_uri"] == uri)
+        return sum(1 for c in w.chunks if c["source_uri"] == uri and c["doc_version"] not in w.dead)
 
     monkeypatch.setattr(chunks_repo, "count_active_for_doc", count_active_for_doc)
 
@@ -251,6 +272,58 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
     monkeypatch.setattr(chunks_repo, "mark_doc_superseded", mark_doc_superseded)
     monkeypatch.setattr(documents_repo, "insert_one", insert_one)
     monkeypatch.setattr(documents_repo, "get_one", get_one)
+
+    async def at_version(
+        org: str, ns: str, uri: str, doc_version: int, *, dataset_id: str = "", **_: Any
+    ) -> list[dict[str, Any]]:
+        rows = w.served(uri, doc_version)
+        return [dict(r) for r in rows if not dataset_id or r["dataset_id"] == dataset_id]
+
+    async def insert_catalog(rows: list[dict[str, Any]], **_: Any) -> None:
+        w.catalog.extend(dict(r) for r in rows)
+        w.log.append("datasets")
+
+    async def insert_rows(rows: list[dict[str, Any]], **_: Any) -> None:
+        if w.fail_dataset_rows:
+            w.fail_dataset_rows -= 1
+            if not w.fail_dataset_rows:
+                raise BackendUnavailableError("insert refused", operation="insert")
+        w.dataset_rows.extend(dict(r) for r in rows)
+
+    async def forget(
+        org: str, ns: str, uris: Any, *, before: int = 0, only: int = 0, **_: Any
+    ) -> None:
+        # As the store does: the rows of the datasets the catalog names.
+        ids = {r["dataset_id"] for r in w.catalog if r["source_uri"] in uris}
+
+        def gone(r: dict[str, Any]) -> bool:
+            if r["dataset_id"] not in ids or r["source_uri"] not in uris:
+                return False
+            v = r["doc_version"]
+            return v < before if before else v == only if only else True
+
+        w.forgotten.extend((u, before, only) for u in uris)
+        w.catalog = [r for r in w.catalog if not gone(r)]
+        w.dataset_rows = [r for r in w.dataset_rows if not gone(r)]
+
+    async def forget_published(org: str, ns: str, through: dict[str, int], **_: Any) -> None:
+        ids = {r["dataset_id"] for r in w.catalog if r["source_uri"] in through}
+
+        def gone(r: dict[str, Any]) -> bool:
+            uri = r["source_uri"]
+            return r["dataset_id"] in ids and uri in through and r["doc_version"] <= through[uri]
+
+        # As the store does: a snapshot a catalog row past the bound serves keeps its rows.
+        kept = {r["snapshot_id"] for r in w.catalog if r["source_uri"] in through and not gone(r)}
+        w.forgotten.extend((u, 0, v) for u, v in through.items())
+        w.catalog = [r for r in w.catalog if not gone(r)]
+        w.dataset_rows = [r for r in w.dataset_rows if not gone(r) or r["snapshot_id"] in kept]
+
+    monkeypatch.setattr(datasets_repo, "forget_published", forget_published)
+    monkeypatch.setattr(datasets_repo, "at_version", at_version)
+    monkeypatch.setattr(datasets_repo, "insert_catalog", insert_catalog)
+    monkeypatch.setattr(datasets_repo, "insert_rows", insert_rows)
+    monkeypatch.setattr(datasets_repo, "forget", forget)
 
     async def revision_by_ingestion(org: str, ns: str, uri: str, job_id: str, **_: Any) -> Any:
         rows = [
@@ -1361,3 +1434,269 @@ def test_a_write_between_the_revision_and_the_claim_fails_the_publish(world: Wor
     job = world.job(job_id)
     assert job is not None and job["error_code"] == "revision_conflict"
     assert world.retired == [job["doc_version"]]
+
+
+# ---- datasets ------------------------------------------------------------------
+
+CSV = b"region,amount,day\nEU,10.5,2026-01-02\nUS,7,2026-01-03\n"
+
+
+def _csv_job(w: World, data: bytes = CSV) -> str:
+    upload = _upload(w, data, "sales.csv", content_type="text/csv", format="csv")
+    return _ingest(w, upload, source_uri="repo://sales.csv")
+
+
+def test_a_csv_ingest_publishes_its_table_as_a_typed_dataset_before_the_document(
+    world: World,
+) -> None:
+    assert _run(world, _csv_job(world)) == "ready"
+    assert world.log.index("datasets") < world.log.index("document")
+    doc = world.documents[-1]
+    (catalog,) = world.served("repo://sales.csv", doc["version"])
+    assert (catalog["source_uri"], catalog["doc_version"]) == ("repo://sales.csv", doc["version"])
+    assert catalog["revision"] == doc["revision"] == 1
+    assert catalog["artifact_sha256"] == doc["artifact_sha256"]
+    assert catalog["schema_state"] == "inferred" and catalog["row_count"] == 2
+    schema = {c["name"]: (c["type"], c["slot"]) for c in json.loads(catalog["schema"])}
+    assert schema == {"region": ("string", "s1"), "amount": ("number", "n1"), "day": ("date", "t1")}
+    rows = sorted(world.dataset_rows, key=lambda r: r["row_id"])
+    assert [(r["s1"], r["n1"], r["t1"]) for r in rows] == [
+        ("EU", Decimal("10.500000000"), datetime(2026, 1, 2)),
+        ("US", Decimal("7.000000000"), datetime(2026, 1, 3)),
+    ]
+    assert all(r["snapshot_id"] == catalog["snapshot_id"] for r in rows)
+    job = world.job(world.jobs[-1]["ingestion_id"])
+    assert job is not None
+    for c in ("agent", "user_id", "session_id", "actor", "source_class"):
+        assert catalog[c] == rows[0][c] == job[c]
+    # Once the row lands, the source's older snapshots go.
+    assert world.forgotten == [("repo://sales.csv", doc["version"], 0)]
+
+
+def test_a_new_revision_keeps_an_approval_of_the_same_columns_and_drops_the_old_snapshot(
+    world: World,
+) -> None:
+    assert _run(world, _csv_job(world)) == "ready"
+    (first,) = world.served("repo://sales.csv", world.documents[-1]["version"])
+    schema = json.loads(first["schema"])
+    schema[1]["type"] = "string"  # approved: amount as text
+    world.catalog.append(
+        {**first, "schema": json.dumps(schema), "schema_state": "approved",
+         "approved_by": "user:a", "version": first["version"] + 1}
+    )  # fmt: skip
+    assert _run(world, _csv_job(world, CSV + b"FR,3,2026-01-04\n")) == "ready"
+    doc = world.documents[-1]
+    (second,) = world.served("repo://sales.csv", doc["version"])
+    assert second["schema_state"] == "approved" and second["approved_by"] == "user:a"
+    assert [c["type"] for c in json.loads(second["schema"])] == ["string", "string", "date"]
+    assert {r["doc_version"] for r in world.dataset_rows} == {doc["version"]}
+    assert sorted(r["s2"] for r in world.dataset_rows) == ["10.5", "3", "7"]
+    assert world.served("repo://sales.csv", first["doc_version"]) == []
+
+
+def test_a_new_revision_with_other_columns_is_inferred_again(world: World) -> None:
+    assert _run(world, _csv_job(world)) == "ready"
+    (first,) = world.served("repo://sales.csv", world.documents[-1]["version"])
+    world.catalog.append({**first, "schema_state": "approved", "version": first["version"] + 1})
+    assert _run(world, _csv_job(world, b"region,total\nEU,1\n")) == "ready"
+    (second,) = world.served("repo://sales.csv", world.documents[-1]["version"])
+    assert second["schema_state"] == "inferred" and second["approved_by"] == ""
+
+
+def test_a_failed_publish_retires_its_own_datasets(world: World) -> None:
+    world.fail_document = ValueError("defect")
+    assert _run(world, _csv_job(world)) == "failed"
+    version = world.late_documents[-1]["version"]
+    assert ("repo://sales.csv", 0, version) in world.forgotten
+    assert world.catalog == [] and world.dataset_rows == []
+
+
+def test_a_publish_that_fails_midway_through_a_tables_rows_deletes_them(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.knowledge.app import datasets
+
+    monkeypatch.setattr(datasets, "_BATCH", 1)
+    world.fail_dataset_rows = 2  # the first batch lands, the second fails
+    job_id = _csv_job(world)
+    assert _run(world, job_id) == "pending"
+    assert world.job(job_id)["error_code"] == "retrying"  # type: ignore[index]
+    # The empty catalog row written first names the dataset, so its rows are found.
+    assert world.dataset_rows == [] and world.catalog == []
+
+
+def test_an_approval_landing_while_a_revision_publishes_is_carried_by_its_retry(
+    world: World,
+) -> None:
+    assert _run(world, _csv_job(world)) == "ready"
+    (first,) = world.served("repo://sales.csv", world.documents[-1]["version"])
+    schema = json.loads(first["schema"])
+    schema[1]["type"] = "string"
+
+    def approve() -> None:  # the approval takes the claim first
+        world.in_claim = None
+        world.catalog.append(
+            {**first, "schema": json.dumps(schema), "schema_state": "approved",
+             "version": first["version"] + 1}
+        )  # fmt: skip
+
+    world.in_claim = approve
+    job_id = _csv_job(world, CSV + b"FR,3,2026-01-04\n")
+    assert _run(world, job_id) == "pending"
+    job = world.job(job_id)
+    assert job is not None
+    # Run again at once, the attempt not counted: another write stopped it, not a failure.
+    assert (job["attempts"], job["error_code"]) == (0, "")
+    assert job["next_attempt_at"] <= _now()
+    assert world.documents[-1]["version"] == first["doc_version"]  # nothing published
+    assert _run(world, job_id) == "ready"
+    (second,) = world.served("repo://sales.csv", world.documents[-1]["version"])
+    assert second["schema_state"] == "approved"
+    assert [c["type"] for c in json.loads(second["schema"])] == ["string", "string", "date"]
+
+
+def test_an_erasure_between_a_tables_batches_stops_its_rows(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.knowledge.app import datasets
+
+    monkeypatch.setattr(datasets, "_BATCH", 1)
+    job_id = _csv_job(world)
+    inserted = 0
+
+    async def erased_after_one(rows: list[dict[str, Any]], **_: Any) -> None:
+        nonlocal inserted
+        inserted += 1
+        world.dataset_rows.extend(dict(r) for r in rows)
+        # The erasure deletes the job (and the rows so far) after the first batch.
+        world.jobs = [j for j in world.jobs if j["ingestion_id"] != job_id]
+        world.dataset_rows.clear()
+
+    monkeypatch.setattr(datasets.datasets_repo, "insert_rows", erased_after_one)
+    assert _run(world, job_id) is None  # JobGone: the run writes nothing more
+    assert inserted == 1 and world.dataset_rows == []
+
+
+def test_a_delete_during_a_first_ingest_leaves_the_running_jobs_datasets_whole(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A delete takes no claim, so it may land between a first ingest's batches;
+    it retires no document version there, so it deletes none of the job's rows,
+    and the dataset the job serves holds every row it counts."""
+    from server.knowledge.api.models_knowledge import KnowledgeDeleteInput
+    from server.knowledge.app import datasets
+    from server.knowledge.app.writes import handle_knowledge_delete
+    from server.knowledge.store import datasets as datasets_repo
+
+    monkeypatch.setattr(datasets, "_BATCH", 1)
+    retired: list[dict[str, int]] = []
+
+    async def forget_published(org: str, ns: str, through: dict[str, int], **_: Any) -> None:
+        retired.append(dict(through))
+
+    monkeypatch.setattr(datasets_repo, "forget_published", forget_published)
+    insert = datasets_repo.insert_rows
+    deleted = False
+
+    async def delete_after_one(rows: list[dict[str, Any]], **_: Any) -> None:
+        nonlocal deleted
+        await insert(rows)
+        if not deleted:
+            deleted = True
+            delete = KnowledgeDeleteInput(org="o", namespace="ns", source_uri="repo://sales.csv")
+            await handle_knowledge_delete(delete)
+
+    monkeypatch.setattr(datasets_repo, "insert_rows", delete_after_one)
+    assert _run(world, _csv_job(world)) == "ready"
+    assert deleted and retired == []
+    (served,) = world.served("repo://sales.csv", world.documents[-1]["version"])
+    assert served["row_count"] == 2 == len(world.dataset_rows)
+
+
+def test_a_delete_of_a_deleted_source_clears_a_snapshot_left_behind(world: World) -> None:
+    """A snapshot an earlier delete could not reach (an approval's, landing as it
+    ran) goes with the next delete, though the source is already gone."""
+    from server.knowledge.api.models_knowledge import KnowledgeDeleteInput
+    from server.knowledge.app.writes import handle_knowledge_delete
+
+    assert _run(world, _csv_job(world)) == "ready"
+    version = world.documents[-1]["version"]
+    delete = KnowledgeDeleteInput(org="o", namespace="ns", source_uri="repo://sales.csv")
+    assert asyncio.run(handle_knowledge_delete(delete)).deleted
+    assert world.catalog == [] and world.dataset_rows == []
+    world.catalog.append({"source_uri": "repo://sales.csv", "dataset_id": "ds_x",
+                          "doc_version": version, "snapshot_id": 7, "version": 1})  # fmt: skip
+    world.dataset_rows.append({"source_uri": "repo://sales.csv", "dataset_id": "ds_x",
+                               "doc_version": version, "snapshot_id": 7})  # fmt: skip
+    again = asyncio.run(handle_knowledge_delete(delete))
+    assert not again.deleted
+    assert world.catalog == [] and world.dataset_rows == []
+
+
+def test_forget_takes_one_version_bound() -> None:
+    from server.knowledge.store import datasets as datasets_repo
+
+    for bounds in ({}, {"before": 2, "only": 1}):
+        with pytest.raises(ValueError, match="before or only"):
+            asyncio.run(datasets_repo.forget("o", "ns", ["u"], **bounds))
+
+
+def test_a_metadata_edit_keeps_serving_the_datasets_and_their_approval(world: World) -> None:
+    from server.knowledge.api.models_knowledge import KnowledgeUpdateMetadataInput
+    from server.knowledge.app.writes import handle_knowledge_update_metadata
+
+    assert _run(world, _csv_job(world)) == "ready"
+    before = world.documents[-1]["version"]
+    (first,) = world.served("repo://sales.csv", before)
+    approved = {**first, "schema_state": "approved", "version": first["version"] + 1}
+    world.catalog.append(approved)
+    edit = KnowledgeUpdateMetadataInput(
+        org="o", namespace="ns", source_uri="repo://sales.csv", title="Sales 2026"
+    )
+    assert asyncio.run(handle_knowledge_update_metadata(edit)).updated
+    after = world.documents[-1]
+    assert after["title"] == "Sales 2026" and after["version"] > before
+    (carried,) = world.served("repo://sales.csv", after["version"])
+    assert (carried["snapshot_id"], carried["schema_state"]) == (first["snapshot_id"], "approved")
+    # The next revision reads the approval off the live (edited) version.
+    assert _run(world, _csv_job(world, CSV + b"FR,3,2026-01-04\n")) == "ready"
+    (second,) = world.served("repo://sales.csv", world.documents[-1]["version"])
+    assert second["schema_state"] == "approved"
+
+
+def test_a_metadata_edit_of_an_ingested_source_waits_for_its_claim(world: World) -> None:
+    from server.knowledge.api.models_knowledge import KnowledgeUpdateMetadataInput
+    from server.knowledge.app.writes import handle_knowledge_update_metadata
+
+    assert _run(world, _csv_job(world)) == "ready"
+    rows = len(world.documents)
+    world.claim_busy = True
+    edit = KnowledgeUpdateMetadataInput(
+        org="o", namespace="ns", source_uri="repo://sales.csv", title="Sales 2026"
+    )
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(handle_knowledge_update_metadata(edit))
+    assert len(world.documents) == rows
+
+
+def test_a_metadata_edit_overtaken_while_it_waited_for_the_claim_is_refused(
+    world: World,
+) -> None:
+    from server.knowledge.api.models_knowledge import KnowledgeUpdateMetadataInput
+    from server.knowledge.app.writes import handle_knowledge_update_metadata
+
+    assert _run(world, _csv_job(world)) == "ready"
+    live = world.documents[-1]
+    catalog = list(world.catalog)
+
+    def published_meanwhile() -> None:  # another write landed before the claim was taken
+        world.in_claim = None
+        world.documents.append({**live, "version": live["version"] + 1, "title": "Other"})
+
+    world.in_claim = published_meanwhile
+    edit = KnowledgeUpdateMetadataInput(
+        org="o", namespace="ns", source_uri="repo://sales.csv", title="Sales 2026"
+    )
+    with pytest.raises(PreconditionFailedError):
+        asyncio.run(handle_knowledge_update_metadata(edit))
+    assert world.documents[-1]["title"] == "Other" and world.catalog == catalog

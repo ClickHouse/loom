@@ -12,6 +12,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from server.knowledge.domain.datasets import DatasetType
 from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
 from server.memory.domain.rerank_names import RerankName
 from server.operations.base import MCP_HIDDEN
@@ -814,3 +815,135 @@ class KnowledgeIngestCancelOutput(BaseModel):
     state: str = ""
     # True when this call stopped the job, or asked the worker to.
     cancelled: bool = False
+
+
+# ============================================================
+# knowledge.dataset_get / knowledge.dataset_approve
+# ============================================================
+
+
+class DatasetColumnOut(BaseModel):
+    # The column's name, from the table's header (a repeated one as `<name> (2)`).
+    name: str
+    # The type its values are held as: string, number, bool, date, datetime,
+    # time or duration (seconds).
+    type: str
+    # What the extractor inferred: one of the types, or `mixed` when the values differ.
+    inferred: str
+    # False when every slot of its type was taken: its values are not stored.
+    stored: bool
+
+
+class DatasetClarificationOut(BaseModel):
+    # mixed_types, generated_name, duplicate_name, header_like_data or past_capacity.
+    code: str
+    # The column it is about; empty when it is about the table.
+    column: str
+    # What was found, in words.
+    detail: str
+
+
+class DatasetRejectedOut(BaseModel):
+    # The row's place among the table's rows, from 1.
+    row: int
+    # The column whose value did not fit.
+    column: str
+    # Why it did not fit its column's type.
+    reason: str
+
+
+class DatasetOut(BaseModel):
+    # The dataset's id, the same in every revision of its source.
+    dataset_id: str
+    # The ingested source it was published from.
+    source_uri: str
+    # The sheet's name, or the CSV file's.
+    name: str
+    # The XLSX sheet the table came from; empty for a CSV file.
+    sheet: str = ""
+    # The source's first row the table came from (its header), from 1.
+    row_start: int = 0
+    # The source's last row the table came from.
+    row_end: int = 0
+    # The source revision the dataset was published from.
+    revision: int
+    # The snapshot serving it; knowledge.dataset_approve names the one it approves.
+    snapshot_id: str
+    # inferred, needs_clarification or approved.
+    schema_state: str
+    # The columns in the table's order, each with the type its values are held as.
+    columns: list[DatasetColumnOut]
+    # What a person must answer before the schema is trusted; approving answers them.
+    clarifications: list[DatasetClarificationOut] = Field(default_factory=list)
+    # Rows stored.
+    row_count: int
+    # Rows left out because a value did not fit its column's type (a cell
+    # error, a text in a number column).
+    rejected_rows: int = 0
+    # The first rejected rows, with why.
+    rejected: list[DatasetRejectedOut] = Field(default_factory=list)
+    # False when the extraction did not keep every value of the table: rows or
+    # values past a budget, merges not spread, formulas saved without values.
+    complete: bool = True
+    # Who approved the schema (it carries to a later revision with the same
+    # columns); empty until approved.
+    approved_by: str = ""
+    # When the schema was approved; None until approved.
+    approved_at: datetime | None = None
+    # When this revision's dataset was first written.
+    created_at: datetime | None = None
+    # The first `sample_rows` rows, each a map of column to value (a number
+    # past 2^53 as text).
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class KnowledgeDatasetGetInput(BaseModel):
+    """The typed datasets an ingested file's tables became: their schemas,
+    what needs a person's answer, the rows rejected and, on request, the first
+    rows."""
+
+    org: str
+    namespace: str
+    # The ingested source whose datasets are read.
+    source_uri: str
+    # One dataset of the source; empty for all of them.
+    dataset_id: str = ""
+    # Rows to return of each dataset, from its first (of the first 20 datasets).
+    sample_rows: int = Field(default=0, ge=0, le=50)
+
+
+class KnowledgeDatasetGetOutput(BaseModel):
+    # False when the source has no live document; `datasets` is then empty.
+    found: bool
+    # The live document's revision.
+    revision: int = 0
+    # The live revision's datasets, in the order of the file's tables.
+    datasets: list[DatasetOut] = Field(default_factory=list)
+
+
+class KnowledgeDatasetApproveInput(BaseModel):
+    """Approve a dataset's schema, retyping the columns named: its rows are
+    typed again from the stored extraction under a new snapshot. A later
+    revision of the source with the same columns keeps the approval."""
+
+    org: str
+    namespace: str
+    # The ingested source whose dataset is approved.
+    source_uri: str
+    # The dataset to approve, as knowledge.dataset_get names it.
+    dataset_id: str = Field(min_length=1)
+    # The snapshot the caller reviewed (knowledge.dataset_get); refused once another serves.
+    snapshot_id: str
+    # Column name to the type it is held as; the columns not named keep theirs.
+    columns: dict[str, DatasetType] = Field(default_factory=dict, max_length=1024)
+
+
+class KnowledgeDatasetApproveOutput(BaseModel):
+    # False when the source or the dataset is not live; a later revision, or
+    # another approval that retyped the dataset, since the read is 409
+    # PRECONDITION_FAILED (read it again).
+    found: bool
+    # The dataset as approved; None when not found.
+    dataset: DatasetOut | None = None
+    # True when a retyped column made a new snapshot.
+    retyped: bool = False

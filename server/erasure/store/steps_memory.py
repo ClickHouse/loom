@@ -1142,11 +1142,15 @@ async def stamp_blobs_erased(
 
 # The ingestion tables (`loom.knowledge_uploads`, `loom.knowledge_ingestions`,
 # `loom.knowledge_ingest_cancels`): a file name, a title, a description and
-# metadata, and who asked, so they go with the documents of the scope.
+# metadata, and who asked, so they go with the documents of the scope; and the
+# datasets an ingest typed from the file's tables (`loom.datasets`,
+# `loom.dataset_rows`), the file's cell values.
 _INGESTION_TABLES = (
     "loom.knowledge_uploads",
     "loom.knowledge_ingestions",
     "loom.knowledge_ingest_cancels",
+    "loom.datasets",
+    "loom.dataset_rows",
 )
 
 

@@ -14,9 +14,9 @@ import logging
 import time
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from server.core.errors import ValidationError
+from server.core.errors import BackendUnavailableError, PreconditionFailedError, ValidationError
 from server.core.hashing import sha256_document_text as _content_sha256
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
@@ -39,6 +39,7 @@ from server.knowledge.api.models_knowledge import (
 )
 from server.knowledge.domain.chunking import Chunk, chunk_context, chunk_document, embedding_text
 from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, source_tags
+from server.knowledge.store import datasets as datasets_repo
 
 log = logging.getLogger(__name__)
 
@@ -485,6 +486,11 @@ async def handle_knowledge_delete(
     # Re-delete of an already-deleted doc: deleted=False lets callers
     # distinguish a real first delete from a re-ask on something gone.
     if active == 0 and doc is not None and doc.superseded_at is not None:
+        # A snapshot an earlier delete could not reach (one an approval wrote as it
+        # ran, or one N-1 left) goes now; one catalog read when there is none.
+        await datasets_repo.forget_published(
+            input.org, input.namespace, {input.source_uri: doc.version}
+        )
         return KnowledgeDeleteOutput(deleted=False, chunks_tombstoned=0)
 
     if active > 0:
@@ -499,6 +505,12 @@ async def handle_knowledge_delete(
         await documents_repo.insert_one(
             documents_repo.build_document_row(doc, version=_nano_version(), superseded_at=now)
         )
+    # Unserved once the document is gone; deleted without waiting. A first ingest
+    # still running has no document row, and its datasets are its own.
+    if doc is not None:
+        await datasets_repo.forget_published(
+            input.org, input.namespace, {input.source_uri: doc.version}
+        )
 
     return KnowledgeDeleteOutput(deleted=True, chunks_tombstoned=active)
 
@@ -506,6 +518,38 @@ async def handle_knowledge_delete(
 # ============================================================
 # knowledge.update_metadata — title / description / tags edit
 # ============================================================
+
+
+async def _edit_ingested(
+    input: KnowledgeUpdateMetadataInput, read: DocumentRow, edited: dict[str, Any]
+) -> None:
+    """A metadata edit of an ingested document, under the source's claim (which
+    an ingest's publish and a dataset approval take): its datasets are carried
+    to the new version first, so the edit keeps serving them and no approval
+    lands between the carry and the row. Refused when the source moved since
+    it was read."""
+    from server.core.ch import own_write_reads
+    from server.knowledge.app import datasets
+    from server.knowledge.app.ingest_run import claim_source
+    from server.knowledge.store import documents as documents_repo
+
+    org, ns, uri = input.org, input.namespace, input.source_uri
+    with own_write_reads():
+        async with claim_source(org, ns, uri) as held:
+            if not held:
+                raise BackendUnavailableError(
+                    "another write of this source holds it", operation="knowledge.update_metadata"
+                )
+            live = await documents_repo.get_one(org, ns, uri)
+            if live is None or live.version != read.version:
+                raise PreconditionFailedError(
+                    "the document changed while it was edited; read it again"
+                )
+            version = _nano_version()
+            await datasets.carry(org, ns, uri, live.version, version)
+            await documents_repo.insert_one(
+                documents_repo.build_document_row(live, version=version, **edited)
+            )
 
 
 async def handle_knowledge_update_metadata(
@@ -568,15 +612,13 @@ async def handle_knowledge_update_metadata(
             tags=existing.tags,
         )
 
-    await documents_repo.insert_one(
-        documents_repo.build_document_row(
-            existing,
-            title=next_title,
-            description=next_description,
-            tags=next_tags,
-            version=_nano_version(),
+    edited = {"title": next_title, "description": next_description, "tags": next_tags}
+    if existing.ingestion_id:
+        await _edit_ingested(input, existing, edited)
+    else:
+        await documents_repo.insert_one(
+            documents_repo.build_document_row(existing, version=_nano_version(), **edited)
         )
-    )
 
     chunks_reindexed = 0
     if input.reindex:
@@ -726,11 +768,20 @@ async def handle_knowledge_bulk_delete(
     input: KnowledgeBulkDeleteInput,
 ) -> KnowledgeBulkDeleteOutput:
     """Tombstone all chunks for the listed source_uris in one ALTER UPDATE,
-    plus per-uri chunk counts (one SELECT first). Document rows are
-    superseded via a single batched INSERT."""
+    with per-uri chunk counts. Document rows are superseded via a single
+    batched INSERT, and the datasets of the versions they retire are deleted."""
     from server.knowledge.store import chunks as knowledge_repo
+    from server.knowledge.store import documents as documents_repo
 
     now = datetime.now(UTC).replace(tzinfo=None)
+    # Each source's latest row before this delete, superseded or not: the datasets
+    # of the versions up to it go, so a source deleted before (by this build or an
+    # older one, or as an approval landed) loses what is left. An ingest running
+    # meanwhile writes a later version, which this leaves to it.
+    latest = await documents_repo.get_many_by_uris(
+        input.org, input.namespace, input.source_uris, include_superseded=True
+    )
+    retired = {d.source_uri: d.version for d in latest}
 
     counts = await knowledge_repo.count_active_by_uri(
         input.org,
@@ -747,15 +798,9 @@ async def handle_knowledge_bulk_delete(
             when=now,
         )
 
-        # Supersede document rows: read latest rows, re-INSERT with
-        # superseded_at set + bumped versions.
-        from server.knowledge.store import documents as documents_repo
-
-        existing_docs = await documents_repo.get_many_by_uris(
-            input.org,
-            input.namespace,
-            input.source_uris,
-        )
+        # Supersede the live document rows: re-INSERT with superseded_at set +
+        # bumped versions.
+        existing_docs = [d for d in latest if d.superseded_at is None]
         doc_rows = [
             documents_repo.build_document_row(
                 d,
@@ -765,6 +810,7 @@ async def handle_knowledge_bulk_delete(
             for i, d in enumerate(existing_docs)
         ]
         await documents_repo.insert_many(doc_rows)
+    await datasets_repo.forget_published(input.org, input.namespace, retired)
 
     deleted_results = [
         _KnowledgeBulkDeleteResult(

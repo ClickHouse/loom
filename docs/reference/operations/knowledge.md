@@ -78,6 +78,47 @@ Tombstone multiple documents by source_uri in one lightweight UPDATE.
 | `deleted` | `list[_KnowledgeBulkDeleteResult]` | One result per input URI, in input order, with its tombstoned chunk count (0 if none). |
 | `total_chunks_tombstoned` | `int` | Sum of the chunks tombstoned across every URI. |
 
+## `knowledge.dataset_approve`
+
+Approve a dataset's schema, retyping the columns named: its rows are typed again from the stored extraction under a new snapshot.
+
+`POST /v1/knowledge.dataset_approve` · MCP `loom_knowledge_dataset_approve` · role `writer` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `source_uri` | `str` | required | The ingested source whose dataset is approved. |
+| `dataset_id` | `str` | required | The dataset to approve, as knowledge.dataset_get names it. |
+| `snapshot_id` | `str` | required | The snapshot the caller reviewed (knowledge.dataset_get); refused once another serves. |
+| `columns` | `dict[str, Literal['string', 'number', 'bool', 'date', 'datetime', 'time', 'duration']]` | *(computed)* | Column name to the type it is held as; the columns not named keep theirs. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `found` | `bool` | False when the source or the dataset is not live; a later revision, or another approval that retyped the dataset, since the read is 409 PRECONDITION_FAILED (read it again). |
+| `dataset` | `DatasetOut \| None` | The dataset as approved; None when not found. |
+| `retyped` | `bool` | True when a retyped column made a new snapshot. |
+
+## `knowledge.dataset_get`
+
+The typed datasets an ingested file's tables became: their schemas, what needs a person's answer, the rows rejected and, on request, the first rows.
+
+`POST /v1/knowledge.dataset_get` · MCP `loom_knowledge_dataset_get` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `source_uri` | `str` | required | The ingested source whose datasets are read. |
+| `dataset_id` | `str` | `''` | One dataset of the source; empty for all of them. |
+| `sample_rows` | `int` | `0` | Rows to return of each dataset, from its first (of the first 20 datasets). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `found` | `bool` | False when the source has no live document; `datasets` is then empty. |
+| `revision` | `int` | The live document's revision. |
+| `datasets` | `list[DatasetOut]` | The live revision's datasets, in the order of the file's tables. |
+
 ## `knowledge.dedup_list`
 
 List cross-URI doc duplicates and (optionally) chunk-overlap clusters.

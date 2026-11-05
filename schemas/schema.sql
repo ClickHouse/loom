@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 177 tables + 19 materialized views.
+-- Counts: 179 tables + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (177)
+-- Tables (179)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -1332,6 +1332,138 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, thread_id, ts, msg_id)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.dataset_rows
+CREATE TABLE IF NOT EXISTS loom.dataset_rows
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `dataset_id` String,
+    `snapshot_id` UInt64,
+    `row_id` UInt32,
+    `source_uri` String,
+    `doc_version` UInt64,
+    `agent` LowCardinality(String) DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `actor` String DEFAULT '',
+    `source_class` LowCardinality(String) DEFAULT '',
+    `s1` Nullable(String),
+    `s2` Nullable(String),
+    `s3` Nullable(String),
+    `s4` Nullable(String),
+    `s5` Nullable(String),
+    `s6` Nullable(String),
+    `s7` Nullable(String),
+    `s8` Nullable(String),
+    `s9` Nullable(String),
+    `s10` Nullable(String),
+    `s11` Nullable(String),
+    `s12` Nullable(String),
+    `s13` Nullable(String),
+    `s14` Nullable(String),
+    `s15` Nullable(String),
+    `s16` Nullable(String),
+    `s17` Nullable(String),
+    `s18` Nullable(String),
+    `s19` Nullable(String),
+    `s20` Nullable(String),
+    `s21` Nullable(String),
+    `s22` Nullable(String),
+    `s23` Nullable(String),
+    `s24` Nullable(String),
+    `n1` Nullable(Decimal(38, 9)),
+    `n2` Nullable(Decimal(38, 9)),
+    `n3` Nullable(Decimal(38, 9)),
+    `n4` Nullable(Decimal(38, 9)),
+    `n5` Nullable(Decimal(38, 9)),
+    `n6` Nullable(Decimal(38, 9)),
+    `n7` Nullable(Decimal(38, 9)),
+    `n8` Nullable(Decimal(38, 9)),
+    `n9` Nullable(Decimal(38, 9)),
+    `n10` Nullable(Decimal(38, 9)),
+    `n11` Nullable(Decimal(38, 9)),
+    `n12` Nullable(Decimal(38, 9)),
+    `n13` Nullable(Decimal(38, 9)),
+    `n14` Nullable(Decimal(38, 9)),
+    `n15` Nullable(Decimal(38, 9)),
+    `n16` Nullable(Decimal(38, 9)),
+    `n17` Nullable(Decimal(38, 9)),
+    `n18` Nullable(Decimal(38, 9)),
+    `n19` Nullable(Decimal(38, 9)),
+    `n20` Nullable(Decimal(38, 9)),
+    `n21` Nullable(Decimal(38, 9)),
+    `n22` Nullable(Decimal(38, 9)),
+    `n23` Nullable(Decimal(38, 9)),
+    `n24` Nullable(Decimal(38, 9)),
+    `f1` Nullable(Float64),
+    `f2` Nullable(Float64),
+    `f3` Nullable(Float64),
+    `f4` Nullable(Float64),
+    `f5` Nullable(Float64),
+    `f6` Nullable(Float64),
+    `f7` Nullable(Float64),
+    `f8` Nullable(Float64),
+    `t1` Nullable(DateTime64(6, 'UTC')),
+    `t2` Nullable(DateTime64(6, 'UTC')),
+    `t3` Nullable(DateTime64(6, 'UTC')),
+    `t4` Nullable(DateTime64(6, 'UTC')),
+    `t5` Nullable(DateTime64(6, 'UTC')),
+    `t6` Nullable(DateTime64(6, 'UTC')),
+    `t7` Nullable(DateTime64(6, 'UTC')),
+    `t8` Nullable(DateTime64(6, 'UTC')),
+    `b1` Nullable(Bool),
+    `b2` Nullable(Bool),
+    `b3` Nullable(Bool),
+    `b4` Nullable(Bool),
+    `b5` Nullable(Bool),
+    `b6` Nullable(Bool),
+    `b7` Nullable(Bool),
+    `b8` Nullable(Bool),
+    `created_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree
+ORDER BY (org, namespace, dataset_id, snapshot_id, row_id)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 1024;
+
+-- loom.datasets
+CREATE TABLE IF NOT EXISTS loom.datasets
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `source_uri` String,
+    `dataset_id` String,
+    `doc_version` UInt64,
+    `snapshot_id` UInt64,
+    `revision` UInt64 DEFAULT 0,
+    `table_id` String DEFAULT '',
+    `position` UInt32 DEFAULT 0,
+    `name` String DEFAULT '',
+    `sheet` String DEFAULT '',
+    `row_start` UInt32 DEFAULT 0,
+    `row_end` UInt32 DEFAULT 0,
+    `schema` String DEFAULT '[]',
+    `schema_state` LowCardinality(String) DEFAULT 'inferred',
+    `clarifications` String DEFAULT '[]',
+    `row_count` UInt64 DEFAULT 0,
+    `rejected_rows` UInt64 DEFAULT 0,
+    `rejected` String DEFAULT '[]',
+    `complete` Bool DEFAULT true,
+    `artifact_sha256` String DEFAULT '',
+    `approved_by` String DEFAULT '',
+    `approved_at` Nullable(DateTime64(3)),
+    `agent` LowCardinality(String) DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `actor` String DEFAULT '',
+    `source_class` LowCardinality(String) DEFAULT '',
+    `created_at` DateTime64(3) DEFAULT now64(3),
+    `updated_at` DateTime64(3) DEFAULT now64(3),
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, source_uri, dataset_id, doc_version)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 1024;
 
 -- loom.delete_version_checks
 CREATE TABLE IF NOT EXISTS loom.delete_version_checks

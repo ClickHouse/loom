@@ -10,7 +10,8 @@ runs no workers); then status, get, outline, search and download read it back.
   fails `revision_conflict` and leaves revision 2 serving.
 - A PDF with a page of one image fails `incomplete_extraction`; with
   `allow_partial` it publishes as `partial`, its chunks citing their pages.
-- A CSV publishes its rows as passages, a hit citing its rows.
+- A CSV publishes its rows as passages, a hit citing its rows, and its table as
+  a typed dataset a writer approves (retyping a column) and a delete removes.
 - An upload whose bytes contradict its name is stored, typed by its name, and its
   job fails with the extractor's code; an ingest of an unknown upload is 404.
 
@@ -21,6 +22,7 @@ the CSV test skips unless one declares CSV (`extractors.available_formats`).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -30,6 +32,7 @@ import httpx
 import pytest
 
 from tests.fixtures.office_files import pdf
+from tests.fixtures.xlsx_files import cell, sheet, workbook
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
@@ -294,6 +297,197 @@ async def test_a_csv_publishes_its_rows_as_passages_cited_by_row(control_plane_u
     assert "Table: rollups; Days: 365; Owner: analytics" in hit["content"]
 
 
+async def _dataset_rows(org: str, ns: str, dataset_id: str) -> list[dict[str, Any]]:
+    from server.core.ch import get_client
+
+    ch = get_client()
+    await ch.connect()
+    try:
+        return await ch.query_all(
+            "SELECT snapshot_id, row_id, s1, s2, n1, user_id, source_uri FROM loom.dataset_rows"
+            " WHERE org = {org:String} AND namespace = {ns:String} AND dataset_id = {ds:String}"
+            " ORDER BY snapshot_id, row_id",
+            {"org": org, "ns": ns, "ds": dataset_id},
+        )
+    finally:
+        await ch.disconnect()
+
+
+async def _plant_running_rows(org: str, ns: str, uri: str, dataset_id: str) -> int:
+    """A catalog row and one row of a dataset at a document version between the
+    source's live one and now, as an ingest still running writes them; returns
+    its snapshot id."""
+    from server.core.ch import get_client
+    from server.knowledge.store import datasets as datasets_repo
+
+    ch = get_client()
+    await ch.connect()
+    try:
+        (live,) = await datasets_repo.at_version(
+            org, ns, uri, await _live_version(ch, org, ns, uri)
+        )
+        version = int(live["doc_version"]) + 1
+        running = datasets_repo.dataset_row(live, doc_version=version, snapshot_id=version)
+        await datasets_repo.insert_catalog([running], ch=ch)
+        row = datasets_repo.slot_row(running, {"row_id": 0, "s1": "x"}, live["created_at"])
+        await datasets_repo.insert_rows([row], ch=ch)
+        return version
+    finally:
+        await ch.disconnect()
+
+
+async def _live_version(ch: Any, org: str, ns: str, uri: str) -> int:
+    row = await ch.query_one(
+        "SELECT max(doc_version) AS v FROM loom.datasets FINAL WHERE org = {org:String}"
+        " AND namespace = {ns:String} AND source_uri = {uri:String}",
+        {"org": org, "ns": ns, "uri": uri},
+    )
+    return int(row["v"])
+
+
+async def _deletes_running(since: Any) -> int:
+    """The dataset tables' mutations (a lightweight delete is one) created at
+    `since` or later and not yet applied: this test's, and any another run on
+    the same server makes meanwhile."""
+    from server.core.ch import get_client
+
+    ch = get_client()
+    await ch.connect()
+    try:
+        row = await ch.query_one(
+            "SELECT count() AS n FROM system.mutations WHERE database = 'loom'"
+            " AND table IN ('datasets', 'dataset_rows') AND is_done = 0"
+            " AND create_time >= {t:DateTime}",
+            {"t": since},
+        )
+        return int(row["n"]) if row else 0
+    finally:
+        await ch.disconnect()
+
+
+async def _catalog_at(org: str, ns: str, uri: str, doc_version: int) -> int:
+    from server.core.ch import get_client
+
+    ch = get_client()
+    await ch.connect()
+    try:
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.datasets WHERE org = {org:String}"
+            " AND namespace = {ns:String} AND source_uri = {uri:String}"
+            " AND doc_version = {v:UInt64}",
+            {"org": org, "ns": ns, "uri": uri, "v": doc_version},
+        )
+        return int(row["n"]) if row else 0
+    finally:
+        await ch.disconnect()
+
+
+async def _catalog_rows(org: str, ns: str, uri: str) -> int:
+    from server.core.ch import get_client
+
+    ch = get_client()
+    await ch.connect()
+    try:
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.datasets WHERE org = {org:String}"
+            " AND namespace = {ns:String} AND source_uri = {uri:String}",
+            {"org": org, "ns": ns, "uri": uri},
+        )
+        return int(row["n"]) if row else 0
+    finally:
+        await ch.disconnect()
+
+
+@pytest.mark.usefixtures("extractor_routed")
+@pytest.mark.asyncio
+async def test_a_csv_table_is_a_typed_dataset_a_writer_approves_and_a_delete_removes(
+    control_plane_url: str,
+) -> None:
+    from server.knowledge.app.extractors import available_formats
+
+    if "csv" not in await available_formats():
+        pytest.skip("no configured document extractor declares csv")
+    org, ns, uri = unique_org("ingest-ds"), "docs", "repo://budget.csv"
+    data = b"team,amount\nplatform,120.5\nanalytics,n/a\nsearch,80\n"
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
+        up = await _upload(c, org, ns, data, "budget.csv")
+        assert up.status_code == 201, up.text
+        job = await _op(
+            c, "knowledge.ingest", org=org, namespace=ns, upload_id=up.json()["upload_id"],
+            source_uri=uri,
+        )  # fmt: skip
+        await _work(org, ns, job["ingestion_id"])
+        got = await _op(
+            c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri, sample_rows=5
+        )
+        assert got["found"] and got["revision"] == 1
+        (d,) = got["datasets"]
+        assert d["schema_state"] == "needs_clarification" and d["row_count"] == 3
+        assert [(c_["name"], c_["type"], c_["inferred"]) for c_ in d["columns"]] == [
+            ("team", "string", "string"),
+            ("amount", "string", "mixed"),
+        ]
+        assert [x["code"] for x in d["clarifications"]] == ["mixed_types"]
+        assert d["rows"] == [
+            {"team": "platform", "amount": "120.5"},
+            {"team": "analytics", "amount": "n/a"},
+            {"team": "search", "amount": "80"},
+        ]
+        stored = await _dataset_rows(org, ns, d["dataset_id"])
+        assert [(r["row_id"], r["s1"], r["s2"]) for r in stored] == [
+            (0, "platform", "120.5"),
+            (1, "analytics", "n/a"),
+            (2, "search", "80"),
+        ]
+        assert {(str(r["snapshot_id"]), r["source_uri"]) for r in stored} == {
+            (d["snapshot_id"], uri)
+        }
+
+        stale = await c.post(
+            "/v1/knowledge.dataset_approve",
+            json={"org": org, "namespace": ns, "source_uri": uri,
+                  "dataset_id": d["dataset_id"], "snapshot_id": "1"},
+        )  # fmt: skip
+        assert stale.status_code == 409, stale.text
+        approved = await _op(
+            c, "knowledge.dataset_approve", org=org, namespace=ns, source_uri=uri,
+            dataset_id=d["dataset_id"], snapshot_id=d["snapshot_id"],
+            columns={"amount": "number"},
+        )  # fmt: skip
+        assert approved["found"] and approved["retyped"]
+        a = approved["dataset"]
+        assert a["schema_state"] == "approved" and a["clarifications"] == []
+        assert (a["row_count"], a["rejected_rows"]) == (2, 1)
+        assert a["rejected"] == [{"row": 2, "column": "amount", "reason": "'n/a' is not a number"}]
+        assert a["snapshot_id"] != d["snapshot_id"] and a["approved_at"]
+        again = await _op(
+            c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri, sample_rows=5
+        )
+        assert again["datasets"][0]["snapshot_id"] == a["snapshot_id"]
+        # A metadata edit keeps serving it, approved.
+        await _op(c, "knowledge.update_metadata", org=org, namespace=ns, source_uri=uri,
+                  title="Budget 2026")  # fmt: skip
+        edited = await _op(c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri)
+        assert [(x["snapshot_id"], x["schema_state"]) for x in edited["datasets"]] == [
+            (a["snapshot_id"], "approved")
+        ]
+        assert again["datasets"][0]["rows"] == [
+            {"team": "platform", "amount": 120.5},
+            {"team": "search", "amount": 80},
+        ]
+
+        await _op(c, "knowledge.delete", org=org, namespace=ns, source_uri=uri)
+        gone = await _op(c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri)
+        assert gone == {"found": False, "revision": 0, "datasets": []}
+    # The delete does not wait for the rows to go: they go soon after.
+    for _ in range(50):
+        if not await _dataset_rows(org, ns, d["dataset_id"]):
+            break
+        await asyncio.sleep(0.2)
+    assert await _dataset_rows(org, ns, d["dataset_id"]) == []
+    assert await _catalog_rows(org, ns, uri) == 0
+
+
 @pytest.mark.asyncio
 async def test_a_mislabelled_upload_is_stored_and_the_extractor_refuses_it(
     control_plane_url: str,
@@ -377,3 +571,142 @@ async def test_a_cancelled_pending_job_reads_cancelled_and_the_worker_ends_it(
         )
         r = await c.post("/v1/knowledge.get", json={"org": org, "namespace": ns, "source_uri": uri})
         assert r.status_code == 200 and r.json().get("found") is False, r.text
+
+
+@pytest.mark.usefixtures("extractor_routed")
+@pytest.mark.asyncio
+async def test_a_bulk_delete_removes_each_sources_datasets_at_its_own_version(
+    control_plane_url: str,
+) -> None:
+    from server.knowledge.app.extractors import available_formats
+
+    if "csv" not in await available_formats():
+        pytest.skip("no configured document extractor declares csv")
+    org, ns = unique_org("ingest-ds-bulk"), "docs"
+    files = [("repo://a.csv", b"k,v\na,1\n"), ("repo://b.csv", b"k,v\nb,2\n"),
+             ("repo://b.csv", b"k,v\nb,3\nc,4\n")]  # fmt: skip
+    ids: dict[str, str] = {}
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
+        for uri, data in files:  # b.csv twice: its live version is not a.csv's
+            up = await _upload(c, org, ns, data, uri.removeprefix("repo://"))
+            assert up.status_code == 201, up.text
+            job = await _op(
+                c, "knowledge.ingest", org=org, namespace=ns, upload_id=up.json()["upload_id"],
+                source_uri=uri,
+            )  # fmt: skip
+            await _work(org, ns, job["ingestion_id"])
+            got = await _op(c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri)
+            ids[uri] = got["datasets"][0]["dataset_id"]
+        assert got["revision"] == 2
+        # An ingest of a.csv still running: rows of a version past a.csv's live one
+        # and before b.csv's, which a bound of b.csv's version would take too.
+        running = await _plant_running_rows(org, ns, "repo://a.csv", ids["repo://a.csv"])
+        await _op(
+            c, "knowledge.bulk_delete", org=org, namespace=ns,
+            source_uris=["repo://a.csv", "repo://b.csv"],
+        )  # fmt: skip
+    for _ in range(50):  # until the delete's rows are gone; the running ingest's stay
+        a_rows = await _dataset_rows(org, ns, ids["repo://a.csv"])
+        b_rows = await _dataset_rows(org, ns, ids["repo://b.csv"])
+        if not b_rows and [r["snapshot_id"] for r in a_rows] == [running]:
+            break
+        await asyncio.sleep(0.2)
+    assert await _dataset_rows(org, ns, ids["repo://b.csv"]) == []
+    assert await _catalog_rows(org, ns, "repo://b.csv") == 0
+    left = await _dataset_rows(org, ns, ids["repo://a.csv"])
+    assert [r["snapshot_id"] for r in left] == [running]  # the running ingest's, kept
+    assert await _catalog_rows(org, ns, "repo://a.csv") == 1
+
+
+@pytest.mark.usefixtures("extractor_routed")
+@pytest.mark.asyncio
+async def test_a_delete_bounded_before_a_metadata_edit_keeps_the_carried_snapshots_rows(
+    control_plane_url: str,
+) -> None:
+    """A metadata edit carries a snapshot to its new version while its rows keep
+    the version they were written at; a delete that read the earlier version
+    (and lost the race to the edit) must not take the rows the edit serves."""
+    from server.core.ch import get_client
+    from server.knowledge.app.extractors import available_formats
+    from server.knowledge.store import datasets as datasets_repo
+
+    if "csv" not in await available_formats():
+        pytest.skip("no configured document extractor declares csv")
+    org, ns, uri = unique_org("ingest-ds-edit"), "docs", "repo://edit.csv"
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
+        up = await _upload(c, org, ns, b"k,v\na,1\nb,2\n", "edit.csv")
+        assert up.status_code == 201, up.text
+        job = await _op(
+            c, "knowledge.ingest", org=org, namespace=ns, upload_id=up.json()["upload_id"],
+            source_uri=uri,
+        )  # fmt: skip
+        await _work(org, ns, job["ingestion_id"])
+        (d,) = (await _op(c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri))[
+            "datasets"
+        ]
+        ch = get_client()
+        await ch.connect()
+        try:
+            published = await _live_version(ch, org, ns, uri)
+            await _op(c, "knowledge.update_metadata", org=org, namespace=ns, source_uri=uri,
+                      title="Edited")  # fmt: skip
+            since = (await ch.query_one("SELECT now() AS t"))["t"]  # the server's clock
+            await datasets_repo.forget_published(org, ns, {uri: published}, ch=ch)
+        finally:
+            await ch.disconnect()
+        # The delete does not wait: each table's delete is a mutation of its own,
+        # so the rows are read once both have run.
+        for _ in range(50):
+            if not await _catalog_at(org, ns, uri, published) and not await _deletes_running(since):
+                break
+            await asyncio.sleep(0.2)
+        assert not await _catalog_at(org, ns, uri, published)
+        assert not await _deletes_running(since)
+        got = await _op(c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri,
+                        sample_rows=5)  # fmt: skip
+    (served,) = got["datasets"]
+    assert served["snapshot_id"] == d["snapshot_id"] and served["row_count"] == 2
+    assert [r["k"] for r in served["rows"]] == ["a", "b"]
+
+
+@pytest.mark.usefixtures("extractor_routed")
+@pytest.mark.asyncio
+async def test_a_workbooks_sheets_are_datasets_each_sampled_past_its_rejected_rows(
+    control_plane_url: str,
+) -> None:
+    """Two sheets, one with a cell error: one read samples both, each dataset
+    cut to the rows asked for, the rejected row's id a gap it reads past."""
+    from server.knowledge.app.extractors import available_formats
+
+    if "xlsx" not in await available_formats():
+        pytest.skip("no configured document extractor declares xlsx")
+    org, ns, uri = unique_org("ingest-ds-xlsx"), "docs", "repo://book.xlsx"
+    first = sheet({
+        1: [cell("A1", "k", t="inlineStr"), cell("B1", "v", t="inlineStr")],
+        2: [cell("A2", "a", t="inlineStr"), cell("B2", 1)],
+        3: [cell("A3", "b", t="inlineStr"), cell("B3", "#N/A", t="e")],
+        4: [cell("A4", "c", t="inlineStr"), cell("B4", 3)],
+        5: [cell("A5", "d", t="inlineStr"), cell("B5", 4)],
+    })  # fmt: skip
+    second = sheet({
+        1: [cell("A1", "k", t="inlineStr"), cell("B1", "v", t="inlineStr")],
+        2: [cell("A2", "x", t="inlineStr"), cell("B2", 10)],
+        3: [cell("A3", "y", t="inlineStr"), cell("B3", 20)],
+        4: [cell("A4", "z", t="inlineStr"), cell("B4", 30)],
+    })  # fmt: skip
+    data = workbook([("One", first), ("Two", second)])
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
+        up = await _upload(c, org, ns, data, "book.xlsx")
+        assert up.status_code == 201, up.text
+        job = await _op(
+            c, "knowledge.ingest", org=org, namespace=ns, upload_id=up.json()["upload_id"],
+            source_uri=uri,
+        )  # fmt: skip
+        await _work(org, ns, job["ingestion_id"])
+        got = await _op(c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri,
+                        sample_rows=2)  # fmt: skip
+    one, two = got["datasets"]
+    assert (one["sheet"], one["row_count"], one["rejected_rows"]) == ("One", 3, 1)
+    assert one["rows"] == [{"k": "a", "v": 1}, {"k": "c", "v": 3}]
+    assert (two["sheet"], two["row_count"]) == ("Two", 3)
+    assert two["rows"] == [{"k": "x", "v": 10}, {"k": "y", "v": 20}]

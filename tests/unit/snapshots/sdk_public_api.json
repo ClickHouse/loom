@@ -803,6 +803,14 @@
               "body",
               "options"
             ],
+            "dataset_approve": [
+              "body",
+              "options"
+            ],
+            "dataset_get": [
+              "body",
+              "options"
+            ],
             "dedup_list": [
               "body",
               "options"
