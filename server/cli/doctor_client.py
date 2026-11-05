@@ -892,22 +892,27 @@ def posix_sh(env: dict[str, str]) -> str | None:
     return str(bash) if bash and bash.is_file() else None
 
 
-def claude_plugin_install(home: Path, cwd: Path) -> Path | None:
-    """The loom plugin directory Claude Code runs for `cwd`, from its own
-    records: the project-scope install for that checkout, else the user's.
-    None when it is not installed or settings disable it."""
+def claude_plugin_install(home: Path) -> Path | None:
+    """The user-scope loom plugin directory from Claude Code's own records;
+    None when it is not installed there or user settings disable it. A
+    project-scope install is enabled per project and is not checked."""
     try:
         installed = json.loads(_read(home / ".claude" / "plugins" / "installed_plugins.json"))
         installs = installed["plugins"]["loom@loom"]
         settings = json.loads(_read(home / ".claude" / "settings.json") or "{}")
         if (settings.get("enabledPlugins") or {}).get("loom@loom") is False:
             return None
-        project = [i for i in installs if i.get("projectPath") == str(cwd)]
-        user = [i for i in installs if i.get("scope") == "user"]
-        chosen = (project or user or installs)[0]
-        return Path(chosen["installPath"])
-    except (ValueError, KeyError, TypeError, AttributeError, IndexError):
+        user = next(i for i in installs if i.get("scope") == "user")
+        return Path(user["installPath"])
+    except (ValueError, KeyError, TypeError, AttributeError, StopIteration):
         return None
+
+
+def _plugin_manifest_version(install: Path) -> str:
+    try:
+        return str(json.loads(_read(install / ".claude-plugin" / "plugin.json"))["version"])
+    except (ValueError, KeyError, TypeError):
+        return install.name
 
 
 def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, str]:
@@ -932,21 +937,9 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     under, as that plugin's own launcher finds it in that client's
     environment."""
     out: list[Check] = []
-    install = claude_plugin_install(home, Path(env.get("PWD") or os.getcwd()))
+    install = claude_plugin_install(home)
     if install is not None:
-        launcher = install / "bin" / "loom-node"
-        if launcher.is_file():
-            out.append(_claude_node_check(home, env, launcher))
-        else:
-            out.append(
-                (
-                    "client:claude-code:node",
-                    WARN,
-                    f"the installed plugin ({install.name}) predates the Node launcher: its "
-                    "hooks need `node` on Claude Code's PATH. Fix: "
-                    "`claude plugin update loom@loom`.",
-                )
-            )
+        out.append(_claude_node_check(home, env, install))
     # codex_plugin_enabled checks loom@loom, so read that marketplace's cache.
     codex = max(
         home.glob(".codex/plugins/cache/loom/loom/*/bin/loom-node"),
@@ -961,10 +954,22 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     return out
 
 
-def _claude_node_check(home: Path, env: dict[str, str], launcher: Path) -> Check:
+def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
     """Claude Code runs hooks and the helper with its own environment plus
     its settings `env`: this shell's, or a GUI launch's with no profile."""
     name = "client:claude-code:node"
+    fix = "Fix: `claude plugin update loom@loom`."
+    if not install.is_dir():
+        return (name, WARN, f"the installed plugin at {install} is not on disk. {fix}")
+    launcher = install / "bin" / "loom-node"
+    if not launcher.is_file():
+        version = _plugin_manifest_version(install)
+        return (
+            name,
+            WARN,
+            f"the installed plugin ({version}) predates the Node launcher: its hooks need "
+            f"`node` on Claude Code's PATH. {fix}",
+        )
     settings = _claude_settings_env(home)
     client_env = {**env, **settings}
     sh = posix_sh(client_env)

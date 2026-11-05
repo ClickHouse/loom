@@ -41,7 +41,8 @@ def _install(home: Path, client: str, version: str) -> Path:
     bin_dir.mkdir(parents=True)
     shutil.copy(LAUNCHER, bin_dir / "loom-node")
     if client == ".claude":
-        record = {"version": 2, "plugins": {"loom@loom": [{"installPath": str(bin_dir.parent)}]}}
+        install = {"scope": "user", "installPath": str(bin_dir.parent)}
+        record = {"version": 2, "plugins": {"loom@loom": [install]}}
         (home / ".claude" / "plugins" / "installed_plugins.json").write_text(json.dumps(record))
     else:
         (home / ".codex" / "config.toml").write_text('[plugins."loom@loom"]\nenabled = true\n')
@@ -67,13 +68,12 @@ def test_no_installed_launcher_no_line(home: Path) -> None:
 
 def test_the_newest_codex_install_answers(home: Path) -> None:
     _install(home, ".codex", "1.2.10")
-    newest = _install(home, ".codex", "1.10.0")
+    _install(home, ".codex", "1.10.0")
     _install(home, ".codex", "1.2.9")
     node = _node(home / ".volta" / "bin", "v22.1.0")
     # The newest launcher runs: an older one replaced by a stub would fail.
     for v in ("1.2.9", "1.2.10"):
         (home / ".codex/plugins/cache/loom/loom" / v / "bin/loom-node").write_text("exit 1\n")
-    assert newest.read_text() == LAUNCHER.read_text()
     assert _checks(home)["client:codex:node"] == (
         dc.PASS,
         f"Loom hook runtime ready: {node} (v22.1.0)",
@@ -210,25 +210,25 @@ def test_the_installed_version_is_checked_not_the_newest_cached(home: Path) -> N
     kept = record.read_text()
     _install(home, ".claude", "9.9.9")  # a newer cache with a real launcher
     record.write_text(kept)
-    assert dc.claude_plugin_install(home, home) == installed.parent.parent
+    assert dc.claude_plugin_install(home) == installed.parent.parent
 
 
-def test_the_install_for_this_checkout_wins_over_the_user_install(home: Path) -> None:
-    def entry(version: str, **extra: str) -> dict[str, str]:
-        path = home / ".claude" / "plugins" / "cache" / "loom" / "loom" / version
-        return {"installPath": str(path), **extra}
-
+def test_only_the_user_scope_install_is_checked(home: Path) -> None:
+    cache = home / ".claude" / "plugins" / "cache" / "loom" / "loom"
     installs = [
-        entry("1.2.5", scope="project", projectPath="/elsewhere"),
-        entry("1.2.6", scope="user"),
-        entry("1.2.7", scope="project", projectPath=str(home / "repo")),
+        {
+            "scope": "project",
+            "projectPath": str(home / "repo"),
+            "installPath": str(cache / "1.2.5"),
+        },
+        {"scope": "user", "installPath": str(cache / "1.2.6")},
     ]
     record = home / ".claude" / "plugins" / "installed_plugins.json"
     record.parent.mkdir(parents=True)
     record.write_text(json.dumps({"version": 2, "plugins": {"loom@loom": installs}}))
-    cache = home / ".claude" / "plugins" / "cache" / "loom" / "loom"
-    assert dc.claude_plugin_install(home, home / "repo") == cache / "1.2.7"
-    assert dc.claude_plugin_install(home, home / "other") == cache / "1.2.6"
+    assert dc.claude_plugin_install(home) == cache / "1.2.6"
+    record.write_text(json.dumps({"version": 2, "plugins": {"loom@loom": installs[:1]}}))
+    assert dc.claude_plugin_install(home) is None
 
 
 @pytest.mark.parametrize("installs", [[{"scope": "user"}], {"scope": "user"}, [], "loom"], ids=str)
@@ -240,8 +240,11 @@ def test_a_malformed_install_record_gets_no_line(home: Path, installs: object) -
 
 
 def test_a_plugin_from_before_the_launcher_is_named(home: Path) -> None:
-    launcher = _install(home, ".claude", "1.2.6")
+    launcher = _install(home, ".claude", "0123abcd")
     launcher.unlink()
+    manifest = launcher.parent.parent / ".claude-plugin" / "plugin.json"
+    manifest.parent.mkdir()
+    manifest.write_text(json.dumps({"name": "loom", "version": "1.2.6"}))
     assert _checks(home) == {
         "client:claude-code:node": (
             dc.WARN,
@@ -276,3 +279,13 @@ def test_on_windows_git_bash_from_claude_settings_counts(
     monkeypatch.setattr(dc, "WINDOWS", True)
     _settings(home, {"CLAUDE_CODE_GIT_BASH_PATH": "/bin/sh"})
     assert _checks(home)["client:claude-code:node"][0] == dc.PASS
+
+
+def test_an_install_that_is_not_on_disk_is_named(home: Path) -> None:
+    launcher = _install(home, ".claude", "1.2.7")
+    shutil.rmtree(launcher.parent.parent)
+    assert _checks(home)["client:claude-code:node"] == (
+        dc.WARN,
+        f"the installed plugin at {launcher.parent.parent} is not on disk. "
+        "Fix: `claude plugin update loom@loom`.",
+    )
