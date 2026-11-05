@@ -328,23 +328,29 @@ def _cost(array: Any) -> tuple[int, int]:
         return _cost(array.storage)
     if pa.types.is_dictionary(t):
         copies = 0
-        if (
-            pa.types.is_string(t.value_type)
-            or pa.types.is_large_string(t.value_type)
-            or (pa.types.is_binary(t.value_type) or pa.types.is_large_binary(t.value_type))
-        ):
+        copied = (
+            pa.types.is_string,
+            pa.types.is_large_string,
+            pa.types.is_string_view,
+            pa.types.is_binary,
+            pa.types.is_large_binary,
+            pa.types.is_binary_view,
+        )
+        if any(is_copied(t.value_type) for is_copied in copied):
             sizes = pc.take(pc.binary_length(array.dictionary), array.indices)
             copies = int(pc.sum(sizes).as_py() or 0)
         return len(array), copies
     if pa.types.is_map(t):
         keys, items = _cost(array.keys), _cost(array.items)
         return len(array) + keys[0] + items[0], keys[1] + items[1]
-    if (
-        pa.types.is_list(t)
-        or pa.types.is_large_list(t)
-        or pa.types.is_fixed_size_list(t)
-        or (pa.types.is_list_view(t) or pa.types.is_large_list_view(t))
-    ):
+    lists = (
+        pa.types.is_list,
+        pa.types.is_large_list,
+        pa.types.is_fixed_size_list,
+        pa.types.is_list_view,
+        pa.types.is_large_list_view,
+    )
+    if any(is_list(t) for is_list in lists):
         values, copies = _cost(array.flatten())
         return len(array) + values, copies
     if pa.types.is_struct(t):
@@ -389,9 +395,13 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     groups = [meta.row_group(g).num_rows for g in range(meta.num_row_groups)]
     number = blank = decoded = decoded_bytes = 0
     stopped = False
-    for g, group_rows in enumerate(groups):
+    if not kept:  # no column: every row is blank, counted from the metadata
+        blank = sum(groups)
+    for g, group_rows in enumerate(groups if kept else []):
         if stopped:
             break
+        if not group_rows:  # nothing to decode: no reader is set up for it
+            continue
         if rows.more:
             # Past the budget: counted from the metadata, never decoded.
             rows.count(number + 1, group_rows)
@@ -402,8 +412,10 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
             # Every column, the kept ones taken by position: a name may repeat,
             # so none is selected by name.
             for batch in pf.iter_batches(batch_size=batch_rows, row_groups=[g], use_threads=False):
+                # Every column read, those past MAX_COLUMNS too (they are decoded),
+                # and at least a value a row, so a batch of empty rows costs too.
                 costs = [_cost(batch.column(j)) for j in range(batch.num_columns)]
-                decoded += sum(v for v, _ in costs)
+                decoded += max(batch.num_rows, sum(v for v, _ in costs))
                 decoded_bytes += int(batch.nbytes) + sum(c for _, c in costs)
                 # A file of blank rows, of long lists or of values each too long to
                 # hold is read no further: the rest is its own failed unit.

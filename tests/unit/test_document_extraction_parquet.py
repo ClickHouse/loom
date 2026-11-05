@@ -551,3 +551,39 @@ def test_a_dictionary_inside_a_list_is_charged_for_every_element_that_names_it(
     entries = pa.DictionaryArray.from_arrays(pa.array([0] * 4, pa.int32()), pa.array(["x" * 1_000]))
     value = pa.ListArray.from_arrays(pa.array([0, 4], pa.int32()), entries)
     assert parquetfile._cost(value) == (1 + 4, 4_000)
+
+
+def test_a_schema_of_no_columns_is_counted_not_iterated(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Meta:
+        num_row_groups = 1
+        num_columns = 0
+        num_rows = 10**12
+
+        def row_group(self, g: int) -> Any:
+            return type("Group", (), {"num_rows": 10**12})()
+
+    class File:  # as a hand-written footer may declare: no column, a trillion rows
+        metadata = Meta()
+        schema_arrow: list[Any] = []
+
+        def iter_batches(self, **_: Any) -> Any:
+            raise AssertionError("no batch is read for a schema of no columns")
+
+    monkeypatch.setattr(parquetfile, "_open", lambda data: File())
+    a = parquetfile.extract_parquet(b"", "z.parquet")
+    assert a.tables == () or a.tables[0].rows == ()
+    assert (a.coverage.to_dict()["total"], a.coverage.to_dict()["extracted"]) == (0, 0)
+
+
+def test_a_batch_of_rows_with_no_values_still_costs_its_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(parquetfile, "_MAX_DECODED", 6)
+    monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 4)
+    monkeypatch.setattr(
+        parquetfile, "_cost", lambda array: (0, 0)
+    )  # as a column with nothing in it
+    a, _ = _one(_file(pa.table({"v": pa.array([None] * 20, pa.int64())})))
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        ("f.parquet rows 5-", "16 rows past what one file decodes")
+    ]
