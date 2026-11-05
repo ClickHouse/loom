@@ -731,18 +731,20 @@ leaves B avoidance unresolved against arm 4 (+1.1, -27.3 .. +38.9) and 32.2 poin
 the gold rows. Arms 3 and 6 are not resolved apart on D recall (+2.2, -7.7 .. +10.2).
 Unpaired, as per-arm rates: answers mislead more often with the documents alone than with
 the gold rows, D misleading 47.4 in arm 2 and 23.1 in arm 1 against 16.7 in arm 3, and A
-misleading 41.7 and 25.0 against 8.3; with the extracted rows they mislead at about the
-same rate with or without the documents, D misleading 42.3 in arm 6 and 37.2 in arm 4. A
-hypothesis, not tested here: B avoidance follows the rows the pre-edit block serves. Arm
-4's and arm 6's block served a row on 9 of the 43 tasks with gold rows, arm 3's on 39, but
-the arms also differ in the rows themselves, and no arm varies the block's reach alone.
+misleading 41.7 and 25.0 against 8.3; with the extracted rows, D answers mislead at about
+the same rate with or without the documents (42.3 in arm 6, 37.2 in arm 4), and A answers
+less often with them (26.7 against 36.7). A hypothesis, not tested here: B avoidance
+follows the rows the pre-edit block serves. Arm 4's and arm 6's block served a row on 9 of
+the 43 tasks with gold rows, arm 3's on 39, but the arms also differ in the rows
+themselves, and no arm varies the block's reach alone.
 
 **Treatment check.** Of the 43 tasks with gold rows, arm 3's pre-edit block served 39 and
 search 42 (a task counts when it served one of its own gold rows); arm 4's and arm 6's
 pre-edit block served 9 and search 33 (a task counts when it served any extracted row).
 The knowledge hits held the task's own document on all 43 tasks with gold rows in arms 2
-and 6. Extraction wrote 19 rows across the documents and their revisions, 12 with files,
-with no extraction failure and no failed code lookup.
+and 6; with five documents and five hits shown, this shows the hits were served, not how
+well they ranked. Extraction wrote 19 rows across the documents and their revisions, 12
+with files, with no extraction failure and no failed code lookup.
 
 **Judge stability.** The headline verdict (A and D misleading, B avoids, C passed) agreed
 across the two orders on 90.0% of 827 answers; an answer whose compared pass is
