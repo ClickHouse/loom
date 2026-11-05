@@ -500,7 +500,36 @@ def test_values_python_cannot_hold_are_searched_for_by_halves_to_a_bound(
     assert tab.rows[-1] == (None,) and tab.rows[0] == ("1970-01-01",)
     assert len(calls) <= 2 * 11  # halves to the one value: about two calls a level
     monkeypatch.setattr(parquetfile, "_MAX_UNHELD", 2)
-    a, tab = _one(
-        _file(pa.table({"d": pa.array([3_000_000, 3_000_000, 3_000_000, 1], pa.date32())}))
+    days = pa.array([3_000_000, 3_000_000, 3_000_000, 1], pa.date32())
+    a, tab = _one(_file(pa.table({"d": days})))
+    assert [f.reason for f in a.coverage.failed] == [
+        "2 values past what Python holds; "
+        "2 values left out unread past 2 values Python cannot hold in a batch"
+    ]
+
+
+def test_values_too_long_to_hold_are_read_only_to_the_decode_byte_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(parquetfile, "MAX_VALUE_CHARS", 10)
+    monkeypatch.setattr(parquetfile, "_MAX_DECODED_BYTES", 4_000)
+    monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 4)
+    t = pa.table({"s": ["x" * 1_000] * 40})  # each too long to hold, each a row held empty
+    a, tab = _one(_file(t))
+    units = {f.unit: f.reason for f in a.coverage.failed}
+    assert len(tab.rows) < 8  # cut at the byte bound, not at MAX_ROWS
+    assert units[f"f.parquet rows {len(tab.rows) + 1}-"].endswith(
+        "rows past what one artifact holds"
     )
-    assert [f.reason for f in a.coverage.failed] == ["4 values past what Python holds"]
+
+
+def test_a_dictionary_entry_is_charged_for_every_row_that_names_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(parquetfile, "_MAX_DECODED_BYTES", 10_000)
+    monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 4)
+    # One entry of 1,000 characters: a few KB stored, 1,000 bytes a row read into Python.
+    col = pa.DictionaryArray.from_arrays(pa.array([0] * 40, pa.int32()), pa.array(["x" * 1_000]))
+    a, tab = _one(_file(pa.table({"s": col})))
+    assert len(tab.rows) < 12  # past 10,000 bytes of copies, not past the 40 rows
+    assert any(f.reason.endswith("rows past what one artifact holds") for f in a.coverage.failed)

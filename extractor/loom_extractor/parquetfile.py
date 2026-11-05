@@ -24,8 +24,9 @@ What is read is bounded: the columns past MAX_COLUMNS are left out (`<name>
 columns`), the kept ones taken by position (a name may repeat); pages decode
 one at a time into batches no wider than the cell budget, so a row group's
 size does not decide what is held; the rows past the budget
-(`tabular.Budget`), and past _MAX_DECODED values decoded (a file of blank rows
-is no cheaper to read), are counted from the metadata, never decoded. The
+(`tabular.Budget`), and past _MAX_DECODED values or _MAX_DECODED_BYTES decoded
+(a file of blank rows, or of values too long to hold, is no cheaper to read),
+are counted from the metadata, never decoded. The
 extractor's child limits (memory, CPU, no network) bound one decode (a single
 huge page, a decoder fault): what does not fit fails the rows from there
 (`<name> rows N-`).
@@ -51,9 +52,10 @@ from loom_extractor.tabular import EMPTY, Budget, Cell, Rows, counted, fail, tab
 PARSER_VERSION = "1"
 MAX_VALUE_CHARS = 1 << 20  # not a setting: a value a table holds, as a CSV field
 _BATCH_ROWS = 1024  # not a setting: what one decode holds, at most
-# The values a file decodes, blank rows' among them: past them, the rest is
-# counted from the metadata, not read.
+# The values and the bytes a file decodes, blank rows' and values left out
+# among them: past either, the rest is counted from the metadata, not read.
 _MAX_DECODED = 4 * tabular.MAX_CELLS  # not a setting: a bound on hostile input
+_MAX_DECODED_BYTES = tabular.MAX_HELD_BYTES  # not a setting: a bound on hostile input
 # The values Python cannot hold that one batch's column is searched for; past
 # them the rest of that batch's column is left out unread.
 _MAX_UNHELD = 16  # not a setting: a bound on hostile input
@@ -115,20 +117,25 @@ def _json(value: Any) -> Any:
 
 # A value `_values` left out (and counted): no cell, though the row has a value there.
 LEFT_OUT = object()
+# One it did not convert at all: past _MAX_UNHELD values Python cannot hold in a batch.
+UNREAD = object()
 
 
 class _Reader:
-    """Cells of one column type; counts the values it leaves out."""
+    """Cells of the rows read; counts the values it leaves out."""
 
     def __init__(self) -> None:
         # The values left out of the rows read, by why.
-        self.left_out = {"bytes": 0, "long": 0, "unheld": 0}
+        self.left_out = {"bytes": 0, "long": 0, "unheld": 0, "unread": 0}
 
     def cell(self, value: Any, kind: str) -> Cell:
         if value is None:
             return EMPTY
         if value is LEFT_OUT:
             self.left_out["bytes" if kind == "bytes" else "unheld"] += 1
+            return EMPTY
+        if value is UNREAD:
+            self.left_out["unread"] += 1
             return EMPTY
         if kind == "nested":
             # str: a value of a type JSON does not know (one an extension adds) as its text.
@@ -290,7 +297,7 @@ def _split(column: Any, target: Any, failures: list[int]) -> list[Any]:
     import pyarrow as pa
 
     if failures[0] >= _MAX_UNHELD:
-        return _left_out(column)
+        return [None if null else UNREAD for null in column.is_null().to_pylist()]
     try:
         if target is not None:
             column = column.cast(target, safe=False)
@@ -306,6 +313,26 @@ def _split(column: Any, target: Any, failures: list[int]) -> list[Any]:
     return _split(column.slice(0, half), target, failures) + _split(
         column.slice(half), target, failures
     )
+
+
+def _logical_bytes(batch: Any) -> int:
+    """What a batch's values are, read into Python: its buffers, and a
+    dictionary's entries as many times as rows name them (each is a copy)."""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+
+    total = int(batch.nbytes)
+    for column in batch.columns:
+        t = column.type
+        if pa.types.is_dictionary(t) and (
+            pa.types.is_string(t.value_type)
+            or pa.types.is_large_string(t.value_type)
+            or pa.types.is_binary(t.value_type)
+            or pa.types.is_large_binary(t.value_type)
+        ):
+            sizes = pc.take(pc.binary_length(column.dictionary), column.indices)
+            total += int(pc.sum(sizes).as_py() or 0)
+    return total
 
 
 def _open(data: bytes) -> Any:
@@ -342,7 +369,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     # file: its leaf columns, a struct's fields each one, are what a batch decodes.
     batch_rows = max(1, min(_BATCH_ROWS, tabular.MAX_CELLS // max(1, meta.num_columns)))
     groups = [meta.row_group(g).num_rows for g in range(meta.num_row_groups)]
-    number = blank = decoded = 0
+    number = blank = decoded = decoded_bytes = 0
     for g, group_rows in enumerate(groups):
         if rows.more:
             # Past the budget: counted from the metadata, never decoded.
@@ -355,7 +382,9 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
             # so none is selected by name.
             for batch in pf.iter_batches(batch_size=batch_rows, row_groups=[g], use_threads=False):
                 decoded += batch.num_rows * max(1, meta.num_columns)
-                if decoded > _MAX_DECODED:  # a file of blank rows is read no further
+                decoded_bytes += _logical_bytes(batch)
+                # A file of blank rows, or of values each too long to hold, is read no further.
+                if decoded > _MAX_DECODED or decoded_bytes > _MAX_DECODED_BYTES:
                     rows.count(number + 1, group_rows - (number - start))
                     number = start + group_rows
                     break
@@ -389,6 +418,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
         "bytes": "of bytes, no text",
         "long": f"over {MAX_VALUE_CHARS} characters",
         "unheld": "past what Python holds",
+        "unread": f"left out unread past {_MAX_UNHELD} values Python cannot hold in a batch",
     }
     reasons = [f"{counted(n, 'value')} {causes[k]}" for k, n in reader.left_out.items() if n]
     if reasons:
