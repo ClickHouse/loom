@@ -17,7 +17,7 @@ from typing import Any
 
 from server.knowledge.domain import datasets as ds
 
-# The types each aggregate takes; count and count_distinct take any.
+# Which types each comparison and aggregate applies to; count and count_distinct take any.
 _NUMERIC = frozenset({"number", "duration"})
 _ORDERED = frozenset({"number", "duration", "date", "datetime", "string", "time"})
 _ORDERED_OPS = frozenset({"lt", "le", "gt", "ge"})

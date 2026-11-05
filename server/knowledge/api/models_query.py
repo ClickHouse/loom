@@ -18,6 +18,7 @@ MAX_AGGREGATES = 16
 MAX_SELECTED = 32
 MAX_FILTER_VALUES = 1000
 MAX_ROWS = 1000
+MAX_ORDER = 4
 
 _NAME = r"^[A-Za-z_][A-Za-z0-9_]{0,63}$"
 
@@ -121,7 +122,7 @@ class KnowledgeQueryInput(BaseModel):
     # <alias>.<column> in the result when the plan reads several datasets.
     select: list[QueryColumn] = Field(default_factory=list, max_length=MAX_SELECTED)
     # The result's order, by result column names; groups, or rows in source order, by default.
-    order_by: list[QueryOrder] = Field(default_factory=list, max_length=4)
+    order_by: list[QueryOrder] = Field(default_factory=list, max_length=MAX_ORDER)
     # The result rows returned at most; `truncated` says when more matched.
     limit: int = Field(default=100, ge=1, le=MAX_ROWS)
 

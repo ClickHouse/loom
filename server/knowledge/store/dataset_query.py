@@ -56,11 +56,16 @@ def _ref(c: Column) -> str:
     return f"q{c.index}.{_slot(c)}"
 
 
+def _read(c: Column) -> str:
+    """The column's value as its type reads: a date's slot holds a UTC
+    date-time at midnight, which reads as the date."""
+    return f"toDate({_ref(c)})" if c.column.type == "date" else _ref(c)
+
+
 def _of(o: Output) -> str:
-    """A group's or a selected column's reference: each names a column."""
-    if o.column is None:
-        raise ValueError(f"result column {o.name!r} names no column")
-    return _ref(o.column)
+    """A group's or a selected column's value: each names a column."""
+    assert o.column is not None  # groups and selected columns are built with one
+    return _read(o.column)
 
 
 def _condition(f: Filter, p: _Params) -> str:
@@ -95,7 +100,7 @@ def _aggregate(o: Output) -> str:
     if o.fn == "avg":
         # NULL for no values: a decimal divided by a NULL count is NULL, not an error.
         return f"sum(toDecimal256({x}, 9)) / nullIf(count({x}), 0)" if decimal else f"avg({x})"
-    return f"{o.fn}({x})"  # min, max
+    return f"{o.fn}({_read(o.column)})"  # min, max
 
 
 def compile_plan(plan: Resolved, org: str, namespace: str) -> tuple[str, dict[str, Any]]:
@@ -126,7 +131,10 @@ def compile_plan(plan: Resolved, org: str, namespace: str) -> tuple[str, dict[st
     for k, (left, right) in enumerate(plan.joins, start=1):
         source += f" INNER JOIN {subqueries[k]} ON {_ref(left)} = {_ref(right)}"
 
-    exprs = [_BUCKET[o.bucket].format(_of(o)) if o.bucket else _of(o) for o in plan.groups]
+    exprs = [
+        _BUCKET[o.bucket].format(_ref(o.column)) if o.bucket and o.column else _of(o)
+        for o in plan.groups
+    ]
     exprs += [_aggregate(o) for o in plan.aggregates]
     exprs += [_of(o) for o in plan.selected]
     picked = [f"{e} AS c{i}" for i, e in enumerate(exprs)]

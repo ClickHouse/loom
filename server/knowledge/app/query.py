@@ -14,6 +14,7 @@ snapshot replaced or erased while the statement ran is never returned.
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from typing import Any
 
 from server.core.ch import caller_shaped, own_write_reads
@@ -70,18 +71,18 @@ async def _catalogs(input: KnowledgeQueryInput, docs: dict[str, Any]) -> dict[st
 async def _still_served(
     input: KnowledgeQueryInput, docs: dict[str, Any], catalogs: dict[str, dict[str, Any]]
 ) -> None:
-    """Refuses unless every source still serves the version read and every
-    dataset the snapshot read: a publish moves the document's version, a
-    retyping approval the dataset's snapshot under the same version, and either
-    deletes the rows read without waiting."""
+    """Refuses unless every dataset is still served by the snapshot read: a
+    publish or a retyping approval serves another and deletes the rows read
+    without waiting, an erasure serves none. A metadata edit moves the
+    document's version but keeps the snapshot, so it is not a change."""
     after = await _live_versions(input.org, input.namespace, sorted(docs))
     for d in input.datasets:
-        now, then = after[d.source_uri], docs[d.source_uri]
+        now = after[d.source_uri]
         served = (
             await datasets_repo.at_version(
                 input.org, input.namespace, d.source_uri, now.version, dataset_id=d.dataset_id
             )
-            if now is not None and now.version == then.version
+            if now is not None
             else []
         )
         if not served or served[0]["snapshot_id"] != catalogs[d.alias]["snapshot_id"]:
@@ -89,6 +90,14 @@ async def _still_served(
                 f"dataset {d.alias!r} changed while the query ran: the snapshot read no longer"
                 " serves; run it again"
             )
+
+
+def _param_text(v: Any) -> str:
+    """A parameter as the receipt shows it: a decimal in plain digits (not
+    `0E-9`), a list as a JSON array of such text."""
+    if isinstance(v, list):
+        return json.dumps([_param_text(x) for x in v])
+    return format(v, "f") if isinstance(v, Decimal) else str(v)
 
 
 def _snapshot(alias: str, c: dict[str, Any]) -> QuerySnapshot:
@@ -124,7 +133,8 @@ async def handle_knowledge_query(input: KnowledgeQueryInput) -> KnowledgeQueryOu
     except ValueError as e:
         raise ValidationError(str(e)) from None
     sql, params = dataset_query.compile_plan(resolved, input.org, input.namespace)
-    with caller_shaped(narrow=_NARROW):
+    # The rows a publish just wrote, read where the catalog row naming them was.
+    with own_write_reads(), caller_shaped(narrow=_NARROW):
         rows = await dataset_query.run(sql, params)
     with own_write_reads():  # released only while every snapshot read still serves
         await _still_served(input, docs, catalogs)
@@ -149,9 +159,6 @@ async def handle_knowledge_query(input: KnowledgeQueryInput) -> KnowledgeQueryOu
             snapshots=snapshots,
             plan=plan,
             sql=sql,
-            params={
-                k: json.dumps(v, default=str) if isinstance(v, list) else str(v)
-                for k, v in params.items()
-            },
+            params={k: _param_text(v) for k, v in params.items()},
         ),
     )

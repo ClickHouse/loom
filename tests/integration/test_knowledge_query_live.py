@@ -234,9 +234,18 @@ async def test_a_parquet_decimal_sums_exactly(control_plane_url: str) -> None:
 
     if "parquet" not in await available_formats():
         pytest.skip("no configured document extractor declares parquet")
-    amounts = [Decimal("99999999999999999999.123456789"), Decimal("0.000000001")]
+    import datetime as dt
+
+    amounts = [Decimal("99999999999999999999.123456789"), Decimal("0.000000001"), Decimal(0)]
+    table = pa.table(
+        {
+            "amount": pa.array(amounts, pa.decimal128(38, 9)),
+            "settled": [True, True, False],
+            "due": pa.array([dt.date(2026, 1, 31), dt.date(2026, 2, 1), None], pa.date32()),
+        }
+    )
     buf = io.BytesIO()
-    pq.write_table(pa.table({"amount": pa.array(amounts, pa.decimal128(38, 9))}), buf)
+    pq.write_table(table, buf)
     org, ns, uri = unique_org("query-dec"), "data", "repo://ledger.parquet"
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
         d = await _publish(c, org, ns, uri, buf.getvalue(), "ledger.parquet")
@@ -251,9 +260,21 @@ async def test_a_parquet_decimal_sums_exactly(control_plane_url: str) -> None:
         assert r.status_code == 200, r.text
         # Every digit: a double would make the total 1e20.
         assert r.json()["rows"] == [
-            ["99999999999999999999.12345679", "49999999999999999999.561728395",
+            ["99999999999999999999.12345679", "33333333333333333333.041152263",
              "99999999999999999999.123456789"]
         ]  # fmt: skip
+        r = await _query(
+            c, org, ns, datasets=[{"source_uri": uri, "dataset_id": d["dataset_id"]}],
+            where=[{"column": _col("settled"), "op": "eq", "value": True},
+                   {"column": _col("amount"), "op": "gt", "value": 0}],
+            aggregates=[{"fn": "count", "name": "n"}, {"fn": "max", "column": _col("due"),
+                                                       "name": "last"}],
+        )  # fmt: skip
+        assert r.status_code == 200, r.text
+        out = r.json()
+        assert out["rows"] == [[2, "2026-02-01"]]  # a date, as its column's type says
+        assert [c_["type"] for c_ in out["columns"]] == ["number", "date"]
+        assert out["receipt"]["params"]["p5"] == "0.000000000"  # plain digits, not 0E-9
 
 
 @pytest.mark.asyncio

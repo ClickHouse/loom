@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from server.core.ch import _raise_if_caller_cap, sequential_reads_var
 from server.core.errors import NotFoundError, PreconditionFailedError, ValidationError
 from server.knowledge.api.models_query import KnowledgeQueryInput
 from server.knowledge.app import query as app
@@ -27,6 +28,7 @@ ORDERS = [
     {"name": "late", "type": "duration", "inferred": "duration", "slot": "n2"},
     {"name": "score", "type": "number", "inferred": "number", "slot": "f1"},
     {"name": "spare", "type": "number", "inferred": "number", "slot": ""},
+    {"name": "due", "type": "date", "inferred": "date", "slot": "t2"},
 ]
 TEAMS = [
     {"name": "team", "type": "string", "inferred": "string", "slot": "s1"},
@@ -196,6 +198,18 @@ def test_rows_are_selected_with_their_row_ids_in_source_order() -> None:
     assert "AND f1 IS NOT NULL)" in sql and sql.endswith("ORDER BY r0 LIMIT {p4:UInt32}")
 
 
+def test_a_date_reads_as_a_date_wherever_it_is_returned() -> None:
+    plan = plan_domain.resolve(
+        _plan(group_by=[{"column": _col("due")}],
+              aggregates=[{"fn": "max", "column": _col("due"), "name": "last"},
+                          {"fn": "max", "column": _col("placed_at"), "name": "at"}]),
+        CATALOGS,
+    )  # fmt: skip
+    sql, _ = dataset_query.compile_plan(plan, "o", "ns")
+    # Its slot holds a UTC date-time at midnight; a date-time column stays one.
+    assert sql.startswith("SELECT toDate(q0.t2) AS c0, max(toDate(q0.t2)) AS c1, max(q0.t1) AS c2")
+
+
 def test_a_schema_naming_a_column_no_slot_holds_is_not_compiled() -> None:
     bad = {"o": _catalog("orders", [{**ORDERS[0], "slot": "s1; DROP"}])}
     plan = plan_domain.resolve(
@@ -217,25 +231,33 @@ class Stores:
         self.after_run: dict[str, int | None] = {}
         self.snapshot_after_run: dict[str, int] = {}
         self.shaped: list[bool] = []
+        self.own_reads: list[bool] = []  # each lookup's and the scan's read-your-writes
+        self.served = {7}  # the document versions whose catalog rows serve the datasets
+        self.raises: BaseException | None = None
         monkeypatch.setattr(app.documents_repo, "get_one", self.get_one)
         monkeypatch.setattr(app.datasets_repo, "at_version", self.at_version)
         monkeypatch.setattr(app.dataset_query, "run", self.run)
 
     async def get_one(self, org: str, namespace: str, uri: str) -> Any:
+        self.own_reads.append(sequential_reads_var.get())
         v = self.versions.get(uri)
         return None if v is None else SimpleNamespace(version=v)
 
     async def at_version(
         self, org: str, ns: str, uri: str, v: int, *, dataset_id: str
     ) -> list[dict[str, Any]]:
+        self.own_reads.append(sequential_reads_var.get())
         c = self.catalogs.get(dataset_id)
-        return [c] if c is not None and c["source_uri"] == uri and v == 7 else []
+        return [c] if c is not None and c["source_uri"] == uri and v in self.served else []
 
     async def run(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         from server.core.ch import caller_shaped_var
 
         self.shaped.append(caller_shaped_var.get())
+        self.own_reads.append(sequential_reads_var.get())
         self.ran.append((sql, params))
+        if self.raises is not None:
+            _raise_if_caller_cap(self.raises)  # as the client does with a cap's error
         self.versions.update(self.after_run)  # type: ignore[arg-type]
         for dataset_id, snapshot in self.snapshot_after_run.items():
             self.catalogs[dataset_id] = {**self.catalogs[dataset_id], "snapshot_id": snapshot}
@@ -260,6 +282,9 @@ def _run(**kw: Any) -> Any:
 def test_a_query_reads_the_live_snapshot_and_names_it_in_its_receipt(stores: Stores) -> None:
     out = _run()
     assert stores.shaped == [True]  # under the caller-shaped ceilings, as the reader user
+    # Every lookup and the scan read the caller's own writes: a query right after an
+    # ingest finds the snapshot it published, and every row of it.
+    assert stores.own_reads == [True] * 5
     assert (out.rows, out.complete, out.incomplete, out.truncated) == ([[5]], True, [], False)
     (snap,) = out.receipt.snapshots
     assert (snap.alias, snap.snapshot_id, snap.revision, snap.schema_state) == (
@@ -314,6 +339,19 @@ def test_a_snapshot_replaced_while_the_statement_ran_is_never_released(stores: S
     stores.snapshot_after_run = {"orders": 99}
     with pytest.raises(PreconditionFailedError, match="dataset 'o' changed while the query ran"):
         _run()
+    # A metadata edit moves the version but keeps the snapshot: the rows read still serve.
+    stores.catalogs["orders"], stores.snapshot_after_run = CATALOGS["o"], {}
+    stores.after_run, stores.served = {"repo://orders.csv": 8}, {7, 8}
+    assert _run().rows == [[5]]
+
+
+def test_a_query_past_the_ceilings_says_how_to_narrow_a_query(stores: Stores) -> None:
+    stores.raises = RuntimeError("Code: 158. DB::Exception: Limit for rows exceeded")
+    with pytest.raises(ValidationError) as e:
+        _run()
+    assert str(e.value).endswith(
+        "narrow it (a filter, fewer datasets, a join on a key that does not repeat)"
+    )
 
 
 def test_a_result_says_what_it_may_not_cover_and_when_more_matched(stores: Stores) -> None:
