@@ -119,6 +119,9 @@ async def test_reference_queries(control_plane_url: str) -> None:
             "not_listed": dict(datasets=[o], where=[
                 {"column": _col("amount"), "op": "not_in", "values": ["0.1"]}
             ], aggregates=[{"fn": "count", "name": "n"}]),
+            "thirds": dict(datasets=[o], where=[
+                {"column": _col("order_id"), "op": "in", "values": [1, 2, 5]}
+            ], aggregates=[{"fn": "avg", "column": _col("order_id"), "name": "mean"}]),
             "not_equal": dict(datasets=[o], where=[
                 {"column": _col("amount"), "op": "ne", "value": "0.1"}
             ], aggregates=[{"fn": "count", "name": "n"}]),
@@ -158,6 +161,7 @@ async def test_reference_queries(control_plane_url: str) -> None:
         assert results["unpriced"]["rows"] == [[1]]
         assert results["not_listed"]["rows"] == [[3]]  # a null amount is in no list, nor out of one
         assert results["not_equal"]["rows"] == [[3]]  # nor unequal to one
+        assert results["thirds"]["rows"] == [[2.666666667]]  # 8/3, rounded, not truncated
         # 0.1 and 120.5 are platform's; 120.5's order is the one placed at 10:00 on the 15th.
         assert results["listed"]["rows"] == [[1, "2026-01-31T23:59:59"]]
         assert results["joined"]["rows"] == [[120.6]]

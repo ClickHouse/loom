@@ -180,14 +180,14 @@ def test_a_value_its_op_does_not_take_is_refused_not_dropped(
 def test_a_list_is_counted_as_the_client_encodes_it() -> None:
     """The bound counts what clickhouse-connect sends: if its escaping changes,
     this fails before a list past ClickHouse's parameter size is sent."""
-    from clickhouse_connect.driver.binding import must_escape, str_query_value
+    from clickhouse_connect.driver.binding import format_bind_value, must_escape
 
     from server.knowledge.api import models_query
 
     assert set(models_query._ESCAPED) == set(must_escape)
     for values in (["`\n\t'\\x€"] * 3, ["plain", "two words"]):
         # `[a, b]`: the brackets take the bytes of the `, ` the last value has none of.
-        sent = len(str_query_value(values).encode())
+        sent = len(format_bind_value(values, None).encode())  # what a {p:Array(T)} sends
         assert sum(models_query._sent_bytes(v) for v in values) == sent
 
 
@@ -244,7 +244,7 @@ def test_the_statement_holds_no_caller_text_and_reads_each_dataset_in_its_scope(
     sql, params = dataset_query.compile_plan(plan, "o", "ns")
     assert sql == (
         "SELECT toStartOfMonth(q0.t1) AS c0, sum(toDecimal256(q0.n1, 9)) AS c1,"
-        " sum(toDecimal256(q0.n1, 9)) / nullIf(count(q0.n1), 0) AS c2"
+        " round(sum(toDecimal256(q0.n1, 18)) / nullIf(count(q0.n1), 0), 9) AS c2"
         " FROM (SELECT row_id, n1, s1, t1 FROM loom.dataset_rows WHERE org = {p0:String}"
         " AND namespace = {p1:String} AND dataset_id = {p2:String} AND snapshot_id = {p3:UInt64})"
         " AS q0 INNER JOIN (SELECT row_id, s1 FROM loom.dataset_rows WHERE org = {p0:String}"

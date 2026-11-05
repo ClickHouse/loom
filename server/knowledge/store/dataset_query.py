@@ -9,8 +9,8 @@ caller's org and namespace, with its filters, before any join, so a row of
 another tenant or snapshot is never joined, counted or summed.
 
 A sum of a decimal column is taken in Decimal256, which no sum of the rows a
-dataset holds overflows, and an average is that sum over the count, to nine
-places (ClickHouse's `avg` of a decimal is a double).
+dataset holds overflows, and an average is that sum over the count, rounded
+to nine places (ClickHouse's `avg` of a decimal is a double).
 """
 
 from __future__ import annotations
@@ -66,8 +66,8 @@ def _read(c: Column) -> str:
 
 
 def _of(o: Output) -> str:
-    """A group's or a selected column's value: each names a column."""
-    assert o.column is not None  # groups and selected columns are built with one
+    """A selected column's value."""
+    assert o.column is not None  # selected columns are built with one
     return _read(o.column)
 
 
@@ -107,8 +107,14 @@ def _aggregate(o: Output) -> str:
     if o.fn == "sum":
         return f"sum(toDecimal256({x}, 9))" if decimal else f"sum({x})"
     if o.fn == "avg":
-        # NULL for no values: a decimal divided by a NULL count is NULL, not an error.
-        return f"sum(toDecimal256({x}, 9)) / nullIf(count({x}), 0)" if decimal else f"avg({x})"
+        # Divided at 18 places and rounded to nine: a decimal division truncates to its
+        # scale (2/3 at nine places is 0.666666666). NULL for no values: a decimal
+        # divided by a NULL count is NULL, not an error.
+        return (
+            f"round(sum(toDecimal256({x}, 18)) / nullIf(count({x}), 0), 9)"
+            if decimal
+            else f"avg({x})"
+        )
     return f"{o.fn}({_read(o.column)})"  # min, max
 
 

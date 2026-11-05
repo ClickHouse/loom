@@ -474,8 +474,9 @@ to one read-only statement over `loom.dataset_rows` (`server/knowledge/store/dat
 result names `c0`, `c1`, ... and typed parameters alone, so nothing a caller wrote is SQL. Each dataset is a subquery
 held to its snapshot and the caller's org and namespace, with its own filters, before any join, so a row of another
 tenant or snapshot never reaches a count. A sum of a decimal column is taken in `Decimal256`, which no dataset's rows
-overflow, and an average is that sum over the count, to nine places (ClickHouse's `avg` of a decimal is a double); a
-dataset's number columns past its first 24 number or duration columns are held, so summed and averaged, as doubles.
+overflow, and an average is that sum over the count, divided at 18 places and rounded to nine (ClickHouse's `avg` of a
+decimal is a double, and a decimal division truncates); a dataset's number columns past its first 24 number or duration
+columns are held, so summed and averaged, as doubles.
 
 Each dataset is read at the snapshot its source's live document serves; a dataset whose schema needs an answer
 (`needs_clarification`) is refused until it is approved. The statement runs under the caller-shaped ceilings as the
