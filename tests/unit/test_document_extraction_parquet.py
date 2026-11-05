@@ -86,30 +86,34 @@ def test_each_column_type_reads_as_its_table_value() -> None:
     assert (tab.locator.row_start, tab.locator.row_end) == (1, 2)
 
 
-def test_values_json_cannot_hold_as_numbers_are_text() -> None:
+def test_values_json_cannot_hold_as_numbers_keep_their_column_a_number() -> None:
     t = pa.table(
         {
-            "u": pa.array([2**64 - 1, 1], pa.uint64()),  # past signed 64 bits: its digits
-            "f": pa.array([float("nan"), float("inf")], pa.float64()),
+            "u": pa.array([2**64 - 1, 1, 2], pa.uint64()),  # past signed 64 bits: its digits
+            "f": pa.array([float("nan"), float("-inf"), 1.5], pa.float64()),
+            "f16": pa.array([float("inf"), float("nan"), 0.5], pa.float16()),
         }
     )
-    _, tab = _one(_file(t))
-    assert tab.rows == (("18446744073709551615", "nan"), (1, "inf"))
-    # Past signed 64 bits, a number's exact digits, as a decimal's: the column stays a number.
-    assert [c.type for c in tab.columns] == ["number", "string"]
+    a, tab = _one(_file(t))
+    # A NaN is no value, as a null; an infinity is left out and counted.
+    assert tab.rows == (("18446744073709551615", None, None), (1, None, None), (2, 1.5, 0.5))
+    assert [c.type for c in tab.columns] == ["number", "number", "number"]
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        ("f.parquet values", "2 values infinite, no number a cell holds")
+    ]
 
 
 def test_float32_bounds_and_small_or_scaled_decimals_read_as_plain_numbers() -> None:
     big = 3.4028234663852886e38  # float32's maximum, a common "no value" mark
     t = pa.table(
         {
-            "f32": pa.array([big, -big, float("inf")], pa.float32()),
+            "f32": pa.array([big, -big, 2.5], pa.float32()),
             "dec": pa.array([Decimal("0.0000001"), Decimal("1"), None], pa.decimal128(10, 7)),
         }
     )
     a, tab = _one(_file(t))
     assert tab.rows[0] == (3.4028235e38, "0.0000001")
-    assert tab.rows[1][:2] == (-3.4028235e38, "1.0000000") and tab.rows[2][0] == "inf"
+    assert tab.rows[1][:2] == (-3.4028235e38, "1.0000000") and tab.rows[2][0] == 2.5
     assert a.coverage.complete
 
 
@@ -199,13 +203,16 @@ def test_a_nanosecond_column_is_read_to_the_microsecond_in_every_batch(
             "ts": pa.array(ns, pa.timestamp("ns")),
             "du": pa.array([1_500, 86_400_000_123_456], pa.duration("ns")),
             "nested": pa.array([[ns[0]], [ns[1]]], pa.list_(pa.timestamp("ns"))),
+            "large": pa.array([[ns[0]], [ns[1]]], pa.large_list(pa.timestamp("ns"))),
+            "tod": pa.array([1_000_000_000, 3_600_000_123_456], pa.time64("ns")),
         }
     )
     a, tab = _one(_file(t))
-    assert [c.type for c in tab.columns] == ["datetime", "duration", "string"]
+    assert [c.type for c in tab.columns] == ["datetime", "duration", "string", "string", "time"]
+    whole, sub = '["2023-11-14T22:13:20"]', '["2023-11-14T22:13:20.123456"]'
     assert tab.rows == (
-        ("2023-11-14T22:13:20", "0:00:00.000001", '["2023-11-14T22:13:20"]'),
-        ("2023-11-14T22:13:20.123456", "24:00:00.000123", '["2023-11-14T22:13:20.123456"]'),
+        ("2023-11-14T22:13:20", "0:00:00.000001", whole, whole, "00:00:01"),
+        ("2023-11-14T22:13:20.123456", "24:00:00.000123", sub, sub, "01:00:00.000123"),
     )
     assert a.coverage.complete
 

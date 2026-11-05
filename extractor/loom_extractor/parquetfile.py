@@ -8,9 +8,9 @@ A value reads as its column's type says, decided once from the schema:
 - an integer is a number; a decimal is a number written as its exact digits
   (a JSON number would read back as a double and lose them), as is an integer
   past signed 64 bits (a uint64);
-- a float is a number (a float32 or float16 column's its shortest decimal;
-  one inside a list or struct is the double it widens to); NaN or an infinity
-  is its text;
+- a float is a number (a float32 or float16 column's value is its shortest
+  decimal; one inside a list or struct is the double it widens to); a NaN is
+  no value, as a null is, and an infinity is left out and counted;
 - a bool, a date, a timestamp (its zone kept, none when the column has none),
   a time of day and a duration (`H:MM:SS`, hours past a day) as the other
   readers write them; a nanosecond unit is read to the microsecond;
@@ -130,7 +130,7 @@ class _Reader:
 
     def __init__(self) -> None:
         # The values left out of the rows read, by why.
-        self.left_out = {"bytes": 0, "long": 0, "unheld": 0, "unread": 0}
+        self.left_out = {"bytes": 0, "infinite": 0, "long": 0, "unheld": 0, "unread": 0}
 
     def cell(self, value: Any, kind: str) -> Cell:
         if value is None:
@@ -144,17 +144,22 @@ class _Reader:
         if kind == "nested":
             # str: a value of a type JSON does not know (one an extension adds) as its text.
             value, kind = json.dumps(_json(value), ensure_ascii=False, default=str), "string"
-        if kind in ("float32", "float16"):
-            if not math.isfinite(value):
-                return Cell(str(value), "string")
-            return Cell(_shortest(value, "f" if kind == "float32" else "e"), "number")
+        if kind in ("float32", "float16", "number") and isinstance(value, float):
+            # A NaN is a float column's mark of no value (pandas and Spark write one
+            # for a missing number), so it is a blank cell; an infinity no number
+            # a cell holds, so it is left out. Either way the column stays a number.
+            if math.isnan(value):
+                return EMPTY
+            if math.isinf(value):
+                self.left_out["infinite"] += 1
+                return EMPTY
+            if kind != "number":
+                return Cell(_shortest(value, "f" if kind == "float32" else "e"), "number")
         if kind == "number":
             if isinstance(value, Decimal):  # an Arrow decimal is finite
                 return Cell(_plain(value), "number")
             if isinstance(value, int):
                 return Cell(value, "number") if value in _INT64 else Cell(str(value), "number")
-            if not math.isfinite(value):
-                return Cell(str(value), "string")
             return Cell(value, "number")
         if kind in ("date", "datetime", "time"):
             return Cell(value.isoformat(), kind)
@@ -487,6 +492,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
             break
     causes = {
         "bytes": "of bytes, no text",
+        "infinite": "infinite, no number a cell holds",
         "long": f"over {MAX_VALUE_CHARS} characters",
         "unheld": "past what Python holds",
         "unread": f"left out unread past {_MAX_UNHELD} values Python cannot hold in a column",
