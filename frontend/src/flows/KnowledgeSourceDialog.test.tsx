@@ -292,6 +292,20 @@ describe("AddSourceDialog's kinds", () => {
     expect(screen.getByLabelText(/^Read-only credential/)).toHaveValue("");
   });
 
+  it("shows the server's refusal of a config as it comes back", async () => {
+    const message = "config.project_ids: at most 20 projects";
+    vi.mocked(addKnowledgeSource).mockRejectedValue(new ApiError({ status: 400, code: "BAD_CONFIG", message }));
+    renderAdd();
+    fireEvent.click(screen.getByRole("radio", { name: "Project documents" }));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "roadmap" } });
+    await typeInto(/^Projects/, PROJECT);
+    fireEvent.change(screen.getByLabelText(/^Read-only API key/), { target: { value: SECRET } });
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
+    expectKeyNowhere();
+  });
+
   it("shows the server's refusal as it comes back", async () => {
     // What the server answers when the account cannot see the space.
     const message = "the source could not be listed: space abc: http_404; check the id and that the account can see it";

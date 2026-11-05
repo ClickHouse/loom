@@ -318,17 +318,18 @@ export function projectIds(text: string): string[] {
 
 /** A page store id from a bare id with or without dashes, or from a pasted link the id
  *  that ends its last path segment (`Title-<id>`; the `?v=` view id is not the
- *  database's). With `peek`, a link's `p=<id>` (the page a peek link opens) comes
- *  first. Lower-case without dashes; the server stores it dashed. A piece that is
+ *  database's). With `peek`, a link with a `p=` (the page a peek link opens) gives
+ *  that page, never the database in its path. Lower-case without dashes; the server stores it dashed. A piece that is
  *  neither is kept as typed, so the form can name it. */
 function pageStoreId(piece: string, peek: boolean): string {
   if (!piece.includes("/")) {
     const hexes = piece.toLowerCase().replace(/-/g, "");
     return PAGE_ID_RE.test(hexes) ? hexes : piece;
   }
-  if (peek) {
-    const page = /[?&]p=([0-9a-f-]+)(?:[&#]|$)/i.exec(piece)?.[1]?.toLowerCase().replace(/-/g, "");
-    if (page && PAGE_ID_RE.test(page)) return page;
+  const page = peek ? /[?&]p=([^&#]*)/.exec(piece)?.[1] : undefined;
+  if (page !== undefined) {
+    const hexes = page.toLowerCase().replace(/-/g, "");
+    return PAGE_ID_RE.test(hexes) ? hexes : piece;
   }
   // The id is the whole segment, or what follows the title's last `-`.
   const segment = (piece.split(/[?#]/)[0] ?? "").replace(/\/+$/, "").split("/").pop() ?? "";

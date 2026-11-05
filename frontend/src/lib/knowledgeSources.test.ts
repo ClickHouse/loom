@@ -140,6 +140,9 @@ describe("the add form's other kinds", () => {
     const VIEW = "0123456789abcdef0123456789abcdef";
     const peekLink = `https://pages.example/team/${DATABASE}?v=${VIEW}&p=${PAGE}&pm=s`;
     expect(pageIds(peekLink)).toEqual([PAGE]);
+    // A mistyped page in a peek link is named, never read as the database.
+    const badPeek = `https://pages.example/team/${DATABASE}?v=${VIEW}&p=${PAGE}0&pm=s`;
+    expect(pageIds(badPeek)).toEqual([badPeek]);
     // In the databases field the same link is its database.
     expect(databaseIds(peekLink)).toEqual([DATABASE]);
     expect(sourceAddBody("o", "x", { ...emptySourceForm(), kind: "notion", databases: peekLink }, true).config).toEqual(
