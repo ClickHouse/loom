@@ -408,7 +408,7 @@ class _Reader:
                     unit = f"{name} rows {sheet.number + (not sheet.open)}-"
                     failed.append(Failure(unit, str(e)))
         # A merge reaches no row past the last one held (nor, in `_spread`, past MAX_ROWS).
-        rest = sheet.counted
+        rest = sheet.past
         last = rest.more_from - 1 if rest.more_from else max(sheet.grid, default=0)
         skipped, clipped = _spread(sheet.grid, sorted(sheet.merges), budget, last)
         skipped += sheet.merges_dropped
@@ -466,7 +466,7 @@ class _SheetStream:
         self.repeated = 0  # cells at a position already read: the earlier value is lost
         self._chars = 0  # the value being read
         self._too_long = False
-        self.counted = Rows([])  # the rows past the budget, counted by the table's rule
+        self.past = Rows([])  # the rows past the budget, counted by the table's rule
         self._filled = False  # the row has a value (counted, past the budget)
         self.number = 0
         self.open = False  # within a row
@@ -589,12 +589,12 @@ class _SheetStream:
                 self.repeated += len(held.keys() & self._row.keys())
                 held.update(self._row)
             else:
-                self.counted.count(self.number)
+                self.past.count(self.number)
 
     def _full(self) -> bool:
         """Whether the open row is past the budget: only checked for a value."""
         over = self._row_held > self.budget.held
-        return over or bool(self.counted.more) or len(self.grid) > MAX_ROWS or self.budget.cut
+        return over or bool(self.past.more) or len(self.grid) > MAX_ROWS or self.budget.cut
 
 
 def _spread(
@@ -738,14 +738,14 @@ def extract_xlsx(data: bytes) -> Artifact:
         # The merged ranges it read stay counted: their time is spent either way.
         before = budget.cells, budget.held, budget.cut, reader.uncalculated, reader.unshared
         try:
-            rows, lost, unread = reader.rows(pkg, name, part, budget)
+            rows, sheet_failed, unread = reader.rows(pkg, name, part, budget)
         except PartError as e:
             # Its rows, and what they counted, are not kept.
             budget.cells, budget.held, budget.cut, reader.uncalculated, reader.unshared = before
             fail(budget, failed, f"sheet {name}", str(e))
             unread_sheets += 1
             continue
-        for f in lost:
+        for f in sheet_failed:
             fail(budget, failed, f.unit, f.reason)
         total += unread
         if rows is None:
@@ -756,13 +756,13 @@ def extract_xlsx(data: bytes) -> Artifact:
             continue
         mark = len(acc.blocks)
         acc.heading(1, name, Locator(sheet=name), **({"hidden": True} if hidden else {}))
-        t, lost = table(acc, f"t{i}", name, rows, budget, sheet=name)
+        t, table_failed = table(acc, f"t{i}", name, rows, budget, sheet=name)
         if t is not None:
             tables.append(replace(t, attrs={"hidden": True}) if hidden else t)
             kept += len(t.rows)
         else:  # no table: no heading over nothing, which would be a chunk of its own
             del acc.blocks[mark:]
-        failed += lost
+        failed += table_failed
         total += len(rows.rows) + rows.more
     return Artifact(
         format="xlsx",
