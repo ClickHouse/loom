@@ -226,6 +226,7 @@ def test_rows_are_selected_with_their_row_ids_in_source_order() -> None:
     sql, _ = dataset_query.compile_plan(plan, "o", "ns")
     assert sql.startswith("SELECT q0.s1 AS c0, q0.f1 AS c1, q0.row_id AS r0 FROM")
     assert "AND f1 IS NOT NULL)" in sql and sql.endswith("ORDER BY r0 LIMIT {p4:UInt32}")
+    assert "SETTINGS" not in sql  # the extended date results are a bucket's alone
 
 
 def test_a_date_reads_as_a_date_wherever_it_is_returned() -> None:

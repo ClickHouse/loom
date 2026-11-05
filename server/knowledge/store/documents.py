@@ -220,8 +220,8 @@ async def get_many_by_uris(
 async def live_versions(
     org: str, namespace: str, source_uris: list[str], *, ch: _CHClient | None = None
 ) -> dict[str, int]:
-    """Each source's live document version, in one read of the key alone; a
-    source with no live document is absent."""
+    """Each source's live document version, in one read of each source's version
+    only, not its content; a source with no live document is absent."""
     if not source_uris:
         return {}
     ch = ch or _default_client()

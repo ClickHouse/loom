@@ -61,7 +61,9 @@ class QueryFilter(BaseModel):
     # The comparison: contains and starts_with (case-sensitive) apply to text; lt, le, gt
     # and ge to ordered types; a null meets none but is_null (ne and not_in skip it too).
     op: FilterOp
-    # The value compared with, read as the column's type; in, not_in and the null tests take none.
+    # The value compared with, read as the column's type: a date or date-time as ISO text (an
+    # offset read as UTC), a duration as seconds or H:MM:SS, a number to at most nine decimal
+    # places (more is refused); in, not_in and the null tests take none.
     value: Scalar | None = None
     # The values of in and not_in.
     values: list[Scalar] = Field(default_factory=list, max_length=MAX_FILTER_VALUES)

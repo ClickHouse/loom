@@ -467,15 +467,15 @@ the caller's namespace, each under an alias; filters on their columns, all of wh
 each dataset past the first to one before it; groups (a date or date-time by day, month or year, in UTC); and aggregates
 (`count`, `count_distinct`, `sum`, `avg`, `min`, `max`), or the rows themselves with their row ids. The plan is checked
 against the datasets' schemas (`server/knowledge/domain/query.py`): every column it names is one a schema stores, every
-filter value is read as its column's type (as a row's value is, but a number past nine decimal places is refused, not
-rounded), and every comparison, join, group and aggregate is one its columns' types allow; join keys must sit in the
-same kind of slot, since a decimal and a double have no common type. It compiles to one read-only statement over
-`loom.dataset_rows` (`server/knowledge/store/dataset_query.py`) built from slot names, result names `c0`, `c1`, ... and
-typed parameters alone, so nothing a caller wrote is SQL. Each dataset is a subquery held to its snapshot and the
-caller's org and namespace, with its own filters, before any join, so a row of another tenant or snapshot never reaches
-a count. A sum of a decimal column is taken in `Decimal256`, which no dataset's rows overflow, and an average is that
-sum over the count, to nine places (ClickHouse's `avg` of a decimal is a double); a dataset's number columns past the
-first 24 are held, so summed and averaged, as doubles.
+filter value is read as its column's type (as a row's value is, but a decimal past nine places is refused, not rounded;
+a number column held as a double compares as one), and every comparison, join, group and aggregate is one its columns'
+types allow; join keys must sit in the same kind of slot, since a decimal and a double have no common type. It compiles
+to one read-only statement over `loom.dataset_rows` (`server/knowledge/store/dataset_query.py`) built from slot names,
+result names `c0`, `c1`, ... and typed parameters alone, so nothing a caller wrote is SQL. Each dataset is a subquery
+held to its snapshot and the caller's org and namespace, with its own filters, before any join, so a row of another
+tenant or snapshot never reaches a count. A sum of a decimal column is taken in `Decimal256`, which no dataset's rows
+overflow, and an average is that sum over the count, to nine places (ClickHouse's `avg` of a decimal is a double); a
+dataset's number columns past the first 24 are held, so summed and averaged, as doubles.
 
 Each dataset is read at the snapshot its source's live document serves; a dataset whose schema needs an answer
 (`needs_clarification`) is refused until it is approved. The statement runs under the caller-shaped ceilings as the
