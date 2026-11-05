@@ -169,7 +169,6 @@ def test_a_plain_multi_file_diff_without_diff_lines_is_well_formed() -> None:
         "--- a/src/b.cpp\n+++ b/src/b.cpp\n@@ -1,0 +1,1 @@\n+two\n"
     )
     assert rb.added_text(plain) == ("one\ntwo", False)
-    assert rb.read_hunks(plain).paths == ["src/a.cpp", "src/b.cpp"]
 
 
 def test_a_blank_line_after_a_hunk_makes_the_check_unknown() -> None:

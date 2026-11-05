@@ -163,28 +163,15 @@ class DiffFacts:
 
 
 @dataclass
-class HunkLine:
-    """One line inside a hunk: `marker` is `+`, `-` or ` `, `old_no` its old-side line
-    number (`-` and ` ` lines), the paths those of the file it is in."""
-
-    old_path: str
-    new_path: str
-    marker: str
-    body: str
-    old_no: int
-
-
-@dataclass
 class Hunks:
-    """A unified diff read hunk by hunk: the new-side paths in diff order, every line
-    inside a hunk, and whether a hunk's header miscounted its lines."""
+    """What the token check reads of a unified diff: the lines its hunks add, without
+    their `+`, and whether a hunk's header miscounted its lines."""
 
-    paths: list[str] = field(default_factory=list)
-    lines: list[HunkLine] = field(default_factory=list)
+    added: list[str] = field(default_factory=list)
     malformed: bool = False
 
 
-_HUNK_HEADER = re.compile(r"@@ -(\d+)(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+_HUNK_HEADER = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 # What may follow a hunk whose counted lines ran out (`--- ` starts the next file of a
 # plain `diff -u` with no `diff` lines).
 _AFTER_HUNK = ("diff ", "@@", "\\", "--- ")
@@ -192,13 +179,10 @@ _AFTER_HUNK = ("diff ", "@@", "\\", "--- ")
 
 @dataclass
 class _Cursor:
-    """Where a walk of a diff is: the file it is in and what is left of the hunk."""
+    """What is left of the hunk a walk of a diff is in."""
 
-    old_path: str = ""
-    new_path: str = ""
     old_left: int = 0
     new_left: int = 0
-    old_no: int = 0
     ended: bool = False  # a hunk's counts just ran out
 
     def in_hunk(self) -> bool:
@@ -239,10 +223,10 @@ def _hunk_line(out: Hunks, cur: _Cursor, line: str) -> bool:
         out.malformed = True
         cur.old_left = cur.new_left = 0
         return False
-    out.lines.append(HunkLine(cur.old_path, cur.new_path, marker, line[1:], cur.old_no))
+    if marker == "+":
+        out.added.append(line[1:])
     if marker != "+":
         cur.old_left -= 1
-        cur.old_no += 1
     if marker != "-":
         cur.new_left -= 1
     if cur.old_left < 0 or cur.new_left < 0:
@@ -252,28 +236,20 @@ def _hunk_line(out: Hunks, cur: _Cursor, line: str) -> bool:
 
 
 def _between_hunks(out: Hunks, cur: _Cursor, line: str) -> None:
-    """Read one line outside a hunk: a file header, a hunk header, or anything else."""
+    """Read one line outside a hunk: a hunk header starts one; file headers and the rest
+    are passed over."""
     if cur.ended and line.startswith("\\"):
         return  # "\ No newline at end of file" after the hunk's last line
     if cur.ended and not line.startswith(_AFTER_HUNK):
         out.malformed = True  # lines go on after the counts ran out
     cur.ended = False
-    if line.startswith("--- "):
-        p = line[4:].strip()
-        cur.old_path = "" if p == "/dev/null" else (p[2:] if p.startswith("a/") else p)
-    elif line.startswith("+++ "):
-        p = line[4:].strip()
-        cur.new_path = "" if p == "/dev/null" else (p[2:] if p.startswith("b/") else p)
-        if cur.new_path and cur.new_path not in out.paths:
-            out.paths.append(cur.new_path)
-    elif line.startswith("@@"):
+    if line.startswith("@@"):
         m = _HUNK_HEADER.match(line)
         if m is None:
             out.malformed = True
             return
-        cur.old_no = int(m.group(1))
-        cur.old_left = int(m.group(2) if m.group(2) is not None else 1)
-        cur.new_left = int(m.group(3) if m.group(3) is not None else 1)
+        cur.old_left = int(m.group(1) if m.group(1) is not None else 1)
+        cur.new_left = int(m.group(2) if m.group(2) is not None else 1)
         cur.ended = not cur.in_hunk()
 
 
@@ -464,7 +440,8 @@ def apply_budget(
 ) -> tuple[dict[str, dict[str, Any]], int]:
     """Trim whole rows, largest section first, until the served sections fit
     the budget. Every section keeps its verdict (and `rows_total`); a
-    trimmed one says `truncated`. Deterministic: ties break on SECTION_ORDER."""
+    trimmed one says `truncated`. Deterministic: ties break on the order of `names`
+    (SERVED_ORDER)."""
     out: dict[str, dict[str, Any]] = {}
     for n in names:
         sec = sections.get(n) or section(
@@ -614,7 +591,7 @@ def checked_names(text: str, *, constraint: bool) -> list[str]:
 def added_text(diff: str) -> tuple[str, bool]:
     """(the lines a unified diff adds without their `+`, whether a hunk miscounted)."""
     hunks = read_hunks(diff)
-    return "\n".join(h.body for h in hunks.lines if h.marker == "+"), hunks.malformed
+    return "\n".join(hunks.added), hunks.malformed
 
 
 def names_in(added: str, names: list[str]) -> list[str]:
@@ -798,8 +775,6 @@ __all__ = [
     "TIER_BUDGET_TOKENS",
     "BriefInputs",
     "DiffFacts",
-    "HunkLine",
-    "Hunks",
     "added_text",
     "apply_budget",
     "canonical",
@@ -810,7 +785,6 @@ __all__ = [
     "names_in",
     "parse_diff",
     "rationale_section",
-    "read_hunks",
     "row_names",
     "serve",
     "source_stems",
