@@ -62,7 +62,7 @@ override replaces the plugin's entry whole, helper included), and put the same U
 ```toml
 [mcp_servers.loom]
 url = "https://loom.example.com/mcp?toolset=core,coding,tracker,tasks"
-http_headers_helper = 'h="$(ls -d "$HOME"/.codex/plugins/cache/*/loom/*/bin/loom-mcp-headers.mjs 2>/dev/null | sort -V | tail -1)"; sh "${h%/*}/loom-node" "$h"'
+http_headers_helper = 'l="$(ls -d "$HOME"/.codex/plugins/cache/*/loom/*/bin/loom-node 2>/dev/null | sort -V | tail -1)"; sh "$l" "${l%/*}/loom-mcp-headers.mjs"'
 ```
 
 Codex runs the helper through `sh -c` with a reduced environment (`HOME`, `PATH`, the

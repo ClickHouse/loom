@@ -348,7 +348,10 @@ test("every hook and both header helpers start Node through the launcher", () =>
     'sh "$CLAUDE_PLUGIN_ROOT/bin/loom-node" "$CLAUDE_PLUGIN_ROOT/bin/loom-mcp-headers.mjs"',
   );
   const codex = JSON.parse(fs.readFileSync(path.join(codexRoot, ".mcp.json"), "utf8")).mcpServers.loom;
-  assert.match(codex.http_headers_helper, /; sh "\$\{h%\/\*\}\/loom-node" "\$h"$/);
+  assert.match(
+    codex.http_headers_helper,
+    /\/bin\/loom-node 2>\/dev\/null \| sort -V \| tail -1\)"; sh "\$l" "\$\{l%\/\*\}\/loom-mcp-headers\.mjs"$/,
+  );
 });
 
 test("the Codex header helper finds the newest cached plugin and runs its helper through its launcher", {
@@ -370,6 +373,10 @@ test("the Codex header helper finds the newest cached plugin and runs its helper
       fs.copyFileSync(launcher, path.join(bin, "loom-node"));
       fs.writeFileSync(path.join(bin, "loom-mcp-headers.mjs"), `process.stdout.write(${JSON.stringify(v)});\n`);
     }
+    // An older copy without a launcher, under a marketplace that sorts later, is not picked.
+    const stale = path.join(f.home, ".codex", "plugins", "cache", "zz", "loom", "1.2.6", "bin");
+    fs.mkdirSync(stale, { recursive: true });
+    fs.writeFileSync(path.join(stale, "loom-mcp-headers.mjs"), 'process.stdout.write("stale");\n');
     const helper = JSON.parse(fs.readFileSync(path.join(codexRoot, ".mcp.json"), "utf8")).mcpServers.loom
       .http_headers_helper;
     // Codex's cleared environment: HOME, and a Node only under nvm.

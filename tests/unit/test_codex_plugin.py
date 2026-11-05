@@ -215,12 +215,15 @@ def test_codex_plugin_bundles_its_mcp_entry() -> None:
     assert entry["url"] == f"{defaults['server_url']}/mcp?toolset=core,coding,tracker,tasks"
     # Codex runs the helper through `sh -c` in the session's cwd with a cleared
     # environment (HOME kept, no PLUGIN_ROOT/CODEX_HOME), so the command finds
-    # the newest installed copy of this plugin's own helper under $HOME.
+    # the newest installed copy of this plugin's own launcher under $HOME and
+    # runs the helper beside it.
     helper = entry["http_headers_helper"]
-    assert '"$HOME"/.codex/plugins/cache/*/loom/*/bin/loom-mcp-headers.mjs' in helper
+    assert '"$HOME"/.codex/plugins/cache/*/loom/*/bin/loom-node' in helper
+    assert '"${l%/*}/loom-mcp-headers.mjs"' in helper
     assert "sort -V | tail -1" in helper
     assert "bearer_token_env_var" not in entry  # the token comes from ~/.loom/config.json
     assert (CODEX / "bin" / "loom-mcp-headers.mjs").is_file()
+    assert (CODEX / "bin" / "loom-node").is_file()
 
 
 def test_both_plugins_ship_one_version() -> None:
