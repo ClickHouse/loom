@@ -164,15 +164,27 @@ export function canCall(op: GatedOp, role: NamespaceRole | null, whoami: WhoAmI 
 // The flat claims, lowercased: org and platform admin reach no more than admin here.
 const CLAIM_RANK: Record<string, number> = { ...RANK, org_admin: RANK.admin, platform_admin: RANK.admin };
 
+/** The ops `canCallOn` answers: namespace-gated at writer or above, the card's verbs. */
+export type RowOp = Extract<
+  GatedOp,
+  | "knowledge.add"
+  | "knowledge.delete"
+  | "knowledge.source.add"
+  | "knowledge.source.check"
+  | "knowledge.source.rotate"
+  | "knowledge.source.remove"
+  | "knowledge.source.sync_now"
+>;
+
 /**
  * Whether the caller may call `op` on the namespace of one `code.repos` row, by the rule
  * `server/auth/authz.py::check_authorized` applies, read from the token's claims and the
  * row's `my_role` (the caller's grant there) and `my_status`:
  * - auth off with no bearer on the request: the server checks nothing. A stored token
  *   (or the proxy's header) is still sent and still checked, and its claims are unknown
- *   here (the auth-off identity is synthesised), so only the row's grant counts, and a
- *   restricted namespace offers nothing, since whether the token names it and what it
- *   claims are unknown here. The same holds before whoami has loaded;
+ *   here (the auth-off identity is synthesised): a verb the bearer's claim (not its
+ *   grant) would admit stays hidden, and a restricted namespace offers nothing. The
+ *   same holds before whoami has loaded;
  * - a restricted namespace (`_check_restricted`): a token of its org naming it, whose
  *   claim reaches the op's role, and a grant that reaches it too. No claim widens it;
  * - otherwise a grant that reaches the role, or a claim that does on a token covering
@@ -186,17 +198,18 @@ const CLAIM_RANK: Record<string, number> = { ...RANK, org_admin: RANK.admin, pla
  * token's own grant), a service account with no grant of its own, which the server
  * admits on its creator's grant while the row states none, and the restricted kill
  * switch (`LOOM_RESTRICTED_SERVE=false` refuses everyone on a restricted namespace).
- * With auth off and a bearer, a restricted namespace hides verbs the server may allow.
+ * With auth off and a bearer, a verb the bearer's claim (not its grant) would admit
+ * stays hidden, and a restricted namespace offers nothing.
  * The row's `my_role` and `my_status` can also differ from the grant the server checks
  * when the subject has grants under several alias spellings or a differently cased
  * subject.
  */
 export function canCallOn(
-  op: GatedOp,
+  op: RowOp,
   row: Pick<CodeRepoSummary, "org" | "namespace" | "my_role" | "my_status" | "classification">,
   whoami: WhoAmI | null,
 ): boolean {
-  const bearer = isProxyMode() || storedToken() !== null;
+  const bearer = isProxyMode() || !!storedToken();
   if (isAuthDisabled() && !bearer) return true;
   const min = RANK[OP_MIN_ROLE[op].min];
   const grant = row.my_role ? RANK[row.my_role] : 0;
