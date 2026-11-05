@@ -215,6 +215,10 @@ describe("the add form's other kinds", () => {
     expect(sourceFormProblems({ ...zoom, meetings: "812 3456 7890 912 3456 7890" })).toEqual([
       "Put one meeting id per line, or comma-separated: 812 3456 7890 912 3456 7890.",
     ]);
+    // One spaced id a digit too long is not two ids.
+    expect(sourceFormProblems({ ...zoom, meetings: "812 3456 789012" })).toEqual([
+      "Not a meeting id (9-12 digits): 812 3456 789012.",
+    ]);
     // Anything else is named as typed, spaces and all.
     expect(sourceFormProblems({ ...zoom, meetings: "Meeting ID: 812 3456 7890" })).toEqual([
       "Not a meeting id (9-12 digits): Meeting ID: 812 3456 7890.",

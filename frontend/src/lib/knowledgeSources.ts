@@ -369,12 +369,12 @@ export function meetingIds(text: string, provider: RecordingProvider): string[] 
   });
 }
 
-/** Meeting ids' problems; spaced digits left whole are too long for one id, so they are
- *  two ids on one line. */
+/** Meeting ids' problems. Spaced digits left whole are too long for one id; 18 or more
+ *  of them (two ids of at least 9) are two ids on one line. */
 function zoomProblems(ids: string[]): string[] {
   if (ids.length === 0) return ["Add at least one meeting id."];
   const problems = ids.length > MAX_IDS ? [`At most ${MAX_IDS} meeting ids.`] : [];
-  const joined = ids.filter((id) => /\s/.test(id) && /^[0-9\s]+$/.test(id));
+  const joined = ids.filter((id) => /\s/.test(id) && /^[0-9\s]+$/.test(id) && id.replace(/\s/g, "").length >= 18);
   const bad = ids.filter((id) => !MEETING_ID_RE.zoom.test(id) && !joined.includes(id));
   if (bad.length > 0) problems.push(`Not a meeting id (9-12 digits): ${bad.join(", ")}.`);
   if (joined.length > 0) problems.push(`Put one meeting id per line, or comma-separated: ${joined.join("; ")}.`);
