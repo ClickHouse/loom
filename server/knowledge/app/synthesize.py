@@ -58,8 +58,8 @@ async def handle_knowledge_synthesize(
         from server.llm.client import get_llm_client
 
         llm = get_llm_client()
-    # One calculation an answer: the plan for the task, cited `[knowledge.query#1]`.
     model = str(getattr(llm, "model", "") or synth_model or "")
+    # One calculation an answer: the plan for the task, cited `[knowledge.query#1]`.
     calculation: SynthesizeCalculation | None = None
     if input.datasets:
         done = await _calculate(input, llm, model)

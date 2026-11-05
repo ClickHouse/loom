@@ -415,7 +415,7 @@ class KnowledgeSynthesizeInput(BaseModel):
     max_windows: int = Field(default=64, ge=1, le=512)
 
     @model_validator(mode="after")
-    def _reads_something(self) -> KnowledgeSynthesizeInput:
+    def _documents_and_datasets_hold(self) -> KnowledgeSynthesizeInput:
         if not self.source_uris and not self.datasets:
             raise ValueError("name source_uris, datasets or both")
         # With a dataset, a document by that name would cite as the calculation does.
