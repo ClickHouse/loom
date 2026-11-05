@@ -249,7 +249,7 @@ test("the nvm default alias wins over a newer install", () => {
     assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v20.1.0/bin"));
     // lts/iron's file names the version; lts/* names lts/iron (no `*` file on Windows)
     fs.mkdirSync(path.join(f.home, ".nvm", "alias", "lts"));
-    fs.writeFileSync(path.join(f.home, ".nvm", "alias", "lts", "iron"), "v20.11.0\n");
+    fs.writeFileSync(path.join(f.home, ".nvm", "alias", "lts", "iron"), "v20.11.0"); // no final newline
     fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "lts/iron\n");
     assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v20.11.0/bin"));
     if (!WINDOWS) {

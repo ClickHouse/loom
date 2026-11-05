@@ -527,8 +527,6 @@ def duplicate_registration_check(name: str, entry: dict[str, Any]) -> Check:
 
 def _checkout_slug(cwd: Path) -> str:
     """owner/name of the checkout's origin remote, "" outside a git repo."""
-    import subprocess
-
     try:
         url = subprocess.run(
             ["git", "-C", str(cwd), "config", "--get", "remote.origin.url"],
@@ -719,7 +717,7 @@ def codex_plugin_mcp_url(home: Path, config_text: str) -> str:
     cache = home / ".codex" / "plugins" / "cache" / "loom" / "loom"
     versions = sorted(
         cache.glob("*/.mcp.json"),
-        key=lambda p: tuple(int(n) for n in re.findall(r"\d+", p.parent.name)),
+        key=lambda p: _plugin_version(p.parent.name),
         reverse=True,
     )
     for path in versions:
@@ -868,19 +866,23 @@ def _claude_settings_env(home: Path) -> dict[str, str]:
 
 # The PATH a GUI or IDE launch hands the agent: no shell profile has run.
 GUI_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
-# What Codex passes its MCP header helper (codex-rs rmcp-client DEFAULT_ENV_VARS).
-CODEX_HELPER_ENV = ("HOME", "LOGNAME", "PATH", "SHELL", "USER", "LANG", "LC_ALL", "TMPDIR", "TZ")
+WINDOWS = sys.platform == "win32"
+# Of what Codex passes its MCP header helper (codex-rs rmcp-client
+# DEFAULT_ENV_VARS), the part the launcher reads: no LOOM_NODE, no version
+# manager's variables.
+CODEX_HELPER_ENV = ("HOME", "PATH")
+
+
+def _plugin_version(name: str) -> tuple[int, ...]:
+    """A plugin cache directory's version (1.2.10) as a sortable tuple."""
+    return tuple(int(n) for n in re.findall(r"\d+", name))
 
 
 def newest_launcher(home: Path, client_dir: str) -> Path | None:
     """`bin/loom-node` of the newest loom plugin installed under
     `~/<client_dir>/plugins/cache`; None when none ships one."""
     found = home.glob(f"{client_dir}/plugins/cache/*/loom/*/bin/loom-node")
-
-    def version(p: Path) -> tuple[int, ...]:
-        return tuple(int(x) for x in re.findall(r"\d+", p.parent.parent.name))
-
-    return max(found, key=version, default=None)
+    return max(found, key=lambda p: _plugin_version(p.parent.parent.name), default=None)
 
 
 def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, str]:
@@ -910,7 +912,8 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     if claude is not None:
         out.append(_claude_node_check(home, env, claude, sh))
     codex = newest_launcher(home, ".codex")
-    if codex is not None and sh is not None:  # on Windows, Codex hooks use cmd.exe
+    # On Windows, Codex runs hooks and the helper through cmd.exe, not the launcher.
+    if codex is not None and sh is not None and not WINDOWS:
         out.append(_codex_node_check(env, codex, sh))
     return out
 
@@ -925,8 +928,8 @@ def _claude_node_check(home: Path, env: dict[str, str], launcher: Path, sh: str 
     try:
         code, line = _launcher_check(sh, launcher, {**env, **settings})
         if code != 0:
-            return (name, FAIL, f"{line} {_NO_NODE} Fix: the loom-status skill.")
-        if sys.platform == "win32":  # a Windows GUI app gets the user's PATH
+            return (name, FAIL, f"{line} {_NO_NODE} Fix: /loom:loom-status.")
+        if WINDOWS:  # a Windows GUI app gets the user's PATH
             return (name, PASS, line)
         gui = {"HOME": str(home), "PATH": GUI_PATH, **settings}
         gui_code, _ = _launcher_check(sh, launcher, gui)
@@ -951,7 +954,7 @@ def _codex_node_check(env: dict[str, str], launcher: Path, sh: str) -> Check:
     try:
         code, line = _launcher_check(sh, launcher, env)
         if code != 0:
-            return (name, FAIL, f"{line} {_NO_NODE} Fix: the loom-status skill.")
+            return (name, FAIL, f"{line} {_NO_NODE} Fix: $loom-status.")
         helper_code, _ = _launcher_check(sh, launcher, helper_env)
     except (OSError, subprocess.TimeoutExpired) as e:
         return (name, WARN, f"could not run {launcher}: {e}")
@@ -959,9 +962,9 @@ def _codex_node_check(env: dict[str, str], launcher: Path, sh: str) -> Check:
         return (
             name,
             WARN,
-            f"{line} for the hooks, but the MCP header helper, which Codex runs with "
-            "only HOME and PATH, finds no Node. Fix: put that Node's directory on the "
-            "PATH Codex starts with.",
+            f"{line} for the hooks, but the MCP header helper, which Codex runs without "
+            "LOOM_NODE or a version manager's variables, finds no Node. Fix: put that "
+            "Node's directory on the PATH Codex starts with.",
         )
     return (name, PASS, line)
 

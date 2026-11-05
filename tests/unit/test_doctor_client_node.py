@@ -112,7 +112,7 @@ def test_loom_node_reaches_codex_hooks_but_not_its_header_helper(home: Path) -> 
     node = _node(home / "elsewhere", "v24.0.0")
     grade, line = _checks(home, LOOM_NODE=str(node))["client:codex:node"]
     assert grade == dc.WARN
-    assert "the MCP header helper, which Codex runs with only HOME and PATH, finds no Node" in line
+    assert "the MCP header helper, which Codex runs without LOOM_NODE" in line
 
 
 def test_no_node_fails_with_the_launcher_line(home: Path) -> None:
@@ -123,17 +123,27 @@ def test_no_node_fails_with_the_launcher_line(home: Path) -> None:
     assert line.startswith(
         f"loom: Node.js 18+ is required; the first Node found, {old} (v16.20.2), is older."
     )
-    assert "the MCP entry gets no token" in line and line.endswith("Fix: the loom-status skill.")
+    assert "the MCP entry gets no token" in line and line.endswith("Fix: /loom:loom-status.")
 
 
-def test_no_sh_fails_claude_code_and_skips_codex(
-    home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_no_sh_fails_claude_code(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _install(home, ".claude", "1.3.0")
     _install(home, ".codex", "1.3.0")
     monkeypatch.setattr(shutil, "which", lambda name: None)
     assert _checks(home) == {
         "client:claude-code:node": (dc.FAIL, "no POSIX sh: the hooks need Git Bash on Windows.")
+    }
+
+
+def test_on_windows_codex_is_skipped_and_claude_code_has_no_gui_run(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install(home, ".claude", "1.3.0")
+    _install(home, ".codex", "1.3.0")
+    node = _node(home / "shell-only", "v24.0.0")
+    monkeypatch.setattr(dc, "WINDOWS", True)
+    assert _checks(home, PATH=str(node.parent)) == {
+        "client:claude-code:node": (dc.PASS, f"Loom hook runtime ready: {node} (v24.0.0)")
     }
 
 

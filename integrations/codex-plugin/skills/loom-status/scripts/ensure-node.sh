@@ -30,32 +30,38 @@ download_setup() {
   curl -fsSL --connect-timeout 10 --max-time 120 "$1" -o "$SETUP_FILE"
 }
 
-# setting <name>: "=<value>" when ~/.claude/settings.json `env` sets it
-setting() {
-  sh "$LAUNCHER" -e '
-    try {
-      const v = require(process.argv[1]).env[process.argv[2]];
-      if (typeof v === "string") process.stdout.write("=" + v);
-    } catch {}' "$HOME/.claude/settings.json" "$1" 2>/dev/null
-}
-
 # The launcher as Claude Code started from a GUI or IDE runs it: no shell
-# profile, only HOME, the system PATH and Claude Code's settings env.
+# profile, only HOME, the system PATH and its settings.json `env`.
 gui_check() {
   set -- HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin
-  for name in LOOM_NODE LOOM_NODE_SYSTEM_DIRS; do
-    value=$(setting "$name")
-    case $value in =*) set -- "$@" "$name$value" ;; esac
-  done
+  settings=$(sh "$LAUNCHER" -e '
+    try {
+      const env = require(process.argv[1]).env || {};
+      for (const [k, v] of Object.entries(env))
+        if (typeof v === "string" && !v.includes("\n")) console.log(`${k}=${v}`);
+    } catch {}' "$HOME/.claude/settings.json" 2>/dev/null)
+  while IFS= read -r kv; do
+    [ -n "$kv" ] && set -- "$@" "$kv"
+  done <<SETTINGS
+$settings
+SETTINGS
   env -i "$@" sh "$LAUNCHER" --check >/dev/null 2>&1
+}
+
+# Codex runs its hooks through a login shell, so only Claude Code's GUI
+# launch is checked.
+claude_code() {
+  [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && return 0
+  case $0 in */.claude/plugins/*) return 0 ;; esac
+  return 1
 }
 
 if [ "${1:-}" = '--check' ]; then
   sh "$LAUNCHER" --check || exit 1
   case "$(uname -s)" in
     Darwin | Linux)
-      if ! gui_check; then
-        echo 'Found only with this shell'"'"'s environment: an agent started from a GUI or IDE finds no Node. Set LOOM_NODE to the path above in its environment (for Claude Code, the env block of ~/.claude/settings.json).'
+      if claude_code && ! gui_check; then
+        echo 'Found only with this shell'"'"'s environment: Claude Code started from a GUI or IDE finds no Node. Set LOOM_NODE to the path above in the env block of ~/.claude/settings.json.'
       fi
       ;;
   esac

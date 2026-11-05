@@ -25,8 +25,8 @@ same name replaces the plugin's, and one under another name lists every tool twi
 Codex runs a plugin's hooks only after the user approves them, and again after an update
 that changes their commands. Run `codex` interactively once after installing and approve
 the Loom hooks; Codex records each approval as a `trusted_hash` under `[hooks.state]` in
-`~/.codex/config.toml`. Until then the MCP tools
-work but sessions are not captured, including under `codex exec`.
+`~/.codex/config.toml`. Until then the MCP tools work but sessions are not captured,
+including under `codex exec`.
 
 ### The token
 
@@ -68,7 +68,8 @@ http_headers_helper = 'h="$(ls -d "$HOME"/.codex/plugins/cache/*/loom/*/bin/loom
 Codex runs the helper through `sh -c` with only `HOME`, `PATH` and the locale variables,
 and does not expand `${PLUGIN_ROOT}`, so the command finds the newest installed helper
 under `$HOME/.codex` and starts it through the plugin's `bin/loom-node`. The launcher
-finds Node 18+ on that `PATH` or under a version manager; `LOOM_NODE` does not reach it.
+finds Node 18+ on that `PATH` or in a version manager's default directory under `HOME`;
+`LOOM_NODE` and variables such as `NVM_DIR` do not reach it.
 With a custom `CODEX_HOME`, spell the path out. On Windows Codex runs the helper through
 `cmd.exe`, which cannot run this command: use `bearer_token_env_var` there. A Codex build
 that rejects `Authorization` from a header helper ("returned a reserved header") also
@@ -89,17 +90,17 @@ such an override with `bearer_token_env_var` and `?toolset=coding`, and writes `
 
 ## What differs from Claude Code
 
-| Codex                                                            | Effect                                                                                                                                                                                                                      |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| no `Read` / `Grep` tools; files are read through the shell tool  | the code shunt watches the shell tool (`Bash`, `shell`, `exec_command`, `local_shell`) for `cat`, `rg`, `grep -r`; the command may be a string or an argv array                                                             |
-| edits go through `apply_patch`                                   | file context and blast radius read the target paths out of the patch text (`*** Update File:` / `*** Add File:`)                                                                                                            |
-| `transcript_path` may be missing or in Codex's own shape         | the hooks keep a turn journal: `loom-run` records each prompt, `loom-conversation` each reply (`last_assistant_message`) at Stop; the working-memory note, the run close, the conversation plane and session memory read it |
-| no per-turn token counters in the payload                        | `loom-usage` is not wired                                                                                                                                                                                                   |
-| `SessionEnd` hooks get about one second                          | only fire-and-forget scripts run there (capture, run close, session memory, session brief); conversation turns are sent at Stop                                                                                             |
-| no `PostToolUseFailure` event                                    | a `PostToolUse` result flagged as an error (`is_error`, `isError` or `error`) is observed as type `error`                                                                                                                   |
-| the mentor-hint hook matches every tool                          | it ignores results without a Loom `hint` and makes no request of its own                                                                                                                                                    |
-| hooks run through `$SHELL -lc`, and through `cmd.exe` on Windows | each command starts its script through `bin/loom-node`, which finds Node 18+ as in Claude Code; on Windows `commandWindows` (read by Codex 0.131 and later; earlier builds ignore it) runs `node` from the system `PATH`    |
-| identity                                                         | run ids are `cx-<session_id>`, the default agent is `codex`, session memories carry `source:codex`                                                                                                                          |
+| Codex                                                            | Effect                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| no `Read` / `Grep` tools; files are read through the shell tool  | the code shunt watches the shell tool (`Bash`, `shell`, `exec_command`, `local_shell`) for `cat`, `rg`, `grep -r`; the command may be a string or an argv array                                                                                                                                                       |
+| edits go through `apply_patch`                                   | file context and blast radius read the target paths out of the patch text (`*** Update File:` / `*** Add File:`)                                                                                                                                                                                                      |
+| `transcript_path` may be missing or in Codex's own shape         | the hooks keep a turn journal: `loom-run` records each prompt, `loom-conversation` each reply (`last_assistant_message`) at Stop; the working-memory note, the run close, the conversation plane and session memory read it                                                                                           |
+| no per-turn token counters in the payload                        | `loom-usage` is not wired                                                                                                                                                                                                                                                                                             |
+| `SessionEnd` hooks get about one second                          | only fire-and-forget scripts run there (capture, run close, session memory, session brief); conversation turns are sent at Stop                                                                                                                                                                                       |
+| no `PostToolUseFailure` event                                    | a `PostToolUse` result flagged as an error (`is_error`, `isError` or `error`) is observed as type `error`                                                                                                                                                                                                             |
+| the mentor-hint hook matches every tool                          | it ignores results without a Loom `hint` and makes no request of its own                                                                                                                                                                                                                                              |
+| hooks run through `$SHELL -lc`, and through `cmd.exe` on Windows | each command starts its script through `bin/loom-node`, which finds Node 18+ as in Claude Code; on Windows `commandWindows` runs `node` from the system `PATH`. Codex reads it from 0.131; an earlier build on Windows runs the `sh` command through `cmd.exe`, where it fails, so Windows needs Codex 0.131 or later |
+| identity                                                         | run ids are `cx-<session_id>`, the default agent is `codex`, session memories carry `source:codex`                                                                                                                                                                                                                    |
 
 SessionStart fires on `startup`, `resume`, `clear` and `compact`; the primer is printed
 to stdout, which Codex adds as developer context. Every command in `hooks/hooks.json`
