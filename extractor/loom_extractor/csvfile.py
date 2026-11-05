@@ -150,11 +150,11 @@ def extract_csv(text: str, filename: str = "") -> Artifact:
     tables = []
     kept = 0
     if rows is not None:
-        t, lost = table(acc, "t0", name, rows, budget)
+        t, table_failed = table(acc, "t0", name, rows, budget)
         if t is not None:
             tables.append(t)
             kept = len(t.rows)
-        failed += lost
+        failed += table_failed
     total = len(rows.rows) + rows.more if rows is not None else 0
     return Artifact(
         format="csv",
