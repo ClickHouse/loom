@@ -189,8 +189,9 @@ export type RowOp = Extract<
  *   the namespace (named, or `*`); a token naming a namespace where its subject holds a
  *   grant or a request is held to that grant (`claim_cap`).
  * It cannot follow what whoami and the row do not carry: per-namespace token roles,
- * `ns_write`, delegation, service-account inheritance, the restricted kill switch and
- * grants under other alias spellings. The server stays the authority.
+ * `ns_write`, delegation, service-account inheritance, a revoked grant row that still
+ * caps a claim, the restricted kill switch and grants under other alias spellings. The
+ * server stays the authority.
  */
 export function canCallOn(
   op: RowOp,
