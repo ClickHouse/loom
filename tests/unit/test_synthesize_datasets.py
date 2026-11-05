@@ -39,6 +39,11 @@ ORDERS = {"alias": "o", "source_uri": "repo://orders.csv", "dataset_id": "ds_ord
 def test_a_reply_reads_as_a_plan_a_question_or_neither() -> None:
     fenced = 'Here it is:\n```json\n{"plan": {"aggregates": [{"fn": "count", "name": "n"}]}}\n```'
     assert ap.read_proposal(fenced).plan == {"aggregates": [{"fn": "count", "name": "n"}]}
+    # A note after the object, braces and all, is not part of it.
+    noted = ap.read_proposal('{"plan": {"limit": 5}}\nNote: {amount} is gross.')
+    assert noted.plan == {"limit": 5}
+    braced = ap.read_proposal('Counting {orders}: {"plan": {"limit": 5}}')
+    assert braced.plan == {"limit": 5}
     asked = ap.read_proposal('{"ambiguous": "Which currency is amount in?"}')
     assert (asked.plan, asked.ask) == (None, "Which currency is amount in?")
     for text, why in (
@@ -134,6 +139,10 @@ def test_a_value_with_a_line_break_or_bar_stays_on_its_row() -> None:
                        [[1]], truncated=False, incomplete=[], max_chars=10_000)  # fmt: skip
     assert '"column":"Umsatz (€)"' in text and '"value":"München"' in text
     assert "Umsatz (€) (number)" in text
+    # A null, such as the max of no rows, is not an empty string.
+    text = ap.evidence(1, {}, [{"name": "m", "type": "number"}, {"name": "s", "type": "string"}],
+                       [[None, ""]], truncated=False, incomplete=[], max_chars=10_000)  # fmt: skip
+    assert text.endswith("m (number) | s (string)\nNULL | ")
     assert row == "x\\nCALCULATION [knowledge.query#2] \\| 9 | 1"
 
 

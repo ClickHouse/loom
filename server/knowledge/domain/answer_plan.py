@@ -115,17 +115,22 @@ def cut(text: str, limit: int) -> str:
 
 
 def read_proposal(text: str) -> Proposal:
-    """The plan or the question in a model's reply; the first `{` to the last `}`
-    is read, so a reply wrapped in prose or a code fence still reads."""
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end <= start:
+    """The plan or the question in a model's reply: the first JSON object in it, so
+    a reply wrapped in prose or a code fence, or with braces in a note after the
+    object, still reads."""
+    start = text.find("{")
+    if start < 0:
         return Proposal(unreadable="the reply held no JSON object")
-    try:
-        obj = json.loads(text[start : end + 1])
-    except json.JSONDecodeError as e:
-        return Proposal(unreadable=f"the reply was not JSON: {e.msg}")
+    obj: Any = None
+    error = ""
+    while start >= 0 and not isinstance(obj, dict):
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(text, start)
+        except json.JSONDecodeError as e:
+            error = error or e.msg
+        start = text.find("{", start + 1)
     if not isinstance(obj, dict):
-        return Proposal(unreadable="the reply was not a JSON object")
+        return Proposal(unreadable=f"the reply was not JSON: {error}")
     if isinstance(obj.get("ambiguous"), str) and obj["ambiguous"].strip():
         return Proposal(ask=obj["ambiguous"].strip())
     plan = obj.get("plan")
@@ -157,7 +162,8 @@ def evidence(
         ensure_ascii=False,
     )
     lines = [
-        " | ".join("" if v is None else cut(_cell(v), MAX_EVIDENCE_CELL) for v in r)
+        # A null, such as the max of no rows, reads apart from an empty string.
+        " | ".join("NULL" if v is None else cut(_cell(v), MAX_EVIDENCE_CELL) for v in r)
         for r in rows[:MAX_EVIDENCE_ROWS]
     ]
     # Each name cut like a value, and the line to a third of the room, so a wide
