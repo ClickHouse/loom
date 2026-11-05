@@ -37,15 +37,15 @@ flowchart LR
 
 A leg that fails returns `{"error": ...}` under its own key; the other sections still answer.
 
-| Argument  | Meaning                                                                                                                  |
-| --------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `query`   | Required.                                                                                                                |
-| `top_k`   | Default 5, 1–100.                                                                                                        |
-| `tags`    | Keep rows carrying any of them; a coding session's rows carry `project:<folder>` and `repo:<id>`.                        |
-| `recipe`  | `fast`, `balanced`, `quality`, `verbatim`, `code`, `temporal`, `graph`.                                                  |
-| `bodies`  | `excerpt` (default, 200 characters; a decision or constraint row whole, up to its stored 1,200), `full`, `unit`, `none`. |
-| `page`    | A `memory.next_page` handle from an earlier response.                                                                    |
-| `explain` | A `why:` note per memory hit; nothing withheld.                                                                          |
+| Argument  | Meaning                                                                                              |
+| --------- | ---------------------------------------------------------------------------------------------------- |
+| `query`   | Required.                                                                                            |
+| `top_k`   | Default 5, 1–100.                                                                                    |
+| `tags`    | Keep rows carrying any of them; a coding session's rows carry `project:<folder>` and `repo:<id>`.    |
+| `recipe`  | `fast`, `balanced`, `quality`, `verbatim`, `code`, `temporal`, `graph`.                              |
+| `bodies`  | `excerpt` (default, 200 characters; a decision or constraint row as stored), `full`, `unit`, `none`. |
+| `page`    | A `memory.next_page` handle from an earlier response.                                                |
+| `explain` | A `why:` note per memory hit; nothing withheld.                                                      |
 
 ### Which namespaces it reads
 

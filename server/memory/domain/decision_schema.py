@@ -32,7 +32,7 @@ def is_decision(memory_type: str, tags: Collection[str]) -> bool:
 
 def is_whole_row(memory_type: str, tags: Collection[str]) -> bool:
     """A decision or a constraint: its reasons and rejected options follow its outcome, so
-    the pre-edit block and a search excerpt serve it whole."""
+    the pre-edit block prints it whole and a search excerpt serves it as stored."""
     return is_decision(memory_type, tags) or CONSTRAINT_TAG in tags
 
 

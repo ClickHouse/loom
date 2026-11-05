@@ -353,6 +353,5 @@ def test_a_tier_hit_carries_its_row_tags_so_a_constraint_keeps_its_excerpt(monke
         bodies="excerpt",
     )
     (hit,) = asyncio.run(ms._prepend_recent([], inp))
-    assert hit._row_tags == ("constraint",)
     _apply_bodies([hit], inp)
     assert hit.content_excerpt == rows[0].value

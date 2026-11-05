@@ -39,7 +39,7 @@ class SearchInput(BaseModel):
     # empty = the server's defaults.
     recipe: Literal["", "fast", "balanced", "quality", "verbatim", "code", "temporal", "graph"] = ""
     # What each memory hit carries: `excerpt` (the first 200 characters; a decision or a
-    # constraint whole, up to the stored clip), `full` (the stored clip), `none` (keys and
+    # constraint as stored), `full` (the stored clip), `none` (keys and
     # scores only) or `unit` (whole values within a budget).
     bodies: Literal["full", "excerpt", "none", "unit"] = "excerpt"
     # Every section unwithheld, and the ranking terms of each memory hit.
