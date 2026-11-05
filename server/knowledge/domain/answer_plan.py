@@ -24,8 +24,6 @@ CALCULATION_SOURCE = "knowledge.query"
 # says when it cut), and each dataset's columns.
 MAX_EVIDENCE_ROWS = 50  # not a setting: what one prompt shows of a result
 MAX_EVIDENCE_CELL = 200  # not a setting: what one prompt shows of a value
-# Each name whole (a cut name could not be planned over), at most MAX_COLUMN_CHARS;
-# the datasets share the schema listing's characters.
 MAX_PROMPT_COLUMNS = 100  # not a setting: what one prompt shows of a schema
 MAX_PROMPT_SCHEMA_CHARS = 24_000  # not a setting: what one prompt shows of the schemas
 

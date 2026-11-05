@@ -397,7 +397,8 @@ class KnowledgeSynthesizeInput(BaseModel):
 
     org: str
     namespace: str
-    # The documents to read in full (up to 50); unknown URIs contribute nothing.
+    # The documents to read in full (up to 50; this, `datasets` or both); unknown URIs
+    # contribute nothing.
     source_uris: list[str] = Field(default_factory=list, max_length=50)
     # Datasets to calculate over (up to 4, as knowledge.query takes them); one plan is
     # proposed for the task, checked against their schemas and run over every row.

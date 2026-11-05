@@ -498,7 +498,7 @@ refused by either is proposed once more with the reason, then the answer abstain
 and first 50 rows, with what it may not cover, are one more note for the reduce, cited as `[knowledge.query#1]` and
 grounded like a chunk citation (`ground_citations`), so a citation of a calculation that was not run is removed. Column
 names and the task are untrusted input to the plan, which grants nothing: the query runs in the caller's scope, as the
-reader user.
+reader user where one is set.
 
 ## Dependencies
 

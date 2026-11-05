@@ -597,7 +597,7 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `source_uris` | `list[str]` | *(computed)* | The documents to read in full (up to 50); unknown URIs contribute nothing. |
+| `source_uris` | `list[str]` | *(computed)* | The documents to read in full (up to 50; this, `datasets` or both); unknown URIs contribute nothing. |
 | `datasets` | `list[QueryDataset]` | *(computed)* | Datasets to calculate over (up to 4, as knowledge.query takes them); one plan is proposed for the task, checked against their schemas and run over every row. |
 | `task` | `str` | required | What to do with the documents and datasets: a question to answer or a summary to write. |
 | `window_chars` | `int` | `24000` | Characters of document text per map call; the reduce folds notes into batches of the same size, and a calculation's note is at most half of it. |

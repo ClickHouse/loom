@@ -432,6 +432,23 @@ async def test_a_column_name_written_as_an_instruction_grants_the_plan_nothing(
     assert [d.dataset_id for d in query.datasets] == ["ds_orders"]
 
 
+@pytest.mark.asyncio
+async def test_an_answer_that_abstains_on_its_dataset_reads_no_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    read: list[str] = []
+
+    async def _chunks(org: str, ns: str, uri: str) -> list[Any]:
+        read.append(uri)
+        return []
+
+    monkeypatch.setattr("server.knowledge.app.synthesize.document_chunks", _chunks)
+    llm = _LLM(['{"ambiguous": "Gross or net?"}'])
+    Stores(monkeypatch, llm)
+    out = await _synthesize(source_uris=["doc://policy"])
+    assert out.abstain_reason == "ambiguous" and read == []
+
+
 def test_a_task_needs_documents_or_datasets_each_with_an_alias_of_its_own() -> None:
     with pytest.raises(pydantic.ValidationError, match="name source_uris, datasets or both"):
         KnowledgeSynthesizeInput(org="o", namespace="n", task="t")
