@@ -1,4 +1,11 @@
-import { isAuthDisabled, type CodeRepoSummary, type MyNamespaceEntry, type WhoAmI } from "../api";
+import {
+  isAuthDisabled,
+  isProxyMode,
+  storedToken,
+  type CodeRepoSummary,
+  type MyNamespaceEntry,
+  type WhoAmI,
+} from "../api";
 import { hasAdminClaim } from "./role";
 import type { NamespaceRole } from "./namespaceRole";
 
@@ -161,7 +168,9 @@ const CLAIM_RANK: Record<string, number> = { ...RANK, org_admin: RANK.admin, pla
  * Whether the caller may call `op` on the namespace of one `code.repos` row, by the rule
  * `server/auth/authz.py::check_authorized` applies, read from the token's claims and the
  * row's `my_role` (the caller's grant there) and `my_status`:
- * - auth off: the server checks nothing;
+ * - auth off with no bearer on the request: the server checks nothing. A stored token
+ *   (or the proxy's header) is still sent and still checked, and its claims are unknown
+ *   here (the auth-off identity is synthesised), so only the row's grant counts;
  * - a restricted namespace (`_check_restricted`): a token of its org naming it, whose
  *   claim reaches the op's role, and a grant that reaches it too. No claim widens it;
  * - otherwise a grant that reaches the role, or a claim that does on a token covering
@@ -184,16 +193,18 @@ export function canCallOn(
   row: Pick<CodeRepoSummary, "org" | "namespace" | "my_role" | "my_status" | "classification">,
   whoami: WhoAmI | null,
 ): boolean {
-  if (isAuthDisabled()) return true;
+  const bearer = isProxyMode() || storedToken() !== null;
+  if (isAuthDisabled() && !bearer) return true;
   const min = RANK[OP_MIN_ROLE[op].min];
   const grant = row.my_role ? RANK[row.my_role] : 0;
-  if (!whoami) return row.classification !== "restricted" && grant >= min;
+  if (!whoami || isAuthDisabled()) return row.classification !== "restricted" && grant >= min;
   const claim = Math.max(0, ...(whoami.roles ?? []).map((r) => CLAIM_RANK[r.toLowerCase()] ?? 0));
   const namespaces = whoami.namespaces ?? [];
-  const named = (whoami.org === "*" || whoami.org === row.org) && namespaces.includes(row.namespace);
+  const inOrg = whoami.org === "*" || whoami.org === row.org;
+  const named = inOrg && namespaces.includes(row.namespace);
   if (row.classification === "restricted")
     return whoami.org === row.org && namespaces.includes(row.namespace) && claim >= min && grant >= min;
-  const covered = named || ((whoami.org === "*" || whoami.org === row.org) && namespaces.includes("*"));
+  const covered = inOrg && (named || namespaces.includes("*"));
   const capped = named && (row.my_status === "member" || row.my_status === "pending");
   return grant >= min || (covered && !capped && claim >= min);
 }

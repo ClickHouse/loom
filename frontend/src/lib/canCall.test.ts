@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isAuthDisabled, type CodeRepoSummary, type WhoAmI } from "../api";
+import { isAuthDisabled, isProxyMode, storedToken, type CodeRepoSummary, type WhoAmI } from "../api";
 import type { MyNamespaceEntry } from "../api";
 import { OP_MIN_ROLE, canCall, canCallCodeRepos, canCallOn } from "./canCall";
 import { must } from "../test/must";
@@ -10,6 +10,8 @@ import { must } from "../test/must";
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   isAuthDisabled: vi.fn(() => false),
+  storedToken: vi.fn(() => null),
+  isProxyMode: vi.fn(() => false),
 }));
 
 const user = (roles: string[]): WhoAmI => ({ authenticated: true, subject: "u@example.com", org: "dev", roles });
@@ -55,7 +57,11 @@ describe("canCall", () => {
 });
 
 describe("canCallOn: an op on one repository row's namespace", () => {
-  afterEach(() => vi.mocked(isAuthDisabled).mockReturnValue(false));
+  afterEach(() => {
+    vi.mocked(isAuthDisabled).mockReturnValue(false);
+    vi.mocked(storedToken).mockReturnValue(null);
+    vi.mocked(isProxyMode).mockReturnValue(false);
+  });
   type Row = Pick<CodeRepoSummary, "org" | "namespace" | "my_role" | "my_status" | "classification">;
   const row = (over: Partial<Row> = {}): Row => ({ org: "dev", namespace: "code-x", my_role: "", ...over });
   const token = (roles: string[], namespaces: string[], org = "dev"): WhoAmI => ({
@@ -100,10 +106,29 @@ describe("canCallOn: an op on one repository row's namespace", () => {
     expect(canCallOn("knowledge.add", r("writer"), null)).toBe(false);
   });
 
-  it("auth off: every op, restricted or not", () => {
+  it("auth off with no token: every op, restricted or not", () => {
     vi.mocked(isAuthDisabled).mockReturnValue(true);
     expect(canCallOn("knowledge.source.remove", row(), null)).toBe(true);
     expect(canCallOn("knowledge.source.remove", row({ classification: "restricted" }), null)).toBe(true);
+  });
+
+  it("auth off with a stored token: the server checks the token, so only the grant counts", () => {
+    vi.mocked(isAuthDisabled).mockReturnValue(true);
+    vi.mocked(storedToken).mockReturnValue("a.b.c");
+    // The auth-off identity is synthesised as a platform admin; it says nothing of the token.
+    const local = token(["PLATFORM_ADMIN"], ["local"]);
+    expect(canCallOn("knowledge.source.remove", row(), local)).toBe(false);
+    expect(canCallOn("knowledge.source.remove", row({ my_role: "writer" }), local)).toBe(false);
+    expect(canCallOn("knowledge.add", row({ my_role: "writer" }), local)).toBe(true);
+    expect(canCallOn("knowledge.source.remove", row({ my_role: "admin" }), local)).toBe(true);
+    expect(canCallOn("knowledge.add", row({ my_role: "admin", classification: "restricted" }), local)).toBe(false);
+  });
+
+  it("auth off behind the proxy: its header is a bearer too", () => {
+    vi.mocked(isAuthDisabled).mockReturnValue(true);
+    vi.mocked(isProxyMode).mockReturnValue(true);
+    expect(canCallOn("knowledge.source.remove", row(), token(["PLATFORM_ADMIN"], ["local"]))).toBe(false);
+    expect(canCallOn("knowledge.source.remove", row({ my_role: "admin" }), null)).toBe(true);
   });
 });
 

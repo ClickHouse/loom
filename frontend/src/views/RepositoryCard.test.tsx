@@ -1,7 +1,7 @@
 import { cleanup, render, screen, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isAuthDisabled, type CodeRepoSummary, type WhoAmI } from "../api";
+import { isAuthDisabled, storedToken, type CodeRepoSummary, type WhoAmI } from "../api";
 import { listKnowledgeSources } from "../api/knowledgeSources";
 import { ApiError } from "../lib/errors";
 import { buildCards } from "../lib/repositoryCard";
@@ -23,6 +23,7 @@ vi.mock("../api", async (importOriginal) => {
   return {
     ...actual,
     isAuthDisabled: vi.fn(() => false),
+    storedToken: vi.fn(() => null),
     listKnowledge: vi.fn(async () => ({ rows: [], next_cursor: null })),
   };
 });
@@ -863,6 +864,7 @@ describe("RepositoryCard — who gets the Docs and Sources verbs", () => {
   afterEach(() => {
     useStore.setState({ whoami: null });
     vi.mocked(isAuthDisabled).mockReturnValue(false);
+    vi.mocked(storedToken).mockReturnValue(null);
   });
 
   const token = (roles: string[], namespaces = ["*"]): WhoAmI => ({
@@ -899,6 +901,14 @@ describe("RepositoryCard — who gets the Docs and Sources verbs", () => {
     expect(await verbs({ my_role: "" }, token(["ADMIN"]))).toEqual(all);
     expect(await verbs({ my_role: "" }, token(["org_admin"]))).toEqual(all);
     expect(await verbs({ my_role: "" }, token(["ADMIN"], ["code-clickhouse"]))).toEqual(all);
+  });
+
+  it("auth off with a token still stored: only the grant counts, as the server checks the token", async () => {
+    vi.mocked(storedToken).mockReturnValue("a.b.c");
+    const local = token(["PLATFORM_ADMIN"], ["local"]);
+    expect(await verbs({ my_role: "" }, local, true)).toEqual(none);
+    expect(await verbs({ my_role: "writer" }, local, true)).toEqual(writer);
+    expect(await verbs({ my_role: "admin" }, local, true)).toEqual(all);
   });
 
   it("an admin claim on a token that does not cover the namespace, or is held to a lower grant, gets none", async () => {
