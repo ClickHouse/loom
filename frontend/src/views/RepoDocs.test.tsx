@@ -47,10 +47,10 @@ const DOC = {
 };
 const OTHER = { ...DOC, source_uri: "repo-doc://Acme/kj/design", title: "Design note", description: "" };
 
-function mount(maintained = false) {
+function mount(writable = false) {
   return render(
     <main>
-      <RepoDocsList org="dev" docsNamespace="code-kj" repo="Acme/kj" maintained={maintained} busy={false} />
+      <RepoDocsList org="dev" docsNamespace="code-kj" repo="Acme/kj" writable={writable} busy={false} />
     </main>,
   );
 }

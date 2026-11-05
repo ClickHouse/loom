@@ -1,4 +1,4 @@
-import type { MyNamespaceEntry, WhoAmI } from "../api";
+import { isAuthDisabled, type CodeRepoSummary, type MyNamespaceEntry, type WhoAmI } from "../api";
 import { hasAdminClaim } from "./role";
 import type { NamespaceRole } from "./namespaceRole";
 
@@ -73,6 +73,15 @@ export const OP_MIN_ROLE = {
   "memory.unpin": { min: "admin", by: "namespace" },
   // Conversations' recording toggle: a namespace setting, ADMIN on the namespace.
   "conversation.set_logging": { min: "admin", by: "namespace" },
+  // A repository card's Docs and Sources facets (`canCallOn`): Add a document and Remove,
+  // and every verb on a document source.
+  "knowledge.add": { min: "writer", by: "namespace" },
+  "knowledge.delete": { min: "writer", by: "namespace" },
+  "knowledge.source.add": { min: "admin", by: "namespace" },
+  "knowledge.source.check": { min: "admin", by: "namespace" },
+  "knowledge.source.rotate": { min: "admin", by: "namespace" },
+  "knowledge.source.remove": { min: "admin", by: "namespace" },
+  "knowledge.source.sync_now": { min: "admin", by: "namespace" },
   // Listed for the registry mirror, not yet consulted at a call site: the
   // other namespace-scoped ops a view reads on mount. Each is the page's
   // own content (the view renders the humanized 403) or a secondary read
@@ -143,6 +152,38 @@ export function canCall(op: GatedOp, role: NamespaceRole | null, whoami: WhoAmI 
   if (gate.by === "claim") return false;
   if (role === null) return false;
   return RANK[role] >= RANK[gate.min];
+}
+
+const CLAIM_RANK: Record<string, number> = { viewer: 1, writer: 2, admin: 3, org_admin: 3, platform_admin: 3 };
+
+/**
+ * Whether the caller may call `op` on the namespace of one `code.repos` row, by the rule
+ * `server/auth/authz.py::check_authorized` applies, read from the token's claims and the
+ * row's `my_role` (the caller's grant there) and `my_status`:
+ * - auth off: the server checks nothing;
+ * - a restricted namespace (`_check_restricted`): a token of its org naming it, whose
+ *   claim reaches the op's role, and a grant that reaches it too. No claim widens it;
+ * - otherwise a grant that reaches the role, or a claim that does on a token covering
+ *   the namespace (named, or `*`). A token naming a namespace where its subject holds a
+ *   grant or a request is held to that grant (`claim_cap`).
+ * A mirror to hide verbs the server would refuse; the server stays the authority.
+ */
+export function canCallOn(
+  op: GatedOp,
+  row: Pick<CodeRepoSummary, "org" | "namespace" | "my_role" | "my_status" | "classification">,
+  whoami: WhoAmI | null,
+): boolean {
+  if (isAuthDisabled()) return true;
+  const min = RANK[OP_MIN_ROLE[op].min];
+  const grant = row.my_role ? RANK[row.my_role] : 0;
+  if (!whoami) return row.classification !== "restricted" && grant >= min;
+  const claim = Math.max(0, ...(whoami.roles ?? []).map((r) => CLAIM_RANK[r.toLowerCase()] ?? 0));
+  const namespaces = whoami.namespaces ?? [];
+  const named = (whoami.org === "*" || whoami.org === row.org) && namespaces.includes(row.namespace);
+  if (row.classification === "restricted") return whoami.org === row.org && named && claim >= min && grant >= min;
+  const covered = named || ((whoami.org === "*" || whoami.org === row.org) && namespaces.includes("*"));
+  const capped = named && (row.my_status === "member" || row.my_status === "pending");
+  return grant >= min || (covered && !capped && claim >= min);
 }
 
 /**

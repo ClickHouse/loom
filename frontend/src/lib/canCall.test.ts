@@ -1,11 +1,16 @@
-import { describe, expect, it } from "vitest";
-import type { WhoAmI } from "../api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { isAuthDisabled, type CodeRepoSummary, type WhoAmI } from "../api";
 import type { MyNamespaceEntry } from "../api";
-import { OP_MIN_ROLE, canCall, canCallCodeRepos } from "./canCall";
+import { OP_MIN_ROLE, canCall, canCallCodeRepos, canCallOn } from "./canCall";
 import { must } from "../test/must";
 
 // The dashboard never issues a request the token cannot make; when the role is unknown it
 // does not poll.
+
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  isAuthDisabled: vi.fn(() => false),
+}));
 
 const user = (roles: string[]): WhoAmI => ({ authenticated: true, subject: "u@example.com", org: "dev", roles });
 
@@ -46,6 +51,59 @@ describe("canCall", () => {
     // require_admin reads the JWT roles claim and nothing else: an admin
     // grant row on the namespace does not open workers.status.
     expect(canCall("admin/workers.status", "admin", user(["WRITER"]))).toBe(false);
+  });
+});
+
+describe("canCallOn: an op on one repository row's namespace", () => {
+  afterEach(() => vi.mocked(isAuthDisabled).mockReturnValue(false));
+  type Row = Pick<CodeRepoSummary, "org" | "namespace" | "my_role" | "my_status" | "classification">;
+  const row = (over: Partial<Row> = {}): Row => ({ org: "dev", namespace: "code-x", my_role: "", ...over });
+  const token = (roles: string[], namespaces: string[], org = "dev"): WhoAmI => ({
+    authenticated: true,
+    subject: "u@example.com",
+    org,
+    namespaces,
+    roles,
+  });
+
+  it("a standard namespace: an admin claim, or the grant the row states", () => {
+    expect(canCallOn("knowledge.source.add", row(), token(["ADMIN"], ["*"]))).toBe(true);
+    expect(canCallOn("knowledge.source.add", row({ my_role: "admin" }), token(["WRITER"], []))).toBe(true);
+    expect(canCallOn("knowledge.source.add", row({ my_role: "writer" }), token(["WRITER"], []))).toBe(false);
+    expect(canCallOn("knowledge.add", row({ my_role: "writer" }), token(["VIEWER"], []))).toBe(true);
+    expect(canCallOn("knowledge.delete", row({ my_role: "viewer" }), token(["VIEWER"], ["*"]))).toBe(false);
+    expect(canCallOn("knowledge.add", row(), null)).toBe(false);
+    expect(canCallOn("knowledge.add", row({ my_role: "writer" }), null)).toBe(true);
+  });
+
+  it("a claim counts only on a token covering the namespace, and a named one is held to its grant", () => {
+    expect(canCallOn("knowledge.source.add", row(), token(["ADMIN"], ["code-x"]))).toBe(true);
+    expect(canCallOn("knowledge.source.add", row(), token(["ADMIN"], ["team-x"]))).toBe(false);
+    expect(canCallOn("knowledge.source.add", row(), token(["ADMIN"], ["*"], "other"))).toBe(false);
+    expect(canCallOn("knowledge.source.add", row(), token(["ADMIN"], ["*"], "*"))).toBe(true);
+    const viewer = row({ my_role: "viewer", my_status: "member" });
+    expect(canCallOn("knowledge.source.add", viewer, token(["ADMIN"], ["code-x"]))).toBe(false);
+    expect(canCallOn("knowledge.source.add", viewer, token(["ADMIN"], ["*"]))).toBe(true);
+    const pending = row({ my_status: "pending" });
+    expect(canCallOn("knowledge.add", pending, token(["WRITER"], ["code-x"]))).toBe(false);
+  });
+
+  it("a restricted namespace: the grant, and a token of its org naming it whose claim reaches", () => {
+    const r = (my_role: Row["my_role"]) => row({ classification: "restricted", my_role });
+    expect(canCallOn("knowledge.source.add", r("admin"), token(["ADMIN"], ["code-x"]))).toBe(true);
+    expect(canCallOn("knowledge.source.add", r(""), token(["PLATFORM_ADMIN"], ["code-x"]))).toBe(false);
+    expect(canCallOn("knowledge.source.add", r("admin"), token(["ADMIN"], ["*"]))).toBe(false);
+    expect(canCallOn("knowledge.source.add", r("admin"), token(["ADMIN"], ["code-x"], "*"))).toBe(false);
+    expect(canCallOn("knowledge.source.add", r("admin"), token(["WRITER"], ["code-x"]))).toBe(false);
+    expect(canCallOn("knowledge.add", r("admin"), token(["WRITER"], ["code-x"]))).toBe(true);
+    expect(canCallOn("knowledge.add", r("viewer"), token(["ADMIN"], ["code-x"]))).toBe(false);
+    expect(canCallOn("knowledge.add", r("writer"), null)).toBe(false);
+  });
+
+  it("auth off: every op, restricted or not", () => {
+    vi.mocked(isAuthDisabled).mockReturnValue(true);
+    expect(canCallOn("knowledge.source.remove", row(), null)).toBe(true);
+    expect(canCallOn("knowledge.source.remove", row({ classification: "restricted" }), null)).toBe(true);
   });
 });
 

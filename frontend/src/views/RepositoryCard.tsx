@@ -61,6 +61,8 @@ import { RecordSourceDetails } from "./TrackerSources";
 import { RepoDocsList } from "./RepoDocs";
 import { RepoSourcesList } from "./RepoSources";
 import { oneOf } from "../lib/oneOf";
+import { canCallOn } from "../lib/canCall";
+import { useStore } from "../lib/state";
 
 /** The reader-grant sentence, said once for the whole card: a token reads through its
  *  subject's — or, for an `sa:` token, its creator's — reader grant, so nothing has to
@@ -776,6 +778,7 @@ export const RepositoryCard = memo(function RepositoryCard({
   // The branch whose namespace holds the repository's documents
   const docsNs = card.code?.branches.find((b) => b.docs_namespace)?.docs_namespace ?? "";
   const docs = docsNs ? (card.code?.branches.find((b) => b.namespace === docsNs) ?? null) : null;
+  const whoami = useStore((s) => s.whoami);
   const settings = card.maintained || (!!code.onSetAccess && !!card.code?.branches.some((b) => b.my_role === "admin"));
 
   return (
@@ -834,7 +837,7 @@ export const RepositoryCard = memo(function RepositoryCard({
                   org={docs.org}
                   docsNamespace={docs.namespace}
                   repo={card.repo}
-                  maintained={docs.my_role === "admin"}
+                  writable={canCallOn("knowledge.add", docs, whoami)}
                   busy={anyBusy}
                 />
               </FacetRow>
@@ -846,7 +849,7 @@ export const RepositoryCard = memo(function RepositoryCard({
                   org={docs.org}
                   docsNamespace={docs.namespace}
                   repo={card.repo}
-                  maintained={docs.my_role === "admin"}
+                  maintained={canCallOn("knowledge.source.add", docs, whoami)}
                   busy={anyBusy}
                 />
               </FacetRow>

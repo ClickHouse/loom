@@ -1,10 +1,11 @@
 import { cleanup, render, screen, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
-import type { CodeRepoSummary } from "../api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { isAuthDisabled, type CodeRepoSummary, type WhoAmI } from "../api";
 import { listKnowledgeSources } from "../api/knowledgeSources";
 import { ApiError } from "../lib/errors";
 import { buildCards } from "../lib/repositoryCard";
+import { useStore } from "../lib/state";
 import type { TrackerSource, TrackerSourceNamespace } from "../lib/trackerSources";
 import { axeViolations, unlabeledControls } from "../test/axe";
 import {
@@ -19,7 +20,11 @@ import { must } from "../test/must";
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, listKnowledge: vi.fn(async () => ({ rows: [], next_cursor: null })) };
+  return {
+    ...actual,
+    isAuthDisabled: vi.fn(() => false),
+    listKnowledge: vi.fn(async () => ({ rows: [], next_cursor: null })),
+  };
 });
 vi.mock("../api/knowledgeSources", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/knowledgeSources")>();
@@ -847,6 +852,79 @@ describe("RepositoryCard — sources", () => {
         .getAllByRole("menuitem")
         .map((m) => m.textContent),
     ).toEqual(["Check", "Sync now", "Rotate credential", "Retire"]);
+  });
+});
+
+// Both facets offer their verbs on the rule the server gates the ops on (`canCallOn`):
+// Add a document and Remove need writer, every source verb needs admin.
+describe("RepositoryCard — who gets the Docs and Sources verbs", () => {
+  afterEach(() => {
+    useStore.setState({ whoami: null });
+    vi.mocked(isAuthDisabled).mockReturnValue(false);
+  });
+
+  const token = (roles: string[], namespaces = ["*"]): WhoAmI => ({
+    authenticated: true,
+    subject: "u@example.com",
+    org: "dev",
+    namespaces,
+    roles,
+  });
+
+  async function verbs(over: Partial<CodeRepoSummary>, whoami: WhoAmI | null, authOff = false) {
+    vi.mocked(isAuthDisabled).mockReturnValue(authOff);
+    useStore.setState({ whoami });
+    const my_status = over.my_role ? "member" : "none";
+    mount([branch({ my_status, docs_namespace: "code-clickhouse", ...over })], []);
+    const sources = screen.getByRole("group", { name: "Sources" });
+    await within(sources).findByText("design-docs");
+    const docs = screen.getByRole("group", { name: "Docs" });
+    await within(docs).findByText(/No documents yet/);
+    const out = {
+      addDocument: within(docs).queryByRole("button", { name: "Add a document" }) !== null,
+      addSource: within(sources).queryByRole("button", { name: "Add a source" }) !== null,
+      sourceMenu: within(sources).queryByRole("button", { name: "Actions for design-docs" }) !== null,
+    };
+    cleanup();
+    return out;
+  }
+  const none = { addDocument: false, addSource: false, sourceMenu: false };
+  const writer = { addDocument: true, addSource: false, sourceMenu: false };
+  const all = { addDocument: true, addSource: true, sourceMenu: true };
+
+  it("auth off and an admin claim get every verb without a grant", async () => {
+    expect(await verbs({ my_role: "" }, token(["PLATFORM_ADMIN"], ["local"]), true)).toEqual(all);
+    expect(await verbs({ my_role: "" }, token(["ADMIN"]))).toEqual(all);
+    expect(await verbs({ my_role: "" }, token(["org_admin"]))).toEqual(all);
+    expect(await verbs({ my_role: "" }, token(["ADMIN"], ["code-clickhouse"]))).toEqual(all);
+  });
+
+  it("an admin claim on a token that does not cover the namespace, or is held to a lower grant, gets none", async () => {
+    expect(await verbs({ my_role: "" }, token(["ADMIN"], ["team-x"]))).toEqual(none);
+    expect(await verbs({ my_role: "viewer" }, token(["ADMIN"], ["code-clickhouse"]))).toEqual(none);
+    expect(await verbs({ my_role: "writer" }, token(["ADMIN"], ["code-clickhouse"]))).toEqual(writer);
+  });
+
+  it("a grant gets the verbs its role reaches", async () => {
+    const flat = token(["WRITER"], ["team-x"]);
+    expect(await verbs({ my_role: "admin" }, flat)).toEqual(all);
+    expect(await verbs({ my_role: "writer" }, flat)).toEqual(writer);
+    expect(await verbs({ my_role: "viewer" }, flat)).toEqual(none);
+    expect(await verbs({ my_role: "" }, flat)).toEqual(none);
+    expect(await verbs({ my_role: "" }, token(["VIEWER"]))).toEqual(none);
+    expect(await verbs({ my_role: "" }, null)).toEqual(none);
+  });
+
+  it("a restricted namespace needs the grant and a token naming it, never a claim alone", async () => {
+    const restricted = { classification: "restricted" as const };
+    const naming = token(["ADMIN"], ["code-clickhouse"]);
+    expect(await verbs({ ...restricted, my_role: "" }, token(["PLATFORM_ADMIN"]))).toEqual(none);
+    expect(await verbs({ ...restricted, my_role: "" }, naming)).toEqual(none);
+    expect(await verbs({ ...restricted, my_role: "admin" }, token(["ADMIN"]))).toEqual(none);
+    expect(await verbs({ ...restricted, my_role: "admin" }, naming)).toEqual(all);
+    expect(await verbs({ ...restricted, my_role: "writer" }, naming)).toEqual(writer);
+    expect(await verbs({ ...restricted, my_role: "admin" }, token(["WRITER"], ["code-clickhouse"]))).toEqual(writer);
+    expect(await verbs({ ...restricted, my_role: "" }, null, true)).toEqual(all);
   });
 });
 
