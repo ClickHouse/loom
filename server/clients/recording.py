@@ -95,7 +95,7 @@ async def _pages(
     """Every item under `key` across the pages of a listing; a failing page raises."""
     items: list[dict[str, Any]] = []
     while True:
-        data = await bearer_get(get_client(), url, token, what, params)
+        data = await bearer_get(get_client(), url, token, what, params=params)
         items.extend(i for i in data.get(key) or [] if isinstance(i, dict))
         page_token = data.get("nextPageToken")
         if not isinstance(page_token, str) or not page_token:
@@ -187,7 +187,7 @@ async def meet_entries(token: str, transcript: str, *, max_bytes: int) -> list[d
     entries: list[dict[str, Any]] = []
     size = 0
     while True:
-        data = await bearer_get(get_client(), url, token, transcript, params)
+        data = await bearer_get(get_client(), url, token, transcript, params=params)
         for entry in data.get("transcriptEntries") or []:
             if isinstance(entry, dict):
                 entries.append(entry)

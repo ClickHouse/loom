@@ -294,7 +294,8 @@ async def _list(t: _Turn, edited_after: str) -> None:
             t.absent.add(child_id)  # a full turn's lookup decides
             continue
         except notion.VendorError as e:
-            if e.status == 403:
+            # A 403 that is a rate limit ends the turn (`_container_failed`).
+            if isinstance(e, notion.CredentialRefused) and e.status == 403:
                 _child_refused(t, child_id, e)
             else:
                 _container_failed(t.result, e)

@@ -29,6 +29,7 @@ from server.clients._vendor import (
     bearer_get,
     exchange_token,
     get_capped,
+    json_object,
 )
 
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -102,7 +103,7 @@ async def require_folder(token: str, folder_id: str) -> None:
         f"{_FILES_URL}/{folder_id}",
         token,
         what,
-        {"fields": "mimeType,trashed", "supportsAllDrives": "true"},
+        params={"fields": "mimeType,trashed", "supportsAllDrives": "true"},
     )
     if data.get("mimeType") != _FOLDER_MIME or data.get("trashed"):
         raise NotFound(f"{what}: not a folder")
@@ -126,7 +127,7 @@ async def list_files(
         _FILES_URL,
         token,
         "listing",
-        {
+        params={
             "q": _folder_query(folder_ids, mime_types),
             "fields": "nextPageToken,files(id,name,mimeType,modifiedTime)",
             "pageSize": "1000",
@@ -185,7 +186,7 @@ async def list_all(
     files: list[dict[str, Any]] = []
     whole = True
     while True:
-        data = await bearer_get(get_client(), _FILES_URL, token, "listing", params)
+        data = await bearer_get(get_client(), _FILES_URL, token, "listing", params=params)
         whole = whole and not data.get("incompleteSearch")
         files.extend(f for f in data.get("files") or [] if isinstance(f, dict))
         page_token = data.get("nextPageToken")
@@ -202,7 +203,7 @@ async def file_state(token: str, file_id: str) -> dict[str, Any]:
         _file_url(file_id),
         token,
         f"file {file_id}",
-        {"fields": "trashed,parents", "supportsAllDrives": "true"},
+        params={"fields": "trashed,parents", "supportsAllDrives": "true"},
     )
 
 
@@ -228,13 +229,7 @@ async def presentation(token: str, file_id: str, *, max_bytes: int) -> dict[str,
     data = await get_capped(
         get_client(), f"{_SLIDES_URL}/{file_id}", token, what, max_bytes=max_bytes
     )
-    try:
-        deck = json.loads(data)
-    except ValueError:
-        raise VendorError(f"{what}: body is not JSON") from None
-    if not isinstance(deck, dict):
-        raise VendorError(f"{what}: body is not an object")
-    return deck
+    return json_object(data, what)
 
 
 async def download(token: str, file_id: str, *, max_bytes: int) -> bytes:

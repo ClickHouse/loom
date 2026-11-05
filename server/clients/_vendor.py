@@ -13,6 +13,7 @@ its own `get_client` name and a test replaces it there.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -96,10 +97,10 @@ def raise_for_status(resp: httpx.Response, what: str) -> None:
         raise VendorError(f"{what}: http_{status}", status=status)
 
 
-def json_object(resp: httpx.Response, what: str) -> dict[str, Any]:
-    """The answer's body, which must be a JSON object."""
+def json_object(body: bytes, what: str) -> dict[str, Any]:
+    """A body, which must be a JSON object."""
     try:
-        data = resp.json()
+        data = json.loads(body)
     except ValueError:
         raise VendorError(f"{what}: body is not JSON") from None
     if not isinstance(data, dict):
@@ -116,7 +117,7 @@ async def request_json(
     except httpx.RequestError as e:
         raise VendorError(f"{what}: {type(e).__name__}") from e
     raise_for_status(resp, what)
-    return json_object(resp, what)
+    return json_object(resp.content, what)
 
 
 async def bearer_get(
@@ -124,6 +125,7 @@ async def bearer_get(
     url: str,
     token: str,
     what: str,
+    *,
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """A GET with `token` as the bearer credential, and its JSON object answer."""
@@ -144,7 +146,7 @@ async def exchange_token(
     if resp.status_code == 400:
         raise CredentialRefused(f"{what}: http_400", status=400)
     raise_for_status(resp, what)
-    answer = json_object(resp, what)
+    answer = json_object(resp.content, what)
     token = answer.get("access_token")
     if not isinstance(token, str) or not token:
         raise VendorError(f"{what}: no access_token in the answer")
