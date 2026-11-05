@@ -719,9 +719,10 @@ write embeddings are not recorded. The ledger does not split spend by arm: the a
 cost per arm is their recorded tokens priced at the current price table, and judging is
 not split.
 
-**Reading.** Resolved against zero (the interval's lower bound above it, or its upper
-bound below it): the gold rows (arm 3) raise A and D precision and recall and B avoidance
-and satisfaction over no design knowledge. The whole document (arm 1) raises D recall 10.5
+**Reading.** The resolved results this run is about, each resolved against zero (the
+interval's lower bound above it, or its upper bound below it); the comparison table holds
+the rest: the gold rows (arm 3) raise A and D precision and recall and B avoidance and
+satisfaction over no design knowledge. The whole document (arm 1) raises D recall 10.5
 points over the gold rows and lowers B avoidance below arm 0 (-14.4). Extracted rows alone
 (arm 4) fall below the gold rows on A, B and D; adding the documents' knowledge hits to
 them (arm 6) raises A precision (+31.1) and recall (+51.0) and D precision (+22.4) and
