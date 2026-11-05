@@ -484,6 +484,12 @@ def test_the_dry_run_counts_every_call(capsys):
     assert p["usage"]["extract"]["calls"] == 0  # arm 4 not run
     run.print_plan(p)
     assert "at every output cap" in capsys.readouterr().out
+    # Arm 6 reads a second search section, the knowledge hits, beside arm 4's surfaces.
+    four, six = (
+        run.plan(ts, dataclasses.replace(cfg, arms=[arm]))["usage"]["answer"]["in"]
+        for arm in (4, 6)
+    )
+    assert six - four == 9 * 2 * run.SEARCH_SECTION_TOKENS
 
 
 def test_the_extraction_bound_covers_every_window_the_extractor_reads():
