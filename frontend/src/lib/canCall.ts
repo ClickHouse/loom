@@ -178,31 +178,19 @@ export type RowOp = Extract<
 
 /**
  * Whether the caller may call `op` on the namespace of one `code.repos` row, by the rule
- * `server/auth/authz.py::check_authorized` applies, read from the token's claims and the
+ * `server/auth/authz.py::check_authorized` applies, from the token's claims and the
  * row's `my_role` (the caller's grant there) and `my_status`:
- * - auth off with no bearer on the request: the server checks nothing. A stored token
- *   (or the proxy's header) is still sent and still checked, and its claims are unknown
- *   here (the auth-off identity is synthesised): a verb the bearer's claim (not its
- *   grant) would admit stays hidden, and a restricted namespace offers nothing. The
- *   same holds before whoami has loaded;
- * - a restricted namespace (`_check_restricted`): a token of its org naming it, whose
- *   claim reaches the op's role, and a grant that reaches it too. No claim widens it;
+ * - auth off with no bearer: the server checks nothing. With a stored token or the
+ *   proxy's header, or before whoami has loaded, the claims are unknown here, so only
+ *   the grant counts and a restricted namespace offers nothing;
+ * - a restricted namespace (`_check_restricted`): a token of its org naming it, a claim
+ *   reaching the op's role, and a grant reaching it too. No claim widens it;
  * - otherwise a grant that reaches the role, or a claim that does on a token covering
- *   the namespace (named, or `*`). A token naming a namespace where its subject holds a
+ *   the namespace (named, or `*`); a token naming a namespace where its subject holds a
  *   grant or a request is held to that grant (`claim_cap`).
- * A mirror to hide verbs the server would refuse; the server stays the authority. What
- * `/v1/whoami` and the row do not carry, it cannot follow: a scoped token's per-namespace
- * roles, a token's `ns_write` claim (a write outside it is refused), a revoked grant
- * that still caps a claim, a delegated token (the row states its creator's grant; the
- * server also caps by the token's own claim, and a restricted namespace reads the
- * token's own grant), a service account with no grant of its own, which the server
- * admits on its creator's grant while the row states none, and the restricted kill
- * switch (`LOOM_RESTRICTED_SERVE=false` refuses everyone on a restricted namespace).
- * With auth off and a bearer, a verb the bearer's claim (not its grant) would admit
- * stays hidden, and a restricted namespace offers nothing.
- * The row's `my_role` and `my_status` can also differ from the grant the server checks
- * when the subject has grants under several alias spellings or a differently cased
- * subject.
+ * It cannot follow what whoami and the row do not carry: per-namespace token roles,
+ * `ns_write`, delegation, service-account inheritance, the restricted kill switch and
+ * grants under other alias spellings. The server stays the authority.
  */
 export function canCallOn(
   op: RowOp,
