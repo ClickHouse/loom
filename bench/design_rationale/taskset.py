@@ -241,6 +241,10 @@ def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
             isinstance(t[name], list) and all(isinstance(x, str) for x in t[name])
         ):
             raise TaskSetError(f"task {tid}: {name} is a list of strings")
+    # A why or feature answer is scored against its gold list: an empty one scores nothing.
+    gold = {"A": "gold_arguments", "D": "gold_facts"}.get(kind)
+    if gold and not t[gold]:
+        raise TaskSetError(f"task {tid}: {kind} task with an empty {gold!r}")
     if kind == "C":
         if t["subtype"] not in C_SUBTYPES:
             raise TaskSetError(f"task {tid}: subtype is one of {C_SUBTYPES}")

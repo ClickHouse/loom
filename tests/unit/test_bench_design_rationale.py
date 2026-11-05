@@ -1395,6 +1395,13 @@ def test_a_feature_task_without_gold_facts_is_refused(tmp_path):
     (root / "tasks.json").write_text(json.dumps(tasks))
     with pytest.raises(TaskSetError, match="gold_facts"):
         load(root)
+    # An empty list scores nothing: refused too, for A's gold arguments as for D's facts.
+    for kind, field in (("D", "gold_facts"), ("A", "gold_arguments")):
+        tasks = json.loads((EXAMPLE / "tasks.json").read_text())
+        tasks[kind][0][field] = []
+        (root / "tasks.json").write_text(json.dumps(tasks))
+        with pytest.raises(TaskSetError, match=f"empty '{field}'"):
+            load(root)
 
 
 def test_arm_6_serves_the_extracted_rows_with_the_documents_knowledge_hits(tmp_path):
