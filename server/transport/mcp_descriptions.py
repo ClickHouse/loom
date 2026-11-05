@@ -1070,8 +1070,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "`ambiguous` with the question to ask.\n"
         "ARGS: `task`, and `source_uris` (up to 50 documents), `datasets` or both; "
         "`window_chars` per map call (default 24000), `max_answer_chars`, "
-        "`max_windows` (cap on LLM calls; `truncated` reports the cut). "
-        "Costs one LLM call per window plus the reduce."
+        "`max_windows` (cap on map calls; `truncated` reports the cut). "
+        "Costs one LLM call per window, one or two for a calculation's plan, "
+        "plus the reduce."
     ),
     "knowledge.outline": (
         "A document's table of contents, from the headings recorded on its "

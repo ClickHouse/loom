@@ -135,18 +135,13 @@ def evidence(
     warnings = list(incomplete)
     if truncated:
         warnings.insert(0, f"more rows matched than the {len(rows)} the calculation returned")
-    elif len(rows) > len(lines):
-        warnings.insert(0, f"only the first {len(lines)} result rows are shown")
     # The plan takes at most a third of the room, so a long `in` list leaves rows room.
     plan_text = _cut(ran, max(1, max_chars // 3))
 
     def note(kept: int) -> str:
-        fit = []
-        if kept < len(lines):
-            fit.append(
-                f"only the first {kept} result rows fit here" if kept else "no result row fits here"
-            )
-        caveat = "".join(f"\nNOTE: {x}" for x in warnings + fit)
+        # Which of the rows returned are shown: the first MAX_EVIDENCE_ROWS, or fewer to fit.
+        shown = f"only the first {kept} of the {len(rows)} result rows are shown"
+        caveat = "".join(f"\nNOTE: {x}" for x in warnings + ([shown] if kept < len(rows) else []))
         return (
             f"CALCULATION [{CALCULATION_SOURCE}#{n}] over every row of the datasets named "
             f"(cite it as [{CALCULATION_SOURCE}#{n}]){caveat}\nPLAN: {plan_text}\n{head}\n"

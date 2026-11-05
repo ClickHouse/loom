@@ -332,17 +332,13 @@ async def test_a_formula_column_is_calculated_over_its_saved_values(control_plan
         assert r.json()["rows"] == [[42.5]] and r.json()["complete"]
 
 
-@pytest.mark.usefixtures("csv_routed")
+@pytest.mark.usefixtures("csv_routed", "require_fake_llm")
 @pytest.mark.asyncio
 async def test_an_answer_over_a_dataset_runs_and_cites_the_plan_the_model_proposed(
     control_plane_url: str,
 ) -> None:
     """With the fake provider, whose plan counts the rows: the plan is checked and run
     over the live snapshot, and the answer cites the calculation."""
-    from server.settings import settings
-
-    if settings.llm_provider != "fake":
-        pytest.skip("the plan asserted is the fake provider's")
     org, ns = unique_org("answer"), "data"
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
         orders = await _publish(c, org, ns, "repo://orders.csv", ORDERS, "orders.csv")

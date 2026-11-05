@@ -4,8 +4,7 @@ documents, and a calculation over the named datasets."""
 from __future__ import annotations
 
 import asyncio
-import typing
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args
 
 import pydantic
 
@@ -279,7 +278,7 @@ def _model_in(annotation: Any) -> type[pydantic.BaseModel] | None:
     """The model a field holds, alone, in a list or as an optional."""
     if isinstance(annotation, type) and issubclass(annotation, pydantic.BaseModel):
         return annotation
-    for arg in typing.get_args(annotation):
+    for arg in get_args(annotation):
         found = _model_in(arg)
         if found is not None:
             return found

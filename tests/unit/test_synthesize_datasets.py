@@ -7,6 +7,7 @@ and against a real server in tests/integration/test_knowledge_query_live.py."""
 from __future__ import annotations
 
 import json
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -98,7 +99,12 @@ def test_evidence_shows_the_plan_the_result_and_what_it_may_not_cover() -> None:
     assert "team (string) | n (number)" in text
     assert f"t{ap.MAX_EVIDENCE_ROWS - 1} | {ap.MAX_EVIDENCE_ROWS - 1}" in text
     assert f"t{ap.MAX_EVIDENCE_ROWS} |" not in text
-    assert "NOTE: only the first 50 result rows are shown" in text
+    assert "NOTE: only the first 50 of the 55 result rows are shown" in text
+    # A result cut at its limit says so, and how many of the rows it returned are here.
+    cut = ap.evidence(1, {}, cols, rows[:50] + rows[:50], truncated=True, incomplete=[],
+                       max_chars=100_000)  # fmt: skip
+    assert "NOTE: more rows matched than the 100 the calculation returned" in cut
+    assert "NOTE: only the first 50 of the 100 result rows are shown" in cut
     assert "NOTE: o: 2 rows were rejected" in text
 
 
@@ -111,7 +117,8 @@ def test_a_note_cut_to_fit_keeps_its_warnings_and_drops_whole_rows() -> None:
     # What the result may not cover comes before the rows, so a cut never loses it.
     head = text.split("\nPLAN:")[0]
     assert "NOTE: more rows matched than the 50 the calculation returned" in head
-    assert "NOTE: o: 2 rows were rejected" in head and "result rows fit here" in head
+    assert "NOTE: o: 2 rows were rejected" in head
+    assert re.search(r"NOTE: only the first \d+ of the 50 result rows are shown", head)
     assert all(line.count("|") == 2 for line in text.split("\n")[6:])  # whole rows only
     # A long plan takes at most a third of the note; the rows still fit beside it.
     wide_plan = {"where": [{"op": "in", "values": ["v" * 9000]}]}
