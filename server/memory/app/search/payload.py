@@ -13,6 +13,7 @@ from server.identity.app.request_scope import request_scope
 from server.memory.app.search.request import apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
+from server.memory.domain.decision_schema import is_whole_row
 from server.memory.domain.sensitivity import reads_high
 from server.memory.store.shared import SHARED_AGENT
 
@@ -514,19 +515,11 @@ async def _expand_source_bodies(
     return (n_served, n_over)
 
 
-def _whole_row(hit: Any) -> bool:
-    """A decision or a constraint: its reasons and rejected options come after its
-    outcome, so an excerpt of the usual length would cut what an agent must read."""
-    from server.memory.domain.decision_schema import is_decision
-
-    tags = getattr(hit, "_row_tags", None) or getattr(hit, "tags", None) or ()
-    return is_decision(str(getattr(hit, "memory_type", "") or ""), tags) or "constraint" in tags
-
-
 def _apply_bodies(hits: list[Any], input: Any) -> None:
     """Apply the request's `bodies` mode in place: "full" is a no-op; "excerpt" clips each
-    body to LOOM_MEMORY_SEARCH_EXCERPT_CHARS, a decision's or a constraint's to
-    LOOM_MEMORY_SEARCH_DECISION_EXCERPT_CHARS; "none" blanks it. Keys, types and scores are
+    body to LOOM_MEMORY_SEARCH_EXCERPT_CHARS, except a decision's or a constraint's, which
+    keeps its stored excerpt: its reasons and rejected options follow its outcome; "none"
+    blanks it. Keys, types and scores are
     untouched, so a caller can still cite and memory.get what it needs. The wire tier of the
     per-hit explanation is decided here too — both are "what a hit carries", on the main and
     the read-your-writes path alike."""
@@ -536,13 +529,14 @@ def _apply_bodies(hits: list[Any], input: Any) -> None:
         return
     from server.settings import settings as _s
 
-    excerpt = int(_s.memory_search_excerpt_chars)
-    whole = int(_s.memory_search_decision_excerpt_chars)
+    limit = int(_s.memory_search_excerpt_chars)
     for h in hits:
         body = getattr(h, "content_excerpt", "") or ""
-        limit = max(excerpt, whole) if _whole_row(h) else excerpt
+        tags = getattr(h, "_row_tags", None) or getattr(h, "tags", None) or ()
         if bodies == "none":
             new = ""
+        elif is_whole_row(str(getattr(h, "memory_type", "") or ""), tags):
+            new = body
         else:
             new = body if len(body) <= limit else body[: limit - 1] + "…"
         if new != body:

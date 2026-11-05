@@ -4238,12 +4238,6 @@
           "type": "number",
           "description": "Smallest window share verbatim chunks keep when the pool has them. 0.0 = off."
         },
-        "memory_search_decision_excerpt_chars": {
-          "default": 6000,
-          "minimum": 1,
-          "type": "integer",
-          "description": "Body length (chars) for bodies=\"excerpt\" of a decision or constraint row, whose reasons and rejected options follow its outcome; below memory_search_excerpt_chars, that wins."
-        },
         "memory_search_default_mode": {
           "default": "semantic",
           "enum": [
@@ -4314,7 +4308,7 @@
           "default": 200,
           "minimum": 1,
           "type": "integer",
-          "description": "Body length (chars) for bodies=\"excerpt\" (the MCP search default)."
+          "description": "Body length (chars) for bodies=\"excerpt\" (the MCP search default); a decision or constraint row keeps its stored excerpt."
         },
         "memory_search_fact_codes_fetch_multiplier": {
           "default": 3.0,

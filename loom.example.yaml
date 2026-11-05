@@ -3916,13 +3916,9 @@ settings:
   # fail-open. 0 = off. [live]
   # memory_search_query_spelling_max_words: 6
 
-  # Body length (chars) for bodies="excerpt" (the MCP search default). [live]
+  # Body length (chars) for bodies="excerpt" (the MCP search default); a decision or
+  # constraint row keeps its stored excerpt. [live]
   # memory_search_excerpt_chars: 200
-
-  # Body length (chars) for bodies="excerpt" of a decision or constraint row, whose
-  # reasons and rejected options follow its outcome; below memory_search_excerpt_chars,
-  # that wins. [live]
-  # memory_search_decision_excerpt_chars: 6000
 
   # Above this top_k a search that pinned no `bodies` serves excerpts, and per-hit
   # explanation / score_components ride only under `explain: true`. Keys, order and

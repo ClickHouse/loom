@@ -92,41 +92,49 @@ def test_bodies_excerpt_clips_to_the_setting(monkeypatch):
     assert hits[0].memory_key == "a" and hits[0].similarity == 0.5
 
 
-def test_an_excerpt_keeps_a_decision_or_constraint_whole_up_to_its_own_cap(monkeypatch):
+def test_an_excerpt_serves_a_decision_or_constraint_as_stored(monkeypatch):
+    from server.memory.domain.decision_statement import memory_value
+    from server.memory.domain.excerpt import build_excerpt
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_search_excerpt_chars", 50)
-    monkeypatch.setattr(settings, "memory_search_decision_excerpt_chars", 300)
-    statement = "Decided x because y. Rejected: z — w. " * 5
-    decision = _hit("d", distance=0.5, excerpt=statement)
-    decision.memory_type = "decision"
-    tagged = _hit("t", distance=0.5, excerpt=statement)
-    tagged._row_tags = ("decision",)
-    constraint = _hit("c", distance=0.5, excerpt=statement)
-    constraint._row_tags = ("constraint",)
-    long = _hit("l", distance=0.5, excerpt="x" * 500)
-    long.memory_type = "decision"
-    plain = _hit("p", distance=0.5, excerpt=statement)
-    _apply_bodies([decision, tagged, constraint, long, plain], SimpleNamespace(bodies="excerpt"))
-    assert (
-        decision.content_excerpt
-        == tagged.content_excerpt
-        == constraint.content_excerpt
-        == statement
+    statement = memory_value(
+        {
+            "scenario": "how the final merge reads spilled files",
+            "outcome": "merge 64 files at a time",
+            "reasoning": "the final merge holds one block of every file",
+            "alternatives": ["read every file at once — rejected: memory grows with files"],
+        }
     )
-    assert len(long.content_excerpt) == 300 and long.content_excerpt.endswith("…")
-    assert len(plain.content_excerpt) == 50
+    # The body a decision hit carries is the stored excerpt the write built.
+    stored = build_excerpt(statement, memory_key="decision:fan-in")
+
+    def hit(key: str, *, memory_type: str = "semantic", **attrs: object) -> _MemorySearchHit:
+        h = _hit(key, distance=0.5, excerpt=stored)
+        h.memory_type = memory_type
+        for name, value in attrs.items():
+            setattr(h, name, value)
+        return h
+
+    typed = hit("d", memory_type="decision")
+    row_tagged = hit("t", _row_tags=("decision",))
+    wire_tagged = hit("w", tags=["constraint"])
+    constraint = hit("c", _row_tags=("constraint",))
+    plain = hit("p")
+    _apply_bodies(
+        [typed, row_tagged, wire_tagged, constraint, plain], SimpleNamespace(bodies="excerpt")
+    )
+    assert "rejected: memory grows with files" in stored
+    for whole in (typed, row_tagged, wire_tagged, constraint):
+        assert whole.content_excerpt == stored
+    assert len(plain.content_excerpt) == 50 and plain.content_excerpt.endswith("…")
 
 
-def test_a_decision_cap_below_the_excerpt_length_does_not_shorten_a_decision(monkeypatch):
-    from server.settings import settings
-
-    monkeypatch.setattr(settings, "memory_search_excerpt_chars", 200)
-    monkeypatch.setattr(settings, "memory_search_decision_excerpt_chars", 20)
-    decision = _hit("d", distance=0.5, excerpt="y" * 150)
+def test_none_still_blanks_a_decision():
+    decision = _hit("d", distance=0.5, excerpt="Decided x because y.")
     decision.memory_type = "decision"
-    _apply_bodies([decision], SimpleNamespace(bodies="excerpt"))
-    assert decision.content_excerpt == "y" * 150
+    _apply_bodies([decision], SimpleNamespace(bodies="none"))
+    assert decision.content_excerpt == ""
 
 
 def test_bodies_none_blanks_every_body():

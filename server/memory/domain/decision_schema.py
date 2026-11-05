@@ -28,6 +28,12 @@ def is_decision(memory_type: str, tags: Collection[str]) -> bool:
     return memory_type == SCHEMA_NAME or DECISION_TAG in tags
 
 
+def is_whole_row(memory_type: str, tags: Collection[str]) -> bool:
+    """A decision or a constraint: its reasons and rejected options follow its outcome, so
+    the pre-edit block and a search excerpt serve it whole."""
+    return is_decision(memory_type, tags) or "constraint" in tags
+
+
 # category + scenario identify a decision: re-deciding the same scenario supersedes the
 # earlier record (history keeps it), which is what "what is our current decision on X"
 # needs; precedent search still sees every decision row because memory.search reads the

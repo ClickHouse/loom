@@ -24,6 +24,7 @@ from server.memory.domain.decision_schema import (
     SCHEMA_NAME,
     SOURCE_CHANGED_TAG,
     is_decision,
+    is_whole_row,
 )
 from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import row_verification
@@ -164,7 +165,7 @@ def _is_decision(hit: dict[str, Any]) -> bool:
 
 def _is_whole(hit: dict[str, Any]) -> bool:
     """A decision or a constraint: printed whole, outside the token budget."""
-    return _is_decision(hit) or "constraint" in (hit.get("tags") or [])
+    return is_whole_row(str(hit.get("memory_type") or ""), hit.get("tags") or [])
 
 
 def _body(hit: dict[str, Any], *, decision: bool, whole: bool = True) -> str:
