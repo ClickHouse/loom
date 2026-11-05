@@ -103,8 +103,8 @@ class Config:
     only: set[str] = field(default_factory=set)
     keep_namespaces: bool = False
     arm4_namespace: str = ""
-    # Arm 4's rows carry files (a code index linked them, or a sync's rows are served):
-    # it reads the pre-edit block, and so does arm 6. Without, both are served through
+    # The extracted rows carry files (a code index linked them, or a sync's rows are
+    # served): arms 4 and 6 read the pre-edit block. Without, both are served through
     # loom_search only.
     arm4_files: bool = True
     extract_model: str = ""
@@ -315,8 +315,8 @@ def namespaces(state: dict[str, Any], cfg: Config) -> dict[str, str]:
 
 def orgs(state: dict[str, Any], cfg: Config) -> dict[str, str]:
     """The org of each role's namespace, the run's own: a search and the cost readback
-    read a whole org, so a namespace another run left behind must not share one. Arm 4
-    served from a sync's rows keeps the org they were written in."""
+    read a whole org, so a namespace another run left behind must not share one. The
+    extracted arms, served from a sync's rows, keep the org they were written in."""
     prefix = state["prefix"]
     out = {role: f"{cfg.org}-{prefix}-{role}" for role in ("kb", "gold", "extract")}
     if cfg.arm4_namespace:

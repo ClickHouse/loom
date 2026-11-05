@@ -40,7 +40,7 @@ treatment keys) cover both extracted arms: arms 4 and 6 serve the same rows.
 
 Each role's namespace lives in an org of its own: `<org>-<prefix>-<role>`, the prefix
 `dr-<hex>` fixed per run, since a search and the cost readback read a whole org. The
-gold rows are never written where arm 4 extracts. A namespace given with
+gold rows are never written where the extracted rows are. A namespace given with
 `--arm4-namespace` is the exception: it is read in `--org` itself, the harness neither
 registers nor erases it, and its server spend is not read back (its daily cost cap, if
 any, is the deployment's).

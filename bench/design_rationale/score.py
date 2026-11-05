@@ -38,7 +38,7 @@ MDE_Z = 1.96 + 0.84
 # run has a spread of its own: a pass/fail outcome averaged over K samples.
 PLANNING_SD = 0.35
 # (treatment arm, reference arm) pairs reported when both ran. Arm 4 against arm 5 is
-# the like-for-like comparison when arm 4 had no code index (no pre-edit block).
+# the like-for-like comparison when the extracted rows had no files (no pre-edit block).
 # Arm 6 against arms 2 and 4 asks whether serving the documents beside the extracted
 # rows adds to either alone; against arm 3 (or arm 5 without files, as for arm 4), how
 # far both together stay from the gold rows.
