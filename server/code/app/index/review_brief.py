@@ -639,6 +639,7 @@ def rationale_section(
     refused: bool = False,
     paths_maybe_cut: bool = False,
     no_repo: bool = False,
+    no_paths: bool = False,
     budget_tokens: int,
 ) -> dict[str, Any]:
     """The `rationale` section over the rows `decisions_for_paths` read and the PR's diff
@@ -650,7 +651,8 @@ def rationale_section(
     `budget_tokens` (the first always). The verdict reads every row: check | unknown |
     clear | none (no row has anything to check). It is `clear` or `none` only when every
     changed path and every matching row was checked; otherwise `unknown`, with the cause:
-    no repository is configured for the namespace (`no_repo`), the caller may not read
+    no repository is configured for the namespace (`no_repo`), the brief stores no
+    changed path (`no_paths`), the caller may not read
     the trunk namespace (`refused`), the stored changed-path list
     may be shorter than the PR's (`paths_maybe_cut`), `paths_left` changed paths were
     not read, `paths_full` paths' reads reached their row ceiling, `links_skipped`
@@ -665,10 +667,13 @@ def rationale_section(
     verdict = next((v for v in ("check", "unknown", "clear") if v in verdicts), "none")
     left_to_check = sum(1 for d in left_out if has_check(d))
     counts = (paths_left, paths_full, links_skipped, left_to_check)
-    incomplete = no_repo or refused or paths_maybe_cut or any(n > 0 for n in counts)
+    flags = (no_repo, no_paths, refused, paths_maybe_cut)
+    incomplete = any(flags) or any(n > 0 for n in counts)
     if incomplete and verdict in ("clear", "none"):
         verdict = "unknown"
     causes = ["no_repo"] if no_repo else []
+    if no_paths:
+        causes.append("no_paths")
     if refused:
         causes.append("trunk_not_readable")
     if diff is None and "unknown" in verdicts:

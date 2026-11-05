@@ -898,6 +898,30 @@ async def test_rationale_is_unknown_when_no_repository_is_configured(
 
 
 @pytest.mark.asyncio
+async def test_rationale_is_unknown_when_the_brief_stores_no_changed_path(
+    wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.app import memory_links
+    from server.memory.app import code_plane_reads
+
+    async def _decisions(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
+        assert list(paths) == []
+        return code_plane_reads.DecisionRows([], [])
+
+    monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
+    monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _decisions)
+    payload = {
+        "pr_number": 117354,
+        "merge_sha": SHA,
+        "sections": {"paths": rb.section(rb.SERVED, verdict="no_paths", rows=[])},
+    }
+    wired["repo"] = _HandlerRepo(stored={"payload": json.dumps(payload)})
+    out = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354))
+    sec = out.sections["rationale"]
+    assert sec["verdict"] == "unknown" and sec["causes"] == ["no_paths"]
+
+
+@pytest.mark.asyncio
 async def test_rationale_fails_open_to_a_failed_section(
     wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -317,6 +317,8 @@ async def _rationale_section(
         refused=read.refused,
         # the stored list may hold fewer paths than the PR changed once it is this long
         paths_maybe_cut=len(rows) >= rb.IMPACT_SEED_FILES,
+        # a brief stored without a diff or a file list says nothing of the PR's paths
+        no_paths=not rows,
         budget_tokens=settings.code_review_brief_rationale_tokens,
     )
 
