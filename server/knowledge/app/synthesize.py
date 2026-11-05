@@ -277,7 +277,8 @@ def _model_in(annotation: Any) -> type[pydantic.BaseModel] | None:
 
 
 def _why(e: Exception) -> str:
-    """A refused plan's reason, short enough to hand back to the model."""
+    """A refused plan's reason, to hand back to the model (cut to MAX_REASON_CHARS
+    where it is used)."""
     if isinstance(e, pydantic.ValidationError):
         return "; ".join(
             f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors()[:5]
