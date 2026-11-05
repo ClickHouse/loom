@@ -27,10 +27,11 @@ one at a time into batches no wider than the cell budget, so a row group's
 size does not decide what is held; the rows past the budget
 (`tabular.Budget`), and past _MAX_DECODED values or _MAX_DECODED_BYTES decoded
 or _MAX_GROUPS row groups read (a file of blank rows, or of values too long to
-hold, is no cheaper to read), are counted from the metadata, never decoded. The
-extractor's child limits (memory, CPU, no network) bound one decode (a single
-huge page, a decoder fault): what does not fit fails the rows from there
-(`<name> rows N-`).
+hold, is no cheaper to read), are counted from the metadata, never decoded. A
+decode that raises (a page that does not decode, an allocation past the
+child's memory) fails the rows from there (`<name> rows N-`); the extractor's
+child limits (memory, CPU, no network) stop one that runs away, and one past
+the CPU limit or that crashes the child refuses the file (`resource_limit`).
 
 Pure: it reads only the bytes it is given.
 """
