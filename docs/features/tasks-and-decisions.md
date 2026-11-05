@@ -287,7 +287,7 @@ decision whose outcome is recorded reads as decided).
 caller's own `decision:proposed` tag; `memory.update`, which replaces a row's tags, edits the tag like any other, and
 the readers follow it.
 
-A `loom decisions extract` run keeps the stage of a row whose words stay the same ([Extract decisions from a
+A `loom decisions extract` run keeps the stage of a row the document still states ([Extract decisions from a
 document](#extract-decisions-from-a-document), **Stage**), so a proposal later marked accepted keeps its rows proposed.
 Mark such a decision decided by sending the body a `--dry-run` reports for it (it carries the extractor's identity, so
 it replaces the row) with `stage: "decided"`, record its outcome with `decision.outcome`, or delete the document's
