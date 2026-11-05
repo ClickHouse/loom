@@ -98,7 +98,7 @@ def test_values_json_cannot_hold_as_numbers_keep_their_column_a_number() -> None
     assert tab.rows == (("18446744073709551615", None, None), (1, None, None), (2, 1.5, 0.5))
     assert [c.type for c in tab.columns] == ["number", "number", "number"]
     assert [(f.unit, f.reason) for f in a.coverage.failed] == [
-        ("f.parquet values", "2 values infinite, no number a cell holds")
+        ("f.parquet values", "2 values infinite")
     ]
 
 
@@ -437,6 +437,30 @@ def test_each_cause_of_a_value_left_out_is_named(monkeypatch: pytest.MonkeyPatch
     ]
 
 
+def test_every_cause_of_a_value_left_out_is_named_in_full(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(parquetfile, "MAX_VALUE_CHARS", 3)
+    monkeypatch.setattr(parquetfile, "_MAX_UNHELD", 1)
+    n = 1_000_000  # the decode bound's order: counts of seven digits must fit too
+    t = pa.table(
+        {
+            "bin": [b"\x00", None, None],
+            "f": [float("inf"), None, None],
+            "s": ["long text", None, None],
+            "d": pa.array([3_000_000, 3_000_000, None], pa.date32()),
+            "k": ["a", "b", "c"],
+        }
+    )
+    a, _ = _one(_file(t))
+    reason = (
+        "1 value of bytes, no text; 1 value infinite; 1 value over 3 characters; "
+        "1 value past what Python holds; 1 value unread past 1 in a column"
+    )
+    assert [f.reason for f in a.coverage.failed] == [reason]
+    monkeypatch.undo()  # the real bounds' phrases
+    worst = "; ".join(f"{n} values {why}" for why in parquetfile._causes().values())
+    assert len(worst) <= 200  # what a failed unit's reason holds
+
+
 def test_values_left_out_are_counted_for_the_rows_read(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tabular, "MAX_ROWS", 2)
     t = pa.table({"k": list("abcde"), "d": pa.array([3_000_000] * 5, pa.date32())})
@@ -529,6 +553,15 @@ def test_a_file_whose_values_were_all_left_out_is_still_its_header_to_find() -> 
     assert [(b.text, b.locator.row_start) for b in a.blocks] == [("s: x", rows + 1)]
 
 
+def test_a_block_partly_of_rows_left_out_holds_and_cites_only_rows_with_text() -> None:
+    t = pa.table({"bin": [b"\x00", None, b"\x01", None], "s": [None, "a", None, "b"]})
+    a = extract(_file(t), "p.parquet")
+    assert [(b.text, b.locator.row_start, b.locator.row_end) for b in a.blocks] == [
+        ("s: a\ns: b", 2, 4)
+    ]
+    assert len(a.tables[0].rows) == 4  # every row is still the table's
+
+
 def test_a_file_of_blank_rows_is_read_only_to_the_decode_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -568,8 +601,7 @@ def test_values_python_cannot_hold_are_searched_for_by_halves_to_a_bound(
     days = pa.array([3_000_000, 3_000_000, 3_000_000, 1], pa.date32())
     a, tab = _one(_file(pa.table({"d": days})))
     assert [f.reason for f in a.coverage.failed] == [
-        "2 values past what Python holds; "
-        "2 values left out unread past 2 values Python cannot hold in a column"
+        "2 values past what Python holds; 2 values unread past 2 in a column"
     ]
 
 
@@ -637,6 +669,7 @@ def test_a_schema_of_no_columns_is_counted_not_iterated(monkeypatch: pytest.Monk
     monkeypatch.setattr(parquetfile, "_open", lambda data: File())
     a = parquetfile.extract_parquet(b"", "z.parquet")
     assert [(t.columns, t.rows, t.header_rows) for t in a.tables] == [((), (), 0)]
+    assert a.blocks == ()  # no name to find: the server answers no_text
     assert (a.coverage.to_dict()["total"], a.coverage.to_dict()["extracted"]) == (0, 0)
 
 
@@ -772,8 +805,7 @@ def test_a_column_past_its_unheld_bound_is_not_searched_in_later_batches(
     # The first batch finds the two; each later batch is one call, nothing converted.
     assert searched == [2, 1, 1, 2, 2, 2, 2]
     assert a.coverage.failed[-1].reason == (
-        "2 values past what Python holds; "
-        "8 values left out unread past 2 values Python cannot hold in a column"
+        "2 values past what Python holds; 8 values unread past 2 in a column"
     )
 
 
@@ -793,8 +825,7 @@ def test_the_unheld_bound_is_counted_for_each_column_apart(
     assert [r[1] for r in tab.rows] == [None, "1970-01-02", "1970-01-03", "1970-01-04"]
     assert [r[0] for r in tab.rows] == [None, None, None, None]
     assert [f.reason for f in a.coverage.failed] == [
-        "3 values past what Python holds; "
-        "2 values left out unread past 2 values Python cannot hold in a column"
+        "3 values past what Python holds; 2 values unread past 2 in a column"
     ]
 
 

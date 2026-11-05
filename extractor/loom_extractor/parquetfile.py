@@ -417,6 +417,18 @@ def _open(data: bytes) -> Any:
         raise ParquetError(str(e)[:250]) from e  # source.py names it a corrupt parquet file
 
 
+def _causes() -> dict[str, str]:
+    """Why a value was left out, by `_Reader.left_out`'s key: short enough that
+    all five, at the decode bound's counts, fit a failed unit's reason."""
+    return {
+        "bytes": "of bytes, no text",
+        "infinite": "infinite",
+        "long": f"over {MAX_VALUE_CHARS} characters",
+        "unheld": "past what Python holds",
+        "unread": f"unread past {_MAX_UNHELD} in a column",
+    }
+
+
 class _Walk:
     """One file's rows as they are read: the numbering, the blank rows, what has
     been decoded so far and what failed, across its row groups."""
@@ -509,14 +521,8 @@ class _Walk:
 
     def fail_left_out(self) -> None:
         """The values left out of the rows read, a failed unit naming each cause."""
-        causes = {
-            "bytes": "of bytes, no text",
-            "infinite": "infinite, no number a cell holds",
-            "long": f"over {MAX_VALUE_CHARS} characters",
-            "unheld": "past what Python holds",
-            "unread": f"left out unread past {_MAX_UNHELD} values Python cannot hold in a column",
-        }
         counts = self.reader.left_out.items()
+        causes = _causes()
         reasons = [f"{counted(n, 'value')} {causes[k]}" for k, n in counts if n]
         if reasons:
             self.fail("values", "; ".join(reasons))

@@ -284,14 +284,15 @@ def table(
     columns = tuple(Column(names[i], _type([r[i] for _, r in grid])) for i in range(width))
     written = False
     for run in blocks:
-        body = "\n".join(line for _, line in run)
-        if body.strip():  # a run of rows whose values were all left out is no text
-            loc = Locator(sheet=sheet, row_start=run[0][0], row_end=run[-1][0])
-            acc.add("paragraph", body, loc, table_id=tid)
+        # A row whose values were all left out has no line: no text, and not cited.
+        lines = [(n, line) for n, line in run if line]
+        if lines:
+            loc = Locator(sheet=sheet, row_start=lines[0][0], row_end=lines[-1][0])
+            acc.add("paragraph", "\n".join(line for _, line in lines), loc, table_id=tid)
             written = True
-    if not written:
+    if not written and head:
         # A header with nothing under it to read (a sheet of one note, a Parquet
-        # column of bytes) is still text to find.
+        # column of bytes) is still text to find; one of no names is no text.
         if len(head) + CHUNK_FLOOR > budget.text:
             fail(budget, failed, name, "its header is past what one artifact holds")
             return None, failed
