@@ -21,11 +21,11 @@ from typing import Any
 # The source a calculation is cited by, as `[knowledge.query#<n>]`.
 CALCULATION_SOURCE = "knowledge.query"
 # What one prompt shows: the result rows and each value's characters (the evidence
-# says when it cut), and each dataset's columns and each name's characters.
+# says when it cut), and each dataset's columns.
 MAX_EVIDENCE_ROWS = 50  # not a setting: what one prompt shows of a result
 MAX_EVIDENCE_CELL = 200  # not a setting: what one prompt shows of a value
-MAX_PROMPT_COLUMNS = 200  # not a setting: what one prompt shows of a schema
-MAX_PROMPT_NAME = 120  # not a setting: what one prompt shows of a column name
+# Each name whole (a cut name could not be planned over), at most MAX_COLUMN_CHARS.
+MAX_PROMPT_COLUMNS = 100  # not a setting: what one prompt shows of a schema
 
 PLAN_SYSTEM = (
     "You turn a question about tabular datasets into a calculation plan, or say "
@@ -72,16 +72,14 @@ def plan_prompt(task: str, schemas: Sequence[Mapping[str, Any]], refused: str = 
 def _described(schema: Mapping[str, Any]) -> str:
     """One dataset as the prompt lists it, its columns and their names bounded."""
     cols = list(schema["columns"])
-    shown = ", ".join(
-        f"{_cut(str(c['name']), MAX_PROMPT_NAME)} ({c['type']})" for c in cols[:MAX_PROMPT_COLUMNS]
-    )
+    shown = ", ".join(f"{c['name']} ({c['type']})" for c in cols[:MAX_PROMPT_COLUMNS])
     more = (
         f", and {len(cols) - MAX_PROMPT_COLUMNS} more not shown"
         if len(cols) > MAX_PROMPT_COLUMNS
         else ""
     )
-    name = _cut(str(schema["name"]), MAX_PROMPT_NAME)
-    return f"- {schema['alias']}: {name} ({schema['row_count']} rows); columns: {shown}{more}"
+    head = f"- {schema['alias']}: {schema['name']} ({schema['row_count']} rows)"
+    return f"{head}; columns: {shown}{more}"
 
 
 def _cut(text: str, limit: int) -> str:
@@ -121,26 +119,42 @@ def evidence(
     incomplete: Sequence[str],
     max_chars: int,
 ) -> str:
-    """A calculation as a note the answer reads and cites: the plan that ran (so the
-    answer can tell what was counted), the result's columns and first rows, and what it
-    may not cover; at most `max_chars`."""
-    ran = {k: v for k, v in plan.items() if k != "datasets" and v not in (None, [], {})}
-    shown = rows[:MAX_EVIDENCE_ROWS]
+    """A calculation as a note the answer reads and cites, at most `max_chars`: what
+    it may not cover and the plan that ran first (so the answer can tell what was
+    counted, and no cut loses either), then the result's columns and as many of its
+    first rows as fit."""
+    ran = json.dumps(
+        {k: v for k, v in plan.items() if k != "datasets" and v not in (None, [], {})},
+        separators=(",", ":"),
+    )
+    lines = [
+        " | ".join("" if v is None else _cut(str(v), MAX_EVIDENCE_CELL) for v in r)
+        for r in rows[:MAX_EVIDENCE_ROWS]
+    ]
     head = " | ".join(f"{c['name']} ({c['type']})" for c in columns)
-    body = "\n".join(
-        " | ".join("" if v is None else _cut(str(v), MAX_EVIDENCE_CELL) for v in r) for r in shown
-    )
-    notes = []
-    if truncated or len(rows) > len(shown):
-        notes.append(f"only the first {len(shown)} result rows are shown; more matched")
-    notes += list(incomplete)
-    caveat = "".join(f"\nNOTE: {x}" for x in notes)
-    note = (
-        f"CALCULATION [{CALCULATION_SOURCE}#{n}] over every row of the datasets named "
-        f"(cite it as [{CALCULATION_SOURCE}#{n}]); the plan that ran: "
-        f"{json.dumps(ran, separators=(',', ':'))}\n{head}\n{body}{caveat}"
-    )
-    if len(note) <= max_chars:
-        return note
-    cut = f"\nNOTE: the calculation's text was cut to {max_chars} characters"
-    return note[: max(0, max_chars - len(cut))] + cut
+    warnings = list(incomplete)
+    if truncated:
+        warnings.insert(0, f"more rows matched than the {len(rows)} the calculation returned")
+    elif len(rows) > len(lines):
+        warnings.insert(0, f"only the first {len(lines)} result rows are shown")
+    # The plan takes at most a third of the room, so a long `in` list leaves rows room.
+    plan_text = _cut(ran, max(1, max_chars // 3))
+
+    def note(kept: int) -> str:
+        fit = []
+        if kept < len(lines):
+            fit.append(
+                f"only the first {kept} result rows fit here" if kept else "no result row fits here"
+            )
+        caveat = "".join(f"\nNOTE: {x}" for x in warnings + fit)
+        return (
+            f"CALCULATION [{CALCULATION_SOURCE}#{n}] over every row of the datasets named "
+            f"(cite it as [{CALCULATION_SOURCE}#{n}]){caveat}\nPLAN: {plan_text}\n{head}\n"
+            + "\n".join(lines[:kept])
+        )
+
+    kept = len(lines)
+    while kept and len(note(kept)) > max_chars:
+        kept -= 1
+    # The warnings are never cut; only a note too short for them is.
+    return note(kept)[:max_chars]

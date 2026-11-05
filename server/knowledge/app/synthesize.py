@@ -22,6 +22,7 @@ from server.knowledge.app.datasets import handle_knowledge_dataset_get
 from server.knowledge.app.document_reads import document_chunks
 from server.knowledge.app.query import handle_knowledge_query
 from server.knowledge.domain import answer_plan as ap
+from server.knowledge.domain import datasets as ds
 from server.observability.genai import llm_stage
 from server.settings.budgets import llm_max_tokens
 
@@ -48,15 +49,7 @@ async def handle_knowledge_synthesize(
     from server.settings import settings as _s
 
     if await namespace_over_cap(input.org, input.namespace):
-        return KnowledgeSynthesizeOutput(
-            answer="",
-            windows=0,
-            chunks_read=0,
-            documents=0,
-            reduce_rounds=0,
-            abstain=True,
-            abstain_reason="budget_capped",
-        )
+        return _abstain("budget_capped")
     chunks, docs = await _corpus_chunks(input)
     if not chunks and not input.datasets:
         return _abstain("no_chunks")
@@ -193,7 +186,7 @@ async def _schemas(
         if found is None:
             raise NotFoundError(f"no live dataset {d.dataset_id!r} of {d.source_uri!r}")
         if found.schema_state == "needs_clarification":
-            asks = "; ".join(f"{c.code} {c.column}".strip() for c in found.clarifications[:5])
+            asks = ds.asks([c.model_dump() for c in found.clarifications])
             return _abstain(
                 "needs_clarification",
                 f"dataset {d.alias!r} needs its schema answered ({asks}):"

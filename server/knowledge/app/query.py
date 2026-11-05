@@ -28,6 +28,7 @@ from server.knowledge.api.models_query import (
     QuerySnapshot,
 )
 from server.knowledge.app.datasets import json_value
+from server.knowledge.domain import datasets as ds
 from server.knowledge.domain import query as plan_domain
 from server.knowledge.store import dataset_query
 from server.knowledge.store import datasets as datasets_repo
@@ -60,10 +61,7 @@ async def _catalogs(
             raise missing
         catalog = rows[0]
         if catalog["schema_state"] == "needs_clarification":
-            asks = "; ".join(
-                f"{c['code']}{' ' + c['column'] if c['column'] else ''}"
-                for c in json.loads(catalog["clarifications"])[:5]
-            )
+            asks = ds.asks(json.loads(catalog["clarifications"]))
             raise ValidationError(
                 f"dataset {d.alias!r} needs its schema answered before it is calculated over"
                 f" ({asks}): approve it with knowledge.dataset_approve"

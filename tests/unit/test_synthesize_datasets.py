@@ -67,14 +67,15 @@ def test_the_prompt_lists_each_dataset_and_says_why_a_plan_was_refused() -> None
     )
 
 
-def test_the_prompt_lists_a_wide_schema_only_to_its_bound() -> None:
+def test_the_prompt_lists_a_wide_schema_only_to_its_bound_each_name_whole() -> None:
     cols = [
         {"name": f"c{i}" + "x" * 300, "type": "string"} for i in range(ap.MAX_PROMPT_COLUMNS + 7)
     ]
     schema = {"alias": "o", "name": "wide.csv", "row_count": 1, "columns": cols}
     prompt = ap.plan_prompt("t", [schema])
-    assert ", and 7 more not shown" in prompt and "x" * 300 not in prompt
-    assert len(prompt) < (ap.MAX_PROMPT_NAME + 12) * (ap.MAX_PROMPT_COLUMNS + 2)
+    assert ", and 7 more not shown" in prompt
+    # A name is shown whole, as a plan must name it; past the bound, none is shown.
+    assert f"c0{'x' * 300} (string)" in prompt and f"c{ap.MAX_PROMPT_COLUMNS}x" not in prompt
 
 
 def test_evidence_shows_the_plan_the_result_and_what_it_may_not_cover() -> None:
@@ -90,19 +91,33 @@ def test_evidence_shows_the_plan_the_result_and_what_it_may_not_cover() -> None:
         max_chars=100_000,
     )  # fmt: skip
     assert text.startswith("CALCULATION [knowledge.query#1]")
-    assert "team (string) | n (number)" in text
     # What ran, so the answer can tell what was counted (no datasets, no empty fields).
-    assert '"where":[{"column":{"dataset":"o","column":"team"},"op":"ne","value":"x"}]' in text
-    assert '"joins"' not in text and '"datasets"' not in text
+    assert (
+        'PLAN: {"where":[{"column":{"dataset":"o","column":"team"},"op":"ne","value":"x"}]}' in text
+    )
+    assert "team (string) | n (number)" in text
     assert f"t{ap.MAX_EVIDENCE_ROWS - 1} | {ap.MAX_EVIDENCE_ROWS - 1}" in text
     assert f"t{ap.MAX_EVIDENCE_ROWS} |" not in text
     assert "NOTE: only the first 50 result rows are shown" in text
     assert "NOTE: o: 2 rows were rejected" in text
-    # A long value and a long note are cut, and say so.
-    long_rows = [["y" * 5000, 1]] * 50
-    wide = ap.evidence(1, {}, cols, long_rows, truncated=False, incomplete=[], max_chars=4000)
-    assert "y" * (ap.MAX_EVIDENCE_CELL + 1) not in wide and len(wide) <= 4000
-    assert wide.endswith("NOTE: the calculation's text was cut to 4000 characters")
+
+
+def test_a_note_cut_to_fit_keeps_its_warnings_and_drops_whole_rows() -> None:
+    cols = [{"name": "team", "type": "string"}] * 3
+    long_rows = [["y" * 5000] * 3] * 50
+    text = ap.evidence(1, {"limit": 50}, cols, long_rows, truncated=True,
+                       incomplete=["o: 2 rows were rejected"], max_chars=12_000)  # fmt: skip
+    assert len(text) <= 12_000 and "y" * (ap.MAX_EVIDENCE_CELL + 1) not in text
+    # What the result may not cover comes before the rows, so a cut never loses it.
+    head = text.split("\nPLAN:")[0]
+    assert "NOTE: more rows matched than the 50 the calculation returned" in head
+    assert "NOTE: o: 2 rows were rejected" in head and "result rows fit here" in head
+    assert all(line.count("|") == 2 for line in text.split("\n")[6:])  # whole rows only
+    # A long plan takes at most a third of the note; the rows still fit beside it.
+    wide_plan = {"where": [{"op": "in", "values": ["v" * 9000]}]}
+    text = ap.evidence(1, wide_plan, cols, [["a", "b", "c"]] * 3, truncated=False,
+                       incomplete=[], max_chars=3000)  # fmt: skip
+    assert text.endswith("a | b | c\na | b | c\na | b | c") and len(text) <= 3000
 
 
 # ---- the handler -------------------------------------------------------------------
@@ -259,6 +274,19 @@ async def test_a_refused_plan_is_proposed_again_once_with_why_then_abstains(
     )
     assert len(stores.queries) == 1  # the first plan never reached the query
     assert out.model == "fake-synth"
+
+
+@pytest.mark.asyncio
+async def test_a_plan_past_the_query_ceilings_is_proposed_again_with_how_to_narrow_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cap the scan hits is the query's 422, a plan refused like any other."""
+    llm = _LLM([PLAN, PLAN], answer="Total [knowledge.query#1]")
+    stores = Stores(monkeypatch, llm)
+    narrow = "the query needs more rows, time or memory than this deployment allows one request"
+    stores.refuse = [narrow]
+    out = await _synthesize()
+    assert narrow in llm.calls[1][1] and out.calculations and len(stores.queries) == 2
 
 
 @pytest.mark.asyncio

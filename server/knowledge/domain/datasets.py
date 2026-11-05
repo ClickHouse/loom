@@ -17,7 +17,7 @@ import hashlib
 import math
 import re
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
 from decimal import Context, Decimal, InvalidOperation
@@ -350,6 +350,12 @@ def _slot_value(v: Any, col: DatasetColumn) -> Any:
     if col.type == "bool":
         return _bool(v)
     return _instant(v, col.type)
+
+
+def asks(clarifications: Sequence[Mapping[str, str]], *, first: int = 5) -> str:
+    """The first clarifications a dataset needs answered, as a refusal names them
+    (`mixed_types amount; header_like_data`)."""
+    return "; ".join(f"{c['code']} {c['column']}".strip() for c in clarifications[:first])
 
 
 def compared_value(v: Any, col: DatasetColumn) -> Any:
