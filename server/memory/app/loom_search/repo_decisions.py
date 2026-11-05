@@ -47,8 +47,9 @@ async def search_repo_decisions(
         # Kept whole here: the merge elides them as the home search elides its own.
         explain=True,
         tags=mem_input.tags,
-        # A recorded statement fits the stored clip, and its reason comes last: an
-        # excerpt would cut it. bodies="none" still serves keys only.
+        # Pinned to the stored clip, so a `unit` request spends no body budget on this
+        # leg; an excerpt would serve a decision as stored too. bodies="none" still serves
+        # keys only.
         bodies="none" if mem_input.bodies == "none" else "full",
         # Only rows that clear the floor: padding the section is the home search's job.
         floor_mode="drop",

@@ -110,7 +110,7 @@ async def _prepend_tier(hits: list[Any], input: Any, tier: str) -> list[Any]:
         who = [getattr(r, c, None) for c in ("agent", "user_id", "session_id")]
         if None not in who:
             hit._row_identity = (str(who[0]), str(who[1]), str(who[2]))
-        # The body tiers read them: a constraint keeps its stored excerpt.
+        # _apply_bodies reads them, so a constraint keeps its excerpt.
         tier_rows.append(stamp_row_tags(hit, getattr(r, "tags", None)))
     # the tiers join after the pool's code annotation: theirs is read here
     from server.memory.app.code_link_reads import annotate_hits
