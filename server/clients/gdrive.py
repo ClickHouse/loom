@@ -94,13 +94,6 @@ async def access_token(account: ServiceAccount) -> str:
     return str(answer["access_token"])
 
 
-async def _get_bytes(
-    url: str, token: str, params: dict[str, Any], what: str, max_bytes: int
-) -> bytes:
-    """The body of a GET, read up to `max_bytes`; TooLarge past it."""
-    return await get_capped(get_client(), url, token, what, max_bytes=max_bytes, params=params)
-
-
 async def require_folder(token: str, folder_id: str) -> None:
     """NotFound when the account cannot see `folder_id` or it is no folder."""
     what = f"folder {folder_id}"
@@ -215,12 +208,13 @@ async def file_state(token: str, file_id: str) -> dict[str, Any]:
 
 async def export_markdown(token: str, file_id: str, *, max_bytes: int) -> str:
     """A native document exported as Markdown."""
-    data = await _get_bytes(
+    data = await get_capped(
+        get_client(),
         _file_url(file_id, "/export"),
         token,
-        {"mimeType": "text/markdown"},
         f"export {file_id}",
-        max_bytes,
+        max_bytes=max_bytes,
+        params={"mimeType": "text/markdown"},
     )
     return data.decode("utf-8", errors="replace")
 
@@ -231,7 +225,9 @@ async def presentation(token: str, file_id: str, *, max_bytes: int) -> dict[str,
     if not valid_file_id(file_id):
         raise ValueError("not a file id")
     what = f"presentation {file_id}"
-    data = await _get_bytes(f"{_SLIDES_URL}/{file_id}", token, {}, what, max_bytes)
+    data = await get_capped(
+        get_client(), f"{_SLIDES_URL}/{file_id}", token, what, max_bytes=max_bytes
+    )
     try:
         deck = json.loads(data)
     except ValueError:
@@ -243,12 +239,13 @@ async def presentation(token: str, file_id: str, *, max_bytes: int) -> dict[str,
 
 async def download(token: str, file_id: str, *, max_bytes: int) -> bytes:
     """An uploaded file's bytes."""
-    return await _get_bytes(
+    return await get_capped(
+        get_client(),
         _file_url(file_id),
         token,
-        {"alt": "media", "supportsAllDrives": "true"},
         f"download {file_id}",
-        max_bytes,
+        max_bytes=max_bytes,
+        params={"alt": "media", "supportsAllDrives": "true"},
     )
 
 
