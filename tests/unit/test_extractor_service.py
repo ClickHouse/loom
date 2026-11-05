@@ -136,9 +136,11 @@ async def test_capabilities_declare_each_parsed_format_and_its_options() -> None
         "text": ["encoding"],
         "sql": ["encoding", "sql_dialect"],
         "toml": ["encoding"],
+        "csv": ["encoding"],
         "pdf": [],
         "docx": [],
         "pptx": [],
+        "xlsx": [],
     }
 
 
@@ -167,7 +169,7 @@ async def test_an_extraction_runs_in_a_child_and_returns_the_artifact() -> None:
 @pytest.mark.parametrize(
     ("params", "body", "code"),
     [
-        ({"format": "csv", "name": "a.csv"}, b"a,b\n", "format_unavailable"),
+        ({"format": "parquet", "name": "a.parquet"}, b"PAR1PAR1", "format_unavailable"),
         ({"format": "pdf", "name": "a.pdf"}, b"%PDF-1.7", "corrupt"),
         ({"format": "pdf", "name": "a.pdf", "encoding": "utf-8"}, b"%PDF-1.7", "invalid_option"),
         ({"format": "markdown", "name": "a.md", "sql_dialect": "x"}, b"# a", "invalid_option"),

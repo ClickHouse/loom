@@ -10,6 +10,7 @@ runs no workers); then status, get, outline, search and download read it back.
   fails `revision_conflict` and leaves revision 2 serving.
 - A PDF with a page of one image fails `incomplete_extraction`; with
   `allow_partial` it publishes as `partial`, its chunks citing their pages.
+- A CSV publishes its rows as passages, a hit citing its rows.
 - An upload whose bytes contradict its name is stored, typed by its name, and its
   job fails with the extractor's code; an ingest of an unknown upload is 404.
 
@@ -247,6 +248,43 @@ async def test_a_pdf_with_an_image_page_publishes_only_when_partial_is_allowed(
     assert [(m["locator"], m["section_path"]) for m in metas] == [
         ({"page_start": 1, "page_end": 1}, ["Escalation"])
     ]
+
+
+@pytest.mark.usefixtures("extractor_routed")
+@pytest.mark.asyncio
+async def test_a_csv_publishes_its_rows_as_passages_cited_by_row(control_plane_url: str) -> None:
+    from server.knowledge.app.extractors import available_formats
+
+    if "csv" not in await available_formats():
+        pytest.skip("no configured document extractor declares csv")
+    org, ns, uri = unique_org("ingest-csv"), "docs", "repo://retention.csv"
+    data = b"Table,Days,Owner\nevents,30,platform\nrollups,365,analytics\n"
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
+        up = (await _upload(c, org, ns, data, "retention.csv")).json()
+        job = await _op(
+            c, "knowledge.ingest", org=org, namespace=ns, upload_id=up["upload_id"], source_uri=uri
+        )
+        await _work(org, ns, job["ingestion_id"])
+        status = await _op(
+            c, "knowledge.ingest_status", org=org, namespace=ns, ingestion_id=job["ingestion_id"]
+        )
+        assert (status["state"], status["format"], status["coverage"]["unit"]) == (
+            "ready",
+            "csv",
+            "rows",
+        )
+        hits = await _op(
+            c,
+            "knowledge.search",
+            org=org,
+            namespace=ns,
+            query="how long are rollups kept",
+            namespace_scope="this",
+            search_mode="lexical",
+        )
+    hit = next(h for h in hits["results"] if "rollups" in h["content"])
+    assert hit["locator"] == {"row_start": 2, "row_end": 3} and hit["format"] == "csv"
+    assert "Table: rollups; Days: 365; Owner: analytics" in hit["content"]
 
 
 @pytest.mark.asyncio

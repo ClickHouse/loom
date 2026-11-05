@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from pypdf import PdfWriter
 
-from loom_extractor import ExtractionError, Options, extract
+from loom_extractor import ExtractionError, Options, extract, ooxml
 from loom_extractor.artifact import Artifact
 from server.knowledge.domain.extract import InvalidArtifact, parse_artifact, structural
 from tests.fixtures.office_files import FORM_IMAGE, FORM_INLINE_IMAGE, INLINE_IMAGE, pdf
@@ -648,3 +648,16 @@ def test_a_slide_nested_past_what_the_walk_reads_fails_that_slide_alone() -> Non
 def test_a_docx_whose_only_picture_was_deleted_is_no_pictures_only_document() -> None:
     a = extract(_zip(_docx_parts("<w:p><w:del><w:r><w:drawing/></w:r></w:del></w:p>")), "a.docx")
     assert a.blocks == () and a.coverage.failed == ()
+
+
+def test_parts_past_the_package_total_fail_their_unit_and_a_document_part_the_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ooxml, "MAX_PACKAGE_BYTES", 15_000)
+    deck = _deck({"a.xml": _slide(_sp("Fine")), "b.xml": _slide(_sp("x" * 20_000))})
+    a = extract(_zip(deck), "deck.pptx")
+    reasons = {f.unit: f.reason for f in a.coverage.failed}
+    assert set(reasons) == {"slide 2"} and "past 15000 bytes" in reasons["slide 2"]
+    with pytest.raises(ExtractionError) as e:
+        extract(_zip(_docx_parts(_wp("y" * 20_000))), "a.docx")
+    assert e.value.code == "corrupt"

@@ -5,8 +5,8 @@ run in this process as a knowledge_ingest worker pass runs one (the server under
 no workers), so each job reaches its state the way production reaches it:
 
 - backlog: a job queued and not yet run (and a job cancelled while pending, which is not);
-- extractor unavailable: an XLSX no configured extractor takes (failed `format_unavailable`;
-  another such XLSX that a text write then replaced is in no finding), and a SQL file whose
+- extractor unavailable: a Parquet file no configured extractor takes (failed `format_unavailable`;
+  another such file that a text write then replaced is in no finding), and a SQL file whose
   extractor is stopped (an unreachable URL: the job is back to pending, retrying);
 - missing access: an original no longer stored (`original_gone`);
 - with the reference extractor at LOOM_DOCUMENT_EXTRACTOR_URL, also missing access (the
@@ -132,11 +132,11 @@ async def test_backlog_a_missing_extractor_and_missing_access_are_kept_apart(
 
     org, ns = unique_org("kinspect-ingest"), f"ki-ingest-{uuid.uuid4().hex[:6]}"
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
-        # No configured extractor takes xlsx: the job fails for the deployment.
-        xlsx, xlsx_job = await _ingest(c, org, ns, b"plain words, not a workbook", "report.xlsx")
-        assert (await _work(xlsx_job, c, org, ns))["error_code"] == "format_unavailable"
+        # No configured extractor takes parquet: the job fails for the deployment.
+        pq, pq_job = await _ingest(c, org, ns, b"plain words, not a parquet file", "report.parquet")
+        assert (await _work(pq_job, c, org, ns))["error_code"] == "format_unavailable"
         # The same failure, then a text write of the source: the write replaced the job.
-        fixed, fixed_job = await _ingest(c, org, ns, b"also not a workbook", "fixed.xlsx")
+        fixed, fixed_job = await _ingest(c, org, ns, b"also not a parquet file", "fixed.parquet")
         assert (await _work(fixed_job, c, org, ns))["error_code"] == "format_unavailable"
         await asyncio.sleep(1.1)  # the document row's ingested_at counts seconds
         await _op(c, "knowledge.add", org=org, namespace=ns, source_uri=fixed, content="Fixed.")
@@ -195,7 +195,7 @@ async def test_backlog_a_missing_extractor_and_missing_access_are_kept_apart(
     # The server's own settings: workers off here, an extractor configured or not.
     assert i["worker_enabled"] == settings.knowledge_ingest_enabled
     assert {s["source_uri"] for s in i["without_document_listed"]} == {
-        xlsx,
+        pq,
         gone,
         down,
         queued,
@@ -213,7 +213,7 @@ async def test_backlog_a_missing_extractor_and_missing_access_are_kept_apart(
     unavailable = f["extractor_unavailable"]
     assert unavailable["kind"] == "system_state"
     assert dict(zip(unavailable["samples"], unavailable["ingestion_ids"], strict=True)) == {
-        xlsx: xlsx_job,
+        pq: pq_job,
         down: down_job,
     }
     access = f["ingest_missing_access"]
@@ -231,7 +231,7 @@ async def test_backlog_a_missing_extractor_and_missing_access_are_kept_apart(
     assert listed[down]["open_ingestion_id"] == down_job
     assert listed[down]["current"]["failure_class"] == "extractor_unavailable"
     assert listed[down]["current"]["next_attempt_at"] is not None
-    assert listed[xlsx]["open_ingestion_id"] == "" and listed[xlsx]["current"]["ended_at"]
+    assert listed[pq]["open_ingestion_id"] == "" and listed[pq]["current"]["ended_at"]
     assert listed[gone]["current"]["failure_class"] == "missing_access"
     c_job = listed[cancelled]
     assert (c_job["open_ingestion_id"], c_job["current"]["state"]) == ("", "cancelled")

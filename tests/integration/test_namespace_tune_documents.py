@@ -1,12 +1,12 @@
 """namespace.tune's document drafts against a live Loom + ClickHouse.
 
-Six text documents whose sections are longer than the chunk size, and an XLSX that no
+Six text documents whose sections are longer than the chunk size, and a Parquet file that no
 configured extractor takes (ingested through the wire and its job run in this process
 as a knowledge_ingest worker pass runs one, so it fails `format_unavailable` as
 production fails it).
 Tune cuts the documents again in process and reports the cut: every section is cut, and
 no larger size is drafted because the test embedder states no input limit, which
-`skipped` says. The XLSX is named in `skipped` with no route invented, decision extraction
+`skipped` says. The Parquet file is named in `skipped` with no route invented, decision extraction
 is said to take no instructions, the same sample comes back on a second call, and nothing
 is written: the document rows and chunks are as they were.
 """
@@ -39,27 +39,27 @@ async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:
     return dict(r.json())
 
 
-async def _failed_xlsx(c: httpx.AsyncClient, org: str, ns: str) -> str:
-    """An XLSX uploaded, ingested and its job run here: its source_uri. The job is run
+async def _failed_parquet(c: httpx.AsyncClient, org: str, ns: str) -> str:
+    """A Parquet file uploaded, ingested and its job run here: its source_uri. The job is run
     by itself, as a pass that took it runs it, since a pass takes one job of a queue
     other tests' jobs share."""
     from server.core.ch import get_client
     from server.knowledge.app import ingest_run
     from server.knowledge.store import ingestions
 
-    data = b"plain words, not a workbook"
+    data = b"plain words, not a parquet file"
     up = await c.post(
         "/v1/knowledge.upload",
         params={
             "org": org,
             "namespace": ns,
-            "filename": "report.xlsx",
+            "filename": "report.parquet",
             "sha256": hashlib.sha256(data).hexdigest(),
         },
         content=data,
     )
     assert up.status_code == 201, up.text
-    uri = "repo://report.xlsx"
+    uri = "repo://report.parquet"
     job = await _op(
         c,
         "knowledge.ingest",
@@ -101,7 +101,7 @@ async def test_tune_cuts_the_documents_again_and_writes_nothing(
                 content=content,
                 title=f"Doc {i}",
             )
-        xlsx = await _failed_xlsx(c, org, ns)
+        pq = await _failed_parquet(c, org, ns)
 
         def snapshot() -> list[tuple[Any, ...]]:
             docs = ch_client.query(
@@ -135,13 +135,13 @@ async def test_tune_cuts_the_documents_again_and_writes_nothing(
     assert "settings.knowledge_chunking" not in targets
     skipped = out["skipped"]
     assert any(s.startswith("chunking:") and "input limit is not known" in s for s in skipped)
-    # No configured extractor declares xlsx: said, and no route is invented.
+    # No configured extractor declares parquet: said, and no route is invented.
     assert "settings.document_extractors_json" not in targets
     assert any(
-        s.startswith("extractor.xlsx: 1 source failed format_unavailable")
-        and "no configured extractor declares xlsx" in s
+        s.startswith("extractor.parquet: 1 source failed format_unavailable")
+        and "no configured extractor declares parquet" in s
         for s in skipped
     ), skipped
     assert any(s.startswith("decision_extraction:") for s in skipped)
     # No document text comes back.
-    assert "word word" not in str(out) and xlsx not in str(sample)
+    assert "word word" not in str(out) and pq not in str(sample)

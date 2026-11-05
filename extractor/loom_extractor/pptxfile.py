@@ -20,7 +20,7 @@ from xml.etree.ElementTree import Element
 from loom_extractor.artifact import Artifact, Blocks, Coverage, Failure, Locator
 from loom_extractor.ooxml import Package, PartError, q
 
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"  # parts past a package-wide bound fail
 _PRESENTATION = "ppt/presentation.xml"
 _TITLES = {"title", "ctrTitle"}
 _MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
