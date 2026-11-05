@@ -1405,6 +1405,11 @@ def test_arm_6_serves_the_extracted_rows_with_the_documents_knowledge_hits(tmp_p
     # namespace the documents were extracted in.
     assert six["for_file_keys"] == surf["B1/arm4"]["for_file_keys"] != []
     assert "loom_search knowledge section:" in six["context"]
+    # The search's count line is printed once, as the real answer prints it, whichever
+    # section carries it.
+    for key, srf in surf.items():
+        if key.endswith("/arm6") and "knowledge section" in srf["context"]:
+            assert srf["context"].count("loom_search '") == 1, key
     assert six["tokens"]["search_knowledge"] > 0 and six["knowledge_uris"]
     assert "knowledge section" not in surf["B1/arm4"]["context"]
     m = score.score(ts, out)

@@ -601,115 +601,115 @@ revised once for the supersession tasks; 10 A, 15 B, 10 C (5 supersession, 5 abs
 and 13 D tasks. The C revisions and abstention questions are synthetic. Each task is
 answered 3 times per arm; each answer is judged once in each order.
 
-| Arm | A precision | A recall | A misleading | A abstains | B avoids | B satisfies | C passes | C states current | D precision | D recall | D misleading | Citation precision | Citation recall |
-| --- | ----------- | -------- | ------------ | ---------- | -------- | ----------- | -------- | ---------------- | ----------- | -------- | ------------ | ------------------ | --------------- |
-| 0   | 29.3        | 30.1     | 78.3         | 100.0      | 18.9     | 12.2        | 93.3     | 13.3             | 15.6        | 12.1     | 65.4         | -                  | 0.0             |
-| 1   | 84.1        | 92.1     | 25.0         | 20.0       | 4.4      | 2.2         | 100.0    | 100.0            | 89.5        | 76.0     | 23.1         | 83.4               | 79.0            |
-| 2   | 81.3        | 80.6     | 41.7         | 26.7       | 42.2     | 43.3        | 100.0    | 100.0            | 80.3        | 59.7     | 47.4         | 54.5               | 48.9            |
-| 3   | 96.8        | 88.8     | 8.3          | 10.0       | 87.8     | 81.1        | 100.0    | 100.0            | 91.9        | 65.5     | 16.7         | 94.0               | 94.2            |
-| 4   | 53.6        | 32.9     | 36.7         | 63.3       | 54.4     | 52.2        | 96.7     | 10.0             | 65.0        | 26.9     | 37.2         | 92.1               | 63.8            |
-| 6   | 84.8        | 83.9     | 26.7         | 20.0       | 55.6     | 55.6        | 100.0    | 100.0            | 85.4        | 67.7     | 42.3         | 84.0               | 74.9            |
+| Arm | A precision | A recall | A misleading | A abstains | B avoids | B satisfies | C passes | C states current | D precision | D recall | D misleading | D abstains | Citation precision | Citation recall |
+| --- | ----------: | -------: | -----------: | ---------: | -------: | ----------: | -------: | ---------------: | ----------: | -------: | -----------: | ---------: | -----------------: | --------------: |
+| 0   |        29.3 |     30.1 |         78.3 |      100.0 |     18.9 |        12.2 |     93.3 |             13.3 |        15.6 |     12.1 |         65.4 |      100.0 |                  - |             0.0 |
+| 1   |        84.1 |     92.1 |         25.0 |       20.0 |      4.4 |         2.2 |    100.0 |            100.0 |        89.5 |     76.0 |         23.1 |        0.0 |               83.4 |            79.0 |
+| 2   |        81.3 |     80.6 |         41.7 |       26.7 |     42.2 |        43.3 |    100.0 |            100.0 |        80.3 |     59.7 |         47.4 |       10.3 |               54.5 |            48.9 |
+| 3   |        96.8 |     88.8 |          8.3 |       10.0 |     87.8 |        81.1 |    100.0 |            100.0 |        91.9 |     65.5 |         16.7 |        6.4 |               94.0 |            94.2 |
+| 4   |        53.6 |     32.9 |         36.7 |       63.3 |     54.4 |        52.2 |     96.7 |             10.0 |        65.0 |     26.9 |         37.2 |       69.2 |               92.1 |            63.8 |
+| 6   |        84.8 |     83.9 |         26.7 |       20.0 |     55.6 |        55.6 |    100.0 |            100.0 |        85.4 |     67.7 |         42.3 |        5.1 |               84.0 |            74.9 |
 
 Percentages. A and D precision is the share of an answer's claims that state a gold
 argument (A) or gold fact (D) or what a gold row states, over the answers that made a
-claim; recall is the share of the gold arguments or facts the answer states; A abstains is
-the share of A answers saying no recorded decision covers the question (in whole or in
-part); A and D misleading are the share of answers that would steer an engineer wrong. B
-avoids: no rejected option proposed (deterministic detectors first, the judge for the
-rest) and the rubric passed where the task has one; B satisfies: no gold constraint
-broken, no rejected option detected, and the rubric passed where the task has one. C
-passes: a supersession answer does not present a reversed statement as the current design,
-an abstention answer says no decision is recorded and invents none. C states current is
-averaged over the 5 supersession tasks. A reversed statement was presented as current in
-6.7% of the supersession answers in arms 0 and 4, none in the other arms; 6.7% of the
-abstention answers failed in arm 0, none in the other arms. Citation precision is the
-share of the answers' citations that resolve and that the judge says support what they are
-cited for. Citation recall is the share of A and D claims with at least one of their own
-citations resolving and supporting them. Answers with no claim, which precision leaves
-out: of the A answers 6.7% in arm 4, of the D answers 10.3% in arm 0 and 17.9% in arm 4,
-none in the other arms.
+claim; recall is the share of the gold arguments or facts the answer states; A and D
+abstain are the share of answers saying no recorded decision (A) or design (D) covers the
+question, in whole or in part; A and D misleading are the share of answers that would
+steer an engineer wrong. B avoids: no rejected option proposed (deterministic detectors
+first, the judge for the rest) and the rubric passed where the task has one; B satisfies:
+no gold constraint broken, no rejected option detected, and the rubric passed where the
+task has one. C passes: a supersession answer does not present a reversed statement as the
+current design, an abstention answer says no decision is recorded and invents none. C
+states current is averaged over the 5 supersession tasks. A reversed statement was
+presented as current in 6.7% of the supersession answers in arms 0 and 4, none in the
+other arms; 6.7% of the abstention answers failed in arm 0, none in the other arms.
+Citation precision is the share of the answers' citations that resolve and that the judge
+says support what they are cited for. Citation recall is the share of A and D claims with
+at least one of their own citations resolving and supporting them. Answers with no claim,
+which precision leaves out: of the A answers 6.7% in arm 4, of the D answers 10.3% in arm
+0 and 17.9% in arm 4, none in the other arms.
 
 Paired per task, bootstrap over documents, 95% interval, and the minimum detectable effect
 taken from that interval. With five clusters the bootstrap intervals and the MDEs taken
 from them understate the uncertainty:
 
-| Treatment vs reference | Kind | Metric    | n (clusters) | Delta | 95% interval   | MDE  |
-| ---------------------- | ---- | --------- | ------------ | ----- | -------------- | ---- |
-| 3 vs 0                 | A    | precision | 10 (5)       | +67.5 | +61.0 .. +82.7 | 15.5 |
-| 3 vs 0                 | A    | recall    | 10 (5)       | +58.7 | +53.1 .. +73.8 | 14.8 |
-| 3 vs 0                 | B    | avoids    | 15 (5)       | +68.9 | +59.5 .. +86.7 | 19.4 |
-| 3 vs 0                 | B    | satisfies | 15 (5)       | +68.9 | +40.9 .. +89.4 | 34.6 |
-| 3 vs 0                 | C    | passed    | 10 (5)       | +6.7  | +0.0 .. +12.1  | 8.7  |
-| 3 vs 0                 | D    | precision | 13 (5)       | +76.3 | +60.5 .. +87.2 | 19.0 |
-| 3 vs 0                 | D    | recall    | 13 (5)       | +53.3 | +41.0 .. +71.6 | 21.8 |
-| 4 vs 0                 | A    | precision | 10 (5)       | +24.3 | -9.5 .. +45.8  | 39.5 |
-| 4 vs 0                 | A    | recall    | 10 (5)       | +2.8  | -18.1 .. +16.2 | 24.4 |
-| 4 vs 0                 | B    | avoids    | 15 (5)       | +35.6 | +0.0 .. +59.5  | 42.5 |
-| 4 vs 0                 | B    | satisfies | 15 (5)       | +40.0 | +8.3 .. +61.1  | 37.7 |
-| 4 vs 0                 | C    | passed    | 10 (5)       | +3.3  | +0.0 .. +8.3   | 5.9  |
-| 4 vs 0                 | D    | precision | 11 (5)       | +46.5 | +1.3 .. +69.3  | 48.6 |
-| 4 vs 0                 | D    | recall    | 13 (5)       | +14.7 | -0.7 .. +22.4  | 16.5 |
-| 4 vs 3                 | A    | precision | 10 (5)       | -43.2 | -81.0 .. -22.9 | 41.5 |
-| 4 vs 3                 | A    | recall    | 10 (5)       | -55.9 | -83.3 .. -39.4 | 31.4 |
-| 4 vs 3                 | B    | avoids    | 15 (5)       | -33.3 | -64.1 .. -11.9 | 37.3 |
-| 4 vs 3                 | B    | satisfies | 15 (5)       | -28.9 | -61.5 .. -8.3  | 38.0 |
-| 4 vs 3                 | C    | passed    | 10 (5)       | -3.3  | -10.0 .. +0.0  | 7.1  |
-| 4 vs 3                 | D    | precision | 11 (5)       | -29.2 | -59.5 .. -15.1 | 31.7 |
-| 4 vs 3                 | D    | recall    | 13 (5)       | -38.6 | -56.3 .. -28.2 | 20.1 |
-| 1 vs 0                 | A    | precision | 10 (5)       | +54.8 | +47.9 .. +69.5 | 15.4 |
-| 1 vs 0                 | A    | recall    | 10 (5)       | +62.0 | +48.7 .. +88.1 | 28.1 |
-| 1 vs 0                 | B    | avoids    | 15 (5)       | -14.4 | -22.0 .. -3.0  | 13.5 |
-| 1 vs 0                 | B    | satisfies | 15 (5)       | -10.0 | -15.2 .. -1.5  | 9.7  |
-| 1 vs 0                 | C    | passed    | 10 (5)       | +6.7  | +0.0 .. +12.1  | 8.7  |
-| 1 vs 0                 | D    | precision | 13 (5)       | +73.9 | +59.0 .. +82.1 | 16.4 |
-| 1 vs 0                 | D    | recall    | 13 (5)       | +63.8 | +54.7 .. +75.3 | 14.7 |
-| 1 vs 3                 | A    | precision | 10 (5)       | -12.7 | -20.2 .. -6.9  | 9.5  |
-| 1 vs 3                 | A    | recall    | 10 (5)       | +3.3  | -7.1 .. +22.5  | 21.2 |
-| 1 vs 3                 | B    | avoids    | 15 (5)       | -83.3 | -94.0 .. -70.0 | 17.2 |
-| 1 vs 3                 | B    | satisfies | 15 (5)       | -78.9 | -97.0 .. -42.4 | 39.0 |
-| 1 vs 3                 | C    | passed    | 10 (5)       | +0.0  | +0.0 .. +0.0   | 0.0  |
-| 1 vs 3                 | D    | precision | 13 (5)       | -2.4  | -10.6 .. +3.6  | 10.2 |
-| 1 vs 3                 | D    | recall    | 13 (5)       | +10.5 | +4.4 .. +15.5  | 7.9  |
-| 2 vs 3                 | A    | precision | 10 (5)       | -15.6 | -27.5 .. -7.6  | 14.2 |
-| 2 vs 3                 | A    | recall    | 10 (5)       | -8.2  | -17.6 .. +8.5  | 18.7 |
-| 2 vs 3                 | B    | avoids    | 15 (5)       | -45.6 | -52.8 .. -40.2 | 9.0  |
-| 2 vs 3                 | B    | satisfies | 15 (5)       | -37.8 | -52.8 .. -19.1 | 24.1 |
-| 2 vs 3                 | C    | passed    | 10 (5)       | +0.0  | +0.0 .. +0.0   | 0.0  |
-| 2 vs 3                 | D    | precision | 13 (5)       | -11.6 | -14.1 .. -7.5  | 4.7  |
-| 2 vs 3                 | D    | recall    | 13 (5)       | -5.8  | -13.8 .. +1.9  | 11.2 |
-| 6 vs 2                 | A    | precision | 10 (5)       | +3.5  | -0.4 .. +10.3  | 7.6  |
-| 6 vs 2                 | A    | recall    | 10 (5)       | +3.3  | -7.4 .. +8.6   | 11.4 |
-| 6 vs 2                 | B    | avoids    | 15 (5)       | +13.3 | -0.9 .. +38.3  | 28.0 |
-| 6 vs 2                 | B    | satisfies | 15 (5)       | +12.2 | -3.0 .. +38.3  | 29.5 |
-| 6 vs 2                 | C    | passed    | 10 (5)       | +0.0  | +0.0 .. +0.0   | 0.0  |
-| 6 vs 2                 | D    | precision | 13 (5)       | +5.1  | -4.1 .. +9.9   | 10.0 |
-| 6 vs 2                 | D    | recall    | 13 (5)       | +8.0  | +1.3 .. +15.4  | 10.1 |
-| 6 vs 4                 | A    | precision | 10 (5)       | +31.1 | +13.5 .. +68.3 | 39.1 |
-| 6 vs 4                 | A    | recall    | 10 (5)       | +51.0 | +31.9 .. +80.2 | 34.4 |
-| 6 vs 4                 | B    | avoids    | 15 (5)       | +1.1  | -27.3 .. +38.9 | 47.3 |
-| 6 vs 4                 | B    | satisfies | 15 (5)       | +3.3  | -25.0 .. +40.3 | 46.6 |
-| 6 vs 4                 | C    | passed    | 10 (5)       | +3.3  | +0.0 .. +10.0  | 7.1  |
-| 6 vs 4                 | D    | precision | 11 (5)       | +22.4 | +9.6 .. +44.8  | 25.2 |
-| 6 vs 4                 | D    | recall    | 13 (5)       | +40.8 | +29.1 .. +57.1 | 20.0 |
-| 6 vs 3                 | A    | precision | 10 (5)       | -12.1 | -20.1 .. -5.4  | 10.5 |
-| 6 vs 3                 | A    | recall    | 10 (5)       | -4.9  | -13.0 .. +8.1  | 15.0 |
-| 6 vs 3                 | B    | avoids    | 15 (5)       | -32.2 | -44.7 .. -10.0 | 24.8 |
-| 6 vs 3                 | B    | satisfies | 15 (5)       | -25.6 | -44.7 .. +10.0 | 39.1 |
-| 6 vs 3                 | C    | passed    | 10 (5)       | +0.0  | +0.0 .. +0.0   | 0.0  |
-| 6 vs 3                 | D    | precision | 13 (5)       | -6.5  | -17.6 .. +0.4  | 12.8 |
-| 6 vs 3                 | D    | recall    | 13 (5)       | +2.2  | -7.7 .. +10.2  | 12.8 |
+| Treatment vs reference | Kind | Metric    | n (clusters) | Delta | 95% interval   |  MDE |
+| ---------------------- | ---- | --------- | -----------: | ----: | -------------- | ---: |
+| 3 vs 0                 | A    | precision |       10 (5) | +67.5 | +61.0 .. +82.7 | 15.5 |
+| 3 vs 0                 | A    | recall    |       10 (5) | +58.7 | +53.1 .. +73.8 | 14.8 |
+| 3 vs 0                 | B    | avoids    |       15 (5) | +68.9 | +59.5 .. +86.7 | 19.4 |
+| 3 vs 0                 | B    | satisfies |       15 (5) | +68.9 | +40.9 .. +89.4 | 34.6 |
+| 3 vs 0                 | C    | passed    |       10 (5) |  +6.7 | +0.0 .. +12.1  |  8.7 |
+| 3 vs 0                 | D    | precision |       13 (5) | +76.3 | +60.5 .. +87.2 | 19.0 |
+| 3 vs 0                 | D    | recall    |       13 (5) | +53.3 | +41.0 .. +71.6 | 21.8 |
+| 4 vs 0                 | A    | precision |       10 (5) | +24.3 | -9.5 .. +45.8  | 39.5 |
+| 4 vs 0                 | A    | recall    |       10 (5) |  +2.8 | -18.1 .. +16.2 | 24.4 |
+| 4 vs 0                 | B    | avoids    |       15 (5) | +35.6 | +0.0 .. +59.5  | 42.5 |
+| 4 vs 0                 | B    | satisfies |       15 (5) | +40.0 | +8.3 .. +61.1  | 37.7 |
+| 4 vs 0                 | C    | passed    |       10 (5) |  +3.3 | +0.0 .. +8.3   |  5.9 |
+| 4 vs 0                 | D    | precision |       11 (5) | +46.5 | +1.3 .. +69.3  | 48.6 |
+| 4 vs 0                 | D    | recall    |       13 (5) | +14.7 | -0.7 .. +22.4  | 16.5 |
+| 4 vs 3                 | A    | precision |       10 (5) | -43.2 | -81.0 .. -22.9 | 41.5 |
+| 4 vs 3                 | A    | recall    |       10 (5) | -55.9 | -83.3 .. -39.4 | 31.4 |
+| 4 vs 3                 | B    | avoids    |       15 (5) | -33.3 | -64.1 .. -11.9 | 37.3 |
+| 4 vs 3                 | B    | satisfies |       15 (5) | -28.9 | -61.5 .. -8.3  | 38.0 |
+| 4 vs 3                 | C    | passed    |       10 (5) |  -3.3 | -10.0 .. +0.0  |  7.1 |
+| 4 vs 3                 | D    | precision |       11 (5) | -29.2 | -59.5 .. -15.1 | 31.7 |
+| 4 vs 3                 | D    | recall    |       13 (5) | -38.6 | -56.3 .. -28.2 | 20.1 |
+| 1 vs 0                 | A    | precision |       10 (5) | +54.8 | +47.9 .. +69.5 | 15.4 |
+| 1 vs 0                 | A    | recall    |       10 (5) | +62.0 | +48.7 .. +88.1 | 28.1 |
+| 1 vs 0                 | B    | avoids    |       15 (5) | -14.4 | -22.0 .. -3.0  | 13.5 |
+| 1 vs 0                 | B    | satisfies |       15 (5) | -10.0 | -15.2 .. -1.5  |  9.7 |
+| 1 vs 0                 | C    | passed    |       10 (5) |  +6.7 | +0.0 .. +12.1  |  8.7 |
+| 1 vs 0                 | D    | precision |       13 (5) | +73.9 | +59.0 .. +82.1 | 16.4 |
+| 1 vs 0                 | D    | recall    |       13 (5) | +63.8 | +54.7 .. +75.3 | 14.7 |
+| 1 vs 3                 | A    | precision |       10 (5) | -12.7 | -20.2 .. -6.9  |  9.5 |
+| 1 vs 3                 | A    | recall    |       10 (5) |  +3.3 | -7.1 .. +22.5  | 21.2 |
+| 1 vs 3                 | B    | avoids    |       15 (5) | -83.3 | -94.0 .. -70.0 | 17.2 |
+| 1 vs 3                 | B    | satisfies |       15 (5) | -78.9 | -97.0 .. -42.4 | 39.0 |
+| 1 vs 3                 | C    | passed    |       10 (5) |  +0.0 | +0.0 .. +0.0   |  0.0 |
+| 1 vs 3                 | D    | precision |       13 (5) |  -2.4 | -10.6 .. +3.6  | 10.2 |
+| 1 vs 3                 | D    | recall    |       13 (5) | +10.5 | +4.4 .. +15.5  |  7.9 |
+| 2 vs 3                 | A    | precision |       10 (5) | -15.6 | -27.5 .. -7.6  | 14.2 |
+| 2 vs 3                 | A    | recall    |       10 (5) |  -8.2 | -17.6 .. +8.5  | 18.7 |
+| 2 vs 3                 | B    | avoids    |       15 (5) | -45.6 | -52.8 .. -40.2 |  9.0 |
+| 2 vs 3                 | B    | satisfies |       15 (5) | -37.8 | -52.8 .. -19.1 | 24.1 |
+| 2 vs 3                 | C    | passed    |       10 (5) |  +0.0 | +0.0 .. +0.0   |  0.0 |
+| 2 vs 3                 | D    | precision |       13 (5) | -11.6 | -14.1 .. -7.5  |  4.7 |
+| 2 vs 3                 | D    | recall    |       13 (5) |  -5.8 | -13.8 .. +1.9  | 11.2 |
+| 6 vs 2                 | A    | precision |       10 (5) |  +3.5 | -0.4 .. +10.3  |  7.6 |
+| 6 vs 2                 | A    | recall    |       10 (5) |  +3.3 | -7.4 .. +8.6   | 11.4 |
+| 6 vs 2                 | B    | avoids    |       15 (5) | +13.3 | -0.9 .. +38.3  | 28.0 |
+| 6 vs 2                 | B    | satisfies |       15 (5) | +12.2 | -3.0 .. +38.3  | 29.5 |
+| 6 vs 2                 | C    | passed    |       10 (5) |  +0.0 | +0.0 .. +0.0   |  0.0 |
+| 6 vs 2                 | D    | precision |       13 (5) |  +5.1 | -4.1 .. +9.9   | 10.0 |
+| 6 vs 2                 | D    | recall    |       13 (5) |  +8.0 | +1.3 .. +15.4  | 10.1 |
+| 6 vs 4                 | A    | precision |       10 (5) | +31.1 | +13.5 .. +68.3 | 39.1 |
+| 6 vs 4                 | A    | recall    |       10 (5) | +51.0 | +31.9 .. +80.2 | 34.4 |
+| 6 vs 4                 | B    | avoids    |       15 (5) |  +1.1 | -27.3 .. +38.9 | 47.3 |
+| 6 vs 4                 | B    | satisfies |       15 (5) |  +3.3 | -25.0 .. +40.3 | 46.6 |
+| 6 vs 4                 | C    | passed    |       10 (5) |  +3.3 | +0.0 .. +10.0  |  7.1 |
+| 6 vs 4                 | D    | precision |       11 (5) | +22.4 | +9.6 .. +44.8  | 25.2 |
+| 6 vs 4                 | D    | recall    |       13 (5) | +40.8 | +29.1 .. +57.1 | 20.0 |
+| 6 vs 3                 | A    | precision |       10 (5) | -12.1 | -20.1 .. -5.4  | 10.5 |
+| 6 vs 3                 | A    | recall    |       10 (5) |  -4.9 | -13.0 .. +8.1  | 15.0 |
+| 6 vs 3                 | B    | avoids    |       15 (5) | -32.2 | -44.7 .. -10.0 | 24.8 |
+| 6 vs 3                 | B    | satisfies |       15 (5) | -25.6 | -44.7 .. +10.0 | 39.1 |
+| 6 vs 3                 | C    | passed    |       10 (5) |  +0.0 | +0.0 .. +0.0   |  0.0 |
+| 6 vs 3                 | D    | precision |       13 (5) |  -6.5 | -17.6 .. +0.4  | 12.8 |
+| 6 vs 3                 | D    | recall    |       13 (5) |  +2.2 | -7.7 .. +10.2  | 12.8 |
 
 The n of a D precision comparison with arm 4 is 11: on two tasks no arm 4 answer made a
 claim to grade.
 
 | Arm | Injected tokens per task (mean, max) | Pre-edit calls | Pre-edit max | Answers' cost, 144 answers (USD) |
-| --- | ------------------------------------ | -------------- | ------------ | -------------------------------- |
-| 0   | 0, 0                                 | 0              | 0            | 0.011                            |
-| 1   | 1,878, 3,432                         | 0              | 0            | 0.062                            |
-| 2   | 725, 1,015                           | 0              | 0            | 0.033                            |
-| 3   | 1,190, 2,758                         | 129            | 663          | 0.035                            |
-| 4   | 296, 1,048                           | 129            | 273          | 0.015                            |
-| 6   | 1,049, 1,790                         | 129            | 273          | 0.038                            |
+| --- | -----------------------------------: | -------------: | -----------: | -------------------------------: |
+| 0   |                                 0, 0 |              0 |            0 |                            0.011 |
+| 1   |                         1,878, 3,432 |              0 |            0 |                            0.062 |
+| 2   |                           725, 1,015 |              0 |            0 |                            0.033 |
+| 3   |                         1,190, 2,758 |            129 |          663 |                            0.035 |
+| 4   |                           296, 1,048 |            129 |          273 |                            0.015 |
+| 6   |                         1,049, 1,790 |            129 |          273 |                            0.038 |
 
 Arm 1 injects 1.58 times arm 3's tokens. By ledger stage the run spent 0.194 USD on
 answers, 0.391 on 1,728 judge passes and 0.004 on the server's own model and embedding

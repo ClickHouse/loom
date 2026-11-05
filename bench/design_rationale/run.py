@@ -559,6 +559,9 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
                 }
                 if arm == 6:
                     knowledge = knowledge_section(found["text"], found["knowledge"])
+                    if knowledge and section:
+                        # One answer, one count line: the memory section carries it.
+                        knowledge = knowledge.split("\n", 1)[1]
                     if knowledge:
                         parts.append("loom_search knowledge section:\n" + knowledge)
                     entry["tokens"]["search_knowledge"] = tokens(knowledge)
