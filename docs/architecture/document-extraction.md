@@ -49,7 +49,7 @@ schema version, the format asked for, each block's type, a unique id and a paren
 10,000 keys of 1,024 characters and 64 section-path entries of 500 characters per block (so the chunks cut from a long
 block share its keys and per-chunk work stays linear), locator spans that are ranges, coverage counts within their
 total, strings that are valid Unicode, numbers that are JSON (no `NaN` or `Infinity`; signed 64-bit integers (-2^63 to
-2^63-1), other numbers within a double) each table's shape (a unique id, at most 16,384 typed columns named in at most
+2^63-1), other numbers within a double), each table's shape (a unique id, at most 16,384 typed columns named in at most
 500 characters, rows as long as its columns of scalars or cell errors, and a sheet and rows that are a locator), and
 nesting depth in `attrs` and `options` (16; the reference TOML parser leaves out the `attrs.value` of a value nested
 deeper than 8, whose text the block keeps). `complete` is recomputed from the counts, failures and losses, and an
