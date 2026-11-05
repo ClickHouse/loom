@@ -1414,10 +1414,6 @@ def test_arm_6_serves_the_extracted_rows_with_the_documents_knowledge_hits(tmp_p
     pairs = {(c["treatment"], c["reference"]) for c in m["comparisons"]}
     assert {(6, 2), (6, 4)} <= pairs
     assert m["arms"][6]["D"]["tasks"] == 1
-    # A surface stored without its hits list is left out of the check, not a miss.
-    del surf["B1/arm2"]["knowledge_uris"]
-    (out / "surfaces.json").write_text(json.dumps(surf))
-    assert score.score(ts, out)["treatment"]["arm2_knowledge_served"] == "8/8"
 
 
 def test_scoring_with_the_unfilled_label_sheet_fails_clearly(tmp_path, capsys):
@@ -1810,3 +1806,31 @@ def test_a_rerun_with_other_flags_is_refused_before_it_erases_anything(tmp_path)
     with pytest.raises(run.RunError, match="other arms"):
         run.run(ts, _config(out, arms=[0]), loom, model, [model], ledger)
     assert loom.erased == []
+
+
+def test_the_report_has_d_columns_and_prints_a_zero_bound_with_a_plus():
+    m = {
+        "arms": {6: {"D": {"precision": 0.5, "recall": 0.25, "misleading": 0.0}}},
+        "comparisons": [
+            {
+                "treatment": 6,
+                "reference": 4,
+                "kind": "D",
+                "metric": "recall",
+                "n": 2,
+                "clusters": 1,
+                "delta": 0.1,
+                "lb": -0.0,
+                "ub": 0.2,
+                "mde": 0.1,
+            }
+        ],
+        "tokens": {},
+        "treatment": {},
+        "judge_stability": {},
+        "unreadable": {},
+    }
+    text = score.report(m)
+    assert "D precision | D recall | D misleading" in text
+    assert "| 6 | - | - | - | - | - | - | - | 50.0 | 25.0 | 0.0 |" in text
+    assert "| 6 vs 4 | D | recall | 2 (1) | +10.0 | +0.0 .. +20.0 |" in text

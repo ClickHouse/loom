@@ -71,8 +71,8 @@ run, whose erasure is refused, rerun the same command with the admin token, or r
 `loom namespaces-gc` command it printed.
 
 The server is a Loom server (and its ClickHouse) you started for this run, never one
-found listening, with real providers and the server's environment in the shell: arm 4
-runs `loom decisions extract` in a child process, on the model those settings name. The
+found listening, with real providers and the server's environment in the shell: arms 4
+and 6 run `loom decisions extract` in a child process, on the model those settings name. The
 dry run prints the calls, tokens and spend, typical and at every output cap. Each task
 is answered K times per arm, each answer judged in both orders and twice per order; arms
 are compared paired per task with a bootstrap over documents, and each comparison
@@ -149,7 +149,7 @@ A changed default is caught with a `diff_added_regex` whose `path_glob` names th
 and whose `pattern` matches the declaration line with a value other than the old one.
 
 A detector that fires is a failure of the task. The paths detectors name are also the
-files whose pre-edit block arms 3 and 4 read. The harness applies no patch and runs no
+files whose pre-edit block arms 3, 4 and 6 read. The harness applies no patch and runs no
 test, so a change's test pass rate is not measured.
 
 ## Outputs

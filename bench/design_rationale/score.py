@@ -380,8 +380,10 @@ def token_summary(surf: dict[str, Any], arms: list[int]) -> dict[int, dict[str, 
 
 def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     """Proof the arms did what they mean, per surface: the tasks whose pre-edit block,
-    and whose loom_search section, served a row (for arm 3 and 5, one of the task's own
-    gold rows); for arm 4 the rows extracted, the rows given files, the failed runs."""
+    and whose loom_search section, served a row (for arms 3 and 5, one of the task's own
+    gold rows; for arms 4 and 6, any extracted row); for arms 2 and 6 the tasks whose
+    knowledge hits held the task's own document; and the rows extracted, the rows given
+    files and the failed runs."""
     out: dict[str, Any] = {}
     tasks = [t for _, t in ts.all_tasks()]
     arm4_files = (state.get("flags") or {}).get("arm4_files", True)
@@ -394,8 +396,8 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
         for surface in ("for_file_keys", "search_keys"):
             if surface == "for_file_keys" and (arm == 5 or (arm in (4, 6) and not arm4_files)):
                 continue  # this arm reads no pre-edit block
-            # Tasks with gold rows only: an abstention task has nothing to serve. Arm
-            # 4's and 6's rows have keys of their own, so any row it served counts.
+            # Tasks with gold rows only: an abstention task has nothing to serve. Arms 4
+            # and 6 serve rows with keys of their own, so any row they served counts.
             if arm in (4, 6):
                 hits = [bool(r.get(surface)) for t, r in rows if t.get("gold_rows")]
             else:
@@ -407,12 +409,9 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
             out[f"arm{arm}_{surface.removesuffix('_keys')}_served"] = f"{sum(hits)}/{len(hits)}"
     for arm in (2, 6):
         # The tasks whose knowledge hits include a section of the task's own document
-        # (any version of it: a revision shares the source_uri). A surface that recorded
-        # no hits list is left out, not counted a miss.
+        # (any version of it: a revision shares the source_uri).
         rows = [
-            (t, r)
-            for t in tasks
-            if "knowledge_uris" in (r := surf.get(surface_key(t["id"], arm)) or {})
+            (t, surf[surface_key(t["id"], arm)]) for t in tasks if surface_key(t["id"], arm) in surf
         ]
         if rows:
             hits = [ts.document_of(t).source_uri in r["knowledge_uris"] for t, r in rows]
@@ -661,6 +660,11 @@ def _pct(v: float | None) -> str:
     return "-" if v is None else f"{v * 100:.1f}"
 
 
+def _signed(x: float) -> str:
+    """A share as signed points; a bootstrap bound of -0.0 prints as +0.0."""
+    return f"{round(x * 100, 1) + 0.0:+.1f}"
+
+
 def report(m: dict[str, Any]) -> str:
     """The aggregate numbers as markdown: per arm, per kind, no task text."""
     lines = [
@@ -688,8 +692,8 @@ def report(m: dict[str, Any]) -> str:
         mde = "-" if c["mde"] is None else f"{c['mde'] * 100:.1f}"
         lines.append(
             f"| {c['treatment']} vs {c['reference']} | {c['kind']} | {c['metric']} | "
-            f"{c['n']} ({c['clusters']}) | {c['delta'] * 100:+.1f} | "
-            f"{c['lb'] * 100:+.1f} .. {c['ub'] * 100:+.1f} | {mde} |"
+            f"{c['n']} ({c['clusters']}) | {_signed(c['delta'])} | "
+            f"{_signed(c['lb'])} .. {_signed(c['ub'])} | {mde} |"
         )
     lines += [
         "",

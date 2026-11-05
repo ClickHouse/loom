@@ -612,21 +612,22 @@ answered 3 times per arm; each answer is judged once in each order.
 
 Percentages. A and D precision is the share of an answer's claims that state a gold
 argument (A) or gold fact (D) or what a gold row states, over the answers that made a
-claim; recall is the share of the gold arguments or facts the answer states; A abstains is the
-share of A answers saying no recorded decision covers the question (in whole or in part);
-A and D misleading are the share of answers that would steer an engineer wrong. B avoids:
-no rejected option proposed (deterministic detectors first, the judge for the rest) and
-the rubric passed where the task has one; B satisfies: no gold constraint broken, no
-rejected option detected, and the rubric passed where the task has one. C passes: a
-supersession answer does not present a reversed statement as the current design, an
-abstention answer says no decision is recorded and invents none. C states current is
-averaged over the 5 supersession tasks. A reversed statement was presented as current on
-6.7% of the supersession tasks in arms 0 and 4, none in the other arms; abstention tasks
-failed on 6.7% in arm 0, none in the other arms. Citation precision is the share of the answers' citations that resolve and
-that the judge says support what they are cited for. Citation recall is the share of A and
-D claims with at least one of their own citations resolving and supporting them. Answers with
-no claim, which precision leaves out: of the A answers 6.7% in arm 4, of the D answers
-10.3% in arm 0 and 17.9% in arm 4, none in the other arms.
+claim; recall is the share of the gold arguments or facts the answer states; A abstains is
+the share of A answers saying no recorded decision covers the question (in whole or in
+part); A and D misleading are the share of answers that would steer an engineer wrong. B
+avoids: no rejected option proposed (deterministic detectors first, the judge for the
+rest) and the rubric passed where the task has one; B satisfies: no gold constraint
+broken, no rejected option detected, and the rubric passed where the task has one. C
+passes: a supersession answer does not present a reversed statement as the current design,
+an abstention answer says no decision is recorded and invents none. C states current is
+averaged over the 5 supersession tasks. A reversed statement was presented as current in
+6.7% of the supersession answers in arms 0 and 4, none in the other arms; 6.7% of the
+abstention answers failed in arm 0, none in the other arms. Citation precision is the
+share of the answers' citations that resolve and that the judge says support what they are
+cited for. Citation recall is the share of A and D claims with at least one of their own
+citations resolving and supporting them. Answers with no claim, which precision leaves
+out: of the A answers 6.7% in arm 4, of the D answers 10.3% in arm 0 and 17.9% in arm 4,
+none in the other arms.
 
 Paired per task, bootstrap over documents, 95% interval, and the minimum detectable effect
 taken from that interval. With five clusters the bootstrap intervals and the MDEs taken
@@ -643,7 +644,7 @@ from them understate the uncertainty:
 | 3 vs 0                 | D    | recall    | 13 (5)       | +53.3 | +41.0 .. +71.6 | 21.8 |
 | 4 vs 0                 | A    | precision | 10 (5)       | +24.3 | -9.5 .. +45.8  | 39.5 |
 | 4 vs 0                 | A    | recall    | 10 (5)       | +2.8  | -18.1 .. +16.2 | 24.4 |
-| 4 vs 0                 | B    | avoids    | 15 (5)       | +35.6 | -0.0 .. +59.5  | 42.5 |
+| 4 vs 0                 | B    | avoids    | 15 (5)       | +35.6 | +0.0 .. +59.5  | 42.5 |
 | 4 vs 0                 | B    | satisfies | 15 (5)       | +40.0 | +8.3 .. +61.1  | 37.7 |
 | 4 vs 0                 | C    | passed    | 10 (5)       | +3.3  | +0.0 .. +8.3   | 5.9  |
 | 4 vs 0                 | D    | precision | 11 (5)       | +46.5 | +1.3 .. +69.3  | 48.6 |
@@ -719,16 +720,18 @@ cost per arm is their recorded tokens priced at the current price table, and jud
 not split.
 
 **Reading.** Resolved against zero (the interval's lower bound above it, or its upper
-bound below it): the gold rows (arm 3) raise A and D precision and recall and B
-avoidance and satisfaction over no design knowledge. The whole document (arm 1) gives the highest D recall, 10.5 points over the gold
-rows, and lowers B avoidance below arm 0 (-14.4). Extracted rows alone (arm 4) fall below
-the gold rows on A, B and D; adding the documents' knowledge hits to them (arm 6) raises A
-precision (+31.1) and recall (+51.0) and D precision (+22.4) and recall (+40.8) over arm 4,
-and D recall over the knowledge hits alone (arm 2, +8.0), and leaves B avoidance unresolved
-against arm 4 (+1.1, -27.3 .. +38.9) and 32.2 points below the gold rows. Feature questions
-(D) are answered from the documents' text; change requests (B) are steered by rows the
-pre-edit block serves: arm 4's and arm 6's pre-edit block served a row on 9 of the 43
-tasks with gold rows, arm 3's on 39.
+bound below it): the gold rows (arm 3) raise A and D precision and recall and B avoidance
+and satisfaction over no design knowledge. The whole document (arm 1) gives the highest D
+recall, 10.5 points over the gold rows, and lowers B avoidance below arm 0 (-14.4).
+Extracted rows alone (arm 4) fall below the gold rows on A, B and D; adding the documents'
+knowledge hits to them (arm 6) raises A precision (+31.1) and recall (+51.0) and D
+precision (+22.4) and recall (+40.8) over arm 4, and D recall over the knowledge hits
+alone (arm 2, +8.0), and leaves B avoidance unresolved against arm 4 (+1.1, -27.3 ..
++38.9) and 32.2 points below the gold rows. Arms 3 and 6 are not resolved apart on D
+recall (+2.2, -7.7 .. +10.2). A hypothesis, not tested here: B avoidance follows the rows
+the pre-edit block serves. Arm 4's and arm 6's block served a row on 9 of the 43 tasks
+with gold rows, arm 3's on 39, but the arms also differ in the rows themselves, and no arm
+varies the block's reach alone.
 
 **Treatment check.** Of the 43 tasks with gold rows, arm 3's pre-edit block served 39 and
 search 42 (a task counts when it served one of its own gold rows); arm 4's and arm 6's
