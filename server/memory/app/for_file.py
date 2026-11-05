@@ -20,6 +20,8 @@ from server.memory.api.models_for_file import (
 )
 from server.memory.domain.code_change import STATE_RANK, worst
 from server.memory.domain.decision_schema import (
+    CONSTRAINT_TAG,
+    DECISION_TAG,
     FAILURE_TAG,
     SCHEMA_NAME,
     SOURCE_CHANGED_TAG,
@@ -58,7 +60,10 @@ _FILE_MATCH = (
 # A decision or constraint prints whole, so it is read up to the block's ceiling at twelve
 # stored bytes a character (`whole_bytes`, an escaped surrogate pair each) and the rendered
 # line decides whether it fits; every other row up to the 600 bytes its capped line shows.
-_WHOLE_ROW = "(memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))"
+# The SQL twin of `is_whole_row`, from the same constants.
+_WHOLE_ROW = (
+    f"(memory_type = '{SCHEMA_NAME}' OR hasAny(tags, ['{DECISION_TAG}', '{CONSTRAINT_TAG}']))"
+)
 _READ_BYTES = f"if({_WHOLE_ROW}, {{whole_bytes:UInt32}}, {_VALUE_BYTES})"
 
 _SELECT = f"""
