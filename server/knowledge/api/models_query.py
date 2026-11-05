@@ -5,15 +5,30 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StrictBool, StrictFloat, StrictInt, model_validator
 
-# One filter value's text and one list's in all: each is one parameter of the
-# statement, which ClickHouse takes up to 128 KiB of, escaping included.
+# One filter value's text, and one list's bytes as the statement sends it: each
+# is one parameter, which ClickHouse takes up to 128 KiB of.
 MAX_VALUE_CHARS = 1024
-MAX_LIST_CHARS = 60_000
+MAX_LIST_BYTES = 100_000
 
 # A value a filter compares with: read as the column's type (a date as ISO text).
-Scalar = Annotated[str, Field(max_length=MAX_VALUE_CHARS)] | int | float | bool
+# Strict, so a text value is never read as another type (a long run of digits as
+# the integer they spell).
+Scalar = (
+    Annotated[str, Field(max_length=MAX_VALUE_CHARS, strict=True)]
+    | StrictInt
+    | StrictFloat
+    | StrictBool
+)
+
+
+def _sent_bytes(v: Any) -> int:
+    """`v`'s bytes in a list parameter: its UTF-8, a backslash before each quote
+    or backslash, and the quotes and comma around it."""
+    text = str(v)
+    return len(text.encode()) + text.count("'") + text.count("\\") + 3
+
 
 # Bounds of one plan: what one request may ask, not a tunable.
 MAX_DATASETS = 4
@@ -70,13 +85,13 @@ class QueryFilter(BaseModel):
     # offset read as UTC), a duration as seconds or H:MM:SS, a number to at most nine decimal
     # places (more is refused); in, not_in and the null tests take none.
     value: Scalar | None = None
-    # The values of in and not_in: at most 1,000, of 60,000 characters in all.
+    # The values of in and not_in: at most 1,000, of about 100 KB in all as UTF-8.
     values: list[Scalar] = Field(default_factory=list, max_length=MAX_FILTER_VALUES)
 
     @model_validator(mode="after")
     def _values_fit_a_parameter(self) -> QueryFilter:
-        if sum(len(str(v)) for v in self.values) > MAX_LIST_CHARS:
-            raise ValueError(f"in and not_in values may be {MAX_LIST_CHARS} characters in all")
+        if sum(_sent_bytes(v) for v in self.values) > MAX_LIST_BYTES:
+            raise ValueError(f"in and not_in values may be {MAX_LIST_BYTES} bytes in all")
         return self
 
 
