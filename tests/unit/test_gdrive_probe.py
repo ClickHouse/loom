@@ -15,7 +15,6 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from server.clients import gdrive
-from server.clients._vendor import raise_for_status
 from server.knowledge.app import source_probes
 
 FOLDER = "1AbCdEfGhIjKlMnOp"
@@ -138,23 +137,6 @@ def test_an_id_that_is_not_a_folder_is_unreachable(monkeypatch: pytest.MonkeyPat
     _install(monkeypatch, _handler)
     with pytest.raises(source_probes.SourceUnreachable):
         asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL))
-
-
-@pytest.mark.parametrize(
-    "reason", ["userRateLimitExceeded", "dailyLimitExceeded", "rateLimitExceeded"]
-)
-def test_a_403_that_is_a_rate_limit_is_told_from_a_refusal(reason: str) -> None:
-    body = {"error": {"code": 403, "errors": [{"reason": reason}], "message": "x"}}
-    with pytest.raises(gdrive.RateLimited, match="rate_limited"):
-        raise_for_status(httpx.Response(403, json=body), "listing")
-    status = {"error": {"code": 403, "status": "RESOURCE_EXHAUSTED"}}
-    with pytest.raises(gdrive.RateLimited):
-        raise_for_status(httpx.Response(403, json=status), "listing")
-    refused = {"error": {"code": 403, "errors": [{"reason": "insufficientFilePermissions"}]}}
-    with pytest.raises(gdrive.CredentialRefused):
-        raise_for_status(httpx.Response(403, json=refused), "listing")
-    with pytest.raises(gdrive.CredentialRefused):
-        raise_for_status(httpx.Response(403, text="not json"), "listing")
 
 
 def test_a_rate_limited_probe_says_so(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -34,6 +34,8 @@ def _google_reason(reason: str) -> dict[str, Any]:
     [
         (429, {}, _vendor.RateLimited, "thing: rate_limited"),
         (403, _google_reason("userRateLimitExceeded"), _vendor.RateLimited, "thing: rate_limited"),
+        (403, _google_reason("dailyLimitExceeded"), _vendor.RateLimited, "thing: rate_limited"),
+        (403, _google_reason("rateLimitExceeded"), _vendor.RateLimited, "thing: rate_limited"),
         (403, {"error": {"status": "RESOURCE_EXHAUSTED"}}, _vendor.RateLimited, "rate_limited"),
         (403, _google_reason("insufficientPermissions"), _vendor.CredentialRefused, "http_403"),
         (403, {"code": "restricted_resource", "message": SECRET}, _vendor.CredentialRefused, "403"),
@@ -50,6 +52,11 @@ def test_an_error_answer_maps_to_its_error_without_the_body(
         _vendor.raise_for_status(httpx.Response(status, json=body), "thing")
     assert caught.value.status == status
     assert SECRET not in str(caught.value)
+
+
+def test_a_403_whose_body_is_not_json_is_a_refusal() -> None:
+    with pytest.raises(_vendor.CredentialRefused, match="^thing: http_403$"):
+        _vendor.raise_for_status(httpx.Response(403, text="not json"), "thing")
 
 
 def test_a_success_raises_nothing() -> None:

@@ -35,9 +35,9 @@ from server.clients._vendor import (
     RateLimited,
     TooLarge,
     VendorError,
+    bearer_get,
     exchange_token,
     get_capped,
-    request_json,
 )
 
 _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -89,18 +89,13 @@ async def _token(url: str, what: str, read_only: Callable[[list[str]], bool], **
     return str(answer["access_token"])
 
 
-async def _get(url: str, token: str, params: dict[str, Any], what: str) -> dict[str, Any]:
-    headers = {"Authorization": f"Bearer {token}"}
-    return await request_json(get_client(), "GET", url, what, headers=headers, params=params)
-
-
 async def _pages(
     url: str, token: str, params: dict[str, Any], key: str, what: str
 ) -> list[dict[str, Any]]:
     """Every item under `key` across the pages of a listing; a failing page raises."""
     items: list[dict[str, Any]] = []
     while True:
-        data = await _get(url, token, params, what)
+        data = await bearer_get(get_client(), url, token, what, params)
         items.extend(i for i in data.get(key) or [] if isinstance(i, dict))
         page_token = data.get("nextPageToken")
         if not isinstance(page_token, str) or not page_token:
@@ -128,7 +123,9 @@ async def meet_token(credential: str) -> str:
 async def meet_space(token: str, space_id: str) -> dict[str, Any]:
     """The space (its canonical `name`, `meetingUri`); NotFound when the user cannot
     see it. `space_id` was checked by the caller (`parse_config`)."""
-    return await _get(f"{_MEET_URL}/spaces/{space_id}", token, {}, f"space {space_id}")
+    return await bearer_get(
+        get_client(), f"{_MEET_URL}/spaces/{space_id}", token, f"space {space_id}"
+    )
 
 
 async def meet_records(
@@ -190,7 +187,7 @@ async def meet_entries(token: str, transcript: str, *, max_bytes: int) -> list[d
     entries: list[dict[str, Any]] = []
     size = 0
     while True:
-        data = await _get(url, token, params, transcript)
+        data = await bearer_get(get_client(), url, token, transcript, params)
         for entry in data.get("transcriptEntries") or []:
             if isinstance(entry, dict):
                 entries.append(entry)
@@ -225,8 +222,11 @@ async def zoom_token(credential: str) -> str:
 async def zoom_instances(token: str, meeting_id: str) -> list[dict[str, Any]]:
     """A meeting's ended instances (`uuid`, `start_time`); NotFound when the account
     has no such meeting. `meeting_id` was checked by the caller (`parse_config`)."""
-    data = await _get(
-        f"{_ZOOM_URL}/past_meetings/{meeting_id}/instances", token, {}, f"meeting {meeting_id}"
+    data = await bearer_get(
+        get_client(),
+        f"{_ZOOM_URL}/past_meetings/{meeting_id}/instances",
+        token,
+        f"meeting {meeting_id}",
     )
     return [m for m in data.get("meetings") or [] if isinstance(m, dict)]
 
@@ -248,8 +248,8 @@ async def zoom_recording(token: str, uuid: str) -> dict[str, Any] | None:
     """One meeting instance's recording (`share_url`, `recording_files`), or None
     when the instance was not recorded."""
     try:
-        return await _get(
-            f"{_ZOOM_URL}/meetings/{uuid_path(uuid)}/recordings", token, {}, "recording"
+        return await bearer_get(
+            get_client(), f"{_ZOOM_URL}/meetings/{uuid_path(uuid)}/recordings", token, "recording"
         )
     except NotFound:
         return None

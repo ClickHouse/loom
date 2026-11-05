@@ -26,9 +26,9 @@ from server.clients._vendor import (
     RateLimited,
     TooLarge,
     VendorError,
+    bearer_get,
     exchange_token,
     get_capped,
-    request_json,
 )
 
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -94,11 +94,6 @@ async def access_token(account: ServiceAccount) -> str:
     return str(answer["access_token"])
 
 
-async def _get(url: str, token: str, params: dict[str, Any], what: str) -> dict[str, Any]:
-    headers = {"Authorization": f"Bearer {token}"}
-    return await request_json(get_client(), "GET", url, what, headers=headers, params=params)
-
-
 async def _get_bytes(
     url: str, token: str, params: dict[str, Any], what: str, max_bytes: int
 ) -> bytes:
@@ -112,11 +107,12 @@ async def _get_bytes(
 async def require_folder(token: str, folder_id: str) -> None:
     """NotFound when the account cannot see `folder_id` or it is no folder."""
     what = f"folder {folder_id}"
-    data = await _get(
+    data = await bearer_get(
+        get_client(),
         f"{_FILES_URL}/{folder_id}",
         token,
-        {"fields": "mimeType,trashed", "supportsAllDrives": "true"},
         what,
+        {"fields": "mimeType,trashed", "supportsAllDrives": "true"},
     )
     if data.get("mimeType") != _FOLDER_MIME or data.get("trashed"):
         raise NotFound(f"{what}: not a folder")
@@ -135,9 +131,11 @@ async def list_files(
 ) -> tuple[list[dict[str, Any]], bool]:
     """One page (1000 at most) of the files of `mime_types` in any of `folder_ids`,
     and whether more follow: one call for every folder."""
-    data = await _get(
+    data = await bearer_get(
+        get_client(),
         _FILES_URL,
         token,
+        "listing",
         {
             "q": _folder_query(folder_ids, mime_types),
             "fields": "nextPageToken,files(id,name,mimeType,modifiedTime)",
@@ -146,7 +144,6 @@ async def list_files(
             "supportsAllDrives": "true",
             "includeItemsFromAllDrives": "true",
         },
-        "listing",
     )
     files = [f for f in data.get("files") or [] if isinstance(f, dict)]
     return files, bool(data.get("nextPageToken"))
@@ -198,7 +195,7 @@ async def list_all(
     files: list[dict[str, Any]] = []
     whole = True
     while True:
-        data = await _get(_FILES_URL, token, params, "listing")
+        data = await bearer_get(get_client(), _FILES_URL, token, "listing", params)
         whole = whole and not data.get("incompleteSearch")
         files.extend(f for f in data.get("files") or [] if isinstance(f, dict))
         page_token = data.get("nextPageToken")
@@ -210,11 +207,12 @@ async def list_all(
 
 async def file_state(token: str, file_id: str) -> dict[str, Any]:
     """A file's `trashed` flag and `parents`; NotFound when the account cannot see it."""
-    return await _get(
+    return await bearer_get(
+        get_client(),
         _file_url(file_id),
         token,
-        {"fields": "trashed,parents", "supportsAllDrives": "true"},
         f"file {file_id}",
+        {"fields": "trashed,parents", "supportsAllDrives": "true"},
     )
 
 

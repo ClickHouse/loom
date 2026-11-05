@@ -1,5 +1,5 @@
 """What the knowledge-source clients share: their errors, the mapping from an HTTP
-answer to one, a JSON request, a token exchange and a size-capped body read.
+answer to one, a JSON request, a bearer GET, a token exchange and a size-capped body read.
 
 Errors carry the HTTP status, never the vendor's response body, which can name
 documents, people or the vendor's own hosts. A rate limit raises `RateLimited`, a
@@ -119,6 +119,18 @@ async def request_json(
     return json_object(resp, what)
 
 
+async def bearer_get(
+    client: httpx.AsyncClient,
+    url: str,
+    token: str,
+    what: str,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A GET with `token` as the bearer credential, and its JSON object answer."""
+    headers = {"Authorization": f"Bearer {token}"}
+    return await request_json(client, "GET", url, what, headers=headers, params=params)
+
+
 async def exchange_token(
     client: httpx.AsyncClient, url: str, what: str, **kw: Any
 ) -> dict[str, Any]:
@@ -128,12 +140,9 @@ async def exchange_token(
         resp = await client.post(url, **kw)
     except httpx.RequestError as e:
         raise VendorError(f"{what}: {type(e).__name__}") from e
-    # A rate limit first; otherwise a token endpoint answers an unknown or revoked
-    # credential with 400, 401 or 403.
-    if rate_limited(resp):
-        raise RateLimited(f"{what}: rate_limited", status=resp.status_code)
-    if resp.status_code in (400, 401, 403):
-        raise CredentialRefused(f"{what}: http_{resp.status_code}", status=resp.status_code)
+    # A token endpoint answers an unknown or revoked credential with a 400 too.
+    if resp.status_code == 400:
+        raise CredentialRefused(f"{what}: http_400", status=400)
     raise_for_status(resp, what)
     answer = json_object(resp, what)
     token = answer.get("access_token")
