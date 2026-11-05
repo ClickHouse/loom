@@ -10,9 +10,11 @@ from pydantic import BaseModel, Field, StrictBool, StrictFloat, StrictInt, model
 from server.knowledge.domain.extract.artifact import MAX_COLUMN_CHARS
 
 # One filter value's text, and one list's bytes: each is one parameter of the
-# statement, which ClickHouse takes up to 128 KiB of. A text list is counted as
-# the client sends it; any other list's values send at most about 42 bytes each
-# (a decimal's 38 digits), so 1,000 of them stay far under the cap.
+# statement, which ClickHouse takes up to 128 KiB of. A list of text values is
+# counted as the client sends it; a number or boolean in it is counted by its
+# Python text, within a few bytes of the text sent (`1.23456789012346e+15` for
+# 1234567890123456.0), and any other list's values send at most about 42 bytes
+# each (a decimal's 38 digits): 1,000 of either stay far under the cap.
 MAX_VALUE_CHARS = 1024
 MAX_LIST_BYTES = 100_000
 
