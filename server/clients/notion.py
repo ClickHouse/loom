@@ -4,11 +4,9 @@ The credential is the integration's token, sent in the `Authorization` header
 only, with the API version the shapes below were written against. The host is a
 constant here, and every id that goes into a request path is checked first.
 
-Errors carry the HTTP status, never the store's response body, which can name
-pages. A rate limit raises `RateLimited`, a refused token or capability
-`CredentialRefused` (401, 403), an id the integration cannot see `NotFound`, a
-page past the caller's bounds `TooLarge`, and any other failure `NotionError`.
-Nothing here retries: the sync worker's next pass is the retry.
+Errors are the shared ones of `server.clients._vendor`: a refused token or
+capability is `CredentialRefused` (401, 403), a page past the caller's bounds
+`TooLarge`.
 """
 
 from __future__ import annotations
@@ -19,9 +17,15 @@ import re
 import time
 from typing import Any
 
-import httpx
-
 from server.clients._http import get_client
+from server.clients._vendor import (
+    CredentialRefused,
+    NotFound,
+    RateLimited,
+    TooLarge,
+    VendorError,
+    request_json,
+)
 
 _API_URL = "https://api.notion.com/v1"
 # The API version the request and response shapes here follow.
@@ -40,36 +44,6 @@ _ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 _OTHER_PAGES = {"child_page", "child_database"}
 
 
-class NotionError(RuntimeError):
-    """`status` is the HTTP status the store answered, 0 when it gave none (a
-    network error, a body that is not JSON, a bound passed here)."""
-
-    def __init__(self, message: str, *, status: int = 0) -> None:
-        super().__init__(message)
-        self.status = status
-
-    @property
-    def refused(self) -> bool:
-        """The store refused this request (a 4xx), as opposed to failing to answer."""
-        return 400 <= self.status < 500
-
-
-class RateLimited(NotionError):
-    pass
-
-
-class CredentialRefused(NotionError):
-    pass
-
-
-class NotFound(NotionError):
-    pass
-
-
-class TooLarge(NotionError):
-    pass
-
-
 def valid_id(value: str) -> bool:
     """Whether `value` is an id in the store's dashed form, safe in a request path."""
     return bool(_ID_RE.fullmatch(value))
@@ -83,17 +57,6 @@ def _valid_stamp(stamp: str) -> bool:
 def valid_token(credential: str) -> bool:
     """Whether `credential` can be an integration token: one printable word."""
     return bool(re.fullmatch(r"[\x21-\x7e]{8,256}", credential))
-
-
-def _raise_for(resp: httpx.Response, what: str) -> None:
-    if resp.status_code == 429:
-        raise RateLimited(f"{what}: rate_limited", status=429)
-    if resp.status_code in (401, 403):
-        raise CredentialRefused(f"{what}: http_{resp.status_code}", status=resp.status_code)
-    if resp.status_code == 404:
-        raise NotFound(f"{what}: http_404", status=404)
-    if resp.status_code >= 400:
-        raise NotionError(f"{what}: http_{resp.status_code}", status=resp.status_code)
 
 
 # When the next request of each integration may go out (time.monotonic), by a digest
@@ -122,20 +85,9 @@ async def _call(
 ) -> dict[str, Any]:
     await _pace(token)
     headers = {"Authorization": f"Bearer {token}", "Notion-Version": API_VERSION}
-    try:
-        resp = await get_client().request(
-            method, f"{_API_URL}{path}", headers=headers, params=params, json=body
-        )
-    except httpx.RequestError as e:
-        raise NotionError(f"{what}: {type(e).__name__}") from e
-    _raise_for(resp, what)
-    try:
-        data = resp.json()
-    except ValueError:
-        raise NotionError(f"{what}: body is not JSON") from None
-    if not isinstance(data, dict):
-        raise NotionError(f"{what}: body is not an object")
-    return data
+    return await request_json(
+        get_client(), method, f"{_API_URL}{path}", what, headers=headers, params=params, json=body
+    )
 
 
 def _checked(object_id: str) -> str:
@@ -292,9 +244,9 @@ __all__ = [
     "PAGE_PACE_S",
     "CredentialRefused",
     "NotFound",
-    "NotionError",
     "RateLimited",
     "TooLarge",
+    "VendorError",
     "block",
     "data_source_ids",
     "database",

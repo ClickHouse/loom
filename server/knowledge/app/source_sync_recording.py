@@ -138,7 +138,7 @@ async def _meet_listing(token: str, space_id: str, since: str) -> list[dict[str,
     space = await recording.meet_space(token, space_id)
     name = str(space.get("name") or "")
     if not _MEET_SPACE_RE.fullmatch(name):
-        raise recording.RecordingError(f"space {space_id}: no space name in the answer")
+        raise recording.VendorError(f"space {space_id}: no space name in the answer")
     out = []
     for record in await recording.meet_records(
         token, name, label=f"space {space_id}", ended_after=since
@@ -261,7 +261,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     except recording.CredentialRefused as e:
         result.fail("credential_invalid", sync.client_error(e))
         return result
-    except recording.RecordingError as e:
+    except recording.VendorError as e:
         result.fail("failed", sync.client_error(e))
         return result
     if lost:
@@ -320,7 +320,7 @@ async def _fetch_and_write(
         return "stop"
     except recording.TooLarge:
         return sync.give_up(f, result, "too_large")
-    except recording.RecordingError as e:
+    except recording.VendorError as e:
         if e.status == 401:
             result.fail("credential_invalid", sync.client_error(e))
             return "stop"

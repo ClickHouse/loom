@@ -6,11 +6,8 @@ key, the OAuth 2.0 JWT bearer grant) and the token goes in the `Authorization`
 header only. Both hosts are constants here: a key's own `token_uri` is never
 dialled.
 
-Errors carry the HTTP status, never the store's response body, which can name
-files or the store's own hosts. A rate limit raises `RateLimited`, a refused
-key or token `CredentialRefused`, an id the account cannot see `NotFound`, a
-file over the caller's size bound `TooLarge`, and any other failure
-`DriveError`. Nothing here retries: the sync worker's next pass is the retry.
+Errors are the shared ones of `server.clients._vendor`; a 403 whose error reason
+is a rate limit raises `RateLimited`, not `CredentialRefused`.
 """
 
 from __future__ import annotations
@@ -22,9 +19,17 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
-
 from server.clients._http import get_client
+from server.clients._vendor import (
+    CredentialRefused,
+    NotFound,
+    RateLimited,
+    TooLarge,
+    VendorError,
+    exchange_token,
+    get_capped,
+    request_json,
+)
 
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _FILES_URL = "https://www.googleapis.com/drive/v3/files"
@@ -39,36 +44,6 @@ PAGE_PACE_S = 0.7  # not a setting: the store's limit, the same on every deploym
 _STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z")
 # A file id goes into a request path; the store's own ids are in this alphabet.
 _FILE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,256}")
-
-
-class DriveError(RuntimeError):
-    """`status` is the HTTP status the store answered, 0 when it gave none (a
-    network error, a body that is not JSON, a bound passed here)."""
-
-    def __init__(self, message: str, *, status: int = 0) -> None:
-        super().__init__(message)
-        self.status = status
-
-    @property
-    def refused(self) -> bool:
-        """The store refused this request (a 4xx), as opposed to failing to answer."""
-        return 400 <= self.status < 500
-
-
-class RateLimited(DriveError):
-    pass
-
-
-class CredentialRefused(DriveError):
-    pass
-
-
-class NotFound(DriveError):
-    pass
-
-
-class TooLarge(DriveError):
-    pass
 
 
 @dataclass(frozen=True)
@@ -93,62 +68,6 @@ def parse_service_account(credential: str) -> ServiceAccount:
     return ServiceAccount(client_email=email, private_key=key)
 
 
-# The `reason` (or `status`) the store's error body gives a 403 that is a rate
-# limit, not a refusal; compared lower-cased.
-_RATE_LIMIT_REASONS = {
-    "ratelimitexceeded",
-    "userratelimitexceeded",
-    "dailylimitexceeded",
-    "quotaexceeded",
-    "rate_limit_exceeded",
-    "resource_exhausted",
-}
-
-
-def _error_reasons(resp: httpx.Response) -> set[str]:
-    """The lower-cased `error.errors[].reason` and `error.status` of an error body, or
-    the OAuth token endpoint's `error` string."""
-    try:
-        error = resp.json().get("error")
-    except (ValueError, AttributeError):
-        return set()
-    if isinstance(error, str):
-        return {error.lower()} if error else set()
-    if not isinstance(error, dict):
-        return set()
-    reasons = {str(e.get("reason") or "") for e in error.get("errors") or [] if isinstance(e, dict)}
-    reasons.add(str(error.get("status") or ""))
-    return {r.lower() for r in reasons if r}
-
-
-def rate_limited(resp: httpx.Response) -> bool:
-    """A 429, or a 403 whose error reason is a rate limit rather than a refusal."""
-    return resp.status_code == 429 or (
-        resp.status_code == 403 and bool(_error_reasons(resp) & _RATE_LIMIT_REASONS)
-    )
-
-
-def _raise_for(resp: httpx.Response, what: str) -> None:
-    if rate_limited(resp):
-        raise RateLimited(f"{what}: rate_limited", status=resp.status_code)
-    if resp.status_code in (401, 403):
-        raise CredentialRefused(f"{what}: http_{resp.status_code}", status=resp.status_code)
-    if resp.status_code == 404:
-        raise NotFound(f"{what}: http_404", status=404)
-    if resp.status_code >= 400:
-        raise DriveError(f"{what}: http_{resp.status_code}", status=resp.status_code)
-
-
-def _json(resp: httpx.Response, what: str) -> dict[str, Any]:
-    try:
-        data = resp.json()
-    except ValueError:
-        raise DriveError(f"{what}: body is not JSON") from None
-    if not isinstance(data, dict):
-        raise DriveError(f"{what}: body is not an object")
-    return data
-
-
 async def access_token(account: ServiceAccount) -> str:
     """A read-only access token for the service account."""
     import jwt
@@ -166,59 +85,28 @@ async def access_token(account: ServiceAccount) -> str:
     # A public key or a non-RSA key raises AttributeError or InvalidKeyError here.
     except (ValueError, TypeError, AttributeError, jwt.PyJWTError):
         raise CredentialRefused("the service account's private_key is not an RSA key") from None
-    try:
-        resp = await get_client().post(
-            _TOKEN_URL,
-            data={
-                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                "assertion": assertion,
-            },
-        )
-    except httpx.RequestError as e:
-        raise DriveError(f"token exchange: {type(e).__name__}") from e
-    # A rate limit first; otherwise the token endpoint answers a key it does not know
-    # or a revoked one with 400, 401 or 403.
-    if rate_limited(resp):
-        raise RateLimited("token exchange: rate_limited")
-    if resp.status_code in (400, 401, 403):
-        raise CredentialRefused(f"token exchange: http_{resp.status_code}")
-    _raise_for(resp, "token exchange")
-    token = _json(resp, "token exchange").get("access_token")
-    if not isinstance(token, str) or not token:
-        raise DriveError("token exchange: no access_token in the answer")
-    return token
+    answer = await exchange_token(
+        get_client(),
+        _TOKEN_URL,
+        "token exchange",
+        data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion},
+    )
+    return str(answer["access_token"])
 
 
 async def _get(url: str, token: str, params: dict[str, Any], what: str) -> dict[str, Any]:
-    try:
-        resp = await get_client().get(
-            url, headers={"Authorization": f"Bearer {token}"}, params=params
-        )
-    except httpx.RequestError as e:
-        raise DriveError(f"{what}: {type(e).__name__}") from e
-    _raise_for(resp, what)
-    return _json(resp, what)
+    headers = {"Authorization": f"Bearer {token}"}
+    return await request_json(get_client(), "GET", url, what, headers=headers, params=params)
 
 
 async def _get_bytes(
     url: str, token: str, params: dict[str, Any], what: str, max_bytes: int
 ) -> bytes:
     """The body of a GET, read up to `max_bytes`; TooLarge past it."""
-    try:
-        async with get_client().stream(
-            "GET", url, headers={"Authorization": f"Bearer {token}"}, params=params
-        ) as resp:
-            if resp.status_code >= 400:
-                await resp.aread()  # the error reasons tell a rate limit from a refusal
-                _raise_for(resp, what)
-            body = bytearray()
-            async for piece in resp.aiter_bytes():
-                body.extend(piece)
-                if len(body) > max_bytes:
-                    raise TooLarge(f"{what}: over {max_bytes} bytes")
-    except httpx.RequestError as e:
-        raise DriveError(f"{what}: {type(e).__name__}") from e
-    return bytes(body)
+    headers = {"Authorization": f"Bearer {token}"}
+    return await get_capped(
+        get_client(), url, what, max_bytes=max_bytes, headers=headers, params=params
+    )
 
 
 async def require_folder(token: str, folder_id: str) -> None:
@@ -352,9 +240,9 @@ async def presentation(token: str, file_id: str, *, max_bytes: int) -> dict[str,
     try:
         deck = json.loads(data)
     except ValueError:
-        raise DriveError(f"{what}: body is not JSON") from None
+        raise VendorError(f"{what}: body is not JSON") from None
     if not isinstance(deck, dict):
-        raise DriveError(f"{what}: body is not an object")
+        raise VendorError(f"{what}: body is not an object")
     return deck
 
 
@@ -372,11 +260,11 @@ async def download(token: str, file_id: str, *, max_bytes: int) -> bytes:
 __all__ = [
     "PAGE_PACE_S",
     "CredentialRefused",
-    "DriveError",
     "NotFound",
     "RateLimited",
     "ServiceAccount",
     "TooLarge",
+    "VendorError",
     "access_token",
     "download",
     "export_markdown",
@@ -385,7 +273,6 @@ __all__ = [
     "list_files",
     "parse_service_account",
     "presentation",
-    "rate_limited",
     "require_folder",
     "valid_file_id",
     "valid_stamp",

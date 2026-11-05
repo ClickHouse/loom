@@ -737,7 +737,7 @@ def test_a_space_s_listing_error_names_the_configured_id(monkeypatch: pytest.Mon
     client = httpx.AsyncClient(transport=httpx.MockTransport(_answer))
     monkeypatch.setattr(recording, "get_client", lambda: client)
     session = source_sync_recording.Session("meet", "tok")
-    with pytest.raises(recording.RecordingError, match="^space abc-mnop-xyz: http_500$"):
+    with pytest.raises(recording.VendorError, match="^space abc-mnop-xyz: http_500$"):
         asyncio.run(source_sync_recording.list_recordings(session, ["abc-mnop-xyz"]))
 
 
