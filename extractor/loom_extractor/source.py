@@ -37,12 +37,19 @@ from loom_extractor.xlsxfile import StrictWorkbook, extract_xlsx
 # Every format a source can be.
 KNOWN_FORMATS = ("markdown", "html", "text", "sql", "toml", "csv", "pdf", "docx", "pptx", "xlsx",
                  "parquet")  # fmt: skip
-# Parquet is read with pyarrow, an install of its own: a build without it reads
-# every other format and does not declare this one.
-_UNREAD = () if importlib.util.find_spec("pyarrow") is not None else ("parquet",)
-# The formats this build parses, and those read from their bytes (no encoding applies).
-PARSED_FORMATS = tuple(f for f in KNOWN_FORMATS if f not in _UNREAD)
-BINARY_PARSED = tuple(f for f in ("pdf", "docx", "pptx", "xlsx", "parquet") if f not in _UNREAD)
+
+
+def parsed_formats(has_pyarrow: bool) -> tuple[str, ...]:
+    """The formats a build parses: Parquet is read with pyarrow, an install of
+    its own, so a build without it reads every other format and does not
+    declare this one."""
+    return tuple(f for f in KNOWN_FORMATS if has_pyarrow or f != "parquet")
+
+
+PARSED_FORMATS = parsed_formats(importlib.util.find_spec("pyarrow") is not None)
+# The formats read from their bytes (no encoding applies; one this build does
+# not parse is refused before that matters).
+BINARY_PARSED = ("pdf", "docx", "pptx", "xlsx", "parquet")
 
 _EXTENSIONS = {
     "md": "markdown",

@@ -8,12 +8,14 @@ A value reads as its column's type says, decided once from the schema:
 - an integer is a number; a decimal is a number written as its exact digits
   (a JSON number would read back as a double and lose them), as is an integer
   past signed 64 bits (a uint64);
-- a float is a number (a float32 or float16 its shortest decimal); NaN or an
-  infinity is its text;
+- a float is a number (a float32 or float16 column's its shortest decimal;
+  one inside a list or struct is the double it widens to); NaN or an infinity
+  is its text;
 - a bool, a date, a timestamp (its zone kept, none when the column has none),
   a time of day and a duration (`H:MM:SS`, hours past a day) as the other
   readers write them; a nanosecond unit is read to the microsecond;
-- text is text; a list, struct or map is its JSON (bytes in it as base64);
+- text is text, a UUID its text; a list, struct or map is its JSON (bytes in
+  it as base64);
 - bytes are no text: left out and counted as a failed unit (`<name> values`),
   as is a value over MAX_VALUE_CHARS, and a value Python cannot hold (a date
   past year 9999), its batch's values of that column with it.
@@ -72,14 +74,14 @@ def _plain(value: Decimal) -> str:
 def _shortest32(value: float) -> float:
     """A float32 value as its shortest decimal: `0.1`, not the double it widens
     to (`0.10000000149011612`)."""
-    for digits in range(1, 10):
+    for digits in range(1, 9):
         short = float(f"{value:.{digits}g}")
         try:
             if struct.unpack("f", struct.pack("f", short))[0] == value:
                 return short
         except OverflowError:  # rounded past float32's range (its maximum, rounded up)
             continue
-    return value
+    return float(f"{value:.9g}")  # nine significant digits round-trip every float32
 
 
 def _json(value: Any) -> Any:
@@ -126,7 +128,7 @@ class _Reader:
                 return Cell(value, "number") if value in _INT64 else Cell(str(value), "number")
             if not math.isfinite(value):
                 return Cell(str(value), "string")
-            return Cell(float(value), "number")
+            return Cell(value, "number")
         if kind in ("date", "datetime", "time"):
             return Cell(value.isoformat(), kind)
         if kind == "duration":
@@ -220,7 +222,8 @@ def _values(column: Any, target: Any, reader: _Reader) -> list[Any]:
     try:
         if target is not None:
             column = column.cast(target, safe=False)
-        return list(column.to_pylist())
+        values: list[Any] = column.to_pylist()
+        return values
     except (pa.ArrowException, ValueError, OverflowError, KeyError):
         reader.left_out += len(column) - column.null_count
         return [None] * len(column)

@@ -265,3 +265,56 @@ def test_the_artifact_reads_back_and_types_its_decimals_exactly() -> None:
     assert [(c.type, c.slot) for c in schema.columns] == [("string", "s1"), ("number", "n1")]
     assert [r["n1"] for r in ds.typed_rows(tab, schema.columns, 0, 9).rows] == amounts
     assert json.loads(a.to_json())["tables"][0]["rows"][0][1] == "99999999999999999999.123456789"
+
+
+def test_nanoseconds_inside_a_struct_a_map_or_a_dictionary_and_a_float16_column_read_alike() -> (
+    None
+):
+    ns = 1_700_000_000_123_456_789
+    t = pa.table(
+        {
+            "st": pa.array([{"at": ns}], pa.struct([("at", pa.timestamp("ns"))])),
+            "m": pa.array([[("k", ns)]], pa.map_(pa.string(), pa.timestamp("ns"))),
+            "dict": pa.array([ns], pa.timestamp("ns")).dictionary_encode(),
+            "f16": pa.array([0.5], pa.float16()),
+        }
+    )
+    a, tab = _one(_file(t))
+    assert tab.rows == (
+        (
+            '{"at": "2023-11-14T22:13:20.123456"}',
+            '[["k", "2023-11-14T22:13:20.123456"]]',
+            "2023-11-14T22:13:20.123456",
+            0.5,
+        ),
+    )
+    assert a.coverage.complete
+
+
+def test_a_uuid_reads_as_its_text_and_a_named_zone_keeps_its_offset() -> None:
+    import uuid
+
+    u = uuid.UUID("12345678-1234-5678-1234-567812345678")
+    at = dt.datetime(2026, 1, 2, 12, tzinfo=dt.UTC)
+    t = pa.table(
+        {
+            "u": pa.array([u.bytes], pa.uuid()),
+            "ts": pa.array([at], pa.timestamp("us", tz="America/New_York")),
+        }
+    )
+    a, tab = _one(_file(t))
+    assert tab.rows == ((str(u), "2026-01-02T07:00:00-05:00"),) and a.coverage.complete
+
+
+def test_a_build_without_pyarrow_neither_parses_nor_declares_parquet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom_extractor import source
+
+    without = source.parsed_formats(has_pyarrow=False)
+    assert "parquet" not in without and set(source.KNOWN_FORMATS) - set(without) == {"parquet"}
+    assert source.parsed_formats(has_pyarrow=True) == source.KNOWN_FORMATS == source.PARSED_FORMATS
+    monkeypatch.setattr(source, "PARSED_FORMATS", without)  # as that build's import sets it
+    with pytest.raises(ExtractionError) as e:
+        extract(b"PAR1 not read PAR1", "a.parquet")
+    assert e.value.code == "format_unavailable"

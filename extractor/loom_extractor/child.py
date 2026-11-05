@@ -7,8 +7,9 @@ seconds, file size, no core dump, no new process); it writes the artifact
 JSON to stdout and exits 0, or writes `{"error": {"code", "message"}}` and
 exits 3.
 
-The service starts it in `/` with only `PYTHONPATH`, `PATH` and `LC_ALL` in
-its environment, so a parser does not see the service's token, and with the
+The service starts it in `/` with only `PYTHONPATH`, `PATH`, `LC_ALL` and the
+native libraries' thread and allocator settings (`service._NATIVE_ENV`) in its
+environment, so a parser does not see the service's token, and with the
 request off its command line, so no other local user sees the file's name.
 Linux only.
 """
