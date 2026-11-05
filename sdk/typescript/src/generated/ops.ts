@@ -3246,6 +3246,76 @@ export interface KnowledgeBulkDeleteOutput {
   total_chunks_tombstoned: number;
 }
 
+export interface KnowledgeDatasetApproveInput {
+  org: string;
+  namespace: string;
+  source_uri: string;
+  dataset_id: string;
+  snapshot_id: string;
+  columns?: Record<string, "string" | "number" | "bool" | "date" | "datetime" | "time" | "duration">;
+}
+
+export interface DatasetOut {
+  dataset_id: string;
+  source_uri: string;
+  name: string;
+  sheet?: string;
+  row_start?: number;
+  row_end?: number;
+  revision: number;
+  snapshot_id: string;
+  schema_state: string;
+  columns: DatasetColumnOut[];
+  clarifications?: DatasetClarificationOut[];
+  row_count: number;
+  rejected_rows?: number;
+  rejected?: DatasetRejectedOut[];
+  complete?: boolean;
+  approved_by?: string;
+  approved_at?: string | null;
+  created_at?: string | null;
+  rows?: Array<Record<string, unknown>>;
+}
+
+export interface DatasetColumnOut {
+  name: string;
+  type: string;
+  inferred: string;
+  stored: boolean;
+}
+
+export interface DatasetClarificationOut {
+  code: string;
+  column: string;
+  detail: string;
+}
+
+export interface DatasetRejectedOut {
+  row: number;
+  column: string;
+  reason: string;
+}
+
+export interface KnowledgeDatasetApproveOutput {
+  found: boolean;
+  dataset?: DatasetOut | null;
+  retyped?: boolean;
+}
+
+export interface KnowledgeDatasetGetInput {
+  org: string;
+  namespace: string;
+  source_uri: string;
+  dataset_id?: string;
+  sample_rows?: number;
+}
+
+export interface KnowledgeDatasetGetOutput {
+  found: boolean;
+  revision?: number;
+  datasets?: DatasetOut[];
+}
+
 export interface KnowledgeDedupListInput {
   org: string;
   namespace: string;
@@ -9852,6 +9922,8 @@ export type OpName =
   | "knowledge.add"
   | "knowledge.bulk_add"
   | "knowledge.bulk_delete"
+  | "knowledge.dataset_approve"
+  | "knowledge.dataset_get"
   | "knowledge.dedup_list"
   | "knowledge.dedup_resolve"
   | "knowledge.delete"
@@ -10206,6 +10278,8 @@ export interface OpMap {
   "knowledge.add": { input: KnowledgeAddInput; output: KnowledgeAddOutput };
   "knowledge.bulk_add": { input: KnowledgeBulkAddInput; output: KnowledgeBulkAddOutput };
   "knowledge.bulk_delete": { input: KnowledgeBulkDeleteInput; output: KnowledgeBulkDeleteOutput };
+  "knowledge.dataset_approve": { input: KnowledgeDatasetApproveInput; output: KnowledgeDatasetApproveOutput };
+  "knowledge.dataset_get": { input: KnowledgeDatasetGetInput; output: KnowledgeDatasetGetOutput };
   "knowledge.dedup_list": { input: KnowledgeDedupListInput; output: KnowledgeDedupListOutput };
   "knowledge.dedup_resolve": { input: KnowledgeDedupResolveInput; output: KnowledgeDedupResolveOutput };
   "knowledge.delete": { input: KnowledgeDeleteInput; output: KnowledgeDeleteOutput };
@@ -10560,6 +10634,8 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.add", group: "knowledge", method: "add", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 50, audit: false, readOnly: false },
   { name: "knowledge.bulk_add", group: "knowledge", method: "bulkAdd", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 2000, audit: false, readOnly: false },
   { name: "knowledge.bulk_delete", group: "knowledge", method: "bulkDelete", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 500, audit: true, readOnly: false },
+  { name: "knowledge.dataset_approve", group: "knowledge", method: "datasetApprove", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "knowledge.dataset_get", group: "knowledge", method: "datasetGet", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "knowledge.dedup_list", group: "knowledge", method: "dedupList", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: false },
   { name: "knowledge.dedup_resolve", group: "knowledge", method: "dedupResolve", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.delete", group: "knowledge", method: "delete", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
@@ -10580,7 +10656,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.source.rotate", group: "knowledge", method: "sourceRotate", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "knowledge.source.sync_now", group: "knowledge", method: "sourceSyncNow", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 300, audit: true, readOnly: false },
   { name: "knowledge.synthesize", group: "knowledge", method: "synthesize", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
-  { name: "knowledge.update_metadata", group: "knowledge", method: "updateMetadata", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: true, readOnly: false },
+  { name: "knowledge.update_metadata", group: "knowledge", method: "updateMetadata", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.upsert", group: "knowledge", method: "upsert", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: false },
   { name: "learnings.list", group: "learnings", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "learnings.quality", group: "learnings", method: "quality", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false, readOnly: true },
@@ -10794,4 +10870,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 351;
+export const GENERATED_OP_COUNT = 353;

@@ -5563,6 +5563,12 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.add": 50,
     "knowledge.bulk_add": 2000,
     "knowledge.bulk_delete": 500,
+    # The live document and the catalog rows, and with sample_rows the first rows of the
+    # first 20 datasets: three reads, the last about 20 ms (a key range a dataset).
+    "knowledge.dataset_get": 80,
+    # A retype reads the stored artifact and types its rows again (up to 100,000 a
+    # table, in batches); an approval of the inferred types is four reads and a write.
+    "knowledge.dataset_approve": 30000,
     "knowledge.dedup_list": 400,
     "knowledge.dedup_resolve": 400,
     "knowledge.delete": 100,
@@ -5592,7 +5598,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.source.sync_now": 300,
     # One LLM call per window plus the reduce; bounded by max_windows.
     "knowledge.synthesize": 60000,
-    "knowledge.update_metadata": 60,
+    # A read and an insert; an ingested document's edit also takes the source's claim
+    # (its lease statements, waiting up to 10 s for another write), reads the document
+    # again and its datasets' catalog (FINAL), and inserts their rows at the new version.
+    "knowledge.update_metadata": 400,
     "knowledge.upsert": 100,
     "learnings.list": 80,
     "learnings.quality": 120,

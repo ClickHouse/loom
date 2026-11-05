@@ -10,6 +10,10 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeBulkAddOutput,
     KnowledgeBulkDeleteInput,
     KnowledgeBulkDeleteOutput,
+    KnowledgeDatasetApproveInput,
+    KnowledgeDatasetApproveOutput,
+    KnowledgeDatasetGetInput,
+    KnowledgeDatasetGetOutput,
     KnowledgeDedupListInput,
     KnowledgeDedupListOutput,
     KnowledgeDedupResolveInput,
@@ -38,6 +42,10 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeUpdateMetadataOutput,
     KnowledgeUpsertInput,
     KnowledgeUpsertOutput,
+)
+from server.knowledge.app.datasets import (
+    handle_knowledge_dataset_approve,
+    handle_knowledge_dataset_get,
 )
 from server.knowledge.app.dedup import handle_knowledge_dedup_list, handle_knowledge_dedup_resolve
 from server.knowledge.app.document_reads import (
@@ -252,6 +260,28 @@ knowledge_ingest_cancel = Operation(
     maturity="experimental",
 )
 
+knowledge_dataset_get = Operation(
+    name="knowledge.dataset_get",
+    input_model=KnowledgeDatasetGetInput,
+    output_model=KnowledgeDatasetGetOutput,
+    handler=handle_knowledge_dataset_get,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+    maturity="experimental",
+)
+
+knowledge_dataset_approve = Operation(
+    name="knowledge.dataset_approve",
+    input_model=KnowledgeDatasetApproveInput,
+    output_model=KnowledgeDatasetApproveOutput,
+    handler=handle_knowledge_dataset_approve,
+    idempotent=False,  # a retype moves the snapshot a retry names
+    required_role=Role.WRITER,
+    audit=True,
+    maturity="experimental",
+)
+
 knowledge_inspect = Operation(
     name="knowledge.inspect",
     maturity="experimental",
@@ -282,4 +312,6 @@ OPERATIONS: list[Operation] = [
     knowledge_ingest,
     knowledge_ingest_status,
     knowledge_ingest_cancel,
+    knowledge_dataset_get,
+    knowledge_dataset_approve,
 ]

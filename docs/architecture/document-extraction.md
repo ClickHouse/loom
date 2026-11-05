@@ -359,6 +359,72 @@ the job, and a job whose own publish is found ends published whatever cancel cam
 oldest open job of a source is offered, a stale one before any later one), and namespaces in turn (the one served
 longest ago first), and a run cut off at that deadline or by a stopped process counts toward the job's attempts.
 
+## Datasets
+
+A table of the artifact (a sheet, a CSV file) also becomes a typed dataset (`server/knowledge/app/datasets.py`), so its
+values can be read as values rather than as passages. Two tables hold every dataset, whatever the files' shapes, so no
+upload creates a table:
+
+- `loom.datasets`, the catalog: a ReplacingMergeTree row per (source, dataset, document version), read with `FINAL`,
+  with the schema, its state (`inferred`, `needs_clarification`, `approved`), what needs an answer, the rows stored and
+  rejected, whether the extraction kept every value of the table, and the snapshot that serves it.
+- `loom.dataset_rows`, the rows: a column's values sit in the typed slot the schema gives it, 72 in all: text and times
+  in `s1`..`s24` (`Nullable(String)`), numbers and durations (in seconds) in `n1`..`n24` (`Nullable(Decimal128(9))`,
+  the number columns past those in `f1`..`f8`, `Nullable(Float64)`), dates and date-times in `t1`..`t8`
+  (`Nullable(DateTime64(6, 'UTC'))`), booleans in `b1`..`b8`. A column past its kind's slots is not stored and says
+  so (`past_capacity`). The key is `(org, namespace, dataset_id, snapshot_id, row_id)`.
+
+A column takes the extractor's type; a `mixed` one is held as text. A row with a cell error, or a value its column's
+type cannot hold, is rejected whole and counted, the first 20 with their reason, so a dataset's values are all typed:
+a number of 10^29 or more (after rounding to nine places) in an `n` slot, one a double cannot hold in an `f` slot, an
+instant outside 1900-2299 (what `DateTime64` holds; a time zone is turned to UTC). A dataset is `complete` only when
+the extraction kept every value of its table: none of its rows, merges, values or cells is a failed unit, no shared
+string was lost, and the artifact lost none of the capabilities a value depends on (formula values, shared strings,
+number formats).
+The schema asks for an answer (`needs_clarification`) for a mixed column, a generated name (an empty header cell), a
+repeated name (an extractor other than the reference one may send one; the dataset names it `<name> (2)`, as the
+reference extractor does, since a column is addressed by its name), a header whose every name reads as a number or a
+date (the first row may be data), and the columns no slot holds (one answer for each type, naming the first of them).
+The answers about single columns stop at 100; past them, a column's `inferred` type says the rest. Inference runs off
+the event loop, since a table may be 16,384 columns wide. A dataset's id is the same in every revision of its source: a
+sheet by its name, a CSV file's table by its id, and a sheet an extractor split into more than one table by its name and
+the table's id.
+
+The ingest job writes each dataset after the chunks and before the source's claim: an empty catalog row, so a run that
+stops midway finds the rows it wrote, its rows in batches of 5,000 under a new snapshot (typed off the event loop, the
+job read again before each, so an erasure that deleted it stops the rest), then its catalog row, with the document
+version the job's row takes. Nothing reads them until that row lands: a dataset is served while the source's live
+document row has the version it was published with, so the document row is the switch for the chunks and the datasets
+alike, and a text write or a delete of the source stops serving them at once. A metadata edit
+(`knowledge.update_metadata`) keeps them: under the source's claim it writes each catalog row at its new version, the
+same snapshot, before its document row. Once the row lands, the source's snapshots of earlier versions are deleted; a
+run that stops before it deletes its own. A revision of a source whose live dataset was approved keeps the approved
+types when its columns are the same names in the same order; an approval that lands after the publish read the live
+datasets (it takes the claim first) puts the job back to run again at once, the attempt not counted, so it is carried,
+not dropped.
+
+`knowledge.dataset_approve` approves a dataset's schema, retyping the columns it names. A retype types the rows again
+from the stored artifact under a new snapshot, written before the source's claim is taken (the same claim an ingest's
+publish takes); under the claim the approval checks that the document is the one it read and the snapshot the one the
+caller reviewed, writes the catalog row that switches to the new snapshot (its version stamped there, past the row it
+replaces), and deletes the rows of the one it replaced. An approval that finds another write moved the source, cannot
+take the claim or fails before its catalog row is sent writes no catalog row and deletes its own rows; one whose catalog
+insert fails once sent keeps them, since the row may have landed. The catalog row is the approver's write: its `actor`
+and `approved_by` name the approver and its `source_class` is `asserted`; the rows stay the uploader's (`user_id`,
+their own `source_class`), as a user erasure finds them.
+
+Snapshots go by lightweight `DELETE FROM` with `lightweight_deletes_sync = 0`: nothing reads a snapshot once no catalog
+row serves it, so no request waits on one. `knowledge.delete` deletes the datasets of the document versions it retires,
+up to the one it read; an ingest running meanwhile writes a later version, which it leaves whole to that ingest (a
+delete takes no claim, so it may land between the ingest's batches). A carried snapshot's rows keep the version they
+were written at, so a delete keeps the rows of any snapshot a catalog row past its bound still serves; an edit whose
+carry lands after the delete read the catalog may revive the document over the delete, when its version is the later
+one: its chunks are tombstoned and its datasets serve with their rows deleted, as a claim-free delete racing an edit
+leaves it, and a delete of the source settles both. A delete of a source already deleted deletes what is left of its
+retired versions again (an approval's snapshot that landed as the first delete ran, or one build N-1 left). A text write
+over an ingested source leaves its snapshot unserved until the source's next ingest or delete. Erasure deletes both
+tables' rows of the scope with the documents (`documents.tombstone`).
+
 ## Dependencies
 
 The reference extractor's parsers need `sqlglot` for SQL, `pypdf` (and `cryptography`, for a PDF encrypted with AES) for
@@ -392,6 +458,8 @@ allows no egress, with no credential but its token; on either, an extraction mak
 | Format routing             | `server/core/document_formats.py` (`format_of`)                                            |
 | Calls to extractors        | `server/knowledge/app/extractors.py` (`extract`, `available_formats`)                      |
 | Structural chunks          | `server/knowledge/domain/extract/structural.py` (`chunk_artifact`)                         |
+| Dataset schemas and typing | `server/knowledge/domain/datasets.py` (`infer`, `typed_rows`)                              |
+| Dataset publish, approval  | `server/knowledge/app/datasets.py`, rows in `server/knowledge/store/datasets.py`           |
 | The reference service      | `extractor/loom_extractor/service.py`, one extraction per `child.py` process               |
 | Format detection, decoding | `extractor/loom_extractor/source.py` (`detect_format`, `decode`, `extract`)                |
 | SQL                        | `extractor/loom_extractor/sql.py` (`extract_sql`, `detect_dialect`)                        |

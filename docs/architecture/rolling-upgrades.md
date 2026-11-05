@@ -308,6 +308,20 @@ schema. These rules keep that safe. The operator procedure is in
     so a hand-off between the builds mines a `notion` document again. No gate holds the
     rollout: the cost is that status, shown until N's turn, and those extra mining
     calls, and it ends once no N-1 replica serves.
+29. **Typed datasets** (`loom.datasets`, `loom.dataset_rows`, migration
+    `083_knowledge_datasets.sql`): N-1 ingests a file without its datasets and serves no
+    dataset op. A dataset is served only while the source's live document row has the
+    version it was published with, so a write or a delete N-1 makes of the source stops
+    serving N's datasets as N's own would; N-1's delete or ingest of the source leaves
+    their rows, which the source's next ingest or delete by N removes (a delete of a
+    source already deleted included). A metadata edit N-1 makes of an ingested source
+    carries nothing, unlike N's: its datasets stop being served, and the next ingest
+    infers their types again, an earlier approval dropped; ingest the file again after
+    the rollout to serve them, and approve again. An erasure N-1 runs does not know the
+    two tables, so the rows N wrote in its scope stay and the saga still records
+    `completed`: once N-1 stops serving, request the erasures completed since the
+    rollout began again, which N's saga runs through every table. No gate holds the
+    rollout.
 
 ## What checks them
 

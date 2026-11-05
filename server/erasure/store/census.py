@@ -407,6 +407,12 @@ _CENSUS: tuple[Substrate, ...] = (
         "documents.tombstone",
         final=False,
     ),
+    # The datasets typed from an ingested file's tables: their catalog (sheet and
+    # column names) and their rows (the cell values) go with the documents.
+    Substrate("loom.datasets", "1", UID, "documents.tombstone", "documents.tombstone"),
+    Substrate(
+        "loom.dataset_rows", "1", UID, "documents.tombstone", "documents.tombstone", final=False
+    ),
 )
 
 # Steps that mutate a table the census does not count, with the reason. The

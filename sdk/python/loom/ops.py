@@ -162,6 +162,8 @@ OpName = Literal[
     "knowledge.add",
     "knowledge.bulk_add",
     "knowledge.bulk_delete",
+    "knowledge.dataset_approve",
+    "knowledge.dataset_get",
     "knowledge.dedup_list",
     "knowledge.dedup_resolve",
     "knowledge.delete",
@@ -516,6 +518,8 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.add",
     "knowledge.bulk_add",
     "knowledge.bulk_delete",
+    "knowledge.dataset_approve",
+    "knowledge.dataset_get",
     "knowledge.dedup_list",
     "knowledge.dedup_resolve",
     "knowledge.delete",
@@ -2223,6 +2227,30 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
+    "knowledge.dataset_approve": OpSpec(
+        "knowledge.dataset_approve",
+        "KnowledgeDatasetApproveInput",
+        "KnowledgeDatasetApproveBody",
+        "KnowledgeDatasetApproveOutput",
+        False,
+        "writer",
+        "experimental",
+        30000,
+        True,
+        False,
+    ),
+    "knowledge.dataset_get": OpSpec(
+        "knowledge.dataset_get",
+        "KnowledgeDatasetGetInput",
+        "KnowledgeDatasetGetBody",
+        "KnowledgeDatasetGetOutput",
+        True,
+        "viewer",
+        "experimental",
+        80,
+        False,
+        True,
+    ),
     "knowledge.dedup_list": OpSpec(
         "knowledge.dedup_list",
         "KnowledgeDedupListInput",
@@ -2471,7 +2499,7 @@ OPS: dict[str, OpSpec] = {
         True,
         "writer",
         "experimental",
-        60,
+        400,
         True,
         False,
     ),
@@ -9925,6 +9953,105 @@ class KnowledgeBulkDeleteOutput(TypedDict, total=False):
 class KnowledgeBulkDeleteResult(TypedDict, total=False):
     source_uri: Required[str]
     chunks_tombstoned: Required[int]
+
+
+class KnowledgeDatasetApproveInput(TypedDict, total=False):
+    "Approve a dataset's schema, retyping the columns named: its rows are"
+
+    org: Required[str]
+    namespace: Required[str]
+    source_uri: Required[str]
+    dataset_id: Required[str]
+    snapshot_id: Required[str]
+    columns: NotRequired[
+        dict[str, Literal["string", "number", "bool", "date", "datetime", "time", "duration"]]
+    ]
+
+
+class KnowledgeDatasetApproveBody(TypedDict, total=False):
+    "Approve a dataset's schema, retyping the columns named: its rows are"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    source_uri: Required[str]
+    dataset_id: Required[str]
+    snapshot_id: Required[str]
+    columns: NotRequired[
+        dict[str, Literal["string", "number", "bool", "date", "datetime", "time", "duration"]]
+    ]
+
+
+class KnowledgeDatasetApproveOutput(TypedDict, total=False):
+    found: Required[bool]
+    dataset: NotRequired[Optional["DatasetOut"]]
+    retyped: NotRequired[bool]
+
+
+class DatasetOut(TypedDict, total=False):
+    dataset_id: Required[str]
+    source_uri: Required[str]
+    name: Required[str]
+    sheet: NotRequired[str]
+    row_start: NotRequired[int]
+    row_end: NotRequired[int]
+    revision: Required[int]
+    snapshot_id: Required[str]
+    schema_state: Required[str]
+    columns: Required[list["DatasetColumnOut"]]
+    clarifications: NotRequired[list["DatasetClarificationOut"]]
+    row_count: Required[int]
+    rejected_rows: NotRequired[int]
+    rejected: NotRequired[list["DatasetRejectedOut"]]
+    complete: NotRequired[bool]
+    approved_by: NotRequired[str]
+    approved_at: NotRequired[Optional[str]]
+    created_at: NotRequired[Optional[str]]
+    rows: NotRequired[list[dict[str, Any]]]
+
+
+class DatasetColumnOut(TypedDict, total=False):
+    name: Required[str]
+    type: Required[str]
+    inferred: Required[str]
+    stored: Required[bool]
+
+
+class DatasetClarificationOut(TypedDict, total=False):
+    code: Required[str]
+    column: Required[str]
+    detail: Required[str]
+
+
+class DatasetRejectedOut(TypedDict, total=False):
+    row: Required[int]
+    column: Required[str]
+    reason: Required[str]
+
+
+class KnowledgeDatasetGetInput(TypedDict, total=False):
+    "The typed datasets an ingested file's tables became: their schemas,"
+
+    org: Required[str]
+    namespace: Required[str]
+    source_uri: Required[str]
+    dataset_id: NotRequired[str]
+    sample_rows: NotRequired[int]
+
+
+class KnowledgeDatasetGetBody(TypedDict, total=False):
+    "The typed datasets an ingested file's tables became: their schemas,"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    source_uri: Required[str]
+    dataset_id: NotRequired[str]
+    sample_rows: NotRequired[int]
+
+
+class KnowledgeDatasetGetOutput(TypedDict, total=False):
+    found: Required[bool]
+    revision: NotRequired[int]
+    datasets: NotRequired[list["DatasetOut"]]
 
 
 class KnowledgeDedupListInput(TypedDict, total=False):

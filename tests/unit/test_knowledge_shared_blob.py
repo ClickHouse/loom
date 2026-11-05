@@ -176,9 +176,14 @@ def test_delete_and_bulk_delete_supersede_without_touching_the_originals(
         KnowledgeDeleteInput,
     )
     from server.knowledge.store import chunks as chunks_repo
+    from server.knowledge.store import datasets as datasets_repo
 
     written: list[object] = []
-    docs = [_prior(source_uri="doc-a"), _prior(source_uri="doc-b", blob_path="ab")]
+    forgotten: list[dict[str, int]] = []
+    docs = [
+        _prior(source_uri="doc-a", version=10),
+        _prior(source_uri="doc-b", blob_path="ab", version=20),
+    ]
 
     async def _counts(org, ns, uris, **_kw):
         return dict.fromkeys(uris, 1)
@@ -198,6 +203,10 @@ def test_delete_and_bulk_delete_supersede_without_touching_the_originals(
     async def _insert(rows, **kw):
         written.append(rows)
 
+    async def _forget(org, ns, through, **kw):
+        forgotten.append(dict(through))
+
+    monkeypatch.setattr(datasets_repo, "forget_published", _forget)
     monkeypatch.setattr(chunks_repo, "count_active_by_uri", _counts)
     monkeypatch.setattr(chunks_repo, "count_active_for_doc", _one)
     monkeypatch.setattr(chunks_repo, "mark_docs_superseded", _noop)
@@ -217,6 +226,9 @@ def test_delete_and_bulk_delete_supersede_without_touching_the_originals(
         )
     )
     assert len(written) == 2  # the superseded rows, and no delete of an original
+    # And the datasets of the versions they retired.
+    v = docs[0].version, docs[1].version
+    assert forgotten == [{"doc-a": v[0]}, {"doc-a": v[0], "doc-b": v[1]}]
 
 
 def test_bad_base64_is_a_validation_error(store) -> None:
@@ -248,3 +260,37 @@ def test_an_end_user_s_upload_is_recorded_before_its_bytes() -> None:
     ch = _CH()
     asyncio.run(blobs.put("o", "n", b"bytes", uploader="-", ch=ch))  # type: ignore[arg-type]
     assert [t for t, _ in ch.inserts] == [blobs.TABLE]
+
+
+def test_a_bulk_delete_of_sources_already_deleted_still_deletes_their_datasets(
+    monkeypatch, store
+) -> None:
+    """Nothing live to tombstone, yet a snapshot an approval or an older build
+    left goes: the datasets are read off each source's latest row, superseded
+    or not."""
+    from server.knowledge.api.models_knowledge import KnowledgeBulkDeleteInput
+    from server.knowledge.store import chunks as chunks_repo
+    from server.knowledge.store import datasets as datasets_repo
+
+    gone = [_prior(source_uri="doc-a", version=10, superseded_at="2026-01-01")]
+    forgotten: list[dict[str, int]] = []
+
+    async def _counts(org, ns, uris, **_kw):
+        return dict.fromkeys(uris, 0)
+
+    async def _docs(org, ns, uris, **kw):
+        return gone if kw.get("include_superseded") else []
+
+    async def _forget(org, ns, through, **kw):
+        forgotten.append(dict(through))
+
+    monkeypatch.setattr(chunks_repo, "count_active_by_uri", _counts)
+    monkeypatch.setattr(documents_repo, "get_many_by_uris", _docs)
+    monkeypatch.setattr(datasets_repo, "forget_published", _forget)
+    out = asyncio.run(
+        kh.handle_knowledge_bulk_delete(
+            KnowledgeBulkDeleteInput(org="o", namespace="n", source_uris=["doc-a", "doc-b"])
+        )
+    )
+    assert out.total_chunks_tombstoned == 0
+    assert forgotten == [{"doc-a": 10}]
