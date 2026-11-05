@@ -281,11 +281,12 @@ async def _rationale_section(
     `code_review_brief_rationale_paths` of them; rows with something to check are kept
     ahead of the `code_review_brief_rationale_rows` cut."""
     from server.code.app.memory_links import trunk_namespace
+    from server.code.domain.index.verdicts import PATH_CLASS_SRC
     from server.memory.app.code_plane_reads import decisions_for_paths
 
     most = settings.code_review_brief_rationale_paths
     rows = ((payload.get("sections") or {}).get("paths") or {}).get("rows") or []
-    paths = [str(r["path"]) for r in sorted(rows, key=lambda r: r.get("class") != "src")]
+    paths = [str(r["path"]) for r in sorted(rows, key=lambda r: r.get("class") != PATH_CLASS_SRC)]
     try:
         trunk = trunk_namespace(org, ns)
         if not trunk:

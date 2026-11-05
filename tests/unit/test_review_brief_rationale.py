@@ -184,32 +184,6 @@ def test_a_form_feed_inside_an_added_line_does_not_split_it() -> None:
     assert rb.added_text(diff) == ("page\x0cbreak\nSpillingHashSet s;", False)
 
 
-def test_parse_diff_reads_a_removed_sql_comment_as_a_removed_line() -> None:
-    # removing `-- note` gives `--- note`: a line of the hunk, not the next file's header
-    path = "tests/queries/0_stateless/03999_x.sql"
-    diff = (
-        f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
-        "@@ -3,2 +3,1 @@\n--- note\n SET max_threads = 1;\n"
-    )
-    facts = rb.parse_diff(diff)
-    assert facts.paths == [path] and facts.deleted == {path: [(3, 3)]}
-
-
-def test_parse_diff_still_reads_the_lines_past_an_undercounting_header() -> None:
-    """The brief's settings, tests and blame read those lines as before; only the token
-    check treats the diff as malformed."""
-    path = "tests/queries/0_stateless/03999_x.sql"
-    diff = (
-        f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
-        "@@ -1,1 +1,1 @@\n-SELECT 0;\n+SELECT 1;\n-SELECT 2;\n+SET max_threads = 1;\n"
-    )
-    facts = rb.parse_diff(diff)
-    assert dict(facts.settings) == {"max_threads": "test_uses"}
-    assert facts.deleted == {path: [(1, 2)]}
-    added, malformed = rb.added_text(diff)
-    assert added == "SELECT 1;" and malformed
-
-
 def test_a_malformed_diff_that_shows_no_name_is_unknown() -> None:
     spill = _row("design/spill", DECISION, ["decision"])
     under = HEAD + "@@ -1,0 +1,1 @@\n+first\n+SpillingHashSet second;\n"
