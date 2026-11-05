@@ -151,7 +151,8 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--code-index",
         default="",
-        help="Base URL of the Loom whose code index resolves arm 4's code names",
+        help="Base URL of the Loom whose code index resolves the extracted rows' code names "
+        "(arms 4 and 6)",
     )
     r.add_argument("--code-index-org", default="")
     r.add_argument("--code-index-namespace", default="")
@@ -159,7 +160,7 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--arm4-namespace",
         default="",
-        help="Serve arm 4 from rows a document source's sync already wrote in this "
+        help="Serve arms 4 and 6 from rows a document source's sync already wrote in this "
         "namespace of --org, beside the documents they cite (a citation into another "
         "namespace counts as unresolved)",
     )
