@@ -592,19 +592,25 @@ def names_in(added: str, names: list[str]) -> list[str]:
     return found
 
 
+def row_names(d: dict[str, Any]) -> list[str]:
+    """The names the token check looks for in a `decisions_for_paths` row."""
+    return checked_names(d["text"], constraint="constraint" in d["tags"])
+
+
 def has_check(d: dict[str, Any]) -> bool:
     """Whether the token check has something to look at in a `decisions_for_paths` row:
     names to look for, or a value cut at the read that may hide some."""
-    constraint = "constraint" in d["tags"]
-    return bool(d.get("value_truncated") or checked_names(d["text"], constraint=constraint))
+    return bool(d.get("value_truncated") or row_names(d))
 
 
 def _checked_row(d: dict[str, Any], added: str, *, unsure: bool) -> dict[str, Any]:
-    """One served row with its token check against the `added` lines; `unsure` when the
-    diff could not be read whole (unread, cut or malformed)."""
+    """One served row with its token check against the `added` lines: `check` when the
+    diff adds one of its names; else `unknown` when `unsure` (the diff could not be read
+    whole: unread, cut or malformed) or the row's value was cut at the read, `clear`
+    otherwise; '' when it has nothing to check."""
     constraint = "constraint" in d["tags"]
     value_cut = bool(d.get("value_truncated"))
-    names = checked_names(d["text"], constraint=constraint)
+    names = row_names(d)
     found = names_in(added, names) if names else []
     if not names and not value_cut:
         verdict = ""
@@ -643,21 +649,12 @@ def rationale_section(
     budget_tokens: int,
 ) -> dict[str, Any]:
     """The `rationale` section over the rows `decisions_for_paths` read and the PR's diff
-    (None: it could not be read). A row whose checked names the diff adds says `check`;
-    one whose checked names it does not add says `clear`, or `unknown` when the diff was
-    cut or a hunk of it miscounted its lines, the row's value was cut at the read (a name
-    may lie past any of these) or the diff could not be read; one with nothing to check
-    says ''. `check` rows first, then constraints, then the rest, whole rows up to
-    `budget_tokens` (the first always). The verdict reads every row: check | unknown |
-    clear | none (no row has anything to check). It is `clear` or `none` only when every
-    changed path and every matching row was checked; otherwise `unknown`, with the cause:
-    no repository is configured for the namespace (`no_repo`), the brief stores no
-    changed path (`no_paths`), the caller may not read
-    the trunk namespace (`refused`), the stored changed-path list
-    may be shorter than the PR's (`paths_maybe_cut`), `paths_left` changed paths were
-    not read, `paths_full` paths' reads reached their row ceiling, `links_skipped`
-    paths' code-links reads failed, or a row the row cap left out (`left_out`) had
-    something to check."""
+    (None: it could not be read): each row's token check (`_checked_row`), `check` rows
+    first, then constraints, then the rest, whole rows up to `budget_tokens` (the first
+    always). The verdict reads every row: check | unknown | clear | none (no row has
+    anything to check). It is `clear` or `none` only when every changed path and every
+    matching row was checked; otherwise `unknown`, each flag and count naming its cause
+    (the causes table on the review-brief page of the docs)."""
     added, malformed = added_text(diff) if diff is not None else (None, False)
     malformed = malformed and not diff_cut  # a cut diff ends inside a hunk anyway
     unsure = added is None or diff_cut or malformed
@@ -776,6 +773,7 @@ __all__ = [
     "parse_diff",
     "rationale_section",
     "read_hunks",
+    "row_names",
     "serve",
     "source_stems",
     "tier_sections",

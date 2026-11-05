@@ -137,14 +137,15 @@ async def decisions_for_paths(
     limit: int,
     first: Callable[[dict[str, Any]], bool] | None = None,
 ) -> DecisionRows:
-    """The active decision and constraint rows of the trunk code namespace `trunk_ns`
-    whose `files[]` or code links touch `paths`, at most `limit` served and the rest left
-    out. The rows `first` admits rank ahead, then constraints, then pinned rows, then by
-    confidence. Each is a `memory.for_file` hit with its `memory_id`, `code_state` the
-    worst over its links on every path, `line` (the pre-edit block's line, the value cut)
-    and `text` (the value as that read holds it: cut at its ceiling when
-    `value_truncated`). Each path's read keeps its top PER_PATH_ROWS rows. `refused`, and
-    nothing read, when the caller may not read `trunk_ns`."""
+    """The live (active or conflicted) decision and constraint rows of the trunk code
+    namespace `trunk_ns` whose `files[]` or code links touch `paths`, at most `limit`
+    served and the rest left out. The rows `first` admits rank ahead, then constraints,
+    then pinned rows, then by confidence. Each is a `memory.for_file` hit with its
+    `memory_id`, `code_state` the worst over its links on every path, `line` (the
+    pre-edit block's line, the value cut) and `text` (the value as that read holds it:
+    cut at its ceiling when `value_truncated`). Each path's read keeps its top
+    PER_PATH_ROWS rows. `refused`, and nothing read, when the caller may not read
+    `trunk_ns`."""
     from server.memory.api.models_for_file import MemoryForFileInput
     from server.memory.app.code_link_reads import readable_namespaces
     from server.memory.app.for_file import listing_line, listing_rows, value_text
@@ -163,7 +164,6 @@ async def decisions_for_paths(
                     namespace=trunk_ns,
                     path=p,
                     top_k=PER_PATH_ROWS,
-                    include_conflicted=False,
                     extra_namespaces=[trunk_ns],
                 ),
                 whole_only=True,

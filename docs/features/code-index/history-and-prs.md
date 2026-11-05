@@ -70,21 +70,22 @@ every changed file, the touched functions with their callers and fan-in, the tes
 cover them, and what reviewers said.
 
 At the `standard` and `full` tiers the brief also has a `rationale` section: the design
-decisions and constraints (rows typed `decision`, or tagged `decision` or `constraint`) in
-the repository's trunk code namespace whose `files` or code links touch the PR's files. It
-is read on every call, from the trunk namespace only when the caller may read it, and
-never stored with the brief, so a decision recorded or changed after the merge shows up on
-the next read. It reads the first `LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` (10) changed
-files, source files first, of those the brief stores, up to 50 rows each, and serves at
-most `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` (8) rows, those with something to check
-first, in whole rows up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` (250) tokens: rows
-that say `check` first, then constraints; within that budget of its own the first row is
-always served, and the tier's budget may still trim the section like any other. Each row
-carries the line the pre-edit block prints for it (value, source, `(pinned)`, a
-code-change note), `pinned`, `code_state` and a `verdict`. Each changed file read is one
-`memory.for_file` read: four ClickHouse reads (files match, code links, their memories,
-the linked rows; a file with many links slices the last), each keeping up to 50 rows with
-up to `LOOM_MEMORY_FOR_FILE_WHOLE_TOKENS` × 48 bytes of value.
+decisions and constraints (rows typed `decision`, or tagged `decision` or `constraint`,
+active or conflicted as the pre-edit block shows them) in the repository's trunk code
+namespace whose `files` or code links touch the PR's files. It is read on every call, from
+the trunk namespace only when the caller may read it, and never stored with the brief, so
+a decision recorded or changed after the merge shows up on the next read. It reads the
+first `LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` (10) changed files, source files first, of
+those the brief stores, up to 50 rows each, and serves at most
+`LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` (8) rows, those with something to check first, in
+whole rows up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` (250) tokens: rows that say
+`check` first, then constraints; within that budget of its own the first row is always
+served, and the tier's budget may still trim the section like any other. Each row carries
+the line the pre-edit block prints for it (value, source, `(pinned)`, a code-change note),
+`pinned`, `code_state` and a `verdict`. Each changed file read is one `memory.for_file`
+read: four ClickHouse reads (files match, code links, their memories, the linked rows; a
+file with many links slices the last), each keeping up to 50 rows with up to
+`LOOM_MEMORY_FOR_FILE_WHOLE_TOKENS` × 48 bytes of value.
 
 The check looks for two kinds of name: the code-shaped names in a row's `Rejected:`
 clause, up to a `Realized:` one (backticked, qualified like `A::b`, or calls like `f()`),

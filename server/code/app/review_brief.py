@@ -301,7 +301,7 @@ async def _rationale_section(
         diff: str | None = ""
         cut = False
         found = read.served
-        if any(rb.checked_names(d["text"], constraint="constraint" in d["tags"]) for d in found):
+        if any(rb.row_names(d) for d in found):
             diff, cut = await _pr_diff(org, ns, payload, pr_number=pr_number, is_open=is_open)
     except Exception as e:  # noqa: BLE001 — the stored sections serve without this one
         logger.warning("code.review_brief: rationale read failed: %s", e)

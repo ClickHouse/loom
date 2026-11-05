@@ -335,7 +335,8 @@ async def test_decisions_for_paths_merges_paths_worst_state_and_orders_constrain
     assert all(
         i.namespace == "code-widgets" and i.extra_namespaces == ["code-widgets"] for i in seen
     )
-    assert all(i.tags == [] and not i.include_conflicted for i in seen)
+    # conflicted rows are live: memory.for_file shows them, so the check reads them too
+    assert all(i.tags == [] and i.include_conflicted for i in seen)
     # each path reads up to memory.for_file's ceiling; the cut is made after the merge
     assert all(i.top_k == 50 for i in seen)
 
@@ -745,3 +746,40 @@ def test_the_impact_seed_count_is_code_impacts_own_file_cap() -> None:
         if hasattr(m, "max_length")
     ]
     assert caps == [rb.IMPACT_SEED_FILES]
+
+
+@pytest.mark.asyncio
+async def test_a_conflicted_decision_is_read_and_checked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import code_link_reads
+    from tests.unit.ch_fake import RecordingCH
+
+    row = {
+        "memory_id": "m1",
+        "memory_key": "design/spill",
+        "memory_type": "decision",
+        "value": json.dumps(DECISION),
+        "tags": ["decision"],
+        "confidence": 1.0,
+        "pinned": 0,
+        "status_text": "conflicted",
+        "agent": "alice",
+        "matched_files": ["src/a.cpp"],
+    }
+    ch = RecordingCH().on("FROM loom.memory FINAL", [row])
+    ch.install(monkeypatch, "server.memory.app.for_file")
+
+    async def _readable(org: str, nss: set[str]) -> set[str]:
+        return nss
+
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
+    monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda org, ns: "")
+    read = await code_plane_reads.decisions_for_paths(
+        "acme", "code-widgets", ["src/a.cpp"], limit=8, first=rb.has_check
+    )
+    (stmt,) = ch.statements("FROM loom.memory FINAL")
+    assert stmt.params["statuses"] == ["active", "conflicted"]
+    assert [(r["memory_key"], r["status"]) for r in read.served] == [("design/spill", "conflicted")]
+    sec = _section(read.served, DIFF)
+    assert sec["verdict"] == "check" and sec["rows"][0]["names"] == ["DB::SpillingHashSet"]
