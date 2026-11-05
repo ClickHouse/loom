@@ -606,7 +606,8 @@ def _held_error(org: str, e: LoomServerError) -> str:
 
 
 def _windows(chunks: list[CorpusChunk], skipped: set[str], window_chars: int) -> list[Window]:
-    """The windows sent to the model. A section judged image-only (`skipped`) is not sent.
+    """The windows sent to the model: one when the sent text fits `window_chars`, else
+    windows of whole sections. A section judged image-only (`skipped`) is not sent.
     An empty-path chunk of an image-only preamble is skipped only when its own text is
     image-only too."""
 
@@ -617,7 +618,12 @@ def _windows(chunks: list[CorpusChunk], skipped: set[str], window_chars: int) ->
             return True
         return not c.section_path and not dx.image_only(c.text)
 
-    return windows([c for c in chunks if sent(c)], window_chars=window_chars)
+    kept = [c for c in chunks if sent(c)]
+    # A document that fits is read whole: `windows` closes a window at a section change
+    # once it is a third full.
+    if kept and sum(len(c.text) for c in kept) <= window_chars:
+        return [Window(kept)]
+    return windows(kept, window_chars=window_chars)
 
 
 async def _read_own(

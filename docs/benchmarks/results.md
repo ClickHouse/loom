@@ -584,19 +584,21 @@ before serving the cache on it.
 
 `bench/design_rationale/` asks a coding agent four kinds of task about code its team's
 design documents describe: why questions (A), change requests whose obvious move is an
-option the documents rejected or a constraint they set (B), questions about a statement a
-later revision reversed or about code no document covers (C), and questions about how a
-feature works, its limits, compatibility and dependencies (D). Each arm shows the agent
-different design knowledge: nothing (0), the whole document through `knowledge.get` (1),
-the document as knowledge through the knowledge hits of `loom_search` (2), hand-written
-gold decision rows through the pre-edit block and the memory section of `loom_search` (3),
-the rows `loom decisions extract --apply` mined from the same documents, through the same
-surfaces (4), and those extracted rows with the documents' knowledge hits of `loom_search`
-(6). Arm 4 approximates the sync leg: documents ingested as a document source's sync writes
-them, mined by the same extraction function. The extractor in this run read 6,000-character
-windows and kept a decision only when each reason was one verbatim span of the text; the
-whole-document extractor with cited, checked claims is not in these tables. Extracted rows get files from a read-only code
-index of the ClickHouse repository, so arms 4 and 6 read the pre-edit block too.
+option the documents rejected or a constraint they set (B), questions about a statement
+a later revision reversed or about code no document covers (C), and questions about how
+a feature works, its limits, compatibility and dependencies (D). Each arm shows the
+agent different design knowledge: nothing (0), the whole document through
+`knowledge.get` (1), the document as knowledge through the knowledge hits of
+`loom_search` (2), hand-written gold decision rows through the pre-edit block and the
+memory section of `loom_search` (3), the rows `loom decisions extract --apply` mined
+from the same documents, through the same surfaces (4), and those extracted rows with
+the documents' knowledge hits of `loom_search` (6). Arm 4 approximates the sync leg:
+documents ingested as a document source's sync writes them, mined by the same extraction
+function. The extractor in this run read 6,000-character windows and kept a decision
+only when its reasoning and each rejected option's reason were one verbatim span of one
+chunk; the whole-document extractor with cited, checked claims is not in these tables.
+Extracted rows get files from a read-only code index of the ClickHouse repository, so
+arms 4 and 6 read the pre-edit block too.
 
 The task set is private: five design documents for the ClickHouse repository, four of them
 revised once for the supersession tasks; 10 A, 15 B, 10 C (5 supersession, 5 abstention)

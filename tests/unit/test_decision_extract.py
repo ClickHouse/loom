@@ -2511,6 +2511,19 @@ def _fake_fallback(monkeypatch, answers: list[str]) -> None:
     monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Routed(_Primary()))
 
 
+def test_a_document_that_fits_the_window_is_read_whole_across_its_sections() -> None:
+    # 2,000 characters before the second heading: past a third of a 3,000-character window,
+    # where windows() alone would close the window at the section change.
+    chunks = [
+        CorpusChunk("u", 0, "a" * 2000, ("Problem",)),
+        CorpusChunk("u", 1, "b" * 900, ("Decision",)),
+    ]
+    (whole,) = de._windows(chunks, set(), 3000)
+    assert whole.chunks == chunks
+    # Past the window it is read in windows of whole sections.
+    assert [w.chunks for w in de._windows(chunks, set(), 2500)] == [chunks[:1], chunks[1:]]
+
+
 async def _two_windows(monkeypatch) -> None:
     from server.knowledge.app import document_reads
 
