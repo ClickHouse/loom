@@ -163,9 +163,9 @@ def test_rows_past_the_budget_are_counted_from_the_metadata_not_decoded(
     decoded: list[int] = []
     real = parquetfile._values
 
-    def counting(column: Any, target: Any, kind: str, failures: list[int]) -> list[Any]:
+    def counting(column: Any, target: Any, kind: str, unheld: list[int], j: int) -> list[Any]:
         decoded.append(len(column))
-        return real(column, target, kind, failures)
+        return real(column, target, kind, unheld, j)
 
     monkeypatch.setattr(parquetfile, "_values", counting)
     monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 2)
@@ -247,9 +247,9 @@ def test_a_batch_holds_no_more_cells_than_the_budget(monkeypatch: pytest.MonkeyP
     sizes: list[int] = []
     real = parquetfile._values
 
-    def recording(column: Any, target: Any, kind: str, failures: list[int]) -> list[Any]:
+    def recording(column: Any, target: Any, kind: str, unheld: list[int], j: int) -> list[Any]:
         sizes.append(len(column))
-        return real(column, target, kind, failures)
+        return real(column, target, kind, unheld, j)
 
     monkeypatch.setattr(parquetfile, "_values", recording)
     t = pa.table({f"c{i}": list(range(5)) for i in range(4)})  # 4 wide: 3 rows a batch
@@ -468,7 +468,7 @@ def test_an_arrow_memory_error_in_a_conversion_is_raised_not_left_out() -> None:
             raise pa.ArrowMemoryError("out of memory")  # a MemoryError and an ArrowException
 
     with pytest.raises(MemoryError):  # the loop fails the rows from there by name
-        parquetfile._split(Column(), None, [0])
+        parquetfile._split(Column(), None, [0], 0)
 
 
 def test_a_file_of_blank_rows_is_read_only_to_the_decode_bound(
@@ -490,9 +490,9 @@ def test_values_python_cannot_hold_are_searched_for_by_halves_to_a_bound(
     calls: list[int] = []
     real = parquetfile._split
 
-    def counting(column: Any, target: Any, failures: list[int]) -> list[Any]:
+    def counting(column: Any, target: Any, unheld: list[int], j: int) -> list[Any]:
         calls.append(len(column))
-        return real(column, target, failures)
+        return real(column, target, unheld, j)
 
     monkeypatch.setattr(parquetfile, "_split", counting)
     days = [0] * 1023 + [3_000_000]  # one bad value at the end of a batch of 1,024
@@ -620,9 +620,9 @@ def test_a_column_past_its_unheld_bound_is_not_searched_in_later_batches(
     searched: list[int] = []
     real = parquetfile._split
 
-    def counting(column: Any, target: Any, failures: list[int]) -> list[Any]:
+    def counting(column: Any, target: Any, unheld: list[int], j: int) -> list[Any]:
         searched.append(len(column))
-        return real(column, target, failures)
+        return real(column, target, unheld, j)
 
     monkeypatch.setattr(parquetfile, "_split", counting)
     a, _ = _one(_file(pa.table({"d": pa.array([3_000_000] * 10, pa.date32())})))

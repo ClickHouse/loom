@@ -18,7 +18,8 @@ A value reads as its column's type says, decided once from the schema:
   it as base64);
 - bytes are no text: left out and counted as a failed unit (`<name> values`),
   as is a value over MAX_VALUE_CHARS, and a value Python cannot hold (a date
-  past year 9999), that value alone (`_split`).
+  past year 9999), that value alone (`_split`), and past _MAX_UNHELD of them
+  the rest of its column, unread.
 
 What is read is bounded: the columns past MAX_COLUMNS are left out (`<name>
 columns`), the kept ones taken by position (a name may repeat); pages decode
@@ -119,7 +120,8 @@ def _json(value: Any) -> Any:
 
 # A value `_values` left out (and counted): no cell, though the row has a value there.
 _LEFT_OUT = object()
-# One it did not convert at all: past _MAX_UNHELD values Python cannot hold in a batch.
+# One it did not convert at all: past _MAX_UNHELD values Python cannot hold in
+# its column, across the file.
 _UNREAD = object()
 
 
@@ -271,14 +273,14 @@ def _readable(arrow_type: Any) -> Any:
     return None
 
 
-def _values(column: Any, target: Any, kind: str, failures: list[int]) -> list[Any]:
+def _values(column: Any, target: Any, kind: str, unheld: list[int], j: int) -> list[Any]:
     """A batch column's values as Python holds them. Bytes, and a value Python
     cannot hold (a date past year 9999, a zone it does not know), are _LEFT_OUT,
     not None, so a row of them is still a row; the rows read count them
     (`_Reader.cell`). Bytes are never copied into Python. A batch with a value
     Python cannot hold is split in halves until each part converts or is one
     value, so only that value is left out; past _MAX_UNHELD such values in the
-    column (`failures`, kept across its batches), the rest of it is left out
+    column (`unheld[j]`, kept across its batches), the rest of it is left out
     unread."""
     import pyarrow as pa
 
@@ -286,19 +288,20 @@ def _values(column: Any, target: Any, kind: str, failures: list[int]) -> list[An
         return _left_out(column)
     if isinstance(column.type, pa.BaseExtensionType) and _stored(column.type) is not column.type:
         column = column.storage
-    return _split(column, target, failures)
+    return _split(column, target, unheld, j)
 
 
 def _left_out(column: Any) -> list[Any]:
     return [None if null else _LEFT_OUT for null in column.is_null().to_pylist()]
 
 
-def _split(column: Any, target: Any, failures: list[int]) -> list[Any]:
+def _split(column: Any, target: Any, unheld: list[int], j: int) -> list[Any]:
     """`column` converted, or, where it fails, each half of it: a value that
-    fails alone is _LEFT_OUT, and past _MAX_UNHELD failures what is left is."""
+    fails alone is _LEFT_OUT (and counted in `unheld[j]`, its column's), and
+    past _MAX_UNHELD of them what is left is _UNREAD."""
     import pyarrow as pa
 
-    if failures[0] >= _MAX_UNHELD:
+    if unheld[j] >= _MAX_UNHELD:
         return [None if null else _UNREAD for null in column.is_null().to_pylist()]
     try:
         if target is not None:
@@ -309,11 +312,11 @@ def _split(column: Any, target: Any, failures: list[int]) -> list[Any]:
         raise
     except (pa.ArrowException, ValueError, OverflowError, KeyError):
         if len(column) == 1:
-            failures[0] += 1
+            unheld[j] += 1
             return [_LEFT_OUT]
     half = len(column) // 2
-    return _split(column.slice(0, half), target, failures) + _split(
-        column.slice(half), target, failures
+    return _split(column.slice(0, half), target, unheld, j) + _split(
+        column.slice(half), target, unheld, j
     )
 
 
@@ -412,7 +415,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     number = blank = decoded = decoded_bytes = 0
     stopped = False
     read_groups = 0
-    unheld = [[0] for _ in kept]  # each column's values Python cannot hold, across the file
+    unheld = [0] * len(kept)  # each column's values Python cannot hold, across the file
     if not kept:  # no column: every row is blank, counted from the metadata
         blank = sum(groups)
     for g, group_rows in enumerate(groups if kept else []):
@@ -454,7 +457,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
                     stopped = True
                     break
                 columns = [
-                    _values(batch.column(j), targets[j], kinds[j], unheld[j])
+                    _values(batch.column(j), targets[j], kinds[j], unheld, j)
                     for j in range(len(kept))
                 ]
                 for i in range(batch.num_rows):
