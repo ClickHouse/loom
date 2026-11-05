@@ -518,7 +518,7 @@ async def _expand_source_bodies(
 def _apply_bodies(hits: list[Any], input: Any) -> None:
     """Apply the request's `bodies` mode in place. "full" is a no-op. "excerpt" clips each
     body to LOOM_MEMORY_SEARCH_EXCERPT_CHARS; a decision or a constraint keeps its stored
-    excerpt, because its reasons and rejected options follow its outcome. "none" blanks
+    excerpt, because it is read in full, never by its first sentence. "none" blanks
     every body. Keys, types and scores are untouched, so a caller can still cite and
     memory.get what it needs. The wire tier of the per-hit explanation is decided here
     too — both are "what a hit carries", on the main and the read-your-writes path alike."""
