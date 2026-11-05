@@ -131,16 +131,20 @@ class _Reader:
     def __init__(self) -> None:
         # The values left out of the rows read, by why.
         self.left_out = {"bytes": 0, "infinite": 0, "long": 0, "unheld": 0, "unread": 0}
+        self.total = 0  # their sum, so a row can tell whether it left one out
+
+    def leave(self, cause: str) -> Cell:
+        self.left_out[cause] += 1
+        self.total += 1
+        return EMPTY
 
     def cell(self, value: Any, kind: str) -> Cell:
         if value is None:
             return EMPTY
         if value is _LEFT_OUT:
-            self.left_out["bytes" if kind == "bytes" else "unheld"] += 1
-            return EMPTY
+            return self.leave("bytes" if kind == "bytes" else "unheld")
         if value is _UNREAD:
-            self.left_out["unread"] += 1
-            return EMPTY
+            return self.leave("unread")
         if kind == "nested":
             # str: a value of a type JSON does not know (one an extension adds) as its text.
             value, kind = json.dumps(_json(value), ensure_ascii=False, default=str), "string"
@@ -151,8 +155,7 @@ class _Reader:
             if math.isnan(value):
                 return EMPTY
             if math.isinf(value):
-                self.left_out["infinite"] += 1
-                return EMPTY
+                return self.leave("infinite")
             if kind != "number":
                 return Cell(_shortest(value, "f" if kind == "float32" else "e"), "number")
         if kind == "number":
@@ -169,8 +172,7 @@ class _Reader:
             return Cell(bool(value), "bool")
         text = str(value)
         if len(text) > MAX_VALUE_CHARS:
-            self.left_out["long"] += 1
-            return EMPTY
+            return self.leave("long")
         return Cell(text, "string") if text.strip() else EMPTY
 
 
@@ -347,7 +349,7 @@ def _cost(array: Any) -> tuple[int, int]:
             pa.types.is_binary_view,
         )
         if any(is_copied(t.value_type) for is_copied in copied):
-            sizes = pc.take(pc.binary_length(array.dictionary), array.indices)
+            sizes = pc.take(_lengths(array.dictionary), array.indices)
             copies = int(pc.sum(sizes).as_py() or 0)
         return len(array), copies
     if pa.types.is_map(t):
@@ -369,6 +371,23 @@ def _cost(array: Any) -> tuple[int, int]:
     if pa.types.is_string_view(t) or pa.types.is_binary_view(t):
         return len(array), _shared(array)
     return len(array), 0
+
+
+def _lengths(values: Any) -> Any:
+    """Each string or binary value's length in bytes, read without copying one;
+    a view's from its view (Arrow has no length kernel for views, and casting
+    would copy the bytes views share)."""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+
+    if not (pa.types.is_string_view(values.type) or pa.types.is_binary_view(values.type)):
+        return pc.binary_length(values)
+    n, views = values.offset + len(values), values.buffers()[1]
+    if len(values) == 0 or views is None:
+        return pa.array([0] * len(values), pa.int32())
+    words = pa.Array.from_buffers(pa.int32(), 4 * n, [None, views])  # a view is four int32s
+    lengths = pc.list_element(pa.FixedSizeListArray.from_arrays(words, 4), 0)
+    return pc.if_else(values.is_null(), 0, lengths.slice(values.offset))
 
 
 def _shared(views: Any) -> int:
@@ -469,12 +488,12 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
                     if rows.more:  # past the budget: counted below, its rows not read
                         break
                     number += 1
-                    left = sum(reader.left_out.values())
+                    left = reader.total
                     typed = (reader.cell(columns[j][i], kinds[j]) for j in range(len(kept)))
                     cells = {j: c for j, c in enumerate(typed) if c.kind != "empty"}
                     # A row of nothing (nulls, NaNs, blank text) is no row, as a blank
                     # CSV record; one whose values were left out is still a row.
-                    if not cells and sum(reader.left_out.values()) == left:
+                    if not cells and reader.total == left:
                         blank += 1
                         continue
                     rows.add(number, cells, budget)

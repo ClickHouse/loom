@@ -694,6 +694,14 @@ def test_the_extractor_imports_without_pyarrow() -> None:
     assert (run.returncode, run.stdout.strip()) == (0, "False"), run.stderr
 
 
+def test_a_dictionary_of_views_is_charged_by_its_views_lengths() -> None:
+    # Arrow has no length kernel for views; the lengths come from the views, sliced or not.
+    big = "x" * 100
+    entries = pa.array(["q", "ab", big, None], pa.string_view()).slice(1)
+    d = pa.DictionaryArray.from_arrays(pa.array([0, 1, 1, None, 2], pa.int32()), entries)
+    assert parquetfile._cost(d) == (5, 2 + 100 + 100)
+
+
 def test_a_view_array_of_no_values_costs_nothing() -> None:
     empty = pa.array([], pa.string_view())
     assert parquetfile._cost(empty) == (0, 0)
