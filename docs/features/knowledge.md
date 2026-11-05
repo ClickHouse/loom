@@ -88,18 +88,18 @@ documents ([syncing](#syncing-a-source)); `list` says whether this deployment ru
 (`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
 
 On the dashboard, an opened repository on the Repositories page shows its sources under
-Sources: each source's kind, last sync and counts, to anyone who reads the repository.
-A caller with the role the table below names gets the verbs: Add a source, Check, Sync
+Sources: each source's kind, last sync and counts, to anyone who reads the repository. A
+caller with the role the table below names gets the verbs: Add a source, Check, Sync
 now, Rotate credential and Retire. Add a source takes a kind, then that kind's `config`
 fields as listed below (a `gdrive` folder or a `notion` page or database may also be
 given as a pasted link, a `meet` space with its `spaces/` prefix, a `zoom` meeting id
-with the spaces it is shown with) and its credential. The form checks the server's rules for those ids before Check is offered;
-Check sends `knowledge.source.add` with `dry_run`, and Add stays off until the form it
-would send is the one that passed. A refused check or add shows the server's error as it
-came back. The credential is typed into a password field, sent with the request and never
-shown again; changing the kind or the `recording` provider clears it, so it only goes to
-the store it was typed for, and changing the provider also clears the ids typed for the
-other one.
+with the spaces it is shown with) and its credential. The form checks the server's rules
+for those ids before Check is offered; Check sends `knowledge.source.add` with
+`dry_run`, and Add stays off until the form it would send is the one that passed. A
+refused check or add shows the server's error as it came back. The credential is typed
+into a password field, sent with the request and never shown again; changing the kind or
+the `recording` provider clears it, so it only goes to the store it was typed for, and
+changing the provider also clears the ids typed for the other one.
 
 | Operation                                                                                   | Role   | Does                                                                                                       |
 | ------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------- |
