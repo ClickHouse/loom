@@ -20,7 +20,13 @@ from typing import Any
 
 from bench.bootstrap import paired_bootstrap
 from bench.design_rationale.llm import cost_usd, price, read_ledger
-from bench.design_rationale.taskset import TaskSet, parse_key, parse_sample, surface_key
+from bench.design_rationale.taskset import (
+    KINDS,
+    TaskSet,
+    parse_key,
+    parse_sample,
+    surface_key,
+)
 
 # z(0.975) + z(0.80): the effect a two-sided 5% test detects with 80% power is this many
 # standard errors.
@@ -30,13 +36,18 @@ MDE_Z = 1.96 + 0.84
 PLANNING_SD = 0.35
 # (treatment arm, reference arm) pairs reported when both ran. Arm 4 against arm 5 is
 # the like-for-like comparison when arm 4 had no code index (no pre-edit block).
-COMPARISONS = ((3, 0), (4, 0), (4, 3), (4, 5), (1, 0), (1, 3), (2, 3))
+# Arm 6 against arms 2 and 4 asks whether serving the documents beside the extracted
+# rows adds to either alone.
+COMPARISONS = ((3, 0), (4, 0), (4, 3), (4, 5), (1, 0), (1, 3), (2, 3), (6, 2), (6, 4), (6, 3))
 # The keys a verdict must carry to be read; one without them is unreadable, not a pass.
 REQUIRED = {
     "A": ("claims", "gold_covered", "potentially_misleading"),
     "B": ("forbidden_proposed", "constraints_violated"),
     "C": ("stale_served", "abstained", "invented_rationale"),
+    "D": ("claims", "gold_covered", "potentially_misleading"),
 }
+# The kinds whose answers are claims scored against a gold list, and that list's field.
+GOLD_LIST = {"A": "gold_arguments", "D": "gold_facts"}
 # The run flags a summary publishes; the org and an --arm4-namespace name a deployment.
 SUMMARY_FLAGS = (
     "arms",
@@ -53,6 +64,7 @@ HEADLINE = {
     "A": ("precision", "recall"),
     "B": ("avoids", "satisfies"),
     "C": ("passed",),
+    "D": ("precision", "recall"),
 }
 # The change-task fields a fired detector decides: a human label on them says nothing about
 # the judge. `detector_fired` is never the judge's at all.
@@ -122,10 +134,10 @@ def pass_metrics(
         "citations": len(entry["citations"]),
         "citations_good": len(good),
     }
-    if kind == "A":
+    if kind in GOLD_LIST:
         claims = verdict.get("claims") or []
         correct = sum(c.get("verdict") == "correct" for c in claims)
-        gold_n = len(task["gold_arguments"])
+        gold_n = len(task[GOLD_LIST[kind]])
         covered = {
             i for i in verdict.get("gold_covered") or [] if isinstance(i, int) and 0 <= i < gold_n
         }
@@ -258,6 +270,7 @@ def arm_summary(rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
         ("A", ("precision", "recall", "misleading", "abstained")),
         ("B", ("avoids", "satisfies", "pushed_back", "detector_fired")),
         ("C", ("passed", "current_stated", "stale", "abstention_failed")),
+        ("D", ("precision", "recall", "misleading", "abstained")),
     ):
         mine = [r for r in rows.values() if r["kind"] == kind]
         if not mine:
@@ -268,8 +281,8 @@ def arm_summary(rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
             out[kind][m] = round(mean(vals), 4) if vals else None
     n = sum(r.get("citations") or 0 for r in rows.values())
     good = sum(r.get("citations_good") or 0 for r in rows.values())
-    claims = sum(r.get("claims") or 0 for r in rows.values() if r["kind"] == "A")
-    cited = sum(r.get("claims_cited") or 0 for r in rows.values() if r["kind"] == "A")
+    claims = sum(r.get("claims") or 0 for r in rows.values() if r["kind"] in GOLD_LIST)
+    cited = sum(r.get("claims_cited") or 0 for r in rows.values() if r["kind"] in GOLD_LIST)
     out["citation_precision"] = round(good / n, 4) if n else None
     out["citation_recall"] = round(cited / claims, 4) if claims else None
     return out
@@ -355,18 +368,18 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
     out: dict[str, Any] = {}
     tasks = [t for _, t in ts.all_tasks()]
     arm4_files = (state.get("flags") or {}).get("arm4_files", True)
-    for arm in (3, 4, 5):
+    for arm in (3, 4, 5, 6):
         rows = [
             (t, surf[surface_key(t["id"], arm)]) for t in tasks if surface_key(t["id"], arm) in surf
         ]
         if not rows:
             continue
         for surface in ("for_file_keys", "search_keys"):
-            if surface == "for_file_keys" and (arm == 5 or (arm == 4 and not arm4_files)):
+            if surface == "for_file_keys" and (arm == 5 or (arm in (4, 6) and not arm4_files)):
                 continue  # this arm reads no pre-edit block
             # Tasks with gold rows only: an abstention task has nothing to serve. Arm
-            # 4's rows have keys of their own, so any row it served counts.
-            if arm == 4:
+            # 4's and 6's rows have keys of their own, so any row it served counts.
+            if arm in (4, 6):
                 hits = [bool(r.get(surface)) for t, r in rows if t.get("gold_rows")]
             else:
                 hits = [
@@ -375,6 +388,15 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
                     if t.get("gold_rows")
                 ]
             out[f"arm{arm}_{surface.removesuffix('_keys')}_served"] = f"{sum(hits)}/{len(hits)}"
+    for arm in (2, 6):
+        # The tasks whose knowledge hits include a section of the task's own document
+        # (any version of it: a revision shares the source_uri).
+        rows = [
+            (t, surf[surface_key(t["id"], arm)]) for t in tasks if surface_key(t["id"], arm) in surf
+        ]
+        if rows:
+            hits = [ts.document_of(t).source_uri in r.get("knowledge_uris", []) for t, r in rows]
+            out[f"arm{arm}_knowledge_served"] = f"{sum(hits)}/{len(hits)}"
     extraction = state.get("extraction") or {}
     if extraction:
         # A key the run over a revision reported again is one row.
@@ -397,7 +419,7 @@ def judge_stability(ts: TaskSet, judged: dict[str, Any]) -> dict[str, Any]:
     between its repeats, and between judge models. A change answer whose detector fired
     is decided by the detector, so its passes cannot disagree: it is left out."""
     tasks = {t["id"]: (kind, t) for kind, t in ts.all_tasks()}
-    headline = {"A": "misleading", "B": "avoids", "C": "passed"}
+    headline = {"A": "misleading", "B": "avoids", "C": "passed", "D": "misleading"}
     agree: dict[str, list[bool]] = defaultdict(list)
     for key, entry in judged.items():
         tid, _arm = parse_key(key)
@@ -570,7 +592,7 @@ def summary(ts: TaskSet, metrics: dict[str, Any], out_dir: Path) -> dict[str, An
         # A document can be revised more than once: entries and distinct bases.
         "revisions": sum(1 for d in ts.documents.values() if d.revision_of),
         "revised_documents": len({d.revision_of for d in ts.documents.values() if d.revision_of}),
-        "tasks": {kind: len(ts.tasks.get(kind, [])) for kind in ("A", "B", "C")},
+        "tasks": {kind: len(ts.tasks.get(kind, [])) for kind in KINDS},
         "c_subtypes": dict(sorted(subtypes.items())),
         "tasks_with_gold_rows": sum(1 for _, t in ts.all_tasks() if t["gold_rows"]),
     }
@@ -623,16 +645,18 @@ def report(m: dict[str, Any]) -> str:
     """The aggregate numbers as markdown: per arm, per kind, no task text."""
     lines = [
         "| Arm | A precision | A recall | A misleading | B avoids | B satisfies | "
-        "C passes | C states current | Citation precision | Citation recall |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "C passes | C states current | D precision | D recall | D misleading | "
+        "Citation precision | Citation recall |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for arm, s in m["arms"].items():
-        a, b, c = s.get("A", {}), s.get("B", {}), s.get("C", {})
+        a, b, c, d = s.get("A", {}), s.get("B", {}), s.get("C", {}), s.get("D", {})
         lines.append(
             f"| {arm} | {_pct(a.get('precision'))} | {_pct(a.get('recall'))} | "
             f"{_pct(a.get('misleading'))} | {_pct(b.get('avoids'))} | "
             f"{_pct(b.get('satisfies'))} | {_pct(c.get('passed'))} | "
-            f"{_pct(c.get('current_stated'))} | "
+            f"{_pct(c.get('current_stated'))} | {_pct(d.get('precision'))} | "
+            f"{_pct(d.get('recall'))} | {_pct(d.get('misleading'))} | "
             f"{_pct(s.get('citation_precision'))} | {_pct(s.get('citation_recall'))} |"
         )
     lines += [

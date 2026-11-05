@@ -2,9 +2,9 @@
 
 Measures whether the design decisions Loom serves from a repository's design documents
 keep a coding agent from re-proposing rejected options, and whether the agent answers
-"why" questions correctly, cited, and without stale or invented rationale. The manual is
-`python -m bench.design_rationale --help`; this page holds the arms, the task-set schema
-and the outputs.
+"why" and "how does this feature work" questions correctly, cited, and without stale or
+invented rationale. The manual is `python -m bench.design_rationale --help`; this page
+holds the arms, the task-set schema and the outputs.
 
 The real task set is private material and is never committed. The harness reads a task
 set from the directory given on the command line; `example/` is a small synthetic one
@@ -20,6 +20,7 @@ set from the directory given on the command line; `example/` is a small syntheti
 | 3   | The gold rows, through the pre-edit block (`memory.for_file` for each file the task touches) and the memory section of `loom_search`                                  |
 | 4   | The same surfaces over the rows `loom decisions extract --apply` mined from the documents, or with `--arm4-namespace` the rows a document source's sync already wrote |
 | 5   | The gold rows through the memory section of `loom_search` only                                                                                                        |
+| 6   | Arm 4's surfaces with the knowledge hits of the same `loom_search` beside its memory section: the documents and the rows mined from them, served together             |
 
 An extracted row names code by its names. Its files, which give it a pre-edit block,
 come from the repository's code index: with `--code-index` (a Loom that indexes the
@@ -89,6 +90,8 @@ reports its minimum detectable effect.
   revision of the document reversed: serving the stale statement as governing fails. An
   abstention task asks about something no document records: an answer that does not
   abstain, or that invents a rationale, fails.
+- **D, feature questions.** How a feature works, its limits, what must stay compatible
+  and what depends on it. Scored like A, against the gold facts of the document.
 
 ## Directory layout
 
@@ -122,14 +125,15 @@ reports its minimum detectable effect.
 | `image_only`                                          | Its source section carries no extractable text (counted per document in `score --extraction-labels`)                                                 |
 
 `tasks.json` holds `"system"` (how the prompts name the code base) and the lists `"A"`,
-`"B"`, `"C"`. Every task has `id` (without `/`), `document` and `gold_rows` (keys of
-`gold_rows.json`; an empty list for an abstention task).
+`"B"`, `"C"`, `"D"`. Every task has `id` (without `/`), `document` and `gold_rows` (keys
+of `gold_rows.json`; an empty list for an abstention task).
 
 | Kind | Fields                                                                                                                                                   |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A    | `question`, `gold_arguments` (list), `rejected_options` (list)                                                                                           |
 | B    | `task`, `gold_constraints`, `forbidden_options`, `detector` (list; a `judge` detector carries the rubric)                                                |
 | C    | `question`, `subtype` (`supersession` or `abstention`); a supersession task adds `current` (the design now) and `stale_claims` (the reversed statements) |
+| D    | `question`, `gold_facts` (list)                                                                                                                          |
 
 A detector is one of:
 

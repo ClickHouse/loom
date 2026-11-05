@@ -6,13 +6,14 @@
     "tasks": {
       "A": 10,
       "B": 15,
-      "C": 10
+      "C": 10,
+      "D": 13
     },
     "c_subtypes": {
       "abstention": 5,
       "supersession": 5
     },
-    "tasks_with_gold_rows": 30
+    "tasks_with_gold_rows": 43
   },
   "run": {
     "arms": [
@@ -20,7 +21,8 @@
       1,
       2,
       3,
-      4
+      4,
+      6
     ],
     "arm4_files": true,
     "extract_window_chars": 6000,
@@ -31,37 +33,41 @@
     "extract_model": "gpt-6-luna",
     "k": 3,
     "judge_orders": 2,
-    "judge_repeats": 2
+    "judge_repeats": 1
   },
   "spend_usd": {
     "by_stage": {
-      "answer": 0.0991,
+      "answer": 0.1935,
       "extract": 0.1731,
-      "judge": 0.3211,
-      "server": 0.0037
+      "judge": 0.3914,
+      "server": 0.0038
     },
-    "total": 0.5969,
+    "total": 0.7617,
     "ledger_rows_dropped": 0,
     "answers_by_arm": {
       "0": {
-        "answers": 105,
-        "usd": 0.0082
+        "answers": 144,
+        "usd": 0.0105
       },
       "1": {
-        "answers": 105,
-        "usd": 0.0389
+        "answers": 144,
+        "usd": 0.0621
       },
       "2": {
-        "answers": 105,
-        "usd": 0.0199
+        "answers": 144,
+        "usd": 0.0332
       },
       "3": {
-        "answers": 105,
-        "usd": 0.0211
+        "answers": 144,
+        "usd": 0.0345
       },
       "4": {
-        "answers": 105,
-        "usd": 0.0109
+        "answers": 144,
+        "usd": 0.0149
+      },
+      "6": {
+        "answers": 144,
+        "usd": 0.0383
       }
     }
   },
@@ -69,24 +75,31 @@
     "0": {
       "A": {
         "tasks": 10,
-        "precision": 0.3403,
-        "recall": 0.3819,
-        "misleading": 0.7083,
+        "precision": 0.2931,
+        "recall": 0.3008,
+        "misleading": 0.7833,
         "abstained": 1.0
       },
       "B": {
         "tasks": 15,
-        "avoids": 0.1556,
+        "avoids": 0.1889,
         "satisfies": 0.1222,
         "pushed_back": 0.0,
         "detector_fired": 0.0
       },
       "C": {
         "tasks": 10,
-        "passed": 0.9917,
-        "current_stated": 0.1667,
-        "stale": 0.0,
-        "abstention_failed": 0.0167
+        "passed": 0.9333,
+        "current_stated": 0.1333,
+        "stale": 0.0667,
+        "abstention_failed": 0.0667
+      },
+      "D": {
+        "tasks": 13,
+        "precision": 0.1563,
+        "recall": 0.1214,
+        "misleading": 0.6538,
+        "abstained": 1.0
       },
       "citation_precision": null,
       "citation_recall": 0.0
@@ -94,102 +107,162 @@
     "1": {
       "A": {
         "tasks": 10,
-        "precision": 0.8454,
-        "recall": 0.9068,
-        "misleading": 0.3,
-        "abstained": 0.2333
+        "precision": 0.8412,
+        "recall": 0.9208,
+        "misleading": 0.25,
+        "abstained": 0.2
       },
       "B": {
         "tasks": 15,
-        "avoids": 0.0667,
-        "satisfies": 0.0667,
+        "avoids": 0.0444,
+        "satisfies": 0.0222,
         "pushed_back": 0.0222,
         "detector_fired": 0.0222
       },
       "C": {
         "tasks": 10,
-        "passed": 0.8417,
-        "current_stated": 0.9833,
+        "passed": 1.0,
+        "current_stated": 1.0,
         "stale": 0.0,
-        "abstention_failed": 0.3167
+        "abstention_failed": 0.0
       },
-      "citation_precision": 0.839,
-      "citation_recall": 0.8553
+      "D": {
+        "tasks": 13,
+        "precision": 0.895,
+        "recall": 0.7596,
+        "misleading": 0.2308,
+        "abstained": 0.0
+      },
+      "citation_precision": 0.8344,
+      "citation_recall": 0.79
     },
     "2": {
       "A": {
         "tasks": 10,
-        "precision": 0.8262,
-        "recall": 0.759,
-        "misleading": 0.3583,
-        "abstained": 0.4
+        "precision": 0.8129,
+        "recall": 0.8056,
+        "misleading": 0.4167,
+        "abstained": 0.2667
       },
       "B": {
         "tasks": 15,
-        "avoids": 0.3389,
-        "satisfies": 0.3389,
-        "pushed_back": 0.237,
+        "avoids": 0.4222,
+        "satisfies": 0.4333,
+        "pushed_back": 0.2222,
         "detector_fired": 0.0
       },
       "C": {
         "tasks": 10,
-        "passed": 0.95,
+        "passed": 1.0,
         "current_stated": 1.0,
         "stale": 0.0,
-        "abstention_failed": 0.1
+        "abstention_failed": 0.0
       },
-      "citation_precision": 0.8625,
-      "citation_recall": 0.7668
+      "D": {
+        "tasks": 13,
+        "precision": 0.8032,
+        "recall": 0.5971,
+        "misleading": 0.4744,
+        "abstained": 0.1026
+      },
+      "citation_precision": 0.5452,
+      "citation_recall": 0.4889
     },
     "3": {
       "A": {
         "tasks": 10,
-        "precision": 0.9583,
-        "recall": 0.8917,
+        "precision": 0.9683,
+        "recall": 0.8878,
         "misleading": 0.0833,
-        "abstained": 0.0667
+        "abstained": 0.1
       },
       "B": {
         "tasks": 15,
-        "avoids": 0.8593,
-        "satisfies": 0.8037,
-        "pushed_back": 0.7667,
+        "avoids": 0.8778,
+        "satisfies": 0.8111,
+        "pushed_back": 0.7556,
         "detector_fired": 0.0
       },
       "C": {
         "tasks": 10,
-        "passed": 0.9833,
+        "passed": 1.0,
         "current_stated": 1.0,
         "stale": 0.0,
-        "abstention_failed": 0.0333
+        "abstention_failed": 0.0
       },
-      "citation_precision": 0.8524,
-      "citation_recall": 0.9349
+      "D": {
+        "tasks": 13,
+        "precision": 0.9191,
+        "recall": 0.6547,
+        "misleading": 0.1667,
+        "abstained": 0.0641
+      },
+      "citation_precision": 0.9399,
+      "citation_recall": 0.942
     },
     "4": {
       "A": {
         "tasks": 10,
-        "precision": 0.6667,
-        "recall": 0.4558,
-        "misleading": 0.1833,
-        "abstained": 0.7333
+        "precision": 0.5361,
+        "recall": 0.3289,
+        "misleading": 0.3667,
+        "abstained": 0.6333
       },
       "B": {
         "tasks": 15,
-        "avoids": 0.6,
-        "satisfies": 0.5778,
-        "pushed_back": 0.4167,
+        "avoids": 0.5444,
+        "satisfies": 0.5222,
+        "pushed_back": 0.4111,
         "detector_fired": 0.0
       },
       "C": {
         "tasks": 10,
-        "passed": 0.9417,
-        "current_stated": 0.2,
-        "stale": 0.0,
-        "abstention_failed": 0.1167
+        "passed": 0.9667,
+        "current_stated": 0.1,
+        "stale": 0.0667,
+        "abstention_failed": 0.0
       },
-      "citation_precision": 0.8316,
-      "citation_recall": 0.6927
+      "D": {
+        "tasks": 13,
+        "precision": 0.6497,
+        "recall": 0.2687,
+        "misleading": 0.3718,
+        "abstained": 0.6923
+      },
+      "citation_precision": 0.9213,
+      "citation_recall": 0.6379
+    },
+    "6": {
+      "A": {
+        "tasks": 10,
+        "precision": 0.8475,
+        "recall": 0.8389,
+        "misleading": 0.2667,
+        "abstained": 0.2
+      },
+      "B": {
+        "tasks": 15,
+        "avoids": 0.5556,
+        "satisfies": 0.5556,
+        "pushed_back": 0.3778,
+        "detector_fired": 0.0
+      },
+      "C": {
+        "tasks": 10,
+        "passed": 1.0,
+        "current_stated": 1.0,
+        "stale": 0.0,
+        "abstention_failed": 0.0
+      },
+      "D": {
+        "tasks": 13,
+        "precision": 0.8538,
+        "recall": 0.6769,
+        "misleading": 0.4231,
+        "abstained": 0.0513
+      },
+      "citation_precision": 0.8405,
+      "citation_recall": 0.749
     }
   },
   "comparisons": [
@@ -200,14 +273,14 @@
       "metric": "precision",
       "n": 10,
       "clusters": 5,
-      "delta": 0.6181,
-      "lb": 0.4845,
-      "ub": 0.8583,
-      "mde": 0.267,
+      "delta": 0.6753,
+      "lb": 0.6097,
+      "ub": 0.8269,
+      "mde": 0.1551,
       "win_tie_loss": [
-        9,
+        10,
         0,
-        1
+        0
       ]
     },
     {
@@ -217,13 +290,13 @@
       "metric": "recall",
       "n": 10,
       "clusters": 5,
-      "delta": 0.5097,
-      "lb": 0.4231,
-      "ub": 0.6706,
-      "mde": 0.1768,
+      "delta": 0.5869,
+      "lb": 0.531,
+      "ub": 0.7381,
+      "mde": 0.148,
       "win_tie_loss": [
-        9,
-        1,
+        10,
+        0,
         0
       ]
     },
@@ -234,14 +307,14 @@
       "metric": "avoids",
       "n": 15,
       "clusters": 5,
-      "delta": 0.7037,
-      "lb": 0.5965,
-      "ub": 0.8889,
-      "mde": 0.2089,
+      "delta": 0.6889,
+      "lb": 0.5952,
+      "ub": 0.8667,
+      "mde": 0.1939,
       "win_tie_loss": [
-        11,
-        4,
-        0
+        12,
+        2,
+        1
       ]
     },
     {
@@ -251,14 +324,14 @@
       "metric": "satisfies",
       "n": 15,
       "clusters": 5,
-      "delta": 0.6815,
-      "lb": 0.4405,
-      "ub": 0.9343,
-      "mde": 0.3528,
+      "delta": 0.6889,
+      "lb": 0.4091,
+      "ub": 0.8939,
+      "mde": 0.3463,
       "win_tie_loss": [
         12,
-        3,
-        0
+        2,
+        1
       ]
     },
     {
@@ -268,14 +341,48 @@
       "metric": "passed",
       "n": 10,
       "clusters": 5,
-      "delta": -0.0083,
-      "lb": -0.0714,
-      "ub": 0.0192,
-      "mde": 0.0648,
+      "delta": 0.0667,
+      "lb": 0.0,
+      "ub": 0.1212,
+      "mde": 0.0866,
       "win_tie_loss": [
-        1,
+        2,
         8,
-        1
+        0
+      ]
+    },
+    {
+      "treatment": 3,
+      "reference": 0,
+      "kind": "D",
+      "metric": "precision",
+      "n": 13,
+      "clusters": 5,
+      "delta": 0.7627,
+      "lb": 0.6053,
+      "ub": 0.8716,
+      "mde": 0.1903,
+      "win_tie_loss": [
+        13,
+        0,
+        0
+      ]
+    },
+    {
+      "treatment": 3,
+      "reference": 0,
+      "kind": "D",
+      "metric": "recall",
+      "n": 13,
+      "clusters": 5,
+      "delta": 0.5333,
+      "lb": 0.4104,
+      "ub": 0.716,
+      "mde": 0.2183,
+      "win_tie_loss": [
+        13,
+        0,
+        0
       ]
     },
     {
@@ -283,14 +390,14 @@
       "reference": 0,
       "kind": "A",
       "metric": "precision",
-      "n": 9,
+      "n": 10,
       "clusters": 5,
-      "delta": 0.321,
-      "lb": 0.0238,
-      "ub": 0.6372,
-      "mde": 0.4381,
+      "delta": 0.2431,
+      "lb": -0.0952,
+      "ub": 0.4583,
+      "mde": 0.3954,
       "win_tie_loss": [
-        7,
+        8,
         1,
         1
       ]
@@ -302,10 +409,10 @@
       "metric": "recall",
       "n": 10,
       "clusters": 5,
-      "delta": 0.0739,
-      "lb": -0.1296,
-      "ub": 0.3014,
-      "mde": 0.3079,
+      "delta": 0.0281,
+      "lb": -0.1806,
+      "ub": 0.1617,
+      "mde": 0.2445,
       "win_tie_loss": [
         5,
         3,
@@ -319,14 +426,14 @@
       "metric": "avoids",
       "n": 15,
       "clusters": 5,
-      "delta": 0.4444,
-      "lb": 0.4058,
-      "ub": 0.5,
-      "mde": 0.0673,
+      "delta": 0.3556,
+      "lb": -0.0,
+      "ub": 0.5952,
+      "mde": 0.4252,
       "win_tie_loss": [
-        8,
-        7,
-        0
+        9,
+        4,
+        2
       ]
     },
     {
@@ -336,14 +443,14 @@
       "metric": "satisfies",
       "n": 15,
       "clusters": 5,
-      "delta": 0.4556,
-      "lb": 0.4091,
-      "ub": 0.5,
-      "mde": 0.0649,
+      "delta": 0.4,
+      "lb": 0.0833,
+      "ub": 0.6111,
+      "mde": 0.377,
       "win_tie_loss": [
-        8,
-        7,
-        0
+        9,
+        4,
+        2
       ]
     },
     {
@@ -353,14 +460,48 @@
       "metric": "passed",
       "n": 10,
       "clusters": 5,
-      "delta": -0.05,
-      "lb": -0.1667,
-      "ub": 0.0069,
-      "mde": 0.124,
+      "delta": 0.0333,
+      "lb": 0.0,
+      "ub": 0.0833,
+      "mde": 0.0595,
       "win_tie_loss": [
         1,
-        6,
-        3
+        9,
+        0
+      ]
+    },
+    {
+      "treatment": 4,
+      "reference": 0,
+      "kind": "D",
+      "metric": "precision",
+      "n": 11,
+      "clusters": 5,
+      "delta": 0.4649,
+      "lb": 0.0126,
+      "ub": 0.6933,
+      "mde": 0.4862,
+      "win_tie_loss": [
+        9,
+        0,
+        2
+      ]
+    },
+    {
+      "treatment": 4,
+      "reference": 0,
+      "kind": "D",
+      "metric": "recall",
+      "n": 13,
+      "clusters": 5,
+      "delta": 0.1474,
+      "lb": -0.0069,
+      "ub": 0.2235,
+      "mde": 0.1646,
+      "win_tie_loss": [
+        8,
+        3,
+        2
       ]
     },
     {
@@ -368,16 +509,16 @@
       "reference": 3,
       "kind": "A",
       "metric": "precision",
-      "n": 9,
+      "n": 10,
       "clusters": 5,
-      "delta": -0.287,
-      "lb": -0.6083,
-      "ub": -0.1212,
-      "mde": 0.3479,
+      "delta": -0.4322,
+      "lb": -0.8103,
+      "ub": -0.2286,
+      "mde": 0.4155,
       "win_tie_loss": [
+        2,
         1,
-        4,
-        4
+        7
       ]
     },
     {
@@ -387,13 +528,30 @@
       "metric": "recall",
       "n": 10,
       "clusters": 5,
-      "delta": -0.4358,
-      "lb": -0.6528,
-      "ub": -0.3333,
-      "mde": 0.2282,
+      "delta": -0.5589,
+      "lb": -0.8333,
+      "ub": -0.394,
+      "mde": 0.3138,
+      "win_tie_loss": [
+        0,
+        1,
+        9
+      ]
+    },
+    {
+      "treatment": 4,
+      "reference": 3,
+      "kind": "B",
+      "metric": "avoids",
+      "n": 15,
+      "clusters": 5,
+      "delta": -0.3333,
+      "lb": -0.641,
+      "ub": -0.119,
+      "mde": 0.3728,
       "win_tie_loss": [
         1,
-        1,
+        6,
         8
       ]
     },
@@ -401,34 +559,17 @@
       "treatment": 4,
       "reference": 3,
       "kind": "B",
-      "metric": "avoids",
-      "n": 15,
-      "clusters": 5,
-      "delta": -0.2593,
-      "lb": -0.404,
-      "ub": -0.1481,
-      "mde": 0.1828,
-      "win_tie_loss": [
-        0,
-        10,
-        5
-      ]
-    },
-    {
-      "treatment": 4,
-      "reference": 3,
-      "kind": "B",
       "metric": "satisfies",
       "n": 15,
       "clusters": 5,
-      "delta": -0.2259,
-      "lb": -0.4343,
-      "ub": 0.0455,
-      "mde": 0.3427,
+      "delta": -0.2889,
+      "lb": -0.6154,
+      "ub": -0.0833,
+      "mde": 0.38,
       "win_tie_loss": [
         1,
-        9,
-        5
+        6,
+        8
       ]
     },
     {
@@ -438,14 +579,48 @@
       "metric": "passed",
       "n": 10,
       "clusters": 5,
-      "delta": -0.0417,
-      "lb": -0.0952,
-      "ub": -0.0069,
-      "mde": 0.0631,
+      "delta": -0.0333,
+      "lb": -0.1,
+      "ub": 0.0,
+      "mde": 0.0714,
       "win_tie_loss": [
         0,
-        7,
-        3
+        9,
+        1
+      ]
+    },
+    {
+      "treatment": 4,
+      "reference": 3,
+      "kind": "D",
+      "metric": "precision",
+      "n": 11,
+      "clusters": 5,
+      "delta": -0.2919,
+      "lb": -0.5947,
+      "ub": -0.1506,
+      "mde": 0.3172,
+      "win_tie_loss": [
+        2,
+        1,
+        8
+      ]
+    },
+    {
+      "treatment": 4,
+      "reference": 3,
+      "kind": "D",
+      "metric": "recall",
+      "n": 13,
+      "clusters": 5,
+      "delta": -0.386,
+      "lb": -0.5626,
+      "ub": -0.2817,
+      "mde": 0.2007,
+      "win_tie_loss": [
+        0,
+        1,
+        12
       ]
     },
     {
@@ -455,10 +630,10 @@
       "metric": "precision",
       "n": 10,
       "clusters": 5,
-      "delta": 0.5051,
-      "lb": 0.3873,
-      "ub": 0.724,
-      "mde": 0.2405,
+      "delta": 0.5482,
+      "lb": 0.4794,
+      "ub": 0.6951,
+      "mde": 0.1541,
       "win_tie_loss": [
         10,
         0,
@@ -472,14 +647,14 @@
       "metric": "recall",
       "n": 10,
       "clusters": 5,
-      "delta": 0.5249,
-      "lb": 0.3576,
-      "ub": 0.8292,
-      "mde": 0.3368,
+      "delta": 0.62,
+      "lb": 0.4872,
+      "ub": 0.8806,
+      "mde": 0.281,
       "win_tie_loss": [
         9,
-        0,
-        1
+        1,
+        0
       ]
     },
     {
@@ -489,48 +664,82 @@
       "metric": "avoids",
       "n": 15,
       "clusters": 5,
-      "delta": -0.0889,
-      "lb": -0.1818,
-      "ub": 0.0667,
-      "mde": 0.1775,
+      "delta": -0.1444,
+      "lb": -0.2197,
+      "ub": -0.0303,
+      "mde": 0.1353,
       "win_tie_loss": [
-        1,
+        0,
         11,
+        4
+      ]
+    },
+    {
+      "treatment": 1,
+      "reference": 0,
+      "kind": "B",
+      "metric": "satisfies",
+      "n": 15,
+      "clusters": 5,
+      "delta": -0.1,
+      "lb": -0.1515,
+      "ub": -0.0152,
+      "mde": 0.0974,
+      "win_tie_loss": [
+        0,
+        12,
         3
       ]
     },
     {
       "treatment": 1,
       "reference": 0,
-      "kind": "B",
-      "metric": "satisfies",
-      "n": 15,
+      "kind": "C",
+      "metric": "passed",
+      "n": 10,
       "clusters": 5,
-      "delta": -0.0556,
-      "lb": -0.1667,
-      "ub": 0.1,
-      "mde": 0.1905,
+      "delta": 0.0667,
+      "lb": 0.0,
+      "ub": 0.1212,
+      "mde": 0.0866,
       "win_tie_loss": [
         2,
-        11,
-        2
+        8,
+        0
       ]
     },
     {
       "treatment": 1,
       "reference": 0,
-      "kind": "C",
-      "metric": "passed",
-      "n": 10,
+      "kind": "D",
+      "metric": "precision",
+      "n": 13,
       "clusters": 5,
-      "delta": -0.15,
-      "lb": -0.3542,
-      "ub": -0.05,
-      "mde": 0.2173,
+      "delta": 0.7387,
+      "lb": 0.5904,
+      "ub": 0.8207,
+      "mde": 0.1645,
       "win_tie_loss": [
+        13,
         0,
-        6,
-        4
+        0
+      ]
+    },
+    {
+      "treatment": 1,
+      "reference": 0,
+      "kind": "D",
+      "metric": "recall",
+      "n": 13,
+      "clusters": 5,
+      "delta": 0.6383,
+      "lb": 0.5473,
+      "ub": 0.7531,
+      "mde": 0.147,
+      "win_tie_loss": [
+        13,
+        0,
+        0
       ]
     },
     {
@@ -540,13 +749,13 @@
       "metric": "precision",
       "n": 10,
       "clusters": 5,
-      "delta": -0.1129,
-      "lb": -0.1796,
-      "ub": -0.0641,
-      "mde": 0.0825,
+      "delta": -0.1271,
+      "lb": -0.2019,
+      "ub": -0.0692,
+      "mde": 0.0947,
       "win_tie_loss": [
-        1,
-        3,
+        2,
+        2,
         6
       ]
     },
@@ -557,14 +766,14 @@
       "metric": "recall",
       "n": 10,
       "clusters": 5,
-      "delta": 0.0151,
-      "lb": -0.0754,
-      "ub": 0.1603,
-      "mde": 0.1684,
+      "delta": 0.0331,
+      "lb": -0.0708,
+      "ub": 0.2254,
+      "mde": 0.2116,
       "win_tie_loss": [
-        2,
+        4,
         3,
-        5
+        3
       ]
     },
     {
@@ -574,14 +783,14 @@
       "metric": "avoids",
       "n": 15,
       "clusters": 5,
-      "delta": -0.7926,
-      "lb": -0.8704,
-      "ub": -0.6566,
-      "mde": 0.1527,
+      "delta": -0.8333,
+      "lb": -0.9405,
+      "ub": -0.7,
+      "mde": 0.1718,
       "win_tie_loss": [
         0,
-        2,
-        13
+        1,
+        14
       ]
     },
     {
@@ -591,10 +800,10 @@
       "metric": "satisfies",
       "n": 15,
       "clusters": 5,
-      "delta": -0.737,
-      "lb": -0.8704,
-      "ub": -0.4293,
-      "mde": 0.3151,
+      "delta": -0.7889,
+      "lb": -0.9697,
+      "ub": -0.4242,
+      "mde": 0.3896,
       "win_tie_loss": [
         0,
         2,
@@ -608,13 +817,47 @@
       "metric": "passed",
       "n": 10,
       "clusters": 5,
-      "delta": -0.1417,
-      "lb": -0.2976,
-      "ub": -0.05,
-      "mde": 0.1769,
+      "delta": 0.0,
+      "lb": 0.0,
+      "ub": 0.0,
+      "mde": 0.0,
       "win_tie_loss": [
         0,
-        6,
+        10,
+        0
+      ]
+    },
+    {
+      "treatment": 1,
+      "reference": 3,
+      "kind": "D",
+      "metric": "precision",
+      "n": 13,
+      "clusters": 5,
+      "delta": -0.024,
+      "lb": -0.1061,
+      "ub": 0.0362,
+      "mde": 0.1016,
+      "win_tie_loss": [
+        4,
+        2,
+        7
+      ]
+    },
+    {
+      "treatment": 1,
+      "reference": 3,
+      "kind": "D",
+      "metric": "recall",
+      "n": 13,
+      "clusters": 5,
+      "delta": 0.1049,
+      "lb": 0.0444,
+      "ub": 0.1552,
+      "mde": 0.0791,
+      "win_tie_loss": [
+        8,
+        1,
         4
       ]
     },
@@ -625,14 +868,14 @@
       "metric": "precision",
       "n": 10,
       "clusters": 5,
-      "delta": -0.1321,
-      "lb": -0.1708,
-      "ub": -0.0461,
-      "mde": 0.0891,
+      "delta": -0.1555,
+      "lb": -0.2749,
+      "ub": -0.0757,
+      "mde": 0.1423,
       "win_tie_loss": [
-        1,
         3,
-        6
+        2,
+        5
       ]
     },
     {
@@ -642,71 +885,462 @@
       "metric": "recall",
       "n": 10,
       "clusters": 5,
-      "delta": -0.1326,
-      "lb": -0.2002,
-      "ub": -0.0079,
-      "mde": 0.1374,
+      "delta": -0.0822,
+      "lb": -0.1764,
+      "ub": 0.0852,
+      "mde": 0.1868,
+      "win_tie_loss": [
+        2,
+        4,
+        4
+      ]
+    },
+    {
+      "treatment": 2,
+      "reference": 3,
+      "kind": "B",
+      "metric": "avoids",
+      "n": 15,
+      "clusters": 5,
+      "delta": -0.4556,
+      "lb": -0.5278,
+      "ub": -0.4015,
+      "mde": 0.0902,
       "win_tie_loss": [
         1,
+        5,
+        9
+      ]
+    },
+    {
+      "treatment": 2,
+      "reference": 3,
+      "kind": "B",
+      "metric": "satisfies",
+      "n": 15,
+      "clusters": 5,
+      "delta": -0.3778,
+      "lb": -0.5278,
+      "ub": -0.1905,
+      "mde": 0.2409,
+      "win_tie_loss": [
+        2,
+        5,
+        8
+      ]
+    },
+    {
+      "treatment": 2,
+      "reference": 3,
+      "kind": "C",
+      "metric": "passed",
+      "n": 10,
+      "clusters": 5,
+      "delta": 0.0,
+      "lb": 0.0,
+      "ub": 0.0,
+      "mde": 0.0,
+      "win_tie_loss": [
+        0,
+        10,
+        0
+      ]
+    },
+    {
+      "treatment": 2,
+      "reference": 3,
+      "kind": "D",
+      "metric": "precision",
+      "n": 13,
+      "clusters": 5,
+      "delta": -0.1159,
+      "lb": -0.1411,
+      "ub": -0.0755,
+      "mde": 0.0469,
+      "win_tie_loss": [
+        1,
+        1,
+        11
+      ]
+    },
+    {
+      "treatment": 2,
+      "reference": 3,
+      "kind": "D",
+      "metric": "recall",
+      "n": 13,
+      "clusters": 5,
+      "delta": -0.0576,
+      "lb": -0.1376,
+      "ub": 0.0193,
+      "mde": 0.1121,
+      "win_tie_loss": [
+        3,
+        2,
+        8
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 2,
+      "kind": "A",
+      "metric": "precision",
+      "n": 10,
+      "clusters": 5,
+      "delta": 0.0347,
+      "lb": -0.0042,
+      "ub": 0.1027,
+      "mde": 0.0763,
+      "win_tie_loss": [
+        5,
+        4,
+        1
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 2,
+      "kind": "A",
+      "metric": "recall",
+      "n": 10,
+      "clusters": 5,
+      "delta": 0.0333,
+      "lb": -0.0741,
+      "ub": 0.0855,
+      "mde": 0.114,
+      "win_tie_loss": [
+        3,
+        6,
+        1
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 2,
+      "kind": "B",
+      "metric": "avoids",
+      "n": 15,
+      "clusters": 5,
+      "delta": 0.1333,
+      "lb": -0.0088,
+      "ub": 0.3833,
+      "mde": 0.2801,
+      "win_tie_loss": [
+        4,
+        7,
+        4
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 2,
+      "kind": "B",
+      "metric": "satisfies",
+      "n": 15,
+      "clusters": 5,
+      "delta": 0.1222,
+      "lb": -0.0303,
+      "ub": 0.3833,
+      "mde": 0.2955,
+      "win_tie_loss": [
+        4,
+        7,
+        4
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 2,
+      "kind": "C",
+      "metric": "passed",
+      "n": 10,
+      "clusters": 5,
+      "delta": 0.0,
+      "lb": 0.0,
+      "ub": 0.0,
+      "mde": 0.0,
+      "win_tie_loss": [
+        0,
+        10,
+        0
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 2,
+      "kind": "D",
+      "metric": "precision",
+      "n": 13,
+      "clusters": 5,
+      "delta": 0.0506,
+      "lb": -0.0411,
+      "ub": 0.0991,
+      "mde": 0.1001,
+      "win_tie_loss": [
+        7,
+        2,
+        4
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 2,
+      "kind": "D",
+      "metric": "recall",
+      "n": 13,
+      "clusters": 5,
+      "delta": 0.0797,
+      "lb": 0.0129,
+      "ub": 0.1542,
+      "mde": 0.1009,
+      "win_tie_loss": [
+        8,
+        3,
+        2
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 4,
+      "kind": "A",
+      "metric": "precision",
+      "n": 10,
+      "clusters": 5,
+      "delta": 0.3114,
+      "lb": 0.135,
+      "ub": 0.6829,
+      "mde": 0.3914,
+      "win_tie_loss": [
+        7,
+        3,
+        0
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 4,
+      "kind": "A",
+      "metric": "recall",
+      "n": 10,
+      "clusters": 5,
+      "delta": 0.51,
+      "lb": 0.3194,
+      "ub": 0.8016,
+      "mde": 0.3444,
+      "win_tie_loss": [
+        8,
+        2,
+        0
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 4,
+      "kind": "B",
+      "metric": "avoids",
+      "n": 15,
+      "clusters": 5,
+      "delta": 0.0111,
+      "lb": -0.2727,
+      "ub": 0.3889,
+      "mde": 0.4726,
+      "win_tie_loss": [
+        5,
+        5,
+        5
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 4,
+      "kind": "B",
+      "metric": "satisfies",
+      "n": 15,
+      "clusters": 5,
+      "delta": 0.0333,
+      "lb": -0.25,
+      "ub": 0.4028,
+      "mde": 0.4663,
+      "win_tie_loss": [
+        6,
         4,
         5
       ]
     },
     {
-      "treatment": 2,
+      "treatment": 6,
+      "reference": 4,
+      "kind": "C",
+      "metric": "passed",
+      "n": 10,
+      "clusters": 5,
+      "delta": 0.0333,
+      "lb": 0.0,
+      "ub": 0.1,
+      "mde": 0.0714,
+      "win_tie_loss": [
+        1,
+        9,
+        0
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 4,
+      "kind": "D",
+      "metric": "precision",
+      "n": 11,
+      "clusters": 5,
+      "delta": 0.2243,
+      "lb": 0.0955,
+      "ub": 0.4479,
+      "mde": 0.2517,
+      "win_tie_loss": [
+        9,
+        0,
+        2
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 4,
+      "kind": "D",
+      "metric": "recall",
+      "n": 13,
+      "clusters": 5,
+      "delta": 0.4081,
+      "lb": 0.2908,
+      "ub": 0.5714,
+      "mde": 0.2004,
+      "win_tie_loss": [
+        12,
+        0,
+        1
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 3,
+      "kind": "A",
+      "metric": "precision",
+      "n": 10,
+      "clusters": 5,
+      "delta": -0.1208,
+      "lb": -0.2009,
+      "ub": -0.0537,
+      "mde": 0.1051,
+      "win_tie_loss": [
+        3,
+        2,
+        5
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 3,
+      "kind": "A",
+      "metric": "recall",
+      "n": 10,
+      "clusters": 5,
+      "delta": -0.0489,
+      "lb": -0.1296,
+      "ub": 0.0806,
+      "mde": 0.1501,
+      "win_tie_loss": [
+        2,
+        5,
+        3
+      ]
+    },
+    {
+      "treatment": 6,
       "reference": 3,
       "kind": "B",
       "metric": "avoids",
       "n": 15,
       "clusters": 5,
-      "delta": -0.5204,
-      "lb": -0.6645,
-      "ub": -0.4495,
-      "mde": 0.1536,
+      "delta": -0.3222,
+      "lb": -0.4474,
+      "ub": -0.1,
+      "mde": 0.2481,
       "win_tie_loss": [
         0,
-        5,
-        10
+        7,
+        8
       ]
     },
     {
-      "treatment": 2,
+      "treatment": 6,
       "reference": 3,
       "kind": "B",
       "metric": "satisfies",
       "n": 15,
       "clusters": 5,
-      "delta": -0.4648,
-      "lb": -0.6157,
-      "ub": -0.2976,
-      "mde": 0.2272,
+      "delta": -0.2556,
+      "lb": -0.4474,
+      "ub": 0.1,
+      "mde": 0.391,
       "win_tie_loss": [
-        0,
-        5,
-        10
+        1,
+        6,
+        8
       ]
     },
     {
-      "treatment": 2,
+      "treatment": 6,
       "reference": 3,
       "kind": "C",
       "metric": "passed",
       "n": 10,
       "clusters": 5,
-      "delta": -0.0333,
-      "lb": -0.0926,
+      "delta": 0.0,
+      "lb": 0.0,
       "ub": 0.0,
-      "mde": 0.0661,
+      "mde": 0.0,
       "win_tie_loss": [
         0,
-        8,
-        2
+        10,
+        0
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 3,
+      "kind": "D",
+      "metric": "precision",
+      "n": 13,
+      "clusters": 5,
+      "delta": -0.0653,
+      "lb": -0.1756,
+      "ub": 0.0044,
+      "mde": 0.1285,
+      "win_tie_loss": [
+        3,
+        1,
+        9
+      ]
+    },
+    {
+      "treatment": 6,
+      "reference": 3,
+      "kind": "D",
+      "metric": "recall",
+      "n": 13,
+      "clusters": 5,
+      "delta": 0.0222,
+      "lb": -0.0769,
+      "ub": 0.1025,
+      "mde": 0.1281,
+      "win_tie_loss": [
+        5,
+        0,
+        8
       ]
     }
   ],
   "tokens": {
     "0": {
-      "tasks": 35,
+      "tasks": 48,
       "injected_mean": 0,
       "injected_max": 0,
       "pre_edit_calls": 0,
@@ -714,84 +1348,97 @@
       "with_context": 0
     },
     "1": {
-      "tasks": 35,
-      "injected_mean": 1833.8,
+      "tasks": 48,
+      "injected_mean": 1877.8,
       "injected_max": 3432,
       "pre_edit_calls": 0,
       "pre_edit_max": 0,
-      "with_context": 35,
-      "ratio_to_arm3": 1.83
+      "with_context": 48,
+      "ratio_to_arm3": 1.58
     },
     "2": {
-      "tasks": 35,
-      "injected_mean": 735.4,
+      "tasks": 48,
+      "injected_mean": 725.1,
       "injected_max": 1015,
       "pre_edit_calls": 0,
       "pre_edit_max": 0,
-      "with_context": 35
+      "with_context": 48
     },
     "3": {
-      "tasks": 35,
-      "injected_mean": 1002.6,
-      "injected_max": 2201,
-      "pre_edit_calls": 71,
+      "tasks": 48,
+      "injected_mean": 1190.4,
+      "injected_max": 2758,
+      "pre_edit_calls": 129,
       "pre_edit_max": 663,
-      "with_context": 35
+      "with_context": 48
     },
     "4": {
-      "tasks": 35,
-      "injected_mean": 365.7,
-      "injected_max": 849,
-      "pre_edit_calls": 71,
-      "pre_edit_max": 272,
-      "with_context": 35
+      "tasks": 48,
+      "injected_mean": 296.0,
+      "injected_max": 1048,
+      "pre_edit_calls": 129,
+      "pre_edit_max": 273,
+      "with_context": 39
+    },
+    "6": {
+      "tasks": 48,
+      "injected_mean": 1048.8,
+      "injected_max": 1790,
+      "pre_edit_calls": 129,
+      "pre_edit_max": 273,
+      "with_context": 48
     }
   },
   "treatment": {
-    "arm3_for_file_served": "27/30",
-    "arm3_search_served": "29/30",
-    "arm4_for_file_served": "5/30",
-    "arm4_search_served": "30/30",
-    "arm4_rows_extracted": 32,
-    "arm4_rows_with_files": 14,
+    "arm3_for_file_served": "39/43",
+    "arm3_search_served": "42/43",
+    "arm4_for_file_served": "9/43",
+    "arm4_search_served": "33/43",
+    "arm6_for_file_served": "9/43",
+    "arm6_search_served": "33/43",
+    "arm2_knowledge_served": "47/48",
+    "arm6_knowledge_served": "47/48",
+    "arm4_rows_extracted": 19,
+    "arm4_rows_with_files": 12,
     "arm4_extract_failures": 0,
     "arm4_code_lookups_failed": 0
   },
   "judge_stability": {
     "orders": {
-      "answers": 498,
-      "agreement": 0.9337
-    },
-    "repeats": {
-      "answers": 500,
-      "agreement": 0.972
+      "answers": 827,
+      "agreement": 0.8996
     }
   },
   "unreadable": {
     "0": {
-      "passes": 420,
-      "unreadable": 11,
-      "answers_unscored": 0
+      "passes": 288,
+      "unreadable": 8,
+      "answers_unscored": 1
     },
     "1": {
-      "passes": 420,
-      "unreadable": 5,
+      "passes": 288,
+      "unreadable": 0,
       "answers_unscored": 0
     },
     "2": {
-      "passes": 420,
-      "unreadable": 16,
-      "answers_unscored": 1
+      "passes": 288,
+      "unreadable": 10,
+      "answers_unscored": 3
     },
     "3": {
-      "passes": 420,
-      "unreadable": 18,
-      "answers_unscored": 2
+      "passes": 288,
+      "unreadable": 12,
+      "answers_unscored": 4
     },
     "4": {
-      "passes": 420,
-      "unreadable": 20,
-      "answers_unscored": 0
+      "passes": 288,
+      "unreadable": 10,
+      "answers_unscored": 2
+    },
+    "6": {
+      "passes": 288,
+      "unreadable": 9,
+      "answers_unscored": 3
     }
   },
   "a_answers_without_claims": {
@@ -799,6 +1446,7 @@
     "1": 0.0,
     "2": 0.0,
     "3": 0.0,
-    "4": 0.1667
+    "4": 0.0667,
+    "6": 0.0
   }
 }

@@ -44,7 +44,7 @@ EXAMPLE = Path(__file__).resolve().parents[2] / "bench" / "design_rationale" / "
 
 def test_the_example_set_loads_with_its_revision_and_kinds():
     ts = load(EXAMPLE)
-    assert {k: len(v) for k, v in ts.tasks.items()} == {"A": 3, "B": 3, "C": 2}
+    assert {k: len(v) for k, v in ts.tasks.items()} == {"A": 3, "B": 3, "C": 2, "D": 1}
     assert ts.documents["upload-retries-v2"].revision_of == "upload-retries"
     # The key written again after the revision: two writes, the later one current.
     writes = [r for r in ts.gold_writes if r.memory_key == "design/upload/retried-statuses"]
@@ -235,6 +235,24 @@ def test_a_why_answer_scores_precision_recall_and_cited_claims():
     ]
     m = score.pass_metrics("A", task, entry, verdict)
     assert m["citations_good"] == 1 and m["claims_cited"] == 1
+
+
+def test_a_feature_answer_scores_against_the_gold_facts():
+    task = {"gold_facts": ["f0", "f1", "f2", "f3"]}
+    entry = {"citations": [{"cite": "design/a", "resolves": True}]}
+    verdict = {
+        "claims": [
+            {"verdict": "correct", "gold": [1], "cites": ["design/a"], "cites_support": [True]},
+            {"verdict": "contradicts", "cites": [], "cites_support": []},
+        ],
+        "gold_covered": [1, 3],
+        "potentially_misleading": True,
+    }
+    m = score.pass_metrics("D", task, entry, verdict)
+    assert m["precision"] == 0.5 and m["recall"] == 0.5
+    assert m["misleading"] == 1.0 and m["claims_cited"] == 1
+    assert score.readable("D", task, verdict)
+    assert not score.readable("D", task, {"claims": []})
 
 
 def test_a_change_task_fails_on_a_detector_even_when_the_judge_passes_it():
@@ -457,8 +475,8 @@ def test_the_dry_run_counts_every_call(capsys):
         judge_repeats=1,
     )
     p = run.plan(ts, cfg)
-    assert p["usage"]["answer"]["calls"] == 8 * 2 * 2
-    assert p["usage"]["judge"]["calls"] == 8 * 2 * 2 * 2
+    assert p["usage"]["answer"]["calls"] == 9 * 2 * 2
+    assert p["usage"]["judge"]["calls"] == 9 * 2 * 2 * 2
     assert p["usage"]["extract"]["calls"] == 0  # arm 4 not run
     run.print_plan(p)
     assert "at every output cap" in capsys.readouterr().out
@@ -713,7 +731,7 @@ def test_the_example_set_runs_end_to_end_over_a_fake_loom(tmp_path):
     assert any(r["estimated"] for r in ledger.rows())
 
     judged = json.loads((out / "judged.json").read_text())
-    assert len(judged) == 8 * 5 * 2
+    assert len(judged) == 9 * 5 * 2
     assert all(len(e["passes"]) == 2 for e in judged.values())
     cited = [c for e in judged.values() for c in e["citations"]]
     assert cited and all(c["resolves"] for c in cited if c["kind"] == "memory")
@@ -783,14 +801,14 @@ def test_a_run_stopped_by_the_cap_resumes_without_spending_again(tmp_path, capsy
     assert "to resume, or erase the namespaces with: loom namespaces-gc" in stopped
     first = ledger.rows()
     answered = len(json.loads((out / "answers.json").read_text()))
-    assert 0 < answered < 8 * 5 * 2
+    assert 0 < answered < 9 * 5 * 2
 
     cfg.max_usd = ledger.max_usd = 100.0
     assert run.run(ts, cfg, loom, model, [model], ledger, FakeCodeIndex()) is True
     added = ledger.rows()[len(first) :]
     # The resume set nothing up again and only answered and judged what was left.
     assert not any(r["stage"] == "extract" for r in added)
-    assert sum(r["stage"] == "answer" for r in added) == 8 * 5 * 2 - answered
+    assert sum(r["stage"] == "answer" for r in added) == 9 * 5 * 2 - answered
     assert len(loom.erased) == 3
 
 
@@ -1351,6 +1369,40 @@ def test_an_a_task_without_rejected_options_is_refused(tmp_path):
         load(root)
 
 
+def test_a_feature_task_without_gold_facts_is_refused(tmp_path):
+    root = _copy_example(tmp_path)
+    tasks = json.loads((root / "tasks.json").read_text())
+    del tasks["D"][0]["gold_facts"]
+    (root / "tasks.json").write_text(json.dumps(tasks))
+    with pytest.raises(TaskSetError, match="gold_facts"):
+        load(root)
+
+
+def test_arm_6_serves_the_extracted_rows_with_the_documents_knowledge_hits(tmp_path):
+    ts = load(EXAMPLE)
+    out = tmp_path / "run"
+    cfg = _config(out, arms=[2, 4, 6], k=1, judge_orders=1)
+    ledger = Ledger(out / "ledger.jsonl", cfg.max_usd)
+    out.mkdir()
+    model = _fake_model(ledger)
+    assert run.run(ts, cfg, FakeLoom(), model, [model], ledger, FakeCodeIndex()) is True
+    surf = json.loads((out / "surfaces.json").read_text())
+    six = surf["B1/arm6"]
+    # The rows of arm 4 and the knowledge hits of arm 2, from one search of the
+    # namespace the documents were extracted in.
+    assert six["for_file_keys"] == surf["B1/arm4"]["for_file_keys"] != []
+    assert "loom_search knowledge section:" in six["context"]
+    assert six["tokens"]["search_knowledge"] > 0 and six["knowledge_uris"]
+    assert "knowledge section" not in surf["B1/arm4"]["context"]
+    m = score.score(ts, out)
+    t = m["treatment"]
+    assert t["arm6_knowledge_served"] == t["arm2_knowledge_served"] == "9/9"
+    assert t["arm6_for_file_served"].split("/")[0] != "0"
+    pairs = {(c["treatment"], c["reference"]) for c in m["comparisons"]}
+    assert {(6, 2), (6, 4)} <= pairs
+    assert m["arms"][6]["D"]["tasks"] == 1
+
+
 def test_scoring_with_the_unfilled_label_sheet_fails_clearly(tmp_path, capsys):
     ts = load(EXAMPLE)
     out = tmp_path / "run"
@@ -1416,9 +1468,9 @@ def test_score_writes_the_summary_without_per_task_rows(tmp_path):
         "documents": 2,
         "revisions": 2,
         "revised_documents": 1,
-        "tasks": {"A": 3, "B": 3, "C": 2},
+        "tasks": {"A": 3, "B": 3, "C": 2, "D": 1},
         "c_subtypes": {"abstention": 1, "supersession": 1},
-        "tasks_with_gold_rows": 7,
+        "tasks_with_gold_rows": 8,
     }
     assert summary["run"]["judge_orders"] == 2
     assert summary["run"]["judge_repeats"] == cfg.judge_repeats

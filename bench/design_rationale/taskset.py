@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-KINDS = ("A", "B", "C")
+KINDS = ("A", "B", "C", "D")
 # Each detector type and the keys it needs (`path_glob` is optional).
 DETECTOR_TYPES = {
     "file_touched": ("paths",),
@@ -181,6 +181,7 @@ TEXT_LISTS = (
     "gold_constraints",
     "forbidden_options",
     "stale_claims",
+    "gold_facts",
 )
 
 
@@ -220,6 +221,7 @@ def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
         "A": ("question", "gold_arguments", "rejected_options"),
         "B": ("task", "gold_constraints", "forbidden_options", "detector"),
         "C": ("question", "subtype"),
+        "D": ("question", "gold_facts"),
     }[kind]
     for name in need:
         if name not in t:

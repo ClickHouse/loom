@@ -28,6 +28,7 @@ from bench.design_rationale.llm import (
     write_atomic,
 )
 from bench.design_rationale.loom import (
+    KNOWLEDGE_HITS_SHOWN,
     PRE_EDIT_BUDGET,
     CodeIndex,
     Loom,
@@ -37,9 +38,16 @@ from bench.design_rationale.loom import (
     tokens,
 )
 from bench.design_rationale.score import planning_mde
-from bench.design_rationale.taskset import Document, TaskSet, answer_key, parse_key, surface_key
+from bench.design_rationale.taskset import (
+    KINDS,
+    Document,
+    TaskSet,
+    answer_key,
+    parse_key,
+    surface_key,
+)
 
-ARMS = (0, 1, 2, 3, 4, 5)
+ARMS = (0, 1, 2, 3, 4, 5, 6)
 ARM_NAMES = {
     0: "no design knowledge",
     1: "whole document through knowledge.get",
@@ -47,14 +55,21 @@ ARM_NAMES = {
     3: "gold rows through the pre-edit block and loom_search",
     4: "extracted rows through the pre-edit block and loom_search",
     5: "gold rows through loom_search only",
+    6: "extracted rows and the documents' knowledge hits through the pre-edit block and "
+    "loom_search",
 }
-# The namespace each arm's rows or documents are read from.
-ARM_HOME = {2: "kb", 3: "gold", 4: "extract", 5: "gold"}
+# The namespace each arm's rows or documents are read from. The extract namespace holds
+# the documents too, so arm 6's one search returns both its rows and its knowledge hits.
+ARM_HOME = {2: "kb", 3: "gold", 4: "extract", 5: "gold", 6: "extract"}
+# The arms served extracted rows, and the arms whose loom_search answer an agent reads
+# for its memory section.
+EXTRACTED_ARMS = (4, 6)
+MEMORY_ARMS = (3, 4, 5, 6)
 # Planning estimates for a dry run, before any surface is read.
 SEARCH_SECTION_TOKENS = 800  # a loom_search section with the reading rule
 CITED_TEXT_TOKENS = 1200  # the cited source text a judge reads
 JUDGE_FRAME_TOKENS = 900  # the judge's instructions and gold lists
-TYPICAL_OUT = {"A": 400, "B": 900, "C": 400, "judge": 500, "extract": 800}
+TYPICAL_OUT = {"A": 400, "B": 900, "C": 400, "D": 500, "judge": 500, "extract": 800}
 JUDGE_OUT_CAP = 4000
 # The left-out line of a pre-edit block, outside both of its budgets; the render test
 # keeps it honest.
@@ -89,7 +104,8 @@ class Config:
     keep_namespaces: bool = False
     arm4_namespace: str = ""
     # Arm 4's rows carry files (a code index linked them, or a sync's rows are served):
-    # it reads the pre-edit block. Without, arm 4 is served through loom_search only.
+    # it reads the pre-edit block, and so does arm 6. Without, both are served through
+    # loom_search only.
     arm4_files: bool = True
     extract_model: str = ""
     extract_window_chars: int = EXTRACT_WINDOW_CHARS
@@ -113,12 +129,12 @@ def pre_edit_block_tokens() -> int:
 
 
 def own_extraction(cfg: Config) -> bool:
-    return 4 in cfg.arms and not cfg.arm4_namespace
+    return bool(set(EXTRACTED_ARMS) & set(cfg.arms)) and not cfg.arm4_namespace
 
 
 def pre_edit(cfg: Config, arm: int) -> bool:
     """Whether the arm reads the pre-edit block."""
-    return arm == 3 or (arm == 4 and cfg.arm4_files)
+    return arm == 3 or (arm in EXTRACTED_ARMS and cfg.arm4_files)
 
 
 # ---------------------------------------------------------------- extraction bound
@@ -194,9 +210,10 @@ def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
                 ctx = len(ts.document_of(t).content) // CHARS_PER_TOKEN_WORST
             elif arm in (2, 5):
                 ctx = SEARCH_SECTION_TOKENS
-            elif arm in (3, 4):
+            elif arm in (3, 4, 6):
                 blocks = len(ts.task_paths(t)) if pre_edit(cfg, arm) else 0
-                ctx = SEARCH_SECTION_TOKENS + pre_edit_block_tokens() * blocks
+                sections = 2 if arm == 6 else 1  # arm 6 reads the knowledge hits too
+                ctx = SEARCH_SECTION_TOKENS * sections + pre_edit_block_tokens() * blocks
             else:
                 ctx = 0
             system, user, cap = prompts.answer_prompt(kind, t, "", ts.system)
@@ -242,7 +259,7 @@ def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
             continue
         u["usd_at_caps"] = _priced(models[stage], u["in"], u["out_at_caps"])
         u["usd_typical"] = _priced(models[stage], u["in"], u["out_typical"])
-    counts = {kind: sum(1 for kk, _ in tasks if kk == kind) for kind in "ABC"}
+    counts = {kind: sum(1 for kk, _ in tasks if kk == kind) for kind in KINDS}
     return {
         "arms": {a: ARM_NAMES[a] for a in cfg.arms},
         "tasks": counts,
@@ -256,10 +273,10 @@ def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
 
 def print_plan(p: dict[str, Any]) -> None:
     print("arms: " + "; ".join(f"{a} = {n}" for a, n in p["arms"].items()))
+    counts = ", ".join(f"{kind} {n}" for kind, n in p["tasks"].items())
     print(
-        f"tasks: A {p['tasks']['A']}, B {p['tasks']['B']}, C {p['tasks']['C']} over "
-        f"{p['documents']} document(s); K = {p['k']}; {p['judge_passes_per_answer']} judge "
-        "pass(es) per answer"
+        f"tasks: {counts} over {p['documents']} document(s); K = {p['k']}; "
+        f"{p['judge_passes_per_answer']} judge pass(es) per answer"
     )
     total_caps = total_typical = 0.0
     for stage, u in p["usage"].items():
@@ -501,7 +518,7 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
         session = f"{state['prefix']}-arm{arm}"
         home = ns[ARM_HOME[arm]] if arm in ARM_HOME else ""
         missing = any(surface_key(t["id"], arm) not in out for _, t in tasks)
-        if arm in (3, 4, 5) and missing:
+        if arm in MEMORY_ARMS and missing:
             # The reading rule rides on a session's first search with memory hits: warm
             # the session so every task sees what a mid-session search shows.
             for _, t in tasks:
@@ -528,25 +545,38 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
                 section = knowledge_section(found["text"], found["knowledge"])
                 entry["context"] = section or "(none)"
                 entry["tokens"] = {"search_knowledge": tokens(section)}
-            elif arm in (3, 4, 5):
+                entry["knowledge_uris"] = shown_uris(found["knowledge"])
+            elif arm in MEMORY_ARMS:
                 paths = ts.task_paths(t) if pre_edit(cfg, arm) else []
                 blocks = [loom.for_file(home, p) for p in paths]
-                section = memory_section(loom.search(home, query, session)["text"])
+                found = loom.search(home, query, session)
+                section = memory_section(found["text"])
                 parts = [b["rendered"] for b in blocks if b["rendered"]]
                 if section:
                     parts.append("loom_search memory section:\n" + section)
-                entry["context"] = "\n\n".join(parts) or "(none)"
-                entry["for_file"] = blocks
                 entry["tokens"] = {
                     "for_file": [b["tokens"] for b in blocks],
                     "search_memory": tokens(section),
                 }
+                if arm == 6:
+                    knowledge = knowledge_section(found["text"], found["knowledge"])
+                    if knowledge:
+                        parts.append("loom_search knowledge section:\n" + knowledge)
+                    entry["tokens"]["search_knowledge"] = tokens(knowledge)
+                    entry["knowledge_uris"] = shown_uris(found["knowledge"])
+                entry["context"] = "\n\n".join(parts) or "(none)"
+                entry["for_file"] = blocks
                 entry["for_file_keys"] = list(dict.fromkeys(k for b in blocks for k in b["keys"]))
                 entry["search_keys"] = section_keys(section)
                 entry["keys"] = list(dict.fromkeys(entry["for_file_keys"] + entry["search_keys"]))
             out[key] = entry
             save_json(path, out)
     return out
+
+
+def shown_uris(results: list[dict[str, Any]]) -> list[str]:
+    """The documents of the knowledge hits an agent reads, in order, once each."""
+    return list(dict.fromkeys(h["source_uri"] for h in results[:KNOWLEDGE_HITS_SHOWN]))
 
 
 # ---------------------------------------------------------------- answers
@@ -584,7 +614,7 @@ class Resolver:
         self.cache: dict[tuple[str, str, str], tuple[bool, str]] = {}
 
     def resolve(self, cite: dict[str, Any], arm: int) -> tuple[bool, str]:
-        rows_ns = self.ns[ARM_HOME[arm]] if arm in (3, 4, 5) else ""
+        rows_ns = self.ns[ARM_HOME[arm]] if arm in MEMORY_ARMS else ""
         key = (cite["kind"], cite["cite"], rows_ns)
         if key not in self.cache:
             self.cache[key] = self._resolve(cite, rows_ns)

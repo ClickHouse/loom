@@ -16,7 +16,8 @@ whole document through knowledge.get; 2 the document as knowledge through loom_s
 the gold rows through the pre-edit block (memory.for_file) and the loom_search memory
 section; 4 the same surfaces over the rows `loom decisions extract` mined from the
 documents (or, with --arm4-namespace, rows a document source's sync wrote); 5 the gold
-rows through the loom_search memory section only, added whenever arm 4 has no files.
+rows through the loom_search memory section only, added whenever arm 4 has no files; 6
+arm 4's surfaces with the knowledge hits of the same loom_search beside them.
 
 Arm 4's rows name code by its names; the files that give them a pre-edit block come from
 a code index of the repository (--code-index: read-only code.symbol calls on the Loom
@@ -101,7 +102,8 @@ def parser() -> argparse.ArgumentParser:
         type=_arms,
         default=[0, 1, 2, 3, 4],
         help="Comma list of arms (default 0,1,2,3,4; 5 is added when arm 4 has no "
-        "files: no --code-index or --arm4-namespace)",
+        "files: no --code-index or --arm4-namespace; 6 serves arm 4's rows with the "
+        "documents' knowledge hits)",
     )
     r.add_argument(
         "--k",
@@ -259,7 +261,7 @@ def cmd_run(a: argparse.Namespace) -> int:
             )
         if a.offline and provider != "fake":
             return _fail(
-                "--offline with arm 4 needs LOOM_LLM_PROVIDER=fake: the extraction "
+                "--offline with arm 4 or 6 needs LOOM_LLM_PROVIDER=fake: the extraction "
                 f"would call {provider}"
             )
         cfg.extract_model = model
