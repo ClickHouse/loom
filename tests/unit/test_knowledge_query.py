@@ -118,9 +118,6 @@ JOINED = [
          "join 1: its right column must be of 't'"),
         (dict(datasets=JOINED, joins=[{"left": _col("score", "o"), "right": _col("budget", "t")}]),
          "'score' (number) and 'budget' (number) are not held alike"),
-        (dict(datasets=[JOINED[0], {**JOINED[1], "alias": "o"}],
-              joins=[{"left": _col("team", "o"), "right": _col("team", "o")}]),
-         "each dataset needs an alias of its own"),
     ],
 )  # fmt: skip
 def test_a_plan_its_schemas_do_not_allow_is_refused_with_why(
@@ -129,6 +126,13 @@ def test_a_plan_its_schemas_do_not_allow_is_refused_with_why(
     with pytest.raises(ValueError) as e:
         plan_domain.resolve(_plan(**plan), CATALOGS)
     assert reason in str(e.value)
+
+
+def test_a_repeated_alias_is_refused_before_any_dataset_is_looked_up() -> None:
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError, match="each dataset needs an alias of its own"):
+        _plan(datasets=[JOINED[0], {**JOINED[1], "alias": "o"}])
 
 
 def test_filter_values_are_read_as_their_columns_types() -> None:
@@ -234,14 +238,17 @@ class Stores:
         self.own_reads: list[bool] = []  # each lookup's and the scan's read-your-writes
         self.served = {7}  # the document versions whose catalog rows serve the datasets
         self.raises: BaseException | None = None
-        monkeypatch.setattr(app.documents_repo, "get_one", self.get_one)
+        monkeypatch.setattr(app.documents_repo, "get_many_by_uris", self.get_many)
         monkeypatch.setattr(app.datasets_repo, "at_version", self.at_version)
         monkeypatch.setattr(app.dataset_query, "run", self.run)
 
-    async def get_one(self, org: str, namespace: str, uri: str) -> Any:
+    async def get_many(self, org: str, namespace: str, uris: list[str]) -> list[Any]:
         self.own_reads.append(sequential_reads_var.get())
-        v = self.versions.get(uri)
-        return None if v is None else SimpleNamespace(version=v)
+        return [
+            SimpleNamespace(source_uri=u, version=self.versions[u])
+            for u in uris
+            if self.versions.get(u) is not None
+        ]
 
     async def at_version(
         self, org: str, ns: str, uri: str, v: int, *, dataset_id: str
@@ -343,6 +350,24 @@ def test_a_snapshot_replaced_while_the_statement_ran_is_never_released(stores: S
     stores.catalogs["orders"], stores.snapshot_after_run = CATALOGS["o"], {}
     stores.after_run, stores.served = {"repo://orders.csv": 8}, {7, 8}
     assert _run().rows == [[5]]
+
+
+def test_a_publish_that_lands_as_the_query_looks_a_dataset_up_is_a_retry(
+    stores: Stores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A publish writes the document's new version, then deletes the catalog rows
+    of the one the query read: the lookup finds none, and that is a change."""
+    stores.served = set()
+    real = stores.get_many
+
+    async def publishing(org: str, namespace: str, uris: list[str]) -> list[Any]:
+        found = await real(org, namespace, uris)
+        stores.versions["repo://orders.csv"] = 8  # lands after this read
+        return found
+
+    monkeypatch.setattr(app.documents_repo, "get_many_by_uris", publishing)
+    with pytest.raises(PreconditionFailedError, match="published again as the query read it"):
+        _run()
 
 
 def test_a_query_past_the_ceilings_says_how_to_narrow_a_query(stores: Stores) -> None:

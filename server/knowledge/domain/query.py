@@ -69,9 +69,7 @@ class Resolved:
 def resolve(plan: Mapping[str, Any], catalogs: Mapping[str, Mapping[str, Any]]) -> Resolved:
     """`plan` (a `knowledge.query` input's fields) over `catalogs`, each
     dataset's catalog row by its alias."""
-    aliases = [d["alias"] for d in plan["datasets"]]
-    if len(set(aliases)) != len(aliases):
-        raise ValueError("each dataset needs an alias of its own")
+    aliases = [d["alias"] for d in plan["datasets"]]  # distinct: the input model checks
     schemas = [ds.columns_from_json(_schema(catalogs[a])) for a in aliases]
 
     def column(ref: Mapping[str, Any]) -> Column:

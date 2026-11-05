@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # A value a filter compares with: read as the column's type (a date as ISO text).
 Scalar = str | int | float | bool
@@ -94,7 +94,7 @@ class QueryAggregate(BaseModel):
 
 class QueryOrder(BaseModel):
     # A result column's name: a group's or an aggregate's, or a selected column's
-    # (<alias>.<column> when the plan reads several datasets).
+    # (`<alias>.<column>` when the plan reads several datasets).
     by: str = Field(min_length=1)
     # True for the largest first.
     desc: bool = False
@@ -119,12 +119,19 @@ class KnowledgeQueryInput(BaseModel):
     # The calculations; empty to return the rows themselves (`select`).
     aggregates: list[QueryAggregate] = Field(default_factory=list, max_length=MAX_AGGREGATES)
     # The columns of each row returned when the plan has no aggregates; each is named
-    # <alias>.<column> in the result when the plan reads several datasets.
+    # `<alias>.<column>` in the result when the plan reads several datasets.
     select: list[QueryColumn] = Field(default_factory=list, max_length=MAX_SELECTED)
     # The result's order, by result column names; groups, or rows in source order, by default.
     order_by: list[QueryOrder] = Field(default_factory=list, max_length=MAX_ORDER)
     # The result rows returned at most; `truncated` says when more matched.
     limit: int = Field(default=100, ge=1, le=MAX_ROWS)
+
+    @model_validator(mode="after")
+    def _aliases_are_distinct(self) -> KnowledgeQueryInput:
+        aliases = [d.alias for d in self.datasets]
+        if len(set(aliases)) != len(aliases):
+            raise ValueError("each dataset needs an alias of its own")
+        return self
 
 
 class QueryResultColumn(BaseModel):

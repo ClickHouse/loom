@@ -35,16 +35,16 @@ from server.knowledge.store import documents as documents_repo
 _NARROW = "a filter, fewer datasets, a join on a key that does not repeat"
 
 
-async def _live_versions(org: str, namespace: str, uris: list[str]) -> dict[str, Any]:
-    """Each source's live document row, None for one with none."""
-    return {uri: await documents_repo.get_one(org, namespace, uri) for uri in uris}
+async def _live_documents(org: str, namespace: str, uris: list[str]) -> dict[str, Any]:
+    """Each source's live document row, in one read; a source with none is absent."""
+    return {d.source_uri: d for d in await documents_repo.get_many_by_uris(org, namespace, uris)}
 
 
 async def _catalogs(input: KnowledgeQueryInput, docs: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Each alias's catalog row at its source's live document version."""
     out: dict[str, dict[str, Any]] = {}
     for d in input.datasets:
-        doc = docs[d.source_uri]
+        doc = docs.get(d.source_uri)
         rows = (
             await datasets_repo.at_version(
                 input.org, input.namespace, d.source_uri, doc.version, dataset_id=d.dataset_id
@@ -53,6 +53,15 @@ async def _catalogs(input: KnowledgeQueryInput, docs: dict[str, Any]) -> dict[st
             else []
         )
         if not rows:
+            # A publish of the source writes its document's new version, then deletes
+            # the catalog rows of the one read: that is a change to retry, not a 404.
+            again = (await _live_documents(input.org, input.namespace, [d.source_uri])).get(
+                d.source_uri
+            )
+            if doc is not None and again is not None and again.version != doc.version:
+                raise PreconditionFailedError(
+                    f"{d.source_uri!r} was published again as the query read it; run it again"
+                )
             raise NotFoundError(f"no live dataset {d.dataset_id!r} of {d.source_uri!r}")
         catalog = rows[0]
         if catalog["schema_state"] == "needs_clarification":
@@ -75,9 +84,9 @@ async def _still_served(
     publish or a retyping approval serves another and deletes the rows read
     without waiting, an erasure serves none. A metadata edit moves the
     document's version but keeps the snapshot, so it is not a change."""
-    after = await _live_versions(input.org, input.namespace, sorted(docs))
+    after = await _live_documents(input.org, input.namespace, sorted(docs))
     for d in input.datasets:
-        now = after[d.source_uri]
+        now = after.get(d.source_uri)
         served = (
             await datasets_repo.at_version(
                 input.org, input.namespace, d.source_uri, now.version, dataset_id=d.dataset_id
@@ -125,7 +134,7 @@ def _incomplete(s: QuerySnapshot) -> str:
 async def handle_knowledge_query(input: KnowledgeQueryInput) -> KnowledgeQueryOutput:
     uris = sorted({d.source_uri for d in input.datasets})
     with own_write_reads():  # a dataset an ingest or approval just published is read
-        docs = await _live_versions(input.org, input.namespace, uris)
+        docs = await _live_documents(input.org, input.namespace, uris)
         catalogs = await _catalogs(input, docs)
     plan = input.model_dump(exclude={"org", "namespace"})
     try:

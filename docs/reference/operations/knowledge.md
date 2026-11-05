@@ -380,7 +380,7 @@ Calculate over the live snapshots of ingested datasets with a typed plan: filter
 | `joins` | `list[QueryJoin]` | *(computed)* | How the datasets past the first join one already in the plan: one join each. |
 | `group_by` | `list[QueryGroup]` | *(computed)* | The columns the aggregates are calculated per; empty for one result row. |
 | `aggregates` | `list[QueryAggregate]` | *(computed)* | The calculations; empty to return the rows themselves (`select`). |
-| `select` | `list[QueryColumn]` | *(computed)* | The columns of each row returned when the plan has no aggregates; each is named <alias>.<column> in the result when the plan reads several datasets. |
+| `select` | `list[QueryColumn]` | *(computed)* | The columns of each row returned when the plan has no aggregates; each is named `<alias>.<column>` in the result when the plan reads several datasets. |
 | `order_by` | `list[QueryOrder]` | *(computed)* | The result's order, by result column names; groups, or rows in source order, by default. |
 | `limit` | `int` | `100` | The result rows returned at most; `truncated` says when more matched. |
 

@@ -479,12 +479,13 @@ a dataset's number columns past the first 24 are held, so summed and averaged, a
 Each dataset is read at the snapshot its source's live document serves; a dataset whose schema needs an answer
 (`needs_clarification`) is refused until it is approved. The statement runs under the caller-shaped ceilings as the
 read-only reader user (`ch.caller_shaped`), so a plan past the deployment's rows, time or memory for one request fails
-(`422`) rather than returning part of an aggregate. Before the rows are released each source must still serve the
-version read and each dataset the snapshot read (a publish moves the version, a retyping approval the snapshot under the
-same version, and either deletes the rows read without waiting): one replaced or erased while the statement ran answers
-`409 PRECONDITION_FAILED`, to run again. The result names each snapshot read in its receipt, with the plan as validated,
-the statement and its parameters, and is `complete: false`, saying why, when a dataset's extraction left part of its
-table out or rejected rows. Nothing is stored: the receipt is the response.
+(`422`) rather than returning part of an aggregate. Before the rows are released each dataset must still be served by
+the snapshot read (a publish or a retyping approval serves another and deletes the rows read without waiting; an erasure
+serves none; a metadata edit keeps it): one replaced or erased while the statement ran answers `409
+PRECONDITION_FAILED`, to run again, as does a publish that lands while the query looks the dataset up. The result names
+each snapshot read in its receipt, with the plan as validated, the statement and its parameters, and is `complete:
+false`, saying why, when a dataset's extraction left part of its table out or rejected rows. Nothing is stored: the
+receipt is the response.
 
 ## Dependencies
 

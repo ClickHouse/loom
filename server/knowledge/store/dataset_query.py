@@ -68,6 +68,12 @@ def _of(o: Output) -> str:
     return _read(o.column)
 
 
+def _group(o: Output) -> str:
+    """A group's value: its column's, or the start of its period (UTC)."""
+    assert o.column is not None  # groups are built with one
+    return _BUCKET[o.bucket].format(_ref(o.column)) if o.bucket else _read(o.column)
+
+
 def _condition(f: Filter, p: _Params) -> str:
     slot = _slot(f.column)
     typ = _PARAM[slot[0]]
@@ -131,10 +137,7 @@ def compile_plan(plan: Resolved, org: str, namespace: str) -> tuple[str, dict[st
     for k, (left, right) in enumerate(plan.joins, start=1):
         source += f" INNER JOIN {subqueries[k]} ON {_ref(left)} = {_ref(right)}"
 
-    exprs = [
-        _BUCKET[o.bucket].format(_ref(o.column)) if o.bucket and o.column else _of(o)
-        for o in plan.groups
-    ]
+    exprs = [_group(o) for o in plan.groups]
     exprs += [_aggregate(o) for o in plan.aggregates]
     exprs += [_of(o) for o in plan.selected]
     picked = [f"{e} AS c{i}" for i, e in enumerate(exprs)]
