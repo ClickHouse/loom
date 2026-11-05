@@ -1300,15 +1300,15 @@ def _left_unjudged(row: MemoryRow, record: dict[str, Any], inp: DecisionRecordIn
 
 
 def _not_ours(rec: RecordReport, writer: Any, row: MemoryRow | None) -> RecordReport:
-    """Another writer's record or another document's row under the key: printed, never
-    written."""
+    """Another writer's record, another document's row, or a writer record with no live
+    row behind it under the key: printed, never written."""
     rec.body.update(agent=writer.agent, user_id=writer.user_id, session_id=writer.session_id)
     rec.action = "not_ours"
     rec.note = (
         f"recorded by {writer.agent} from {row.source_resource_id or 'no document'}; "
         "the extractor revises only its own rows on this document"
         if row is not None
-        else f"recorded by {writer.agent}; the extractor revises only its own rows"
+        else f"recorded by {writer.agent}, whose row under the key is gone; nothing to revise"
     )
     return rec
 

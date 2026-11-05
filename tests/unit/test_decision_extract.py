@@ -4160,6 +4160,9 @@ async def test_a_writer_record_with_no_row_behind_it_writes_nothing(monkeypatch)
     report = await _run()
     (rec,) = report.records
     assert rec.action == "not_ours" and world.recorded == []
+    assert rec.note == (
+        f"recorded by {de.EXTRACTOR_AGENT}, whose row under the key is gone; nothing to revise"
+    )
 
 
 @pytest.mark.asyncio
