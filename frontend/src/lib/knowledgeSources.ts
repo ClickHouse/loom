@@ -324,11 +324,11 @@ export function projectIds(text: string): string[] {
 /** A bare id (dashed or not), a peek link's `p=` (pages field), or the 32 hex digits ending
  *  a link's last path segment; a link in the wrong field, or anything else, is kept as
  *  typed so the form names it. Lower-case without dashes; the server stores it dashed. */
-function pageStoreId(piece: string, peek: boolean): string {
+function pageStoreId(piece: string, inPages: boolean): string {
   if (!piece.includes("/")) return bareId(piece) || piece;
-  const page = peek ? /[?&]p=([^&#]*)/.exec(piece)?.[1] : undefined;
+  const page = inPages ? /[?&]p=([^&#]*)/.exec(piece)?.[1] : undefined;
   if (page !== undefined) return bareId(page) || piece;
-  if (peek ? isDatabaseLink(piece) : isPageLink(piece)) return piece;
+  if (inPages ? isDatabaseLink(piece) : isPageLink(piece)) return piece;
   // The id is the whole segment, or what follows the title's last `-`.
   const segment = (piece.split(/[?#]/)[0] ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
   return /(?:^|-)([0-9a-f]{32})$/.exec(segment.toLowerCase())?.[1] ?? piece;
