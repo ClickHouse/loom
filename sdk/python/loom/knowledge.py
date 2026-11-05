@@ -176,23 +176,28 @@ class KnowledgeClient:
 
     async def synthesize(
         self,
-        source_uris: list[str],
+        source_uris: list[str] | None,
         task: str,
         *,
+        datasets: list[dict[str, Any]] | None = None,
         window_chars: int = 24000,
         max_answer_chars: int = 8000,
         max_windows: int = 64,
     ) -> dict[str, Any]:
-        """Complete `task` over whole documents by map-reduce:
-        `{"answer", "windows", "chunks_read", "documents", "reduce_rounds",
-        "citations", "unsupported_citations", "truncated", "abstain", "abstain_reason",
+        """Complete `task` over whole documents by map-reduce and, with `datasets`
+        (each `{"source_uri", "dataset_id", "alias"}`, as knowledge.query takes them),
+        a calculation over every row of them; `source_uris` may be None when datasets
+        are named. Returns `{"answer", "windows", "chunks_read", "documents",
+        "reduce_rounds", "citations", "cited_chunks", "unsupported_citations",
+        "truncated", "abstain", "abstain_reason", "clarification", "calculations",
         "model"}`."""
         return await self._agent.transport.post(
             "/v1/knowledge.synthesize",
             {
                 "org": self._agent.org,
                 "namespace": self._agent.namespace,
-                "source_uris": list(source_uris),
+                "source_uris": list(source_uris or []),
+                "datasets": list(datasets or []),
                 "task": task,
                 "window_chars": window_chars,
                 "max_answer_chars": max_answer_chars,

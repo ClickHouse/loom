@@ -2550,6 +2550,7 @@
         "synthesize": [
           "source_uris",
           "task",
+          "datasets",
           "window_chars",
           "max_answer_chars",
           "max_windows"

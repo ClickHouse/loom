@@ -11163,7 +11163,6 @@ class CitedChunk(TypedDict, total=False):
 
 class SynthesizeCalculation(TypedDict, total=False):
     citation: Required[str]
-    plan: Required[dict[str, Any]]
     columns: Required[list["QueryResultColumn"]]
     rows: Required[list[list[Any]]]
     truncated: NotRequired[bool]

@@ -4096,7 +4096,6 @@ export interface CitedChunk {
 
 export interface SynthesizeCalculation {
   citation: string;
-  plan: Record<string, unknown>;
   columns: QueryResultColumn[];
   rows: unknown[][];
   truncated?: boolean;

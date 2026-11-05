@@ -240,7 +240,6 @@ async def _calculate(
             continue
         return SynthesizeCalculation(
             citation=f"{ap.CALCULATION_SOURCE}#1",
-            plan=out.receipt.plan,
             columns=out.columns,
             rows=out.rows,
             truncated=out.truncated,
@@ -297,7 +296,7 @@ def _why(e: Exception) -> str:
 def _evidence(c: SynthesizeCalculation, window_chars: int) -> str:
     return ap.evidence(
         1,
-        c.plan,
+        c.receipt.plan,
         [col.model_dump() for col in c.columns],
         c.rows,
         truncated=c.truncated,

@@ -127,6 +127,14 @@ def test_a_note_cut_to_fit_keeps_its_warnings_and_drops_whole_rows() -> None:
     assert text.endswith("a | b | c\na | b | c\na | b | c") and len(text) <= 3000
 
 
+def test_a_wide_selection_leaves_its_rows_room_at_the_smallest_window() -> None:
+    cols = [{"name": f"o.{'n' * 30}{i}", "type": "number"} for i in range(32)]
+    rows = [list(range(32))] * 5
+    text = ap.evidence(1, {}, cols, rows, truncated=False, incomplete=[], max_chars=1000)
+    assert len(text) <= 1000 and text.rstrip().endswith("31")  # a row is shown whole
+    assert "no result row" not in text
+
+
 # ---- the handler -------------------------------------------------------------------
 
 

@@ -131,7 +131,12 @@ def evidence(
         " | ".join("" if v is None else _cut(str(v), MAX_EVIDENCE_CELL) for v in r)
         for r in rows[:MAX_EVIDENCE_ROWS]
     ]
-    head = " | ".join(f"{c['name']} ({c['type']})" for c in columns)
+    # Each name cut like a value, and the line to a third of the room, so a wide
+    # selection's heads leave its rows room.
+    head = _cut(
+        " | ".join(f"{_cut(c['name'], MAX_EVIDENCE_CELL)} ({c['type']})" for c in columns),
+        max(1, max_chars // 3),
+    )
     warnings = list(incomplete)
     if truncated:
         warnings.insert(0, f"more rows matched than the {len(rows)} the calculation returned")

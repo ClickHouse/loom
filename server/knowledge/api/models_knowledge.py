@@ -430,8 +430,6 @@ class KnowledgeSynthesizeInput(BaseModel):
 class SynthesizeCalculation(BaseModel):
     # How the answer cites it: `knowledge.query#1`.
     citation: str
-    # The plan as validated (knowledge.query's fields, without org and namespace).
-    plan: dict[str, Any]
     # The result's columns and rows, as knowledge.query returns them.
     columns: list[QueryResultColumn]
     rows: list[list[Any]]
@@ -440,7 +438,7 @@ class SynthesizeCalculation(BaseModel):
     # False when a dataset read is incomplete or rejected rows; `incomplete` says why.
     complete: bool
     incomplete: list[str] = Field(default_factory=list)
-    # The snapshots read and the statement run.
+    # The plan as validated, the snapshots read and the statement run.
     receipt: QueryReceipt
 
 
