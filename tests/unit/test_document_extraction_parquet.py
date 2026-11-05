@@ -571,7 +571,7 @@ def test_a_schema_of_no_columns_is_counted_not_iterated(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(parquetfile, "_open", lambda data: File())
     a = parquetfile.extract_parquet(b"", "z.parquet")
-    assert a.tables == () or a.tables[0].rows == ()
+    assert [(t.columns, t.rows, t.header_rows) for t in a.tables] == [((), (), 0)]
     assert (a.coverage.to_dict()["total"], a.coverage.to_dict()["extracted"]) == (0, 0)
 
 
@@ -632,6 +632,44 @@ def test_a_column_past_its_unheld_bound_is_not_searched_in_later_batches(
         "2 values past what Python holds; "
         "8 values left out unread past 2 values Python cannot hold in a column"
     )
+
+
+def test_the_unheld_bound_is_counted_for_each_column_apart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(parquetfile, "_MAX_UNHELD", 2)
+    bad = 3_000_000  # a date past year 9999
+    t = pa.table(
+        {
+            "a": pa.array([bad, bad, bad, 1], pa.date32()),
+            "b": pa.array([bad, 1, 2, 3], pa.date32()),
+        }
+    )
+    a, tab = _one(_file(t))
+    # Column a's bound does not stop b: b's one bad value is left out, its others read.
+    assert [r[1] for r in tab.rows] == [None, "1970-01-02", "1970-01-03", "1970-01-04"]
+    assert [r[0] for r in tab.rows] == [None, None, None, None]
+    assert [f.reason for f in a.coverage.failed] == [
+        "3 values past what Python holds; "
+        "2 values left out unread past 2 values Python cannot hold in a column"
+    ]
+
+
+def test_the_extractor_imports_without_pyarrow() -> None:
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    extractor = Path(__file__).resolve().parents[2] / "extractor"
+    code = (
+        "import sys; sys.modules['pyarrow'] = None\n"
+        "from loom_extractor import source\n"
+        "print('parquet' in source.PARSED_FORMATS)\n"
+    )
+    run = subprocess.run(
+        [sys.executable, "-c", code], cwd=extractor, capture_output=True, text=True, timeout=60
+    )
+    assert (run.returncode, run.stdout.strip()) == (0, "False"), run.stderr
 
 
 def test_a_view_array_of_no_values_costs_nothing() -> None:
