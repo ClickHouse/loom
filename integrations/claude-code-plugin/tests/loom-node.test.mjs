@@ -449,3 +449,32 @@ test("--check names the real directory, not a per-shell link to it", { skip: WIN
     f.done();
   }
 });
+
+test("versions are tried from the highest down: one --version for the newest", { skip: WINDOWS }, () => {
+  const f = fixture();
+  try {
+    const log = path.join(f.dir, "versions.log");
+    for (const v of ["v18.20.4", "v20.11.1", "v22.1.0"]) {
+      const bin = path.join(f.home, ".nvm", "versions", "node", v, "bin");
+      fs.mkdirSync(bin, { recursive: true });
+      fs.writeFileSync(path.join(bin, "node"), `#!/bin/sh\necho ${v} >> "${log}"\necho ${v}\n`, { mode: 0o755 });
+    }
+    assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v22.1.0/bin"));
+    assert.equal(fs.readFileSync(log, "utf8"), "v22.1.0\n");
+  } finally {
+    f.done();
+  }
+});
+
+test("--check prints a stable link, such as fnm's default alias, as it is", { skip: WINDOWS }, () => {
+  const f = fixture();
+  try {
+    const installation = path.dirname(path.dirname(f.node(".local/share/fnm/node-versions/v22.1.0/installation/bin")));
+    const aliases = path.join(f.home, ".local", "share", "fnm", "aliases");
+    fs.mkdirSync(aliases);
+    fs.symlinkSync(installation, path.join(aliases, "default"));
+    assert.equal(found(f, f.run({})), exe(".local/share/fnm/aliases/default/bin"));
+  } finally {
+    f.done();
+  }
+});

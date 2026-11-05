@@ -88,11 +88,12 @@ finding.
 - Node.js 18 or newer. The hooks and the MCP header helper start through the plugin's
   `bin/loom-node`, which runs the first Node 18+ among `LOOM_NODE`, `node` on the `PATH`
   Claude Code hands its hooks, a version manager's default or newest install, and the
-  usual install directories. That `PATH` is Claude Code's own, so Claude Code started from
-  the Dock or a desktop launcher does not see one a shell profile sets up. For a Node the launcher misses,
-  set `LOOM_NODE=/path/to/node` in the `env` block of `~/.claude/settings.json`. If a
-  hook says it found no Node, run the `loom-status` skill; it diagnoses read-only and
-  offers to install Node, running the installer only when you say yes.
+  usual install directories. That `PATH` is Claude Code's own, so Claude Code started
+  from the Dock or a desktop launcher does not see one a shell profile sets up. For a
+  Node the launcher misses, set `LOOM_NODE=/path/to/node` in the `env` block of
+  `~/.claude/settings.json`. If a hook says it found no Node, run the `loom-status`
+  skill; it diagnoses read-only and offers to install Node, running the installer only
+  when you say yes.
 - A POSIX `sh`: macOS and Linux have one; on Windows the hooks need Git Bash, which
   Claude Code uses for hooks when it is installed.
 - A **writer** token for the namespace the session writes to. A viewer token lets the

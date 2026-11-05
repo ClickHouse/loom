@@ -41,7 +41,8 @@ def _install(home: Path, client: str, version: str) -> Path:
     bin_dir.mkdir(parents=True)
     shutil.copy(LAUNCHER, bin_dir / "loom-node")
     if client == ".claude":
-        (home / ".claude" / "plugins" / "data" / "loom").mkdir(parents=True, exist_ok=True)
+        record = {"version": 2, "plugins": {"loom@loom": [{"installPath": str(bin_dir.parent)}]}}
+        (home / ".claude" / "plugins" / "installed_plugins.json").write_text(json.dumps(record))
     else:
         (home / ".codex" / "config.toml").write_text('[plugins."loom@loom"]\nenabled = true\n')
     return bin_dir / "loom-node"
@@ -64,11 +65,11 @@ def test_no_installed_launcher_no_line(home: Path) -> None:
     assert _checks(home) == {}
 
 
-def test_the_newest_install_of_each_client(home: Path) -> None:
-    _install(home, ".claude", "1.2.10")
-    _install(home, ".claude", "1.2.9")
-    newest = _install(home, ".claude", "1.10.0")
-    assert dc.newest_launcher(home.glob(".claude/plugins/cache/*/loom/*/bin/loom-node")) == newest
+def test_the_newest_codex_install(home: Path) -> None:
+    _install(home, ".codex", "1.2.10")
+    _install(home, ".codex", "1.2.9")
+    newest = _install(home, ".codex", "1.10.0")
+    assert dc.newest_launcher(home.glob(".codex/plugins/cache/*/loom/*/bin/loom-node")) == newest
     assert dc.newest_launcher([]) is None
 
 
@@ -145,6 +146,7 @@ def test_on_windows_codex_is_skipped_and_claude_code_has_no_gui_run(
     _install(home, ".claude", "1.3.0")
     _install(home, ".codex", "1.3.0")
     node = _node(home / "shell-only", "v24.0.0")
+    _settings(home, {"CLAUDE_CODE_GIT_BASH_PATH": "/bin/sh"})
     monkeypatch.setattr(dc, "WINDOWS", True)
     assert _checks(home, PATH=str(node.parent)) == {
         "client:claude-code:node": (dc.PASS, f"Loom hook runtime ready: {node} (v24.0.0)")
@@ -177,9 +179,28 @@ def test_settings_env_keeps_only_strings(home: Path) -> None:
 def test_a_cache_left_after_uninstalling_or_disabling_gets_no_line(home: Path) -> None:
     _install(home, ".claude", "1.3.0")
     _install(home, ".codex", "1.3.0")
-    shutil.rmtree(home / ".claude" / "plugins" / "data")
+    plugins = home / ".claude" / "plugins"
+    # The marketplace stays registered after `claude plugin uninstall`.
+    (plugins / "known_marketplaces.json").write_text(
+        json.dumps({"loom": {"repo": "ClickHouse/loom"}})
+    )
+    (plugins / "installed_plugins.json").write_text(json.dumps({"version": 2, "plugins": {}}))
     (home / ".codex" / "config.toml").write_text('[plugins."loom@loom"]\nenabled = false\n')
     assert _checks(home) == {}
+
+
+def test_a_disabled_claude_code_plugin_gets_no_line(home: Path) -> None:
+    _install(home, ".claude", "1.3.0")
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps({"enabledPlugins": {"loom@loom": False}})
+    )
+    assert _checks(home) == {}
+
+
+def test_the_installed_version_is_checked_not_the_newest_cached(home: Path) -> None:
+    installed = _install(home, ".claude", "1.2.7")
+    (home / ".claude" / "plugins" / "cache" / "loom" / "loom" / "9.9.9" / "bin").mkdir(parents=True)
+    assert dc.claude_plugin_launcher(home) == installed
 
 
 def test_on_windows_git_bash_is_found_as_claude_code_finds_it(
@@ -194,3 +215,16 @@ def test_on_windows_git_bash_is_found_as_claude_code_finds_it(
     monkeypatch.setattr(shutil, "which", lambda name: str(git) if name == "git" else None)
     assert dc.posix_sh({}) == str(bash)
     assert dc.posix_sh({"CLAUDE_CODE_GIT_BASH_PATH": "D:/tools/bash.exe"}) == "D:/tools/bash.exe"
+    # Another sh on PATH is not what Claude Code runs hooks with.
+    monkeypatch.setattr(shutil, "which", lambda name: "C:/msys64/usr/bin/sh.exe")
+    assert dc.posix_sh({}) is None
+
+
+def test_on_windows_git_bash_from_claude_settings_counts(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install(home, ".claude", "1.3.0")
+    _node(home / ".volta" / "bin", "v22.1.0")
+    monkeypatch.setattr(dc, "WINDOWS", True)
+    _settings(home, {"CLAUDE_CODE_GIT_BASH_PATH": "/bin/sh"})
+    assert _checks(home)["client:claude-code:node"][0] == dc.PASS
