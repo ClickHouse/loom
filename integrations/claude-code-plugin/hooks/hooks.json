@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-start.mjs\" SessionStart"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-start.mjs\" SessionStart"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-prompt-pack.mjs\" UserPromptSubmit"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-prompt-pack.mjs\" UserPromptSubmit"
           }
         ]
       },
@@ -23,7 +23,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-prompt-recall.mjs\" UserPromptSubmit"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-prompt-recall.mjs\" UserPromptSubmit"
           }
         ]
       },
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-run.mjs\" UserPromptSubmit"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-run.mjs\" UserPromptSubmit"
           }
         ]
       }
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-code-shunt.mjs\" PreToolUse"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-code-shunt.mjs\" PreToolUse"
           }
         ]
       },
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-file-context.mjs\" PreToolUse"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-file-context.mjs\" PreToolUse"
           }
         ]
       }
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-mentor-hint.mjs\" PostToolUse"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-mentor-hint.mjs\" PostToolUse"
           }
         ]
       },
@@ -71,7 +71,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-blast-radius.mjs\" PostToolUse"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-blast-radius.mjs\" PostToolUse"
           }
         ]
       },
@@ -80,7 +80,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" PostToolUse"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" PostToolUse"
           }
         ]
       }
@@ -91,7 +91,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" PostToolUseFailure"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" PostToolUseFailure"
           }
         ]
       }
@@ -101,15 +101,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" PreCompact"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" PreCompact"
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" PreCompact"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" PreCompact"
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" PreCompact"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" PreCompact"
           }
         ]
       }
@@ -119,31 +119,31 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" Stop"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" Stop"
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-conversation.mjs\" Stop"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-conversation.mjs\" Stop"
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-usage.mjs\" Stop"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-usage.mjs\" Stop"
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-test-gate.mjs\" Stop"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-test-gate.mjs\" Stop"
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-validate-gate.mjs\" Stop"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-validate-gate.mjs\" Stop"
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-namespace-health.mjs\" Stop"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-namespace-health.mjs\" Stop"
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" Stop"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" Stop"
           }
         ]
       }
@@ -153,27 +153,27 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" SessionEnd",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" SessionEnd",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-conversation.mjs\" SessionEnd",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-conversation.mjs\" SessionEnd",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-run.mjs\" SessionEnd",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-run.mjs\" SessionEnd",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-memory.mjs\" SessionEnd",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-memory.mjs\" SessionEnd",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" SessionEnd",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" SessionEnd",
             "timeout": 10
           }
         ]

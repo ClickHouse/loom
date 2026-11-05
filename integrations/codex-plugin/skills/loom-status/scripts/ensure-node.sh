@@ -1,27 +1,15 @@
 #!/bin/sh
-# Loom's coding-agent hooks are .mjs files launched by /bin/sh, so a Node
-# runtime in a login-shell-only version manager does not satisfy them.
+# Loom's coding-agent hooks run through bin/loom-node, which finds Node 18+
+# on PATH, under a version manager or in the usual install directories.
 #   ensure-node.sh --check   report only: exit 0 when ready, 1 when missing
 #   ensure-node.sh           install Node when missing (root or sudo -n);
 #                            exit 2 names what blocks the install
 set -eu
 
-HOOK_PATH=${LOOM_NODE_HOOK_PATH:-/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin}
-NODE_PATH=''
-NODE_VERSION=''
+LAUNCHER="$(dirname "$0")/../../../bin/loom-node"
+CLAUDE_SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 SETUP_FILE=''
 trap 'if [ -n "$SETUP_FILE" ]; then rm -f "$SETUP_FILE"; fi' EXIT HUP INT TERM
-
-hook_node_ready() {
-  NODE_PATH=$(PATH="$HOOK_PATH" /bin/sh -c 'command -v node' 2>/dev/null) || return 1
-  NODE_VERSION=$("$NODE_PATH" --version 2>/dev/null) || return 1
-  major=${NODE_VERSION#v}
-  major=${major%%.*}
-  case "$major" in
-    '' | *[!0-9]*) return 1 ;;
-  esac
-  [ "$major" -ge 18 ]
-}
 
 as_root() {
   if [ "$(id -u)" -eq 0 ]; then
@@ -43,14 +31,60 @@ download_setup() {
   curl -fsSL --connect-timeout 10 --max-time 120 "$1" -o "$SETUP_FILE"
 }
 
-if hook_node_ready; then
-  printf 'Loom hook runtime ready: %s (%s)\n' "$NODE_PATH" "$NODE_VERSION"
+# The launcher as Claude Code started from the Dock runs it: no shell
+# profile, only HOME, the system PATH and its settings.json `env`.
+gui_check() {
+  set -- HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin
+  settings=$(sh "$LAUNCHER" -e '
+    try {
+      const env = require(process.argv[1]).env || {};
+      for (const [k, v] of Object.entries(env))
+        if (/^[A-Za-z_]\w*$/.test(k) && typeof v === "string" && !v.includes("\n"))
+          console.log(`${k}=${v}`);
+    } catch {}' "$CLAUDE_SETTINGS" 2>/dev/null)
+  while IFS= read -r kv; do
+    [ -n "$kv" ] && set -- "$@" "$kv"
+  done <<SETTINGS
+$settings
+SETTINGS
+  env -i "$@" sh "$LAUNCHER" --check >/dev/null 2>&1
+}
+
+claude_code() {
+  [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && return 0
+  case $0 in */.claude/plugins/*) return 0 ;; esac
+  [ -n "${CLAUDE_CONFIG_DIR:-}" ] && case $0 in "$CLAUDE_CONFIG_DIR"/plugins/*) return 0 ;; esac
+  return 1
+}
+
+# Codex runs its MCP header helper with HOME and PATH, and no LOOM_NODE.
+# LOOM_NODE_SYSTEM_DIRS is kept when set, so a test can replace the fixed
+# directories both runs search.
+codex_helper_check() {
+  set -- HOME="$HOME" PATH="$PATH"
+  [ -n "${LOOM_NODE_SYSTEM_DIRS+x}" ] && set -- "$@" LOOM_NODE_SYSTEM_DIRS="$LOOM_NODE_SYSTEM_DIRS"
+  env -i "$@" sh "$LAUNCHER" --check >/dev/null 2>&1
+}
+
+if [ "${1:-}" = '--check' ]; then
+  sh "$LAUNCHER" --check || exit 1
+  # On Windows a GUI app gets the user's PATH, and Codex runs no launcher.
+  case "$(uname -s)" in Darwin | Linux) ;; *) exit 0 ;; esac
+  if claude_code; then
+    gui_check || echo 'Found only with this shell'"'"'s environment: Claude Code started from the Dock or a desktop launcher finds no Node. Set LOOM_NODE to the path above in the env block of '"$CLAUDE_SETTINGS."
+  else
+    codex_helper_check || echo 'The MCP header helper, which Codex runs without LOOM_NODE or a version manager'"'"'s variables, finds no Node. Put that Node'"'"'s directory on the PATH Codex starts with.'
+  fi
   exit 0
 fi
 
-if [ "${1:-}" = '--check' ]; then
-  echo 'Loom hooks need Node.js 18+ in the system shell PATH.' >&2
-  exit 1
+if sh "$LAUNCHER" --check 2>/dev/null; then
+  exit 0
+fi
+
+if [ -n "${LOOM_NODE:-}" ]; then
+  echo "LOOM_NODE=$LOOM_NODE is not Node.js 18+, and it wins over any install; fix or unset it." >&2
+  exit 2
 fi
 
 case "$(uname -s)" in
@@ -76,7 +110,7 @@ case "$(uname -s)" in
     elif command -v apk >/dev/null 2>&1; then
       as_root apk add --no-cache nodejs
     else
-      echo 'Unsupported Linux package manager; install system-wide Node.js 18+ and retry.' >&2
+      echo 'Unsupported Linux package manager; install Node.js 18+, or set LOOM_NODE=/path/to/node.' >&2
       exit 2
     fi
     ;;
@@ -88,13 +122,10 @@ case "$(uname -s)" in
     brew upgrade node || brew install node
     ;;
   *)
-    echo 'Unsupported OS; install system-wide Node.js 18+ and retry.' >&2
+    echo 'No installer for this OS; install Node.js 18+, or set LOOM_NODE=/path/to/node.' >&2
     exit 2
     ;;
 esac
 
-if ! hook_node_ready; then
-  echo 'Node was installed, but /bin/sh still cannot find Node.js 18+ in its system PATH.' >&2
-  exit 1
-fi
-printf 'Loom hook runtime ready: %s (%s). Restart the coding-agent session.\n' "$NODE_PATH" "$NODE_VERSION"
+sh "$LAUNCHER" --check
+echo 'Restart the coding-agent session.'

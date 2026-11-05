@@ -305,7 +305,7 @@ BIOME    ?= npx --yes @biomejs/biome@2.5.14
 PRETTIER ?= npx --yes prettier@3.9.9
 TAPLO    ?= npx --yes @taplo/cli@0.7.0
 SHFMT    ?= shfmt
-SHELL_SOURCES = git ls-files '*.sh' ':!tests/fixtures'
+SHELL_SOURCES = git ls-files '*.sh' 'integrations/*/bin/loom-node' ':!tests/fixtures'
 
 format:
 	@command -v $(SHFMT) >/dev/null 2>&1 || { echo "missing shfmt; install it (macOS: brew install shfmt, Linux: see https://github.com/mvdan/sh)" >&2; exit 127; }

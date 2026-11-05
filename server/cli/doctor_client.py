@@ -10,7 +10,9 @@ client's point of view, with the client's own resolution order for the
 server URL and the token, and each line says what to do.
 
 Pure functions take their I/O as arguments (`get_json`, `post_json`, `home`,
-`tmp`, `now`) so the unit tests run them offline.
+`tmp`, `now`) so the unit tests run them offline. `node_checks` is the
+exception: it runs the installed plugin's own launcher, so that one
+implementation decides which Node the hooks get.
 """
 
 from __future__ import annotations
@@ -19,6 +21,9 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
+import sys
 import time
 import tomllib
 from collections.abc import Callable
@@ -522,8 +527,6 @@ def duplicate_registration_check(name: str, entry: dict[str, Any]) -> Check:
 
 def _checkout_slug(cwd: Path) -> str:
     """owner/name of the checkout's origin remote, "" outside a git repo."""
-    import subprocess
-
     try:
         url = subprocess.run(
             ["git", "-C", str(cwd), "config", "--get", "remote.origin.url"],
@@ -714,7 +717,7 @@ def codex_plugin_mcp_url(home: Path, config_text: str) -> str:
     cache = home / ".codex" / "plugins" / "cache" / "loom" / "loom"
     versions = sorted(
         cache.glob("*/.mcp.json"),
-        key=lambda p: tuple(int(n) for n in re.findall(r"\d+", p.parent.name)),
+        key=lambda p: _plugin_version(p.parent.name),
         reverse=True,
     )
     for path in versions:
@@ -812,11 +815,7 @@ def hook_override_check(home: Path, env: dict[str, str]) -> list[Check]:
     """One WARN per hook override found in the environment or in
     ~/.claude/settings.json `env` (which Claude Code applies to its hooks),
     saying what each one does."""
-    try:
-        raw_settings = _read(home / ".claude" / "settings.json") or "{}"
-        settings_env = json.loads(raw_settings).get("env") or {}
-    except (ValueError, AttributeError):
-        settings_env = {}
+    settings_env = _claude_settings_env(home)
     found: list[tuple[str, str, str]] = []
     for name in _HOOK_OVERRIDES:
         sources = ((env, "the environment"), (settings_env, "~/.claude/settings.json env"))
@@ -854,6 +853,182 @@ def hook_override_check(home: Path, env: dict[str, str]) -> list[Check]:
             )
         out.append(("client:hook-override", WARN, why))
     return out
+
+
+def _claude_settings(home: Path, key: str) -> dict[str, Any]:
+    """One object of ~/.claude/settings.json (`env`, `enabledPlugins`); {}
+    when the file or the key is missing or not an object."""
+    try:
+        value = json.loads(_read(home / ".claude" / "settings.json") or "{}").get(key)
+    except (ValueError, AttributeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _claude_settings_env(home: Path) -> dict[str, str]:
+    """~/.claude/settings.json `env`, which Claude Code applies to its hooks."""
+    return {k: v for k, v in _claude_settings(home, "env").items() if isinstance(v, str)}
+
+
+# The PATH an app started from the Dock or a desktop launcher gets: no shell
+# profile has run. (IDEs such as VS Code load the login shell's.)
+GUI_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+WINDOWS = sys.platform == "win32"
+# Of what Codex passes its MCP header helper (codex-rs rmcp-client
+# DEFAULT_ENV_VARS), the part the launcher reads: no LOOM_NODE, no version
+# manager's variables. LOOM_NODE_SYSTEM_DIRS is kept, as ensure-node.sh keeps
+# it, so a test can replace the fixed directories.
+CODEX_HELPER_ENV = ("HOME", "PATH", "LOOM_NODE_SYSTEM_DIRS")
+
+
+def _plugin_version(name: str) -> tuple[int, ...]:
+    """A plugin cache directory's version (1.2.10) as a sortable tuple."""
+    return tuple(int(n) for n in re.findall(r"\d+", name))
+
+
+def posix_sh(env: dict[str, str]) -> str | None:
+    """The sh Claude Code runs hooks with: on Windows Git Bash, found the
+    way Claude Code finds it (CLAUDE_CODE_GIT_BASH_PATH, else beside git)."""
+    if not WINDOWS:
+        return shutil.which("sh")
+    if env.get("CLAUDE_CODE_GIT_BASH_PATH"):
+        bash: Path | None = Path(env["CLAUDE_CODE_GIT_BASH_PATH"])
+    else:
+        git = shutil.which("git")
+        bash = Path(git).parents[1] / "bin" / "bash.exe" if git else None
+    return str(bash) if bash and bash.is_file() else None
+
+
+def claude_plugin_install(home: Path) -> Path | None:
+    """The user-scope loom plugin directory from Claude Code's own records;
+    None when it is not installed there or user settings disable it. A
+    project-scope install is enabled per project and is not checked."""
+    if _claude_settings(home, "enabledPlugins").get("loom@loom") is False:
+        return None
+    try:
+        installed = json.loads(_read(home / ".claude" / "plugins" / "installed_plugins.json"))
+        installs = installed["plugins"]["loom@loom"]
+        user = next(i for i in installs if i.get("scope") == "user")
+        return Path(user["installPath"])
+    except (ValueError, KeyError, TypeError, AttributeError, StopIteration):
+        return None
+
+
+def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, str]:
+    """`sh <launcher> --check`: its exit code and its one line. Raises
+    OSError or TimeoutExpired when the launcher itself does not run."""
+    r = subprocess.run(
+        [sh, str(launcher), "--check"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    return r.returncode, (r.stdout or r.stderr).strip()
+
+
+_NO_NODE = 'No hook runs, and the MCP entry gets no token ("needs authentication").'
+_NO_SH = "no POSIX sh: the hooks and the MCP header helper run `sh` (Git Bash on Windows)."
+
+
+def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
+    """The Node each installed plugin's hooks and MCP header helper run
+    under, as that plugin's own launcher finds it in that client's
+    environment."""
+    out: list[Check] = []
+    install = claude_plugin_install(home)
+    if install is not None:
+        out.append(_claude_node_check(home, env, install))
+    # codex_plugin_enabled checks loom@loom, so read that marketplace's cache.
+    # Like the header helper, take the newest copy with a launcher; with none,
+    # the newest copy, so a pre-launcher plugin is named.
+    cached = [p for p in home.glob(".codex/plugins/cache/loom/loom/*") if p.is_dir()]
+    launched = [p for p in cached if (p / "bin" / "loom-node").is_file()]
+    codex = max(launched or cached, key=lambda p: _plugin_version(p.name), default=None)
+    enabled = codex_plugin_enabled(_read(home / ".codex" / "config.toml"))
+    # On Windows, Codex runs hooks and the helper through cmd.exe, not the launcher.
+    if codex is not None and enabled and not WINDOWS:
+        out.append(_codex_node_check(env, codex))
+    return out
+
+
+def _predates_launcher(name: str, install: Path, client: str, fix: str) -> Check:
+    return (
+        name,
+        WARN,
+        f"the installed plugin at {install} predates the Node launcher: its hooks need "
+        f"`node` on {client}'s PATH. Fix: {fix}.",
+    )
+
+
+def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
+    """Claude Code runs hooks and the helper with its own environment plus
+    its settings `env`: this shell's, or a GUI launch's with no profile."""
+    name = "client:claude-code:node"
+    if not install.is_dir():
+        return (
+            name,
+            WARN,
+            f"the installed plugin at {install} is not on disk. Fix: "
+            "`claude plugin uninstall loom@loom && claude plugin install loom@loom`.",
+        )
+    launcher = install / "bin" / "loom-node"
+    if not launcher.is_file():
+        return _predates_launcher(name, install, "Claude Code", "`claude plugin update loom@loom`")
+    settings = _claude_settings_env(home)
+    client_env = {**env, **settings}
+    sh = posix_sh(client_env)
+    if sh is None:
+        return (name, FAIL, _NO_SH)
+    try:
+        code, line = _launcher_check(sh, launcher, client_env)
+        if code != 0:
+            return (name, FAIL, f"{line} {_NO_NODE} Fix: /loom:loom-status.")
+        if WINDOWS:  # a Windows GUI app gets the user's PATH
+            return (name, PASS, line)
+        gui = {"HOME": str(home), "PATH": GUI_PATH, **settings}
+        gui_code, _ = _launcher_check(sh, launcher, gui)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return (name, WARN, f"could not run {launcher}: {e}")
+    if gui_code != 0:
+        return (
+            name,
+            WARN,
+            f"{line}, but only with this shell's environment: Claude Code started from "
+            "the Dock or a desktop launcher finds no Node. Fix: set LOOM_NODE to that "
+            "path in the `env` block of ~/.claude/settings.json.",
+        )
+    return (name, PASS, line)
+
+
+def _codex_node_check(env: dict[str, str], install: Path) -> Check:
+    """Codex runs hooks through a login shell, and the MCP header helper
+    with only a few variables kept, LOOM_NODE not among them."""
+    name = "client:codex:node"
+    launcher = install / "bin" / "loom-node"
+    if not launcher.is_file():
+        return _predates_launcher(name, install, "Codex", "`codex plugin marketplace upgrade loom`")
+    sh = shutil.which("sh")
+    if sh is None:
+        return (name, FAIL, _NO_SH)
+    helper_env = {k: env[k] for k in CODEX_HELPER_ENV if k in env}
+    try:
+        code, line = _launcher_check(sh, launcher, env)
+        if code != 0:
+            return (name, FAIL, f"{line} {_NO_NODE} Fix: $loom-status.")
+        helper_code, _ = _launcher_check(sh, launcher, helper_env)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return (name, WARN, f"could not run {launcher}: {e}")
+    if helper_code != 0:
+        return (
+            name,
+            WARN,
+            f"{line} for the hooks, but the MCP header helper, which Codex runs without "
+            "LOOM_NODE or a version manager's variables, finds no Node. Fix: put that "
+            "Node's directory on the PATH Codex starts with.",
+        )
+    return (name, PASS, line)
 
 
 def flush_check(tmp: Path, now: float) -> Check:
@@ -902,7 +1077,7 @@ def client_checks(
     now: float | None = None,
 ) -> list[Check]:
     """Every client-side line, in reading order: server, token, auth,
-    namespace, the two clients' wiring, stranded captures."""
+    namespace, the two clients' wiring, the hooks' Node, stranded captures."""
     home = home or Path.home()
     env = dict(os.environ if env is None else env)
     tmp = tmp or Path(env.get("TMPDIR") or "/tmp")
@@ -956,6 +1131,7 @@ def client_checks(
             )
         )
     checks.extend(codex_checks(home, base_url, env=env, post_json=probe, now=now))
+    checks.extend(node_checks(home, env))
     checks.append(flush_check(tmp, now))
     return checks
 
