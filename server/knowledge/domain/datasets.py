@@ -177,7 +177,8 @@ def infer(table: Table, overrides: dict[str, DatasetType] | None = None) -> Sche
         detail = f"{len(names)} {type_name} column(s) past the slots, not stored: {shown}"
         asks.append(Clarification("past_capacity", "", detail))
     named = [c.name for c in table.columns if not _GENERATED.fullmatch(c.name)]
-    if not overrides and named and all(_reads_as_data(n) for n in named):
+    # A table whose names are no row of its source (a Parquet schema) has no first row to doubt.
+    if table.header_rows and not overrides and named and all(_reads_as_data(n) for n in named):
         asks.append(
             Clarification(
                 "header_like_data",

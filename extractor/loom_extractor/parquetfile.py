@@ -256,31 +256,43 @@ def _readable(arrow_type: Any) -> Any:
 
 
 def _values(column: Any, target: Any, kind: str) -> list[Any]:
-    """A batch column's values as Python holds them. Bytes, and a column with a
-    value Python cannot hold (a date past year 9999, a zone it does not know),
-    are LEFT_OUT, not None, so a row of them is still a row; the rows decoded
-    count them (`_Reader.cell`). Bytes are never copied into Python."""
+    """A batch column's values as Python holds them. Bytes, and a value Python
+    cannot hold (a date past year 9999, a zone it does not know), are LEFT_OUT,
+    not None, so a row of them is still a row; the rows read count them
+    (`_Reader.cell`). Bytes are never copied into Python. A batch with a value
+    Python cannot hold is converted a value at a time, so only that one is."""
     import pyarrow as pa
 
-    def left_out() -> list[Any]:
-        return [None if null else LEFT_OUT for null in column.is_null().to_pylist()]
-
     if kind == "bytes":
-        return left_out()
+        return [None if null else LEFT_OUT for null in column.is_null().to_pylist()]
+    if isinstance(column.type, pa.BaseExtensionType) and _stored(column.type) is not column.type:
+        column = column.storage
     try:
-        if (
-            isinstance(column.type, pa.BaseExtensionType)
-            and _stored(column.type) is not column.type
-        ):
-            column = column.storage
-        if target is not None:
-            column = column.cast(target, safe=False)
-        values: list[Any] = column.to_pylist()
-        return values
+        return _converted(column, target)
     except MemoryError:  # Arrow's too: a decode past the child's memory fails its rows
         raise
     except (pa.ArrowException, ValueError, OverflowError, KeyError):
-        return left_out()
+        pass
+    values: list[Any] = []
+    for i in range(len(column)):
+        one = column.slice(i, 1)
+        if one.null_count:
+            values.append(None)
+            continue
+        try:
+            values.append(_converted(one, target)[0])
+        except MemoryError:
+            raise
+        except (pa.ArrowException, ValueError, OverflowError, KeyError):
+            values.append(LEFT_OUT)
+    return values
+
+
+def _converted(column: Any, target: Any) -> list[Any]:
+    if target is not None:
+        column = column.cast(target, safe=False)
+    values: list[Any] = column.to_pylist()
+    return values
 
 
 def _open(data: bytes) -> Any:
@@ -331,7 +343,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
             for batch in pf.iter_batches(batch_size=batch_rows, row_groups=[g], use_threads=False):
                 columns = [_values(batch.column(j), targets[j], kinds[j]) for j in range(len(kept))]
                 for i in range(batch.num_rows):
-                    if rows.more:  # past the budget: counted below, its values not read
+                    if rows.more:  # past the budget: counted below, its rows not read
                         break
                     number += 1
                     values = [columns[j][i] for j in range(len(kept))]

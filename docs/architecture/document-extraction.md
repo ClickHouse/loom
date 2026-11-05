@@ -289,12 +289,13 @@ a bool, a date, a timestamp (its zone kept, none when the column has none), a ti
 other readers write them, a nanosecond unit to the microsecond (inside a list, struct or map too, not a list view, which
 Arrow casts to no other element type); text is text, a UUID its text, and a list, struct or map is its JSON (bytes in it
 as base64); another extension type reads as what it stores, a `bool8` as a bool. Bytes are no text, and they, a value
-over 1 MiB and a batch's values of a column Python cannot hold (a date past year 9999) are left out and counted (`<name>
-values`, each cause named, for the rows decoded). A row of nulls is no row. Pages decode one at a time, so a row group's
-size does not decide what is held; the rows past the table budget are counted from the metadata, never decoded; a row
-group whose pages do not decode fails the rows from there (`<name> rows N-`). The child's limits bound one decode, and
-its environment holds the native libraries to one thread and the system allocator, which the address-space limit allows.
-A build without pyarrow does not declare Parquet.
+over 1 MiB and a value Python cannot hold (a date past year 9999) are left out and counted (`<name> values`, each cause
+named, over the rows read); a batch with such a value is converted a value at a time, so only that one is. A row of
+nulls is no row. Pages decode one at a time, so a row group's size does not decide what is held; the rows past the table
+budget are not read: those past the batch it ran out in are counted from the metadata, never decoded; a row group whose
+pages do not decode fails the rows from there (`<name> rows N-`). The child's limits bound one decode, and its
+environment holds the native libraries to one thread and the system allocator, which the address-space limit allows. A
+build without pyarrow does not declare Parquet.
 
 **Bounds.** One budget bounds all of an artifact's tables, in three parts: what a source holds, the bytes its tables
 write, and the text they index. A source holds at most 1,000,000 non-empty cells in all, merged cells included, their

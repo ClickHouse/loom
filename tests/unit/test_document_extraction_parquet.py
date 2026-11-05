@@ -409,12 +409,12 @@ def test_each_cause_of_a_value_left_out_is_named(monkeypatch: pytest.MonkeyPatch
     ]
 
 
-def test_values_left_out_are_counted_for_the_rows_decoded(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_values_left_out_are_counted_for_the_rows_read(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tabular, "MAX_ROWS", 2)
     t = pa.table({"k": list("abcde"), "d": pa.array([3_000_000] * 5, pa.date32())})
     a, _ = _one(_file(t))
     units = {f.unit: f.reason for f in a.coverage.failed}
-    # The two held and the one the budget cut; the two after it are never decoded.
+    # The two held and the one the budget cut; the two after it are not read.
     assert units["f.parquet values"] == "3 values past what Python holds"
     assert units["f.parquet rows 3-"] == "3 rows past what one artifact holds"
 
@@ -433,3 +433,37 @@ def test_a_list_of_bool8_reads_as_bools_and_a_list_view_as_it_stores() -> None:
     a, tab = _one(_file(t))
     assert tab.rows == (("[true, false]", '["2023-11-14T22:13:20.123456"]'),)
     assert a.coverage.complete
+
+
+def test_one_value_python_cannot_hold_is_left_out_of_its_batch_alone() -> None:
+    t = pa.table({"d": pa.array([0, 3_000_000, 1], pa.date32())})  # one batch
+    a, tab = _one(_file(t))
+    assert tab.rows == (("1970-01-01",), (None,), ("1970-01-02",))
+    assert [f.reason for f in a.coverage.failed] == ["1 value past what Python holds"]
+
+
+def test_a_sub_microsecond_value_in_a_list_view_is_left_out_and_counted() -> None:
+    ns = pa.array([1_700_000_000_123_456_789], pa.timestamp("ns"))
+    lv = pa.ListViewArray.from_arrays(pa.array([0], pa.int32()), pa.array([1], pa.int32()), ns)
+    a, tab = _one(_file(pa.table({"lv": lv})))
+    assert tab.rows == ((None,),)  # still a row
+    assert [f.reason for f in a.coverage.failed] == ["1 value past what Python holds"]
+
+
+def test_a_list_of_float16_is_the_double_each_widens_to() -> None:
+    t = pa.table({"l": pa.array([[0.5, 0.1]], pa.list_(pa.float16()))})
+    _, tab = _one(_file(t))
+    assert tab.rows == (("[0.5, 0.0999755859375]",),)
+
+
+def test_an_arrow_memory_error_in_a_conversion_fails_its_rows_not_its_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_memory(column: Any, target: Any) -> list[Any]:
+        raise pa.ArrowMemoryError("out of memory")  # a MemoryError and an ArrowException
+
+    monkeypatch.setattr(parquetfile, "_converted", no_memory)
+    a = extract(_file(pa.table({"v": [1, 2]})), "f.parquet")
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        ("f.parquet rows 1-", "not decoded: out of memory")
+    ]

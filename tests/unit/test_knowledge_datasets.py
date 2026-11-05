@@ -134,6 +134,9 @@ def test_what_needs_an_answer_is_asked() -> None:
     numeric = _table([("2024", "number"), ("2025-01-01", "number")], [])
     (ask,) = ds.infer(numeric).clarifications
     assert (ask.code, ask.column) == ("header_like_data", "")
+    # A Parquet schema's names are no row of the file: no first row to doubt.
+    schema_named = _table([("2023", "number"), ("2024", "number")], [], header_rows=0)
+    assert ds.infer(schema_named).clarifications == ()
     for word in ("NaN", "Inf", "Infinity", "sNaN"):  # words Decimal reads as numbers
         assert ds.infer(_table([(word, "number")], [])).clarifications == ()
 
