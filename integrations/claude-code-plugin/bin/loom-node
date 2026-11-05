@@ -46,11 +46,10 @@ in_dir() {
   usable "$1/node" || usable "$1/node.exe"
 }
 
-# newest <root> <bin> [version]: the highest version directory under <root>,
-# or the highest within [version] (22, 22.1), then <bin> inside it (empty:
-# the directory itself)
+# newest <root> <bin> [version]: the Node in <bin> (empty: the directory
+# itself) of the highest version directory under <root> that has one, or the
+# highest within [version] (22, 22.1)
 newest() {
-  best=''
   best_key=-1
   for d in "$1"/*; do
     n=${d##*/}
@@ -67,12 +66,15 @@ newest() {
     patch=${patch%%[!0-9]*}
     case $major$minor in *[!0-9]*) continue ;; esac
     key=$((major * 1000000 + minor * 1000 + ${patch:-0}))
-    if [ "$key" -gt "$best_key" ]; then
-      best=$d
+    if [ "$key" -gt "$best_key" ] && in_dir "$d${2:+/$2}"; then
       best_key=$key
+      best_found=$found
+      best_version=$found_version
     fi
   done
-  [ -n "$best" ] && in_dir "$best${2:+/$2}"
+  [ "$best_key" -ge 0 ] || return 1
+  found=$best_found
+  found_version=$best_version
 }
 
 # default_or_newest <root> <bin> <version>: the install the manager's
@@ -180,6 +182,10 @@ if ! find_node; then
 fi
 
 if [ "${1:-}" = --check ]; then
+  # The real directory: a version manager's per-shell link goes away with the shell.
+  if dir=$(cd -P "${found%/*}" 2>/dev/null && pwd -P); then
+    found=$dir/${found##*/}
+  fi
   printf 'Loom hook runtime ready: %s (%s)\n' "$found" "$found_version"
   exit 0
 fi

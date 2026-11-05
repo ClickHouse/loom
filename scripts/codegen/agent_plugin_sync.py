@@ -2,10 +2,11 @@
 
 The two coding-agent plugins differ only in their manifests and hook wiring
 (`hooks/hooks.json`); the hook scripts (`hooks/*.mjs`), the shared library
-(`lib/*.mjs`), the `bin/` helpers, the skills (`skills/**`) and the listing icon (`assets/`) are one
-source of truth under `integrations/claude-code-plugin/`, copied here so each
-plugin is a self-contained directory a marketplace can check out on its own
-(Codex supports sparse checkouts; a `../` reference would break there).
+(`lib/*.mjs`), the `bin/` helpers, the skills (`skills/**`) and the listing
+icon (`assets/`) are one source of truth under `integrations/claude-code-plugin/`,
+copied here so each plugin is a self-contained directory a marketplace can
+check out on its own (Codex supports sparse checkouts; a `../` reference would
+break there).
 
     python scripts/codegen/agent_plugin_sync.py           # copy
     python scripts/codegen/agent_plugin_sync.py --check   # exit 1 when a copy is stale (CI)

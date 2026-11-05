@@ -65,15 +65,16 @@ url = "https://loom.example.com/mcp?toolset=core,coding,tracker,tasks"
 http_headers_helper = 'h="$(ls -d "$HOME"/.codex/plugins/cache/*/loom/*/bin/loom-mcp-headers.mjs 2>/dev/null | sort -V | tail -1)"; sh "${h%/*}/loom-node" "$h"'
 ```
 
-Codex runs the helper through `sh -c` with only `HOME`, `PATH` and the locale variables,
-and does not expand `${PLUGIN_ROOT}`, so the command finds the newest installed helper
-under `$HOME/.codex` and starts it through the plugin's `bin/loom-node`. The launcher
-finds Node 18+ on that `PATH` or in a version manager's default directory under `HOME`;
-`LOOM_NODE` and variables such as `NVM_DIR` do not reach it.
-With a custom `CODEX_HOME`, spell the path out. On Windows Codex runs the helper through
-`cmd.exe`, which cannot run this command: use `bearer_token_env_var` there. A Codex build
-that rejects `Authorization` from a header helper ("returned a reserved header") also
-needs `bearer_token_env_var = "LOOM_API_KEY"`, with `LOOM_API_KEY` exported.
+Codex runs the helper through `sh -c` with a reduced environment (`HOME`, `PATH`, the
+locale and a few others) and does not expand `${PLUGIN_ROOT}`, so the command finds the
+newest installed helper under `$HOME/.codex` and starts it through the plugin's
+`bin/loom-node`. The launcher finds Node 18+ on that `PATH`, in a version manager's
+default directory under `HOME` or in the usual install directories; `LOOM_NODE` and
+variables such as `NVM_DIR` do not reach it. With a custom `CODEX_HOME`, spell the path
+out. On Windows Codex runs the helper through `cmd.exe`, which cannot run this command:
+use `bearer_token_env_var` there. A Codex build that rejects `Authorization` from a
+header helper ("returned a reserved header") also needs
+`bearer_token_env_var = "LOOM_API_KEY"`, with `LOOM_API_KEY` exported.
 
 `loom install --client codex --server-url https://loom.example.com --token <JWT>` writes
 such an override with `bearer_token_env_var` and `?toolset=coding`, and writes `url` and
@@ -159,6 +160,7 @@ smaller tool listing ([MCP reference](../../reference/mcp.md)). The
 | Symptom                                        | Cause                                                  | Fix                                                                            |
 | ---------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------ |
 | MCP connection fails with 401                  | no token found by the helper                           | write `~/.loom/config.json`, or export `LOOM_API_KEY`                          |
+| MCP connection fails with 401, hooks work      | the helper finds no Node: it gets no `LOOM_NODE`       | put Node's directory on the `PATH` Codex starts with; `$loom-status` says      |
 | "returned a reserved header"                   | this Codex build rejects `Authorization` from a helper | override with `bearer_token_env_var = "LOOM_API_KEY"`                          |
 | tools talk to the wrong server                 | the bundled URL is not your deployment                 | the `config.toml` override above, plus `url` in `~/.loom/config.json`          |
 | tools listed twice                             | a second MCP entry under another name                  | remove it (`codex mcp remove <name>`)                                          |

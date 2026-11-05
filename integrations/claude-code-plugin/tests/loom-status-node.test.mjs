@@ -20,10 +20,11 @@ function fixture() {
   };
   // Only what the test builds: no fixed directories.
   const env = { HOME: dir, PATH: bin, LOOM_NODE_SYSTEM_DIRS: "", TEST_BIN: bin, TMPDIR: dir };
-  const run = (...args) => spawnSync("/bin/sh", [helper, ...args], { encoding: "utf8", env });
+  const runAt = (script, ...args) => spawnSync("/bin/sh", [script, ...args], { encoding: "utf8", env });
+  const run = (...args) => runAt(helper, ...args);
   // The helper and the launcher it calls run under these.
   for (const command of ["sh", "dirname", "env"]) fs.symlinkSync(whichSync(command), path.join(bin, command));
-  return { dir, bin, env, put, run };
+  return { dir, bin, env, put, run, runAt };
 }
 
 test("loom-status Node helper is a no-op when the launcher finds Node 18+", () => {
@@ -146,6 +147,52 @@ test("loom-status Node check warns when only this shell's environment finds Node
     settings({ LOOM_NODE_SYSTEM_DIRS: "" });
     f.env.LOOM_NODE = path.join(f.bin, "node");
     assert.match(f.run("--check").stdout, /Found only/);
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+// The helper and its launcher copied to where a client installs the plugin.
+function installAt(root) {
+  const scripts = path.join(root, "skills", "loom-status", "scripts");
+  fs.mkdirSync(scripts, { recursive: true });
+  fs.mkdirSync(path.join(root, "bin"));
+  fs.copyFileSync(helper, path.join(scripts, "ensure-node.sh"));
+  fs.copyFileSync(path.join(here, "..", "bin", "loom-node"), path.join(root, "bin", "loom-node"));
+  return path.join(scripts, "ensure-node.sh");
+}
+
+test("loom-status Node check knows Claude Code by where it is installed", () => {
+  const f = fixture();
+  try {
+    f.put("uname", "echo Linux");
+    f.put("node", "echo v22.0.0");
+    const installed = installAt(path.join(f.dir, ".claude", "plugins", "cache", "loom", "loom", "1.2.7"));
+    assert.match(f.runAt(installed, "--check").stdout, /Found only with this shell's environment: Claude Code/);
+    f.env.CLAUDE_CONFIG_DIR = path.join(f.dir, "claude config");
+    const custom = installAt(path.join(f.env.CLAUDE_CONFIG_DIR, "plugins", "cache", "loom", "loom", "1.2.7"));
+    assert.match(f.runAt(custom, "--check").stdout, /Found only with this shell's environment: Claude Code/);
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("loom-status Node check under Codex warns when the header helper's environment finds no Node", () => {
+  const f = fixture();
+  try {
+    f.put("uname", "echo Linux");
+    const elsewhere = path.join(f.dir, "elsewhere");
+    fs.mkdirSync(elsewhere);
+    fs.writeFileSync(path.join(elsewhere, "node"), "#!/bin/sh\necho v22.0.0\n", { mode: 0o755 });
+    f.env.LOOM_NODE = path.join(elsewhere, "node");
+    const r = f.run("--check");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(
+      r.stdout,
+      /ready: .*\nThe MCP header helper, which Codex runs without LOOM_NODE .*PATH Codex starts with\.\n$/,
+    );
+    f.env.PATH = `${f.bin}:${elsewhere}`;
+    assert.doesNotMatch(f.run("--check").stdout, /header helper/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
   }

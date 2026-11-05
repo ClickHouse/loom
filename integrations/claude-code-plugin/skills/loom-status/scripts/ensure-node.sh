@@ -48,23 +48,31 @@ SETTINGS
   env -i "$@" sh "$LAUNCHER" --check >/dev/null 2>&1
 }
 
-# Codex runs its hooks through a login shell, so only Claude Code's GUI
-# launch is checked.
 claude_code() {
   [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && return 0
   case $0 in */.claude/plugins/*) return 0 ;; esac
+  [ -n "${CLAUDE_CONFIG_DIR:-}" ] && case $0 in "$CLAUDE_CONFIG_DIR"/plugins/*) return 0 ;; esac
   return 1
+}
+
+# Codex runs its MCP header helper with HOME and PATH, and no LOOM_NODE.
+# LOOM_NODE_SYSTEM_DIRS is kept when set, so a test can replace the fixed
+# directories both runs search.
+codex_helper_check() {
+  set -- HOME="$HOME" PATH="$PATH"
+  [ -n "${LOOM_NODE_SYSTEM_DIRS+x}" ] && set -- "$@" LOOM_NODE_SYSTEM_DIRS="$LOOM_NODE_SYSTEM_DIRS"
+  env -i "$@" sh "$LAUNCHER" --check >/dev/null 2>&1
 }
 
 if [ "${1:-}" = '--check' ]; then
   sh "$LAUNCHER" --check || exit 1
-  case "$(uname -s)" in
-    Darwin | Linux)
-      if claude_code && ! gui_check; then
-        echo 'Found only with this shell'"'"'s environment: Claude Code started from a GUI or IDE finds no Node. Set LOOM_NODE to the path above in the env block of ~/.claude/settings.json.'
-      fi
-      ;;
-  esac
+  # On Windows a GUI app gets the user's PATH, and Codex runs no launcher.
+  case "$(uname -s)" in Darwin | Linux) ;; *) exit 0 ;; esac
+  if claude_code; then
+    gui_check || echo 'Found only with this shell'"'"'s environment: Claude Code started from a GUI or IDE finds no Node. Set LOOM_NODE to the path above in the env block of ~/.claude/settings.json.'
+  else
+    codex_helper_check || echo 'The MCP header helper, which Codex runs without LOOM_NODE or a version manager'"'"'s variables, finds no Node. Put that Node'"'"'s directory on the PATH Codex starts with.'
+  fi
   exit 0
 fi
 

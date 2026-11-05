@@ -64,8 +64,8 @@ def test_the_newest_install_of_each_client(home: Path) -> None:
     _install(home, ".claude", "1.2.10")
     _install(home, ".claude", "1.2.9")
     newest = _install(home, ".claude", "1.10.0")
-    assert dc.newest_launcher(home, ".claude") == newest
-    assert dc.newest_launcher(home, ".codex") is None
+    assert dc.newest_launcher(home.glob(".claude/plugins/cache/*/loom/*/bin/loom-node")) == newest
+    assert dc.newest_launcher([]) is None
 
 
 def test_a_version_manager_node_passes_without_the_shell_path(home: Path) -> None:

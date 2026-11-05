@@ -422,3 +422,30 @@ test("with no script it prints its usage instead of starting a REPL on the hook 
     f.done();
   }
 });
+
+test("an install directory without a Node does not hide an older one", { skip: WINDOWS }, () => {
+  const f = fixture();
+  try {
+    f.node(".nvm/versions/node/v22.1.0/bin");
+    fs.mkdirSync(path.join(f.home, ".nvm", "versions", "node", "v23.0.0"), { recursive: true });
+    assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v22.1.0/bin"));
+  } finally {
+    f.done();
+  }
+});
+
+test("--check names the real directory, not a per-shell link to it", { skip: WINDOWS }, () => {
+  const f = fixture();
+  try {
+    const real = path.dirname(f.node(".local/share/fnm/node-versions/v22.1.0/installation/bin"));
+    const link = path.join(f.home, "fnm_multishells", "123_456");
+    fs.mkdirSync(path.dirname(link));
+    fs.symlinkSync(path.dirname(real), link);
+    assert.equal(
+      found(f, f.run({ PATH: path.join(link, "bin") })),
+      exe(".local/share/fnm/node-versions/v22.1.0/installation/bin"),
+    );
+  } finally {
+    f.done();
+  }
+});

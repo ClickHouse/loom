@@ -68,9 +68,10 @@ in interactive shells, leaves `node` off it. The launcher runs the first
 Node 18+ among `LOOM_NODE`, `node` on PATH, a version manager's default (or
 its newest install when the default cannot be read or is older than 18),
 and the usual install directories. With none, the hook exits 1 with one line
-naming the Node it found too old, or none, and `LOOM_NODE`. Set `LOOM_NODE=/path/to/node` (for Claude Code, in the `env`
-block of `~/.claude/settings.json`) for a Node it misses. On Windows the
-launcher runs under Git Bash, Claude Code's hook shell there.
+naming the Node it found too old, or none, and `LOOM_NODE`. Set
+`LOOM_NODE=/path/to/node` (for Claude Code, in the `env` block of
+`~/.claude/settings.json`) for a Node it misses. On Windows the launcher runs
+under Git Bash, Claude Code's hook shell there.
 
 ## Safety model: fire-and-forget, hard-bounded
 

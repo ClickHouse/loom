@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -878,11 +878,9 @@ def _plugin_version(name: str) -> tuple[int, ...]:
     return tuple(int(n) for n in re.findall(r"\d+", name))
 
 
-def newest_launcher(home: Path, client_dir: str) -> Path | None:
-    """`bin/loom-node` of the newest loom plugin installed under
-    `~/<client_dir>/plugins/cache`; None when none ships one."""
-    found = home.glob(f"{client_dir}/plugins/cache/*/loom/*/bin/loom-node")
-    return max(found, key=lambda p: _plugin_version(p.parent.parent.name), default=None)
+def newest_launcher(launchers: Iterable[Path]) -> Path | None:
+    """The `<version>/bin/loom-node` of the newest plugin version; None for none."""
+    return max(launchers, key=lambda p: _plugin_version(p.parent.parent.name), default=None)
 
 
 def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, str]:
@@ -908,10 +906,11 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     environment."""
     out: list[Check] = []
     sh = shutil.which("sh")
-    claude = newest_launcher(home, ".claude")
+    claude = newest_launcher(home.glob(".claude/plugins/cache/*/loom/*/bin/loom-node"))
     if claude is not None:
         out.append(_claude_node_check(home, env, claude, sh))
-    codex = newest_launcher(home, ".codex")
+    # The marketplace codex_plugin_mcp_url reads, too.
+    codex = newest_launcher(home.glob(".codex/plugins/cache/loom/loom/*/bin/loom-node"))
     # On Windows, Codex runs hooks and the helper through cmd.exe, not the launcher.
     if codex is not None and sh is not None and not WINDOWS:
         out.append(_codex_node_check(env, codex, sh))
