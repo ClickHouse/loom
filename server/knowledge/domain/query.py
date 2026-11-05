@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from server.knowledge.domain import datasets as ds
@@ -136,29 +135,16 @@ def _schema(catalog: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def _value(v: Any, col: ds.DatasetColumn, op: str) -> Any:
-    """A filter's value as its column's slot holds it. A number a decimal slot
-    would round is refused: compared rounded, `ge 0.0000000004` would match 0."""
+    """A filter's value as its column's slot holds it; one the slot would round
+    is refused, since compared rounded `ge 0.0000000004` would match 0."""
     if v is None:
         raise ValueError(f"{op} on {col.name!r} needs a value; is_null finds nulls")
     if col.type == "duration" and isinstance(v, (int, float)) and not isinstance(v, bool):
         col = replace(col, type="number")  # seconds, as the slot holds them
-    held = ds.slot_value(v, col)
-    exact = _exact(v)
-    if isinstance(held, Decimal) and exact is not None and held != exact:
-        raise ValueError(
-            f"{op} on {col.name!r}: {str(v)[:40]} has more than the nine decimal places"
-            " a number column holds"
-        )
-    return held
-
-
-def _exact(v: Any) -> Decimal | None:
-    """`v` as the decimal it says, before any rounding; None for text that is no number
-    (a duration's H:MM:SS)."""
     try:
-        return Decimal(repr(v)) if isinstance(v, float) else Decimal(str(v).strip())
-    except InvalidOperation:
-        return None
+        return ds.compared_value(v, col)
+    except ValueError as e:
+        raise ValueError(f"{op} on {col.name!r}: {e}") from None
 
 
 def _filter(c: Column, f: Mapping[str, Any]) -> Filter:

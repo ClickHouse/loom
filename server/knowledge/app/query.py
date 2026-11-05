@@ -41,27 +41,22 @@ async def _catalogs(
     """Each alias's catalog row at its source's live document version."""
     out: dict[str, dict[str, Any]] = {}
     for d in input.datasets:
+        missing = NotFoundError(f"no live dataset {d.dataset_id!r} of {d.source_uri!r}")
         version = versions.get(d.source_uri)
-        rows = (
-            await datasets_repo.at_version(
-                input.org, input.namespace, d.source_uri, version, dataset_id=d.dataset_id
-            )
-            if version is not None
-            else []
+        if version is None:
+            raise missing
+        rows = await datasets_repo.at_version(
+            input.org, input.namespace, d.source_uri, version, dataset_id=d.dataset_id
         )
         if not rows:
             # A publish of the source writes its document's new version, then deletes
             # the catalog rows of the one read: that is a change to retry, not a 404.
-            again = (
-                await documents_repo.live_versions(input.org, input.namespace, [d.source_uri])
-                if version is not None
-                else {}
-            )
-            if again.get(d.source_uri, version) != version:
+            now = await documents_repo.live_versions(input.org, input.namespace, [d.source_uri])
+            if now.get(d.source_uri) not in (None, version):
                 raise PreconditionFailedError(
                     f"{d.source_uri!r} was published again as the query read it; run it again"
                 )
-            raise NotFoundError(f"no live dataset {d.dataset_id!r} of {d.source_uri!r}")
+            raise missing
         catalog = rows[0]
         if catalog["schema_state"] == "needs_clarification":
             asks = "; ".join(

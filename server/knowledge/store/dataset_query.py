@@ -31,7 +31,10 @@ _PARAM = {
     "b": "Bool",
 }
 _COMPARE = {"eq": "=", "ne": "!=", "lt": "<", "le": "<=", "gt": ">", "ge": ">="}
-_BUCKET = {"day": "toDate({})", "month": "toStartOfMonth({})", "year": "toStartOfYear({})"}
+# Date32 throughout: Date ends at 1970-2149 and wraps a date past either end, while a
+# slot holds 1900-2299 (the statement asks for extended results, so a month or year
+# is a Date32 too).
+_BUCKET = {"day": "toDate32({})", "month": "toStartOfMonth({})", "year": "toStartOfYear({})"}
 
 
 class _Params:
@@ -59,7 +62,7 @@ def _ref(c: Column) -> str:
 def _read(c: Column) -> str:
     """The column's value as its type reads: a date's slot holds a UTC
     date-time at midnight, which reads as the date."""
-    return f"toDate({_ref(c)})" if c.column.type == "date" else _ref(c)
+    return f"toDate32({_ref(c)})" if c.column.type == "date" else _ref(c)
 
 
 def _of(o: Output) -> str:
@@ -158,6 +161,8 @@ def compile_plan(plan: Resolved, org: str, namespace: str) -> tuple[str, dict[st
         sql += " ORDER BY " + ", ".join(order)
     # One row past the limit says whether more matched.
     sql += f" LIMIT {p.add(plan.limit + 1, 'UInt32')}"
+    if any(o.bucket for o in plan.groups):
+        sql += " SETTINGS enable_extended_results_for_datetime_functions = 1"
     return sql, p.values
 
 

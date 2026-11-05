@@ -352,6 +352,23 @@ def _slot_value(v: Any, col: DatasetColumn) -> Any:
     return _instant(v, col.type)
 
 
+def compared_value(v: Any, col: DatasetColumn) -> Any:
+    """`v` as its column's slot holds it, to compare a stored value with; a
+    number the slot would round is refused, since compared rounded it is
+    another number (0.0000000004 would equal 0). ValueError, with the reason."""
+    held = slot_value(v, col)
+    if isinstance(held, Decimal):
+        try:
+            exact = _seconds(v) if col.type == "duration" else _decimal(v)
+        except _Unfit as e:
+            raise ValueError(str(e)) from None
+        if held != exact:
+            raise ValueError(
+                f"{_text(v)[:40]} has more than the nine decimal places a number holds"
+            )
+    return held
+
+
 def slot_value(v: Any, col: DatasetColumn) -> Any:
     """`v` as its column's slot holds it; ValueError, with the reason, when it
     does not fit."""

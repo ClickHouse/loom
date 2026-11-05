@@ -97,7 +97,11 @@ JOINED = [
         (dict(where=[{"column": _col("amount"), "op": "gt"}]), "gt on 'amount' needs a value"),
         # Rounded to nine places, ge 0.0000000004 would match a row holding 0.
         (dict(where=[{"column": _col("amount"), "op": "ge", "value": "0.0000000004"}]),
-         "has more than the nine decimal places a number column holds"),
+         "0.0000000004 has more than the nine decimal places a number holds"),
+        (dict(where=[{"column": _col("amount"), "op": "ge", "value": 4e-10}]),
+         "4e-10 has more than the nine decimal places"),
+        (dict(where=[{"column": _col("late"), "op": "ge", "value": "0:00:00.0000000004"}]),
+         "0:00:00.0000000004 has more than the nine decimal places"),
         (dict(where=[{"column": _col("team"), "op": "in"}]), "in on 'team' needs values"),
         (dict(where=[{"column": _col("placed_at"), "op": "ge", "value": "soon"}]),
          "'soon' is not a datetime"),
@@ -186,6 +190,8 @@ def test_the_statement_holds_no_caller_text_and_reads_each_dataset_in_its_scope(
         " AND s1 = {p6:String}) AS q1 ON q0.s1 = q1.s1"
         # The caller's order, then the groups', so ties come back the same way each time.
         " GROUP BY c0 ORDER BY c1 DESC, c0 LIMIT {p7:UInt32}"
+        # A month as a Date32: Date ends at 1970 and 2149, a slot at 1900 and 2299.
+        " SETTINGS enable_extended_results_for_datetime_functions = 1"
     )
     assert params == {
         "p0": "o", "p1": "ns", "p2": "orders", "p3": 41, "p4": "teams", "p5": 42,
@@ -230,8 +236,11 @@ def test_a_date_reads_as_a_date_wherever_it_is_returned() -> None:
         CATALOGS,
     )  # fmt: skip
     sql, _ = dataset_query.compile_plan(plan, "o", "ns")
-    # Its slot holds a UTC date-time at midnight; a date-time column stays one.
-    assert sql.startswith("SELECT toDate(q0.t2) AS c0, max(toDate(q0.t2)) AS c1, max(q0.t1) AS c2")
+    # Its slot holds a UTC date-time at midnight; a date-time column stays one. A Date32,
+    # since a Date wraps a date before 1970 or past 2149 to another.
+    assert sql.startswith(
+        "SELECT toDate32(q0.t2) AS c0, max(toDate32(q0.t2)) AS c1, max(q0.t1) AS c2"
+    )
 
 
 def test_a_schema_naming_a_column_no_slot_holds_is_not_compiled() -> None:

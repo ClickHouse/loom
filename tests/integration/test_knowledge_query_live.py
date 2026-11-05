@@ -245,7 +245,9 @@ async def test_a_parquet_decimal_sums_exactly(control_plane_url: str) -> None:
         {
             "amount": pa.array(amounts, pa.decimal128(38, 9)),
             "settled": [True, True, False],
-            "due": pa.array([dt.date(2026, 1, 31), dt.date(2026, 2, 1), None], pa.date32()),
+            "due": pa.array(
+                [dt.date(1950, 3, 15), dt.date(2026, 2, 1), dt.date(2290, 12, 31)], pa.date32()
+            ),
         }
     )
     buf = io.BytesIO()
@@ -279,6 +281,14 @@ async def test_a_parquet_decimal_sums_exactly(control_plane_url: str) -> None:
         assert out["rows"] == [[2, "2026-02-01"]]  # a date, as its column's type says
         assert [c_["type"] for c_ in out["columns"]] == ["number", "date"]
         assert out["receipt"]["params"]["p5"] == "0.000000000"  # plain digits, not 0E-9
+        # Dates before 1970 and past 2149, where ClickHouse's Date wraps to another.
+        ds_ = [{"source_uri": uri, "dataset_id": d["dataset_id"]}]
+        r = await _query(c, org, ns, datasets=ds_, group_by=[
+            {"column": _col("due"), "bucket": "month", "name": "month"}
+        ], aggregates=[{"fn": "count", "name": "n"}])  # fmt: skip
+        assert r.json()["rows"] == [["1950-03-01", 1], ["2026-02-01", 1], ["2290-12-01", 1]], r.text
+        r = await _query(c, org, ns, datasets=ds_, select=[_col("due")])
+        assert [row for row in r.json()["rows"]] == [["1950-03-15"], ["2026-02-01"], ["2290-12-31"]]
 
 
 @pytest.mark.asyncio
