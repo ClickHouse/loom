@@ -136,7 +136,7 @@ _STAMP_SKEW_S = 60.0  # not a setting: a margin on the store's own indexing dela
 _MINE_MARGIN_S = 30.0  # not a setting: time for the writes after the last read
 # A document is not started with less read time than this left: the try would be spent
 # on a run cut short. The pass counts as spent instead.
-_MIN_MINE_S = 60.0  # not a setting: a few windows' model calls
+_MIN_MINE_S = 60.0  # not a setting: a small document's read and support check
 # A document whose reads run out with at least this share of a pass's read time will not
 # finish in any pass: the sync before the leg rarely takes more than a quarter of the
 # read time.

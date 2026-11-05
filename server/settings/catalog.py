@@ -2741,9 +2741,12 @@ class MemorySettings(BaseModel):
     # loom.memory_drops as chunk.split/truncated.
     memory_set_chunk_max_chunks: int = 48
     # ---- decision extraction (loom decisions extract) ----
-    # Decisions already recorded from a document that the prompt lists, so a re-run
-    # keeps their keys and wording; past this many, the rest may be read as new. 0 = none.
+    # Decisions already recorded from a document that a re-run lists and judges against the
+    # text; one past this many is never flagged or retired. 0 = none.
     memory_decision_extract_known_max: Annotated[int, LIVE] = Field(default=30, ge=0)
+    # Characters one extraction read takes: a shorter document is read whole, a longer one in
+    # windows of whole sections. Sized so a dense window's reply fits the decision_extract cap.
+    memory_decision_extract_window_chars: Annotated[int, LIVE] = Field(default=24000, ge=500)
     # Closest decision keys a candidate is checked against for a pinned or attested restatement
     # under another key (cosine only); the fetch caps at 500 rows.
     memory_decision_extract_restatement_top_k: Annotated[int, LIVE] = Field(default=20, ge=1)
@@ -5988,9 +5991,12 @@ LLM_MAX_TOKENS: dict[str, int] = {
     "consolidate_merge": 256,
     # conversation.compact: the summary of a thread's oldest turns.
     "conversation_compact": 600,
-    # loom decisions extract: one window's decision candidates as JSON, quotes and
-    # reasons copied from the document.
-    "decision_extract": 4000,
+    # loom decisions extract: one window's decisions as JSON (a whole document's, up to
+    # memory_decision_extract_window_chars), each claim with its quotes.
+    "decision_extract": 12000,
+    # loom decisions extract: the support check's verdict on each claim of one window and
+    # on each stored decision.
+    "decision_support": 8000,
     # the entity extractor: one memory's entities.
     "entity_extract": 160,
     # memory.search HyDE: the hypothetical answer embedded in place of the query.

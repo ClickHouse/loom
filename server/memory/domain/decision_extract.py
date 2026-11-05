@@ -1,20 +1,23 @@
-"""The pure half of `loom decisions extract`: the candidate prompt, reading the model's
-reply, the verbatim and restatement checks, and sorting the code names a candidate
-mentions.
+"""The pure half of `loom decisions extract`: the read prompt, reading the model's reply,
+grounding each claim in the document's text, the support check's prompt and reply, and
+sorting the code names a candidate mentions.
 
-A candidate is kept only when its quote, its reasoning and every rejected option's reason
-each sit inside one chunk the model read (whitespace, letter case and a few label lines
-aside, see `find_span`), its reasoning says more than its outcome (a ban the text gives no
-reason for is kept as one with none), and its quote is not in a recap section: what
-reaches an agent before an edit is the document's own reason. A rejected option the text
-states as part of the choice is left out.
+The model reads the whole document (or a window of whole sections when it is longer) and
+writes each decision as a maintainer would: its outcome, its reasons and the options it
+rejects, in its own concise words, each claim citing short quotes of the document. A
+claim is kept only when one of its quotes is found in the text the model read,
+whitespace, letter case and a few label lines aside (`find_span`; the quotes not found
+are left out), and the support check, a second call over the same text, finds the claim
+stated or directly implied by its quotes: no reason, option or fact reaches an agent
+that the document does not give. A decision the document states with no reason is kept
+with none.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -23,11 +26,13 @@ from server.code.domain.extract.lang_markdown import is_markdown_path
 from server.knowledge.domain.chunking import SEPARATOR, Section, detect_sections
 from server.memory.domain.corpus_synthesis import Window
 from server.memory.domain.decision_schema import Stage
-from server.memory.domain.decision_statement import collapse_ws
-from server.memory.domain.lemmatize import snowball_stem_tokens
+from server.memory.domain.decision_statement import (
+    REJECTED,
+    alternatives,
+    collapse_ws,
+    states_reason,
+)
 
-# How a rejected option is stored: `<option> — rejected: <reason>`.
-REJECTED = " — rejected: "
 # An image: a Markdown image, inline (`![flow](flow.png)`) or by reference
 # (`![diagram][fig1]`); an HTML `<img>` tag; or a slide export's placeholder, `[image]`,
 # `[Image 3]`, `[image: ...]`, `[image_1]`, `[pictures]`. A shortcut reference
@@ -48,66 +53,64 @@ _SETTING_NAME = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
 _BARE_CAMEL = re.compile(r"^[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+$")
 
 SYSTEM = (
-    "You extract design decisions from one part of a design document for a store that "
-    "coding agents read before they edit the code the decision governs. Reply with one "
-    'JSON object, {"decisions": [...]}, each item with the keys category, scenario, '
-    "outcome, reasoning, alternatives, quote, is_constraint, stage and mentions.\n"
-    "- quote: the exact span of the text the decision rests on, copied character for "
-    "character.\n"
-    "- reasoning: the reason the text gives for the choice (the cost, constraint or "
-    "failure it avoids), an exact span of the text. Never the decision restated in other "
-    "words: a span that only says what was chosen is no reasoning, and a decision whose "
-    "text gives no reason is not emitted, except a ban or an invariant the text states "
-    "without one: emit it with is_constraint true and its own sentence as the reasoning.\n"
-    '- alternatives: the options the text rejects, each {"option": ..., "reason": ...}, '
-    "the reason an exact span of the text.\n"
+    "You read a design document and list the design decisions it records, for a store "
+    "that coding agents read before they edit the code a decision governs. An agent that "
+    "reads a decision must not propose again an option the document rejected, must keep a "
+    "constraint it states, and must be able to say why.\n"
+    'Reply with one JSON object, {"decisions": [...]}, each item with the keys category, '
+    "scenario, outcome, evidence, reasons, rejected, is_constraint, stage and mentions.\n"
     "- category: design:<component>, lower case, so decisions about one component share "
     "it.\n"
-    "- scenario: the specific situation that was decided, specific enough that another "
-    "document's decision does not share it.\n"
-    "- outcome: what was chosen, without the reason (that is the reasoning), short "
-    'enough that "<Decided|Proposed> <outcome> because <reasoning>." fits 220 characters.\n'
-    "- is_constraint: true when the decision is a ban or an invariant code must keep.\n"
-    "- stage: proposed when the text puts it forward without saying it was chosen and "
-    "built (a proposal, an RFC, a feature request, a plan, future work, an action item, "
-    "an option under discussion); decided when the text says it was chosen or is how the "
-    "system works. A decision stated in a proposal, an RFC or a feature request (a "
-    "[document: ...] line, when present, names the document) is proposed unless the text "
-    "says it was built. When unsure, proposed.\n"
-    "- mentions: the class, function and setting names and pull request numbers the "
-    "text names, as written.\n"
-    "Copy the document's words; never paraphrase a quote, a reasoning or a reason. Keep "
-    "product names in quote only. Emit nothing for a section that sums up or recaps "
-    "other sections. Never give as the outcome what the text marks as "
-    "former, replaced or superseded (an old default, a previous behaviour): the decision "
-    "is what replaced it. At most {max_per_section} items per section; "
-    '{"decisions": []} when the part records no decision.'
+    "- scenario: the specific situation decided, one short clause, specific enough that "
+    "another document's decision does not share it.\n"
+    "- outcome: what was chosen, or how the system works, in your own concise words, "
+    "without the reason; name the classes, functions, settings and values the document "
+    "names.\n"
+    "- evidence: 1-3 quotes of the document that state the outcome.\n"
+    '- reasons: the reasons the document gives for the outcome, each {"text": ..., '
+    '"evidence": [quotes]}: the cost, constraint, failure or measurement the choice rests '
+    "on, in your own concise words. A reason may be in another section than the outcome "
+    "(a problem statement, a measurement, a list of missing cases). [] when the document "
+    "gives none: never invent one.\n"
+    '- rejected: the options the document rejects, each {"option": ..., "reason": ..., '
+    '"evidence": [quotes]}, the reason "" when the document gives none; the current or '
+    "former approach a new design replaces is a rejected option of the new design.\n"
+    "- is_constraint: true when the decision is a ban, a limit or an invariant code must "
+    "keep.\n"
+    "- stage: proposed when the document puts it forward without saying it was chosen and "
+    "built (a proposal, an RFC, a plan, an option under discussion, future work, a "
+    "follow-up); decided when the document says it was chosen or is how the system works. "
+    "A decision in a proposal or an RFC (a [document: ...] line, when present, names the "
+    "document) is proposed unless the text says it was built. When unsure, proposed.\n"
+    "- mentions: the class, function, file and setting names and pull request numbers the "
+    "document names for the decision, as written.\n"
+    "Each quote is copied character for character from the document, 3 to 30 words on one "
+    "line; a section heading is document text. Every reason and every rejected option "
+    "has its own evidence. One item per choice: merge what the document says about one "
+    "choice across its sections, and do not split a choice into the steps of its "
+    "mechanism. A measurement, a summary or recap, an agenda or a benchmark result is no "
+    "decision. Never give as the outcome what the document marks as former, replaced or "
+    "superseded: the decision is what replaced it. A document that weighs options without "
+    "choosing records the constraints it states and its proposals. At most "
+    '{max_per_section} items whose evidence starts in one section; {"decisions": []} '
+    "when the text records no decision."
 )
 
 
-# The characters of an earlier decision's outcome the prompt shows. Category and scenario
-# are shown whole: the key is built from them.
-_KNOWN_OUTCOME_CHARS = 160
-
-
-def system_prompt(max_per_section: int, known: Sequence[tuple[str, str, str]] = ()) -> str:
-    """The candidate prompt; `known` lists the decisions already recorded from this
-    document as (category, scenario, outcome), whose wording a still-stated decision
-    keeps, so a re-run reads the same keys and outcomes."""
+def system_prompt(max_per_section: int, known: Sequence[tuple[str, str]] = ()) -> str:
+    """The read prompt; `known` lists the decisions already recorded from this document
+    as (category, scenario), whose key a still-recorded decision keeps, so a re-run
+    revises the same rows. Only the key is shown, never the old outcome: the outcome is
+    read from the text as it is now."""
     prompt = SYSTEM.replace("{max_per_section}", str(max_per_section))
     if not known:
         return prompt
-    lines = []
-    for category, scenario, outcome in known:
-        outcome = collapse_ws(outcome)
-        if len(outcome) > _KNOWN_OUTCOME_CHARS:
-            outcome = outcome[: _KNOWN_OUTCOME_CHARS - 1].rstrip() + "…"
-        lines.append(" | ".join((collapse_ws(category), collapse_ws(scenario), outcome)))
+    lines = [" | ".join((collapse_ws(c), collapse_ws(s))) for c, s in known]
     return (
-        prompt + "\nDecisions already recorded from this document, as category | scenario | "
-        "outcome; an outcome ending in … is shortened. When the part still states one, reuse "
-        "its category and scenario exactly, and its outcome as far as it is shown:\n"
-        + "\n".join(f"- {line}" for line in lines)
+        prompt + "\nDecisions already recorded from this document, as category | scenario. "
+        "When the text still records one of them, as it was or changed, reuse its category "
+        "and scenario exactly, and write its outcome and reasons as the text now gives "
+        "them:\n" + "\n".join(f"- {line}" for line in lines)
     )
 
 
@@ -193,23 +196,62 @@ def image_only(body: str) -> bool:
     return has_image(body) and not more_than_a_caption(body)
 
 
+@dataclass(frozen=True)
+class Claim:
+    """A reason the document gives, in the model's words, and the quotes it rests on."""
+
+    text: str
+    evidence: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Rejected:
+    """An option the document rejects, why ('' when it says not), and the quotes."""
+
+    option: str
+    reason: str
+    evidence: tuple[str, ...]
+
+
 @dataclass
 class Candidate:
     category: str
     scenario: str
     outcome: str
-    reasoning: str
-    quote: str
-    # (option, reason) pairs
-    alternatives: list[tuple[str, str]] = field(default_factory=list)
+    # The quotes that state the outcome.
+    evidence: list[str] = field(default_factory=list)
+    reasons: list[Claim] = field(default_factory=list)
+    alternatives: list[Rejected] = field(default_factory=list)
     is_constraint: bool = False
     mentions: list[str] = field(default_factory=list)
     # "proposed": put forward, not yet chosen or built.
     stage: Stage = "proposed"
 
+    @property
+    def quote(self) -> str:
+        """The first quote of the outcome: where the decision is, in reports and links."""
+        return self.evidence[0] if self.evidence else ""
+
+    @property
+    def reasoning(self) -> str:
+        """The reasons as decision.record stores them; '' when the document gives none."""
+        return "; ".join(r.text.rstrip(" .;") for r in self.reasons)
+
+    def quotes(self) -> list[str]:
+        """Every quote the candidate cites, outcome first."""
+        out = list(self.evidence)
+        for r in self.reasons:
+            out += r.evidence
+        for a in self.alternatives:
+            out += a.evidence
+        return out
+
     def rejected(self) -> list[str]:
-        """The alternatives as decision.record stores them."""
-        return [f"{option}{REJECTED}{reason}" for option, reason in self.alternatives]
+        """The alternatives as decision.record stores them: `<option> — rejected: <reason>`,
+        or the option alone when the document gives no reason."""
+        return [
+            f"{a.option}{REJECTED}{a.reason}" if a.reason else a.option for a in self.alternatives
+        ]
 
 
 def _text(value: Any) -> str:
@@ -221,11 +263,22 @@ def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
-def _alternative(item: Any) -> tuple[str, str] | None:
+def _quotes(value: Any) -> tuple[str, ...]:
+    return tuple(q for q in map(_text, _list(value)) if q)
+
+
+def _claim(item: Any) -> Claim | None:
     if not isinstance(item, dict):
         return None
-    option, reason = _text(item.get("option")), _text(item.get("reason"))
-    return (option, reason) if option and reason else None
+    text, evidence = _text(item.get("text")), _quotes(item.get("evidence"))
+    return Claim(text, evidence) if text and evidence else None
+
+
+def _rejected(item: Any) -> Rejected | None:
+    if not isinstance(item, dict):
+        return None
+    option, evidence = _text(item.get("option")), _quotes(item.get("evidence"))
+    return Rejected(option, _text(item.get("reason")), evidence) if option and evidence else None
 
 
 def _stage(value: Any) -> Stage:
@@ -234,10 +287,17 @@ def _stage(value: Any) -> Stage:
     return "decided" if _text(value).lower() == "decided" else "proposed"
 
 
+# A model that writes the statement's verb into the outcome: "Decided to use X",
+# "Proposed: X". An outcome that opens with the word itself ("Proposed decisions are
+# hidden") keeps it.
+_LEADING_VERB = re.compile(r"^(?:decided|proposed)(?:\s+to\b|\s*:)\s*", re.I)
+
+
 def parse_candidates(reply: str) -> list[Candidate] | None:
     """The candidates of one model reply (its code fence already removed by the caller);
-    None when the reply is not the asked-for JSON. An item missing a required field is
-    skipped."""
+    None when the reply is not the asked-for JSON. An item without a category, scenario,
+    outcome or evidence is skipped; a reason or rejected option without evidence is
+    left out."""
     try:
         data = json.loads(reply)
     except (TypeError, ValueError):
@@ -249,35 +309,32 @@ def parse_candidates(reply: str) -> list[Candidate] | None:
     for item in items:
         if not isinstance(item, dict):
             continue
-        alternatives = [a for a in map(_alternative, _list(item.get("alternatives"))) if a]
-        mentions = [_text(m) for m in _list(item.get("mentions")) if _text(m)]
         cand = Candidate(
             category=_text(item.get("category")),
             scenario=_text(item.get("scenario")),
-            outcome=_text(item.get("outcome")),
-            reasoning=_text(item.get("reasoning")),
-            quote=_text(item.get("quote")),
-            alternatives=alternatives,
+            outcome=_LEADING_VERB.sub("", _text(item.get("outcome"))),
+            evidence=list(_quotes(item.get("evidence"))),
+            reasons=[c for c in map(_claim, _list(item.get("reasons"))) if c],
+            alternatives=[a for a in map(_rejected, _list(item.get("rejected"))) if a],
             is_constraint=item.get("is_constraint") is True,
-            mentions=mentions,
+            mentions=[_text(m) for m in _list(item.get("mentions")) if _text(m)],
             stage=_stage(item.get("stage")),
         )
-        if cand.category and cand.scenario and cand.outcome and cand.reasoning:
+        if cand.category and cand.scenario and cand.outcome and cand.evidence:
             out.append(cand)
     return out
 
 
-# The shortest span a decision may rest on: "We" or "the" is in every document, and a
-# reasoning that short never leaves it, so its row would never retire. Characters, so a
-# CJK span is held to the same floor.
+# The shortest quote a claim may rest on: "We" or "the" is in every document, so a quote
+# that short grounds nothing. Characters, so a CJK quote is held to the same floor.
 MIN_SPAN_CHARS = 12
 
 
 # The label lines a span reads across between two of its words.
-# not a setting: part of what a label line is, which the verbatim check's docs state
+# not a setting: part of what a label line is, which the grounding docs state
 LABEL_LINES_MAX = 3
-# Words of a ban or an invariant (`states_a_ban`), and words that say a sentence
-# rejects or contrasts what it names (`inverted_options`).
+# Words of a ban or an invariant, and words that say a sentence rejects or contrasts
+# what it names: a line holding one is never a label.
 _BAN_WORDS = r"only|no|never|must|not|always|at\s+most|at\s+least"
 _NEGATION_WORDS = (
     r"not|no|never|cannot|can['’]t|instead|rather|without|fail\w*|reject\w*|than"
@@ -397,146 +454,181 @@ def stored_span(span: str, texts: Sequence[str]) -> str:
     return collapse_ws(" ".join(pieces)) if pieces else ""
 
 
-def unlabelled_span(span: str, texts: Sequence[str]) -> str:
-    """The text's span that reads as `span` with its label lines left out and its other
-    line breaks kept, or '': where a list item or a blank line ends a sentence, and no
-    label names an option. The blank lines around a label go with it: the label sits
-    inside one sentence."""
-    pieces = _without_labels(span, texts)
-    return "".join(pieces) if pieces else ""
+def _grounded(quotes: Sequence[str], texts: Sequence[str]) -> tuple[str, ...]:
+    """The quotes found in the text, each as the text stores it (`stored_span`); a quote
+    shorter than MIN_SPAN_CHARS rests on nothing and is left out."""
+    out = []
+    for q in quotes:
+        if len(collapse_ws(q)) < MIN_SPAN_CHARS:
+            continue
+        span = stored_span(q, texts)
+        if span and span not in out:
+            out.append(span)
+    return tuple(out)
 
 
-def verbatim_failure(cand: Candidate, texts: list[str]) -> str:
-    """Why `cand` fails the verbatim check against the chunk texts the model read, or ''.
-    Each span must sit inside one chunk: the join between two is not the document's. A
-    span of the quote is in the quote's chunk, so the chunks alone decide."""
-
-    def holds(span: str) -> bool:
-        return bool(find_span(span, texts))
-
-    def short(span: str) -> bool:
-        # Measured on the span as the model gave it, whitespace runs one space.
-        return len(collapse_ws(span)) < MIN_SPAN_CHARS
-
-    if short(cand.quote):
-        return "quote too short to rest a decision on"
-    if not holds(cand.quote):
-        return "quote is not in the document text"
-    if short(cand.reasoning):
-        return "reasoning too short to rest a decision on"
-    if not holds(cand.reasoning):
-        return "reasoning is not in the document text"
-    for option, reason in cand.alternatives:
-        if short(reason):
-            return f"the reason given for rejecting {option!r} is too short to rest on"
-        if not holds(reason):
-            return f"the reason given for rejecting {option!r} is not in the document text"
-    return ""
+UNGROUNDED = "none of the outcome's quotes is in the document text"
 
 
-def unfound_reason(cand: Candidate, texts: list[str]) -> str:
-    """The reasoning or rejected option's reason that is not in the text while the quote
-    is, or '': a model often joins a reason from two places, and asked again gives one
-    span. '' when any span is too short: reading again does not lengthen it."""
-    spans = (cand.quote, cand.reasoning, *(reason for _option, reason in cand.alternatives))
-    if any(len(collapse_ws(s)) < MIN_SPAN_CHARS for s in spans):
-        return ""
-    if not find_span(cand.quote, texts):
-        return ""
-    return next((span for span in spans[1:] if not find_span(span, texts)), "")
+def ground(cand: Candidate, texts: list[str]) -> tuple[Candidate | None, list[str]]:
+    """(`cand` with only the claims whose quotes are in the text, each quote the text's
+    own; or None when none of the outcome's quotes is there) and what was left out: a
+    reason or rejected option keeps the quotes found and is left out when none is."""
+    evidence = _grounded(cand.evidence, texts)
+    if not evidence:
+        return None, [UNGROUNDED]
+    notes: list[str] = []
+    reasons = []
+    for r in cand.reasons:
+        if found := _grounded(r.evidence, texts):
+            reasons.append(Claim(r.text, found))
+        else:
+            notes.append(f"reason {r.text!r} left out: none of its quotes is in the document text")
+    rejected = []
+    for a in cand.alternatives:
+        if found := _grounded(a.evidence, texts):
+            rejected.append(Rejected(a.option, a.reason, found))
+        else:
+            notes.append(
+                f"rejected option {a.option!r} left out: none of its quotes is in the document text"
+            )
+    return replace(cand, evidence=list(evidence), reasons=reasons, alternatives=rejected), notes
 
 
-def stitched_note(failed: Sequence[tuple[str, str]]) -> str:
-    """What the second call of a window adds before the text: each (outcome, span) whose
-    reason span is not in the text."""
-    lines = "\n".join(
-        f"- {collapse_ws(outcome)}: {json.dumps(collapse_ws(span), ensure_ascii=False)}"
-        for outcome, span in failed
-    )
-    return (
-        "An earlier reply gave these decisions a reason that is not one span of the text: "
-        "it joins words from two places. Reply with only these decisions again, each "
-        "reasoning and each rejected option's reason one contiguous span copied from the "
-        'text, or {"decisions": []} when the text gives no such span:\n' + lines
-    )
-
-
-def document_spans(cand: Candidate, texts: list[str]) -> Candidate:
-    """`cand` with each span replaced by the text's own as it is stored (`stored_span`),
-    for a candidate that passed the verbatim check: what is stored is the document's
-    words, never a label between them."""
-    return replace(
-        cand,
-        quote=stored_span(cand.quote, texts),
-        reasoning=stored_span(cand.reasoning, texts),
-        alternatives=[(option, stored_span(reason, texts)) for option, reason in cand.alternatives],
-    )
-
-
-# Words that say a choice was made or put forward, or join a sentence, rather than give a reason.
-_FILLER_WORDS = (
-    "a an the and or of to in on at for with as is are was were be been being has have had "
-    "it its this that these those we our us they will would should must can so decide "
-    "chose chosen choose use used using instead because since decision pick picked opt "
-    "opted select selected propose"
+SUPPORT_SYSTEM = (
+    "You check claims extracted from a design document against the document. Each claim "
+    "cites quotes of it. A claim is supported when a careful reader would agree that the "
+    "quotes, read in the context of their sections and the rest of the document, state "
+    "the claim or directly imply it: summarising, paraphrasing and combining the quotes "
+    "is fine. A reason is supported when the document presents it as the problem, cost, "
+    "limit or motivation the outcome answers, even without the word because. An option "
+    "the document describes as the current or former approach, with its problems, beside "
+    "the new design that replaces it, is an option the document rejects. A claim is "
+    "unsupported when it adds what the document does not say: a reason, a cause, a "
+    "number, a name or a rejected option. Whether the document decided the outcome or "
+    "only proposes it is not checked here: judge only whether the document says what the "
+    "claim says.\n"
+    'Reply with one JSON object: {"claims": [{"id": ..., "why": <5 to 15 words>, '
+    '"supported": true|false}]}, one item per claim id.'
 )
-# Compared as Snowball stems, so `spilling` meets `spill`, `stored` meets `store`, and
-# every form of a filler word is one: `deciding`, `chooses`, `used`.
-_FILLER_STEMS = frozenset(snowball_stem_tokens(_FILLER_WORDS.split()))
-_WORD = re.compile(r"\w+")
+# Added to SUPPORT_SYSTEM when the extractor holds decisions from an earlier reading.
+STORED_NOTE = (
+    "\nThe stored decisions were recorded from an earlier reading of the document. For "
+    "each, still_stated is true when the document still says everything the stored "
+    "statement says, wording aside, and false when the document changed or no longer "
+    "says it; same_as is the number of the candidate (the number before the dot in "
+    'its claim ids) that records the same decision, or null. Add "stored": [{"id": '
+    '<stored id>, "why": <5 to 15 words>, "still_stated": true|false, "same_as": <number '
+    "or null>}] to the reply, one item per stored id."
+)
 
 
-def _content_words(text: str) -> set[str]:
-    return set(snowball_stem_tokens(_WORD.findall(text.lower()))) - _FILLER_STEMS
+def support_system(stored: bool) -> str:
+    """The support check's system prompt, with the stored decisions' part when the
+    extractor holds some."""
+    return SUPPORT_SYSTEM + (STORED_NOTE if stored else "")
 
 
-RESTATED = "reasoning only restates the outcome: it has no word the outcome lacks"
+def _claim_lines(i: int, cand: Candidate) -> list[dict[str, Any]]:
+    """Candidate `i`'s claims, each with its id and quotes: `<i>.o` for the outcome,
+    `<i>.r<j>` for a reason, `<i>.x<j>` for a rejected option."""
+    head = cand.outcome[:200]
+    # The stage is the read's to judge; the check reads what the claim says.
+    out = [{"id": f"{i}.o", "claim": f"The document says: {cand.outcome}", "quotes": cand.evidence}]
+    for j, r in enumerate(cand.reasons):
+        claim = f"A reason the document gives for '{head}': {r.text}"
+        out.append({"id": f"{i}.r{j}", "claim": claim, "quotes": list(r.evidence)})
+    for j, a in enumerate(cand.alternatives):
+        why = f", because {a.reason}" if a.reason else ""
+        claim = f"The document rejects, in favour of '{head}': {a.option}{why}"
+        out.append({"id": f"{i}.x{j}", "claim": claim, "quotes": list(a.evidence)})
+    return out
 
 
-def restates_outcome(cand: Candidate) -> bool:
-    """The reasoning adds nothing to the outcome: every word of it, case, punctuation,
-    plural and tense endings and the filler words aside, is a word of the outcome. Such
-    a span is the decision in the document's words, not the reason for it."""
-    return _content_words(cand.reasoning) <= _content_words(cand.outcome)
+def stored_statement(record: dict[str, Any]) -> str:
+    """A stored decision as the support check reads it: its scenario, outcome, reasons and
+    rejected options from the record, without the stage verb or a realized outcome, which
+    no design document states."""
+    scenario, outcome, reasoning = (
+        collapse_ws(record.get(k) or "") for k in ("scenario", "outcome", "reasoning")
+    )
+    stated = f"{outcome} because {reasoning}" if states_reason(record) else outcome
+    rejected = "; ".join(a.replace(REJECTED.rstrip(), " —") for a in alternatives(record))
+    parts = [scenario, stated, f"Rejected: {rejected}" if rejected else ""]
+    return ". ".join(p for p in parts if p)
 
 
-# A ban or an invariant: a constraint the text states may give no reason for it.
-_BAN_MARKER = re.compile(rf"\b(?:{_BAN_WORDS})\b", re.I)
+def support_prompt(body: str, cands: Sequence[Candidate], stored: Sequence[tuple[str, str]]) -> str:
+    """The support check's user prompt: the text the model read (`body`, as `user_prompt`
+    writes it), each candidate's claims, and the stored decisions as (key, statement)."""
+    claims = [line for i, c in enumerate(cands) for line in _claim_lines(i, c)]
+    parts = [body, "[candidates]", json.dumps(claims, ensure_ascii=False)]
+    if stored:
+        listed = [{"id": key, "statement": collapse_ws(s)} for key, s in stored]
+        parts += ["[stored decisions]", json.dumps(listed, ensure_ascii=False)]
+    return "\n\n".join(parts)
 
 
-def states_a_ban(cand: Candidate) -> bool:
-    """A constraint whose reasoning, the span that is stored, says only, no, never, must,
-    not, always, at most or at least. The model's constraint flag alone is not enough: it
-    marks plain descriptions as constraints too."""
-    return cand.is_constraint and bool(_BAN_MARKER.search(cand.reasoning))
+@dataclass(frozen=True)
+class Verdicts:
+    """The support check's reply: the claim ids it supports, and each stored decision's
+    (still stated, the candidate index that restates it or None)."""
+
+    supported: frozenset[str]
+    stored: dict[str, tuple[bool, int | None]]
 
 
-# decision.record's limit on an outcome: a ban stored as its own outcome must fit it.
-# not a setting: mirrors DecisionRecordInput.outcome's max_length, which a test pins
-OUTCOME_MAX_CHARS = 1000
+def parse_support(reply: str, asked: Collection[str]) -> Verdicts | None:
+    """The support check's reply; None when it is not the asked-for JSON. A claim the
+    reply leaves out is unsupported; a stored decision it leaves out, or answers with
+    anything but true or false, gets no verdict, and one whose id is not among the `asked`
+    keys is ignored."""
+    try:
+        data = json.loads(reply)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    supported = frozenset(
+        str(v.get("id"))
+        for v in _list(data.get("claims"))
+        if isinstance(v, dict) and v.get("supported") is True
+    )
+    stored: dict[str, tuple[bool, int | None]] = {}
+    for v in _list(data.get("stored")):
+        still = v.get("still_stated") if isinstance(v, dict) else None
+        if not isinstance(still, bool) or str(v.get("id")) not in asked:
+            continue
+        same = v.get("same_as")
+        index = int(same) if isinstance(same, (int, str)) and str(same).isdigit() else None
+        stored[str(v.get("id"))] = (still, index)
+    return Verdicts(supported, stored)
 
 
-def reasonless_ban(cand: Candidate) -> bool:
-    """A ban stated with no reason: its reasoning restates its outcome, or is its whole
-    quote (an outcome shorter than the sentence adds a word the reasoning lacks). One
-    too long to be an outcome is judged as any other candidate."""
-    if not states_a_ban(cand) or len(collapse_ws(cand.reasoning)) > OUTCOME_MAX_CHARS:
-        return False
-    return restates_outcome(cand) or collapse_ws(cand.reasoning) == collapse_ws(cand.quote)
+UNSUPPORTED = "the support check found the outcome not stated by its quotes"
 
 
-def without_reason(cand: Candidate) -> Candidate:
-    """A ban the text states with no reason: its outcome is its reasoning, the document's
-    span on one line, which the statement reads as no stated reason. A reasoning that is
-    a fragment of the ban (fewer words than the outcome) gives way to the quote when the
-    quote states the ban too: "no server retry setting" alone loses "client-side
-    retries only"."""
-    span = cand.reasoning
-    fragment = _content_words(cand.reasoning) < _content_words(cand.outcome)
-    quote_fits = len(collapse_ws(cand.quote)) <= OUTCOME_MAX_CHARS
-    if fragment and quote_fits and _BAN_MARKER.search(cand.quote):
-        span = cand.quote
-    return replace(cand, reasoning=span, outcome=collapse_ws(span))
+def supported(i: int, cand: Candidate, v: Verdicts) -> tuple[Candidate | None, list[str]]:
+    """Candidate `i` with only the claims the support check supports, or None when it
+    does not support the outcome; and what was left out."""
+    if f"{i}.o" not in v.supported:
+        return None, [UNSUPPORTED]
+    notes: list[str] = []
+    reasons = []
+    for j, r in enumerate(cand.reasons):
+        if f"{i}.r{j}" in v.supported:
+            reasons.append(r)
+        else:
+            notes.append(f"reason {r.text!r} left out: the support check found it not stated")
+    rejected = []
+    for j, a in enumerate(cand.alternatives):
+        if f"{i}.x{j}" in v.supported:
+            rejected.append(a)
+        else:
+            notes.append(
+                f"rejected option {a.option!r} left out: the support check found it not stated"
+            )
+    return replace(cand, reasons=reasons, alternatives=rejected), notes
 
 
 # A section that restates others: its quote is no decision, though its text stays in the
@@ -548,60 +640,6 @@ RECAP = "the quote is in a recap, summary or background section"
 def in_recap(section: str) -> bool:
     """A heading at any level of the breadcrumb names a recap, summary or background."""
     return bool(_RECAP_HEADING.search(section))
-
-
-# A sentence end, a blank line, or a line break before a list item. A single line break
-# alone does not end a sentence: hard-wrapped text keeps a negation on the next line.
-_SENTENCE_END = re.compile(
-    # "vs.", "e.g." and "i.e." end no sentence.
-    r"(?<!\bvs\.)(?<!\be\.g\.)(?<!\bi\.e\.)(?<=[.!?])\s+"
-    r"|\n\s*\n\s*|\n(?=[ \t]*(?:[-*+]|\d+[.)])\s)",
-    re.I,
-)
-_NEGATION = re.compile(rf"\b(?:{_NEGATION_WORDS})\b", re.I)
-
-
-def _sentences(text: str) -> list[tuple[int, int]]:
-    """The (start, end) of each sentence of `text`."""
-    out: list[tuple[int, int]] = []
-    start = 0
-    for m in _SENTENCE_END.finditer(text):
-        out.append((start, m.start()))
-        start = m.end()
-    out.append((start, len(text)))
-    return out
-
-
-def _states_as_chosen(option: str, reason: str, text: str) -> bool:
-    """One sentence of `text` (the candidate's quote) holds every content word of
-    `option` and no negation or contrast word, and is not the sentence giving the reason
-    it was rejected."""
-    words = _content_words(option)
-    if not words:
-        return False
-    # A reason passed the verbatim check, so it has words.
-    pattern = re.compile(r"\s+".join(map(re.escape, reason.split())), re.IGNORECASE)
-    reasons = [(m.start(), m.end()) for m in pattern.finditer(text)]
-    for start, end in _sentences(text):
-        if any(a < end and start < b for a, b in reasons):
-            continue
-        sentence = text[start:end]
-        if words <= _content_words(sentence) and not _NEGATION.search(sentence):
-            return True
-    return False
-
-
-def inverted_options(cand: Candidate) -> list[str]:
-    """The rejected options the candidate's own quote, the chosen design's span, states
-    as part of the choice ("...; sharding by tenant is deferred to v2" read as the
-    rejected "Defer sharding by tenant"): a model inverts them. Only the quote is read: a
-    document often names an option in one sentence and rejects it in the next. "v1
-    cannot evict it" still rejects "evict the largest job"."""
-    return [
-        option
-        for option, reason in cand.alternatives
-        if _states_as_chosen(option, reason, cand.quote)
-    ]
 
 
 @dataclass(frozen=True)

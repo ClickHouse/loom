@@ -3866,13 +3866,19 @@
           "default": 30,
           "minimum": 0,
           "type": "integer",
-          "description": "Decisions already recorded from a document that the prompt lists, so a re-run keeps their keys and wording; past this many, the rest may be read as new. 0 = none."
+          "description": "Decisions already recorded from a document that a re-run lists and judges against the text; one past this many is never flagged or retired. 0 = none."
         },
         "memory_decision_extract_restatement_top_k": {
           "default": 20,
           "minimum": 1,
           "type": "integer",
           "description": "Closest decision keys a candidate is checked against for a pinned or attested restatement under another key (cosine only); the fetch caps at 500 rows."
+        },
+        "memory_decision_extract_window_chars": {
+          "default": 24000,
+          "minimum": 500,
+          "type": "integer",
+          "description": "Characters one extraction read takes: a shorter document is read whole, a longer one in windows of whole sections. Sized so a dense window's reply fits the decision_extract cap."
         },
         "memory_durability_verifier_max_facts_per_call": {
           "default": 60,
