@@ -77,7 +77,7 @@ def _error_reasons(resp: httpx.Response) -> set[str]:
     return {r.lower() for r in reasons if r}
 
 
-def rate_limited(resp: httpx.Response) -> bool:
+def _rate_limited(resp: httpx.Response) -> bool:
     """A 429, or a 403 whose error reason is a rate limit rather than a refusal."""
     return resp.status_code == 429 or (
         resp.status_code == 403 and bool(_error_reasons(resp) & _RATE_LIMIT_REASONS)
@@ -87,7 +87,7 @@ def rate_limited(resp: httpx.Response) -> bool:
 def raise_for_status(resp: httpx.Response, what: str) -> None:
     """The error an answer of 400 or more stands for; nothing for a success."""
     status = resp.status_code
-    if rate_limited(resp):
+    if _rate_limited(resp):
         raise RateLimited(f"{what}: rate_limited", status=status)
     if status in (401, 403):
         raise CredentialRefused(f"{what}: http_{status}", status=status)
