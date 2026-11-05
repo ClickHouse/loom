@@ -176,6 +176,9 @@ export type RowOp = Extract<
   | "knowledge.source.sync_now"
 >;
 
+/** The fields of a `code.repos` row that `canCallOn` reads. */
+export type RepoRow = Pick<CodeRepoSummary, "org" | "namespace" | "my_role" | "my_status" | "classification">;
+
 /**
  * Whether the caller may call `op` on the namespace of one `code.repos` row, by the rule
  * `server/auth/authz.py::check_authorized` applies, from the token's claims and the
@@ -193,11 +196,7 @@ export type RowOp = Extract<
  * caps a claim, the restricted kill switch and grants under other alias spellings. The
  * server stays the authority.
  */
-export function canCallOn(
-  op: RowOp,
-  row: Pick<CodeRepoSummary, "org" | "namespace" | "my_role" | "my_status" | "classification">,
-  whoami: WhoAmI | null,
-): boolean {
+export function canCallOn(op: RowOp, row: RepoRow, whoami: WhoAmI | null): boolean {
   const bearer = isProxyMode() || !!storedToken();
   if (isAuthDisabled() && !bearer) return true;
   const min = RANK[OP_MIN_ROLE[op].min];
@@ -207,8 +206,7 @@ export function canCallOn(
   const namespaces = whoami.namespaces ?? [];
   const inOrg = whoami.org === "*" || whoami.org === row.org;
   const named = inOrg && namespaces.includes(row.namespace);
-  if (row.classification === "restricted")
-    return whoami.org === row.org && namespaces.includes(row.namespace) && claim >= min && grant >= min;
+  if (row.classification === "restricted") return whoami.org === row.org && named && claim >= min && grant >= min;
   const covered = inOrg && (named || namespaces.includes("*"));
   const capped = named && (row.my_status === "member" || row.my_status === "pending");
   return grant >= min || (covered && !capped && claim >= min);

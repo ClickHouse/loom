@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isAuthDisabled, isProxyMode, storedToken, type CodeRepoSummary, type WhoAmI } from "../api";
-import type { MyNamespaceEntry } from "../api";
-import { OP_MIN_ROLE, canCall, canCallCodeRepos, canCallOn } from "./canCall";
+import { isAuthDisabled, isProxyMode, storedToken, type MyNamespaceEntry, type WhoAmI } from "../api";
+import { OP_MIN_ROLE, type RepoRow, canCall, canCallCodeRepos, canCallOn } from "./canCall";
 import { must } from "../test/must";
 
 // The dashboard never issues a request the token cannot make; when the role is unknown it
@@ -62,8 +61,7 @@ describe("canCallOn: an op on one repository row's namespace", () => {
     vi.mocked(storedToken).mockReturnValue(null);
     vi.mocked(isProxyMode).mockReturnValue(false);
   });
-  type Row = Pick<CodeRepoSummary, "org" | "namespace" | "my_role" | "my_status" | "classification">;
-  const row = (over: Partial<Row> = {}): Row => ({ org: "dev", namespace: "code-x", my_role: "", ...over });
+  const row = (over: Partial<RepoRow> = {}): RepoRow => ({ org: "dev", namespace: "code-x", my_role: "", ...over });
   const token = (roles: string[], namespaces: string[], org = "dev"): WhoAmI => ({
     authenticated: true,
     subject: "u@example.com",
@@ -95,7 +93,7 @@ describe("canCallOn: an op on one repository row's namespace", () => {
   });
 
   it("a restricted namespace: the grant, and a token of its org naming it whose claim reaches", () => {
-    const r = (my_role: Row["my_role"]) => row({ classification: "restricted", my_role });
+    const r = (my_role: RepoRow["my_role"]) => row({ classification: "restricted", my_role });
     expect(canCallOn("knowledge.source.add", r("admin"), token(["ADMIN"], ["code-x"]))).toBe(true);
     expect(canCallOn("knowledge.source.add", r(""), token(["PLATFORM_ADMIN"], ["code-x"]))).toBe(false);
     expect(canCallOn("knowledge.source.add", r("admin"), token(["ADMIN"], ["*"]))).toBe(false);
