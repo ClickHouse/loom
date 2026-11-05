@@ -1187,6 +1187,17 @@ def test_known_children_the_store_refuses_are_kept_and_stay_known(world: _Store)
     assert detail["child_pages"] == {CHILD: PAGE, GRANDCHILD: PAGE}
 
 
+def test_a_known_child_s_rate_limited_403_ends_the_turn(world: _Store) -> None:
+    _with_children(world, CHILD, GRANDCHILD)
+    limited = {"error": {"errors": [{"reason": "rateLimitExceeded"}]}}
+    world.answers[f"/pages/{CHILD}"] = httpx.Response(403, json=limited)
+    _run(full=True)
+    detail = _detail(world)
+    assert detail["status"] == "rate_limited"
+    assert CHILD not in (detail.get("file_waits") or {})
+    assert _uri(world, CHILD) in world.docs and world.audits == []
+
+
 def test_a_refused_child_is_given_up_and_no_longer_blocks_retirement(world: _Store) -> None:
     _with_children(world, CHILD, GRANDCHILD)
     world.answers[f"/pages/{CHILD}"] = httpx.Response(403)

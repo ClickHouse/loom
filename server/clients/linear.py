@@ -14,7 +14,9 @@ tracker's own not-found error `NotFound` (an answer that merely lacks the object
 a `LinearError`, never evidence of absence), an answer over the caller's size bound
 `TooLarge`, and any other failure `LinearError`. An answer with any GraphQL error
 raises, so a listing is never taken from a partial answer. Nothing here retries: the
-sync worker's next pass is the retry.
+sync worker's next pass is the retry. The errors are this client's own, not those of
+`server.clients._vendor`: they carry the GraphQL error's type, which says more than
+the status.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from typing import Any
 import httpx
 
 from server.clients._http import get_client
+from server.clients._vendor import read_capped
 
 _GRAPHQL_URL = "https://api.linear.app/graphql"
 # Documents per listing page: the API's own default page size.
@@ -173,13 +176,11 @@ async def _query(
             headers={"Authorization": api_key, "Content-Type": "application/json"},
             json={"query": query, "variables": variables},
         ) as resp:
-            raw = bytearray()
-            async for piece in resp.aiter_bytes():
-                raw.extend(piece)
-                if len(raw) > max_bytes:
-                    raise TooLarge(what, "too_large")
+            raw = await read_capped(resp, max_bytes)
     except httpx.RequestError as e:
         raise LinearError(what, "unreachable") from e
+    if raw is None:
+        raise TooLarge(what, "too_large")
     try:
         body = json.loads(raw)
     except ValueError:

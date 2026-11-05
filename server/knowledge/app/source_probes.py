@@ -66,7 +66,7 @@ async def _probe_gdrive(config: dict[str, Any], credential: str) -> Probe:
         raise CredentialRefused(str(e)) from None
     except gdrive.NotFound as e:
         raise SourceUnreachable(f"{e}; share the folder with the service account") from None
-    except gdrive.DriveError as e:
+    except gdrive.VendorError as e:
         raise SourceUnreachable(str(e)) from None
     # The listing is ordered most recently changed first.
     titles = [str(f.get("name") or "") for f in found[:SAMPLE_TITLES]]
@@ -137,7 +137,7 @@ async def _probe_notion(config: dict[str, Any], credential: str) -> Probe:
         raise CredentialRefused(str(e)) from None
     except notion.NotFound as e:
         raise SourceUnreachable(f"{e}; share it with the integration") from None
-    except notion.NotionError as e:
+    except notion.VendorError as e:
         raise SourceUnreachable(str(e)) from None
     # A listed page may also be a listed database's.
     found = list({str(p.get("id")): p for p in found}.values())
@@ -155,7 +155,7 @@ async def _probe_recording(config: dict[str, Any], credential: str) -> Probe:
         found, lost = await source_sync_recording.list_recordings(session, config["ids"])
     except recording.CredentialRefused as e:
         raise CredentialRefused(str(e)) from None
-    except recording.RecordingError as e:
+    except recording.VendorError as e:
         raise SourceUnreachable(str(e)) from None
     if lost:
         raise SourceUnreachable(f"{lost[0]}; check the id and that the account can see it")

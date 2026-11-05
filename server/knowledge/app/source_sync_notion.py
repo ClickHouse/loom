@@ -69,7 +69,7 @@ def _now() -> datetime:
 class _TurnStop(Exception):
     """A rate limit or a refused token while listing: the turn's, not one page's."""
 
-    def __init__(self, error: notion.NotionError) -> None:
+    def __init__(self, error: notion.VendorError) -> None:
         super().__init__(str(error))
         self.error = error
 
@@ -204,7 +204,7 @@ def _item(page: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _ends_turn(e: notion.NotionError) -> bool:
+def _ends_turn(e: notion.VendorError) -> bool:
     """A rate limit or a refused token: the turn's, not one page's."""
     return isinstance(e, notion.RateLimited) or e.status == 401
 
@@ -213,7 +213,7 @@ def _ends_turn(e: notion.NotionError) -> bool:
 _CHILD_REFUSED = "child_http_403"
 
 
-def _child_refused(t: _Turn, child_id: str, e: notion.NotionError) -> None:
+def _child_refused(t: _Turn, child_id: str, e: notion.VendorError) -> None:
     """A known child the store refuses (403): a refused permission says nothing of
     whether the page still exists, so the child stays known and its document is kept.
     It waits like a file's trouble, keyed by its stored revision: the turn fails for
@@ -232,14 +232,14 @@ def _read_again(t: _Turn, child_id: str) -> None:
         del t.result.waits[child_id]
 
 
-def _fail_turn(result: sync.TurnResult, e: notion.NotionError) -> None:
+def _fail_turn(result: sync.TurnResult, e: notion.VendorError) -> None:
     if isinstance(e, notion.RateLimited):
         result.fail("rate_limited", "rate_limited")
     else:
         result.fail("credential_invalid", sync.client_error(e))
 
 
-def _container_failed(result: sync.TurnResult, e: notion.NotionError) -> None:
+def _container_failed(result: sync.TurnResult, e: notion.VendorError) -> None:
     """A listed page, database or data source, or a known child, that could not be
     read: the turn fails and retires nothing, but goes on with the others. A rate
     limit or a 401 stops it."""
@@ -257,7 +257,7 @@ async def _list(t: _Turn, edited_after: str) -> None:
     for page_id in config.get("page_ids") or []:
         try:
             page = await notion.page(t.token, page_id)
-        except notion.NotionError as e:
+        except notion.VendorError as e:
             _container_failed(t.result, e)
             continue
         if not page.get("in_trash"):
@@ -265,7 +265,7 @@ async def _list(t: _Turn, edited_after: str) -> None:
     for database_id in config.get("database_ids") or []:
         try:
             db = await notion.database(t.token, database_id)
-        except notion.NotionError as e:
+        except notion.VendorError as e:
             _container_failed(t.result, e)
             continue
         if db.get("in_trash"):
@@ -277,7 +277,7 @@ async def _list(t: _Turn, edited_after: str) -> None:
                 found, whole = await notion.query_pages(
                     t.token, data_source_id, edited_after=edited_after
                 )
-            except notion.NotionError as e:
+            except notion.VendorError as e:
                 _container_failed(t.result, e)
                 continue
             for page in found:
@@ -293,8 +293,9 @@ async def _list(t: _Turn, edited_after: str) -> None:
         except notion.NotFound:
             t.absent.add(child_id)  # a full turn's lookup decides
             continue
-        except notion.NotionError as e:
-            if e.status == 403:
+        except notion.VendorError as e:
+            # A 403 that is a rate limit ends the turn (`_container_failed`).
+            if isinstance(e, notion.CredentialRefused) and e.status == 403:
                 _child_refused(t, child_id, e)
             else:
                 _container_failed(t.result, e)
@@ -352,7 +353,7 @@ async def _lookup(t: _Turn, page_id: str) -> bool | None:
     limit or a 401 is the turn's, and None stops the retiring."""
     try:
         page = await notion.page(t.token, page_id)
-    except notion.NotionError as e:
+    except notion.VendorError as e:
         if _ends_turn(e):
             _fail_turn(t.result, e)
             return None
@@ -369,7 +370,7 @@ async def _lookup(t: _Turn, page_id: str) -> bool | None:
     if item["parent_block"] and not holder:
         try:
             walked = await _block_page(t, item["parent_block"])
-        except notion.NotionError as e:
+        except notion.VendorError as e:
             _fail_turn(t.result, e)  # a rate limit or a 401
             return None
         if walked is None:
@@ -398,7 +399,7 @@ async def _block_page(t: _Turn, block_id: str) -> str | None:
             block = await notion.block(t.token, block_id)
         except notion.NotFound:
             return ""
-        except notion.NotionError as e:
+        except notion.VendorError as e:
             if _ends_turn(e):
                 raise
             return None
@@ -454,7 +455,7 @@ async def _fetch_and_write(t: _Turn, f: dict[str, Any], uri: str) -> str:
         content, skipped = convert.page_markdown(blocks)
     except notion.TooLarge:
         return sync.give_up(f, result, "too_large")
-    except notion.NotionError as e:
+    except notion.VendorError as e:
         if _ends_turn(e):
             _fail_turn(result, e)
             return "stop"
@@ -554,7 +555,7 @@ async def _add_new_children(t: _Turn, children: list[str]) -> None:
     for child in children:
         try:
             page = await notion.page(t.token, child)
-        except notion.NotionError as e:
+        except notion.VendorError as e:
             if _ends_turn(e):
                 _fail_turn(t.result, e)
                 return

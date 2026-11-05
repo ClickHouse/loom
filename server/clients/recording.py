@@ -15,11 +15,7 @@ instances are listed, and each instance's recording files read for its
 Both token exchanges are refused (`CredentialRefused`) when the answer's `scope`
 holds anything beyond reads (for `zoom`, every scope `<resource>:read...`) or names
 no scope. Every host is a constant here, and a transcript download goes only to the
-store's own https hosts. Errors carry the HTTP status, never the store's response body,
-which can name meetings or people. A rate limit raises `RateLimited`, a refused
-credential `CredentialRefused`, an id the account cannot see `NotFound`, a
-transcript over the caller's size bound `TooLarge`, and any other failure
-`RecordingError`. Nothing here retries: the sync worker's next pass is the retry.
+store's own https hosts. Errors are the shared ones of `server.clients._vendor`.
 """
 
 from __future__ import annotations
@@ -32,10 +28,17 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-import httpx
-
 from server.clients._http import get_client
-from server.clients.gdrive import rate_limited
+from server.clients._vendor import (
+    CredentialRefused,
+    NotFound,
+    RateLimited,
+    TooLarge,
+    VendorError,
+    bearer_get,
+    exchange_token,
+    get_capped,
+)
 
 _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 _MEET_URL = "https://meet.googleapis.com/v2"
@@ -53,36 +56,6 @@ _UUID_RE = re.compile(r"[A-Za-z0-9+/=_-]{1,128}")
 MEET_SCOPE = "https://www.googleapis.com/auth/meetings.space.readonly"
 
 
-class RecordingError(RuntimeError):
-    """`status` is the HTTP status the store answered, 0 when it gave none (a
-    network error, a body that is not JSON, a bound passed here)."""
-
-    def __init__(self, message: str, *, status: int = 0) -> None:
-        super().__init__(message)
-        self.status = status
-
-    @property
-    def refused(self) -> bool:
-        """The store refused this request (a 4xx), as opposed to failing to answer."""
-        return 400 <= self.status < 500
-
-
-class RateLimited(RecordingError):
-    pass
-
-
-class CredentialRefused(RecordingError):
-    pass
-
-
-class NotFound(RecordingError):
-    pass
-
-
-class TooLarge(RecordingError):
-    pass
-
-
 def _credential(credential: str, fields: tuple[str, ...], what: str) -> dict[str, str]:
     """The string `fields` of a JSON credential; CredentialRefused when one is missing."""
     try:
@@ -97,27 +70,6 @@ def _credential(credential: str, fields: tuple[str, ...], what: str) -> dict[str
     return {f: str(v) for f, v in values.items()}
 
 
-def _raise_for(resp: httpx.Response, what: str) -> None:
-    if rate_limited(resp):
-        raise RateLimited(f"{what}: rate_limited", status=resp.status_code)
-    if resp.status_code in (401, 403):
-        raise CredentialRefused(f"{what}: http_{resp.status_code}", status=resp.status_code)
-    if resp.status_code == 404:
-        raise NotFound(f"{what}: http_404", status=404)
-    if resp.status_code >= 400:
-        raise RecordingError(f"{what}: http_{resp.status_code}", status=resp.status_code)
-
-
-def _json(resp: httpx.Response, what: str) -> dict[str, Any]:
-    try:
-        data = resp.json()
-    except ValueError:
-        raise RecordingError(f"{what}: body is not JSON") from None
-    if not isinstance(data, dict):
-        raise RecordingError(f"{what}: body is not an object")
-    return data
-
-
 def _read_only_meet(scopes: list[str]) -> bool:
     return set(scopes) == {MEET_SCOPE}
 
@@ -128,38 +80,13 @@ def _read_only_zoom(scopes: list[str]) -> bool:
 
 
 async def _token(url: str, what: str, read_only: Callable[[list[str]], bool], **kw: Any) -> str:
-    try:
-        resp = await get_client().post(url, **kw)
-    except httpx.RequestError as e:
-        raise RecordingError(f"{what}: {type(e).__name__}") from e
-    # A rate limit first; otherwise a token endpoint answers an unknown or revoked
-    # credential with 400, 401 or 403.
-    if rate_limited(resp):
-        raise RateLimited(f"{what}: rate_limited", status=resp.status_code)
-    if resp.status_code in (400, 401, 403):
-        raise CredentialRefused(f"{what}: http_{resp.status_code}", status=resp.status_code)
-    _raise_for(resp, what)
-    answer = _json(resp, what)
-    token = answer.get("access_token")
-    if not isinstance(token, str) or not token:
-        raise RecordingError(f"{what}: no access_token in the answer")
+    answer = await exchange_token(get_client(), url, what, **kw)
     # Fail closed: a credential that can change the store, or that does not say what
     # it can do, is refused, so a stored credential never holds more than reads.
     scope = answer.get("scope")
     if not isinstance(scope, str) or not read_only(scope.split()):
         raise CredentialRefused(f"{what}: the credential grants more than read-only scopes")
-    return token
-
-
-async def _get(url: str, token: str, params: dict[str, Any], what: str) -> dict[str, Any]:
-    try:
-        resp = await get_client().get(
-            url, headers={"Authorization": f"Bearer {token}"}, params=params
-        )
-    except httpx.RequestError as e:
-        raise RecordingError(f"{what}: {type(e).__name__}") from e
-    _raise_for(resp, what)
-    return _json(resp, what)
+    return str(answer["access_token"])
 
 
 async def _pages(
@@ -168,7 +95,7 @@ async def _pages(
     """Every item under `key` across the pages of a listing; a failing page raises."""
     items: list[dict[str, Any]] = []
     while True:
-        data = await _get(url, token, params, what)
+        data = await bearer_get(get_client(), url, token, what, params=params)
         items.extend(i for i in data.get(key) or [] if isinstance(i, dict))
         page_token = data.get("nextPageToken")
         if not isinstance(page_token, str) or not page_token:
@@ -196,7 +123,9 @@ async def meet_token(credential: str) -> str:
 async def meet_space(token: str, space_id: str) -> dict[str, Any]:
     """The space (its canonical `name`, `meetingUri`); NotFound when the user cannot
     see it. `space_id` was checked by the caller (`parse_config`)."""
-    return await _get(f"{_MEET_URL}/spaces/{space_id}", token, {}, f"space {space_id}")
+    return await bearer_get(
+        get_client(), f"{_MEET_URL}/spaces/{space_id}", token, f"space {space_id}"
+    )
 
 
 async def meet_records(
@@ -258,7 +187,7 @@ async def meet_entries(token: str, transcript: str, *, max_bytes: int) -> list[d
     entries: list[dict[str, Any]] = []
     size = 0
     while True:
-        data = await _get(url, token, params, transcript)
+        data = await bearer_get(get_client(), url, token, transcript, params=params)
         for entry in data.get("transcriptEntries") or []:
             if isinstance(entry, dict):
                 entries.append(entry)
@@ -293,8 +222,11 @@ async def zoom_token(credential: str) -> str:
 async def zoom_instances(token: str, meeting_id: str) -> list[dict[str, Any]]:
     """A meeting's ended instances (`uuid`, `start_time`); NotFound when the account
     has no such meeting. `meeting_id` was checked by the caller (`parse_config`)."""
-    data = await _get(
-        f"{_ZOOM_URL}/past_meetings/{meeting_id}/instances", token, {}, f"meeting {meeting_id}"
+    data = await bearer_get(
+        get_client(),
+        f"{_ZOOM_URL}/past_meetings/{meeting_id}/instances",
+        token,
+        f"meeting {meeting_id}",
     )
     return [m for m in data.get("meetings") or [] if isinstance(m, dict)]
 
@@ -316,8 +248,8 @@ async def zoom_recording(token: str, uuid: str) -> dict[str, Any] | None:
     """One meeting instance's recording (`share_url`, `recording_files`), or None
     when the instance was not recorded."""
     try:
-        return await _get(
-            f"{_ZOOM_URL}/meetings/{uuid_path(uuid)}/recordings", token, {}, "recording"
+        return await bearer_get(
+            get_client(), f"{_ZOOM_URL}/meetings/{uuid_path(uuid)}/recordings", token, "recording"
         )
     except NotFound:
         return None
@@ -335,21 +267,7 @@ async def zoom_download(token: str, url: str, *, max_bytes: int) -> str:
     """A transcript file's text, read up to `max_bytes`; TooLarge past it."""
     if not zoom_download_allowed(url):
         raise ValueError("not a download link of the store")
-    what = "transcript download"
-    try:
-        async with get_client().stream(
-            "GET", url, headers={"Authorization": f"Bearer {token}"}
-        ) as resp:
-            if resp.status_code >= 400:
-                await resp.aread()  # the error body tells a rate limit from a refusal
-                _raise_for(resp, what)
-            body = bytearray()
-            async for piece in resp.aiter_bytes():
-                body.extend(piece)
-                if len(body) > max_bytes:
-                    raise TooLarge(f"{what}: over {max_bytes} bytes")
-    except httpx.RequestError as e:
-        raise RecordingError(f"{what}: {type(e).__name__}") from e
+    body = await get_capped(get_client(), url, token, "transcript download", max_bytes=max_bytes)
     return body.decode("utf-8", errors="replace")
 
 
@@ -358,8 +276,8 @@ __all__ = [
     "CredentialRefused",
     "NotFound",
     "RateLimited",
-    "RecordingError",
     "TooLarge",
+    "VendorError",
     "meet_entries",
     "meet_participants",
     "meet_records",

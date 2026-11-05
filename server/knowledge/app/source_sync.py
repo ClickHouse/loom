@@ -428,7 +428,7 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     except gdrive.CredentialRefused as e:
         turn.fail("credential_invalid", client_error(e))
         return turn
-    except gdrive.DriveError as e:
+    except gdrive.VendorError as e:
         turn.fail("failed", client_error(e))
         return turn
     if turn.full and not await _folders_visible(token, folders, turn):
@@ -528,7 +528,7 @@ async def _folders_visible(token: str, folders: list[str], turn: TurnResult) -> 
         except gdrive.RateLimited:
             turn.fail("rate_limited", "rate_limited")
             return False
-        except gdrive.DriveError as e:
+        except gdrive.VendorError as e:
             if e.status == 401:
                 turn.fail("credential_invalid", client_error(e))
                 return False
@@ -581,7 +581,7 @@ async def _file_gone(token: str, file_id: str, folders: set[str], turn: TurnResu
     except gdrive.RateLimited:
         turn.fail("rate_limited", "rate_limited")
         return None
-    except gdrive.DriveError as e:
+    except gdrive.VendorError as e:
         if e.status == 401:
             turn.fail("credential_invalid", client_error(e))
             return None
@@ -716,7 +716,7 @@ async def _fetch_and_write(
         return "stop"
     except gdrive.TooLarge:
         return give_up(f, turn, "too_large")
-    except gdrive.DriveError as e:
+    except gdrive.VendorError as e:
         if e.status == 401:
             turn.fail("credential_invalid", client_error(e))
             return "stop"
