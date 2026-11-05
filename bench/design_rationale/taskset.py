@@ -13,6 +13,11 @@ from pathlib import Path
 from typing import Any
 
 KINDS = ("A", "B", "C", "D")
+# The arms served extracted rows, the arms whose loom_search answer an agent reads for its
+# memory section, and the arms whose knowledge hits it reads.
+EXTRACTED_ARMS = (4, 6)
+MEMORY_ARMS = (3, 4, 5, 6)
+KNOWLEDGE_ARMS = (2, 6)
 # Each detector type and the keys it needs (`path_glob` is optional).
 DETECTOR_TYPES = {
     "file_touched": ("paths",),

@@ -21,7 +21,10 @@ from typing import Any
 from bench.bootstrap import paired_bootstrap
 from bench.design_rationale.llm import cost_usd, price, read_ledger
 from bench.design_rationale.taskset import (
+    EXTRACTED_ARMS,
     KINDS,
+    KNOWLEDGE_ARMS,
+    MEMORY_ARMS,
     TaskSet,
     parse_key,
     parse_sample,
@@ -316,7 +319,7 @@ def compare(
     for treat, ref in COMPARISONS:
         if treat not in tasks_by_arm or ref not in tasks_by_arm:
             continue
-        if treat in (4, 6) and ref == 3 and not arm4_files:
+        if treat in EXTRACTED_ARMS and ref == 3 and not arm4_files:
             continue
         for kind, metrics in HEADLINE.items():
             for metric in metrics:
@@ -387,18 +390,20 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
     out: dict[str, Any] = {}
     tasks = [t for _, t in ts.all_tasks()]
     arm4_files = (state.get("flags") or {}).get("arm4_files", True)
-    for arm in (3, 4, 5, 6):
+    for arm in MEMORY_ARMS:
         rows = [
             (t, surf[surface_key(t["id"], arm)]) for t in tasks if surface_key(t["id"], arm) in surf
         ]
         if not rows:
             continue
         for surface in ("for_file_keys", "search_keys"):
-            if surface == "for_file_keys" and (arm == 5 or (arm in (4, 6) and not arm4_files)):
+            if surface == "for_file_keys" and (
+                arm == 5 or (arm in EXTRACTED_ARMS and not arm4_files)
+            ):
                 continue  # this arm reads no pre-edit block
             # Tasks with gold rows only: an abstention task has nothing to serve. Arms 4
             # and 6 serve rows with keys of their own, so any row they served counts.
-            if arm in (4, 6):
+            if arm in EXTRACTED_ARMS:
                 hits = [bool(r.get(surface)) for t, r in rows if t.get("gold_rows")]
             else:
                 hits = [
@@ -407,7 +412,7 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
                     if t.get("gold_rows")
                 ]
             out[f"arm{arm}_{surface.removesuffix('_keys')}_served"] = f"{sum(hits)}/{len(hits)}"
-    for arm in (2, 6):
+    for arm in KNOWLEDGE_ARMS:
         # The tasks whose knowledge hits include a section of the task's own document
         # (any version of it: a revision shares the source_uri).
         rows = [

@@ -39,7 +39,9 @@ from bench.design_rationale.loom import (
 )
 from bench.design_rationale.score import planning_mde
 from bench.design_rationale.taskset import (
+    EXTRACTED_ARMS,
     KINDS,
+    MEMORY_ARMS,
     Document,
     TaskSet,
     answer_key,
@@ -59,12 +61,9 @@ ARM_NAMES = {
     "loom_search",
 }
 # The namespace each arm's rows or documents are read from. The extract namespace holds
-# the documents too, so arm 6's one search returns both its rows and its knowledge hits.
+# the documents too (the run upserts them there, or a sync wrote them beside its rows),
+# so arm 6's one search returns both its rows and its knowledge hits.
 ARM_HOME = {2: "kb", 3: "gold", 4: "extract", 5: "gold", 6: "extract"}
-# The arms served extracted rows, and the arms whose loom_search answer an agent reads
-# for its memory section.
-EXTRACTED_ARMS = (4, 6)
-MEMORY_ARMS = (3, 4, 5, 6)
 # Planning estimates for a dry run, before any surface is read.
 SEARCH_SECTION_TOKENS = 800  # a loom_search section with the reading rule
 CITED_TEXT_TOKENS = 1200  # the cited source text a judge reads

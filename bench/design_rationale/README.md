@@ -32,7 +32,9 @@ no code index, and an arm's org must not hold one another arm reads. Without
 only, and arm 5 is added so that they are compared with gold rows served the same way
 (the report then leaves out arms 4 and 6 against arm 3). With `--arm4-namespace` the
 sync's rows keep the files it linked, and arms 4 and 6 read the pre-edit block and are
-compared with arm 3.
+compared with arm 3; arm 6's knowledge hits are then the documents the sync wrote to
+that namespace, and `arm6_knowledge_served` counts the tasks whose own document's
+`source_uri` is among them.
 
 Each role's namespace lives in an org of its own: `<org>-<prefix>-<role>`, the prefix
 `dr-<hex>` fixed per run, since a search and the cost readback read a whole org. The
@@ -72,10 +74,10 @@ run, whose erasure is refused, rerun the same command with the admin token, or r
 
 The server is a Loom server (and its ClickHouse) you started for this run, never one
 found listening, with real providers and the server's environment in the shell: arms 4
-and 6 run `loom decisions extract` in a child process, on the model those settings name. The
-dry run prints the calls, tokens and spend, typical and at every output cap. Each task
-is answered K times per arm, each answer judged in both orders and twice per order; arms
-are compared paired per task with a bootstrap over documents, and each comparison
+and 6 run `loom decisions extract` in a child process, on the model those settings name.
+The dry run prints the calls, tokens and spend, typical and at every output cap. Each
+task is answered K times per arm, each answer judged in both orders and twice per order;
+arms are compared paired per task with a bootstrap over documents, and each comparison
 reports its minimum detectable effect.
 
 ## Task kinds

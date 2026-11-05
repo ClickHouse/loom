@@ -48,7 +48,7 @@ from pathlib import Path
 from bench.design_rationale import run as runner
 from bench.design_rationale import score as scorer
 from bench.design_rationale.llm import Ledger, Model, ProviderComplete, Reply, price
-from bench.design_rationale.taskset import TaskSetError, load
+from bench.design_rationale.taskset import EXTRACTED_ARMS, TaskSetError, load
 
 
 def _arms(text: str) -> list[int]:
@@ -241,7 +241,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     # Rows a sync wrote carry the files it linked; rows this run extracts get theirs
     # from the code index, or have none.
     cfg.arm4_files = bool(a.code_index or a.arm4_namespace)
-    extracted = sorted(set(runner.EXTRACTED_ARMS) & set(cfg.arms))
+    extracted = sorted(set(EXTRACTED_ARMS) & set(cfg.arms))
     if extracted and not cfg.arm4_files:
         names = " and ".join(f"arm {n}" for n in extracted)
         print(f"{names}: no code index, the rows reach loom_search only, no pre-edit block")
