@@ -14,6 +14,7 @@ import pytest
 from server.knowledge.app import writes as kh
 from server.knowledge.app.writes import _content_sha256
 from server.knowledge.store import chunks as knowledge_repo
+from server.knowledge.store import datasets as datasets_repo
 from server.knowledge.store import documents as documents_repo
 from server.knowledge.store.documents import DocumentRow
 from tests.unit.schema_ddl import column_names
@@ -157,8 +158,6 @@ def test_delete_tombstones_carry_every_column(monkeypatch) -> None:
     monkeypatch.setattr(knowledge_repo, "mark_docs_superseded", _noop)
     monkeypatch.setattr(documents_repo, "get_one", _get_one)
     monkeypatch.setattr(documents_repo, "get_many_by_uris", _get_many)
-    from server.knowledge.store import datasets as datasets_repo
-
     retired: list[dict[str, int]] = []
 
     async def _forget(org, ns, through, **kw):
