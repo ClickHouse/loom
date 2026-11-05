@@ -146,9 +146,9 @@ async def _tail(stream: asyncio.StreamReader) -> bytes:
 async def run_child(config: Config, data: bytes, request: dict[str, object]) -> bytes:
     """The artifact JSON of one extraction, or _Refused. The child runs in `/`
     with no environment beyond what Python needs to find this package and the
-    native libraries' settings (`_NATIVE_ENV`), no
-    directory of its own on `sys.path` (`-P`), and only its limits on its
-    command line; the request and the bytes go on stdin."""
+    native libraries' settings (`_NATIVE_ENV`), no directory of its own on
+    `sys.path` (`-P`), and only its limits on its command line; the request
+    and the bytes go on stdin."""
     limits = {
         "memory_bytes": config.memory_mb * 1024 * 1024,
         "cpu_s": max(1, int(config.timeout_s)),

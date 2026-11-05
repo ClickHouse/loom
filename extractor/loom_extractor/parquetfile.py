@@ -71,15 +71,15 @@ def _plain(value: Decimal) -> str:
     return format(value, "f")
 
 
-def _shortest32(value: float) -> float:
-    """A float32 value as its shortest decimal: `0.1`, not the double it widens
-    to (`0.10000000149011612`)."""
+def _shortest(value: float, code: str) -> float:
+    """A float32 (`code` "f") or float16 ("e") value as its shortest decimal:
+    `0.1`, not the double it widens to (`0.10000000149011612`)."""
     for digits in range(1, 9):
         short = float(f"{value:.{digits}g}")
         try:
-            if struct.unpack("f", struct.pack("f", short))[0] == value:
+            if struct.unpack(code, struct.pack(code, short))[0] == value:
                 return short
-        except OverflowError:  # rounded past float32's range (its maximum, rounded up)
+        except OverflowError:  # rounded past the type's range (its maximum, rounded up)
             continue
     return float(f"{value:.9g}")  # nine significant digits round-trip every float32
 
@@ -117,10 +117,10 @@ class _Reader:
             return EMPTY
         if kind == "nested":
             value, kind = json.dumps(_json(value), ensure_ascii=False), "string"
-        if kind == "float32":
+        if kind in ("float32", "float16"):
             if not math.isfinite(value):
                 return Cell(str(value), "string")
-            return Cell(_shortest32(value), "number")
+            return Cell(_shortest(value, "f" if kind == "float32" else "e"), "number")
         if kind == "number":
             if isinstance(value, Decimal):  # an Arrow decimal is finite
                 return Cell(_plain(value), "number")
@@ -143,7 +143,7 @@ class _Reader:
 
 
 def _kind(arrow_type: Any) -> str:
-    """What a column of `arrow_type` holds: number, float32, bool, date,
+    """What a column of `arrow_type` holds: number, float32, float16, bool, date,
     datetime, time, duration, string, bytes or nested."""
     import pyarrow as pa
 
@@ -152,8 +152,10 @@ def _kind(arrow_type: Any) -> str:
         t = t.value_type
     if pa.types.is_boolean(t):
         return "bool"
-    if pa.types.is_float32(t) or pa.types.is_float16(t):
+    if pa.types.is_float32(t):
         return "float32"
+    if pa.types.is_float16(t):
+        return "float16"
     if pa.types.is_integer(t) or pa.types.is_floating(t) or pa.types.is_decimal(t):
         return "number"
     if pa.types.is_date(t):
@@ -259,8 +261,9 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     rows = Rows([Cell(f.name, "string") if f.name.strip() else EMPTY for f in kept], header_row=0)
     budget.collect([c for c in rows.header if c.text])  # held, as a sheet's is
     reader = _Reader()
-    # No more cells to a batch than the budget holds, however wide the file.
-    batch_rows = max(1, min(_BATCH_ROWS, tabular.MAX_CELLS // max(1, len(fields))))
+    # No more values to a batch than the budget holds cells, however wide the
+    # file: its leaf columns, a struct's fields each one, are what a batch decodes.
+    batch_rows = max(1, min(_BATCH_ROWS, tabular.MAX_CELLS // max(1, meta.num_columns)))
     groups = [meta.row_group(g).num_rows for g in range(meta.num_row_groups)]
     number = blank = 0
     for g, group_rows in enumerate(groups):
@@ -276,20 +279,26 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
             for batch in pf.iter_batches(batch_size=batch_rows, row_groups=[g], use_threads=False):
                 columns = [_values(batch.column(j), targets[j], reader) for j in range(len(kept))]
                 for i in range(batch.num_rows):
+                    if rows.more:  # past the budget: counted below, its values not read
+                        break
                     number += 1
-                    typed = (reader.cell(columns[j][i], kinds[j]) for j in range(len(kept)))
-                    cells = {j: c for j, c in enumerate(typed) if c.kind != "empty"}
-                    if cells:
-                        rows.add(number, cells, budget)
-                    else:
+                    values = [columns[j][i] for j in range(len(kept))]
+                    if all(v is None for v in values):
                         blank += 1  # a row of nothing is no row, as a blank CSV record
+                        continue
+                    # A row whose values were all left out (bytes) is still a row.
+                    typed = (reader.cell(values[j], kinds[j]) for j in range(len(kept)))
+                    rows.add(
+                        number, {j: c for j, c in enumerate(typed) if c.kind != "empty"}, budget
+                    )
                 if rows.more:  # the budget ran out in this batch: the rest is counted
                     rest = group_rows - (number - start)
                     rows.count(number + 1, rest)
                     number += rest
                     break
-        except (pa.ArrowException, OSError, ValueError) as e:
-            # The group's rows from the first not decoded, and every group after.
+        except (pa.ArrowException, OSError, ValueError, MemoryError) as e:
+            # The group's rows from the first not decoded (or not held: a list
+            # value past the child's memory), and every group after.
             fail(budget, failed, f"{name} rows {number + 1}-", f"not decoded: {e}"[:200])
             break
     if reader.left_out:

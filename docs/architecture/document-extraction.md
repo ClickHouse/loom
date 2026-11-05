@@ -278,20 +278,21 @@ shared strings or styles that cannot be read to their end keep what was read, an
 
 **Parquet.** pyarrow reads the file from the bytes in memory, with no file system, no threads and its system memory
 pool: its columns from the schema (the first 16,384, kept by position since a name may repeat; the rest are a failed
-unit, `<name> columns`) and its rows a row group at a time, in batches of at most 1,024 rows and no wider than the cell
-budget. The names are no row of the file, so the table has no header row (`header_rows` 0) and its rows count from 1.
-How a column is read is decided once from its type, so every batch of it reads alike. An integer is a number, as is a
-decimal and an integer past signed 64 bits (a `uint64`), each written as its exact digits, since a JSON number reads
-back as a double (the artifact and its passages keep every digit; a dataset holds a number to nine decimal places,
-`Decimal128(9)`, so a `decimal(38,18)` rounds there); a float is a number, a top-level `float32` or `float16` column's
-its shortest decimal, NaN or an infinity its text; a bool, a date, a timestamp (its zone kept, none when the column has
-none), a time of day and a duration read as the other readers write them, a nanosecond unit to the microsecond (inside a
-list, struct or map too); text is text, a UUID its text, and a list, struct or map is its JSON (bytes in it as base64).
-Bytes are no text, and they, a value over 1 MiB and a batch's values of a column Python cannot hold (a date past year 9999) are left out and counted (`<name> values`). A row of nulls is no row. Pages decode one at a time, so a row group's
-size does not decide what is held; the rows past the table budget are counted from the metadata, never decoded; a row
-group whose pages do not decode fails the rows from there (`<name> rows N-`). The child's limits bound one decode, and
-its environment holds the native libraries to one thread and the system allocator, which the address-space limit allows.
-A build without pyarrow does not declare Parquet.
+unit, `<name> columns`) and its rows a row group at a time, in batches of at most 1,024 rows and no more values than the
+cell budget holds, counted by leaf columns (a struct's fields each one). The names are no row of the file, so the table
+has no header row (`header_rows` 0) and its rows count from 1. How a column is read is decided once from its type, so
+every batch of it reads alike. An integer is a number, as is a decimal and an integer past signed 64 bits (a `uint64`),
+each written as its exact digits, since a JSON number reads back as a double (the artifact and its passages keep every
+digit; a dataset holds a number to nine decimal places, `Decimal128(9)`, so a `decimal(38,18)` rounds there); a float is
+a number, a top-level `float32` or `float16` column's its shortest decimal in its own type, NaN or an infinity its text;
+a bool, a date, a timestamp (its zone kept, none when the column has none), a time of day and a duration read as the
+other readers write them, a nanosecond unit to the microsecond (inside a list, struct or map too); text is text, a UUID
+its text, and a list, struct or map is its JSON (bytes in it as base64). Bytes are no text, and they, a value over 1 MiB
+and a batch's values of a column Python cannot hold (a date past year 9999) are left out and counted (`<name> values`).
+A row of nulls is no row. Pages decode one at a time, so a row group's size does not decide what is held; the rows past
+the table budget are counted from the metadata, never decoded; a row group whose pages do not decode fails the rows from
+there (`<name> rows N-`). The child's limits bound one decode, and its environment holds the native libraries to one
+thread and the system allocator, which the address-space limit allows. A build without pyarrow does not declare Parquet.
 
 **Bounds.** One budget bounds all of an artifact's tables, in three parts: what a source holds, the bytes its tables
 write, and the text they index. A source holds at most 1,000,000 non-empty cells in all, merged cells included, their

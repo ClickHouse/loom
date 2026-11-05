@@ -140,6 +140,16 @@ def test_nested_values_are_their_json_and_bytes_are_left_out_and_counted() -> No
     ]
 
 
+def test_a_row_whose_values_were_all_left_out_is_still_a_row() -> None:
+    t = pa.table({"bin": [b"\x00", b"\x01", None]})  # two rows of bytes, one of nulls
+    a, tab = _one(_file(t))
+    assert tab.rows == ((None,), (None,))
+    assert (a.coverage.to_dict()["total"], a.coverage.to_dict()["extracted"]) == (2, 2)
+    assert [f.reason for f in a.coverage.failed] == [
+        "2 values not text, over 1048576 characters or past what Python holds"
+    ]
+
+
 def test_rows_are_blocks_cited_by_row_and_a_row_of_nulls_is_no_row() -> None:
     t = pa.table({"k": ["a", None, "c"], "v": [1, None, 3]})
     a, tab = _one(_file(t, row_group_size=2))
@@ -226,6 +236,12 @@ def test_a_batch_holds_no_more_cells_than_the_budget(monkeypatch: pytest.MonkeyP
     t = pa.table({f"c{i}": list(range(5)) for i in range(4)})  # 4 wide: 3 rows a batch
     _one(_file(t))
     assert max(sizes) == 3
+    sizes.clear()
+    # One column, but a struct of six leaves: the batch is sized by its leaves.
+    leaves = pa.struct([(f"f{i}", pa.int64()) for i in range(6)])
+    nested = pa.table({"s": pa.array([{f"f{i}": r for i in range(6)} for r in range(5)], leaves)})
+    _one(_file(nested))
+    assert max(sizes) == 2
 
 
 def test_columns_past_the_bound_are_kept_by_position_even_when_a_name_repeats(
@@ -276,7 +292,7 @@ def test_nanoseconds_inside_a_struct_a_map_or_a_dictionary_and_a_float16_column_
             "st": pa.array([{"at": ns}], pa.struct([("at", pa.timestamp("ns"))])),
             "m": pa.array([[("k", ns)]], pa.map_(pa.string(), pa.timestamp("ns"))),
             "dict": pa.array([ns], pa.timestamp("ns")).dictionary_encode(),
-            "f16": pa.array([0.5], pa.float16()),
+            "f16": pa.array([0.1], pa.float16()),  # stored as 0.0999755859375
         }
     )
     a, tab = _one(_file(t))
@@ -285,7 +301,7 @@ def test_nanoseconds_inside_a_struct_a_map_or_a_dictionary_and_a_float16_column_
             '{"at": "2023-11-14T22:13:20.123456"}',
             '[["k", "2023-11-14T22:13:20.123456"]]',
             "2023-11-14T22:13:20.123456",
-            0.5,
+            0.1,
         ),
     )
     assert a.coverage.complete
