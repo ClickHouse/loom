@@ -34,10 +34,11 @@ only, and arm 5 is added so that they are compared with gold rows served the sam
 sync's rows keep the files it linked, and arms 4 and 6 read the pre-edit block and are
 compared with arm 3; arm 6's knowledge hits are then the documents the sync wrote to
 that namespace. When arm 2 or arm 6 runs, `arm2_knowledge_served` and
-`arm6_knowledge_served` count the tasks with gold rows whose own document's `source_uri` is among the knowledge hits
-shown. The `arm4` names (`--arm4-namespace`, the `arm4_files` run
-flag, the `arm4_rows_*`, `arm4_extract_failures` and `arm4_code_lookups_failed`
-treatment keys) cover both extracted arms: arms 4 and 6 serve the same rows.
+`arm6_knowledge_served` count the tasks with gold rows whose own document's `source_uri`
+is among the knowledge hits shown. The `arm4` names (`--arm4-namespace`, the
+`arm4_files` run flag, the `arm4_rows_*`, `arm4_extract_failures` and
+`arm4_code_lookups_failed` treatment keys) cover both extracted arms: arms 4 and 6 serve
+the same rows.
 
 Each role's namespace lives in an org of its own: `<org>-<prefix>-<role>`, the prefix
 `dr-<hex>` fixed per run, since a search and the cost readback read a whole org. The
