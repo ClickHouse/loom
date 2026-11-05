@@ -306,7 +306,7 @@ def _iso(raw: str) -> Cell:
     try:
         when = datetime.fromisoformat(raw)
     except ValueError:
-        return Cell(raw, "string")
+        return _string(raw)
     # To the nearest second, its offset kept, as a serial reads.
     try:
         when = (when + timedelta(microseconds=500_000)).replace(microsecond=0)
@@ -379,7 +379,7 @@ class _Reader:
         try:
             number = float(raw)
         except ValueError:
-            return Cell(raw, "string")
+            return _string(raw)
         if not math.isfinite(number):  # no JSON number
             return Cell(raw, "string")
         fmt = self.formats.get(int(style)) if _INDEX.fullmatch(style) else None
@@ -566,10 +566,10 @@ class _SheetStream:
                 self.long += 1
                 return
             if self._col >= MAX_COLUMNS:
-                self.wide += bool(self._raw or self._inline)
+                self.wide += self._has_value()
                 return
             if self._full():  # past the budget: whether the row has a value, not what it is
-                self._filled = self._filled or bool(self._raw or self._inline)
+                self._filled = self._filled or self._has_value()
                 return
             a = self._cell
             cell = self.reader.cell(
@@ -596,6 +596,21 @@ class _SheetStream:
                 held.update(self._row)
             else:
                 self.past.count(self.number)
+
+    def _has_value(self) -> bool:
+        """Whether the cell being read holds a value, without typing it: by the rule
+        `_string` reads text by (only whitespace is no value)."""
+        kind = self._cell.get("t", "n")
+        if kind == "inlineStr":
+            return any(_HAS_TEXT.search(t) for t in self._inline)
+        if not self._raw:
+            return False
+        if kind == "s":
+            i = int(self._raw) if _INDEX.fullmatch(self._raw) else -1
+            return not 0 <= i < len(self.reader.shared) or bool(
+                _HAS_TEXT.search(self.reader.shared[i])
+            )  # a string not held is lost text: a value
+        return bool(_HAS_TEXT.search(self._raw))
 
     def _full(self) -> bool:
         """Whether the open row is past the budget: only checked for a value."""

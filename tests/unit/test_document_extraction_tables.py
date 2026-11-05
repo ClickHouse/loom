@@ -1404,7 +1404,11 @@ def test_an_xlsx_cell_of_only_whitespace_is_empty_as_a_csv_field_is() -> None:
         2: [cell("A2", "Name", t="str"), cell("B2", "Age", t="inlineStr")],
         3: [cell("A3", "Ann", t="str"), cell("B3", 30)],
         4: [cell("A4", "Bo", t="str"), cell("B4", "  ", t="str")],
+        5: [cell("A5", "Cy", t="str"), cell("B5", "  ", t="inlineStr")],
+        6: [cell("A6", "Di", t="str"), cell("B6", " ")],  # a number that is only a space
+        7: [cell("XFE7", " ", t="str")],  # past the columns read, and nothing lost
     }
     a = extract(workbook([("S", sheet(rows))], shared=("   ",)), "b.xlsx")
     assert _columns(a) == [("Name", "string"), ("Age", "number")]
-    assert a.tables[0].rows == (("Ann", 30), ("Bo", None))
+    assert a.tables[0].rows == (("Ann", 30), ("Bo", None), ("Cy", None), ("Di", None))
+    assert a.coverage.to_dict()["complete"]
