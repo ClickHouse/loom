@@ -141,6 +141,32 @@ def test_a_repeated_alias_is_refused_before_any_dataset_is_looked_up() -> None:
         _plan(datasets=[JOINED[0], {**JOINED[1], "alias": "o"}])
 
 
+def test_a_filter_value_longer_than_a_statement_parameter_holds_is_refused_first() -> None:
+    """Each value list is one parameter, which ClickHouse takes up to 128 KiB of:
+    past the bounds a plan is refused as invalid, never sent."""
+    import pydantic
+
+    where = [{"column": _col("team"), "op": "contains", "value": "x" * 1025}]
+    with pytest.raises(pydantic.ValidationError, match="at most 1024 characters"):
+        _plan(where=where)
+    where = [{"column": _col("team"), "op": "in", "values": ["x" * 61] * 1000}]
+    with pytest.raises(pydantic.ValidationError, match="60000 characters in all"):
+        _plan(where=where)
+    _plan(where=[{"column": _col("team"), "op": "in", "values": ["x" * 60] * 1000}])
+
+
+def test_a_date_compares_as_its_midnight_in_utc_and_refuses_a_date_time() -> None:
+    plan = plan_domain.resolve(
+        _plan(where=[{"column": _col("due"), "op": "lt", "value": "1950-03-15"}]), CATALOGS
+    )
+    assert str(plan.filters[0].values[0]) == "1950-03-15 00:00:00"
+    with pytest.raises(ValueError, match="is not a date"):
+        plan_domain.resolve(
+            _plan(where=[{"column": _col("due"), "op": "eq", "value": "1950-03-15T10:00:00"}]),
+            CATALOGS,
+        )
+
+
 def test_filter_values_are_read_as_their_columns_types() -> None:
     plan = plan_domain.resolve(
         _plan(where=[
