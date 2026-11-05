@@ -125,9 +125,10 @@ async def _read_capped(
 
 
 # The native readers' own threads and allocators, held to what the child's
-# address-space limit allows: OpenBLAS (numpy, loaded with pyarrow) reserves a
-# buffer per thread, and Arrow's default pool reserves arenas the system
-# allocator does not.
+# address-space limit allows: Arrow's default pool reserves arenas the system
+# allocator does not, and where numpy is installed beside pyarrow (a
+# development environment; the image has none) pyarrow loads it, whose OpenBLAS
+# reserves a buffer per thread.
 _NATIVE_ENV = {
     "OPENBLAS_NUM_THREADS": "1",
     "OMP_NUM_THREADS": "1",

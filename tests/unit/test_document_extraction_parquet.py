@@ -95,7 +95,22 @@ def test_values_json_cannot_hold_as_numbers_are_text() -> None:
     )
     _, tab = _one(_file(t))
     assert tab.rows == (("18446744073709551615", "nan"), (1, "inf"))
-    assert [c.type for c in tab.columns] == ["mixed", "string"]
+    # Past signed 64 bits, a number's exact digits, as a decimal's: the column stays a number.
+    assert [c.type for c in tab.columns] == ["number", "string"]
+
+
+def test_float32_bounds_and_small_or_scaled_decimals_read_as_plain_numbers() -> None:
+    big = 3.4028234663852886e38  # float32's maximum, a common "no value" mark
+    t = pa.table(
+        {
+            "f32": pa.array([big, -big, float("inf")], pa.float32()),
+            "dec": pa.array([Decimal("0.0000001"), Decimal("1"), None], pa.decimal128(10, 7)),
+        }
+    )
+    a, tab = _one(_file(t))
+    assert tab.rows[0] == (3.4028235e38, "0.0000001")
+    assert tab.rows[1][:2] == (-3.4028235e38, "1.0000000") and tab.rows[2][0] == "inf"
+    assert a.coverage.complete
 
 
 def test_nested_values_are_their_json_and_bytes_are_left_out_and_counted() -> None:
@@ -112,9 +127,17 @@ def test_nested_values_are_their_json_and_bytes_are_left_out_and_counted() -> No
     assert tab.rows[0][:4] == ("a", "[1, 2]", '{"x": 1, "y": "z"}', '[["a", 1]]')
     assert tab.rows[0][4] is None and tab.rows[1] == ("b", "[]", None, None, None)
     assert [(f.unit, f.reason) for f in a.coverage.failed] == [
-        ("f.parquet values", "1 value not text or over 1048576 characters")
+        (
+            "f.parquet values",
+            "1 value not text, over 1048576 characters or past what Python holds",
+        )
     ]
     assert not a.coverage.complete
+    view = pa.table({"k": ["a"], "v": pa.array([b"\x00"], pa.binary_view())})
+    va, vtab = _one(_file(view))
+    assert vtab.rows == (("a", None),) and [f.unit for f in va.coverage.failed] == [
+        "f.parquet values"
+    ]
 
 
 def test_rows_are_blocks_cited_by_row_and_a_row_of_nulls_is_no_row() -> None:
@@ -135,9 +158,9 @@ def test_rows_past_the_budget_are_counted_from_the_metadata_not_decoded(
     decoded: list[int] = []
     real = parquetfile._values
 
-    def counting(column: Any, kinds: list[str], j: int) -> list[Any]:
+    def counting(column: Any, target: Any, reader: Any) -> list[Any]:
         decoded.append(len(column))
-        return real(column, kinds, j)
+        return real(column, target, reader)
 
     monkeypatch.setattr(parquetfile, "_values", counting)
     monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 2)
@@ -161,12 +184,58 @@ def test_columns_past_the_bound_are_not_read_and_are_counted(
     assert a.coverage.failed[0].reason == "2 columns past column 2"
 
 
-def test_a_value_python_cannot_hold_reads_as_arrows_text() -> None:
-    # A nanosecond timestamp: Python's datetime holds microseconds.
-    t = pa.table({"ts": pa.array([1_700_000_000_123_456_789], pa.timestamp("ns"))})
-    _, tab = _one(_file(t))
-    assert tab.rows == (("2023-11-14 22:13:20.123456789",),)
-    assert tab.columns[0].type == "string"
+def test_a_nanosecond_column_is_read_to_the_microsecond_in_every_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 1)  # each value its own batch
+    ns = [1_700_000_000_000_000_000, 1_700_000_000_123_456_789]  # whole, then sub-microsecond
+    t = pa.table(
+        {
+            "ts": pa.array(ns, pa.timestamp("ns")),
+            "du": pa.array([1_500, 86_400_000_123_456], pa.duration("ns")),
+            "nested": pa.array([[ns[0]], [ns[1]]], pa.list_(pa.timestamp("ns"))),
+        }
+    )
+    a, tab = _one(_file(t))
+    assert [c.type for c in tab.columns] == ["datetime", "duration", "string"]
+    assert tab.rows == (
+        ("2023-11-14T22:13:20", "0:00:00.000001", '["2023-11-14T22:13:20"]'),
+        ("2023-11-14T22:13:20.123456", "24:00:00.000123", '["2023-11-14T22:13:20.123456"]'),
+    )
+    assert a.coverage.complete
+
+
+def test_a_value_python_cannot_hold_is_left_out_and_counted() -> None:
+    # Days since 1970: one past year 9999, a date Python's date cannot hold.
+    t = pa.table({"k": ["a", "b"], "d": pa.array([0, 3_000_000], pa.date32())})
+    a, tab = _one(_file(t, row_group_size=1))
+    assert tab.rows == (("a", "1970-01-01"), ("b", None))
+    assert [f.unit for f in a.coverage.failed] == ["f.parquet values"]
+
+
+def test_a_batch_holds_no_more_cells_than_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tabular, "MAX_CELLS", 12)
+    sizes: list[int] = []
+    real = parquetfile._values
+
+    def recording(column: Any, target: Any, reader: Any) -> list[Any]:
+        sizes.append(len(column))
+        return real(column, target, reader)
+
+    monkeypatch.setattr(parquetfile, "_values", recording)
+    t = pa.table({f"c{i}": list(range(5)) for i in range(4)})  # 4 wide: 3 rows a batch
+    _one(_file(t))
+    assert max(sizes) == 3
+
+
+def test_columns_past_the_bound_are_kept_by_position_even_when_a_name_repeats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(parquetfile, "MAX_COLUMNS", 2)
+    t = pa.Table.from_arrays([pa.array([1]), pa.array([2]), pa.array([3])], names=["a", "a", "b"])
+    a, tab = _one(_file(t))
+    assert [c.name for c in tab.columns] == ["a", "a (2)"] and tab.rows == ((1, 2),)
+    assert [f.unit for f in a.coverage.failed] == ["f.parquet columns"]
 
 
 def test_a_file_pyarrow_cannot_read_is_corrupt_and_one_that_breaks_off_fails_its_rows() -> None:

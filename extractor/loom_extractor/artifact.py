@@ -62,7 +62,9 @@ class Locator:
     page_start: int = 0  # a PDF's pages or a PPTX's slides, 1-based, inclusive
     page_end: int = 0
     sheet: str = ""  # an XLSX sheet's name
-    row_start: int = 0  # a sheet's or a CSV file's rows, 1-based, inclusive, the header counted
+    # A sheet's or a CSV file's rows, 1-based, inclusive, the header counted; a
+    # Parquet file's rows from 1 (it has no header row).
+    row_start: int = 0
     row_end: int = 0
 
     def to_dict(self) -> dict[str, Any]:

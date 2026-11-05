@@ -237,17 +237,17 @@ text, is a failed unit. So is a slide id whose relationship names no slide part,
 reader walks. A table, in either format, is one block, a row per line with its cells joined by a pipe, and `attrs.table`
 its `rows` and `columns`.
 
-**Tables (CSV, XLSX, Parquet).** A tabular source is `tables` in the artifact: each a header (the first row with a value), its
-columns typed by every value they hold (`string`, `number`, `bool`, `date`, `datetime`, `time`, `duration`, or `mixed`;
-empty cells and errors do not count; a column of dates and date-times is `datetime`), and its rows of values. The same
-rows are blocks, twenty to a block and at most 1,000 characters (a longer row is a block alone, under a chunk's default
-1,500 characters, so a chunk cites the rows it holds), each row a line of `column: value` pairs, cited by sheet and
-rows, so the lexical and vector legs search them like any passage; a header with no rows under it is a block of its own.
-A column's name is at most 500 characters of its header cell (one cut shorter is a failed unit, `<table> header`). A
-float's row text is what a sheet shows, to 15 significant digits (`0.1+0.2` reads `0.3`), and the table keeps its exact
-value. A number that is no JSON number (an integer past signed 64 bits, an infinity, a NaN) is read as a float or as
-text, and a value no other rule reads (a style index of 5,000 digits, a date rounded past year 9999) reads as a number
-or as text, never failing the file.
+**Tables (CSV, XLSX, Parquet).** A tabular source is `tables` in the artifact: each a header (the first row with a
+value; a Parquet file's schema), its columns typed by every value they hold (`string`, `number`, `bool`, `date`,
+`datetime`, `time`, `duration`, or `mixed`; empty cells and errors do not count; a column of dates and date-times is
+`datetime`), and its rows of values. The same rows are blocks, twenty to a block and at most 1,000 characters (a longer
+row is a block alone, under a chunk's default 1,500 characters, so a chunk cites the rows it holds), each row a line of
+`column: value` pairs, cited by sheet and rows, so the lexical and vector legs search them like any passage; a header
+with no rows under it is a block of its own. A column's name is at most 500 characters of its header cell (one cut
+shorter is a failed unit, `<table> header`). A float's row text is what a sheet shows, to 15 significant digits
+(`0.1+0.2` reads `0.3`), and the table keeps its exact value. A number that is no JSON number (an integer past signed 64
+bits, an infinity, a NaN) is read as a float or as text, and a value no other rule reads (a style index of 5,000 digits,
+a date rounded past year 9999) reads as a number or as text, never failing the file.
 
 **CSV.** The delimiter is sniffed from the whole lines of the file's first 64 KiB (a comma, semicolon, tab or pipe; a
 tab, with no quoting, for a `.tsv` name; a tab-separated file sent with no such name is sniffed, so it reads quotes as
@@ -281,14 +281,16 @@ pool: its columns from the schema (the first 16,384; the rest are a failed unit,
 group at a time in batches of 1,024. The names are no row of the file, so the table has no header row (`header_rows` 0)
 and its rows count from 1. An integer is a number, one past signed 64 bits (a `uint64`) its digits as text; a float is a
 number, a `float32` its shortest decimal and NaN or an infinity its text; a decimal is a number written as its exact
-text, since a JSON number reads back as a double; a bool, a date, a timestamp (its zone kept, none when the column has
-none), a time of day and a duration read as the other readers write them; text is text and a list, struct or map is its
-JSON. Bytes are no text, and they and a value over 1 MiB are left out and counted (`<name> values`). A value Python
-cannot hold (a nanosecond timestamp, a date past year 9999) reads as Arrow's text of it, its column as text. A row of
-nulls is no row. Pages decode one at a time, so a row group's size does not decide what is held; the rows past the table
-budget are counted from the metadata, never decoded; a row group whose pages do not decode fails the rows from there
-(`<name> rows N-`). The child's limits bound one decode, and its environment holds the native libraries to one thread
-and the system allocator, which the address-space limit allows. A build without pyarrow does not declare Parquet.
+digits, since a JSON number reads back as a double (the artifact and its passages keep every digit; a dataset holds a
+number to nine decimal places, `Decimal128(9)`, so a `decimal(38,18)` rounds there); a bool, a date, a timestamp (its
+zone kept, none when the column has none), a time of day and a duration read as the other readers write them; text is
+text and a list, struct or map is its JSON. Bytes are no text, and they and a value over 1 MiB are left out and counted
+(`<name> values`). A value Python cannot hold (a nanosecond timestamp, a date past year 9999) reads as Arrow's text of
+it, its column as text. A row of nulls is no row. Pages decode one at a time, so a row group's size does not decide what
+is held; the rows past the table budget are counted from the metadata, never decoded; a row group whose pages do not
+decode fails the rows from there (`<name> rows N-`). The child's limits bound one decode, and its environment holds the
+native libraries to one thread and the system allocator, which the address-space limit allows. A build without pyarrow
+does not declare Parquet.
 
 **Bounds.** One budget bounds all of an artifact's tables, in three parts: what a source holds, the bytes its tables
 write, and the text they index. A source holds at most 1,000,000 non-empty cells in all, merged cells included, their
@@ -442,14 +444,14 @@ tables' rows of the scope with the documents (`documents.tombstone`).
 ## Dependencies
 
 The reference extractor's parsers need `sqlglot` for SQL, `pypdf` (and `cryptography`, for a PDF encrypted with AES) for
-PDF, `pyarrow` for Parquet, and the standard library otherwise. They are installed with the service (`extractor/pyproject.toml`), and in a
-development environment by the `extractor` extra; the server's image carries none of them. Its image
-(`extractor/Dockerfile`, `ghcr.io/clickhouse/loom-extractor`) installs the package and its locked dependencies
-(`extractor/uv.lock`) into a venv root owns and runs the service as a user that owns nothing in it, so no file on a
-child's `sys.path` is writable to the child. The compose stack and the Helm chart run it apart from the server: Compose
-on an internal network shared with the server alone, the chart behind a NetworkPolicy that admits only Loom's pods and
-allows no egress, with no credential but its token; on either, an extraction makes no socket while it runs alone
-(`LOOM_EXTRACTOR_CONCURRENCY` 1, the default) ([deployment](../operations/deployment.md#container-images),
+PDF, `pyarrow` for Parquet, and the standard library otherwise. They are installed with the service
+(`extractor/pyproject.toml`), and in a development environment by the `extractor` extra; the server's image carries none
+of them. Its image (`extractor/Dockerfile`, `ghcr.io/clickhouse/loom-extractor`) installs the package and its locked
+dependencies (`extractor/uv.lock`) into a venv root owns and runs the service as a user that owns nothing in it, so no
+file on a child's `sys.path` is writable to the child. The compose stack and the Helm chart run it apart from the
+server: Compose on an internal network shared with the server alone, the chart behind a NetworkPolicy that admits only
+Loom's pods and allows no egress, with no credential but its token; on either, an extraction makes no socket while it
+runs alone (`LOOM_EXTRACTOR_CONCURRENCY` 1, the default) ([deployment](../operations/deployment.md#container-images),
 [Kubernetes](../operations/kubernetes.md#document-extractor)).
 
 ## Invariants
