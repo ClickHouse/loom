@@ -77,7 +77,7 @@ def test_a_scenario_that_starts_applies_to_still_checks_the_rejected_option() ->
 
     value = memory_value(
         {
-            "scenario": "Applies to how the final DISTINCT spills",
+            "scenario": "Applies to how the final DISTINCT spills under `distinct_spill_ratio`",
             "outcome": "spill into sorted runs",
             "reasoning": "a set on disk costs a seek per row",
             "alternatives": ["a plain `DB::SpillingHashSet`"],
@@ -85,7 +85,23 @@ def test_a_scenario_that_starts_applies_to_still_checks_the_rejected_option() ->
     )
     assert value.startswith("Applies to")
     assert rb.checked_names(value, constraint=False) == ["DB::SpillingHashSet"]
-    assert rb.checked_names(value, constraint=True) == ["DB::SpillingHashSet"]
+    assert rb.checked_names(value, constraint=True) == [
+        "DB::SpillingHashSet",
+        "distinct_spill_ratio",
+    ]
+
+
+def test_a_constraints_setting_counts_however_it_is_qualified() -> None:
+    rule = "Keep `Setting::distinct_spill_ratio` on: the fan-in relies on it."
+    assert rb.checked_names(rule, constraint=True) == ["Setting::distinct_spill_ratio"]
+    diff = (
+        "--- a/src/a.cpp\n+++ b/src/a.cpp\n@@ -1,0 +1,1 @@\n"
+        "+    settings[Setting::distinct_spill_ratio] = 0;\n"
+    )
+    row = _row("design/ratio", rule, ["constraint"])
+    sec = _section([row], diff)
+    assert sec["verdict"] == "check"
+    assert sec["rows"][0]["names"] == ["Setting::distinct_spill_ratio"]
 
 
 def test_checked_names_read_rejected_options_and_a_constraints_settings() -> None:
@@ -261,7 +277,8 @@ def _listing(for_file_stub: Any) -> Any:
     """A `listing_rows` over a stub of the memory.for_file handler: its hits as dicts with
     a memory_id (the writer and key), the code-links read not skipped."""
 
-    async def _rows(inp: Any) -> tuple[list[dict[str, Any]], bool]:
+    async def _rows(inp: Any, *, whole_only: bool = False) -> tuple[list[dict[str, Any]], bool]:
+        assert whole_only  # decisions and constraints only, typed or tagged
         out = await for_file_stub(inp)
         hits = [h.model_dump() | {"memory_id": f"{h.agent}/{h.memory_key}"} for h in out.hits]
         return hits, False
@@ -318,7 +335,7 @@ async def test_decisions_for_paths_merges_paths_worst_state_and_orders_constrain
     assert all(
         i.namespace == "code-widgets" and i.extra_namespaces == ["code-widgets"] for i in seen
     )
-    assert all(i.tags == ["decision", "constraint"] and not i.include_conflicted for i in seen)
+    assert all(i.tags == [] and not i.include_conflicted for i in seen)
     # each path reads up to memory.for_file's ceiling; the cut is made after the merge
     assert all(i.top_k == 50 for i in seen)
 
@@ -589,7 +606,7 @@ async def test_rows_sharing_a_writer_and_key_stay_two_rows_and_a_failed_links_re
         hit = _hit("design/spill", agent="loom-decisions")
         return hit.model_dump() | {"memory_id": mid, "user_id": user}
 
-    async def _rows(inp: Any) -> tuple[list[dict[str, Any]], bool]:
+    async def _rows(inp: Any, **kw: Any) -> tuple[list[dict[str, Any]], bool]:
         # two users' rows under one writer and key; the second path's links read failed
         if inp.path == "src/a.cpp":
             return [_row_of("m1", "alice"), _row_of("m2", "bob")], False
@@ -604,3 +621,43 @@ async def test_rows_sharing_a_writer_and_key_stay_two_rows_and_a_failed_links_re
     assert read.links_skipped == 1
     sec = _section(read.served, "", links_skipped=read.links_skipped)
     assert sec["verdict"] == "unknown" and sec["causes"] == ["links_not_read:1"]
+
+
+@pytest.mark.asyncio
+async def test_an_untagged_row_typed_decision_is_read_and_checked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """memory.set takes any memory_type: a row typed `decision` with no tag is still a
+    decision the pre-edit block prints whole, and the brief reads and checks it."""
+    from server.memory.app import code_link_reads
+    from tests.unit.ch_fake import RecordingCH
+
+    row = {
+        "memory_id": "m1",
+        "memory_key": "design/spill",
+        "memory_type": "decision",
+        "value": json.dumps(DECISION),
+        "tags": [],
+        "confidence": 1.0,
+        "pinned": 0,
+        "agent": "alice",
+        "matched_files": ["src/a.cpp"],
+    }
+    ch = RecordingCH().on("FROM loom.memory FINAL", [row])
+    ch.install(monkeypatch, "server.memory.app.for_file")
+
+    async def _readable(org: str, nss: set[str]) -> set[str]:
+        return nss
+
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
+    monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda org, ns: "")
+    read = await code_plane_reads.decisions_for_paths(
+        "acme", "code-widgets", ["src/a.cpp"], limit=8, first=rb.has_check
+    )
+    # selected by type or tag, not by tag alone
+    (stmt,) = ch.statements("FROM loom.memory FINAL")
+    assert stmt.params["whole_only"] == 1 and stmt.params["tags"] == []
+    assert "(memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))" in stmt.sql
+    assert [r["memory_key"] for r in read.served] == ["design/spill"]
+    sec = _section(read.served, DIFF)
+    assert sec["verdict"] == "check" and sec["rows"][0]["names"] == ["DB::SpillingHashSet"]

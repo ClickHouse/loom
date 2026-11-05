@@ -13,7 +13,6 @@ from server.code.domain.anchor import Definition, bare_name, local_name
 from server.code.domain.declaration import fingerprint_version
 from server.identity.domain.read_scope import ReadFilters
 from server.memory.domain.code_change import worst
-from server.memory.domain.decision_schema import DECISION_TAG
 from server.memory.store import code_links as links_store
 from server.memory.store import code_plane_reads as reads
 from server.memory.store.code_links import LinkRow
@@ -163,11 +162,11 @@ async def decisions_for_paths(
                     org=org,
                     namespace=trunk_ns,
                     path=p,
-                    tags=[DECISION_TAG, "constraint"],
                     top_k=PER_PATH_ROWS,
                     include_conflicted=False,
                     extra_namespaces=[trunk_ns],
-                )
+                ),
+                whole_only=True,
             )
             for p in dict.fromkeys(paths)
         )

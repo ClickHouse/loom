@@ -77,6 +77,7 @@ WHERE org = {{org:String}} AND namespace = {{ns:String}}
   AND sensitivity != 'high'
   AND status IN {{statuses:Array(String)}}
   AND (length({{tags:Array(String)}}) = 0 OR hasAny(tags, {{tags:Array(String)}}))
+  AND ({{whole_only:UInt8}} = 0 OR {_WHOLE_ROW})
 """
 _ORDER = """
 ORDER BY has(tags, 'constraint') DESC, pinned DESC, confidence DESC, updated_at DESC
@@ -449,10 +450,13 @@ async def _rows_for(
     base: str,
     tags: list[str],
     linked: asyncio.Task[dict[str, list[str]] | None],
+    *,
+    whole_only: bool = False,
 ) -> list[dict[str, Any]]:
     """One namespace's rows naming the file or linked to code still in it (`linked`:
     memory_id -> the states of its links here, read alongside the files match; None when
-    that read failed), each stamped with its namespace and the worst of those states."""
+    that read failed), each stamped with its namespace and the worst of those states.
+    `whole_only` keeps decisions and constraints only (the rows printed whole)."""
     statuses = ["active", "conflicted"] if input.include_conflicted else ["active"]
     params = {
         "org": input.org,
@@ -463,6 +467,7 @@ async def _rows_for(
         "statuses": statuses,
         "lim": int(input.top_k),
         "whole_bytes": _whole_bytes(),
+        "whole_only": int(whole_only),
     }
     ch = get_client()
     found, read = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)
@@ -545,7 +550,7 @@ def _order_key(r: dict[str, Any]) -> tuple[Any, ...]:
 
 
 async def _merged_rows(
-    input: MemoryForFileInput, path: str, base: str
+    input: MemoryForFileInput, path: str, base: str, *, whole_only: bool = False
 ) -> tuple[list[dict[str, Any]], bool]:
     """(rows, links skipped): the caller's namespace, plus each readable extra namespace
     (tag filter on the caller's only), merged in constraint-first order, deduplicated by
@@ -555,12 +560,15 @@ async def _merged_rows(
     extras = await _readable_extras(input)
     linked = asyncio.ensure_future(_linked(input, path, [input.namespace, *extras]))
     try:
-        own = await _rows_for(input, input.namespace, path, base, list(input.tags or []), linked)
+        tags = list(input.tags or [])
+        own = await _rows_for(
+            input, input.namespace, path, base, tags, linked, whole_only=whole_only
+        )
         skipped = linked.result() is None  # read by the own read above
         if not extras:
             return _supersede_order(own), skipped
         got = await asyncio.gather(
-            *(_rows_for(input, ns, path, base, [], linked) for ns in extras),
+            *(_rows_for(input, ns, path, base, [], linked, whole_only=whole_only) for ns in extras),
             return_exceptions=True,
         )
     finally:
@@ -605,12 +613,16 @@ def _hit(r: dict[str, Any], input: MemoryForFileInput) -> _MemoryForFileHit:
     )
 
 
-async def listing_rows(input: MemoryForFileInput) -> tuple[list[dict[str, Any]], bool]:
+async def listing_rows(
+    input: MemoryForFileInput, *, whole_only: bool = False
+) -> tuple[list[dict[str, Any]], bool]:
     """(rows, links skipped) for a reader that lists several files' rows itself: each
     row the hit memory.for_file serves with its `memory_id`, and whether the code-links
-    read failed (a row reached only by a link is then missing)."""
+    read failed (a row reached only by a link is then missing). `whole_only` keeps the
+    decisions and constraints (typed `decision`, or tagged `decision` or `constraint`)."""
     path = repo_relative(input.path)
-    rows, skipped = await _merged_rows(input, path, path.rsplit("/", 1)[-1])
+    base = path.rsplit("/", 1)[-1]
+    rows, skipped = await _merged_rows(input, path, base, whole_only=whole_only)
     return [_hit(r, input).model_dump() | {"memory_id": str(r["memory_id"])} for r in rows], skipped
 
 

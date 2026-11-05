@@ -1358,10 +1358,10 @@
         },
         "code_review_brief_rationale_paths": {
           "default": 10,
-          "maximum": 49,
+          "maximum": 50,
           "minimum": 1,
           "type": "integer",
-          "description": "Changed paths the `rationale` section reads. Below the 50 files a brief stores, so a PR with more always leaves one unread and `rationale` is never `clear` for it."
+          "description": "Changed paths the `rationale` section reads, of the up to 200 a review brief stores."
         },
         "code_review_brief_rationale_rows": {
           "default": 8,

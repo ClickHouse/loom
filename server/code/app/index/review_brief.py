@@ -562,7 +562,10 @@ def checked_names(text: str, *, constraint: bool) -> list[str]:
         options = rejected.group(1).split(_REALIZED, 1)[0]
         names += [m.name for m in mentions(options, cap=cap) if not m.in_prose]
     if constraint:
-        names += [m.name for m in mentions(text, cap=cap) if _SETTING_NAME.fullmatch(m.name)]
+        # `Setting::distinct_spill_ratio` is the setting `distinct_spill_ratio`
+        names += [
+            m.name for m in mentions(text, cap=cap) if _SETTING_NAME.fullmatch(bare_name(m.name))
+        ]
     return list(dict.fromkeys(names))
 
 

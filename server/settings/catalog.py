@@ -1702,9 +1702,8 @@ class CodeSettings(BaseModel):
     # Seconds before the review brief reads a mirror again for an object it did not have
     # (the mirror may have fetched it); a hit is kept.
     code_review_brief_mirror_miss_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
-    # Changed paths the `rationale` section reads. Below the 50 files a brief stores, so a
-    # PR with more always leaves one unread and `rationale` is never `clear` for it.
-    code_review_brief_rationale_paths: Annotated[int, LIVE] = Field(default=10, ge=1, le=49)
+    # Changed paths the `rationale` section reads, of the up to 200 a review brief stores.
+    code_review_brief_rationale_paths: Annotated[int, LIVE] = Field(default=10, ge=1, le=50)
     # Decision and constraint rows the `rationale` section serves.
     code_review_brief_rationale_rows: Annotated[int, LIVE] = Field(default=8, ge=1, le=50)
     # The `rationale` section's own token budget; its first row is served even past it.
