@@ -855,13 +855,19 @@ def hook_override_check(home: Path, env: dict[str, str]) -> list[Check]:
     return out
 
 
-def _claude_settings_env(home: Path) -> dict[str, str]:
-    """~/.claude/settings.json `env`, which Claude Code applies to its hooks."""
+def _claude_settings(home: Path, key: str) -> dict[str, Any]:
+    """One object of ~/.claude/settings.json (`env`, `enabledPlugins`); {}
+    when the file or the key is missing or not an object."""
     try:
-        raw = json.loads(_read(home / ".claude" / "settings.json") or "{}").get("env") or {}
-        return {k: v for k, v in raw.items() if isinstance(v, str)}
+        value = json.loads(_read(home / ".claude" / "settings.json") or "{}").get(key)
     except (ValueError, AttributeError):
         return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _claude_settings_env(home: Path) -> dict[str, str]:
+    """~/.claude/settings.json `env`, which Claude Code applies to its hooks."""
+    return {k: v for k, v in _claude_settings(home, "env").items() if isinstance(v, str)}
 
 
 # The PATH an app started from the Dock or a desktop launcher gets: no shell
@@ -896,23 +902,15 @@ def claude_plugin_install(home: Path) -> Path | None:
     """The user-scope loom plugin directory from Claude Code's own records;
     None when it is not installed there or user settings disable it. A
     project-scope install is enabled per project and is not checked."""
+    if _claude_settings(home, "enabledPlugins").get("loom@loom") is False:
+        return None
     try:
         installed = json.loads(_read(home / ".claude" / "plugins" / "installed_plugins.json"))
         installs = installed["plugins"]["loom@loom"]
-        settings = json.loads(_read(home / ".claude" / "settings.json") or "{}")
-        if (settings.get("enabledPlugins") or {}).get("loom@loom") is False:
-            return None
         user = next(i for i in installs if i.get("scope") == "user")
         return Path(user["installPath"])
     except (ValueError, KeyError, TypeError, AttributeError, StopIteration):
         return None
-
-
-def _plugin_manifest_version(install: Path) -> str:
-    try:
-        return str(json.loads(_read(install / ".claude-plugin" / "plugin.json"))["version"])
-    except (ValueError, KeyError, TypeError):
-        return install.name
 
 
 def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, str]:
@@ -942,8 +940,8 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
         out.append(_claude_node_check(home, env, install))
     # codex_plugin_enabled checks loom@loom, so read that marketplace's cache.
     codex = max(
-        home.glob(".codex/plugins/cache/loom/loom/*/bin/loom-node"),
-        key=lambda p: _plugin_version(p.parent.parent.name),
+        (p for p in home.glob(".codex/plugins/cache/loom/loom/*") if p.is_dir()),
+        key=lambda p: _plugin_version(p.name),
         default=None,
     )
     enabled = codex_plugin_enabled(_read(home / ".codex" / "config.toml"))
@@ -954,22 +952,29 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     return out
 
 
+def _predates_launcher(name: str, install: Path, client: str, fix: str) -> Check:
+    return (
+        name,
+        WARN,
+        f"the installed plugin at {install} predates the Node launcher: its hooks need "
+        f"`node` on {client}'s PATH. Fix: {fix}.",
+    )
+
+
 def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
     """Claude Code runs hooks and the helper with its own environment plus
     its settings `env`: this shell's, or a GUI launch's with no profile."""
     name = "client:claude-code:node"
-    fix = "Fix: `claude plugin update loom@loom`."
     if not install.is_dir():
-        return (name, WARN, f"the installed plugin at {install} is not on disk. {fix}")
-    launcher = install / "bin" / "loom-node"
-    if not launcher.is_file():
-        version = _plugin_manifest_version(install)
         return (
             name,
             WARN,
-            f"the installed plugin ({version}) predates the Node launcher: its hooks need "
-            f"`node` on Claude Code's PATH. {fix}",
+            f"the installed plugin at {install} is not on disk. Fix: "
+            "`claude plugin uninstall loom@loom && claude plugin install loom@loom`.",
         )
+    launcher = install / "bin" / "loom-node"
+    if not launcher.is_file():
+        return _predates_launcher(name, install, "Claude Code", "`claude plugin update loom@loom`")
     settings = _claude_settings_env(home)
     client_env = {**env, **settings}
     sh = posix_sh(client_env)
@@ -996,10 +1001,13 @@ def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
     return (name, PASS, line)
 
 
-def _codex_node_check(env: dict[str, str], launcher: Path, sh: str) -> Check:
+def _codex_node_check(env: dict[str, str], install: Path, sh: str) -> Check:
     """Codex runs hooks through a login shell, and the MCP header helper
     with only a few variables kept, LOOM_NODE not among them."""
     name = "client:codex:node"
+    launcher = install / "bin" / "loom-node"
+    if not launcher.is_file():
+        return _predates_launcher(name, install, "Codex", "`codex plugin add loom@loom`")
     helper_env = {k: env[k] for k in CODEX_HELPER_ENV if k in env}
     try:
         code, line = _launcher_check(sh, launcher, env)

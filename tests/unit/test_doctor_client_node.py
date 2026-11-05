@@ -240,17 +240,21 @@ def test_a_malformed_install_record_gets_no_line(home: Path, installs: object) -
 
 
 def test_a_plugin_from_before_the_launcher_is_named(home: Path) -> None:
-    launcher = _install(home, ".claude", "0123abcd")
-    launcher.unlink()
-    manifest = launcher.parent.parent / ".claude-plugin" / "plugin.json"
-    manifest.parent.mkdir()
-    manifest.write_text(json.dumps({"name": "loom", "version": "1.2.6"}))
+    claude = _install(home, ".claude", "1.2.6")
+    codex = _install(home, ".codex", "1.2.6")
+    claude.unlink()
+    codex.unlink()
     assert _checks(home) == {
         "client:claude-code:node": (
             dc.WARN,
-            "the installed plugin (1.2.6) predates the Node launcher: its hooks need `node` "
-            "on Claude Code's PATH. Fix: `claude plugin update loom@loom`.",
-        )
+            f"the installed plugin at {claude.parent.parent} predates the Node launcher: its "
+            "hooks need `node` on Claude Code's PATH. Fix: `claude plugin update loom@loom`.",
+        ),
+        "client:codex:node": (
+            dc.WARN,
+            f"the installed plugin at {codex.parent.parent} predates the Node launcher: its "
+            "hooks need `node` on Codex's PATH. Fix: `codex plugin add loom@loom`.",
+        ),
     }
 
 
@@ -286,6 +290,13 @@ def test_an_install_that_is_not_on_disk_is_named(home: Path) -> None:
     shutil.rmtree(launcher.parent.parent)
     assert _checks(home)["client:claude-code:node"] == (
         dc.WARN,
-        f"the installed plugin at {launcher.parent.parent} is not on disk. "
-        "Fix: `claude plugin update loom@loom`.",
+        f"the installed plugin at {launcher.parent.parent} is not on disk. Fix: "
+        "`claude plugin uninstall loom@loom && claude plugin install loom@loom`.",
     )
+
+
+@pytest.mark.parametrize("settings", ["{not json", "[]", '{"enabledPlugins": []}'])
+def test_unreadable_settings_do_not_hide_the_row(home: Path, settings: str) -> None:
+    _install(home, ".claude", "1.3.0")
+    (home / ".claude" / "settings.json").write_text(settings)
+    assert "client:claude-code:node" in _checks(home, LOOM_NODE_SYSTEM_DIRS="")
