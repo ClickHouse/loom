@@ -665,9 +665,12 @@ def test_a_footer_declaring_rows_past_signed_64_bits_is_corrupt(
     assert e.value.code == "corrupt"
 
 
-@pytest.mark.parametrize("declared", [3, 30])
+@pytest.mark.parametrize(
+    ("declared", "kept"),
+    [(3, 2), (4, 4), (30, 10)],  # 4: the footer's count on a batch boundary, past it more
+)
 def test_a_row_group_whose_pages_disagree_with_its_footer_fails_from_there(
-    monkeypatch: pytest.MonkeyPatch, declared: int
+    monkeypatch: pytest.MonkeyPatch, declared: int, kept: int
 ) -> None:
     monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 2)
     real = parquetfile._open(_file(pa.table({"v": list(range(10))})))
@@ -689,9 +692,12 @@ def test_a_row_group_whose_pages_disagree_with_its_footer_fails_from_there(
     (tab,) = a.tables
     c = a.coverage.to_dict()
     # Rows are counted by the footer, so the artifact never holds more than it declares.
-    assert c["total"] == declared and c["extracted"] == len(tab.rows) <= declared
-    assert [f.reason for f in a.coverage.failed] == [
-        "not decoded: the row group's pages disagree with its footer"
+    assert (c["total"], c["extracted"], len(tab.rows)) == (declared, kept, kept)
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        (
+            f"f.parquet rows {kept + 1}-",
+            "not decoded: the row group's pages disagree with its footer",
+        )
     ]
 
 

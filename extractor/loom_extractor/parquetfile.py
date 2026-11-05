@@ -23,18 +23,19 @@ A value reads as its column's type says, decided once from the schema:
 
 What is read is bounded: the columns past MAX_COLUMNS are left out (`<name>
 columns`), the kept ones taken by position (a name may repeat); pages decode
-one at a time into batches no wider than the cell budget, so a row group's
-size does not decide what is held; the rows past the budget
-(`tabular.Budget`), and past _MAX_DECODED values or _MAX_DECODED_BYTES decoded
-or _MAX_GROUPS row groups read (a file of blank rows, or of values too long to
-hold, is no cheaper to read), are counted from the metadata, never decoded. A
-row count a footer declares below zero is none, and a footer whose row groups
-declare 2^63 rows or more is refused (corrupt). A decode that raises (a page
-that does not decode, an allocation past the child's memory), and a row group
-whose pages hold more or fewer rows than its footer declares, fails the rows
-from there (`<name> rows N-`); the extractor's child limits (memory, time, no
-network) stop one that runs away: one past the time limit refuses the file
-(`timeout`), one that crashes the child (`resource_limit`).
+one at a time into batches no wider than the cell budget, so a row group's size
+does not decide what is held; the rows past the budget (`tabular.Budget`), and
+past _MAX_DECODED values or _MAX_DECODED_BYTES decoded or _MAX_GROUPS row
+groups read (a file of blank rows, or of values too long to hold, is no cheaper
+to read), are counted from the metadata, never decoded. A row count a footer
+declares below zero is none (a row group that declares none is not read), and a
+footer whose row groups declare 2^63 rows or more is refused (corrupt). A
+decode that raises (a page that does not decode, an allocation past the child's
+memory), and a row group whose pages hold more or fewer rows than its footer
+declares, fails the rows from there (`<name> rows N-`); the extractor's child
+limits (memory, time, no network) stop one that runs away: one past the time
+limit refuses the file (`timeout`), one that crashes the child
+(`resource_limit`).
 
 Pure: it reads only the bytes it is given.
 """
@@ -476,7 +477,7 @@ class _Walk:
             )
             for batch in batches:
                 if self.number - start + batch.num_rows > group_rows:
-                    break  # more rows than its footer declares: a damaged file, below
+                    return self._disagrees()  # more rows than its footer declares
                 # A file of blank rows, of long lists or of values each too long to
                 # hold is read no further: the rest is its own failed unit.
                 if self._charge(batch):  # this group's rest and every group after
@@ -495,12 +496,16 @@ class _Walk:
             why = str(e) or type(e).__name__  # a MemoryError has no message
             self._fail_from(f"not decoded: {why}"[:200])
             return True
-        if self.number - start != group_rows:
-            # Its pages hold more or fewer rows than its footer declares: the rows
-            # are numbered, and counted, by the footer, so none past here is read.
-            self._fail_from("not decoded: the row group's pages disagree with its footer")
-            return True
+        if self.number - start < group_rows:  # fewer rows than its footer declares
+            return self._disagrees()
         return False
+
+    def _disagrees(self) -> bool:
+        """A row group whose pages hold more or fewer rows than its footer
+        declares: the rows are numbered, and counted, by the footer, so none
+        past here is read."""
+        self._fail_from("not decoded: the row group's pages disagree with its footer")
+        return True
 
     def fail_left_out(self) -> None:
         """The values left out of the rows read, a failed unit naming each cause."""
