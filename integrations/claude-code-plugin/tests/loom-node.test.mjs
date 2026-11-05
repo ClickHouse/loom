@@ -247,12 +247,16 @@ test("the nvm default alias wins over a newer install", () => {
     f.node(".nvm/versions/node/v20.1.0/bin");
     fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "20.1\n");
     assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v20.1.0/bin"));
-    // lts/* names lts/iron, whose file names the version
+    // lts/iron's file names the version; lts/* names lts/iron (no `*` file on Windows)
     fs.mkdirSync(path.join(f.home, ".nvm", "alias", "lts"));
-    fs.writeFileSync(path.join(f.home, ".nvm", "alias", "lts", "*"), "lts/iron\n");
     fs.writeFileSync(path.join(f.home, ".nvm", "alias", "lts", "iron"), "v20.11.0\n");
-    fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "lts/*\n");
+    fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "lts/iron\n");
     assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v20.11.0/bin"));
+    if (!WINDOWS) {
+      fs.writeFileSync(path.join(f.home, ".nvm", "alias", "lts", "*"), "lts/iron\n");
+      fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "lts/*\n");
+      assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v20.11.0/bin"));
+    }
     fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "node\n");
     assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v22.1.0/bin"));
   } finally {
