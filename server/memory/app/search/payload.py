@@ -531,7 +531,7 @@ def _apply_bodies(hits: list[Any], input: Any) -> None:
     limit = int(_s.memory_search_excerpt_chars)
     for h in hits:
         body = getattr(h, "content_excerpt", "") or ""
-        tags = getattr(h, "_row_tags", None) or getattr(h, "tags", None) or ()
+        tags = getattr(h, "_row_tags", None) or ()
         if bodies == "none":
             new = ""
         elif is_whole_row(str(getattr(h, "memory_type", "") or ""), tags):

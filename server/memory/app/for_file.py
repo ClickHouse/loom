@@ -205,7 +205,7 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
 def _marker(hit: dict[str, Any], *, show_decision: bool) -> str:
     """` [constraint, decision]`: the row's kinds. `decision` is added only when
     `show_decision`; a team line leaves it out because its head says `Decision`."""
-    kinds = [t for t in (hit.get("tags") or []) if t in ("constraint", "gotcha")]
+    kinds = [t for t in (hit.get("tags") or []) if t in (CONSTRAINT_TAG, "gotcha")]
     if show_decision:
         kinds.append("decision")
     return f" [{', '.join(kinds)}]" if kinds else ""

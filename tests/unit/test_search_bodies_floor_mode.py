@@ -118,14 +118,11 @@ def test_an_excerpt_serves_a_decision_or_constraint_as_stored(monkeypatch):
 
     typed = hit("d", memory_type="decision")
     row_tagged = hit("t", _row_tags=("decision",))
-    wire_tagged = hit("w", tags=["constraint"])
     constraint = hit("c", _row_tags=("constraint",))
     plain = hit("p")
-    _apply_bodies(
-        [typed, row_tagged, wire_tagged, constraint, plain], SimpleNamespace(bodies="excerpt")
-    )
+    _apply_bodies([typed, row_tagged, constraint, plain], SimpleNamespace(bodies="excerpt"))
     assert "rejected: memory grows with files" in stored
-    for whole in (typed, row_tagged, wire_tagged, constraint):
+    for whole in (typed, row_tagged, constraint):
         assert whole.content_excerpt == stored
     assert len(plain.content_excerpt) == 50 and plain.content_excerpt.endswith("…")
 
