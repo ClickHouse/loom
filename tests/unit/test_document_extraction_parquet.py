@@ -221,6 +221,30 @@ def test_a_value_python_cannot_hold_is_left_out_and_counted() -> None:
     a, tab = _one(_file(t, row_group_size=1))
     assert tab.rows == (("a", "1970-01-01"), ("b", None))
     assert [f.unit for f in a.coverage.failed] == ["f.parquet values"]
+    # A row with nothing else in it is still a row: its value existed.
+    alone = pa.table({"d": pa.array([3_000_000] * 5, pa.date32())})
+    a, tab = _one(_file(alone))
+    assert tab.rows == ((None,),) * 5
+    assert (a.coverage.to_dict()["total"], a.coverage.to_dict()["extracted"]) == (5, 5)
+
+
+def test_a_fixed_size_list_of_nanoseconds_is_read_to_the_microsecond() -> None:
+    t = pa.table({"l": pa.array([[1_700_000_000_123_456_789]], pa.list_(pa.timestamp("ns"), 1))})
+    a, tab = _one(_file(t))
+    assert tab.rows == (('["2023-11-14T22:13:20.123456"]',),) and a.coverage.complete
+
+
+def test_a_decode_the_childs_memory_cannot_hold_fails_its_rows_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_memory(*a: Any, **k: Any) -> Any:
+        raise MemoryError  # as a list value past the child's limit raises it: no message
+
+    monkeypatch.setattr(pq.ParquetFile, "iter_batches", no_memory)
+    a = extract(_file(pa.table({"v": [1, 2]})), "f.parquet")
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        ("f.parquet rows 1-", "not decoded: MemoryError")
+    ]
 
 
 def test_a_batch_holds_no_more_cells_than_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:

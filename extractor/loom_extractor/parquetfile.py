@@ -103,6 +103,10 @@ def _json(value: Any) -> Any:
     return value
 
 
+# A value `_values` left out (and counted): no cell, though the row has a value there.
+LEFT_OUT = object()
+
+
 class _Reader:
     """Cells of one column type; counts the values it leaves out."""
 
@@ -110,7 +114,7 @@ class _Reader:
         self.left_out = 0  # bytes, a value over MAX_VALUE_CHARS, or one Python cannot hold
 
     def cell(self, value: Any, kind: str) -> Cell:
-        if value is None:
+        if value is None or value is LEFT_OUT:
             return EMPTY
         if kind == "bytes":
             self.left_out += 1
@@ -196,10 +200,12 @@ def _readable(arrow_type: Any) -> Any:
         return pa.duration("us")
     if pa.types.is_float16(t):
         return pa.float32()
-    if pa.types.is_list(t) or pa.types.is_large_list(t):
+    if pa.types.is_list(t) or pa.types.is_large_list(t) or pa.types.is_fixed_size_list(t):
         inner = _readable(t.value_type)
         if inner is None:
             return None
+        if pa.types.is_fixed_size_list(t):
+            return pa.list_(inner, t.list_size)
         return (pa.large_list if pa.types.is_large_list(t) else pa.list_)(inner)
     if pa.types.is_map(t):
         key, item = _readable(t.key_type), _readable(t.item_type)
@@ -218,7 +224,8 @@ def _readable(arrow_type: Any) -> Any:
 def _values(column: Any, target: Any, reader: _Reader) -> list[Any]:
     """A batch column's values as Python holds them. A column with a value
     Python cannot (a date past year 9999, a zone it does not know) has its
-    batch's values left out and counted."""
+    batch's values left out and counted: LEFT_OUT, not None, so a row of them
+    is still a row."""
     import pyarrow as pa
 
     try:
@@ -228,7 +235,7 @@ def _values(column: Any, target: Any, reader: _Reader) -> list[Any]:
         return values
     except (pa.ArrowException, ValueError, OverflowError, KeyError):
         reader.left_out += len(column) - column.null_count
-        return [None] * len(column)
+        return [None if null else LEFT_OUT for null in column.is_null().to_pylist()]
 
 
 def _open(data: bytes) -> Any:
@@ -267,7 +274,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     groups = [meta.row_group(g).num_rows for g in range(meta.num_row_groups)]
     number = blank = 0
     for g, group_rows in enumerate(groups):
-        if rows.more or budget.cut:
+        if rows.more:
             # Past the budget: counted from the metadata, never decoded.
             rows.count(number + 1, group_rows)
             number += group_rows
@@ -286,7 +293,8 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
                     if all(v is None for v in values):
                         blank += 1  # a row of nothing is no row, as a blank CSV record
                         continue
-                    # A row whose values were all left out (bytes) is still a row.
+                    # A row whose values were all left out (bytes, values Python
+                    # cannot hold) is still a row.
                     typed = (reader.cell(values[j], kinds[j]) for j in range(len(kept)))
                     rows.add(
                         number, {j: c for j, c in enumerate(typed) if c.kind != "empty"}, budget
@@ -299,7 +307,8 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
         except (pa.ArrowException, OSError, ValueError, MemoryError) as e:
             # The group's rows from the first not decoded (or not held: a list
             # value past the child's memory), and every group after.
-            fail(budget, failed, f"{name} rows {number + 1}-", f"not decoded: {e}"[:200])
+            why = str(e) or type(e).__name__  # a MemoryError has no message
+            fail(budget, failed, f"{name} rows {number + 1}-", f"not decoded: {why}"[:200])
             break
     if reader.left_out:
         reason = f"{counted(reader.left_out, 'value')} not text, over {MAX_VALUE_CHARS} characters"
