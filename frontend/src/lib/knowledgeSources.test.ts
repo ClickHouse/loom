@@ -4,7 +4,10 @@ import {
   emptySourceForm,
   folderIds,
   kindLabel,
+  meetingIds,
+  pageIds,
   probeCount,
+  projectIds,
   retiredMessage,
   sourceAddBody,
   sourceFormFingerprint,
@@ -99,6 +102,87 @@ describe("the add form", () => {
   it("counts a probe, a lower bound when there are more", () => {
     expect(probeCount({ documents: 1, more: false, sample: [] })).toBe("1 document");
     expect(probeCount({ documents: 1000, more: true, sample: [] })).toBe("1000+ documents");
+  });
+});
+
+const PROJECT = "0f8b2c4e-1a2b-4c3d-8e9f-0123456789ab";
+const PAGE = "1a2b3c4d5e6f708192a3b4c5d6e7f809";
+const DATABASE = "abcdefabcdefabcdefabcdefabcdef01";
+
+describe("the add form's other kinds", () => {
+  const named = { ...emptySourceForm(), name: "notes", credential: "k" };
+
+  it("sends a project tracker's project ids, lower-cased", () => {
+    const f = { ...named, kind: "linear" as const, projects: `${PROJECT.toUpperCase()}\n${PROJECT}` };
+    expect(sourceFormProblems(f)).toEqual([]);
+    expect(sourceAddBody("o", "code-x", f, true)).toEqual({
+      org: "o",
+      namespace: "code-x",
+      name: "notes",
+      kind: "linear",
+      config: { project_ids: [PROJECT] },
+      credential: "k",
+      dry_run: true,
+    });
+    expect(projectIds("A, b")).toEqual(["a", "b"]);
+    expect(sourceFormProblems({ ...f, projects: "" })).toEqual(["Add at least one project."]);
+    expect(sourceFormProblems({ ...f, projects: "my-project" })).toEqual(["Not a project id (a UUID): my-project."]);
+    expect(sourceFormProblems({ ...f, credential: "" })).toEqual(["Paste the read-only API key."]);
+  });
+
+  it("sends a page store's page and database ids, from ids with or without dashes or from links", () => {
+    const dashed = `${PAGE.slice(0, 8)}-${PAGE.slice(8, 12)}-${PAGE.slice(12, 16)}-${PAGE.slice(16, 20)}-${PAGE.slice(20)}`;
+    expect(pageIds(`${dashed}, https://pages.example/team/Design-Notes-${PAGE}`)).toEqual([PAGE]);
+    // A database link's view id (`?v=`) is not the database's id.
+    expect(pageIds(`https://pages.example/team/${DATABASE}?v=${PAGE}`)).toEqual([DATABASE]);
+    // Kept as typed, so the problem names it: an id one digit long is not cut to 32.
+    expect(pageIds(`${PAGE}0`)).toEqual([`${PAGE}0`]);
+    const f = { ...named, kind: "notion" as const, pages: PAGE, databases: DATABASE.toUpperCase() };
+    expect(sourceFormProblems(f)).toEqual([]);
+    expect(sourceAddBody("o", "code-x", f, true).config).toEqual({ page_ids: [PAGE], database_ids: [DATABASE] });
+    expect(sourceAddBody("o", "code-x", { ...f, databases: "" }, true).config).toEqual({
+      page_ids: [PAGE],
+      database_ids: [],
+    });
+    expect(sourceFormProblems({ ...f, pages: "", databases: "" })).toEqual(["Add at least one page or database."]);
+    expect(sourceFormProblems({ ...f, pages: "home" })).toEqual(["Not an id (32 hex digits): home."]);
+    const many = Array.from({ length: 11 }, (_, i) => i.toString(16).padStart(32, "0"));
+    expect(
+      sourceFormProblems({
+        ...f,
+        pages: many.join("\n"),
+        databases: many.map((id) => id.replace(/^0/, "f")).join("\n"),
+      }),
+    ).toEqual(["At most 20 pages and databases in all."]);
+  });
+
+  it("sends a meeting store's provider and ids, each provider with its own id rule", () => {
+    const meet = {
+      ...named,
+      kind: "recording" as const,
+      provider: "meet" as const,
+      meetings: "spaces/abc-DEF_1\nabc-DEF_1",
+    };
+    expect(sourceFormProblems(meet)).toEqual([]);
+    expect(sourceAddBody("o", "code-x", meet, true).config).toEqual({ provider: "meet", ids: ["abc-DEF_1"] });
+    const zoom = { ...meet, provider: "zoom" as const, meetings: "81234567890" };
+    expect(sourceFormProblems(zoom)).toEqual([]);
+    expect(sourceAddBody("o", "code-x", zoom, true).config).toEqual({ provider: "zoom", ids: ["81234567890"] });
+    expect(sourceFormProblems({ ...zoom, meetings: "abc-DEF_1" })).toEqual([
+      "Not a meeting id (9-12 digits): abc-DEF_1.",
+    ]);
+    expect(meetingIds("spaces/x", "zoom")).toEqual(["spaces/x"]);
+    expect(sourceFormProblems({ ...meet, meetings: "" })).toEqual(["Add at least one space id."]);
+  });
+
+  it("sends only the chosen kind's config, so switching kinds keeps what was typed but not in the body", () => {
+    const f = { ...named, folders: FOLDER, projects: PROJECT };
+    expect(sourceAddBody("o", "x", f, true).config).toEqual({
+      folder_ids: [FOLDER],
+      include: ["docs", "slides", "pdf", "pptx"],
+    });
+    expect(sourceAddBody("o", "x", { ...f, kind: "linear" }, true).config).toEqual({ project_ids: [PROJECT] });
+    expect(sourceFormFingerprint(f)).not.toBe(sourceFormFingerprint({ ...f, kind: "linear" }));
   });
 });
 

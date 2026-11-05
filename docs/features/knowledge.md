@@ -89,11 +89,16 @@ documents ([syncing](#syncing-a-source)); `list` says whether this deployment ru
 
 On the dashboard, an opened repository on the Repositories page shows its sources under
 Sources: each source's kind, last sync and counts, to anyone who reads the repository.
-A caller with the role the table below names gets the verbs: Add a source
-(a dry-run check first; Add sends only the form that passed), Check, Sync now, Rotate
-credential and Retire. The page adds `gdrive` sources; a `linear`, `notion` or
-`recording` source is added with `knowledge.source.add` and then shows and is managed
-there like any other. The key is typed into a password field and is never shown again.
+A caller with the role the table below names gets the verbs: Add a source, Check,
+Sync now, Rotate credential and Retire.
+Add a source takes a kind, then that kind's `config` fields as listed below (a `gdrive`
+folder or a `notion` page or database may also be given as a pasted link, a `meet` space with its
+`spaces/` prefix) and its credential. The form checks the server's rules for those ids
+before Check is offered; Check sends `knowledge.source.add` with `dry_run`, and Add stays
+off until the form it would send is the one that passed. A refused check or add shows the
+server's error as it came back. The credential is typed into a password field, sent with
+the request and never shown again; changing the kind or the `recording` provider clears
+it, so it only goes to the store it was typed for.
 
 | Operation                                                                                   | Role   | Does                                                                                                       |
 | ------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------- |

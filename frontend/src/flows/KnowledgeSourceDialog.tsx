@@ -2,10 +2,12 @@
  * Adding, checking, syncing, rotating and retiring a repository's document source.
  * Loaded on first use, behind `lazy()`, by the repository card's Sources facet.
  *
- * Add probes first: Check sends `knowledge.source.add` with `dry_run` (the credential is
- * tried, nothing is stored) and shows what the folders hold; Add stays off until the form
- * it would send is the one that passed. A credential is typed into a password field, held
- * in the dialog's state only, sent once and never shown back.
+ * Add probes first: the form takes a kind and that kind's ids, Check sends
+ * `knowledge.source.add` with `dry_run` (the credential is tried, nothing is stored) and
+ * shows what the source holds; Add stays off until the form it would send is the one
+ * that passed. A credential is typed into a password field, held in the dialog's state
+ * only, sent once and never shown back. Changing the kind or the provider clears it, so
+ * a credential is only ever sent to the store it was typed for.
  */
 import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -26,17 +28,23 @@ import {
   credentialLabel,
   emptySourceForm,
   INCLUDE_OPTIONS,
+  KIND_OPTIONS,
+  kindAbout,
+  kindReads,
   normalisedName,
   probeCount,
+  RECORDING_PROVIDERS,
   retiredMessage,
   sourceFormFingerprint,
   sourceFormProblems,
+  sourceFormTouched,
   toggleInclude,
   type KnowledgeSourceCheckResult,
   type KnowledgeSourceProbe,
   type SourceForm,
 } from "../lib/knowledgeSources";
 import { toast } from "../components/Toast";
+import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Alert } from "../components/ui/Alert";
 import { Loading } from "../components/ui/Loading";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
@@ -69,6 +77,95 @@ function ProbeResult({ probe, lead }: { probe: KnowledgeSourceProbe; lead: strin
   );
 }
 
+type SetField = <K extends keyof SourceForm>(key: K, value: SourceForm[K]) => void;
+
+/** The chosen kind's ids and filters, as the server's config for that kind takes them. */
+function SourceFields({ form, set }: { form: SourceForm; set: SetField }) {
+  switch (form.kind) {
+    case "gdrive":
+      return (
+        <>
+          <TextAreaField
+            id="ksrc-folders"
+            label="Folders (ids or folder links, one per line)"
+            rows={3}
+            className="font-mono"
+            value={form.folders}
+            onChange={(v) => set("folders", v)}
+          />
+          <fieldset>
+            <legend className="mb-1.5 block text-xs font-medium text-text-muted">File kinds to pull</legend>
+            <div className="flex flex-wrap gap-4">
+              {INCLUDE_OPTIONS.map((o) => (
+                <Checkbox
+                  key={o.value}
+                  label={o.label}
+                  checked={form.include.includes(o.value)}
+                  onCheckedChange={() => set("include", toggleInclude(form.include, o.value))}
+                />
+              ))}
+            </div>
+          </fieldset>
+        </>
+      );
+    case "linear":
+      return (
+        <TextAreaField
+          id="ksrc-projects"
+          label="Projects (project ids, UUIDs, one per line)"
+          rows={3}
+          className="font-mono"
+          value={form.projects}
+          onChange={(v) => set("projects", v)}
+        />
+      );
+    case "notion":
+      return (
+        <>
+          <TextAreaField
+            id="ksrc-pages"
+            label="Pages (ids or page links, one per line)"
+            rows={2}
+            className="font-mono"
+            value={form.pages}
+            onChange={(v) => set("pages", v)}
+          />
+          <TextAreaField
+            id="ksrc-databases"
+            label="Databases (ids or database links, one per line; 20 pages and databases in all)"
+            rows={2}
+            className="font-mono"
+            value={form.databases}
+            onChange={(v) => set("databases", v)}
+          />
+        </>
+      );
+    case "recording":
+      return (
+        <>
+          <ChoiceGroup
+            label="Provider"
+            value={form.provider}
+            onChange={(v) => set("provider", v)}
+            options={RECORDING_PROVIDERS}
+          />
+          <TextAreaField
+            id="ksrc-meetings"
+            label={
+              form.provider === "meet"
+                ? "Meeting spaces (space ids, one per line)"
+                : "Meetings (meeting ids, one per line)"
+            }
+            rows={3}
+            className="font-mono"
+            value={form.meetings}
+            onChange={(v) => set("meetings", v)}
+          />
+        </>
+      );
+  }
+}
+
 export function AddSourceDialog({
   open,
   onOpenChange,
@@ -81,8 +178,12 @@ export function AddSourceDialog({
   const [checked, setChecked] = useState<{ fingerprint: string; probe: KnowledgeSourceProbe } | null>(null);
   const [busy, setBusy] = useState<"check" | "add" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const set = <K extends keyof SourceForm>(key: K, value: SourceForm[K]) => setForm((f) => ({ ...f, [key]: value }));
-  const toggle = (kind: string) => set("include", toggleInclude(form.include, kind));
+  const set: SetField = (key, value) =>
+    setForm((f) => {
+      const next = { ...f, [key]: value };
+      if ((key === "kind" || key === "provider") && value !== f[key]) next.credential = "";
+      return next;
+    });
   const problems = sourceFormProblems(form);
   const fingerprint = sourceFormFingerprint(form);
   const passed = checked !== null && checked.fingerprint === fingerprint;
@@ -112,7 +213,7 @@ export function AddSourceDialog({
       onOpenChange={onOpenChange}
       width={560}
       title={`Add a document source · ${repo}`}
-      description="A shared folder of documents, presentations and PDFs. Share it read-only with a service account and paste the account's key; Loom checks the key and the folders before anything is stored."
+      description={kindAbout(form.kind)}
       footer={
         <>
           <CancelButton />
@@ -145,34 +246,15 @@ export function AddSourceDialog({
         onChange={(v) => set("name", v)}
         autoFocus
       />
-      <TextAreaField
-        id="ksrc-folders"
-        label="Folders (ids or folder links, one per line)"
-        rows={3}
-        className="font-mono"
-        value={form.folders}
-        onChange={(v) => set("folders", v)}
-      />
-      <fieldset>
-        <legend className="mb-1.5 block text-xs font-medium text-text-muted">File kinds to pull</legend>
-        <div className="flex flex-wrap gap-4">
-          {INCLUDE_OPTIONS.map((o) => (
-            <Checkbox
-              key={o.value}
-              label={o.label}
-              checked={form.include.includes(o.value)}
-              onCheckedChange={() => toggle(o.value)}
-            />
-          ))}
-        </div>
-      </fieldset>
+      <ChoiceGroup label="Kind" inline value={form.kind} onChange={(v) => set("kind", v)} options={KIND_OPTIONS} />
+      <SourceFields form={form} set={set} />
       <PasswordField
         label={credentialLabel(form.kind)}
         value={form.credential}
         autoComplete="new-password"
         onChange={(v) => set("credential", v)}
       />
-      {problems.length > 0 && (form.name || form.folders || form.credential) && (
+      {problems.length > 0 && sourceFormTouched(form) && (
         <ul className="text-xs text-text-muted list-disc pl-5" aria-label="Before checking">
           {problems.map((p) => (
             <li key={p}>{p}</li>
@@ -180,7 +262,7 @@ export function AddSourceDialog({
         </ul>
       )}
       {checked && passed && (
-        <ProbeResult probe={checked.probe} lead={`The key reads the folders: ${normalisedName(form.name)} lists`} />
+        <ProbeResult probe={checked.probe} lead={`${kindReads(form.kind)}: ${normalisedName(form.name)} lists`} />
       )}
       {checked && !passed && <p className="text-xs text-text-muted">The form changed since the check: check again.</p>}
       {error && <ErrorNote>{error}</ErrorNote>}

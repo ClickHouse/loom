@@ -1,6 +1,7 @@
 /**
  * Adding a document source checks first — `knowledge.source.add(dry_run)`, nothing
- * stored — and Add sends exactly the form that passed. A key is typed into a password
+ * stored — and Add sends exactly the form that passed, each kind with its own config. A
+ * key is typed into a password
  * field, and no toast, error or text on the page ever carries it. Check probes on open
  * and stops when the dialog closes; Sync now records a request; Retire needs the typed
  * name and keeps the documents unless asked.
@@ -17,6 +18,7 @@ import {
 } from "../api/knowledgeSources";
 import { toast } from "../components/Toast";
 import { ApiError } from "../lib/errors";
+import { sourceAddBody, type SourceForm } from "../lib/knowledgeSources";
 import { axeViolations, unlabeledControls } from "../test/axe";
 import {
   AddSourceDialog,
@@ -153,6 +155,156 @@ describe("AddSourceDialog", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("busy");
     expect(add).toBeEnabled();
     expect(screen.getByText(/lists 12 documents/)).toBeInTheDocument();
+    expectKeyNowhere();
+  });
+});
+
+/** The request body the dialog's `n`th add call sends. */
+function sentBody(n: number) {
+  const call = vi.mocked(addKnowledgeSource).mock.calls[n];
+  if (!call) throw new Error(`no add call ${n}`);
+  return sourceAddBody(call[0].org, call[0].namespace, call[1] as SourceForm, call[2]);
+}
+
+const PROJECT = "0f8b2c4e-1a2b-4c3d-8e9f-0123456789ab";
+const PAGE = "1a2b3c4d5e6f708192a3b4c5d6e7f809";
+const DATABASE = "abcdefabcdefabcdefabcdefabcdef01";
+
+describe("AddSourceDialog's kinds", () => {
+  async function typeInto(name: RegExp, text: string) {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("textbox", { name }));
+    await user.paste(text);
+  }
+
+  async function checkAndAdd(lead: RegExp) {
+    vi.mocked(addKnowledgeSource).mockImplementation(async (_id, _f, dryRun) => addResult(dryRun));
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    expect(await screen.findByText(lead)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+    await waitFor(() => expect(addKnowledgeSource).toHaveBeenCalledTimes(2));
+    expect(sentBody(1)).toEqual({ ...sentBody(0), dry_run: false });
+  }
+
+  it("offers each kind, the shared folder first", () => {
+    renderAdd();
+    const kinds = screen.getAllByRole("radio").map((r) => r.getAttribute("aria-label"));
+    expect(kinds).toEqual(["Shared folder", "Project documents", "Pages", "Meeting transcripts"]);
+    expect(screen.getByRole("radio", { name: "Shared folder" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("adds a project tracker's projects with a read-only API key", async () => {
+    renderAdd();
+    fireEvent.click(screen.getByRole("radio", { name: "Project documents" }));
+    expect(screen.queryByLabelText(/^Folders/)).toBeNull();
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "roadmap" } });
+    await typeInto(/^Projects/, PROJECT);
+    const key = screen.getByLabelText(/^Read-only API key/);
+    expect(key).toHaveAttribute("type", "password");
+    fireEvent.change(key, { target: { value: SECRET } });
+    await checkAndAdd(/The key reads the projects: roadmap lists 12 documents/);
+    expect(sentBody(0)).toEqual({
+      org: "o",
+      namespace: "code-x",
+      name: "roadmap",
+      kind: "linear",
+      config: { project_ids: [PROJECT] },
+      credential: SECRET,
+      dry_run: true,
+    });
+    expectKeyNowhere();
+    expect(unlabeledControls(document.body)).toEqual([]);
+    expect(await axeViolations(document.body)).toEqual([]);
+  });
+
+  it("adds a page store's pages and databases with an integration token", async () => {
+    renderAdd();
+    fireEvent.click(screen.getByRole("radio", { name: "Pages" }));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "wiki" } });
+    await typeInto(/^Pages/, `https://pages.example/team/Home-${PAGE}`);
+    await typeInto(/^Databases/, DATABASE);
+    const token = screen.getByLabelText(/^Integration token/);
+    expect(token).toHaveAttribute("type", "password");
+    fireEvent.change(token, { target: { value: SECRET } });
+    await checkAndAdd(/The token reads the pages and databases: wiki lists 12 documents/);
+    expect(sentBody(0)).toMatchObject({
+      kind: "notion",
+      config: { page_ids: [PAGE], database_ids: [DATABASE] },
+      credential: SECRET,
+    });
+    expectKeyNowhere();
+    expect(unlabeledControls(document.body)).toEqual([]);
+    expect(await axeViolations(document.body)).toEqual([]);
+  });
+
+  it("adds a meeting store's meetings, each provider with its own ids", async () => {
+    renderAdd();
+    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
+    expect(screen.getByRole("radio", { name: "meet" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
+    await typeInto(/^Meeting spaces/, "spaces/abc-DEF_1");
+    fireEvent.click(screen.getByRole("radio", { name: "zoom" }));
+    // A space id is no meeting id: the form says so before anything is sent.
+    expect(screen.getByLabelText(/^Meetings/)).toHaveValue("spaces/abc-DEF_1");
+    const credential = screen.getByLabelText(/^Read-only credential/);
+    expect(credential).toHaveAttribute("type", "password");
+    fireEvent.change(credential, { target: { value: KEY } });
+    expect(screen.getByText(/Not a meeting id \(9-12 digits\): spaces\/abc-DEF_1/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
+    await userEvent.setup().clear(screen.getByRole("textbox", { name: /^Meetings/ }));
+    await typeInto(/^Meetings/, "81234567890");
+    await checkAndAdd(/The credential reads the meetings: standups lists 12 documents/);
+    expect(sentBody(0)).toMatchObject({
+      kind: "recording",
+      config: { provider: "zoom", ids: ["81234567890"] },
+      credential: KEY,
+    });
+    expectKeyNowhere();
+    expect(unlabeledControls(document.body)).toEqual([]);
+    expect(await axeViolations(document.body)).toEqual([]);
+  });
+
+  it("a check of one kind does not pass the form once the kind changes", async () => {
+    vi.mocked(addKnowledgeSource).mockImplementation(async (_id, _f, dryRun) => addResult(dryRun));
+    renderAdd();
+    await fill();
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    await screen.findByText(/lists 12 documents/);
+    const add = screen.getByRole("button", { name: "Add source" });
+    expect(add).toBeEnabled();
+    fireEvent.click(screen.getByRole("radio", { name: "Project documents" }));
+    expect(add).toBeDisabled();
+    // The key was typed for the shared folder: another kind never sends it.
+    expect(screen.getByLabelText(/^Read-only API key/)).toHaveValue("");
+    // Back to the shared folder: the folders typed are still there; the key is asked
+    // for again, and the same key gives the form that passed.
+    fireEvent.click(screen.getByRole("radio", { name: "Shared folder" }));
+    expect(screen.getByLabelText(/^Folders/)).toHaveValue(FOLDER);
+    expect(screen.getByLabelText(/^Service account key/)).toHaveValue("");
+    fireEvent.change(screen.getByLabelText(/^Service account key/), { target: { value: KEY } });
+    expect(add).toBeEnabled();
+  });
+
+  it("clears the credential when the provider changes, so one provider's credential never goes to the other", async () => {
+    renderAdd();
+    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
+    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: KEY } });
+    fireEvent.click(screen.getByRole("radio", { name: "zoom" }));
+    expect(screen.getByLabelText(/^Read-only credential/)).toHaveValue("");
+  });
+
+  it("shows the server's refusal of a config as it comes back", async () => {
+    vi.mocked(addKnowledgeSource).mockRejectedValue(
+      new ApiError({ status: 400, code: "BAD_CONFIG", message: "config.ids: '1' is not a meeting id (digits)" }),
+    );
+    renderAdd();
+    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
+    await typeInto(/^Meeting spaces/, "abc");
+    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: KEY } });
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("config.ids: '1' is not a meeting id (digits)");
+    expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
     expectKeyNowhere();
   });
 });

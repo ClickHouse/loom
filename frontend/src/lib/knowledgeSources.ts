@@ -95,7 +95,7 @@ export function kindLabel(kind: string): string {
   return KIND_LABEL[kind] ?? kind;
 }
 
-/** The credential field's label for a kind; the add form serves `gdrive` only. */
+/** The credential field's label for a kind, in the add and rotate forms. */
 const CREDENTIAL_LABEL: Record<string, string> = {
   gdrive: "Service account key (JSON; stored encrypted, never shown again)",
   linear: "Read-only API key (stored encrypted, never shown again)",
@@ -181,6 +181,53 @@ export function unconvertedDetail(reasons: Record<string, number>): string {
 // The add form
 // ---------------------------------------------------------------------------
 
+/** The kinds the add form serves, in the order the form offers them. */
+export const SOURCE_KINDS = ["gdrive", "linear", "notion", "recording"] as const;
+export type SourceKind = (typeof SOURCE_KINDS)[number];
+
+/** What the form says about each kind: the choice, the dialog's description, and what a
+ *  passed check read. */
+const KIND_FORM: Record<SourceKind, { choice: string; about: string; reads: string; noCredential: string }> = {
+  gdrive: {
+    choice: "Shared folder",
+    about:
+      "A shared folder of documents, presentations and PDFs. Share it read-only with a service account and paste the account's key; Loom checks the key and the folders before anything is stored.",
+    reads: "The key reads the folders",
+    noCredential: "Paste the service account's key.",
+  },
+  linear: {
+    choice: "Project documents",
+    about:
+      "The documents of a project tracker's projects. Paste a read-only API key of an account that sees the projects; Loom checks the key and the projects before anything is stored.",
+    reads: "The key reads the projects",
+    noCredential: "Paste the read-only API key.",
+  },
+  notion: {
+    choice: "Pages",
+    about:
+      "A page store's pages and databases. Share them with an integration that has read content access and paste its token; Loom checks the token and every page and database before anything is stored.",
+    reads: "The token reads the pages and databases",
+    noCredential: "Paste the integration token.",
+  },
+  recording: {
+    choice: "Meeting transcripts",
+    about:
+      "The transcripts of a meeting store's recordings. Paste a credential that grants read-only scopes only; Loom checks it and every id before anything is stored.",
+    reads: "The credential reads the meetings",
+    noCredential: "Paste the read-only credential.",
+  },
+};
+
+export const KIND_OPTIONS = SOURCE_KINDS.map((k) => ({ value: k, label: KIND_FORM[k].choice }));
+
+export function kindAbout(kind: SourceKind): string {
+  return KIND_FORM[kind].about;
+}
+
+export function kindReads(kind: SourceKind): string {
+  return KIND_FORM[kind].reads;
+}
+
 /** The file kinds a shared folder's `include` takes, with the words the form shows. */
 export const INCLUDE_OPTIONS = [
   { value: "docs", label: "Documents" },
@@ -189,12 +236,33 @@ export const INCLUDE_OPTIONS = [
   { value: "pptx", label: ".pptx decks" },
 ] as const;
 
+/** A meeting store's providers, with the credential each takes. */
+export const RECORDING_PROVIDERS = [
+  { value: "meet", label: "meet", hint: "An authorized_user JSON file with the meetings.space.readonly scope only" },
+  {
+    value: "zoom",
+    label: "zoom",
+    hint: "A server-to-server app's JSON (account_id, client_id, client_secret) with read-only scopes",
+  },
+] as const;
+export type RecordingProvider = (typeof RECORDING_PROVIDERS)[number]["value"];
+
+/** Each kind's fields live side by side, so switching the kind keeps what was typed;
+ *  only the chosen kind's are sent. */
 export interface SourceForm {
   name: string;
-  kind: string;
-  /** Folder ids or folder links, one per line or comma-separated. */
+  kind: SourceKind;
+  /** gdrive: folder ids or folder links, one per line or comma-separated. */
   folders: string;
   include: string[];
+  /** linear: project ids (UUIDs). */
+  projects: string;
+  /** notion: page ids and database ids, or their links. */
+  pages: string;
+  databases: string;
+  /** recording: the provider, and its space ids (meet) or meeting ids (zoom). */
+  provider: RecordingProvider;
+  meetings: string;
   /** Held in the dialog only: sent with add, never shown back. */
   credential: string;
 }
@@ -207,27 +275,112 @@ export function toggleInclude(include: readonly string[], kind: string): string[
 }
 
 export function emptySourceForm(): SourceForm {
-  return { name: "", kind: "gdrive", folders: "", include: INCLUDE_OPTIONS.map((o) => o.value), credential: "" };
+  return {
+    name: "",
+    kind: "gdrive",
+    folders: "",
+    include: INCLUDE_OPTIONS.map((o) => o.value),
+    projects: "",
+    pages: "",
+    databases: "",
+    provider: "meet",
+    meetings: "",
+    credential: "",
+  };
 }
 
+// The server's rules (server/knowledge/domain/sources.py), checked here so Check stays
+// off until the server would read the config; the server checks them again.
 const NAME_RE = /^[a-z][a-z0-9_-]{1,31}$/;
 const FOLDER_ID_RE = /^[A-Za-z0-9_-]{10,128}$/;
-const MAX_FOLDERS = 20;
+const PROJECT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const PAGE_ID_RE = /^[0-9a-f]{32}$/;
+const MEETING_ID_RE: Record<RecordingProvider, RegExp> = {
+  meet: /^[A-Za-z0-9_-]{1,128}$/,
+  zoom: /^[0-9]{9,12}$/,
+};
+// Each kind takes 1 to 20 ids; a page store's pages and databases count together.
+const MAX_IDS = 20;
+
+/** The pieces of what was typed, one per line or comma-separated, duplicates dropped. */
+function pieces(text: string, normal: (piece: string) => string = (p) => p): string[] {
+  const out: string[] = [];
+  for (const piece of text.split(/[\s,]+/)) {
+    if (!piece) continue;
+    const value = normal(piece);
+    if (!out.includes(value)) out.push(value);
+  }
+  return out;
+}
 
 /** The folder ids in what was typed: a bare id, or the id after `/folders/` in a pasted
  *  folder link. Duplicates are dropped, the order kept. */
 export function folderIds(text: string): string[] {
-  const ids: string[] = [];
-  for (const piece of text.split(/[\s,]+/)) {
-    if (!piece) continue;
-    const id = /\/folders\/([^/?#]+)/.exec(piece)?.[1] ?? piece;
-    if (!ids.includes(id)) ids.push(id);
-  }
-  return ids;
+  return pieces(text, (p) => /\/folders\/([^/?#]+)/.exec(p)?.[1] ?? p);
+}
+
+/** Project ids, lower-cased as the server stores them. */
+export function projectIds(text: string): string[] {
+  return pieces(text, (p) => p.toLowerCase());
+}
+
+/** Page or database ids: a bare id with or without dashes, or the id that ends a pasted
+ *  link's last path segment (`Title-<id>`; the `?v=` view id is not the database's).
+ *  Sent lower-case without dashes; the server stores them dashed. A piece that is
+ *  neither is kept as typed, so the form can name it. */
+export function pageIds(text: string): string[] {
+  return pieces(text, (p) => {
+    if (!p.includes("/")) {
+      const hexes = p.toLowerCase().replace(/-/g, "");
+      return PAGE_ID_RE.test(hexes) ? hexes : p;
+    }
+    const segment = (p.split(/[?#]/)[0] ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
+    return /([0-9a-f]{32})$/.exec(segment.toLowerCase().replace(/-/g, ""))?.[1] ?? p;
+  });
+}
+
+/** Meeting space ids (a `spaces/` prefix dropped) or meeting ids. */
+export function meetingIds(text: string, provider: RecordingProvider): string[] {
+  return pieces(text, (p) => (provider === "meet" ? p.replace(/^spaces\//, "") : p));
 }
 
 export function normalisedName(name: string): string {
   return name.trim().toLowerCase();
+}
+
+/** A list of ids: at least one, at most MAX_IDS, each matching `re`. */
+function idProblems(ids: string[], re: RegExp, what: string, notOne: string): string[] {
+  if (ids.length === 0) return [`Add at least one ${what}.`];
+  const problems = ids.length > MAX_IDS ? [`At most ${MAX_IDS} ${what}s.`] : [];
+  const bad = ids.filter((id) => !re.test(id));
+  if (bad.length > 0) problems.push(`Not ${notOne}: ${bad.join(", ")}.`);
+  return problems;
+}
+
+function configProblems(f: SourceForm): string[] {
+  switch (f.kind) {
+    case "gdrive": {
+      const problems = idProblems(folderIds(f.folders), FOLDER_ID_RE, "folder", "a folder id");
+      if (f.include.length === 0) problems.push("Pick at least one file kind.");
+      return problems;
+    }
+    case "linear":
+      return idProblems(projectIds(f.projects), PROJECT_ID_RE, "project", "a project id (a UUID)");
+    case "notion": {
+      const pages = pageIds(f.pages);
+      const databases = pageIds(f.databases);
+      const all = [...pages, ...databases];
+      if (all.length === 0) return ["Add at least one page or database."];
+      const problems = all.length > MAX_IDS ? [`At most ${MAX_IDS} pages and databases in all.`] : [];
+      const bad = all.filter((id) => !PAGE_ID_RE.test(id));
+      if (bad.length > 0) problems.push(`Not an id (32 hex digits): ${bad.join(", ")}.`);
+      return problems;
+    }
+    case "recording":
+      return f.provider === "meet"
+        ? idProblems(meetingIds(f.meetings, "meet"), MEETING_ID_RE.meet, "space id", "a space id")
+        : idProblems(meetingIds(f.meetings, "zoom"), MEETING_ID_RE.zoom, "meeting id", "a meeting id (9-12 digits)");
+  }
 }
 
 /** What keeps the form from being checked, one line each; [] when it can be. */
@@ -235,14 +388,28 @@ export function sourceFormProblems(f: SourceForm): string[] {
   const problems: string[] = [];
   if (!NAME_RE.test(normalisedName(f.name)))
     problems.push("Name: 2-32 lower-case letters, digits, - or _, starting with a letter.");
-  const ids = folderIds(f.folders);
-  if (ids.length === 0) problems.push("Add at least one folder.");
-  else if (ids.length > MAX_FOLDERS) problems.push(`At most ${MAX_FOLDERS} folders.`);
-  const bad = ids.filter((id) => !FOLDER_ID_RE.test(id));
-  if (bad.length > 0) problems.push(`Not a folder id: ${bad.join(", ")}.`);
-  if (f.include.length === 0) problems.push("Pick at least one file kind.");
-  if (!f.credential.trim()) problems.push("Paste the service account's key.");
+  problems.push(...configProblems(f));
+  if (!f.credential.trim()) problems.push(KIND_FORM[f.kind].noCredential);
   return problems;
+}
+
+/** The chosen kind's config, in the keys the server reads for it. */
+export function sourceConfig(f: SourceForm): Record<string, unknown> {
+  switch (f.kind) {
+    case "gdrive":
+      return { folder_ids: folderIds(f.folders), include: [...f.include] };
+    case "linear":
+      return { project_ids: projectIds(f.projects) };
+    case "notion":
+      return { page_ids: pageIds(f.pages), database_ids: pageIds(f.databases) };
+    case "recording":
+      return { provider: f.provider, ids: meetingIds(f.meetings, f.provider) };
+  }
+}
+
+/** Whether anything but the name and kind was typed, so the problems list can wait. */
+export function sourceFormTouched(f: SourceForm): boolean {
+  return [f.name, f.folders, f.projects, f.pages, f.databases, f.meetings, f.credential].some((v) => v !== "");
 }
 
 export function sourceAddBody(org: string, namespace: string, f: SourceForm, dryRun: boolean) {
@@ -251,7 +418,7 @@ export function sourceAddBody(org: string, namespace: string, f: SourceForm, dry
     namespace,
     name: normalisedName(f.name),
     kind: f.kind,
-    config: { folder_ids: folderIds(f.folders), include: [...f.include] },
+    config: sourceConfig(f),
     credential: f.credential.trim(),
     dry_run: dryRun,
   };
