@@ -17,8 +17,9 @@ whole document through knowledge.get; 2 the document as knowledge through loom_s
 the gold rows through the pre-edit block (memory.for_file) and the loom_search memory
 section; 4 the same surfaces over the rows `loom decisions extract` mined from the
 documents (or, with --arm4-namespace, rows a document source's sync wrote); 5 the gold
-rows through the loom_search memory section only, added whenever arms 4 and 6 have no
-files; 6 arm 4's surfaces with the knowledge hits of the same loom_search beside them.
+rows through the loom_search memory section only, added whenever arm 4 or 6 runs
+without files; 6 arm 4's surfaces with the knowledge hits of the same loom_search beside
+them.
 
 The extracted rows (arms 4 and 6) name code by its names; the files that give them a
 pre-edit block come from a code index of the repository (--code-index: read-only
