@@ -1,10 +1,11 @@
 """A sheet's, a CSV file's or a Parquet file's rows as a table, and as the
 blocks its rows are searched by: one block per run of rows (ROWS_PER_BLOCK,
 BLOCK_CHARS), each row a line of `column: value` pairs, cited by its sheet and
-rows (a table with no rows under its header is one block of the header row, at
-row 0 when the names are no row of the file, as a Parquet file's schema). A
-column's type is what every value it holds is, over the values that are not
-empty or errors.
+rows, each block starting and ending at a row with text (a Parquet row whose
+values were all left out has none). A header with no row of text under it is
+one block of the header row, when it names a column, at row 0 when the names
+are no row of the file, as a Parquet file's schema. A column's type is what
+every value it holds is, over the values that are not empty or errors.
 
 One `Budget` bounds what all of an artifact's tables hold. A source collects
 a row's non-empty cells from it as it reads (`MAX_CELLS` in all, their text
@@ -284,7 +285,8 @@ def table(
     columns = tuple(Column(names[i], _type([r[i] for _, r in grid])) for i in range(width))
     written = False
     for run in blocks:
-        # A row whose values were all left out has no line: no text, and not cited.
+        # A row whose values were all left out has no line: the block holds none
+        # of it, and starts and ends at a row with text.
         lines = [(n, line) for n, line in run if line]
         if lines:
             loc = Locator(sheet=sheet, row_start=lines[0][0], row_end=lines[-1][0])

@@ -453,7 +453,7 @@ def test_every_cause_of_a_value_left_out_is_named_in_full(monkeypatch: pytest.Mo
     a, _ = _one(_file(t))
     reason = (
         "1 value of bytes, no text; 1 value infinite; 1 value over 3 characters; "
-        "1 value past what Python holds; 1 value unread past 1 in a column"
+        "1 value past what Python holds; 1 value unread past 1 unheld in a column"
     )
     assert [f.reason for f in a.coverage.failed] == [reason]
     monkeypatch.undo()  # the real bounds' phrases
@@ -553,7 +553,7 @@ def test_a_file_whose_values_were_all_left_out_is_still_its_header_to_find() -> 
     assert [(b.text, b.locator.row_start) for b in a.blocks] == [("s: x", rows + 1)]
 
 
-def test_a_block_partly_of_rows_left_out_holds_and_cites_only_rows_with_text() -> None:
+def test_a_block_partly_of_rows_left_out_starts_and_ends_at_rows_with_text() -> None:
     t = pa.table({"bin": [b"\x00", None, b"\x01", None], "s": [None, "a", None, "b"]})
     a = extract(_file(t), "p.parquet")
     assert [(b.text, b.locator.row_start, b.locator.row_end) for b in a.blocks] == [
@@ -601,7 +601,7 @@ def test_values_python_cannot_hold_are_searched_for_by_halves_to_a_bound(
     days = pa.array([3_000_000, 3_000_000, 3_000_000, 1], pa.date32())
     a, tab = _one(_file(pa.table({"d": days})))
     assert [f.reason for f in a.coverage.failed] == [
-        "2 values past what Python holds; 2 values unread past 2 in a column"
+        "2 values past what Python holds; 2 values unread past 2 unheld in a column"
     ]
 
 
@@ -805,7 +805,7 @@ def test_a_column_past_its_unheld_bound_is_not_searched_in_later_batches(
     # The first batch finds the two; each later batch is one call, nothing converted.
     assert searched == [2, 1, 1, 2, 2, 2, 2]
     assert a.coverage.failed[-1].reason == (
-        "2 values past what Python holds; 8 values unread past 2 in a column"
+        "2 values past what Python holds; 8 values unread past 2 unheld in a column"
     )
 
 
@@ -825,7 +825,7 @@ def test_the_unheld_bound_is_counted_for_each_column_apart(
     assert [r[1] for r in tab.rows] == [None, "1970-01-02", "1970-01-03", "1970-01-04"]
     assert [r[0] for r in tab.rows] == [None, None, None, None]
     assert [f.reason for f in a.coverage.failed] == [
-        "3 values past what Python holds; 2 values unread past 2 in a column"
+        "3 values past what Python holds; 2 values unread past 2 unheld in a column"
     ]
 
 

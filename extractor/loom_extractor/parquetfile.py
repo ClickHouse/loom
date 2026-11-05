@@ -135,7 +135,7 @@ class _Reader:
 
     def __init__(self) -> None:
         # The values left out of the rows read, by why.
-        self.left_out = {"bytes": 0, "infinite": 0, "long": 0, "unheld": 0, "unread": 0}
+        self.left_out = dict.fromkeys(_causes(), 0)
         self.total = 0  # their sum, so a row can tell whether it left one out
 
     def leave(self, cause: str) -> Cell:
@@ -425,7 +425,7 @@ def _causes() -> dict[str, str]:
         "infinite": "infinite",
         "long": f"over {MAX_VALUE_CHARS} characters",
         "unheld": "past what Python holds",
-        "unread": f"unread past {_MAX_UNHELD} in a column",
+        "unread": f"unread past {_MAX_UNHELD} unheld in a column",
     }
 
 

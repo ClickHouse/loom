@@ -243,12 +243,13 @@ value; a Parquet file's schema), its columns typed by every value they hold (`st
 `datetime`), and its rows of values. The same rows are blocks, twenty to a block and at most 1,000 characters (a longer
 row is a block alone, under a chunk's default 1,500 characters, so a chunk cites the rows it holds), each row a line of
 `column: value` pairs, cited by sheet and rows, so the lexical and vector legs search them like any passage; a header
-with no row of text under it (no rows, or a Parquet file whose every value was left out) is a block of its own. A
-column's name is at most 500 characters of its header cell (one cut shorter is a failed unit, `<table> header`). A
-float's row text is what a sheet shows, to 15 significant digits (`0.1+0.2` reads `0.3`), and the table keeps its exact
-value. In CSV and XLSX a number that is no JSON number (an integer past signed 64 bits, an infinity, a NaN) is read as a
-float or as text, and a value no other rule reads (a style index of 5,000 digits, a date rounded past year 9999) reads
-as a number or as text, never failing the file; Parquet reads each by its column's type (below).
+with no row of text under it (no rows, or a Parquet file whose every value was left out) is a block of its own when it
+names a column, and a block starts and ends at a row with text. A column's name is at most 500 characters of its header
+cell (one cut shorter is a failed unit, `<table> header`). A float's row text is what a sheet shows, to 15 significant
+digits (`0.1+0.2` reads `0.3`), and the table keeps its exact value. In CSV and XLSX a number that is no JSON number (an
+integer past signed 64 bits, an infinity, a NaN) is read as a float or as text, and a value no other rule reads (a style
+index of 5,000 digits, a date rounded past year 9999) reads as a number or as text, never failing the file; Parquet
+reads each by its column's type (below).
 
 **CSV.** The delimiter is sniffed from the whole lines of the file's first 64 KiB (a comma, semicolon, tab or pipe; a
 tab, with no quoting, for a `.tsv` name; a tab-separated file sent with no such name is sniffed, so it reads quotes as
