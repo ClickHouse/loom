@@ -453,8 +453,8 @@ def run_extraction(
     """`loom decisions extract --apply` on one document, its worst-case spend charged to
     the ledger first: the calls run in the server's code, out of the ledger's sight.
     With a code index, each kept row's code names are resolved there and the files
-    written on it, so arm 4 reaches the pre-edit block as arm 3 does; a name the index
-    did not answer for is listed in `lookup_failures`."""
+    written on it, so arms 4 and 6 reach the pre-edit block as arm 3 does; a name the
+    index did not answer for is listed in `lookup_failures`."""
     calls, tin, tout = extraction_bound(doc, cfg.extract_window_chars)
     ledger.check(cfg.extract_model, tin, tout)
     ledger.record("extract", cfg.extract_model, tin, tout, estimated=True)

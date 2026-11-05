@@ -272,9 +272,9 @@ Access patterns where vector-only memory falls down.
 
 - **`design_rationale/`** — whether the decisions and documents Loom serves from design
   documents keep a coding agent from re-proposing rejected options, and whether it
-  answers why, supersession, abstention and feature questions correctly and cited, over a private
-  task set read from a directory (`python -m bench.design_rationale --help`; synthetic
-  set in `example/`).
+  answers why, supersession, abstention and feature questions correctly and cited, over
+  a private task set read from a directory (`python -m bench.design_rationale --help`;
+  synthetic set in `example/`).
 
 ## Tracker
 
