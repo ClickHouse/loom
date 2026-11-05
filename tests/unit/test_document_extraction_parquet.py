@@ -511,6 +511,19 @@ def test_a_file_of_only_blank_rows_is_its_header_block_at_row_0() -> None:
     assert [b.text for b in served.blocks] == ["v; s"] and served.coverage.complete
 
 
+def test_a_file_whose_values_were_all_left_out_is_still_its_header_to_find() -> None:
+    from server.knowledge.domain.extract.structural import chunk_artifact
+    from server.knowledge.domain.extract.validate import parse_artifact
+
+    a = extract(_file(pa.table({"bin": [b"\x00", b"\x01"]})), "b.parquet")
+    (tab,) = a.tables
+    assert (tab.rows, tab.locator.row_start, tab.locator.row_end) == (((None,), (None,)), 1, 2)
+    # No row has text, so the names are its block, as for a table with no rows.
+    assert [(b.text, b.locator.row_start) for b in a.blocks] == [("bin", 0)]
+    served = parse_artifact(a.to_json(), fmt="parquet", max_bytes=1 << 24)
+    assert [c.text for c in chunk_artifact(served, size=760, stride=600)] != []
+
+
 def test_a_file_of_blank_rows_is_read_only_to_the_decode_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
