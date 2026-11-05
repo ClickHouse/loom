@@ -6,8 +6,7 @@ key, the OAuth 2.0 JWT bearer grant) and the token goes in the `Authorization`
 header only. Both hosts are constants here: a key's own `token_uri` is never
 dialled.
 
-Errors are the shared ones of `server.clients._vendor`; a 403 whose error reason
-is a rate limit raises `RateLimited`, not `CredentialRefused`.
+Errors are the shared ones of `server.clients._vendor`.
 """
 
 from __future__ import annotations

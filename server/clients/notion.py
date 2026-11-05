@@ -5,8 +5,8 @@ only, with the API version the shapes below were written against. The host is a
 constant here, and every id that goes into a request path is checked first.
 
 Errors are the shared ones of `server.clients._vendor`: a refused token or
-capability is `CredentialRefused` (401, 403), a page past the caller's bounds
-`TooLarge`.
+capability is `CredentialRefused` (a 401, or a 403 that is not a rate limit), a
+page past the caller's bounds `TooLarge`.
 """
 
 from __future__ import annotations
