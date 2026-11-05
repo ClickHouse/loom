@@ -358,21 +358,22 @@ export function databaseIds(text: string): string[] {
 }
 
 /** Meeting space ids (a `spaces/` prefix dropped), or meeting ids with the spaces they
- *  are shown with dropped (`812 3456 7890`). Spaced digits too long for one meeting id
- *  are kept as typed: they are two ids on one line. */
+ *  are shown with dropped (`812 3456 7890`). Any other piece is kept as typed, so the
+ *  form can name it. */
 export function meetingIds(text: string, provider: RecordingProvider): string[] {
   if (provider === "meet") return pieces(text, ANY_SPACE, (p) => p.replace(/^spaces\//, ""));
   return pieces(text, LINES, (p) => {
     const digits = p.replace(/\s+/g, "");
-    return /^[0-9]{13,}$/.test(digits) ? p.trim() : digits;
+    return /^[0-9]{1,12}$/.test(digits) ? digits : p.trim();
   });
 }
 
-/** Meeting ids' problems; a piece with spaces left in it is two ids on one line. */
+/** Meeting ids' problems; spaced digits left whole are too long for one id, so they are
+ *  two ids on one line. */
 function zoomProblems(ids: string[]): string[] {
   if (ids.length === 0) return ["Add at least one meeting id."];
   const problems = ids.length > MAX_IDS ? [`At most ${MAX_IDS} meeting ids.`] : [];
-  const joined = ids.filter((id) => /\s/.test(id));
+  const joined = ids.filter((id) => /\s/.test(id) && /^[0-9\s]+$/.test(id));
   const bad = ids.filter((id) => !MEETING_ID_RE.zoom.test(id) && !joined.includes(id));
   if (bad.length > 0) problems.push(`Not a meeting id (9-12 digits): ${bad.join(", ")}.`);
   if (joined.length > 0) problems.push(`Put one meeting id per line, or comma-separated: ${joined.join("; ")}.`);
