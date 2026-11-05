@@ -651,9 +651,8 @@ def test_a_batch_of_rows_with_no_values_still_costs_its_rows(
 ) -> None:
     monkeypatch.setattr(parquetfile, "_MAX_DECODED", 6)
     monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 4)
-    monkeypatch.setattr(
-        parquetfile, "_cost", lambda array: (0, 0)
-    )  # as a column with nothing in it
+    # As a column with nothing in it.
+    monkeypatch.setattr(parquetfile, "_cost", lambda array: (0, 0))
     a, _ = _one(_file(pa.table({"v": pa.array([None] * 20, pa.int64())})))
     assert [(f.unit, f.reason) for f in a.coverage.failed] == [
         ("f.parquet rows 5-", "16 rows past what one file decodes")

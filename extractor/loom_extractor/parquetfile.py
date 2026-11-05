@@ -438,7 +438,7 @@ class _Walk:
         self.fail(f"rows {self.number + 1}-", reason)
 
     def read(self, groups: list[int]) -> None:
-        """Read the row groups, each `groups` row count long, to the first bound."""
+        """Read the row groups (`groups`, each one's row count) to the first bound."""
         if not self.kinds:  # no column: every row is blank, counted from the metadata
             self.blank = sum(groups)
             return
@@ -452,9 +452,8 @@ class _Walk:
                 self.number += group_rows
                 continue
             read_groups += 1
-            if (
-                read_groups > _MAX_GROUPS
-            ):  # each costs a reader's setup: past them, the rest is counted
+            # Each costs a reader's setup: past them, the rest is counted.
+            if read_groups > _MAX_GROUPS:
                 self._fail_from(f"{counted(sum(groups[g:]), 'row')} past what one file decodes")
                 return
             if self._group(groups, g):
@@ -492,7 +491,7 @@ class _Walk:
             return True
         return False
 
-    def left_out(self) -> None:
+    def fail_left_out(self) -> None:
         """The values left out of the rows read, a failed unit naming each cause."""
         causes = {
             "bytes": "of bytes, no text",
@@ -560,7 +559,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     # A count a footer declares below 0 is no rows.
     groups = [max(0, meta.row_group(g).num_rows) for g in range(meta.num_row_groups)]
     walk.read(groups)
-    walk.left_out()
+    walk.fail_left_out()
     acc = Blocks()
     t, table_failed = table(acc, "t0", name, rows, budget)
     return Artifact(
