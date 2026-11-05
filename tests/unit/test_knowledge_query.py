@@ -176,7 +176,8 @@ def test_the_statement_holds_no_caller_text_and_reads_each_dataset_in_its_scope(
         " AS q0 INNER JOIN (SELECT row_id, s1 FROM loom.dataset_rows WHERE org = {p0:String}"
         " AND namespace = {p1:String} AND dataset_id = {p4:String} AND snapshot_id = {p5:UInt64}"
         " AND s1 = {p6:String}) AS q1 ON q0.s1 = q1.s1"
-        " GROUP BY c0 ORDER BY c1 DESC LIMIT {p7:UInt32}"
+        # The caller's order, then the groups', so ties come back the same way each time.
+        " GROUP BY c0 ORDER BY c1 DESC, c0 LIMIT {p7:UInt32}"
     )
     assert params == {
         "p0": "o", "p1": "ns", "p2": "orders", "p3": 41, "p4": "teams", "p5": 42,
@@ -214,6 +215,7 @@ class Stores:
         self.rows: list[dict[str, Any]] = [{"c0": 5}]
         self.ran: list[tuple[str, dict[str, Any]]] = []
         self.after_run: dict[str, int | None] = {}
+        self.snapshot_after_run: dict[str, int] = {}
         self.shaped: list[bool] = []
         monkeypatch.setattr(app.documents_repo, "get_one", self.get_one)
         monkeypatch.setattr(app.datasets_repo, "at_version", self.at_version)
@@ -235,6 +237,8 @@ class Stores:
         self.shaped.append(caller_shaped_var.get())
         self.ran.append((sql, params))
         self.versions.update(self.after_run)  # type: ignore[arg-type]
+        for dataset_id, snapshot in self.snapshot_after_run.items():
+            self.catalogs[dataset_id] = {**self.catalogs[dataset_id], "snapshot_id": snapshot}
         return self.rows
 
 
@@ -304,6 +308,11 @@ def test_a_snapshot_replaced_while_the_statement_ran_is_never_released(stores: S
         _run()
     stores.versions, stores.after_run = {"repo://orders.csv": 7}, {"repo://orders.csv": None}
     with pytest.raises(PreconditionFailedError):  # erased while it ran
+        _run()
+    # A retyping approval switches the snapshot under the same document version.
+    stores.versions, stores.after_run = {"repo://orders.csv": 7}, {}
+    stores.snapshot_after_run = {"orders": 99}
+    with pytest.raises(PreconditionFailedError, match="dataset 'o' changed while the query ran"):
         _run()
 
 

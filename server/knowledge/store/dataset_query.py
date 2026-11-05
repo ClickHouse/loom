@@ -19,7 +19,7 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.datasets import SLOT_COLUMNS
-from server.knowledge.domain.query import Column, Output, Resolved
+from server.knowledge.domain.query import Column, Filter, Output, Resolved
 from server.knowledge.store.datasets import ROWS
 
 # The parameter type of each slot kind (schemas/migrations/083_knowledge_datasets.sql).
@@ -56,7 +56,14 @@ def _ref(c: Column) -> str:
     return f"q{c.index}.{_slot(c)}"
 
 
-def _condition(f: Any, p: _Params) -> str:
+def _of(o: Output) -> str:
+    """A group's or a selected column's reference: each names a column."""
+    if o.column is None:
+        raise ValueError(f"result column {o.name!r} names no column")
+    return _ref(o.column)
+
+
+def _condition(f: Filter, p: _Params) -> str:
     slot = _slot(f.column)
     typ = _PARAM[slot[0]]
     if f.op == "is_null":
@@ -119,27 +126,23 @@ def compile_plan(plan: Resolved, org: str, namespace: str) -> tuple[str, dict[st
     for k, (left, right) in enumerate(plan.joins, start=1):
         source += f" INNER JOIN {subqueries[k]} ON {_ref(left)} = {_ref(right)}"
 
-    exprs: list[str] = []
-    for o in plan.groups:
-        assert o.column is not None
-        exprs.append(_BUCKET[o.bucket].format(_ref(o.column)) if o.bucket else _ref(o.column))
+    exprs = [_BUCKET[o.bucket].format(_of(o)) if o.bucket else _of(o) for o in plan.groups]
     exprs += [_aggregate(o) for o in plan.aggregates]
-    exprs += [_ref(o.column) for o in plan.selected if o.column is not None]
+    exprs += [_of(o) for o in plan.selected]
     picked = [f"{e} AS c{i}" for i, e in enumerate(exprs)]
     if plan.selected:  # each row's id in each dataset, after the result columns
         picked += [f"q{i}.row_id AS r{i}" for i in range(len(plan.catalogs))]
     sql = f"SELECT {', '.join(picked)} FROM {source}"
     if plan.groups:
         sql += " GROUP BY " + ", ".join(f"c{i}" for i in range(len(plan.groups)))
+    # The caller's order, then groups in their order or rows in their datasets'
+    # order, so rows that tie come back the same way each time a limit cuts them.
     order = [f"c{i}{' DESC' if desc else ''}" for i, desc in plan.order]
-    if not order:  # groups in their order, rows in their datasets' order
-        order = (
-            [f"c{i}" for i in range(len(plan.groups))]
-            if plan.groups
-            else [f"r{i}" for i in range(len(plan.catalogs))]
-            if plan.selected
-            else []
-        )
+    ordered = {i for i, _ in plan.order}
+    if plan.groups:
+        order += [f"c{i}" for i in range(len(plan.groups)) if i not in ordered]
+    elif plan.selected:
+        order += [f"r{i}" for i in range(len(plan.catalogs))]
     if order:
         sql += " ORDER BY " + ", ".join(order)
     # One row past the limit says whether more matched.

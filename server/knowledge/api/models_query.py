@@ -39,7 +39,7 @@ AggregateFn = Literal["count", "count_distinct", "sum", "avg", "min", "max"]
 
 
 class QueryDataset(BaseModel):
-    # The name the plan's column references use for this dataset.
+    # The name column references use for this dataset (default d); each dataset needs its own.
     alias: str = Field(default="d", pattern=r"^[a-z][a-z0-9_]{0,31}$")
     # The ingested source the dataset belongs to.
     source_uri: str = Field(min_length=1)
@@ -92,7 +92,8 @@ class QueryAggregate(BaseModel):
 
 
 class QueryOrder(BaseModel):
-    # A result column's name.
+    # A result column's name: a group's or an aggregate's, or a selected column's
+    # (<alias>.<column> when the plan reads several datasets).
     by: str = Field(min_length=1)
     # True for the largest first.
     desc: bool = False
@@ -116,7 +117,8 @@ class KnowledgeQueryInput(BaseModel):
     group_by: list[QueryGroup] = Field(default_factory=list, max_length=MAX_GROUPS)
     # The calculations; empty to return the rows themselves (`select`).
     aggregates: list[QueryAggregate] = Field(default_factory=list, max_length=MAX_AGGREGATES)
-    # The columns of each row returned when the plan has no aggregates.
+    # The columns of each row returned when the plan has no aggregates; each is named
+    # <alias>.<column> in the result when the plan reads several datasets.
     select: list[QueryColumn] = Field(default_factory=list, max_length=MAX_SELECTED)
     # The result's order, by result column names; groups, or rows in source order, by default.
     order_by: list[QueryOrder] = Field(default_factory=list, max_length=4)

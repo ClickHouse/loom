@@ -473,16 +473,18 @@ It compiles to one read-only statement over `loom.dataset_rows` (`server/knowled
 slot names, result names `c0`, `c1`, ... and typed parameters alone, so nothing a caller wrote is SQL. Each dataset is a
 subquery held to its snapshot and the caller's org and namespace, with its own filters, before any join, so a row of
 another tenant or snapshot never reaches a count. A sum of a decimal column is taken in `Decimal256`, which no dataset's
-rows overflow, and an average is that sum over the count, to nine places (ClickHouse's `avg` of a decimal is a double).
+rows overflow, and an average is that sum over the count, to nine places (ClickHouse's `avg` of a decimal is a double);
+a dataset's number columns past the first 24 are held, so summed and averaged, as doubles.
 
 Each dataset is read at the snapshot its source's live document serves; a dataset whose schema needs an answer
 (`needs_clarification`) is refused until it is approved. The statement runs under the caller-shaped ceilings as the
 read-only reader user (`ch.caller_shaped`), so a plan past the deployment's rows, time or memory for one request fails
 (`422`) rather than returning part of an aggregate. Before the rows are released each source must still serve the
-version read: a snapshot replaced or erased while the statement ran answers `409 PRECONDITION_FAILED`, to run again. The
-result names each snapshot read in its receipt, with the plan as validated, the statement and its parameters, and is
-`complete: false`, saying why, when a dataset's extraction left part of its table out or rejected rows. Nothing is
-stored: the receipt is the response.
+version read and each dataset the snapshot read (a publish moves the version, a retyping approval the snapshot under the
+same version, and either deletes the rows read without waiting): one replaced or erased while the statement ran answers
+`409 PRECONDITION_FAILED`, to run again. The result names each snapshot read in its receipt, with the plan as validated,
+the statement and its parameters, and is `complete: false`, saying why, when a dataset's extraction left part of its
+table out or rejected rows. Nothing is stored: the receipt is the response.
 
 ## Dependencies
 

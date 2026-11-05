@@ -116,6 +116,9 @@ async def test_reference_queries(control_plane_url: str) -> None:
             "monthly": dict(datasets=[o], group_by=[
                 {"column": _col("placed_at"), "bucket": "month", "name": "month"}
             ], aggregates=[{"fn": "count", "name": "n"}]),
+            "not_listed": dict(datasets=[o], where=[
+                {"column": _col("amount"), "op": "not_in", "values": ["0.1"]}
+            ], aggregates=[{"fn": "count", "name": "n"}]),
             "unpriced": dict(datasets=[o], where=[{"column": _col("amount"), "op": "is_null"}],
                              aggregates=[{"fn": "count", "name": "n"}]),
             "joined": dict(datasets=[o, t], joins=[
@@ -150,6 +153,7 @@ async def test_reference_queries(control_plane_url: str) -> None:
             ["2026-01-01", 2], ["2026-02-01", 2], ["2026-03-01", 1]
         ]  # fmt: skip
         assert results["unpriced"]["rows"] == [[1]]
+        assert results["not_listed"]["rows"] == [[3]]  # a null amount is in no list, nor out of one
         # 0.1 and 120.5 are platform's; 120.5's order is the one placed at 10:00 on the 15th.
         assert results["listed"]["rows"] == [[1, "2026-01-31T23:59:59"]]
         assert results["joined"]["rows"] == [[120.6]]

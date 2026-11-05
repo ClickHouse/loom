@@ -11,7 +11,7 @@ Pure and I/O-free. A plan that does not hold raises ValueError with the reason.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -160,7 +160,9 @@ def _filter(c: Column, f: Mapping[str, Any]) -> Filter:
     return Filter(c, op, (_value(f.get("value"), col, op),))
 
 
-def _joins(raw: Any, aliases: list[str], column: Any) -> tuple[tuple[Column, Column], ...]:
+def _joins(
+    raw: Any, aliases: list[str], column: Callable[[Mapping[str, Any]], Column]
+) -> tuple[tuple[Column, Column], ...]:
     if len(raw) != len(aliases) - 1:
         raise ValueError(
             f"{len(aliases)} datasets need {len(aliases) - 1} joins, one per dataset past the first"

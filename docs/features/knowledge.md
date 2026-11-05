@@ -953,14 +953,16 @@ up to four datasets of the namespace (`source_uri`, `dataset_id`, an `alias`), f
 groups (`group_by`, a date by `day`, `month` or `year`) and aggregates (`count`,
 `count_distinct`, `sum`, `avg`, `min`, `max`), or the rows themselves (`select`, each with
 its `row_ids`). Every row of the live snapshots is read, never a sample; a decimal's sum
-and average keep every digit a dataset holds (an average to nine places), and a sum of no
-values is null. A plan that needs more rows, time or memory than one request may use fails
-with `422` rather than returning part of a total. The response carries a `receipt` naming
-each snapshot read (`snapshot_id`, `revision`, `row_count`, `rejected_rows`), the plan,
-the statement and its parameters; `complete` is false, with `incomplete` saying why, when
-a dataset left rows out. A dataset that needs clarification answers `422` until it is
-approved, and one replaced while the query ran answers `409 PRECONDITION_FAILED`: run it
-again ([queries](../architecture/document-extraction.md#queries)).
+and average keep every digit a dataset holds (an average to nine places; the number
+columns past a dataset's first 24 are doubles), and a sum of no values is null. A plan
+that needs more rows, time or memory than one request may use fails with `422` rather than
+returning part of a total. The response carries a `receipt` naming each snapshot read
+(`snapshot_id`, `revision`, `row_count`, `rejected_rows`), the plan, the statement and its
+parameters; `complete` is false, with `incomplete` saying why, when a dataset left rows
+out. A dataset that needs clarification answers `422` until it is approved, and one
+replaced (by an ingest or a retyping approval) while the query ran answers `409
+PRECONDITION_FAILED`: run it again
+([queries](../architecture/document-extraction.md#queries)).
 
 ## Where originals are stored
 

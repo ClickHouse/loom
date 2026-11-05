@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from server.core.ch import caller_shaped
+from server.core.ch import caller_shaped, own_write_reads
 from server.core.errors import NotFoundError, PreconditionFailedError, ValidationError
 from server.knowledge.api.models_query import (
     KnowledgeQueryInput,
@@ -30,6 +30,8 @@ from server.knowledge.domain import query as plan_domain
 from server.knowledge.store import dataset_query
 from server.knowledge.store import datasets as datasets_repo
 from server.knowledge.store import documents as documents_repo
+
+_NARROW = "a filter, fewer datasets, a join on a key that does not repeat"
 
 
 async def _live_versions(org: str, namespace: str, uris: list[str]) -> dict[str, Any]:
@@ -65,6 +67,30 @@ async def _catalogs(input: KnowledgeQueryInput, docs: dict[str, Any]) -> dict[st
     return out
 
 
+async def _still_served(
+    input: KnowledgeQueryInput, docs: dict[str, Any], catalogs: dict[str, dict[str, Any]]
+) -> None:
+    """Refuses unless every source still serves the version read and every
+    dataset the snapshot read: a publish moves the document's version, a
+    retyping approval the dataset's snapshot under the same version, and either
+    deletes the rows read without waiting."""
+    after = await _live_versions(input.org, input.namespace, sorted(docs))
+    for d in input.datasets:
+        now, then = after[d.source_uri], docs[d.source_uri]
+        served = (
+            await datasets_repo.at_version(
+                input.org, input.namespace, d.source_uri, now.version, dataset_id=d.dataset_id
+            )
+            if now is not None and now.version == then.version
+            else []
+        )
+        if not served or served[0]["snapshot_id"] != catalogs[d.alias]["snapshot_id"]:
+            raise PreconditionFailedError(
+                f"dataset {d.alias!r} changed while the query ran: the snapshot read no longer"
+                " serves; run it again"
+            )
+
+
 def _snapshot(alias: str, c: dict[str, Any]) -> QuerySnapshot:
     return QuerySnapshot(
         alias=alias,
@@ -89,24 +115,19 @@ def _incomplete(s: QuerySnapshot) -> str:
 
 async def handle_knowledge_query(input: KnowledgeQueryInput) -> KnowledgeQueryOutput:
     uris = sorted({d.source_uri for d in input.datasets})
-    docs = await _live_versions(input.org, input.namespace, uris)
-    catalogs = await _catalogs(input, docs)
+    with own_write_reads():  # a dataset an ingest or approval just published is read
+        docs = await _live_versions(input.org, input.namespace, uris)
+        catalogs = await _catalogs(input, docs)
     plan = input.model_dump(exclude={"org", "namespace"})
     try:
         resolved = plan_domain.resolve(plan, catalogs)
     except ValueError as e:
         raise ValidationError(str(e)) from None
     sql, params = dataset_query.compile_plan(resolved, input.org, input.namespace)
-    with caller_shaped():
+    with caller_shaped(narrow=_NARROW):
         rows = await dataset_query.run(sql, params)
-    # Released only while every source still serves the snapshot read.
-    after = await _live_versions(input.org, input.namespace, uris)
-    for uri in uris:
-        now, then = after[uri], docs[uri]
-        if now is None or now.version != then.version:
-            raise PreconditionFailedError(
-                f"{uri!r} changed while the query ran: its snapshot no longer serves; run it again"
-            )
+    with own_write_reads():  # released only while every snapshot read still serves
+        await _still_served(input, docs, catalogs)
 
     outputs = resolved.outputs
     truncated = len(rows) > input.limit

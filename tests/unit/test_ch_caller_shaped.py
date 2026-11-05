@@ -87,6 +87,15 @@ def test_a_row_or_memory_cap_hit_inside_the_scope_is_a_422(err: RuntimeError) ->
     ch._raise_if_caller_cap(err)  # outside the scope: left to the caller as before
 
 
+def test_a_cap_hit_says_how_the_caller_narrows_its_own_request() -> None:
+    err = RuntimeError("Code: 158. DB::Exception: Limit for rows exceeded")
+    with ch.caller_shaped(narrow="fewer datasets"), pytest.raises(ValidationError) as e:
+        ch._raise_if_caller_cap(err)
+    assert str(e.value).endswith("narrow it (fewer datasets)")
+    with ch.caller_shaped(), pytest.raises(ValidationError, match=r"\(a path prefix or globs"):
+        ch._raise_if_caller_cap(err)  # the hint does not outlive its scope
+
+
 @pytest.mark.parametrize(
     "err",
     [

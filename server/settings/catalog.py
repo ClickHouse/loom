@@ -5588,8 +5588,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.inspect": 4000,
     "knowledge.list": 150,
     "knowledge.outline": 80,
-    # Each source's live document read twice (before and after) and a catalog row a
-    # dataset, then one scan of up to four snapshots of at most 100,000 rows each.
+    # Each source's live document and each dataset's catalog row read twice (before and
+    # after), then one scan of up to four snapshots, held to the caller-shaped ceilings.
     "knowledge.query": 1500,
     "knowledge.reads": 500,
     "knowledge.search": 250,
