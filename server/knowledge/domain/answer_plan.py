@@ -83,8 +83,14 @@ def read_proposal(text: str) -> Proposal:
     )
 
 
-def evidence(n: int, columns: Sequence[Mapping[str, str]], rows: Sequence[Sequence[Any]], *,
-             truncated: bool, incomplete: Sequence[str]) -> str:  # fmt: skip
+def evidence(
+    n: int,
+    columns: Sequence[Mapping[str, str]],
+    rows: Sequence[Sequence[Any]],
+    *,
+    truncated: bool,
+    incomplete: Sequence[str],
+) -> str:
     """A calculation's result as a note the answer reads and cites."""
     shown = rows[:MAX_EVIDENCE_ROWS]
     head = " | ".join(f"{c['name']} ({c['type']})" for c in columns)

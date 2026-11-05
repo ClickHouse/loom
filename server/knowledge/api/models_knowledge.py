@@ -18,6 +18,7 @@ from server.knowledge.api.models_query import (
     QueryReceipt,
     QueryResultColumn,
 )
+from server.knowledge.domain.answer_plan import CALCULATION_SOURCE
 from server.knowledge.domain.datasets import DatasetType
 from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
 from server.memory.domain.rerank_names import RerankName
@@ -417,6 +418,8 @@ class KnowledgeSynthesizeInput(BaseModel):
     def _reads_something(self) -> KnowledgeSynthesizeInput:
         if not self.source_uris and not self.datasets:
             raise ValueError("name source_uris, datasets or both")
+        if CALCULATION_SOURCE in self.source_uris:  # it would cite as the calculation does
+            raise ValueError(f"{CALCULATION_SOURCE!r} names the calculation, not a document")
         aliases = [d.alias for d in self.datasets]
         if len(set(aliases)) != len(aliases):
             raise ValueError("each dataset needs an alias of its own")

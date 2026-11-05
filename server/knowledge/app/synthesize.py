@@ -68,13 +68,15 @@ async def handle_knowledge_synthesize(
         from server.llm.client import get_llm_client
 
         llm = get_llm_client()
-    calculations: list[SynthesizeCalculation] = []
+    # One calculation an answer: the plan for the task, cited `[knowledge.query#1]`.
+    calculation: SynthesizeCalculation | None = None
     if input.datasets:
         done = await _calculate(input, llm)
         if isinstance(done, KnowledgeSynthesizeOutput):
-            done.model = str(getattr(llm, "model", "") or synth_model or "")
+            if done.abstain_reason != "needs_clarification":  # that one calls no model
+                done.model = str(getattr(llm, "model", "") or synth_model or "")
             return done
-        calculations.append(done)
+        calculation = done
     wins = cs.windows(chunks, window_chars=input.window_chars)
     truncated = len(wins) > input.max_windows
     wins = wins[: input.max_windows]
@@ -87,13 +89,13 @@ async def handle_knowledge_synthesize(
             )
         return (getattr(res, "text", "") or "").strip()
 
-    notes = [_evidence(i + 1, c) for i, c in enumerate(calculations)]
+    notes = [_evidence(calculation)] if calculation is not None else []
     notes += [n for n in await asyncio.gather(*[_map(w) for w in wins]) if n]
     answer, rounds = await _reduce(input, llm, notes, note_tokens)
     # Grounded before the cut, so removed citations take no room; a kept citation the
     # cut halves is no longer one, so `citations` is read again from what is returned.
     by_key = {(c.source_uri, c.idx): c for w in wins for c in w.chunks}
-    read = set(by_key) | {(ap.CALCULATION_SOURCE, i + 1) for i in range(len(calculations))}
+    read = set(by_key) | ({(ap.CALCULATION_SOURCE, 1)} if calculation is not None else set())
     answer, cited, unsupported = cs.ground_citations(answer, read)
     if len(answer) > input.max_answer_chars:
         answer = answer[: input.max_answer_chars].rstrip() + "…"
@@ -114,7 +116,7 @@ async def handle_knowledge_synthesize(
         truncated=truncated,
         abstain=not answer,
         abstain_reason="" if answer else "empty_answer",
-        calculations=calculations,
+        calculations=[calculation] if calculation is not None else [],
         model=str(getattr(llm, "model", "") or synth_model or ""),
     )
 
@@ -183,7 +185,7 @@ async def _schemas(
                 namespace=input.namespace,
                 source_uri=d.source_uri,
                 dataset_id=d.dataset_id,
-            )  # fmt: skip
+            )
         )
         found = next((x for x in got.datasets if x.dataset_id == d.dataset_id), None)
         if found is None:
@@ -260,9 +262,9 @@ def _why(e: Exception) -> str:
     return str(e)
 
 
-def _evidence(n: int, c: SynthesizeCalculation) -> str:
+def _evidence(c: SynthesizeCalculation) -> str:
     return ap.evidence(
-        n,
+        1,
         [col.model_dump() for col in c.columns],
         c.rows,
         truncated=c.truncated,
