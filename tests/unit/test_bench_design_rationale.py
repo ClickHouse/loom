@@ -1877,3 +1877,15 @@ def test_arm_6_document_citations_resolve_in_the_namespace_it_searched():
     resolver.resolve(cite, 6)
     resolver.resolve(cite, 2)
     assert seen == ["extract-ns", "kb-ns"]
+
+
+def test_citation_recall_counts_the_claims_of_a_and_d_and_no_other_kind():
+    rows = {
+        "A1": {"kind": "A", "claims": 4, "claims_cited": 3},
+        "D1": {"kind": "D", "claims": 6, "claims_cited": 1},
+        # A change answer's citations count for precision, its claims for nothing.
+        "B1": {"kind": "B", "claims": 10, "claims_cited": 0, "citations": 2, "citations_good": 2},
+    }
+    out = score.arm_summary(rows)
+    assert out["citation_recall"] == round((3 + 1) / (4 + 6), 4)
+    assert out["citation_precision"] == 1.0
