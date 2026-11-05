@@ -171,7 +171,7 @@ def pass_metrics(
                 "claims": len(claims),
                 "correct": correct,
                 "precision": correct / len(claims) if claims else None,
-                "recall": len(covered) / gold_n if gold_n else None,
+                "recall": len(covered) / gold_n,
                 "misleading": float(bool(verdict.get("potentially_misleading"))),
                 "abstained": float(bool(verdict.get("abstained"))),
                 "claims_cited": cited_ok,

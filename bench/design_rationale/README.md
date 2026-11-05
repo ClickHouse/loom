@@ -138,10 +138,10 @@ of `gold_rows.json`; an empty list for an abstention task).
 
 | Kind | Fields                                                                                                                                                   |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A    | `question`, `gold_arguments` (list), `rejected_options` (list)                                                                                           |
+| A    | `question`, `gold_arguments` (a non-empty list), `rejected_options` (list)                                                                               |
 | B    | `task`, `gold_constraints`, `forbidden_options`, `detector` (list; a `judge` detector carries the rubric)                                                |
 | C    | `question`, `subtype` (`supersession` or `abstention`); a supersession task adds `current` (the design now) and `stale_claims` (the reversed statements) |
-| D    | `question`, `gold_facts` (list)                                                                                                                          |
+| D    | `question`, `gold_facts` (a non-empty list)                                                                                                              |
 
 A detector is one of:
 
