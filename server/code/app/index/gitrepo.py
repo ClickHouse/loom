@@ -288,12 +288,16 @@ async def run(git_dir: str, *args: str, timeout_s: float | None = None) -> str:
 
 
 async def run_bounded(
-    git_dir: str, *args: str, max_bytes: int, timeout_s: float | None = None
+    git_dir: str,
+    *args: str,
+    max_bytes: int,
+    timeout_s: float | None = None,
+    check: bool = False,
 ) -> tuple[str, bool]:
     """A read-only git command whose stdout is read up to `max_bytes` and then cut:
     (text, truncated). A diff of a huge merge must not hold the request or the process's
-    memory hostage. A non-zero exit with nothing read is a GitError; a cut stream is
-    not."""
+    memory hostage. A non-zero exit with nothing read is a GitError; with `check`, so is
+    one after output (what was read may be partial). A cut stream is not."""
     proc = await asyncio.create_subprocess_exec(
         "git",
         *UNQUOTED_PATHS,
@@ -332,7 +336,7 @@ async def run_bounded(
         _out, err = await communicate_or_kill(proc, timeout_s=10.0)
     except TimeoutError:
         pass  # killed and reaped; what was read stands
-    if not truncated and proc.returncode not in (0, None) and got == 0:
+    if not truncated and proc.returncode not in (0, None) and (got == 0 or check):
         msg = err.decode("utf-8", "replace").strip()[:500]
         raise GitError(msg or f"git exited {proc.returncode}")
     text = b"".join(chunks)[:max_bytes].decode("utf-8", "replace")

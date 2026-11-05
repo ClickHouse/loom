@@ -77,6 +77,7 @@ WHERE org = {{org:String}} AND namespace = {{ns:String}}
   AND sensitivity != 'high'
   AND status IN {{statuses:Array(String)}}
   AND (length({{tags:Array(String)}}) = 0 OR hasAny(tags, {{tags:Array(String)}}))
+  AND ({{whole_only:UInt8}} = 0 OR {_WHOLE_ROW})
 """
 _ORDER = """
 ORDER BY has(tags, 'constraint') DESC, pinned DESC, confidence DESC, updated_at DESC
@@ -92,7 +93,7 @@ def _whole_bytes() -> int:
     return settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN * _PAIR_ESCAPE_CHARS
 
 
-def _readable(hit: dict[str, Any]) -> str:
+def value_text(hit: dict[str, Any]) -> str:
     """The value as text: the stored JSON decoded (a string as written, anything else on one
     line), and a cut string value from its opening quote, its escapes undone up to the cut."""
     raw = str(hit.get("value") or "")
@@ -166,13 +167,14 @@ def _is_whole(hit: dict[str, Any]) -> bool:
     return _is_decision(hit) or "constraint" in (hit.get("tags") or [])
 
 
-def _body(hit: dict[str, Any], *, decision: bool) -> str:
-    """The value on one line, capped unless the row prints whole; a decision's source
-    follows it whole, so the citation still resolves through knowledge.get."""
-    if _is_whole(hit):
-        text = " ".join(_readable(hit).split())
+def _body(hit: dict[str, Any], *, decision: bool, whole: bool = True) -> str:
+    """The value on one line, capped unless the row prints whole (`whole` lets a decision
+    or constraint do so); a decision's source follows it whole, so the citation still
+    resolves through knowledge.get."""
+    if whole and _is_whole(hit):
+        text = " ".join(value_text(hit).split())
     else:
-        text = _one_line(_readable(hit), _LINE_CHARS)
+        text = _one_line(value_text(hit), _LINE_CHARS)
     # Only a line break would break the one-line-per-row layout; spaces stay as cited.
     source = " ".join(str(hit.get("source_resource_id") or "").splitlines())
     if decision and source:
@@ -272,12 +274,18 @@ def _whole_left_out_line(left: list[dict[str, Any]], home: str) -> str:
     )
 
 
-def _row_line(h: dict[str, Any], now: datetime, home: str) -> str:
+def _row_line(h: dict[str, Any], now: datetime, home: str, *, whole: bool = True) -> str:
     decision = _is_decision(h)
     if _is_team(h, home):
         return _team_line(h, now, decision=decision)
     marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
-    return f"- {h['memory_key']}{marks}: {_body(h, decision=decision)}"
+    return f"- {h['memory_key']}{marks}: {_body(h, decision=decision, whole=whole)}"
+
+
+def listing_line(hit: dict[str, Any]) -> str:
+    """A row as the block prints it, its value cut at the line length even for a decision
+    or constraint: for a listing over several files that keeps its own budget."""
+    return _row_line(hit, naive_utc_now(), str(hit.get("namespace") or ""), whole=False)
 
 
 def _ceiling_hides(hits: list[dict[str, Any]], rows: list[str], whole_chars: int) -> bool:
@@ -441,11 +449,14 @@ async def _rows_for(
     path: str,
     base: str,
     tags: list[str],
-    linked: asyncio.Task[dict[str, list[str]]],
+    linked: asyncio.Task[dict[str, list[str]] | None],
+    *,
+    whole_only: bool = False,
 ) -> list[dict[str, Any]]:
     """One namespace's rows naming the file or linked to code still in it (`linked`:
-    memory_id -> the states of its links here, read alongside the files match), each
-    stamped with its namespace and the worst of those states."""
+    memory_id -> the states of its links here, read alongside the files match; None when
+    that read failed), each stamped with its namespace and the worst of those states.
+    `whole_only` keeps decisions and constraints only (the rows printed whole)."""
     statuses = ["active", "conflicted"] if input.include_conflicted else ["active"]
     params = {
         "org": input.org,
@@ -456,9 +467,11 @@ async def _rows_for(
         "statuses": statuses,
         "lim": int(input.top_k),
         "whole_bytes": _whole_bytes(),
+        "whole_only": int(whole_only),
     }
     ch = get_client()
-    found, states_of = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)
+    found, read = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)
+    states_of = read or {}
     ids = sorted(m for m, states in states_of.items() if set(states) != {"missing"})
     # a hot file's links are bound a slice at a time; the best of the files match and
     # of each slice's own top `lim` are the namespace's
@@ -476,11 +489,13 @@ async def _rows_for(
     ]
 
 
-async def _linked(input: MemoryForFileInput, path: str, nss: list[str]) -> dict[str, list[str]]:
+async def _linked(
+    input: MemoryForFileInput, path: str, nss: list[str]
+) -> dict[str, list[str]] | None:
     """memory_id -> the code states of the links of the `nss` memories to code in `path`,
     read from the trunk links of the repository the call is about: the one
     `extra_namespaces` or the `repo:` tag names. None named: no links (a path alone
-    is in every repository)."""
+    is in every repository). None when the read failed."""
     from server.code.app.memory_links import namespace_for_tags, trunk_namespace
     from server.memory.app.code_link_reads import current_links, readable_namespaces
     from server.memory.store import code_links
@@ -497,7 +512,7 @@ async def _linked(input: MemoryForFileInput, path: str, nss: list[str]) -> dict[
         seen = await readable_namespaces(input.org, {a["code_namespace"] for a in links})
     except Exception as e:  # noqa: BLE001 — the links are additive; the files match stands
         log.debug("memory.for_file: code links skipped: %s", e)
-        return {}
+        return None
     out: dict[str, list[str]] = defaultdict(list)
     for a in links:
         if a["code_namespace"] in seen:
@@ -534,18 +549,26 @@ def _order_key(r: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-async def _merged_rows(input: MemoryForFileInput, path: str, base: str) -> list[dict[str, Any]]:
-    """The caller's namespace, plus each readable extra namespace (tag filter on the caller's
-    only), merged in constraint-first order, deduplicated by (namespace, memory_key), cut at
-    top_k. An extra namespace's failed read is dropped; the caller's own raises."""
+async def _merged_rows(
+    input: MemoryForFileInput, path: str, base: str, *, whole_only: bool = False
+) -> tuple[list[dict[str, Any]], bool]:
+    """(rows, links skipped): the caller's namespace, plus each readable extra namespace
+    (tag filter on the caller's only), merged in constraint-first order, deduplicated by
+    (namespace, memory_key), cut at top_k; and whether the code-links read failed, so a
+    row reached only by a link is missing. An extra namespace's failed read is dropped;
+    the caller's own raises."""
     extras = await _readable_extras(input)
     linked = asyncio.ensure_future(_linked(input, path, [input.namespace, *extras]))
     try:
-        own = await _rows_for(input, input.namespace, path, base, list(input.tags or []), linked)
+        tags = list(input.tags or [])
+        own = await _rows_for(
+            input, input.namespace, path, base, tags, linked, whole_only=whole_only
+        )
+        skipped = linked.result() is None  # read by the own read above
         if not extras:
-            return _supersede_order(own)
+            return _supersede_order(own), skipped
         got = await asyncio.gather(
-            *(_rows_for(input, ns, path, base, [], linked) for ns in extras),
+            *(_rows_for(input, ns, path, base, [], linked, whole_only=whole_only) for ns in extras),
             return_exceptions=True,
         )
     finally:
@@ -563,40 +586,57 @@ async def _merged_rows(input: MemoryForFileInput, path: str, base: str) -> list[
         if k not in seen:
             seen.add(k)
             merged.append(r)
-    return _supersede_order(merged[: int(input.top_k)])
+    return _supersede_order(merged[: int(input.top_k)]), skipped
+
+
+def _hit(r: dict[str, Any], input: MemoryForFileInput) -> _MemoryForFileHit:
+    return _MemoryForFileHit(
+        memory_key=str(r["memory_key"]),
+        memory_type=str(r.get("memory_type") or "semantic"),
+        value=str(r.get("value") or ""),
+        value_truncated=bool(r.get("value_truncated")),
+        tags=[str(t) for t in (r.get("tags") or [])],
+        confidence=float(conf) if (conf := r.get("confidence")) is not None else 1.0,
+        pinned=bool(r.get("pinned")),
+        status=str(r.get("status_text") or "active"),
+        agent=str(r.get("agent") or ""),
+        updated_at=r.get("updated_at"),
+        namespace=str(r.get("namespace") or input.namespace),
+        actor=str(r.get("actor") or ""),
+        supersedes_key=str(r.get("supersedes_key") or ""),
+        supersedes=str(r.get("supersedes") or ""),
+        supersedes_kind=r.get("supersedes_kind") or "",
+        matched_files=[str(f) for f in (r.get("matched_files") or [])],
+        source_resource_id=str(r.get("source_resource_id") or ""),
+        verification=row_verification(r),
+        code_state=r.get("code_state", ""),
+    )
+
+
+async def listing_rows(
+    input: MemoryForFileInput, *, whole_only: bool = False
+) -> tuple[list[dict[str, Any]], bool]:
+    """(rows, links skipped) for a reader that lists several files' rows itself: each
+    row the hit memory.for_file serves with its `memory_id`, and whether the code-links
+    read failed (a row reached only by a link is then missing). `whole_only` keeps the
+    decisions and constraints (typed `decision`, or tagged `decision` or `constraint`)."""
+    path = repo_relative(input.path)
+    base = path.rsplit("/", 1)[-1]
+    rows, skipped = await _merged_rows(input, path, base, whole_only=whole_only)
+    return [_hit(r, input).model_dump() | {"memory_id": str(r["memory_id"])} for r in rows], skipped
 
 
 async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutput:
     path = repo_relative(input.path)
     base = path.rsplit("/", 1)[-1]
-    rows = await _merged_rows(input, path, base)
+    rows, _skipped = await _merged_rows(input, path, base)
 
     hits: list[_MemoryForFileHit] = []
     # The ids are not on the wire; render_block needs them to leave a superseded row out
     # with its superseder.
     to_render: list[dict[str, Any]] = []
     for r in rows:
-        hit = _MemoryForFileHit(
-            memory_key=str(r["memory_key"]),
-            memory_type=str(r.get("memory_type") or "semantic"),
-            value=str(r.get("value") or ""),
-            value_truncated=bool(r.get("value_truncated")),
-            tags=[str(t) for t in (r.get("tags") or [])],
-            confidence=float(conf) if (conf := r.get("confidence")) is not None else 1.0,
-            pinned=bool(r.get("pinned")),
-            status=str(r.get("status_text") or "active"),
-            agent=str(r.get("agent") or ""),
-            updated_at=r.get("updated_at"),
-            namespace=str(r.get("namespace") or input.namespace),
-            actor=str(r.get("actor") or ""),
-            supersedes_key=str(r.get("supersedes_key") or ""),
-            supersedes=str(r.get("supersedes") or ""),
-            supersedes_kind=r.get("supersedes_kind") or "",
-            matched_files=[str(f) for f in (r.get("matched_files") or [])],
-            source_resource_id=str(r.get("source_resource_id") or ""),
-            verification=row_verification(r),
-            code_state=r.get("code_state", ""),
-        )
+        hit = _hit(r, input)
         hits.append(hit)
         to_render.append(
             hit.model_dump()

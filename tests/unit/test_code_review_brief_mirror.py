@@ -350,7 +350,7 @@ async def test_ledger_miss_builds_from_the_mirror_discloses_it_and_stores_by_def
         "has_test": 1,
         "is_backport_pr": 0,
     }
-    assert set(out.sections) == set(rb.SECTION_ORDER)
+    assert set(out.sections) == set(rb.SERVED_ORDER)
     assert out.decisions["randomized_setting"] is True
     repo = wired["repo"]
     assert [t for t, _ in repo.inserted] == ["code_review_briefs"]

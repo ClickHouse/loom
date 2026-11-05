@@ -7001,6 +7001,7 @@ class CodeReviewBriefInput(TypedDict, total=False):
                 "qa",
                 "risk",
                 "do_not_flag",
+                "rationale",
             ]
         ]
     ]
@@ -7036,6 +7037,7 @@ class CodeReviewBriefBody(TypedDict, total=False):
                 "qa",
                 "risk",
                 "do_not_flag",
+                "rationale",
             ]
         ]
     ]

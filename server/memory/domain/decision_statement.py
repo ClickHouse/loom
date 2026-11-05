@@ -62,8 +62,10 @@ def memory_value(payload: dict[str, Any], *, proposed: bool = False) -> str:
     the reason, for the memory row that search embeds and memory.for_file shows. A
     `proposed` decision reads "Proposed <outcome>", so no reader takes it for one made.
 
-    The category is left out: it is on the record and in the row's tag. Nothing parses
-    this text.
+    The category is left out: it is on the record and in the row's tag. One reader
+    parses this text: the review brief's token check reads the names of the `Rejected:`
+    clause up to the `Realized:` one (`checked_names` in
+    `server/code/app/index/review_brief.py`).
     """
     scenario = _part(payload.get("scenario"))
     parts = []

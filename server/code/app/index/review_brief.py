@@ -35,10 +35,14 @@ tokens, truncated}`:
                 author's revert prior, and `author_revert_prior` itself, both
                 scored from the fit the weekly pass stored; ranking signals,
                 never a gate, so no `decisions` bit reads them;
-- `do_not_flag` — reserved; always `not_built`.
+- `do_not_flag` — reserved; always `not_built`;
+- `rationale` — the design decisions and constraints of the repository's trunk code
+                namespace whose files or code links touch the PR's files, each with a
+                token check against the diff; read on every call and never stored
+                (`rationale_section`).
 
 Tiers select sections and a token budget — trivial 700 (paths + symbols),
-standard 2,500 (+ tests, settings, history, risk), full 4,000 (+ blame,
+standard 2,500 (+ tests, settings, history, risk, rationale), full 4,000 (+ blame,
 qa) — and
 the budget is applied across the tier's sections by WHOLE rows, largest
 section first; a trimmed section keeps its verdict and says `truncated`.
@@ -56,9 +60,11 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+from server.code.domain.anchor import bare_name, mentions
 
 logger = logging.getLogger(__name__)
 
@@ -75,14 +81,27 @@ SECTION_ORDER: tuple[str, ...] = (
     "risk",
     "do_not_flag",
 )
+# A section each read computes and no build stores: the decisions it lists change after
+# the merge, and a stored copy would serve them as they were.
+RATIONALE = "rationale"
+SERVED_ORDER: tuple[str, ...] = (*SECTION_ORDER, RATIONALE)
 TIERS: dict[str, tuple[str, ...]] = {
     "trivial": ("paths", "symbols", "do_not_flag"),
-    "standard": ("paths", "symbols", "tests", "settings", "history", "risk", "do_not_flag"),
-    "full": SECTION_ORDER,
+    "standard": (
+        "paths",
+        "symbols",
+        "tests",
+        "settings",
+        "history",
+        "risk",
+        "do_not_flag",
+        RATIONALE,
+    ),
+    "full": SERVED_ORDER,
 }
-# Sections a stored payload may lack (built before the section existed): a read serves
-# them only from a payload that has them, or when asked for by name.
-OPTIONAL_SECTIONS: tuple[str, ...] = ("risk",)
+# Sections a stored payload may lack (built before the section existed, or never stored):
+# a read serves them only from a payload that has them, or when asked for by name.
+OPTIONAL_SECTIONS: tuple[str, ...] = ("risk", RATIONALE)
 TIER_BUDGET_TOKENS: dict[str, int] = {"trivial": 700, "standard": 2500, "full": 4000}
 DEFAULT_TIER = "standard"
 
@@ -103,6 +122,10 @@ MAX_SETTINGS = 8
 MAX_COVERAGE_SETTINGS = 4
 MAX_BLAME_RANGES = 5
 MAX_DIFF_CHARS = 200_000  # CodeImpactInput.diff's cap
+# The changed files the brief's impact read seeds from; the stored paths section lists
+# these plus the files of the diff's hunks, so a list this long may be cut.
+# not a setting: CodeImpactInput.files' max_length
+IMPACT_SEED_FILES = 50
 MAX_BLAME_RANGE_LINES = 400  # code.blame_range's own cap
 
 CallOp = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -137,6 +160,90 @@ class DiffFacts:
     paths: list[str] = field(default_factory=list)
     deleted: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
     settings: list[tuple[str, str]] = field(default_factory=list)  # (name, source)
+
+
+_HUNK_HEADER = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+# What may follow a hunk whose counted lines ran out (`--- ` starts the next file of a
+# plain `diff -u` with no `diff` lines).
+_AFTER_HUNK = ("diff ", "@@", "--- ")
+
+
+@dataclass
+class _Cursor:
+    """A walk of a diff: the lines its hunks add, whether a hunk's header miscounted its
+    lines, and what is left of the hunk it is in."""
+
+    added: list[str] = field(default_factory=list)
+    malformed: bool = False
+    old_left: int = 0
+    new_left: int = 0
+    ended: bool = False  # a hunk's counts just ran out
+
+    def in_hunk(self) -> bool:
+        return self.old_left > 0 or self.new_left > 0
+
+
+def _walk_hunks(diff: str) -> _Cursor:
+    """The token check's walker, strict on purpose: a check must never say `clear` on a
+    diff it cannot read, so anything odd marks the diff malformed. `parse_diff` stays
+    lenient on purpose: the brief's facts read what they can of any diff.
+
+    Walk `diff` hunk by hunk, counting each hunk's lines off its `@@ -a,b +c,d @@`
+    header, so a file header (with or without `a/` and `b/`) is never read as a line and
+    a line that looks like one (`--- x` removing a SQL comment) is. Lines split on `\\n`
+    only. `malformed` when a header miscounts: lines go on after its counts ran out, or
+    the next file starts, or the diff ends, before they did."""
+    cur = _Cursor()
+    lines = diff.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()  # the newline that ends the last line
+    for line in lines:
+        if cur.in_hunk() and _hunk_line(cur, line):
+            continue
+        _between_hunks(cur, line)
+    if cur.in_hunk():
+        cur.malformed = True  # the diff ended inside a hunk
+    return cur
+
+
+def _hunk_line(cur: _Cursor, line: str) -> bool:
+    """Read one line inside a hunk; False when it ends the hunk early (the next file
+    starts, or a line no hunk can hold), so the caller reads it as a header."""
+    if line.startswith("\\"):
+        return True  # "\ No newline at end of file"
+    marker = line[:1] or " "
+    if marker not in "+- ":  # `diff --git` of the next file among them
+        cur.malformed = True
+        cur.old_left = cur.new_left = 0
+        return False
+    if marker == "+":
+        cur.added.append(line[1:])
+    if marker != "+":
+        cur.old_left -= 1
+    if marker != "-":
+        cur.new_left -= 1
+    if cur.old_left < 0 or cur.new_left < 0:
+        cur.malformed = True
+    cur.ended = not cur.in_hunk()
+    return True
+
+
+def _between_hunks(cur: _Cursor, line: str) -> None:
+    """Read one line outside a hunk: a hunk header starts one; file headers and the rest
+    are passed over."""
+    if cur.ended and line.startswith("\\"):
+        return  # "\ No newline at end of file" after the hunk's last line
+    if cur.ended and not line.startswith(_AFTER_HUNK):
+        cur.malformed = True  # lines go on after the counts ran out
+    cur.ended = False
+    if line.startswith("@@"):
+        m = _HUNK_HEADER.match(line)
+        if m is None:
+            cur.malformed = True
+            return
+        cur.old_left = int(m.group(1) if m.group(1) is not None else 1)
+        cur.new_left = int(m.group(2) if m.group(2) is not None else 1)
+        cur.ended = not cur.in_hunk()
 
 
 def parse_diff(diff: str) -> DiffFacts:
@@ -306,17 +413,17 @@ def tier_sections(
     present: set[str] | None = None,
 ) -> list[str]:
     """The sections a read serves: the tier's set, narrowed to `requested`
-    when given (unknown names ignored), in SECTION_ORDER. An optional
-    section (`risk`) is served from a payload that has it, or when asked for
-    by name — never as a placeholder on a brief built before it existed."""
+    when given (unknown names ignored), in SERVED_ORDER. An optional
+    section (`risk`, `rationale`) is served from a payload that has it, or when
+    asked for by name — never as a placeholder on a brief built before it existed."""
     allowed = set(TIERS.get(tier, TIERS[DEFAULT_TIER]))
     if requested:
-        allowed &= {s for s in requested if s in SECTION_ORDER}
+        allowed &= {s for s in requested if s in SERVED_ORDER}
     else:
         for opt in OPTIONAL_SECTIONS:
             if present is not None and opt not in present:
                 allowed.discard(opt)
-    return [s for s in SECTION_ORDER if s in allowed]
+    return [s for s in SERVED_ORDER if s in allowed]
 
 
 def apply_budget(
@@ -326,7 +433,8 @@ def apply_budget(
 ) -> tuple[dict[str, dict[str, Any]], int]:
     """Trim whole rows, largest section first, until the served sections fit
     the budget. Every section keeps its verdict (and `rows_total`); a
-    trimmed one says `truncated`. Deterministic: ties break on SECTION_ORDER."""
+    trimmed one says `truncated`. Deterministic: ties break on the order of `names`
+    (SERVED_ORDER)."""
     out: dict[str, dict[str, Any]] = {}
     for n in names:
         sec = sections.get(n) or section(
@@ -444,6 +552,168 @@ def blame_verdict(rows: list[dict[str, Any]], *, ranges: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Pure: the rationale section
+# ---------------------------------------------------------------------------
+
+_REJECTED = re.compile(r"\bRejected:(.*)", re.S)
+# decision.record's value closes its rejected options with the realized outcome
+_REALIZED = "Realized:"
+_SETTING_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+")
+
+
+def checked_names(text: str, *, constraint: bool) -> list[str]:
+    """The names the token check looks for in a PR's diff: the code-shaped names of the
+    row's `Rejected:` clause, up to a `Realized:` one (backticked, qualified like `A::b`,
+    or calls like `f()`) and, for a constraint, the snake_case names anywhere in its
+    value, backticked or not."""
+    names: list[str] = []
+    # `mentions` caps how many it returns; no text holds more names than characters
+    cap = len(text)
+    rejected = _REJECTED.search(text)
+    if rejected:
+        options = rejected.group(1).split(_REALIZED, 1)[0]
+        names += [m.name for m in mentions(options, cap=cap) if not m.in_prose]
+    if constraint:
+        # `Setting::distinct_spill_ratio` is the setting `distinct_spill_ratio`
+        names += [
+            m.name for m in mentions(text, cap=cap) if _SETTING_NAME.fullmatch(bare_name(m.name))
+        ]
+    return list(dict.fromkeys(names))
+
+
+def added_text(diff: str) -> tuple[str, bool]:
+    """(the lines a unified diff adds without their `+`, whether a hunk miscounted)."""
+    walk = _walk_hunks(diff)
+    return "\n".join(walk.added), walk.malformed
+
+
+def names_in(added: str, names: list[str]) -> list[str]:
+    """The `names` the added text spells as a whole word: the name itself, or its last
+    part when that is four characters or more (`DB::HashSet` written as `HashSet`)."""
+    found = []
+    for name in names:
+        forms = {name}
+        if len(bare_name(name)) >= 4:
+            forms.add(bare_name(name))
+        if any(re.search(rf"(?<!\w){re.escape(f)}(?!\w)", added) for f in forms):
+            found.append(name)
+    return found
+
+
+def row_names(d: dict[str, Any]) -> list[str]:
+    """The names the token check looks for in a `decisions_for_paths` row, worked out
+    once and kept on the row (the ranking, the diff gate and the check all ask)."""
+    if "_names" not in d:
+        d["_names"] = checked_names(d["text"], constraint="constraint" in d["tags"])
+    return list(d["_names"])
+
+
+def has_check(d: dict[str, Any]) -> bool:
+    """Whether the token check has something to look at in a `decisions_for_paths` row:
+    names to look for, or a value cut at the read that may hide some."""
+    return bool(d.get("value_truncated") or row_names(d))
+
+
+def _checked_row(d: dict[str, Any], added: str, *, unsure: bool) -> dict[str, Any]:
+    """One served row with its token check against the `added` lines: `check` when the
+    diff adds one of its names; else `unknown` when `unsure` (the diff could not be read
+    whole: unread, cut or malformed) or the row's value was cut at the read, `clear`
+    otherwise; '' when it has nothing to check."""
+    constraint = "constraint" in d["tags"]
+    value_cut = bool(d.get("value_truncated"))
+    names = row_names(d)
+    found = names_in(added, names) if names else []
+    if not names and not value_cut:
+        verdict = ""
+    elif found:
+        verdict = "check"
+    elif unsure or value_cut:
+        verdict = "unknown"
+    else:
+        verdict = "clear"
+    row = {
+        "memory_key": d["memory_key"],
+        "kind": "constraint" if constraint else "decision",
+        "pinned": bool(d["pinned"]),
+        "code_state": d["code_state"],
+        "verdict": verdict,
+        "line": d["line"],
+    }
+    if found:
+        row["names"] = found
+    return row
+
+
+def rationale_section(
+    decisions: list[dict[str, Any]],
+    diff: str | None,
+    *,
+    diff_cut: bool = False,
+    paths_left: int = 0,
+    left_out: Sequence[dict[str, Any]] = (),
+    paths_full: int = 0,
+    links_skipped: int = 0,
+    refused: bool = False,
+    paths_maybe_cut: bool = False,
+    no_repo: bool = False,
+    no_paths: bool = False,
+    budget_tokens: int,
+) -> dict[str, Any]:
+    """The `rationale` section over the rows `decisions_for_paths` read and the PR's diff
+    (None: it could not be read): each row's token check (`_checked_row`), `check` rows
+    first, then constraints, then the rest, whole rows up to `budget_tokens` (the first
+    always). The verdict reads every row: check | unknown | clear | none (no row has
+    anything to check). It is `clear` or `none` only when every changed path and every
+    matching row was checked; otherwise `unknown`, each flag and count naming its cause
+    (the causes are listed under `rationale` in docs/features/code-index/history-and-prs.md)."""
+    added, malformed = added_text(diff) if diff is not None else (None, False)
+    malformed = malformed and not diff_cut  # a cut diff ends inside a hunk anyway
+    unsure = added is None or diff_cut or malformed
+    rows = [_checked_row(d, added or "", unsure=unsure) for d in decisions]
+    rows.sort(key=lambda r: (r["verdict"] != "check", r["kind"] != "constraint"))
+    verdicts = {r["verdict"] for r in rows}
+    verdict = next((v for v in ("check", "unknown", "clear") if v in verdicts), "none")
+    left_to_check = sum(1 for d in left_out if has_check(d))
+    counts = (paths_left, paths_full, links_skipped, left_to_check)
+    flags = (no_repo, no_paths, refused, paths_maybe_cut)
+    incomplete = any(flags) or any(n > 0 for n in counts)
+    if incomplete and verdict in ("clear", "none"):
+        verdict = "unknown"
+    causes = ["no_repo"] if no_repo else []
+    if no_paths:
+        causes.append("no_paths")
+    if refused:
+        causes.append("trunk_not_readable")
+    if diff is None and "unknown" in verdicts:
+        causes.append("diff_unread")
+    if diff_cut:
+        causes.append("diff_cut")
+    if malformed:
+        causes.append("diff_malformed")
+    if any(d.get("value_truncated") for d in decisions):
+        causes.append("value_cut")
+    if paths_maybe_cut:
+        causes.append("paths_maybe_cut")
+    if paths_left > 0:
+        causes.append(f"paths_not_read:{paths_left}")
+    if left_to_check:
+        causes.append(f"rows_not_read:{left_to_check}")
+    if paths_full > 0:
+        causes.append(f"paths_at_row_ceiling:{paths_full}")
+    if links_skipped > 0:
+        causes.append(f"links_not_read:{links_skipped}")
+    kept = rows[:1]
+    for r in rows[1:]:
+        if estimate_tokens([*kept, r]) > budget_tokens:
+            break
+        kept.append(r)
+    out = section(SERVED, verdict=verdict, epistemic="lower_bound", causes=causes, rows=kept)
+    out["rows_total"] = len(rows)
+    out["truncated"] = len(kept) < len(rows)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Assembly
 # ---------------------------------------------------------------------------
 
@@ -488,21 +758,30 @@ __all__ = [
     "DEFAULT_TIER",
     "EMPTY",
     "FAILED",
+    "IMPACT_SEED_FILES",
     "NOT_BOUND",
     "NOT_BUILT",
     "OPTIONAL_SECTIONS",
+    "RATIONALE",
     "RESTRICTED",
     "SECTION_ORDER",
     "SERVED",
+    "SERVED_ORDER",
     "TIERS",
     "TIER_BUDGET_TOKENS",
     "BriefInputs",
     "DiffFacts",
+    "added_text",
     "apply_budget",
     "canonical",
+    "checked_names",
     "decisions_of",
     "deleted_ranges",
+    "has_check",
+    "names_in",
     "parse_diff",
+    "rationale_section",
+    "row_names",
     "serve",
     "source_stems",
     "tier_sections",

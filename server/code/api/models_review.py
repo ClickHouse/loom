@@ -64,10 +64,11 @@ class CodeReviewBriefInput(_CodeIdentity, _PrPostImage):
     touched symbols with callers and fan-in, coverage verdicts, setting facts,
     regression history, blame of the deleted lines, path classes, the tracker record and
     the calibrated risk priors (`jit_risk` and `author_revert_prior`, ranking signals,
-    never a gate) — or a build on the first miss. `tier` selects sections and a token
-    budget (trivial 700: paths + symbols; standard 2,500: + tests, settings, history,
-    risk; full 4,000: + blame, qa); `sections` narrows further; `token_budget` overrides
-    the tier's."""
+    never a gate) — or a build on the first miss. `rationale`, read on every call and
+    never stored, lists the repository's design decisions and constraints that govern the
+    PR's files. `tier` selects sections and a token budget (trivial 700: paths + symbols;
+    standard 2,500: + tests, settings, history, risk, rationale; full 4,000: + blame, qa);
+    `sections` narrows further; `token_budget` overrides the tier's."""
 
     # The PR to brief; 0 = find it by `merge_sha`. Required with `open`.
     pr_number: int = Field(default=0, ge=0)
@@ -85,11 +86,12 @@ class CodeReviewBriefInput(_CodeIdentity, _PrPostImage):
             "qa",
             "risk",
             "do_not_flag",
+            "rationale",
         ]
     ] = Field(default_factory=list)
 
     # Which sections and default budget: trivial (paths, symbols), standard (+ tests,
-    # settings, history, risk) or full (+ blame, qa).
+    # settings, history, risk, rationale) or full (+ blame, qa).
     tier: Literal["trivial", "standard", "full"] = "standard"
     # Token budget for the served sections; 0 = the tier's (700 / 2,500 / 4,000).
     token_budget: int = Field(default=0, ge=0, le=16_000)

@@ -1,16 +1,18 @@
-"""Memory reads the code plane serves from: the memories linked to a symbol card and
-the directories a user's memories name. The statements are
-`server.memory.store.code_plane_reads` and `server.memory.store.code_links`."""
+"""Memory reads the code plane serves from: the memories linked to a symbol card, the
+decisions that govern a set of files, and the directories a user's memories name. The
+statements are `server.memory.store.code_plane_reads`, `server.memory.store.code_links`
+and those of `memory.for_file`."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Callable, Sequence
+from typing import Any, NamedTuple
 
 from server.code.domain.anchor import Definition, bare_name, local_name
 from server.code.domain.declaration import fingerprint_version
 from server.identity.domain.read_scope import ReadFilters
+from server.memory.domain.code_change import worst
 from server.memory.store import code_links as links_store
 from server.memory.store import code_plane_reads as reads
 from server.memory.store.code_links import LinkRow
@@ -107,6 +109,88 @@ async def lessons_for_symbol(
             },
         )
     return [lesson for _, lesson in sorted(out.values(), key=lambda x: x[0])][:limit]
+
+
+# Each path's read keeps this many rows.
+# not a setting: memory.for_file's own `top_k` ceiling (`le` on its input; a test pins it)
+PER_PATH_ROWS = 50
+
+
+class DecisionRows(NamedTuple):
+    """What `decisions_for_paths` read: the rows it serves, the rows the cap left out,
+    how many paths' reads reached PER_PATH_ROWS (more rows may match there), how many
+    paths' code-links reads failed (rows reached only by a link are missing there), and
+    whether the caller was refused the trunk namespace (nothing was read)."""
+
+    served: list[dict[str, Any]]
+    left_out: list[dict[str, Any]]
+    paths_full: int = 0
+    links_skipped: int = 0
+    refused: bool = False
+
+
+async def decisions_for_paths(
+    org: str,
+    trunk_ns: str,
+    paths: Sequence[str],
+    *,
+    limit: int,
+    first: Callable[[dict[str, Any]], bool] | None = None,
+) -> DecisionRows:
+    """The live (active or conflicted) decision and constraint rows of the trunk code
+    namespace `trunk_ns` whose `files[]` or code links touch `paths`, at most `limit`
+    served and the rest left out. The rows `first` admits rank ahead, then constraints,
+    then pinned rows, then by confidence. Each is a `memory.for_file` hit with its
+    `memory_id`, `code_state` the worst over its links on every path, `line` (the
+    pre-edit block's line, the value cut) and `text` (the value as that read holds it:
+    cut at its ceiling when `value_truncated`). Each path's read keeps its top
+    PER_PATH_ROWS rows. `refused`, and nothing read, when the caller may not read
+    `trunk_ns`."""
+    from server.memory.api.models_for_file import MemoryForFileInput
+    from server.memory.app.code_link_reads import readable_namespaces
+    from server.memory.app.for_file import listing_line, listing_rows, value_text
+
+    if not trunk_ns or not paths:
+        return DecisionRows([], [])
+    if trunk_ns not in await readable_namespaces(org, {trunk_ns}):
+        return DecisionRows([], [], refused=True)
+    # One pre-edit read per path. The read follows code links only into the trunk an
+    # extra namespace names, so the trunk is named there too (it is not read twice).
+    per_path = await asyncio.gather(
+        *(
+            listing_rows(
+                MemoryForFileInput(
+                    org=org,
+                    namespace=trunk_ns,
+                    path=p,
+                    top_k=PER_PATH_ROWS,
+                    extra_namespaces=[trunk_ns],
+                ),
+                whole_only=True,
+            )
+            for p in dict.fromkeys(paths)
+        )
+    )
+    rows: dict[str, dict[str, Any]] = {}  # by memory_id: one row found on several paths
+    for hits, _skipped in per_path:
+        for hit in hits:
+            row = rows.setdefault(hit["memory_id"], hit)
+            row["code_state"] = worst([row["code_state"], hit["code_state"]])
+    found = [r | {"line": listing_line(r), "text": value_text(r)} for r in rows.values()]
+    found.sort(
+        key=lambda r: (
+            first is not None and not first(r),
+            "constraint" not in r["tags"],
+            not r["pinned"],
+            -r["confidence"],
+        )
+    )
+    return DecisionRows(
+        found[:limit],
+        found[limit:],
+        paths_full=sum(1 for hits, _ in per_path if len(hits) >= PER_PATH_ROWS),
+        links_skipped=sum(1 for _, skipped in per_path if skipped),
+    )
 
 
 async def _definitions_at(

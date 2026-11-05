@@ -12,6 +12,7 @@ from typing import Any
 
 from server.code.app.index.review_brief import (
     EMPTY,
+    IMPACT_SEED_FILES,
     MAX_COVERAGE_SETTINGS,
     MAX_COVERAGE_SYMBOLS,
     MAX_DIFF_CHARS,
@@ -65,7 +66,7 @@ async def build_brief(
             {
                 "org": inp.org,
                 "namespace": inp.ns,
-                "files": paths[:50],
+                "files": paths[:IMPACT_SEED_FILES],
                 "diff": inp.diff[:MAX_DIFF_CHARS],
                 "depth": 1,
                 "per_hop_limit": 200,

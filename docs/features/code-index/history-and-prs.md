@@ -67,10 +67,54 @@ so.
 
 `code.review_brief` reads the brief the ingest built when the PR merged: the class of
 every changed file, the touched functions with their callers and fan-in, the tests that
-cover them, and what reviewers said. `code.conventions` states the repository's
-recurring maintainer checks as facts over one PR's diff (`pr_number`, `head_sha`,
-`files` or `diff`), never as opinions; `rules` narrows which checks run. The diff it
-reads is capped at `LOOM_CODE_CONVENTIONS_DIFF_MAX_BYTES`.
+cover them, and what reviewers said.
+
+At the `standard` and `full` tiers the brief also has a `rationale` section: the design
+decisions and constraints (rows typed `decision`, or tagged `decision` or `constraint`,
+active or conflicted as the pre-edit block shows them) in the repository's trunk code
+namespace whose `files` or code links touch the PR's files. It is read on every call, from
+the trunk namespace only when the caller may read it, and never stored with the brief, so
+a decision recorded or changed after the merge shows up on the next read. It reads the
+first `LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` (10) changed files, source files first, of
+those the brief stores, and keeps at most `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` (8)
+rows, those with something to check first. It serves whole rows, `check` rows first and
+then constraints, up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` (250) tokens, and always
+the first row; the tier's budget may still trim the section like any other. Each row
+carries the pre-edit block's line for it with its value cut at the line length (source,
+`(pinned)` and the code-change note kept), `pinned`, `code_state` and a `verdict`. Each
+changed file read is one `memory.for_file` read: four ClickHouse reads (files match, code
+links, their memories, the linked rows; a file with many links slices the last), each
+keeping up to 50 rows with up to `LOOM_MEMORY_FOR_FILE_WHOLE_TOKENS` × 48 bytes of value.
+
+The check looks for two kinds of name: the code-shaped names in a row's `Rejected:`
+clause, up to a `Realized:` one (backticked, qualified like `A::b`, or calls like `f()`),
+and the snake_case names anywhere in a constraint's value, backticked or not, bare or
+qualified (`Setting::distinct_spill_ratio`). It is a whole-word match on the lines the
+diff adds, read up to 200,000 characters of a posted diff or 200,000 bytes of the
+mirror's, so `check` means "read this row against the diff", not a violation found.
+
+| Row verdict | Meaning                                                                                                                                                                                                                |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `check`     | the diff adds one of the row's checked names (`names`)                                                                                                                                                                 |
+| `clear`     | the row has checked names and the diff adds none of them                                                                                                                                                               |
+| `unknown`   | no name found, but the diff could not be read here (git failed, even part way), was cut, or has a hunk that miscounts its lines, or the row's value was cut (`diff_unread`, `diff_cut`, `diff_malformed`, `value_cut`) |
+| `""`        | the row names nothing to check                                                                                                                                                                                         |
+
+The section's verdict is `check` when any row says so, then `unknown`, then `clear`, and
+`none` when no row has anything to check. It says `clear` or `none` only when every
+changed path and every matching row was checked; otherwise it says `unknown`, and the
+causes say what was left: no repository is configured for the namespace (`no_repo`), the
+brief stores no changed path (`no_paths`), the caller may not read the trunk namespace
+(`trunk_not_readable`), a stored changed-path list that may be cut (`paths_maybe_cut`: the
+brief stores the first 50 changed files plus the files of the diff's hunks, up to 200, so
+a list of 50 or more may hold fewer than the PR changed), changed paths of that list not
+read (`paths_not_read`), a path whose read reached its 50 rows (`paths_at_row_ceiling`), a
+path whose code-links read failed (`links_not_read`), or rows the row cap left out that
+had something to check (`rows_not_read`).
+
+`code.conventions` states the repository's recurring maintainer checks as facts over one
+PR's diff (`pr_number`, `head_sha`, `files` or `diff`), never as opinions; `rules` narrows
+which checks run. The diff it reads is capped at `LOOM_CODE_CONVENTIONS_DIFF_MAX_BYTES`.
 
 ## Pre-PR duplicate check: `code.pr_check`
 

@@ -684,6 +684,9 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_FORK_UPSTREAM_BUDGET_S` | `float` | `1.5` | live | Seconds the lookup of a repository's fork upstream may take. |
 | `LOOM_CODE_MIRROR_WARMUP_RETRY_S` | `float` | `60.0` | live | Seconds before a failed warm-up clone of a mirror is tried again. |
 | `LOOM_CODE_REVIEW_BRIEF_MIRROR_MISS_TTL_S` | `float` | `600.0` | live | Seconds before the review brief reads a mirror again for an object it did not have (the mirror may have fetched it); a hit is kept. |
+| `LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` | `int` | `10` | live | Changed paths the `rationale` section reads, source paths first; paths past it make `rationale` say `unknown` (`paths_not_read`). |
+| `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` | `int` | `8` | live | Decision and constraint rows the `rationale` section serves. |
+| `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` | `int` | `250` | live | The `rationale` section's own token budget; its first row is served even past it. |
 
 ## Context
 
