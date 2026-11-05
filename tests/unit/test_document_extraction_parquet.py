@@ -645,7 +645,9 @@ def test_a_row_count_a_footer_declares_below_zero_is_no_rows(
     assert (a.coverage.to_dict()["total"], a.coverage.failed) == (0, ())
 
 
-def test_a_footer_declaring_rows_past_64_bits_is_corrupt(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_footer_declaring_rows_past_signed_64_bits_is_corrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class Meta:
         num_row_groups = 2
         num_columns = 1
@@ -661,6 +663,36 @@ def test_a_footer_declaring_rows_past_64_bits_is_corrupt(monkeypatch: pytest.Mon
     with pytest.raises(ExtractionError) as e:
         extract(b"PAR1 footer PAR1", "z.parquet")
     assert e.value.code == "corrupt"
+
+
+@pytest.mark.parametrize("declared", [3, 30])
+def test_a_row_group_whose_pages_disagree_with_its_footer_fails_from_there(
+    monkeypatch: pytest.MonkeyPatch, declared: int
+) -> None:
+    monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 2)
+    real = parquetfile._open(_file(pa.table({"v": list(range(10))})))
+
+    class Meta:
+        num_row_groups = 1
+        num_columns = 1
+
+        def row_group(self, g: int) -> Any:
+            return type("Group", (), {"num_rows": declared})()
+
+    class File:  # the real pages, under a footer that says another count
+        metadata = Meta()
+        schema_arrow = real.schema_arrow
+        iter_batches = real.iter_batches
+
+    monkeypatch.setattr(parquetfile, "_open", lambda data: File())
+    a = parquetfile.extract_parquet(b"", "f.parquet")
+    (tab,) = a.tables
+    c = a.coverage.to_dict()
+    # Rows are counted by the footer, so the artifact never holds more than it declares.
+    assert c["total"] == declared and c["extracted"] == len(tab.rows) <= declared
+    assert [f.reason for f in a.coverage.failed] == [
+        "not decoded: the row group's pages disagree with its footer"
+    ]
 
 
 def test_a_batch_of_rows_with_no_values_still_costs_its_rows(

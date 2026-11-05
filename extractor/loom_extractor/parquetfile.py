@@ -30,7 +30,8 @@ or _MAX_GROUPS row groups read (a file of blank rows, or of values too long to
 hold, is no cheaper to read), are counted from the metadata, never decoded. A
 row count a footer declares below zero is none, and a footer whose row groups
 declare 2^63 rows or more is refused (corrupt). A decode that raises (a page
-that does not decode, an allocation past the child's memory) fails the rows
+that does not decode, an allocation past the child's memory), and a row group
+whose pages hold more or fewer rows than its footer declares, fails the rows
 from there (`<name> rows N-`); the extractor's child limits (memory, time, no
 network) stop one that runs away: one past the time limit refuses the file
 (`timeout`), one that crashes the child (`resource_limit`).
@@ -474,6 +475,8 @@ class _Walk:
                 batch_size=self.batch_rows, row_groups=[g], use_threads=False
             )
             for batch in batches:
+                if self.number - start + batch.num_rows > group_rows:
+                    break  # more rows than its footer declares: a damaged file, below
                 # A file of blank rows, of long lists or of values each too long to
                 # hold is read no further: the rest is its own failed unit.
                 if self._charge(batch):  # this group's rest and every group after
@@ -491,6 +494,11 @@ class _Walk:
             # value past the child's memory), and every group after.
             why = str(e) or type(e).__name__  # a MemoryError has no message
             self._fail_from(f"not decoded: {why}"[:200])
+            return True
+        if self.number - start != group_rows:
+            # Its pages hold more or fewer rows than its footer declares: the rows
+            # are numbered, and counted, by the footer, so none past here is read.
+            self._fail_from("not decoded: the row group's pages disagree with its footer")
             return True
         return False
 

@@ -303,10 +303,11 @@ groups read, charged before a batch is read into Python (at least a value a row,
 down to its leaves, a dictionary entry once for each value that names it and a view's value once for each view (those
 two in a column read into Python: a bytes column is never copied), so a file of blank rows, of long lists or of long
 values is bounded too; the rows from there are their own failed unit, `past what one file decodes`), are counted from
-the metadata, never decoded; a row group whose pages do not decode fails the rows from there (`<name> rows N-`). The
-child's limits bound one decode (one past the time limit refuses the file, `timeout`, and one that crashes the child
-`resource_limit`), and its environment holds the native libraries to one thread and the system allocator, which the
-address-space limit allows. A build without pyarrow does not declare Parquet.
+the metadata, never decoded; a row group whose pages do not decode, or hold more or fewer rows than its footer declares
+(rows are numbered and counted by the footer), fails the rows from there (`<name> rows N-`). The child's limits bound
+one decode (one past the time limit refuses the file, `timeout`, and one that crashes the child `resource_limit`), and
+its environment holds the native libraries to one thread and the system allocator, which the address-space limit allows.
+A build without pyarrow does not declare Parquet.
 
 **Bounds.** One budget bounds all of an artifact's tables, in three parts: what a source holds, the bytes its tables
 write, and the text they index. A source holds at most 1,000,000 non-empty cells in all, merged cells included, their
