@@ -598,13 +598,18 @@ class _SheetStream:
                 self.past.count(self.number)
 
     def _has_value(self) -> bool:
-        """Whether the cell being read holds a value, without typing it: by the rule
-        `_string` reads text by (only whitespace is no value)."""
+        """Whether the cell being read holds a value, without typing it, by the
+        rules `_Reader.cell` reads it by: text of only whitespace is none, a bool or
+        an error is one, and so is a formula with no cached value (it is unknown)."""
         kind = self._cell.get("t", "n")
         if kind == "inlineStr":
             return any(_HAS_TEXT.search(t) for t in self._inline)
+        if self._raw is None:
+            return self._formula
         if not self._raw:
             return False
+        if kind in ("b", "e"):
+            return True
         if kind == "s":
             i = int(self._raw) if _INDEX.fullmatch(self._raw) else -1
             return not 0 <= i < len(self.reader.shared) or bool(

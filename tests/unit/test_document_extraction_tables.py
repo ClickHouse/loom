@@ -1412,3 +1412,37 @@ def test_an_xlsx_cell_of_only_whitespace_is_empty_as_a_csv_field_is() -> None:
     assert _columns(a) == [("Name", "string"), ("Age", "number")]
     assert a.tables[0].rows == (("Ann", 30), ("Bo", None), ("Cy", None), ("Di", None))
     assert a.coverage.to_dict()["complete"]
+
+
+@pytest.mark.parametrize(
+    ("far", "counted"),
+    [
+        (cell("XFE1", " ", t="str"), False),
+        (cell("XFE1", " ", t="b"), True),  # a bool is a value, as in column A
+        (cell("XFE1", None, f="A1"), True),  # a formula with no cached value: unknown
+        (cell("XFE1", 9, t="s"), True),  # a string the workbook does not hold
+    ],
+)
+def test_a_cell_past_the_columns_read_is_a_value_by_the_rules_cells_are_read_by(
+    far: str, counted: bool
+) -> None:
+    rows = {1: [cell("A1", "h", t="str"), far], 2: [cell("A2", 1)]}
+    a = extract(workbook([("S", sheet(rows))], shared=("h",)), "b.xlsx")
+    assert [f.unit for f in a.coverage.failed] == (["S columns"] if counted else [])
+
+
+def test_a_row_past_the_budget_of_only_whitespace_is_not_counted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tabular, "MAX_CELLS", 2)  # the header and one row
+    rows = {
+        1: [cell("A1", "h", t="str")],
+        2: [cell("A2", 1)],
+        3: [cell("A3", 3)],  # does not fit: the rows from here are counted, not read
+        4: [cell("A4", 0, t="s"), cell("B4", "  ", t="inlineStr"), cell("C4", " ", t="str")],
+        5: [cell("A5", 5)],
+    }
+    a = extract(workbook([("S", sheet(rows))], shared=("   ",)), "b.xlsx")
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        ("S rows 3-", "2 rows past what one artifact holds")
+    ]
