@@ -11162,7 +11162,8 @@ class CitedChunk(TypedDict, total=False):
 
 
 class SynthesizeCalculation(TypedDict, total=False):
-    citation: Required[str]
+    "The calculation run for the task: knowledge.query's result (its columns, rows,"
+
     columns: Required[list["QueryResultColumn"]]
     rows: Required[list[list[Any]]]
     row_ids: NotRequired[list[list[int]]]
@@ -11170,6 +11171,7 @@ class SynthesizeCalculation(TypedDict, total=False):
     complete: Required[bool]
     incomplete: NotRequired[list[str]]
     receipt: Required["QueryReceipt"]
+    citation: Required[str]
 
 
 class KnowledgeUpdateMetadataInput(TypedDict, total=False):

@@ -4095,7 +4095,6 @@ export interface CitedChunk {
 }
 
 export interface SynthesizeCalculation {
-  citation: string;
   columns: QueryResultColumn[];
   rows: unknown[][];
   row_ids?: number[][];
@@ -4103,6 +4102,7 @@ export interface SynthesizeCalculation {
   complete: boolean;
   incomplete?: string[];
   receipt: QueryReceipt;
+  citation: string;
 }
 
 export interface KnowledgeSynthesizeOutput {

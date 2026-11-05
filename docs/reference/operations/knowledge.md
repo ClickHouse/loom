@@ -599,24 +599,24 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `source_uris` | `list[str]` | *(computed)* | The documents to read in full (up to 50); unknown URIs contribute nothing. |
 | `datasets` | `list[QueryDataset]` | *(computed)* | Datasets to calculate over (up to 4, as knowledge.query takes them); one plan is proposed for the task, checked against their schemas and run over every row. |
-| `task` | `str` | required | What to do with the documents: a question to answer or a summary to write. |
-| `window_chars` | `int` | `24000` | Characters of document text per map call; the reduce folds notes into batches of the same size. |
+| `task` | `str` | required | What to do with the documents and datasets: a question to answer or a summary to write. |
+| `window_chars` | `int` | `24000` | Characters of document text per map call; the reduce folds notes into batches of the same size, and a calculation's note is at most half of it. |
 | `max_answer_chars` | `int` | `8000` | Cap on the answer's length in characters; a longer answer is cut and ends with `…`. |
 | `max_windows` | `int` | `64` | Cap on map calls; a corpus needing more is answered from the first `max_windows` windows and `truncated` is set. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `answer` | `str` | The task's answer, citing chunks as `[source#idx]`; empty when it abstained. |
+| `answer` | `str` | The task's answer, citing chunks as `[source#idx]` and the calculation as `[knowledge.query#1]`; empty when it abstained. |
 | `windows` | `int` | How many windows were read (one LLM map call each). |
 | `chunks_read` | `int` | How many chunks the read windows covered. |
 | `documents` | `int` | How many of the named documents had chunks to read. |
 | `reduce_rounds` | `int` | How many fold rounds merged the notes into the answer; 1 when they fit one call. |
-| `citations` | `list[str]` | Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning documents) citations in the answer, in the order found; each names chunks the passes read. |
+| `citations` | `list[str]` | Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning documents) citations in the answer, and `knowledge.query#1`, in the order found; each names chunks the passes read or the calculation run. |
 | `cited_chunks` | `list[_CitedChunk]` | Each chunk the kept `citations` name, once, in the order first cited: its revision and its locator, so a caller can open the passage the answer came from. |
-| `unsupported_citations` | `list[str]` | Citations the model wrote naming a chunk the passes did not read; removed from `answer`. |
+| `unsupported_citations` | `list[str]` | Citations the model wrote naming a chunk the passes did not read, or a calculation not run; removed from `answer`. |
 | `truncated` | `bool` | True when the documents needed more than `max_windows` windows and only the first were read. |
 | `abstain` | `bool` | True when there is no answer to give; `abstain_reason` says why. |
-| `abstain_reason` | `str` | budget_capped (the namespace is over its cost cap), no_chunks (no document had chunks and no dataset was named), needs_clarification, ambiguous or invalid_plan (each explained in `clarification`), empty_answer (no answer once unread… |
+| `abstain_reason` | `str` | Why it abstained: `budget_capped` (over the cost cap), `no_chunks` (nothing to read), `needs_clarification`, `ambiguous`, `invalid_plan` (see `clarification`) or `empty_answer`. |
 | `clarification` | `str` | ambiguous: the question to ask; invalid_plan: why no plan held; needs_clarification: the dataset to approve (knowledge.dataset_approve); empty otherwise. |
 | `calculations` | `list[SynthesizeCalculation]` | The calculation run over the datasets, cited in `answer` as `[knowledge.query#1]`. |
 | `model` | `str` | LLM that wrote the notes and the answer; empty when it abstained before any call. |

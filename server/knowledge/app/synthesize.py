@@ -49,9 +49,6 @@ async def handle_knowledge_synthesize(
 
     if await namespace_over_cap(input.org, input.namespace):
         return _abstain("budget_capped")
-    chunks, docs = await _corpus_chunks(input)
-    if not chunks and not input.datasets:
-        return _abstain("no_chunks")
     synth_model = _s.memory_ask_synth_model.strip()
     if synth_model:
         from server.llm.client import get_llm_client_for_model
@@ -69,6 +66,10 @@ async def handle_knowledge_synthesize(
         if isinstance(done, KnowledgeSynthesizeOutput):
             return done
         calculation = done
+    # Read after the calculation, so one that abstains reads no document.
+    chunks, docs = await _corpus_chunks(input)
+    if not chunks and calculation is None:
+        return _abstain("no_chunks")
     wins = cs.windows(chunks, window_chars=input.window_chars)
     truncated = len(wins) > input.max_windows
     wins = wins[: input.max_windows]
@@ -238,16 +239,7 @@ async def _calculate(
         except (pydantic.ValidationError, ValidationError) as e:
             refused = _why(e)
             continue
-        return SynthesizeCalculation(
-            citation=f"{ap.CALCULATION_SOURCE}#1",
-            columns=out.columns,
-            rows=out.rows,
-            row_ids=out.row_ids,
-            truncated=out.truncated,
-            complete=out.complete,
-            incomplete=out.incomplete,
-            receipt=out.receipt,
-        )
+        return SynthesizeCalculation(citation=f"{ap.CALCULATION_SOURCE}#1", **out.model_dump())
     return _abstain("invalid_plan", refused[:1000], model)
 
 

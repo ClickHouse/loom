@@ -132,8 +132,10 @@ async def test_knowledge_synthesize_sends_datasets_with_or_without_documents() -
     path, body, _ = t.calls[0]
     assert path == "/v1/knowledge.synthesize"
     assert (body["source_uris"], body["datasets"], body["task"]) == ([], [orders], "Total amount?")
+    await a.knowledge.synthesize(["doc://p"], "Total, net of refunds?", datasets=[orders])
+    assert (t.calls[1][1]["source_uris"], t.calls[1][1]["datasets"]) == (["doc://p"], [orders])
     await a.knowledge.synthesize(["doc://a"], "Summarize")  # the call it always took
-    assert t.calls[1][1]["source_uris"] == ["doc://a"] and "datasets" not in t.calls[1][1]
+    assert t.calls[2][1]["source_uris"] == ["doc://a"] and "datasets" not in t.calls[2][1]
 
 
 def test_identity_helper() -> None:
