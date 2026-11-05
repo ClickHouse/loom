@@ -60,7 +60,7 @@ def test_the_prompt_lists_each_dataset_and_says_why_a_plan_was_refused() -> None
     prompt = ap.plan_prompt("Total amount?", schemas)
     assert (
         "QUESTION: Total amount?" in prompt
-        and "- o: orders.csv (5 rows); columns: amount (number)" in prompt
+        and '- o: orders.csv (5 rows); columns: "amount" (number)' in prompt
     )
     assert "refused" not in prompt
     assert "Your last plan was refused: no column 'amt'" in ap.plan_prompt(
@@ -75,14 +75,18 @@ def test_the_prompt_lists_a_wide_schema_only_to_its_bound_each_name_whole() -> N
     )
     assert ", and 7 more not shown" in prompt
     assert (
-        f"c{ap.MAX_PROMPT_COLUMNS - 1} (string)" in prompt
-        and f"c{ap.MAX_PROMPT_COLUMNS} (" not in prompt
+        f'"c{ap.MAX_PROMPT_COLUMNS - 1}" (string)' in prompt
+        and f'"c{ap.MAX_PROMPT_COLUMNS}" (' not in prompt
     )
     # A long name is shown whole, as a plan must name it.
     long = [{"name": "x" * 400, "type": "string"}]
-    assert "x" * 400 + " (string)" in ap.plan_prompt(
+    assert '"' + "x" * 400 + '" (string)' in ap.plan_prompt(
         "t", [{"alias": "o", "name": "n", "row_count": 1, "columns": long}]
     )
+    # A name holding a line break or a comma is one JSON string, copied back exactly.
+    wrapped = [{"name": "Amount\n(USD)", "type": "number"}, {"name": "a, b", "type": "string"}]
+    prompt = ap.plan_prompt("t", [{"alias": "o", "name": "n", "row_count": 1, "columns": wrapped}])
+    assert 'columns: "Amount\\n(USD)" (number), "a, b" (string)\n' in prompt
 
 
 def test_evidence_shows_the_plan_the_result_and_what_it_may_not_cover() -> None:
@@ -181,7 +185,7 @@ def test_the_prompt_shares_its_schema_room_among_the_datasets() -> None:
     schemas = [{"alias": a, "name": f"{a}.csv", "row_count": 1, "columns": long} for a in "abcd"]
     prompt = ap.plan_prompt("t", schemas)
     assert len(prompt) < ap.MAX_PROMPT_SCHEMA_CHARS + 2_000
-    assert prompt.count("more not shown") == 4 and "n" * 490 + "0 (number)" in prompt
+    assert prompt.count("more not shown") == 4 and "n" * 490 + '0" (number)' in prompt
 
 
 # ---- the handler -------------------------------------------------------------------
@@ -283,7 +287,7 @@ async def test_a_plan_the_model_proposes_runs_on_the_callers_datasets_and_is_cit
     ]
     assert (query.org, query.namespace) == ("o", "n")
     plan_prompt = llm.calls[0][1]
-    assert "amount (number)" in plan_prompt and "spare" not in plan_prompt  # stored columns only
+    assert '"amount" (number)' in plan_prompt and "spare" not in plan_prompt  # stored columns only
     reduce_user = llm.calls[1][1]
     assert "CALCULATION [knowledge.query#1]" in reduce_user and "120.8" in reduce_user
     # One calculation was run: a citation of a second is no citation.

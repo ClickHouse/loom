@@ -41,7 +41,8 @@ PLAN_SYSTEM = (
     'aggregates: [{"fn": "count|count_distinct|sum|avg|min|max", "column": C, "name": N}] '
     "(count of rows takes no column); select: [C, ...] for rows instead of aggregates; "
     'order_by: [{"by": N, "desc": true|false}]; limit: 1-1000. '
-    'C is {"dataset": "<alias>", "column": "<name>"} exactly as the schema lists it; '
+    'C is {"dataset": "<alias>", "column": "<name>"}, the name being the JSON string '
+    "the schema lists, exactly; "
     "N names a result column. Example: "
     '{"plan": {"where": [{"column": {"dataset": "d", "column": "placed_at"}, "op": "ge", '
     '"value": "2026-03-01"}], "aggregates": [{"fn": "count", "name": "orders"}]}}. '
@@ -73,13 +74,15 @@ def plan_prompt(task: str, schemas: Sequence[Mapping[str, Any]], refused: str = 
 
 def _described(schema: Mapping[str, Any], room: int) -> str:
     """One dataset as the prompt lists it: its first columns, each name whole, as
-    many as MAX_PROMPT_COLUMNS and `room` characters hold, and how many more."""
+    many as MAX_PROMPT_COLUMNS and `room` characters hold, and how many more. A name
+    is a JSON string, so one holding a line break or a comma reads as one name and
+    the plan can copy it back exactly."""
     cols = list(schema["columns"])
     head = f"- {schema['alias']}: {schema['name']} ({schema['row_count']} rows)"
     shown: list[str] = []
     used = len(head)
     for c in cols[:MAX_PROMPT_COLUMNS]:
-        entry = f"{c['name']} ({c['type']})"
+        entry = f"{json.dumps(c['name'], ensure_ascii=False)} ({c['type']})"
         if shown and used + len(entry) + 2 > room:
             break
         shown.append(entry)
