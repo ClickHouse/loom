@@ -760,6 +760,7 @@
  "memory_search_bm25_live_tail": true,
  "memory_search_chunk_date_source": "session",
  "memory_search_chunk_min_share": 0.0,
+ "memory_search_decision_excerpt_chars": 6000,
  "memory_search_default_mode": "semantic",
  "memory_search_default_namespace_scope": "this",
  "memory_search_digest_descent_k": 5,

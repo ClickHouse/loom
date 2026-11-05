@@ -514,9 +514,19 @@ async def _expand_source_bodies(
     return (n_served, n_over)
 
 
+def _whole_row(hit: Any) -> bool:
+    """A decision or a constraint: its reasons and rejected options come after its
+    outcome, so an excerpt of the usual length would cut what an agent must read."""
+    from server.memory.domain.decision_schema import is_decision
+
+    tags = getattr(hit, "_row_tags", None) or getattr(hit, "tags", None) or ()
+    return is_decision(str(getattr(hit, "memory_type", "") or ""), tags) or "constraint" in tags
+
+
 def _apply_bodies(hits: list[Any], input: Any) -> None:
     """Apply the request's `bodies` mode in place: "full" is a no-op; "excerpt" clips each
-    body to LOOM_MEMORY_SEARCH_EXCERPT_CHARS; "none" blanks it. Keys, types and scores are
+    body to LOOM_MEMORY_SEARCH_EXCERPT_CHARS, a decision's or a constraint's to
+    LOOM_MEMORY_SEARCH_DECISION_EXCERPT_CHARS; "none" blanks it. Keys, types and scores are
     untouched, so a caller can still cite and memory.get what it needs. The wire tier of the
     per-hit explanation is decided here too — both are "what a hit carries", on the main and
     the read-your-writes path alike."""
@@ -526,9 +536,11 @@ def _apply_bodies(hits: list[Any], input: Any) -> None:
         return
     from server.settings import settings as _s
 
-    limit = int(_s.memory_search_excerpt_chars)
+    excerpt = int(_s.memory_search_excerpt_chars)
+    whole = int(_s.memory_search_decision_excerpt_chars)
     for h in hits:
         body = getattr(h, "content_excerpt", "") or ""
+        limit = max(excerpt, whole) if _whole_row(h) else excerpt
         if bodies == "none":
             new = ""
         else:
