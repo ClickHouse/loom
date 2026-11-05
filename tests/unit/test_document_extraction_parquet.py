@@ -481,7 +481,7 @@ def test_a_file_of_blank_rows_is_read_only_to_the_decode_bound(
     assert tab.rows == ()
     (unit,) = a.coverage.failed
     # Two batches decoded (8 values), the third past the bound: counted, not read.
-    assert (unit.unit, unit.reason) == ("f.parquet rows 9-", "22 rows past what one artifact holds")
+    assert (unit.unit, unit.reason) == ("f.parquet rows 9-", "22 rows past what one file decodes")
 
 
 def test_values_python_cannot_hold_are_searched_for_by_halves_to_a_bound(
@@ -518,9 +518,7 @@ def test_values_too_long_to_hold_are_read_only_to_the_decode_byte_bound(
     a, tab = _one(_file(t))
     units = {f.unit: f.reason for f in a.coverage.failed}
     assert len(tab.rows) < 8  # cut at the byte bound, not at MAX_ROWS
-    assert units[f"f.parquet rows {len(tab.rows) + 1}-"].endswith(
-        "rows past what one artifact holds"
-    )
+    assert units[f"f.parquet rows {len(tab.rows) + 1}-"].endswith("rows past what one file decodes")
 
 
 def test_a_dictionary_entry_is_charged_for_every_row_that_names_it(
@@ -532,4 +530,24 @@ def test_a_dictionary_entry_is_charged_for_every_row_that_names_it(
     col = pa.DictionaryArray.from_arrays(pa.array([0] * 40, pa.int32()), pa.array(["x" * 1_000]))
     a, tab = _one(_file(pa.table({"s": col})))
     assert len(tab.rows) < 12  # past 10,000 bytes of copies, not past the 40 rows
-    assert any(f.reason.endswith("rows past what one artifact holds") for f in a.coverage.failed)
+    assert any(f.reason.endswith("rows past what one file decodes") for f in a.coverage.failed)
+
+
+def test_a_lists_elements_count_against_the_decode_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(parquetfile, "_MAX_DECODED", 1_000)
+    monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 2)
+    # Each row a list of 300 nulls: no buffer behind its elements, 300 values to read.
+    t = pa.table({"l": pa.array([[None] * 300] * 20, pa.list_(pa.null()))})
+    a, tab = _one(_file(t))
+    assert len(tab.rows) == 2  # one batch of two (602 values); the next would pass 1,000
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        ("f.parquet rows 3-", "18 rows past what one file decodes")
+    ]
+
+
+def test_a_dictionary_inside_a_list_is_charged_for_every_element_that_names_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries = pa.DictionaryArray.from_arrays(pa.array([0] * 4, pa.int32()), pa.array(["x" * 1_000]))
+    value = pa.ListArray.from_arrays(pa.array([0, 4], pa.int32()), entries)
+    assert parquetfile._cost(value) == (1 + 4, 4_000)

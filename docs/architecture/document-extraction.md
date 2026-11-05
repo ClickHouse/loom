@@ -294,11 +294,13 @@ over 1 MiB and a value Python cannot hold (a date past year 9999) are left out a
 named, over the rows read); a batch with such a value is split in halves until each part converts, so only that one is,
 and past 16 of them the rest of the batch's column is left out unread, counted as such. A row of nulls is no row. Pages
 decode one at a time, so a row group's size does not decide what is held; the rows past the table budget are not read:
-those past the batch it ran out in, and past four million values or 256 MiB decoded (a dictionary entry charged once for
-each row that names it, so a file of blank rows or of long values is bounded too), are counted from the metadata, never
-decoded; a row group whose pages do not decode fails the rows from there (`<name> rows N-`). The child's limits bound
-one decode, and its environment holds the native libraries to one thread and the system allocator, which the
-address-space limit allows. A build without pyarrow does not declare Parquet.
+those past the batch it ran out in, and past four million values or 256 MiB decoded, charged before a batch is read into
+Python (every element of a list, struct or map down to its leaves, a dictionary entry once for each value that names it,
+so a file of blank rows, of long lists or of long values is bounded too; the rows from there are their own failed unit,
+`past what one file decodes`), are counted from the metadata, never decoded; a row group whose pages do not decode fails
+the rows from there (`<name> rows N-`). The child's limits bound one decode, and its environment holds the native
+libraries to one thread and the system allocator, which the address-space limit allows. A build without pyarrow does not
+declare Parquet.
 
 **Bounds.** One budget bounds all of an artifact's tables, in three parts: what a source holds, the bytes its tables
 write, and the text they index. A source holds at most 1,000,000 non-empty cells in all, merged cells included, their

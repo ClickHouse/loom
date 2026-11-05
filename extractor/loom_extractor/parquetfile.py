@@ -116,9 +116,9 @@ def _json(value: Any) -> Any:
 
 
 # A value `_values` left out (and counted): no cell, though the row has a value there.
-LEFT_OUT = object()
+_LEFT_OUT = object()
 # One it did not convert at all: past _MAX_UNHELD values Python cannot hold in a batch.
-UNREAD = object()
+_UNREAD = object()
 
 
 class _Reader:
@@ -131,10 +131,10 @@ class _Reader:
     def cell(self, value: Any, kind: str) -> Cell:
         if value is None:
             return EMPTY
-        if value is LEFT_OUT:
+        if value is _LEFT_OUT:
             self.left_out["bytes" if kind == "bytes" else "unheld"] += 1
             return EMPTY
-        if value is UNREAD:
+        if value is _UNREAD:
             self.left_out["unread"] += 1
             return EMPTY
         if kind == "nested":
@@ -271,7 +271,7 @@ def _readable(arrow_type: Any) -> Any:
 
 def _values(column: Any, target: Any, kind: str) -> list[Any]:
     """A batch column's values as Python holds them. Bytes, and a value Python
-    cannot hold (a date past year 9999, a zone it does not know), are LEFT_OUT,
+    cannot hold (a date past year 9999, a zone it does not know), are _LEFT_OUT,
     not None, so a row of them is still a row; the rows read count them
     (`_Reader.cell`). Bytes are never copied into Python. A batch with a value
     Python cannot hold is split in halves until each part converts or is one
@@ -288,16 +288,16 @@ def _values(column: Any, target: Any, kind: str) -> list[Any]:
 
 
 def _left_out(column: Any) -> list[Any]:
-    return [None if null else LEFT_OUT for null in column.is_null().to_pylist()]
+    return [None if null else _LEFT_OUT for null in column.is_null().to_pylist()]
 
 
 def _split(column: Any, target: Any, failures: list[int]) -> list[Any]:
     """`column` converted, or, where it fails, each half of it: a value that
-    fails alone is LEFT_OUT, and past _MAX_UNHELD failures what is left is."""
+    fails alone is _LEFT_OUT, and past _MAX_UNHELD failures what is left is."""
     import pyarrow as pa
 
     if failures[0] >= _MAX_UNHELD:
-        return [None if null else UNREAD for null in column.is_null().to_pylist()]
+        return [None if null else _UNREAD for null in column.is_null().to_pylist()]
     try:
         if target is not None:
             column = column.cast(target, safe=False)
@@ -308,31 +308,49 @@ def _split(column: Any, target: Any, failures: list[int]) -> list[Any]:
     except (pa.ArrowException, ValueError, OverflowError, KeyError):
         if len(column) == 1:
             failures[0] += 1
-            return [LEFT_OUT]
+            return [_LEFT_OUT]
     half = len(column) // 2
     return _split(column.slice(0, half), target, failures) + _split(
         column.slice(half), target, failures
     )
 
 
-def _logical_bytes(batch: Any) -> int:
-    """What a batch's values are, read into Python: its buffers, and a
-    dictionary's entries as many times as rows name them (each is a copy)."""
+def _cost(array: Any) -> tuple[int, int]:
+    """What reading `array` into Python costs, before any of it is: its values,
+    every element of a list, struct or map counted down to its leaves, and the
+    bytes a string or binary dictionary copies, an entry once for each value
+    that names it (a list of nulls has no buffer, a dictionary entry one)."""
     import pyarrow as pa
     import pyarrow.compute as pc
 
-    total = int(batch.nbytes)
-    for column in batch.columns:
-        t = column.type
-        if pa.types.is_dictionary(t) and (
+    t = array.type
+    if isinstance(t, pa.BaseExtensionType):
+        return _cost(array.storage)
+    if pa.types.is_dictionary(t):
+        copies = 0
+        if (
             pa.types.is_string(t.value_type)
             or pa.types.is_large_string(t.value_type)
-            or pa.types.is_binary(t.value_type)
-            or pa.types.is_large_binary(t.value_type)
+            or (pa.types.is_binary(t.value_type) or pa.types.is_large_binary(t.value_type))
         ):
-            sizes = pc.take(pc.binary_length(column.dictionary), column.indices)
-            total += int(pc.sum(sizes).as_py() or 0)
-    return total
+            sizes = pc.take(pc.binary_length(array.dictionary), array.indices)
+            copies = int(pc.sum(sizes).as_py() or 0)
+        return len(array), copies
+    if pa.types.is_map(t):
+        keys, items = _cost(array.keys), _cost(array.items)
+        return len(array) + keys[0] + items[0], keys[1] + items[1]
+    if (
+        pa.types.is_list(t)
+        or pa.types.is_large_list(t)
+        or pa.types.is_fixed_size_list(t)
+        or (pa.types.is_list_view(t) or pa.types.is_large_list_view(t))
+    ):
+        values, copies = _cost(array.flatten())
+        return len(array) + values, copies
+    if pa.types.is_struct(t):
+        parts = [_cost(f) for f in array.flatten()]
+        return len(array) + sum(v for v, _ in parts), sum(c for _, c in parts)
+    return len(array), 0
 
 
 def _open(data: bytes) -> Any:
@@ -370,7 +388,10 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     batch_rows = max(1, min(_BATCH_ROWS, tabular.MAX_CELLS // max(1, meta.num_columns)))
     groups = [meta.row_group(g).num_rows for g in range(meta.num_row_groups)]
     number = blank = decoded = decoded_bytes = 0
+    stopped = False
     for g, group_rows in enumerate(groups):
+        if stopped:
+            break
         if rows.more:
             # Past the budget: counted from the metadata, never decoded.
             rows.count(number + 1, group_rows)
@@ -381,12 +402,16 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
             # Every column, the kept ones taken by position: a name may repeat,
             # so none is selected by name.
             for batch in pf.iter_batches(batch_size=batch_rows, row_groups=[g], use_threads=False):
-                decoded += batch.num_rows * max(1, meta.num_columns)
-                decoded_bytes += _logical_bytes(batch)
-                # A file of blank rows, or of values each too long to hold, is read no further.
+                costs = [_cost(batch.column(j)) for j in range(batch.num_columns)]
+                decoded += sum(v for v, _ in costs)
+                decoded_bytes += int(batch.nbytes) + sum(c for _, c in costs)
+                # A file of blank rows, of long lists or of values each too long to
+                # hold is read no further: the rest is its own failed unit.
                 if decoded > _MAX_DECODED or decoded_bytes > _MAX_DECODED_BYTES:
-                    rows.count(number + 1, group_rows - (number - start))
-                    number = start + group_rows
+                    rest = group_rows - (number - start) + sum(groups[g + 1 :])
+                    reason = f"{counted(rest, 'row')} past what one file decodes"
+                    fail(budget, failed, f"{name} rows {number + 1}-", reason)
+                    stopped = True
                     break
                 columns = [_values(batch.column(j), targets[j], kinds[j]) for j in range(len(kept))]
                 for i in range(batch.num_rows):
