@@ -35,8 +35,19 @@ from loom_extractor.tomlfile import extract_toml
 from loom_extractor.xlsxfile import StrictWorkbook, extract_xlsx
 
 # Every format a source can be.
-KNOWN_FORMATS = ("markdown", "html", "text", "sql", "toml", "csv", "pdf", "docx", "pptx", "xlsx",
-                 "parquet")  # fmt: skip
+KNOWN_FORMATS = (
+    "markdown",
+    "html",
+    "text",
+    "sql",
+    "toml",
+    "csv",
+    "pdf",
+    "docx",
+    "pptx",
+    "xlsx",
+    "parquet",
+)
 
 
 def parsed_formats(has_pyarrow: bool) -> tuple[str, ...]:

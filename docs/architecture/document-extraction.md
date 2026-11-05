@@ -287,12 +287,13 @@ digit; a dataset holds a number to nine decimal places, `Decimal128(9)`, so a `d
 a number, a top-level `float32` or `float16` column's its shortest decimal in its own type, NaN or an infinity its text;
 a bool, a date, a timestamp (its zone kept, none when the column has none), a time of day and a duration read as the
 other readers write them, a nanosecond unit to the microsecond (inside a list, struct or map too); text is text, a UUID
-its text, and a list, struct or map is its JSON (bytes in it as base64). Bytes are no text, and they, a value over 1 MiB
-and a batch's values of a column Python cannot hold (a date past year 9999) are left out and counted (`<name> values`).
-A row of nulls is no row. Pages decode one at a time, so a row group's size does not decide what is held; the rows past
-the table budget are counted from the metadata, never decoded; a row group whose pages do not decode fails the rows from
-there (`<name> rows N-`). The child's limits bound one decode, and its environment holds the native libraries to one
-thread and the system allocator, which the address-space limit allows. A build without pyarrow does not declare Parquet.
+its text, and a list, struct or map is its JSON (bytes in it as base64); another extension type reads as what it stores,
+a `bool8` as a bool. Bytes are no text, and they, a value over 1 MiB and a batch's values of a column Python cannot hold
+(a date past year 9999) are left out and counted (`<name> values`, each cause named, for the rows read). A row of nulls
+is no row. Pages decode one at a time, so a row group's size does not decide what is held; the rows past the table
+budget are counted from the metadata, never decoded; a row group whose pages do not decode fails the rows from there
+(`<name> rows N-`). The child's limits bound one decode, and its environment holds the native libraries to one thread
+and the system allocator, which the address-space limit allows. A build without pyarrow does not declare Parquet.
 
 **Bounds.** One budget bounds all of an artifact's tables, in three parts: what a source holds, the bytes its tables
 write, and the text they index. A source holds at most 1,000,000 non-empty cells in all, merged cells included, their

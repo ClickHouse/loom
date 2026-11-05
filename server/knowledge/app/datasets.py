@@ -219,7 +219,7 @@ def _value(v: Any) -> Any:
         if Decimal(repr(f)) == v:
             return f
         # Its exact digits, trailing zeros dropped: normalize() would round to 28.
-        return format(v, "f").rstrip("0").rstrip(".")
+        return format(v, "f").rstrip("0")  # a fraction: a digit is left past the point
     return v
 
 

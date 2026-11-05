@@ -127,10 +127,7 @@ def test_nested_values_are_their_json_and_bytes_are_left_out_and_counted() -> No
     assert tab.rows[0][:4] == ("a", "[1, 2]", '{"x": 1, "y": "z"}', '[["a", 1]]')
     assert tab.rows[0][4] is None and tab.rows[1] == ("b", "[]", None, None, None)
     assert [(f.unit, f.reason) for f in a.coverage.failed] == [
-        (
-            "f.parquet values",
-            "1 value not text, over 1048576 characters or past what Python holds",
-        )
+        ("f.parquet values", "1 value of bytes, no text")
     ]
     assert not a.coverage.complete
     view = pa.table({"k": ["a"], "v": pa.array([b"\x00"], pa.binary_view())})
@@ -145,9 +142,7 @@ def test_a_row_whose_values_were_all_left_out_is_still_a_row() -> None:
     a, tab = _one(_file(t))
     assert tab.rows == ((None,), (None,))
     assert (a.coverage.to_dict()["total"], a.coverage.to_dict()["extracted"]) == (2, 2)
-    assert [f.reason for f in a.coverage.failed] == [
-        "2 values not text, over 1048576 characters or past what Python holds"
-    ]
+    assert [f.reason for f in a.coverage.failed] == ["2 values of bytes, no text"]
 
 
 def test_rows_are_blocks_cited_by_row_and_a_row_of_nulls_is_no_row() -> None:
@@ -184,7 +179,7 @@ def test_rows_past_the_budget_are_counted_from_the_metadata_not_decoded(
     assert sum(decoded) == 4  # two batches of two, then the rest from the metadata
 
 
-def test_columns_past_the_bound_are_not_read_and_are_counted(
+def test_columns_past_the_bound_are_left_out_and_counted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(parquetfile, "MAX_COLUMNS", 2)
@@ -358,3 +353,68 @@ def test_a_build_without_pyarrow_neither_parses_nor_declares_parquet(
     with pytest.raises(ExtractionError) as e:
         extract(b"PAR1 not read PAR1", "a.parquet")
     assert e.value.code == "format_unavailable"
+
+
+def test_a_uuid_inside_a_list_or_struct_is_its_text_in_the_json() -> None:
+    import uuid
+
+    u = uuid.UUID("12345678-1234-5678-1234-567812345678")
+    ids = pa.ExtensionArray.from_storage(pa.uuid(), pa.array([u.bytes], pa.binary(16)))
+    t = pa.table(
+        {
+            "l": pa.ListArray.from_arrays(pa.array([0, 1], pa.int32()), ids),
+            "st": pa.StructArray.from_arrays([ids], names=["id"]),
+        }
+    )
+    a, tab = _one(_file(t))
+    assert tab.rows == ((f'["{u}"]', f'{{"id": "{u}"}}'),) and a.coverage.complete
+
+
+def test_an_extension_type_reads_as_what_it_stores() -> None:
+    opaque = pa.opaque(pa.binary(), "image", "vendor")
+    t = pa.table(
+        {
+            "k": ["a", "b"],
+            "o": pa.ExtensionArray.from_storage(opaque, pa.array([b"\x00\x01", None])),
+            "b": pa.ExtensionArray.from_storage(pa.bool8(), pa.array([1, 0], pa.int8())),
+        }
+    )
+    a, tab = _one(_file(t))
+    assert [(c.name, c.type) for c in tab.columns] == [
+        ("k", "string"),
+        ("o", "string"),
+        ("b", "bool"),
+    ]
+    assert tab.rows == (("a", None, True), ("b", None, False))  # the bytes are no text
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        ("f.parquet values", "1 value of bytes, no text")
+    ]
+
+
+def test_each_cause_of_a_value_left_out_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(parquetfile, "MAX_VALUE_CHARS", 3)
+    t = pa.table(
+        {
+            "bin": [b"\x00", None],
+            "s": ["long text", "ok"],
+            "d": pa.array([3_000_000, None], pa.date32()),
+        }
+    )
+    a, _ = _one(_file(t))
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        (
+            "f.parquet values",
+            "1 value of bytes, no text; 1 value over 3 characters; 1 value past what Python holds",
+        )
+    ]
+
+
+def test_values_left_out_are_counted_only_for_the_rows_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tabular, "MAX_ROWS", 2)
+    t = pa.table({"k": list("abcde"), "d": pa.array([3_000_000] * 5, pa.date32())})
+    a, _ = _one(_file(t))
+    units = {f.unit: f.reason for f in a.coverage.failed}
+    assert units["f.parquet values"] == "2 values past what Python holds"  # not the 3 past the cut
+    assert units["f.parquet rows 3-"] == "3 rows past what one artifact holds"

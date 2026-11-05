@@ -39,6 +39,7 @@ import datetime as dt
 import json
 import math
 import struct
+import uuid
 from decimal import Decimal
 from typing import Any
 
@@ -100,6 +101,8 @@ def _json(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, dt.timedelta):
         return _duration(value)
+    if isinstance(value, uuid.UUID):
+        return str(value)
     return value
 
 
@@ -111,16 +114,18 @@ class _Reader:
     """Cells of one column type; counts the values it leaves out."""
 
     def __init__(self) -> None:
-        self.left_out = 0  # bytes, a value over MAX_VALUE_CHARS, or one Python cannot hold
+        # The values left out of the rows read, by why.
+        self.left_out = {"bytes": 0, "long": 0, "unheld": 0}
 
     def cell(self, value: Any, kind: str) -> Cell:
-        if value is None or value is LEFT_OUT:
+        if value is None:
             return EMPTY
-        if kind == "bytes":
-            self.left_out += 1
+        if value is LEFT_OUT:
+            self.left_out["bytes" if kind == "bytes" else "unheld"] += 1
             return EMPTY
         if kind == "nested":
-            value, kind = json.dumps(_json(value), ensure_ascii=False), "string"
+            # str: a value of a type JSON does not know (one an extension adds) as its text.
+            value, kind = json.dumps(_json(value), ensure_ascii=False, default=str), "string"
         if kind in ("float32", "float16"):
             if not math.isfinite(value):
                 return Cell(str(value), "string")
@@ -141,19 +146,37 @@ class _Reader:
             return Cell(bool(value), "bool")
         text = str(value)
         if len(text) > MAX_VALUE_CHARS:
-            self.left_out += 1
+            self.left_out["long"] += 1
             return EMPTY
         return Cell(text, "string") if text.strip() else EMPTY
 
 
-def _kind(arrow_type: Any) -> str:
-    """What a column of `arrow_type` holds: number, float32, float16, bool, date,
-    datetime, time, duration, string, bytes or nested."""
+def _stored(arrow_type: Any) -> Any:
+    """The type a column's values are read by: an extension type's storage
+    (its values are those of what it extends), but a UUID, read as its text,
+    and a bool8, a bool."""
     import pyarrow as pa
 
     t = arrow_type
     while pa.types.is_dictionary(t):
         t = t.value_type
+    if isinstance(t, pa.BaseExtensionType):
+        if t.extension_name == "arrow.uuid":
+            return t
+        if t.extension_name == "arrow.bool8":
+            return pa.bool_()
+        return _stored(t.storage_type)
+    return t
+
+
+def _kind(arrow_type: Any) -> str:
+    """What a column of `arrow_type` holds: number, float32, float16, bool, date,
+    datetime, time, duration, string (a UUID among them), bytes or nested."""
+    import pyarrow as pa
+
+    t = _stored(arrow_type)
+    if isinstance(t, pa.BaseExtensionType):  # a UUID
+        return "string"
     if pa.types.is_boolean(t):
         return "bool"
     if pa.types.is_float32(t):
@@ -192,6 +215,11 @@ def _readable(arrow_type: Any) -> Any:
     t = arrow_type
     if pa.types.is_dictionary(t):
         return _readable(t.value_type)
+    if isinstance(t, pa.BaseExtensionType):
+        stored = _stored(t)
+        if stored is t:  # a UUID: read as it is
+            return None
+        return _readable(stored) or stored
     if pa.types.is_timestamp(t) and t.unit == "ns":
         return pa.timestamp("us", tz=t.tz)
     if pa.types.is_time64(t) and t.unit == "ns":
@@ -211,31 +239,44 @@ def _readable(arrow_type: Any) -> Any:
         key, item = _readable(t.key_type), _readable(t.item_type)
         if key is None and item is None:
             return None
-        return pa.map_(key or t.key_type, item or t.item_type)
+        return pa.map_(
+            key if key is not None else t.key_type, item if item is not None else t.item_type
+        )
     if pa.types.is_struct(t):
         fields = [t.field(i) for i in range(t.num_fields)]
         inner = [_readable(f.type) for f in fields]
         if all(i is None for i in inner):
             return None
-        return pa.struct([f.with_type(i or f.type) for f, i in zip(fields, inner, strict=True)])
+        return pa.struct(
+            [f.with_type(f.type if i is None else i) for f, i in zip(fields, inner, strict=True)]
+        )
     return None
 
 
-def _values(column: Any, target: Any, reader: _Reader) -> list[Any]:
-    """A batch column's values as Python holds them. A column with a value
-    Python cannot (a date past year 9999, a zone it does not know) has its
-    batch's values left out and counted: LEFT_OUT, not None, so a row of them
-    is still a row."""
+def _values(column: Any, target: Any, kind: str) -> list[Any]:
+    """A batch column's values as Python holds them. Bytes, and a column with a
+    value Python cannot hold (a date past year 9999, a zone it does not know),
+    are LEFT_OUT, not None, so a row of them is still a row; the rows read
+    count them (`_Reader.cell`). Bytes are never copied into Python."""
     import pyarrow as pa
 
+    def left_out() -> list[Any]:
+        return [None if null else LEFT_OUT for null in column.is_null().to_pylist()]
+
+    if kind == "bytes":
+        return left_out()
     try:
+        if (
+            isinstance(column.type, pa.BaseExtensionType)
+            and _stored(column.type) is not column.type
+        ):
+            column = column.storage
         if target is not None:
             column = column.cast(target, safe=False)
         values: list[Any] = column.to_pylist()
         return values
     except (pa.ArrowException, ValueError, OverflowError, KeyError):
-        reader.left_out += len(column) - column.null_count
-        return [None if null else LEFT_OUT for null in column.is_null().to_pylist()]
+        return left_out()
 
 
 def _open(data: bytes) -> Any:
@@ -284,7 +325,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
             # Every column, the kept ones taken by position: a name may repeat,
             # so none is selected by name.
             for batch in pf.iter_batches(batch_size=batch_rows, row_groups=[g], use_threads=False):
-                columns = [_values(batch.column(j), targets[j], reader) for j in range(len(kept))]
+                columns = [_values(batch.column(j), targets[j], kinds[j]) for j in range(len(kept))]
                 for i in range(batch.num_rows):
                     if rows.more:  # past the budget: counted below, its values not read
                         break
@@ -295,10 +336,12 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
                         continue
                     # A row whose values were all left out (bytes, values Python
                     # cannot hold) is still a row.
+                    counts = dict(reader.left_out)
                     typed = (reader.cell(values[j], kinds[j]) for j in range(len(kept)))
-                    rows.add(
-                        number, {j: c for j, c in enumerate(typed) if c.kind != "empty"}, budget
-                    )
+                    cells = {j: c for j, c in enumerate(typed) if c.kind != "empty"}
+                    rows.add(number, cells, budget)
+                    if rows.more:  # not held: the rows' failed unit counts it, not these
+                        reader.left_out = counts
                 if rows.more:  # the budget ran out in this batch: the rest is counted
                     rest = group_rows - (number - start)
                     rows.count(number + 1, rest)
@@ -310,9 +353,14 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
             why = str(e) or type(e).__name__  # a MemoryError has no message
             fail(budget, failed, f"{name} rows {number + 1}-", f"not decoded: {why}"[:200])
             break
-    if reader.left_out:
-        reason = f"{counted(reader.left_out, 'value')} not text, over {MAX_VALUE_CHARS} characters"
-        fail(budget, failed, f"{name} values", reason + " or past what Python holds")
+    causes = {
+        "bytes": "of bytes, no text",
+        "long": f"over {MAX_VALUE_CHARS} characters",
+        "unheld": "past what Python holds",
+    }
+    reasons = [f"{counted(n, 'value')} {causes[k]}" for k, n in reader.left_out.items() if n]
+    if reasons:
+        fail(budget, failed, f"{name} values", "; ".join(reasons))
     acc = Blocks()
     t, table_failed = table(acc, "t0", name, rows, budget)
     failed += table_failed
