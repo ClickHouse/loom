@@ -22,6 +22,7 @@ from bench.bootstrap import paired_bootstrap
 from bench.design_rationale.llm import cost_usd, price, read_ledger
 from bench.design_rationale.taskset import (
     EXTRACTED_ARMS,
+    GOLD_LIST,
     KINDS,
     KNOWLEDGE_ARMS,
     MEMORY_ARMS,
@@ -62,8 +63,6 @@ REQUIRED = {
     "C": ("stale_served", "abstained", "invented_rationale"),
     "D": ("claims", "gold_covered", "potentially_misleading"),
 }
-# The kinds whose answers are claims scored against a gold list, and that list's field.
-GOLD_LIST = {"A": "gold_arguments", "D": "gold_facts"}
 # The run flags a summary publishes; the org and an --arm4-namespace name a deployment.
 SUMMARY_FLAGS = (
     "arms",

@@ -1407,7 +1407,7 @@ def test_a_feature_task_without_gold_facts_is_refused(tmp_path):
 def test_arm_6_serves_the_extracted_rows_with_the_documents_knowledge_hits(tmp_path):
     ts = load(EXAMPLE)
     out = tmp_path / "run"
-    cfg = _config(out, arms=[2, 4, 6], k=1, judge_orders=1)
+    cfg = _config(out, arms=[2, 3, 4, 6], k=1, judge_orders=1)
     ledger = Ledger(out / "ledger.jsonl", cfg.max_usd)
     out.mkdir()
     model = _fake_model(ledger)
@@ -1425,7 +1425,7 @@ def test_arm_6_serves_the_extracted_rows_with_the_documents_knowledge_hits(tmp_p
     assert t["arm6_knowledge_served"] == t["arm2_knowledge_served"] == "8/8"  # gold-row tasks
     assert t["arm6_for_file_served"].split("/")[0] != "0"
     pairs = {(c["treatment"], c["reference"]) for c in m["comparisons"]}
-    assert {(6, 2), (6, 4)} <= pairs
+    assert {(6, 2), (6, 4), (6, 3)} <= pairs
     assert m["arms"][6]["D"]["tasks"] == 1
     # A task whose knowledge hits miss its own document is not served.
     surf["B1/arm6"]["knowledge_uris"] = ["doc://elsewhere"]
@@ -1695,6 +1695,23 @@ def test_judge_agreement_leaves_out_change_answers_a_detector_decided():
     assert decided == {}  # the detector fired: the passes could not disagree
     open_ = score.judge_stability(ts, {"B1/arm0/s1": entry(False)})
     assert open_["orders"] == {"answers": 1, "agreement": 0.0}
+
+
+def test_judge_agreement_reads_a_feature_answers_misleading_verdict():
+    ts = load(EXAMPLE)
+    did = ts.tasks["D"][0]["id"]
+    passes = [
+        {
+            "model": "m",
+            "order": order,
+            "repeat": 0,
+            "verdict": {"claims": [], "gold_covered": [], "potentially_misleading": bool(order)},
+        }
+        for order in (0, 1)
+    ]
+    entry = {"citations": [], "detectors": [], "passes": passes}
+    out = score.judge_stability(ts, {f"{did}/arm0/s1": entry})
+    assert out["orders"] == {"answers": 1, "agreement": 0.0}
 
 
 def test_judge_accuracy_against_humans_leaves_out_what_a_detector_decided():

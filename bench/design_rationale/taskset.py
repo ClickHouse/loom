@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 KINDS = ("A", "B", "C", "D")
+# The kinds whose answers are claims scored against a gold list, and that list's field.
+GOLD_LIST = {"A": "gold_arguments", "D": "gold_facts"}
 # The arms served extracted rows, the arms whose loom_search answer an agent reads for its
 # memory section, and the arms whose knowledge hits it reads.
 EXTRACTED_ARMS = (4, 6)
@@ -242,7 +244,7 @@ def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
         ):
             raise TaskSetError(f"task {tid}: {name} is a list of strings")
     # A why or feature answer is scored against its gold list: an empty one scores nothing.
-    gold = {"A": "gold_arguments", "D": "gold_facts"}.get(kind)
+    gold = GOLD_LIST.get(kind)
     if gold and not t[gold]:
         raise TaskSetError(f"task {tid}: {kind} task with an empty {gold!r}")
     if kind == "C":
