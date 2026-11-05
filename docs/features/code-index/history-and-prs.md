@@ -80,8 +80,8 @@ those the brief stores, and keeps at most `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS
 rows, those with something to check first. It serves whole rows, `check` rows first and
 then constraints, up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` (250) tokens, and always
 the first row; the tier's budget may still trim the section like any other. Each row
-carries the line the pre-edit block prints for it (value, source, `(pinned)`, a
-code-change note), `pinned`, `code_state` and a `verdict`. Each changed file read is one
+carries the pre-edit block's line for it with its value cut at the line length (source,
+`(pinned)` and the code-change note kept), `pinned`, `code_state` and a `verdict`. Each changed file read is one
 `memory.for_file` read: four ClickHouse reads (files match, code links, their memories,
 the linked rows; a file with many links slices the last), each keeping up to 50 rows with
 up to `LOOM_MEMORY_FOR_FILE_WHOLE_TOKENS` × 48 bytes of value.
