@@ -167,6 +167,29 @@ async def test_an_extraction_runs_in_a_child_and_returns_the_artifact() -> None:
     ]
 
 
+async def test_a_parquet_file_is_read_in_a_child_under_its_limits() -> None:
+    """pyarrow runs in the child as every parser does: its memory, CPU and
+    process limits and its socket filter, with one thread."""
+    import io
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    buf = io.BytesIO()
+    pq.write_table(pa.table({"k": ["a", "b"], "v": [1, 2]}), buf)
+    async with _client() as c:
+        r = await c.post(
+            "/v1/extract",
+            params={"format": "parquet", "name": "t.parquet"},
+            content=buf.getvalue(),
+            headers=AUTH,
+        )
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["format"] == "parquet" and d["coverage"]["complete"] is True
+    assert [t["rows"] for t in d["tables"]] == [[["a", 1], ["b", 2]]]
+
+
 @pytest.mark.parametrize(
     ("params", "body", "code"),
     [

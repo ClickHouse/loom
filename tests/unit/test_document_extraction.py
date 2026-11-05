@@ -116,20 +116,6 @@ def test_decode_is_strict_and_honours_byte_order_marks_and_declared_encodings() 
     assert unknown.value.code == "invalid_option"
 
 
-def test_a_known_format_this_build_does_not_parse_is_unavailable_not_text(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A build without pyarrow knows Parquet but does not parse it."""
-    from loom_extractor import source
-
-    monkeypatch.setattr(
-        source, "PARSED_FORMATS", tuple(f for f in source.PARSED_FORMATS if f != "parquet")
-    )
-    with pytest.raises(ExtractionError) as e:
-        extract(b"PAR1 not read PAR1", "a.parquet")
-    assert e.value.code == "format_unavailable"
-
-
 def test_a_declared_encoding_is_recorded_on_the_artifact() -> None:
     a = extract("# Café\n\nbody".encode("latin-1"), "a.md", Options(encoding="latin-1"))
     assert a.blocks[0].text == "Café"

@@ -284,13 +284,14 @@ cell budget holds, counted by leaf columns (a struct's fields each one). The nam
 has no header row (`header_rows` 0) and its rows count from 1. How a column is read is decided once from its type, so
 every batch of it reads alike. An integer is a number, as is a decimal and an integer past signed 64 bits (a `uint64`),
 each written as its exact digits, since a JSON number reads back as a double (the artifact and its passages keep every
-digit; a dataset holds a number to nine decimal places, `Decimal128(9)`, so a `decimal(38,18)` rounds there); a float is
+digit; a dataset's first 24 number columns hold nine decimal places, so a `decimal(38,18)` rounds there, the rest a
+double, [Datasets](#datasets)); a float is
 a number, a top-level `float32` or `float16` column's its shortest decimal in its own type, NaN or an infinity its text;
 a bool, a date, a timestamp (its zone kept, none when the column has none), a time of day and a duration read as the
 other readers write them, a nanosecond unit to the microsecond (inside a list, struct or map too, not a list view, which
 Arrow casts to no other element type); text is text, a UUID its text, and a list, struct or map is its JSON (bytes in it
 as base64); another extension type reads as what it stores, a `bool8` as a bool. Bytes are no text, and they, a value
-over 1 MiB and a value Python cannot hold (a date past year 9999) are left out and counted (`<name> values`, each cause
+over 1,048,576 characters and a value Python cannot hold (a date past year 9999) are left out and counted (`<name> values`, each cause
 named, over the rows read); a batch with such a value is split in halves until each part converts, so only that one is,
 and past 16 of them in a column (across the file) the rest of the column is left out unread, counted as such. A row of
 nulls is no row; a file whose schema has no column has only blank rows, counted from its metadata, and a row group of no

@@ -4,10 +4,10 @@
 second: a name that claims a format its bytes do not have is refused, never
 read as something else. `extract` decodes text strictly (UTF-8, UTF-16 or
 UTF-32 by its byte-order mark, or a declared encoding; no lossy replacement of
-undecodable bytes) and runs the format's parser; a PDF, DOCX, PPTX or XLSX
-parser reads the bytes themselves. Every failure is an `ExtractionError` with
-a typed `code`, so an unsupported, corrupt or mislabelled file is reported as
-such rather than ingested as binary noise.
+undecodable bytes) and runs the format's parser; a PDF, DOCX, PPTX, XLSX or
+Parquet parser reads the bytes themselves. Every failure is an
+`ExtractionError` with a typed `code`, so an unsupported, corrupt or
+mislabelled file is reported as such rather than ingested as binary noise.
 
 Pure and I/O-free.
 """
@@ -86,7 +86,6 @@ _EXTENSIONS = {
 # Legacy Office formats, refused by name; their content is recognised too, so
 # they are never read as text.
 _LEGACY = {"doc", "xls", "ppt"}
-_BINARY = ("pdf", "docx", "pptx", "xlsx", "parquet")
 
 
 class ExtractionError(Exception):
@@ -155,7 +154,7 @@ def detect_format(data: bytes, filename: str, declared: str = "") -> str:
         if by_name and by_name != by_content:
             raise ExtractionError("format_mismatch", f"the file is {by_content}, not {by_name}")
         return by_content
-    if by_name in _BINARY:
+    if by_name in BINARY_PARSED:
         raise ExtractionError("format_mismatch", f"the file is not a {by_name} file")
     return by_name or "text"
 

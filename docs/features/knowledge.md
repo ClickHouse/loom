@@ -927,8 +927,9 @@ a workbook of more sheets reads the others by `dataset_id`.
 A column's type is `string`, `number`, `bool`, `date`, `datetime`, `time` or `duration`
 (in seconds). A row with a cell error (`#DIV/0!`) or a value its column's type cannot hold
 is rejected and counted, never stored half typed. A dataset holds up to 24 text or time,
-32 number or duration, 8 date or date-time and 8 boolean columns, and a number to nine
-decimal places (a value with more is rounded there).
+32 number or duration, 8 date or date-time and 8 boolean columns. The first 24 number
+columns hold a number to nine decimal places (a value with more is rounded there), the
+rest a double.
 
 `knowledge.dataset_approve` (writer, audited) approves a dataset's schema. It names the
 `snapshot_id` the caller reviewed (`409 PRECONDITION_FAILED` once another serves) and, in
