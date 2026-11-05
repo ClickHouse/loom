@@ -165,6 +165,7 @@ def test_a_filter_value_longer_than_a_statement_parameter_holds_is_refused_first
         ({"op": "in", "value": "a", "values": ["b"]}, "in takes no value; its list is values"),
         ({"op": "eq", "value": "a", "values": ["b"]}, "eq takes one value, not values"),
         ({"op": "is_null", "value": "a"}, "is_null takes no value"),
+        ({"op": "not_null", "values": ["a"]}, "not_null takes no value"),
     ],
 )
 def test_a_value_its_op_does_not_take_is_refused_not_dropped(
@@ -174,6 +175,20 @@ def test_a_value_its_op_does_not_take_is_refused_not_dropped(
 
     with pytest.raises(pydantic.ValidationError, match=reason):
         _plan(where=[{"column": _col("team"), **where}])
+
+
+def test_a_list_is_counted_as_the_client_encodes_it() -> None:
+    """The bound counts what clickhouse-connect sends: if its escaping changes,
+    this fails before a list past ClickHouse's parameter size is sent."""
+    from clickhouse_connect.driver.binding import must_escape, str_query_value
+
+    from server.knowledge.api import models_query
+
+    assert set(models_query._ESCAPED) == set(must_escape)
+    for values in (["`\n\t'\\x€"] * 3, ["plain", "two words"]):
+        # `[a, b]`: the brackets take the bytes of the `, ` the last value has none of.
+        sent = len(str_query_value(values).encode())
+        assert sum(models_query._sent_bytes(v) for v in values) == sent
 
 
 def test_a_date_compares_as_its_midnight_in_utc_and_refuses_a_date_time() -> None:

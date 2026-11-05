@@ -5,7 +5,8 @@ Each dataset is read at the snapshot its source's live document serves, which
 the receipt names. A dataset whose schema needs a person's answer is refused
 until a writer approves it, and a result over a dataset the extraction left
 incomplete, or that rejected rows, says so. The statement runs under the
-caller-shaped ceilings, as the read-only reader user: a plan that needs more
+caller-shaped ceilings, as the read-only reader user where one is set: a plan
+that needs more
 rows, time or memory fails rather than returning part of an aggregate. Before
 the rows are released, each source must still serve the snapshot read, so a
 snapshot replaced or erased while the statement ran is never returned.

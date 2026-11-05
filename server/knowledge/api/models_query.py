@@ -9,8 +9,10 @@ from pydantic import BaseModel, Field, StrictBool, StrictFloat, StrictInt, model
 
 from server.knowledge.domain.extract.artifact import MAX_COLUMN_CHARS
 
-# One filter value's text, and one list's bytes as the statement sends it: each
-# is one parameter, which ClickHouse takes up to 128 KiB of.
+# One filter value's text, and one list's bytes: each is one parameter of the
+# statement, which ClickHouse takes up to 128 KiB of. A text list is counted as
+# the client sends it; any other list's values send at most about 42 bytes each
+# (a decimal's 38 digits), so 1,000 of them stay far under the cap.
 MAX_VALUE_CHARS = 1024
 MAX_LIST_BYTES = 100_000
 
@@ -31,7 +33,7 @@ _ESCAPED = ("\\", "'", "`", "\t", "\n")
 
 
 def _sent_bytes(v: Any) -> int:
-    """`v`'s bytes in a list parameter: its UTF-8, a backslash before each
+    """`v`'s bytes in a text list parameter: its UTF-8, a backslash before each
     character the client escapes, its two quotes and the `, ` after it."""
     text = str(v)
     return len(text.encode()) + sum(text.count(c) for c in _ESCAPED) + 4
@@ -99,8 +101,10 @@ class QueryFilter(BaseModel):
     @model_validator(mode="after")
     def _values_fit_a_parameter(self) -> QueryFilter:
         lists, takes_none = self.op in ("in", "not_in"), self.op in ("is_null", "not_null")
-        if self.value is not None and (lists or takes_none):
-            raise ValueError(f"{self.op} takes no value{'; its list is values' if lists else ''}")
+        if (self.value is not None or self.values) and takes_none:
+            raise ValueError(f"{self.op} takes no value")
+        if self.value is not None and lists:
+            raise ValueError(f"{self.op} takes no value; its list is values")
         if self.values and not lists:
             raise ValueError(f"{self.op} takes one value, not values")
         if sum(_sent_bytes(v) for v in self.values) > MAX_LIST_BYTES:
