@@ -65,12 +65,14 @@ url = "https://loom.example.com/mcp?toolset=core,coding,tracker,tasks"
 http_headers_helper = 'h="$(ls -d "$HOME"/.codex/plugins/cache/*/loom/*/bin/loom-mcp-headers.mjs 2>/dev/null | sort -V | tail -1)"; sh "${h%/*}/loom-node" "$h"'
 ```
 
-Codex runs the helper through `sh -c` with a reduced environment and does not expand
-`${PLUGIN_ROOT}`, so the command finds the newest installed helper under `$HOME/.codex`
-and starts it through the plugin's `bin/loom-node`, which finds Node 18+ without `PATH`;
-with a custom `CODEX_HOME`, spell the path out. A Codex build that rejects `Authorization`
-from a header helper ("returned a reserved header") needs
-`bearer_token_env_var = "LOOM_API_KEY"` instead, with `LOOM_API_KEY` exported.
+Codex runs the helper through `sh -c` with only `HOME`, `PATH` and the locale variables,
+and does not expand `${PLUGIN_ROOT}`, so the command finds the newest installed helper
+under `$HOME/.codex` and starts it through the plugin's `bin/loom-node`. The launcher
+finds Node 18+ on that `PATH` or under a version manager; `LOOM_NODE` does not reach it.
+With a custom `CODEX_HOME`, spell the path out. On Windows Codex runs the helper through
+`cmd.exe`, which cannot run this command: use `bearer_token_env_var` there. A Codex build
+that rejects `Authorization` from a header helper ("returned a reserved header") also
+needs `bearer_token_env_var = "LOOM_API_KEY"`, with `LOOM_API_KEY` exported.
 
 `loom install --client codex --server-url https://loom.example.com --token <JWT>` writes
 such an override with `bearer_token_env_var` and `?toolset=coding`, and writes `url` and
@@ -153,15 +155,15 @@ smaller tool listing ([MCP reference](../../reference/mcp.md)). The
 
 ## Troubleshooting
 
-| Symptom                             | Cause                                                  | Fix                                                                            |
-| ----------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| MCP connection fails with 401       | no token found by the helper                           | write `~/.loom/config.json`, or export `LOOM_API_KEY`                          |
-| "returned a reserved header"        | this Codex build rejects `Authorization` from a helper | override with `bearer_token_env_var = "LOOM_API_KEY"`                          |
-| tools talk to the wrong server      | the bundled URL is not your deployment                 | the `config.toml` override above, plus `url` in `~/.loom/config.json`          |
-| tools listed twice                  | a second MCP entry under another name                  | remove it (`codex mcp remove <name>`)                                          |
-| a hook prints `loom: Node.js 18+ …` | the launcher found no Node 18+, or only an old one     | `LOOM_NODE=/path/to/node` where Codex starts (macOS, Linux), or `$loom-status` |
-| hooks write nothing                 | viewer token, or the hooks read a different `url`      | writer token; check `~/.loom/config.json` and `LOOM_BASE_URL`                  |
-| Sessions view empty                 | conversation logging is off for the namespace          | turn it on in the dashboard or with `conversation.set_logging`                 |
+| Symptom                                        | Cause                                                  | Fix                                                                            |
+| ---------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| MCP connection fails with 401                  | no token found by the helper                           | write `~/.loom/config.json`, or export `LOOM_API_KEY`                          |
+| "returned a reserved header"                   | this Codex build rejects `Authorization` from a helper | override with `bearer_token_env_var = "LOOM_API_KEY"`                          |
+| tools talk to the wrong server                 | the bundled URL is not your deployment                 | the `config.toml` override above, plus `url` in `~/.loom/config.json`          |
+| tools listed twice                             | a second MCP entry under another name                  | remove it (`codex mcp remove <name>`)                                          |
+| a hook prints a `loom:` line about Node.js 18+ | the launcher found no Node 18+, or only an old one     | `LOOM_NODE=/path/to/node` where Codex starts (macOS, Linux), or `$loom-status` |
+| hooks write nothing                            | viewer token, or the hooks read a different `url`      | writer token; check `~/.loom/config.json` and `LOOM_BASE_URL`                  |
+| Sessions view empty                            | conversation logging is off for the namespace          | turn it on in the dashboard or with `conversation.set_logging`                 |
 
 ## Related
 

@@ -192,7 +192,8 @@ for (const shell of SHELLS) {
       try {
         for (const d of dirs) {
           if (d === ".tool-versions-file")
-            fs.writeFileSync(path.join(f.home, ".tool-versions"), "python 3.12.1\nnodejs 20.11.1\n");
+            // a hand-edited file may lack the final newline
+            fs.writeFileSync(path.join(f.home, ".tool-versions"), "python 3.12.1\nnodejs 20.11.1");
           else if (d === ".nodenv-version-file") fs.writeFileSync(path.join(f.home, ".nodenv", "version"), "20.0.0\n");
           else f.node(d);
         }
@@ -268,11 +269,11 @@ test("LOOM_NODE wins, and a LOOM_NODE that is not Node fails rather than falling
     const r = f.run({ LOOM_NODE: path.join(f.home, "missing") });
     assert.equal(r.status, 1);
     assert.equal(r.stdout, "");
-    assert.match(r.stderr, /^loom: Node\.js 18\+ is required; LOOM_NODE=.*missing is not one\.\n$/);
+    assert.match(r.stderr, /^loom: LOOM_NODE=.*missing is not Node\.js 18\+\.\n$/);
     if (!WINDOWS) {
       const old = f.node("old", "v16.20.2");
       const tooOld = f.run({ LOOM_NODE: old });
-      assert.equal(tooOld.stderr, `loom: Node.js 18+ is required; LOOM_NODE=${old} is not one (it is v16.20.2).\n`);
+      assert.equal(tooOld.stderr, `loom: LOOM_NODE=${old} is not Node.js 18+ (it is v16.20.2).\n`);
     }
   } finally {
     f.done();
@@ -374,6 +375,45 @@ test("the Codex header helper finds the newest cached plugin and runs its helper
     });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, "1.2.10");
+  } finally {
+    f.done();
+  }
+});
+
+test("a manager's default that is too old falls through to its newest install", { skip: WINDOWS }, () => {
+  const f = fixture();
+  try {
+    f.node(".nvm/versions/node/v16.20.2/bin", "v16.20.2");
+    f.node(".nvm/versions/node/v20.11.0/bin");
+    fs.mkdirSync(path.join(f.home, ".nvm", "alias"));
+    fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "16\n");
+    assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v20.11.0/bin"));
+  } finally {
+    f.done();
+  }
+});
+
+test("managers are tried in order: fnm before nvm before Volta", () => {
+  const f = fixture();
+  try {
+    f.node(".volta/bin");
+    f.node(".nvm/versions/node/v22.1.0/bin");
+    assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v22.1.0/bin"));
+    f.node(".local/share/fnm/aliases/default/bin");
+    assert.equal(found(f, f.run({})), exe(".local/share/fnm/aliases/default/bin"));
+  } finally {
+    f.done();
+  }
+});
+
+test("with no script it prints its usage instead of starting a REPL on the hook payload", () => {
+  const f = fixture();
+  try {
+    f.node("bin");
+    const r = f.run({ PATH: path.join(f.home, "bin") }, []);
+    assert.equal(r.status, 1);
+    assert.equal(r.stdout, "");
+    assert.equal(r.stderr, "usage: loom-node <script> [args...] | --check\n");
   } finally {
     f.done();
   }

@@ -121,18 +121,28 @@ test("loom-status Node check warns when only this shell's environment finds Node
   const f = fixture();
   try {
     f.put("uname", "echo Darwin");
-    f.put("node", "echo v22.0.0");
+    // A Node on this shell's PATH only; it runs the helper's settings reader.
+    f.put("node", `if [ "$1" = --version ]; then echo v22.0.0; else exec "${process.execPath}" "$@"; fi`);
+    const settings = (env) => {
+      fs.mkdirSync(path.join(f.dir, ".claude"), { recursive: true });
+      fs.writeFileSync(path.join(f.dir, ".claude", "settings.json"), JSON.stringify({ env }));
+    };
+    settings({ LOOM_NODE_SYSTEM_DIRS: "" });
     const shellOnly = f.run("--check");
     assert.equal(shellOnly.status, 0, shellOnly.stderr);
     assert.match(
       shellOnly.stdout,
       /ready: .*\nFound only with this shell's environment: .*LOOM_NODE.*settings\.json\)\.\n$/,
     );
-    // A LOOM_NODE in the environment is what Claude Code's settings env sets: it counts.
-    f.env.LOOM_NODE = path.join(f.bin, "node");
+    // LOOM_NODE in Claude Code's settings env reaches a GUI-started agent: it counts.
+    settings({ LOOM_NODE_SYSTEM_DIRS: "", LOOM_NODE: path.join(f.bin, "node") });
     const set = f.run("--check");
     assert.equal(set.status, 0, set.stderr);
     assert.doesNotMatch(set.stdout, /Found only/);
+    // A LOOM_NODE exported in this shell only does not.
+    settings({ LOOM_NODE_SYSTEM_DIRS: "" });
+    f.env.LOOM_NODE = path.join(f.bin, "node");
+    assert.match(f.run("--check").stdout, /Found only/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
   }

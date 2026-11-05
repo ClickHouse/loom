@@ -10,7 +10,7 @@ client's point of view, with the client's own resolution order for the
 server URL and the token, and each line says what to do.
 
 Pure functions take their I/O as arguments (`get_json`, `post_json`, `home`,
-`tmp`, `now`) so the unit tests run them offline. `node_check` is the
+`tmp`, `now`) so the unit tests run them offline. `node_checks` is the
 exception: it runs the installed plugin's own launcher, so that one
 implementation decides which Node the hooks get.
 """
@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import tomllib
 from collections.abc import Callable
@@ -867,15 +868,14 @@ def _claude_settings_env(home: Path) -> dict[str, str]:
 
 # The PATH a GUI or IDE launch hands the agent: no shell profile has run.
 GUI_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+# What Codex passes its MCP header helper (codex-rs rmcp-client DEFAULT_ENV_VARS).
+CODEX_HELPER_ENV = ("HOME", "LOGNAME", "PATH", "SHELL", "USER", "LANG", "LC_ALL", "TMPDIR", "TZ")
 
 
-def newest_launcher(home: Path) -> Path | None:
-    """`bin/loom-node` of the newest installed loom plugin, Claude Code's or
-    Codex's; None when no installed plugin ships one."""
-    found = [
-        *home.glob(".claude/plugins/cache/*/loom/*/bin/loom-node"),
-        *home.glob(".codex/plugins/cache/*/loom/*/bin/loom-node"),
-    ]
+def newest_launcher(home: Path, client_dir: str) -> Path | None:
+    """`bin/loom-node` of the newest loom plugin installed under
+    `~/<client_dir>/plugins/cache`; None when none ships one."""
+    found = home.glob(f"{client_dir}/plugins/cache/*/loom/*/bin/loom-node")
 
     def version(p: Path) -> tuple[int, ...]:
         return tuple(int(x) for x in re.findall(r"\d+", p.parent.parent.name))
@@ -897,44 +897,73 @@ def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, 
     return r.returncode, (r.stdout or r.stderr).strip()
 
 
-def node_check(home: Path, env: dict[str, str]) -> list[Check]:
-    """The Node the plugin's hooks and MCP header helper run under, as the
-    plugin's own launcher finds it: with this shell's environment, then with
-    only HOME and the PATH of an agent started from a GUI or IDE."""
-    launcher = newest_launcher(home)
+_NO_NODE = 'No hook runs, and the MCP entry gets no token ("needs authentication").'
+
+
+def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
+    """The Node each installed plugin's hooks and MCP header helper run
+    under, as that plugin's own launcher finds it in that client's
+    environment."""
+    out: list[Check] = []
     sh = shutil.which("sh")
-    if launcher is None or sh is None:
-        return []
-    name = "client:node"
-    # Claude Code applies its settings env to its hooks; Codex does not read it.
-    claude = launcher.relative_to(home).parts[0] == ".claude"
-    settings = _claude_settings_env(home) if claude else {}
-    gui = {"HOME": str(home), "PATH": GUI_PATH, **settings}
+    claude = newest_launcher(home, ".claude")
+    if claude is not None:
+        out.append(_claude_node_check(home, env, claude, sh))
+    codex = newest_launcher(home, ".codex")
+    if codex is not None and sh is not None:  # on Windows, Codex hooks use cmd.exe
+        out.append(_codex_node_check(env, codex, sh))
+    return out
+
+
+def _claude_node_check(home: Path, env: dict[str, str], launcher: Path, sh: str | None) -> Check:
+    """Claude Code runs hooks and the helper with its own environment plus
+    its settings `env`: this shell's, or a GUI launch's with no profile."""
+    name = "client:claude-code:node"
+    if sh is None:
+        return (name, FAIL, "no POSIX sh: the hooks need Git Bash on Windows.")
+    settings = _claude_settings_env(home)
     try:
         code, line = _launcher_check(sh, launcher, {**env, **settings})
+        if code != 0:
+            return (name, FAIL, f"{line} {_NO_NODE} Fix: the loom-status skill.")
+        if sys.platform == "win32":  # a Windows GUI app gets the user's PATH
+            return (name, PASS, line)
+        gui = {"HOME": str(home), "PATH": GUI_PATH, **settings}
         gui_code, _ = _launcher_check(sh, launcher, gui)
     except (OSError, subprocess.TimeoutExpired) as e:
-        return [(name, WARN, f"could not run {launcher}: {e}")]
-    if code != 0:
-        return [
-            (
-                name,
-                FAIL,
-                f'{line} No hook runs, and the MCP entry gets no token ("needs '
-                'authentication"). Fix: the loom-status skill.',
-            )
-        ]
+        return (name, WARN, f"could not run {launcher}: {e}")
     if gui_code != 0:
-        return [
-            (
-                name,
-                WARN,
-                f"{line}, but only with this shell's environment: an agent started from a "
-                "GUI or IDE finds no Node. Fix: set LOOM_NODE to that path in the agent's "
-                "environment (for Claude Code, the `env` block of ~/.claude/settings.json).",
-            )
-        ]
-    return [(name, PASS, line)]
+        return (
+            name,
+            WARN,
+            f"{line}, but only with this shell's environment: Claude Code started from "
+            "a GUI or IDE finds no Node. Fix: set LOOM_NODE to that path in the `env` "
+            "block of ~/.claude/settings.json.",
+        )
+    return (name, PASS, line)
+
+
+def _codex_node_check(env: dict[str, str], launcher: Path, sh: str) -> Check:
+    """Codex runs hooks through a login shell, and the MCP header helper
+    with only a few variables kept, LOOM_NODE not among them."""
+    name = "client:codex:node"
+    helper_env = {k: env[k] for k in CODEX_HELPER_ENV if k in env}
+    try:
+        code, line = _launcher_check(sh, launcher, env)
+        if code != 0:
+            return (name, FAIL, f"{line} {_NO_NODE} Fix: the loom-status skill.")
+        helper_code, _ = _launcher_check(sh, launcher, helper_env)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return (name, WARN, f"could not run {launcher}: {e}")
+    if helper_code != 0:
+        return (
+            name,
+            WARN,
+            f"{line} for the hooks, but the MCP header helper, which Codex runs with "
+            "only HOME and PATH, finds no Node. Fix: put that Node's directory on the "
+            "PATH Codex starts with.",
+        )
+    return (name, PASS, line)
 
 
 def flush_check(tmp: Path, now: float) -> Check:
@@ -1037,7 +1066,7 @@ def client_checks(
             )
         )
     checks.extend(codex_checks(home, base_url, env=env, post_json=probe, now=now))
-    checks.extend(node_check(home, env))
+    checks.extend(node_checks(home, env))
     checks.append(flush_check(tmp, now))
     return checks
 

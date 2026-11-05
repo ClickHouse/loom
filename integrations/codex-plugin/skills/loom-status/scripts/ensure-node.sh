@@ -30,12 +30,23 @@ download_setup() {
   curl -fsSL --connect-timeout 10 --max-time 120 "$1" -o "$SETUP_FILE"
 }
 
-# The launcher as an agent started from a GUI or IDE runs it: no shell
-# profile, only the Loom settings Claude Code's settings env would carry.
+# setting <name>: "=<value>" when ~/.claude/settings.json `env` sets it
+setting() {
+  sh "$LAUNCHER" -e '
+    try {
+      const v = require(process.argv[1]).env[process.argv[2]];
+      if (typeof v === "string") process.stdout.write("=" + v);
+    } catch {}' "$HOME/.claude/settings.json" "$1" 2>/dev/null
+}
+
+# The launcher as Claude Code started from a GUI or IDE runs it: no shell
+# profile, only HOME, the system PATH and Claude Code's settings env.
 gui_check() {
   set -- HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin
-  [ -n "${LOOM_NODE:-}" ] && set -- "$@" LOOM_NODE="$LOOM_NODE"
-  [ -n "${LOOM_NODE_SYSTEM_DIRS+x}" ] && set -- "$@" LOOM_NODE_SYSTEM_DIRS="$LOOM_NODE_SYSTEM_DIRS"
+  for name in LOOM_NODE LOOM_NODE_SYSTEM_DIRS; do
+    value=$(setting "$name")
+    case $value in =*) set -- "$@" "$name$value" ;; esac
+  done
   env -i "$@" sh "$LAUNCHER" --check >/dev/null 2>&1
 }
 

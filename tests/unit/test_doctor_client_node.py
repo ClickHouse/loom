@@ -1,5 +1,6 @@
-"""`client:node`: the doctor runs the installed plugin's own launcher, so it
-names the Node the hooks and the MCP header helper get, or why there is none."""
+"""`client:<client>:node`: the doctor runs each installed plugin's own
+launcher in that client's environment, so it names the Node the hooks and
+the MCP header helper get, or why there is none."""
 
 from __future__ import annotations
 
@@ -20,17 +21,19 @@ pytestmark = pytest.mark.skipif(shutil.which("sh") is None, reason="needs a POSI
 
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A home whose GUI PATH and fixed directories hold no Node of the host's.
-    The settings `env` applies to both launcher runs, as it does to the hooks."""
+    """A home whose GUI PATH and fixed directories hold no Node of the host's:
+    Claude Code's settings env and the Codex helper's env both carry
+    LOOM_NODE_SYSTEM_DIRS=""."""
     monkeypatch.setattr(dc, "GUI_PATH", str(tmp_path / "gui-path"))
+    monkeypatch.setattr(dc, "CODEX_HELPER_ENV", (*dc.CODEX_HELPER_ENV, "LOOM_NODE_SYSTEM_DIRS"))
     _settings(tmp_path, {})
     return tmp_path
 
 
 def _settings(home: Path, env: dict[str, str]) -> None:
     (home / ".claude").mkdir(exist_ok=True)
-    isolated = {"LOOM_NODE_SYSTEM_DIRS": ""}
-    (home / ".claude" / "settings.json").write_text(json.dumps({"env": {**isolated, **env}}))
+    settings = {"env": {"LOOM_NODE_SYSTEM_DIRS": "", **env}}
+    (home / ".claude" / "settings.json").write_text(json.dumps(settings))
 
 
 def _install(home: Path, client: str, version: str) -> Path:
@@ -48,77 +51,90 @@ def _node(directory: Path, version: str) -> Path:
     return node
 
 
-def _check(home: Path, **env: str) -> tuple[str, str]:
-    [(name, grade, line)] = dc.node_check(home, {"HOME": str(home), "PATH": "/nowhere", **env})
-    assert name == "client:node"
-    return grade, line
+def _checks(home: Path, **env: str) -> dict[str, tuple[str, str]]:
+    base = {"HOME": str(home), "PATH": "/nowhere", "LOOM_NODE_SYSTEM_DIRS": ""}
+    return {name: (grade, line) for name, grade, line in dc.node_checks(home, {**base, **env})}
 
 
 def test_no_installed_launcher_no_line(home: Path) -> None:
-    assert dc.node_check(home, {"HOME": str(home), "PATH": "/usr/bin:/bin"}) == []
+    assert _checks(home) == {}
 
 
-def test_the_newest_installed_plugin_answers(home: Path) -> None:
+def test_the_newest_install_of_each_client(home: Path) -> None:
+    _install(home, ".claude", "1.2.10")
     _install(home, ".claude", "1.2.9")
-    newest = _install(home, ".codex", "1.2.10")
-    assert dc.newest_launcher(home) == newest
+    newest = _install(home, ".claude", "1.10.0")
+    assert dc.newest_launcher(home, ".claude") == newest
+    assert dc.newest_launcher(home, ".codex") is None
 
 
 def test_a_version_manager_node_passes_without_the_shell_path(home: Path) -> None:
     _install(home, ".claude", "1.3.0")
+    _install(home, ".codex", "1.3.0")
     node = _node(home / ".nvm" / "versions" / "node" / "v22.1.0" / "bin", "v22.1.0")
-    assert _check(home) == (dc.PASS, f"Loom hook runtime ready: {node} (v22.1.0)")
+    line = f"Loom hook runtime ready: {node} (v22.1.0)"
+    assert _checks(home) == {
+        "client:claude-code:node": (dc.PASS, line),
+        "client:codex:node": (dc.PASS, line),
+    }
 
 
-def test_a_node_only_on_the_shell_path_warns(home: Path) -> None:
+def test_a_node_only_on_the_shell_path_warns_for_claude_code(home: Path) -> None:
     _install(home, ".claude", "1.3.0")
     node = _node(home / "shell-only", "v24.0.0")
-    grade, line = _check(home, PATH=str(node.parent))
+    grade, line = _checks(home, PATH=str(node.parent))["client:claude-code:node"]
     assert grade == dc.WARN
     assert line.startswith(f"Loom hook runtime ready: {node} (v24.0.0), but only with this shell")
-    assert "set LOOM_NODE to that path" in line
+    assert "LOOM_NODE to that path in the `env` block of ~/.claude/settings.json" in line
 
 
 def test_shell_only_variables_do_not_reach_the_gui_run(home: Path) -> None:
     _install(home, ".claude", "1.3.0")
     node = _node(home / "custom-nvm" / "versions" / "node" / "v22.1.0" / "bin", "v22.1.0")
-    assert _check(home, LOOM_NODE=str(node))[0] == dc.WARN
-    assert _check(home, NVM_DIR=str(home / "custom-nvm"))[0] == dc.WARN
+    assert _checks(home, LOOM_NODE=str(node))["client:claude-code:node"][0] == dc.WARN
+    assert _checks(home, NVM_DIR=str(home / "custom-nvm"))["client:claude-code:node"][0] == dc.WARN
 
 
-def test_loom_node_in_claude_settings_counts(home: Path) -> None:
-    _install(home, ".claude", "1.3.0")
-    node = _node(home / "shell-only", "v24.0.0")
+def test_loom_node_in_claude_settings_counts_for_claude_code_only(home: Path) -> None:
+    _install(home, ".claude", "1.2.7")
+    _install(home, ".codex", "1.2.8")
+    node = _node(home / "elsewhere", "v24.0.0")
     _settings(home, {"LOOM_NODE": str(node)})
-    assert _check(home)[0] == dc.PASS
+    checks = _checks(home)
+    assert checks["client:claude-code:node"][0] == dc.PASS
+    grade, line = checks["client:codex:node"]
+    assert grade == dc.FAIL
+    assert line.startswith("loom: Node.js 18+ not found")
 
 
-def test_no_node_fails_with_the_launcher_line_and_the_fix(home: Path) -> None:
+def test_loom_node_reaches_codex_hooks_but_not_its_header_helper(home: Path) -> None:
+    _install(home, ".codex", "1.3.0")
+    node = _node(home / "elsewhere", "v24.0.0")
+    grade, line = _checks(home, LOOM_NODE=str(node))["client:codex:node"]
+    assert grade == dc.WARN
+    assert "the MCP header helper, which Codex runs with only HOME and PATH, finds no Node" in line
+
+
+def test_no_node_fails_with_the_launcher_line(home: Path) -> None:
     _install(home, ".claude", "1.3.0")
     old = _node(home / ".volta" / "bin", "v16.20.2")
-    grade, line = _check(home)
+    grade, line = _checks(home)["client:claude-code:node"]
     assert grade == dc.FAIL
     assert line.startswith(
         f"loom: Node.js 18+ is required; the first Node found, {old} (v16.20.2), is older."
     )
-    assert "the MCP entry gets no token" in line and "LOOM_NODE=/path/to/node" in line
+    assert "the MCP entry gets no token" in line and line.endswith("Fix: the loom-status skill.")
 
 
-def test_settings_env_keeps_only_strings(home: Path) -> None:
-    (home / ".claude" / "settings.json").write_text(
-        json.dumps({"env": {"LOOM_HOOK_TIMEOUT_MS": None, "LOOM_NODE": "/x", "N": 0}})
-    )
-    assert dc._claude_settings_env(home) == {"LOOM_NODE": "/x"}
-    assert dc.hook_override_check(home, {}) == []
-
-
-def test_codex_hooks_do_not_get_claude_settings_env(home: Path) -> None:
+def test_no_sh_fails_claude_code_and_skips_codex(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install(home, ".claude", "1.3.0")
     _install(home, ".codex", "1.3.0")
-    node = _node(home / "elsewhere", "v24.0.0")
-    _settings(home, {"LOOM_NODE": str(node)})
-    grade, line = _check(home, LOOM_NODE_SYSTEM_DIRS="")
-    assert grade == dc.FAIL
-    assert line.startswith("loom: Node.js 18+ not found")
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    assert _checks(home) == {
+        "client:claude-code:node": (dc.FAIL, "no POSIX sh: the hooks need Git Bash on Windows.")
+    }
 
 
 def test_a_launcher_that_does_not_run_is_a_warning_not_a_verdict(
@@ -130,4 +146,15 @@ def test_a_launcher_that_does_not_run_is_a_warning_not_a_verdict(
         raise PermissionError(13, "Permission denied")
 
     monkeypatch.setattr(subprocess, "run", refuse)
-    assert _check(home) == (dc.WARN, f"could not run {launcher}: [Errno 13] Permission denied")
+    assert _checks(home)["client:claude-code:node"] == (
+        dc.WARN,
+        f"could not run {launcher}: [Errno 13] Permission denied",
+    )
+
+
+def test_settings_env_keeps_only_strings(home: Path) -> None:
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps({"env": {"LOOM_HOOK_TIMEOUT_MS": None, "LOOM_NODE": "/x", "N": 0}})
+    )
+    assert dc._claude_settings_env(home) == {"LOOM_NODE": "/x"}
+    assert dc.hook_override_check(home, {}) == []

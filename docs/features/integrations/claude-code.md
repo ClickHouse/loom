@@ -344,17 +344,17 @@ Bash tool respectively.
 
 Start with `/loom:loom-status`; it names the cause in one line.
 
-| Symptom                                    | Cause                                              | Fix                                                            |
-| ------------------------------------------ | -------------------------------------------------- | -------------------------------------------------------------- |
-| a hook prints `loom: Node.js 18+ …`        | the launcher found no Node 18+, or only an old one | `LOOM_NODE=/path/to/node`, or the `loom-status` skill; restart |
-| MCP server "needs authentication"          | no Node for the header helper, or no token found   | the `loom-status` skill names which                            |
-| no primer, nothing captured                | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                     |
-| tools answer, captures do not              | the token is viewer-only on the write namespace    | mint a writer token                                            |
-| Sessions view empty                        | conversation logging is off for the namespace      | turn it on in the dashboard or with `conversation.set_logging` |
-| a hook added in a new release never fires  | the installed plugin is older than the server      | `claude plugin update loom@loom`                               |
-| every tool listed twice                    | a user-scope `loom` MCP entry beside the plugin    | `claude mcp remove loom`                                       |
-| reads denied in a repo you work on locally | the checkout is indexed and the file is unmodified | `--config local_first=true` or `LOOM_CODE_LOCAL_FIRST=on`      |
-| `Hook cancelled` at exit                   | SessionEnd hooks ran past the client's budget      | update the plugin (its entries declare `timeout: 10`)          |
+| Symptom                                        | Cause                                              | Fix                                                            |
+| ---------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------- |
+| a hook prints a `loom:` line about Node.js 18+ | the launcher found no Node 18+, or only an old one | `LOOM_NODE=/path/to/node`, or the `loom-status` skill; restart |
+| MCP server "needs authentication"              | no Node for the header helper, or no token found   | the `loom-status` skill names which                            |
+| no primer, nothing captured                    | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                     |
+| tools answer, captures do not                  | the token is viewer-only on the write namespace    | mint a writer token                                            |
+| Sessions view empty                            | conversation logging is off for the namespace      | turn it on in the dashboard or with `conversation.set_logging` |
+| a hook added in a new release never fires      | the installed plugin is older than the server      | `claude plugin update loom@loom`                               |
+| every tool listed twice                        | a user-scope `loom` MCP entry beside the plugin    | `claude mcp remove loom`                                       |
+| reads denied in a repo you work on locally     | the checkout is indexed and the file is unmodified | `--config local_first=true` or `LOOM_CODE_LOCAL_FIRST=on`      |
+| `Hook cancelled` at exit                       | SessionEnd hooks ran past the client's budget      | update the plugin (its entries declare `timeout: 10`)          |
 
 ## Other clients
 

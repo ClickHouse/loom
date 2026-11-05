@@ -10,6 +10,11 @@
 # install directories. Stdout is the script's own: a hook's stdout is its
 # payload. Git Bash opens Windows paths as they are.
 
+if [ $# -eq 0 ]; then
+  echo 'usage: loom-node <script> [args...] | --check' >&2
+  exit 1
+fi
+
 found=''
 found_version=''
 too_old=''
@@ -79,7 +84,7 @@ default_or_newest() {
   newest "$1" "$2"
 }
 
-fnm() {
+from_fnm() {
   in_dir "$1/aliases/default/bin" && return 0
   in_dir "$1/aliases/default" && return 0
   newest "$1/node-versions" installation/bin && return 0
@@ -87,7 +92,7 @@ fnm() {
 }
 
 # nvm's default is a version, or an alias (lts/iron) whose file names one.
-nvm() {
+from_nvm() {
   want=''
   [ -f "$1/alias/default" ] && read -r want <"$1/alias/default"
   for _ in 1 2; do
@@ -100,17 +105,17 @@ nvm() {
 }
 
 # asdf's default is the `nodejs <version>` line of ~/.tool-versions.
-asdf() {
+from_asdf() {
   want=''
   if [ -f "$HOME/.tool-versions" ]; then
-    while read -r tool version _; do
+    while read -r tool version _ || [ -n "$tool" ]; do
       [ "$tool" = nodejs ] && want=$version
     done <"$HOME/.tool-versions"
   fi
   default_or_newest "$1/installs/nodejs" bin "$want"
 }
 
-nodenv() {
+from_nodenv() {
   want=''
   [ -f "$1/version" ] && read -r want <"$1/version"
   default_or_newest "$1/versions" bin "$want"
@@ -123,15 +128,15 @@ find_node() {
   fi
   p=$(command -v node 2>/dev/null) && usable "$p" && return 0
   data=${XDG_DATA_HOME:-$HOME/.local/share}
-  [ -n "${FNM_DIR:-}" ] && fnm "$FNM_DIR" && return 0
-  fnm "$data/fnm" && return 0
-  fnm "$HOME/Library/Application Support/fnm" && return 0
-  fnm "$HOME/.fnm" && return 0
-  nvm "${NVM_DIR:-$HOME/.nvm}" && return 0
+  [ -n "${FNM_DIR:-}" ] && from_fnm "$FNM_DIR" && return 0
+  from_fnm "$data/fnm" && return 0
+  from_fnm "$HOME/Library/Application Support/fnm" && return 0
+  from_fnm "$HOME/.fnm" && return 0
+  from_nvm "${NVM_DIR:-$HOME/.nvm}" && return 0
   in_dir "${VOLTA_HOME:-$HOME/.volta}/bin" && return 0
-  asdf "${ASDF_DATA_DIR:-$HOME/.asdf}" && return 0
+  from_asdf "${ASDF_DATA_DIR:-$HOME/.asdf}" && return 0
   newest "${MISE_DATA_DIR:-$data/mise}/installs/node" bin && return 0
-  nodenv "${NODENV_ROOT:-$HOME/.nodenv}" && return 0
+  from_nodenv "${NODENV_ROOT:-$HOME/.nodenv}" && return 0
   # n puts the active version in its prefix (/usr/local/bin, below, by
   # default) and keeps the others under n/.
   if [ -n "${N_PREFIX:-}" ]; then
@@ -143,7 +148,7 @@ find_node() {
   if [ -n "${APPDATA:-}${LOCALAPPDATA:-}" ]; then
     in_dir "${NVM_SYMLINK:-}" && return 0
     [ -n "${NVM_HOME:-}" ] && newest "$NVM_HOME" '' && return 0
-    [ -n "${APPDATA:-}" ] && fnm "$APPDATA/fnm" && return 0
+    [ -n "${APPDATA:-}" ] && from_fnm "$APPDATA/fnm" && return 0
     [ -n "${LOCALAPPDATA:-}" ] && in_dir "$LOCALAPPDATA/Volta/bin" && return 0
     in_dir "${SCOOP:-$HOME/scoop}/apps/nodejs/current" && return 0
     in_dir "${SCOOP:-$HOME/scoop}/apps/nodejs-lts/current" && return 0
@@ -165,7 +170,7 @@ find_node() {
 
 if ! find_node; then
   if [ -n "${LOOM_NODE:-}" ]; then
-    echo "loom: Node.js 18+ is required; LOOM_NODE=$LOOM_NODE is not one${too_old_version:+ (it is $too_old_version)}." >&2
+    echo "loom: LOOM_NODE=$LOOM_NODE is not Node.js 18+${too_old_version:+ (it is $too_old_version)}." >&2
   elif [ -n "$too_old" ]; then
     echo "loom: Node.js 18+ is required; the first Node found, $too_old ($too_old_version), is older. Install a newer one, or set LOOM_NODE=/path/to/node." >&2
   else
