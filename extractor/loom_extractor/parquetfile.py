@@ -28,11 +28,12 @@ size does not decide what is held; the rows past the budget
 (`tabular.Budget`), and past _MAX_DECODED values or _MAX_DECODED_BYTES decoded
 or _MAX_GROUPS row groups read (a file of blank rows, or of values too long to
 hold, is no cheaper to read), are counted from the metadata, never decoded. A
-decode that raises (a page that does not decode, an allocation past the
-child's memory) fails the rows from there (`<name> rows N-`); the extractor's
-child limits (memory, time, no network) stop one that runs away: one past the
-time limit refuses the file (`timeout`), one that crashes the child
-(`resource_limit`).
+row count a footer declares below zero is none, and a footer whose row groups
+declare 2^63 rows or more is refused (corrupt). A decode that raises (a page
+that does not decode, an allocation past the child's memory) fails the rows
+from there (`<name> rows N-`); the extractor's child limits (memory, time, no
+network) stop one that runs away: one past the time limit refuses the file
+(`timeout`), one that crashes the child (`resource_limit`).
 
 Pure: it reads only the bytes it is given.
 """
@@ -561,8 +562,9 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     # A count a footer declares below 0 is no rows; rows past what a coverage
     # count holds (signed 64 bits) are no file.
     groups = [max(0, meta.row_group(g).num_rows) for g in range(meta.num_row_groups)]
-    if sum(groups) >= 1 << 63:
-        raise ParquetError(f"its footer declares {sum(groups)} rows")
+    declared = sum(groups)
+    if declared >= 1 << 63:
+        raise ParquetError(f"its footer declares {declared} rows")
     walk.read(groups)
     walk.fail_left_out()
     acc = Blocks()
@@ -575,7 +577,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
         # The row groups' rows (the count each declares, as they are read), less the blank.
         coverage=Coverage(
             "rows",
-            sum(groups) - walk.blank,
+            declared - walk.blank,
             len(t.rows) if t is not None else 0,
             failed=(*walk.failed, *table_failed),
         ),
