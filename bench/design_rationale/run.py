@@ -210,9 +210,10 @@ def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
                 ctx = len(ts.document_of(t).content) // CHARS_PER_TOKEN_WORST
             elif arm in (2, 5):
                 ctx = SEARCH_SECTION_TOKENS
-            elif arm in (3, 4, 6):
+            elif arm in MEMORY_ARMS and arm != 5:
                 blocks = len(ts.task_paths(t)) if pre_edit(cfg, arm) else 0
-                sections = 2 if arm == 6 else 1  # arm 6 reads the knowledge hits too
+                # An arm that reads the knowledge hits reads a second search section.
+                sections = 2 if arm in KNOWLEDGE_ARMS else 1
                 ctx = SEARCH_SECTION_TOKENS * sections + pre_edit_block_tokens() * blocks
             else:
                 ctx = 0
@@ -558,7 +559,7 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
                     "for_file": [b["tokens"] for b in blocks],
                     "search_memory": tokens(section),
                 }
-                if arm == 6:
+                if arm in KNOWLEDGE_ARMS:
                     knowledge = knowledge_section(found["text"], found["knowledge"])
                     if knowledge:
                         parts.append("loom_search knowledge section:\n" + knowledge)

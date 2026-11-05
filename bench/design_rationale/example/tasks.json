@@ -97,7 +97,10 @@
       "id": "D1",
       "document": "thumbnail-cache",
       "question": "How does the thumbnail cache evict entries, and what limits its size?",
-      "gold_rows": ["design/thumbnail-cache/segmented-lru"],
+      "gold_rows": [
+        "design/thumbnail-cache/segmented-lru",
+        "design/thumbnail-cache/size-with-memory-limit"
+      ],
       "gold_facts": [
         "a probation segment holds entries seen once",
         "a protected segment holds entries hit twice or more, capped at 80% of the cache",
