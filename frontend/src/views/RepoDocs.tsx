@@ -141,7 +141,7 @@ export function RepoDocsList({
           No documents yet.{" "}
           {writable
             ? "Add the design notes, runbooks or specs agents should read before changing this code."
-            : "A writer there adds them."}
+            : "Anyone who can write to the repository adds them."}
         </p>
       )}
       {state.kind === "ready" && state.rows.length > 0 && (
