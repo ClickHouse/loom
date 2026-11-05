@@ -103,6 +103,21 @@ def test_values_json_cannot_hold_as_numbers_keep_their_column_a_number() -> None
     ]
 
 
+def test_a_row_of_nans_or_blank_text_is_no_row_but_one_left_out_is() -> None:
+    nan, inf = float("nan"), float("inf")
+    t = pa.table(
+        {
+            "f": pa.array([1.5, nan, nan, inf], pa.float64()),
+            "s": pa.array(["a", None, "  ", None]),
+        }
+    )
+    a, tab = _one(_file(t))
+    # Rows 2 and 3 hold nothing; row 4's infinity was left out, so it is a row.
+    assert tab.rows == ((1.5, "a"), (None, None))
+    assert (tab.locator.row_start, tab.locator.row_end) == (1, 4)  # rows keep their numbers
+    assert (a.coverage.to_dict()["total"], a.coverage.to_dict()["extracted"]) == (2, 2)
+
+
 def test_float32_bounds_and_small_or_scaled_decimals_read_as_plain_numbers() -> None:
     big = 3.4028234663852886e38  # float32's maximum, a common "no value" mark
     t = pa.table(

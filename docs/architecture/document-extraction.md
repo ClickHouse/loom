@@ -245,10 +245,10 @@ row is a block alone, under a chunk's default 1,500 characters, so a chunk cites
 `column: value` pairs, cited by sheet and rows, so the lexical and vector legs search them like any passage; a header
 with no rows under it is a block of its own. A column's name is at most 500 characters of its header cell (one cut
 shorter is a failed unit, `<table> header`). A float's row text is what a sheet shows, to 15 significant digits
-(`0.1+0.2` reads `0.3`), and the table keeps its exact value. A number that is no JSON number (an integer past signed 64
-bits, an infinity, a NaN) is read as a float or as text, and in CSV and XLSX a value no other rule reads (a style index
-of 5,000 digits, a date rounded past year 9999) reads as a number or as text, never failing the file; Parquet leaves it
-out and counts it (below).
+(`0.1+0.2` reads `0.3`), and the table keeps its exact value. In CSV and XLSX a number that is no JSON number (an
+integer past signed 64 bits, an infinity, a NaN) is read as a float or as text, and a value no other rule reads (a style
+index of 5,000 digits, a date rounded past year 9999) reads as a number or as text, never failing the file; Parquet
+reads each by its column's type (below).
 
 **CSV.** The delimiter is sniffed from the whole lines of the file's first 64 KiB (a comma, semicolon, tab or pipe; a
 tab, with no quoting, for a `.tsv` name; a tab-separated file sent with no such name is sniffed, so it reads quotes as
@@ -295,8 +295,8 @@ infinity (so a float column stays a number), a value over 1,048,576 characters a
 past year 9999) are left out and counted (`<name> values`, each cause named, over the rows read); a batch with a value
 Python cannot hold is split in halves until each part converts, so only that one is,
 and past 16 of them in a column (across the file) the rest of the column is left out unread, counted as such. A row of
-nulls is no row; a file whose schema has no column has only blank rows, counted from its metadata, and a row group of no
-rows is passed over. Pages decode one at a time, so a row group's size does not decide what is held; the rows past the
+nulls, NaNs or blank text is no row; a file whose schema has no column has only blank rows, counted from its
+metadata, and a row group of no rows is passed over. Pages decode one at a time, so a row group's size does not decide what is held; the rows past the
 table budget are not read: those past the batch it ran out in, and past four million values or 256 MiB decoded or
 100,000 row groups read, charged before a batch is read into Python (at least a value a row, every element of a list,
 struct or map down to its leaves, a dictionary entry once for each value that names it and a view's value once for each

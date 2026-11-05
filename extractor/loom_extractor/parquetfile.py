@@ -145,9 +145,9 @@ class _Reader:
             # str: a value of a type JSON does not know (one an extension adds) as its text.
             value, kind = json.dumps(_json(value), ensure_ascii=False, default=str), "string"
         if kind in ("float32", "float16", "number") and isinstance(value, float):
-            # A NaN is a float column's mark of no value (pandas and Spark write one
-            # for a missing number), so it is a blank cell; an infinity no number
-            # a cell holds, so it is left out. Either way the column stays a number.
+            # A NaN is a float column's mark of no value (a dataframe writer's for a
+            # missing number), so it is a blank cell; an infinity is no number a
+            # cell holds, so it is left out. Either way the column stays a number.
             if math.isnan(value):
                 return EMPTY
             if math.isinf(value):
@@ -469,16 +469,15 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
                     if rows.more:  # past the budget: counted below, its rows not read
                         break
                     number += 1
-                    values = [columns[j][i] for j in range(len(kept))]
-                    if all(v is None for v in values):
-                        blank += 1  # a row of nothing is no row, as a blank CSV record
+                    left = sum(reader.left_out.values())
+                    typed = (reader.cell(columns[j][i], kinds[j]) for j in range(len(kept)))
+                    cells = {j: c for j, c in enumerate(typed) if c.kind != "empty"}
+                    # A row of nothing (nulls, NaNs, blank text) is no row, as a blank
+                    # CSV record; one whose values were left out is still a row.
+                    if not cells and sum(reader.left_out.values()) == left:
+                        blank += 1
                         continue
-                    # A row whose values were all left out (bytes, values Python
-                    # cannot hold) is still a row.
-                    typed = (reader.cell(values[j], kinds[j]) for j in range(len(kept)))
-                    rows.add(
-                        number, {j: c for j, c in enumerate(typed) if c.kind != "empty"}, budget
-                    )
+                    rows.add(number, cells, budget)
                 if rows.more:  # the budget ran out in this batch: the rest is counted
                     rest = group_rows - (number - start)
                     rows.count(number + 1, rest)
