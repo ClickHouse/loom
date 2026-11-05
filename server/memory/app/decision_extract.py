@@ -1213,18 +1213,19 @@ async def _reconcile(
             fresh=True,
             strong=True,
         )
-        if row is not None and not complete:
+        if row is None:
+            # A writer record with no live row under it: nothing of the extractor's to revise.
+            return _not_ours(rec, writer, None)
+        if not complete:
             # The code index did not answer for every name: keep the files the row has
             # rather than drop one an earlier run resolved.
             inp = inp.model_copy(update={"files": list(row.files)})
             rec.body["files"] = list(row.files)
-        this_doc = row is not None and await cites_document(
-            org, row.source_resource_id, t.doc_namespace, source_uri
-        )
+        this_doc = await cites_document(org, row.source_resource_id, t.doc_namespace, source_uri)
         ours = this_doc and _is_extractor(writer.agent, writer.user_id, writer.session_id)
         record = svc.parse_record_json(writer.record_json)
         same = ours and still is True
-        if same and row is not None:
+        if same:
             read_as = inp.stage
             inp = _in_stored_words(inp, record, row)
             rec.body = record_body(inp)
@@ -1232,19 +1233,19 @@ async def _reconcile(
                 rec.note = f"the document reads as {read_as}; the row keeps its stage {inp.stage}"
         # Our own row is revised for its files, source, constraint or repository tag too: a
         # document extracted before its code was indexed gains its files on a later run.
-        stale_row = row is not None and ours and not _frozen(row) and not _same_row(row, inp)
-        if same and row is not None and not stale_row:
+        stale_row = ours and not _frozen(row) and not _same_row(row, inp)
+        if same and not stale_row:
             return await _unchanged(rec, row, t, dry_run=dry_run)
-        if row is not None and ours and still is None:
+        if ours and still is None:
             again = await _unjudged(rec, row, record, inp, t, dry_run=dry_run)
             if again is None:
                 return rec
             inp = again
-        if row is not None and _frozen(row) and ours:
+        if _frozen(row) and ours:
             return await _flag_frozen(rec, row, t, dry_run)
         if not ours:
             return _not_ours(rec, writer, row)
-        if row is not None and svc.has_outcome(record):
+        if svc.has_outcome(record):
             # decision.record rebuilds the record from the body, so a re-record would drop
             # the outcome.
             rec.note = "its outcome is recorded; re-recording would lose it"
