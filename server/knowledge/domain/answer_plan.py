@@ -20,16 +20,29 @@ from typing import Any
 
 # The source a calculation is cited by, as `[knowledge.query#<n>]`.
 CALCULATION_SOURCE = "knowledge.query"
-# The result rows the answer sees; past them the evidence says how many more there are.
+# What one prompt shows: the result rows and each value's characters (the evidence
+# says when it cut), and each dataset's columns and each name's characters.
 MAX_EVIDENCE_ROWS = 50  # not a setting: what one prompt shows of a result
+MAX_EVIDENCE_CELL = 200  # not a setting: what one prompt shows of a value
+MAX_PROMPT_COLUMNS = 200  # not a setting: what one prompt shows of a schema
+MAX_PROMPT_NAME = 120  # not a setting: what one prompt shows of a column name
 
 PLAN_SYSTEM = (
     "You turn a question about tabular datasets into a calculation plan, or say "
     "what you would need to ask first. Answer with one JSON object only: "
     '{"plan": {...}} or {"ambiguous": "<the question to ask the user>"}. '
-    "A plan has the fields where, joins, group_by, aggregates, select, order_by "
-    "and limit of the knowledge.query operation; name each column as "
-    '{"dataset": "<alias>", "column": "<name>"} exactly as the schema lists it. '
+    "A plan has only these fields, each optional: "
+    'where: [{"column": C, "op": "eq|ne|lt|le|gt|ge|in|not_in|is_null|not_null|contains|'
+    'starts_with", "value": V} or with "values": [V, ...] for in and not_in]; '
+    'joins: [{"left": C, "right": C}] (one per dataset past the first); '
+    'group_by: [{"column": C, "bucket": "|day|month|year", "name": N}]; '
+    'aggregates: [{"fn": "count|count_distinct|sum|avg|min|max", "column": C, "name": N}] '
+    "(count of rows takes no column); select: [C, ...] for rows instead of aggregates; "
+    'order_by: [{"by": N, "desc": true|false}]; limit: 1-1000. '
+    'C is {"dataset": "<alias>", "column": "<name>"} exactly as the schema lists it; '
+    "N names a result column. Example: "
+    '{"plan": {"where": [{"column": {"dataset": "d", "column": "placed_at"}, "op": "ge", '
+    '"value": "2026-03-01"}], "aggregates": [{"fn": "count", "name": "orders"}]}}. '
     "Join datasets only on columns the question makes clear belong together, never "
     "because their names look alike. If which column, which unit, which time "
     "period or how datasets relate is unclear, answer ambiguous instead of guessing."
@@ -49,15 +62,30 @@ class Proposal:
 def plan_prompt(task: str, schemas: Sequence[Mapping[str, Any]], refused: str = "") -> str:
     """The plan call's prompt: the task, each dataset's alias, columns and row
     count, and, on a second try, why the first plan was refused."""
-    described = "\n".join(
-        f"- {s['alias']}: {s['name']} ({s['row_count']} rows); columns: "
-        + ", ".join(f"{c['name']} ({c['type']})" for c in s["columns"])
-        for s in schemas
-    )
+    described = "\n".join(_described(s) for s in schemas)
     retry = (
         f"\n\nYour last plan was refused: {refused}\nPropose a corrected plan." if refused else ""
     )
     return f"QUESTION: {task}\n\nDATASETS (alias: name; columns):\n{described}{retry}\n\nJSON:"
+
+
+def _described(schema: Mapping[str, Any]) -> str:
+    """One dataset as the prompt lists it, its columns and their names bounded."""
+    cols = list(schema["columns"])
+    shown = ", ".join(
+        f"{_cut(str(c['name']), MAX_PROMPT_NAME)} ({c['type']})" for c in cols[:MAX_PROMPT_COLUMNS]
+    )
+    more = (
+        f", and {len(cols) - MAX_PROMPT_COLUMNS} more not shown"
+        if len(cols) > MAX_PROMPT_COLUMNS
+        else ""
+    )
+    name = _cut(str(schema["name"]), MAX_PROMPT_NAME)
+    return f"- {schema['alias']}: {name} ({schema['row_count']} rows); columns: {shown}{more}"
+
+
+def _cut(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def read_proposal(text: str) -> Proposal:
@@ -85,22 +113,34 @@ def read_proposal(text: str) -> Proposal:
 
 def evidence(
     n: int,
+    plan: Mapping[str, Any],
     columns: Sequence[Mapping[str, str]],
     rows: Sequence[Sequence[Any]],
     *,
     truncated: bool,
     incomplete: Sequence[str],
+    max_chars: int,
 ) -> str:
-    """A calculation's result as a note the answer reads and cites."""
+    """A calculation as a note the answer reads and cites: the plan that ran (so the
+    answer can tell what was counted), the result's columns and first rows, and what it
+    may not cover; at most `max_chars`."""
+    ran = {k: v for k, v in plan.items() if k != "datasets" and v not in (None, [], {})}
     shown = rows[:MAX_EVIDENCE_ROWS]
     head = " | ".join(f"{c['name']} ({c['type']})" for c in columns)
-    body = "\n".join(" | ".join("" if v is None else str(v) for v in r) for r in shown)
+    body = "\n".join(
+        " | ".join("" if v is None else _cut(str(v), MAX_EVIDENCE_CELL) for v in r) for r in shown
+    )
     notes = []
     if truncated or len(rows) > len(shown):
         notes.append(f"only the first {len(shown)} result rows are shown; more matched")
     notes += list(incomplete)
     caveat = "".join(f"\nNOTE: {x}" for x in notes)
-    return (
+    note = (
         f"CALCULATION [{CALCULATION_SOURCE}#{n}] over every row of the datasets named "
-        f"(cite it as [{CALCULATION_SOURCE}#{n}]):\n{head}\n{body}{caveat}"
+        f"(cite it as [{CALCULATION_SOURCE}#{n}]); the plan that ran: "
+        f"{json.dumps(ran, separators=(',', ':'))}\n{head}\n{body}{caveat}"
     )
+    if len(note) <= max_chars:
+        return note
+    cut = f"\nNOTE: the calculation's text was cut to {max_chars} characters"
+    return note[: max(0, max_chars - len(cut))] + cut

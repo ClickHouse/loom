@@ -4,6 +4,7 @@ documents, and a calculation over the named datasets."""
 from __future__ import annotations
 
 import asyncio
+import typing
 from typing import TYPE_CHECKING, Any
 
 import pydantic
@@ -69,12 +70,11 @@ async def handle_knowledge_synthesize(
 
         llm = get_llm_client()
     # One calculation an answer: the plan for the task, cited `[knowledge.query#1]`.
+    model = str(getattr(llm, "model", "") or synth_model or "")
     calculation: SynthesizeCalculation | None = None
     if input.datasets:
-        done = await _calculate(input, llm)
+        done = await _calculate(input, llm, model)
         if isinstance(done, KnowledgeSynthesizeOutput):
-            if done.abstain_reason != "needs_clarification":  # that one calls no model
-                done.model = str(getattr(llm, "model", "") or synth_model or "")
             return done
         calculation = done
     wins = cs.windows(chunks, window_chars=input.window_chars)
@@ -89,7 +89,7 @@ async def handle_knowledge_synthesize(
             )
         return (getattr(res, "text", "") or "").strip()
 
-    notes = [_evidence(calculation)] if calculation is not None else []
+    notes = [_evidence(calculation, input.window_chars)] if calculation is not None else []
     notes += [n for n in await asyncio.gather(*[_map(w) for w in wins]) if n]
     answer, rounds = await _reduce(input, llm, notes, note_tokens)
     # Grounded before the cut, so removed citations take no room; a kept citation the
@@ -117,7 +117,7 @@ async def handle_knowledge_synthesize(
         abstain=not answer,
         abstain_reason="" if answer else "empty_answer",
         calculations=[calculation] if calculation is not None else [],
-        model=str(getattr(llm, "model", "") or synth_model or ""),
+        model=model,
     )
 
 
@@ -158,7 +158,8 @@ async def _reduce(
     return answer, rounds
 
 
-def _abstain(reason: str, clarification: str = "") -> KnowledgeSynthesizeOutput:
+def _abstain(reason: str, clarification: str = "", model: str = "") -> KnowledgeSynthesizeOutput:
+    """An abstention; `model` names the LLM only when one was called."""
     return KnowledgeSynthesizeOutput(
         answer="",
         windows=0,
@@ -168,6 +169,7 @@ def _abstain(reason: str, clarification: str = "") -> KnowledgeSynthesizeOutput:
         abstain=True,
         abstain_reason=reason,
         clarification=clarification,
+        model=model,
     )
 
 
@@ -209,7 +211,7 @@ async def _schemas(
 
 
 async def _calculate(
-    input: KnowledgeSynthesizeInput, llm: Any
+    input: KnowledgeSynthesizeInput, llm: Any, model: str
 ) -> SynthesizeCalculation | KnowledgeSynthesizeOutput:
     """One plan the model proposes from the task and the datasets' schemas, run
     by knowledge.query, which checks it against them; a refused plan is proposed
@@ -228,9 +230,13 @@ async def _calculate(
             )
         proposal = ap.read_proposal(getattr(res, "text", "") or "")
         if proposal.ask:
-            return _abstain("ambiguous", proposal.ask[:1000])
+            return _abstain("ambiguous", proposal.ask[:1000], model)
         if proposal.plan is None:
             refused = proposal.unreadable
+            continue
+        unknown = _unknown_keys(KnowledgeQueryInput, proposal.plan)
+        if unknown:
+            refused = f"unknown fields {', '.join(unknown[:10])}; use only the fields listed"
             continue
         try:
             query = KnowledgeQueryInput(
@@ -250,7 +256,41 @@ async def _calculate(
             incomplete=out.incomplete,
             receipt=out.receipt,
         )
-    return _abstain("invalid_plan", refused[:1000])
+    return _abstain("invalid_plan", refused[:1000], model)
+
+
+def _unknown_keys(model: type[pydantic.BaseModel], data: Any, path: str = "") -> list[str]:
+    """The keys of `data` its model, or a model nested in it, does not declare. The
+    models ignore an unknown key, so a misnamed field (`filters` for `where`, `period`
+    for `bucket`) would vanish and the plan run without it: a count of every row
+    cited as the count asked for."""
+    if not isinstance(data, dict):
+        return []
+    found = []
+    for key, value in data.items():
+        field = model.model_fields.get(key)
+        if field is None:
+            found.append(f"{path}{key}")
+            continue
+        nested = _model_in(field.annotation)
+        if nested is None:
+            continue
+        items = value if isinstance(value, list) else [value]
+        for i, item in enumerate(items):
+            where = f"{path}{key}.{i}." if isinstance(value, list) else f"{path}{key}."
+            found += _unknown_keys(nested, item, where)
+    return found
+
+
+def _model_in(annotation: Any) -> type[pydantic.BaseModel] | None:
+    """The model a field holds, alone, in a list or as an optional."""
+    if isinstance(annotation, type) and issubclass(annotation, pydantic.BaseModel):
+        return annotation
+    for arg in typing.get_args(annotation):
+        found = _model_in(arg)
+        if found is not None:
+            return found
+    return None
 
 
 def _why(e: Exception) -> str:
@@ -262,13 +302,15 @@ def _why(e: Exception) -> str:
     return str(e)
 
 
-def _evidence(c: SynthesizeCalculation) -> str:
+def _evidence(c: SynthesizeCalculation, window_chars: int) -> str:
     return ap.evidence(
         1,
+        c.plan,
         [col.model_dump() for col in c.columns],
         c.rows,
         truncated=c.truncated,
         incomplete=c.incomplete,
+        max_chars=window_chars // 2,  # half a window: room for the documents' notes
     )
 
 

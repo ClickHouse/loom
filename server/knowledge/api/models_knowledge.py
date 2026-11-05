@@ -418,7 +418,8 @@ class KnowledgeSynthesizeInput(BaseModel):
     def _reads_something(self) -> KnowledgeSynthesizeInput:
         if not self.source_uris and not self.datasets:
             raise ValueError("name source_uris, datasets or both")
-        if CALCULATION_SOURCE in self.source_uris:  # it would cite as the calculation does
+        # With a dataset, a document by that name would cite as the calculation does.
+        if self.datasets and CALCULATION_SOURCE in self.source_uris:
             raise ValueError(f"{CALCULATION_SOURCE!r} names the calculation, not a document")
         aliases = [d.alias for d in self.datasets]
         if len(set(aliases)) != len(aliases):
@@ -476,15 +477,11 @@ class KnowledgeSynthesizeOutput(BaseModel):
     truncated: bool = False
     # True when there is no answer to give; `abstain_reason` says why.
     abstain: bool = False
-    # `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents have
-    # none and no dataset was named), `needs_clarification` (a dataset's schema needs a
-    # person's answer: knowledge.dataset_approve), `ambiguous` (the model would need to ask
-    # first: `clarification`), `invalid_plan` (no plan it proposed held: `clarification`
-    # says why) or `empty_answer` (no letter or digit once unread citations are removed);
-    # empty otherwise.
+    # Why it abstained: budget_capped, no_chunks, needs_clarification, ambiguous,
+    # invalid_plan or empty_answer (see `clarification` for the three that explain).
     abstain_reason: str = ""
-    # With `ambiguous`, the question to ask; with `invalid_plan` or `needs_clarification`,
-    # what was wrong; empty otherwise.
+    # ambiguous: the question to ask; invalid_plan: why no plan held; needs_clarification:
+    # the dataset to approve (knowledge.dataset_approve); empty otherwise.
     clarification: str = ""
     # The calculation run over the datasets, cited in `answer` as `[knowledge.query#1]`.
     calculations: list[SynthesizeCalculation] = Field(default_factory=list)

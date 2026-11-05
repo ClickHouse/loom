@@ -67,17 +67,42 @@ def test_the_prompt_lists_each_dataset_and_says_why_a_plan_was_refused() -> None
     )
 
 
-def test_evidence_shows_the_result_and_what_it_may_not_cover() -> None:
+def test_the_prompt_lists_a_wide_schema_only_to_its_bound() -> None:
+    cols = [
+        {"name": f"c{i}" + "x" * 300, "type": "string"} for i in range(ap.MAX_PROMPT_COLUMNS + 7)
+    ]
+    schema = {"alias": "o", "name": "wide.csv", "row_count": 1, "columns": cols}
+    prompt = ap.plan_prompt("t", [schema])
+    assert ", and 7 more not shown" in prompt and "x" * 300 not in prompt
+    assert len(prompt) < (ap.MAX_PROMPT_NAME + 12) * (ap.MAX_PROMPT_COLUMNS + 2)
+
+
+def test_evidence_shows_the_plan_the_result_and_what_it_may_not_cover() -> None:
     cols = [{"name": "team", "type": "string"}, {"name": "n", "type": "number"}]
     rows = [[f"t{i}", i] for i in range(ap.MAX_EVIDENCE_ROWS + 5)]
-    text = ap.evidence(1, cols, rows, truncated=False, incomplete=["o: 2 rows were rejected"])
-    assert (
-        text.startswith("CALCULATION [knowledge.query#1]") and "team (string) | n (number)" in text
-    )
+    plan = {
+        "where": [{"column": {"dataset": "o", "column": "team"}, "op": "ne", "value": "x"}],
+        "datasets": [{"dataset_id": "ds"}],
+        "joins": [],
+    }
+    text = ap.evidence(
+        1, plan, cols, rows, truncated=False, incomplete=["o: 2 rows were rejected"],
+        max_chars=100_000,
+    )  # fmt: skip
+    assert text.startswith("CALCULATION [knowledge.query#1]")
+    assert "team (string) | n (number)" in text
+    # What ran, so the answer can tell what was counted (no datasets, no empty fields).
+    assert '"where":[{"column":{"dataset":"o","column":"team"},"op":"ne","value":"x"}]' in text
+    assert '"joins"' not in text and '"datasets"' not in text
     assert f"t{ap.MAX_EVIDENCE_ROWS - 1} | {ap.MAX_EVIDENCE_ROWS - 1}" in text
     assert f"t{ap.MAX_EVIDENCE_ROWS} |" not in text
     assert "NOTE: only the first 50 result rows are shown" in text
     assert "NOTE: o: 2 rows were rejected" in text
+    # A long value and a long note are cut, and say so.
+    long_rows = [["y" * 5000, 1]] * 50
+    wide = ap.evidence(1, {}, cols, long_rows, truncated=False, incomplete=[], max_chars=4000)
+    assert "y" * (ap.MAX_EVIDENCE_CELL + 1) not in wide and len(wide) <= 4000
+    assert wide.endswith("NOTE: the calculation's text was cut to 4000 characters")
 
 
 # ---- the handler -------------------------------------------------------------------
@@ -210,6 +235,7 @@ async def test_a_task_the_model_finds_ambiguous_abstains_with_the_question_to_as
         "Gross or net amount?",
     )
     assert stores.queries == [] and len(llm.calls) == 1 and out.answer == ""
+    assert out.model == "fake-synth"  # a model was called
 
 
 @pytest.mark.asyncio
@@ -232,6 +258,42 @@ async def test_a_refused_plan_is_proposed_again_once_with_why_then_abstains(
         "dataset 'o' has no column 'amount'",
     )
     assert len(stores.queries) == 1  # the first plan never reached the query
+    assert out.model == "fake-synth"
+
+
+@pytest.mark.asyncio
+async def test_a_misnamed_plan_field_is_refused_never_run_without_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The query models ignore an unknown key: a plan's `filters` (for `where`) or a
+    group's `period` (for `bucket`) would vanish and count every row as the count asked."""
+    misnamed = json.dumps({"plan": {
+        "filters": [{"column": {"dataset": "o", "column": "amount"}, "op": "gt", "value": 0}],
+        "group_by": [{"column": {"dataset": "o", "column": "amount"}, "period": "month"}],
+        "aggregates": [{"fn": "count", "name": "n"}],
+    }})  # fmt: skip
+    llm = _LLM([misnamed, misnamed])
+    stores = Stores(monkeypatch, llm)
+    out = await _synthesize()
+    assert stores.queries == []
+    assert "unknown fields filters, group_by.0.period" in llm.calls[1][1]
+    assert out.abstain_reason == "invalid_plan" and "filters" in out.clarification
+
+
+@pytest.mark.asyncio
+async def test_documents_and_a_dataset_answer_together(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.unit.test_corpus_synthesis import _patch_reads
+
+    rows = [SimpleNamespace(chunk_idx=0, content="Refunds are not orders.", chunk_metadata="{}")]
+    _patch_reads(monkeypatch, lambda uri: rows if uri == "doc://policy" else [])
+    llm = _LLM([PLAN], answer="Total 120.8 [knowledge.query#1], refunds excluded [doc://policy#0].")
+    Stores(monkeypatch, llm)
+    out = await _synthesize(source_uris=["doc://policy"])
+    assert (out.documents, out.windows, out.chunks_read) == (1, 1, 1)
+    assert out.citations == ["knowledge.query#1", "doc://policy#0"]
+    # The chunk is located; the calculation is in `calculations`, not `cited_chunks`.
+    assert [(c.source_uri, c.chunk_idx) for c in out.cited_chunks] == [("doc://policy", 0)]
+    assert len(out.calculations) == 1
 
 
 @pytest.mark.asyncio
@@ -294,7 +356,11 @@ def test_a_task_needs_documents_or_datasets_each_with_an_alias_of_its_own() -> N
         KnowledgeSynthesizeInput(org="o", namespace="n", task="t", datasets=[ORDERS, ORDERS])
     # A document by that name would cite as the calculation does.
     with pytest.raises(pydantic.ValidationError, match="names the calculation, not a document"):
-        KnowledgeSynthesizeInput(org="o", namespace="n", task="t", source_uris=["knowledge.query"])
+        KnowledgeSynthesizeInput(
+            org="o", namespace="n", task="t", source_uris=["knowledge.query"], datasets=[ORDERS]
+        )
+    # With no dataset there is no calculation to confuse it with.
+    KnowledgeSynthesizeInput(org="o", namespace="n", task="t", source_uris=["knowledge.query"])
     assert cs.ground_citations("x [knowledge.query#1]", {(ap.CALCULATION_SOURCE, 1)})[1] == [
         "knowledge.query#1"
     ]
