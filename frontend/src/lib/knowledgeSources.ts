@@ -185,32 +185,28 @@ export function unconvertedDetail(reasons: Record<string, number>): string {
 export const SOURCE_KINDS = ["gdrive", "linear", "notion", "recording"] as const;
 export type SourceKind = (typeof SOURCE_KINDS)[number];
 
-/** What the form says about each kind: the choice, the dialog's description, and what a
- *  passed check read. */
-export const KIND_FORM: Record<SourceKind, { choice: string; about: string; reads: string; noCredential: string }> = {
+/** What the form says about each kind: the dialog's description, what a passed check
+ *  read, and what to ask for when no credential is typed. */
+export const KIND_FORM: Record<SourceKind, { about: string; reads: string; noCredential: string }> = {
   gdrive: {
-    choice: "Shared folder",
     about:
       "A shared folder of documents, presentations and PDFs. Share it read-only with a service account and paste the account's key; Loom checks the key and the folders before anything is stored.",
     reads: "The key reads the folders",
     noCredential: "Paste the service account's key.",
   },
   linear: {
-    choice: "Project documents",
     about:
       "The documents of a project tracker's projects. Paste a read-only API key of an account that sees the projects; Loom checks the key and the projects before anything is stored.",
     reads: "The key reads the projects",
     noCredential: "Paste the read-only API key.",
   },
   notion: {
-    choice: "Pages",
     about:
       "A page store's pages and databases. Share them with an integration that has read content access and paste its token; Loom checks the token and every page and database before anything is stored.",
     reads: "The token reads the pages and databases",
     noCredential: "Paste the integration token.",
   },
   recording: {
-    choice: "Meeting transcripts",
     about:
       "The transcripts of a meeting store's recordings. Paste a credential that grants read-only scopes only; Loom checks it and every id before anything is stored.",
     reads: "The credential reads the meetings",
@@ -218,7 +214,11 @@ export const KIND_FORM: Record<SourceKind, { choice: string; about: string; read
   },
 };
 
-export const KIND_OPTIONS = SOURCE_KINDS.map((k) => ({ value: k, label: KIND_FORM[k].choice }));
+/** The kind choice, in the card's words for each kind: "Shared folder", "Pages". */
+export const KIND_OPTIONS = SOURCE_KINDS.map((k) => {
+  const label = kindLabel(k);
+  return { value: k, label: label.charAt(0).toUpperCase() + label.slice(1) };
+});
 
 /** The file kinds a shared folder's `include` takes, with the words the form shows. */
 export const INCLUDE_OPTIONS = [
