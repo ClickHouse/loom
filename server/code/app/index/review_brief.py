@@ -162,25 +162,19 @@ class DiffFacts:
     settings: list[tuple[str, str]] = field(default_factory=list)  # (name, source)
 
 
-@dataclass
-class Hunks:
-    """What the token check reads of a unified diff: the lines its hunks add, without
-    their `+`, and whether a hunk's header miscounted its lines."""
-
-    added: list[str] = field(default_factory=list)
-    malformed: bool = False
-
-
 _HUNK_HEADER = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 # What may follow a hunk whose counted lines ran out (`--- ` starts the next file of a
 # plain `diff -u` with no `diff` lines).
-_AFTER_HUNK = ("diff ", "@@", "\\", "--- ")
+_AFTER_HUNK = ("diff ", "@@", "--- ")
 
 
 @dataclass
 class _Cursor:
-    """What is left of the hunk a walk of a diff is in."""
+    """A walk of a diff: the lines its hunks add, whether a hunk's header miscounted its
+    lines, and what is left of the hunk it is in."""
 
+    added: list[str] = field(default_factory=list)
+    malformed: bool = False
     old_left: int = 0
     new_left: int = 0
     ended: bool = False  # a hunk's counts just ran out
@@ -189,7 +183,7 @@ class _Cursor:
         return self.old_left > 0 or self.new_left > 0
 
 
-def read_hunks(diff: str) -> Hunks:
+def _walk_hunks(diff: str) -> _Cursor:
     """The token check's walker, strict on purpose: a check must never say `clear` on a
     diff it cannot read, so anything odd marks the diff malformed. `parse_diff` stays
     lenient on purpose: the brief's facts read what they can of any diff.
@@ -199,54 +193,53 @@ def read_hunks(diff: str) -> Hunks:
     a line that looks like one (`--- x` removing a SQL comment) is. Lines split on `\\n`
     only. `malformed` when a header miscounts: lines go on after its counts ran out, or
     the next file starts, or the diff ends, before they did."""
-    out = Hunks()
     cur = _Cursor()
     lines = diff.split("\n")
     if lines and lines[-1] == "":
         lines.pop()  # the newline that ends the last line
     for line in lines:
-        if cur.in_hunk() and _hunk_line(out, cur, line):
+        if cur.in_hunk() and _hunk_line(cur, line):
             continue
-        _between_hunks(out, cur, line)
+        _between_hunks(cur, line)
     if cur.in_hunk():
-        out.malformed = True  # the diff ended inside a hunk
-    return out
+        cur.malformed = True  # the diff ended inside a hunk
+    return cur
 
 
-def _hunk_line(out: Hunks, cur: _Cursor, line: str) -> bool:
+def _hunk_line(cur: _Cursor, line: str) -> bool:
     """Read one line inside a hunk; False when it ends the hunk early (the next file
     starts, or a line no hunk can hold), so the caller reads it as a header."""
     if line.startswith("\\"):
         return True  # "\ No newline at end of file"
     marker = line[:1] or " "
     if marker not in "+- ":  # `diff --git` of the next file among them
-        out.malformed = True
+        cur.malformed = True
         cur.old_left = cur.new_left = 0
         return False
     if marker == "+":
-        out.added.append(line[1:])
+        cur.added.append(line[1:])
     if marker != "+":
         cur.old_left -= 1
     if marker != "-":
         cur.new_left -= 1
     if cur.old_left < 0 or cur.new_left < 0:
-        out.malformed = True
+        cur.malformed = True
     cur.ended = not cur.in_hunk()
     return True
 
 
-def _between_hunks(out: Hunks, cur: _Cursor, line: str) -> None:
+def _between_hunks(cur: _Cursor, line: str) -> None:
     """Read one line outside a hunk: a hunk header starts one; file headers and the rest
     are passed over."""
     if cur.ended and line.startswith("\\"):
         return  # "\ No newline at end of file" after the hunk's last line
     if cur.ended and not line.startswith(_AFTER_HUNK):
-        out.malformed = True  # lines go on after the counts ran out
+        cur.malformed = True  # lines go on after the counts ran out
     cur.ended = False
     if line.startswith("@@"):
         m = _HUNK_HEADER.match(line)
         if m is None:
-            out.malformed = True
+            cur.malformed = True
             return
         cur.old_left = int(m.group(1) if m.group(1) is not None else 1)
         cur.new_left = int(m.group(2) if m.group(2) is not None else 1)
@@ -590,8 +583,8 @@ def checked_names(text: str, *, constraint: bool) -> list[str]:
 
 def added_text(diff: str) -> tuple[str, bool]:
     """(the lines a unified diff adds without their `+`, whether a hunk miscounted)."""
-    hunks = read_hunks(diff)
-    return "\n".join(hunks.added), hunks.malformed
+    walk = _walk_hunks(diff)
+    return "\n".join(walk.added), walk.malformed
 
 
 def names_in(added: str, names: list[str]) -> list[str]:
@@ -608,8 +601,11 @@ def names_in(added: str, names: list[str]) -> list[str]:
 
 
 def row_names(d: dict[str, Any]) -> list[str]:
-    """The names the token check looks for in a `decisions_for_paths` row."""
-    return checked_names(d["text"], constraint="constraint" in d["tags"])
+    """The names the token check looks for in a `decisions_for_paths` row, worked out
+    once and kept on the row (the ranking, the diff gate and the check all ask)."""
+    if "_names" not in d:
+        d["_names"] = checked_names(d["text"], constraint="constraint" in d["tags"])
+    return list(d["_names"])
 
 
 def has_check(d: dict[str, Any]) -> bool:

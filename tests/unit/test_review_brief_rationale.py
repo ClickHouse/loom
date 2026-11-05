@@ -318,7 +318,7 @@ async def test_decisions_for_paths_merges_paths_worst_state_and_orders_constrain
     assert rows[1]["text"] == "Decided design/a."
     assert rows[1]["line"].startswith("- design/a [decision]")
     assert "(its code changed" in rows[1]["line"]
-    # one read per path, in the trunk, active decision and constraint rows only
+    # one read per path, in the trunk
     assert [i.path for i in seen] == ["src/a.cpp", "src/b.cpp"]
     assert all(
         i.namespace == "code-widgets" and i.extra_namespaces == ["code-widgets"] for i in seen
