@@ -1,7 +1,7 @@
 /**
  * A repository's documents on its card: the design notes, runbooks and specs its code
  * depends on. They are knowledge documents in the repository's docs namespace (its trunk
- * branch's), so they carry the repository's access: a reader reads them, a maintainer
+ * branch's), so they carry the repository's access: a reader reads them, a writer there
  * adds and removes them. Agents find them where they work — `loom_search` in the
  * repository's checkout, and the orientation context pack.
  *
@@ -49,14 +49,14 @@ export function RepoDocsList({
   org,
   docsNamespace,
   repo,
-  maintained,
+  writable,
   busy,
 }: {
   org: string;
   docsNamespace: string;
   repo: string;
-  /** The caller maintains the docs namespace's branch: add and remove. */
-  maintained: boolean;
+  /** The caller may write the docs namespace: add and remove. */
+  writable: boolean;
   busy: boolean;
 }) {
   const [state, setState] = useState<State>({ kind: "loading" });
@@ -139,9 +139,9 @@ export function RepoDocsList({
       {state.kind === "ready" && state.rows.length === 0 && (
         <p className="text-xs text-text-muted">
           No documents yet.{" "}
-          {maintained
+          {writable
             ? "Add the design notes, runbooks or specs agents should read before changing this code."
-            : "A maintainer adds them."}
+            : "Anyone who can write to the repository adds them."}
         </p>
       )}
       {state.kind === "ready" && state.rows.length > 0 && (
@@ -176,7 +176,7 @@ export function RepoDocsList({
                     ) : null}
                   </div>
                 </div>
-                {maintained && (
+                {writable && (
                   <Button
                     type="empty"
                     htmlType="button"
@@ -196,12 +196,12 @@ export function RepoDocsList({
       )}
       {state.kind === "ready" && state.more && <p className="text-xs text-text-muted">Showing the first {LIMIT}.</p>}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        {maintained && state.kind !== "refused" && (
+        {writable && state.kind !== "refused" && (
           <Button type="empty" htmlType="button" iconLeft="plus" disabled={busy} onClick={() => setAdding(true)}>
             Add a document
           </Button>
         )}
-        {state.kind === "ready" && (state.rows.length > 0 || maintained) && (
+        {state.kind === "ready" && (state.rows.length > 0 || writable) && (
           <span className="text-xs text-text-muted">{REPO_DOCS_HINT}</span>
         )}
       </div>

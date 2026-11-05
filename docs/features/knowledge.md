@@ -72,7 +72,7 @@ Markdown built from its text, and the `X-Loom-Download-Source` header says `blob
 
 ## Document sources
 
-A repository's maintainers register the document sources Loom pulls the repository's
+A repository's admins register the document sources Loom pulls the repository's
 documents from. A source lives on the repository's trunk code namespace, the one its
 documents live in, so whoever reads the repository sees where its documents come from,
 and only the namespace's admins change that. Four kinds are served: `gdrive`, a shared
@@ -88,12 +88,12 @@ documents ([syncing](#syncing-a-source)); `list` says whether this deployment ru
 (`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
 
 On the dashboard, an opened repository on the Repositories page shows its sources under
-Docs: each source's kind, last sync and counts, to anyone who reads the repository. The
-namespace's admins also get Add a source (a dry-run check first; Add sends only the form
-that passed), Check, Sync now, Rotate credential and Retire. The page adds `gdrive`
-sources; a `linear` or `recording` source is added with `knowledge.source.add` and then
-shows and is managed there like any other. The key is typed into a password field and is never shown
-again.
+Sources: each source's kind, last sync and counts, to anyone who reads the repository.
+A caller with the role the table below names gets the verbs: Add a source
+(a dry-run check first; Add sends only the form that passed), Check, Sync now, Rotate
+credential and Retire. The page adds `gdrive` sources; a `linear`, `notion` or
+`recording` source is added with `knowledge.source.add` and then shows and is managed
+there like any other. The key is typed into a password field and is never shown again.
 
 | Operation                                                                                   | Role   | Does                                                                                                       |
 | ------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------- |
