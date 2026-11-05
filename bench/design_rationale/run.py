@@ -72,7 +72,10 @@ ARM_HOME = {2: "kb", 3: "gold", 4: "extract", 5: "gold", 6: "extract"}
 SEARCH_SECTION_TOKENS = 800  # a loom_search section with the reading rule
 CITED_TEXT_TOKENS = 1200  # the cited source text a judge reads
 JUDGE_FRAME_TOKENS = 900  # the judge's instructions and gold lists
-TYPICAL_OUT = {"A": 400, "B": 900, "C": 400, "D": 500, "judge": 500, "extract": 800}
+# "extract" is per extraction call, averaged over a window's calls: a whole-document read
+# writes about as many tokens as it reads (some 3,500 for a 14,000-character document),
+# the read again is rare and a support check writes some 500.
+TYPICAL_OUT = {"A": 400, "B": 900, "C": 400, "D": 500, "judge": 500, "extract": 1500}
 JUDGE_OUT_CAP = 4000
 # The left-out line of a pre-edit block, outside both of its budgets; the render test
 # keeps it honest.

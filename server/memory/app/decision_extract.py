@@ -256,9 +256,9 @@ def _unread_reply(stop_reason: str, cap: int, call: str) -> str:
     max_tokens and `call` its LLM_MAX_TOKENS entry."""
     if stop_reason in ("length", "max_tokens"):
         return (
-            f"reply cut at the token limit ({cap}); lower "
-            f"--window-chars or --max-per-section, or raise {call} in "
-            "LOOM_LLM_MAX_TOKENS_OVERRIDES"
+            f"reply cut at the token limit ({cap}); lower --window-chars "
+            "(memory_decision_extract_window_chars) or --max-per-section, or raise "
+            f"{call} in LOOM_LLM_MAX_TOKENS_OVERRIDES"
         )
     reason = "the model's reply is not the JSON asked for"
     return f"{reason} (stop reason: {stop_reason})" if stop_reason else reason

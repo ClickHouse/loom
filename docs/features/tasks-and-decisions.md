@@ -441,16 +441,17 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
       repository's code and be read in the other's);
     - the repositories added from the dashboard could not be read.
 
-- **Windows**: the document's live chunks for the current embedding model, grouped by section, at most
-  `--window-chars` per call (default `LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS`, 24,000): a document that fits is read
-  whole, so a reason the document gives in another section than the choice (a problem statement, a measurement, a list
-  of missing cases) is read with it. The default keeps a dense design document's reply, about as many tokens as the
-  window, inside the read's output cap (`decision_extract` in `LOOM_LLM_MAX_TOKENS_OVERRIDES`); a reply cut at the cap
-  loses its window, and the command says to lower `--window-chars` or raise the cap. A document chunked under another embedding model has none: the command says to run
-  `loom rechunk` first and writes nothing. A `--source-uri` with no live document exits 1 and writes nothing. The
-  prompt lists the category and scenario of up to `LOOM_MEMORY_DECISION_EXTRACT_KNOWN_MAX` (default 30) decisions the
-  extractor already holds for the document and asks the model to reuse them for a decision the text still records, so
-  a re-run reads the same keys; the old outcome is not shown, so a changed outcome is read from the text as it is now.
+- **Windows**: the document's live chunks for the current embedding model, grouped by section, at most `--window-chars`
+  per call (default `LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS`, 24,000): a document that fits is read whole, so a
+  reason the document gives in another section than the choice (a problem statement, a measurement, a list of missing
+  cases) is read with it. The default keeps a dense design document's reply, about as many tokens as the window, inside
+  the read's output cap (`decision_extract` in `LOOM_LLM_MAX_TOKENS_OVERRIDES`); a reply cut at the cap loses its
+  window, and the dropped line says to lower `--window-chars` (the sync reads the setting) or raise the cap. A document
+  chunked under another embedding model has no chunks: the command says to run `loom rechunk` first and writes nothing.
+  A `--source-uri` with no live document exits 1 and writes nothing. The prompt lists the category and scenario of up to
+  `LOOM_MEMORY_DECISION_EXTRACT_KNOWN_MAX` (default 30) decisions the extractor already holds for the document and asks
+  the model to reuse them for a decision the text still records, so a re-run reads the same keys; the old outcome is not
+  shown, so a changed outcome is read from the text as it is now.
 - **Read**: for each decision the model writes its outcome, the reasons the document gives and the options it rejects
   (with the reason given, or none), in its own concise words, and each of these claims cites one to three short quotes
   of the document (`server/memory/domain/decision_extract.py`, `SYSTEM`). A decision the document states with no reason
@@ -460,14 +461,14 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   once more with the same prompt, reported as `read again`. When the document has a title, the window's text opens
   with a `[document: <title>]` line (its first 200 characters).
 - **Grounding**: each quote must be in the text the model read: whitespace runs as one space, letter case ignored, and
-  up to three label lines read across between two words, as a model copies a sentence a slide or diagram export
-  splits (`find_span`). A quote is stored as the document's own words on one line, its label lines left out, and one
-  under 12 characters rests on nothing. A reason or rejected option none of whose quotes is found is left out (`reason
-'...' left out: none of its quotes is in the document text`); a decision none of whose outcome quotes is found is
-  dropped (`none of the outcome's quotes is in the document text`). An outcome quote in a section with `recap`,
-  `summary` or `background` as a word of a heading at any level of its breadcrumb locates no decision; a decision
-  with no other outcome quote is dropped (`the quote is in a recap, summary or background section`), while a reason may
-  rest on such a section's text.
+  up to three label lines read across between two words, as a model copies a sentence a slide or diagram export splits
+  (`find_span`). A quote is stored as the document's own words on one line, its label lines left out, and one under 12
+  characters rests on nothing. A reason or rejected option none of whose quotes is found is left out
+  (`reason '...' left out: none of its quotes is in the document text`); a decision none of whose outcome quotes is
+  found is dropped (`none of the outcome's quotes is in the document text`). An outcome quote in a section with
+  `recap`, `summary` or `background` as a word of a heading at any level of its breadcrumb locates no decision; a
+  decision with no other outcome quote is dropped (`the quote is in a recap, summary or background section`), while a
+  reason may rest on such a section's text.
 - **Support check**: a second call over the same window reads each kept claim with its quotes and supports it only
   when the quotes, read in the context of the document, state or directly imply it; summarising and combining quotes is
   fine, adding a reason, a cause, a number, a name or a rejected option is not. A claim it does not support is left out
