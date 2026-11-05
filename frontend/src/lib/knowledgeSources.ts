@@ -182,8 +182,8 @@ export function unconvertedDetail(reasons: Record<string, number>): string {
 // ---------------------------------------------------------------------------
 
 /** The kinds the add form serves, in the order the form offers them. */
-export const SOURCE_KINDS = ["gdrive", "linear", "notion", "recording"] as const;
-export type SourceKind = (typeof SOURCE_KINDS)[number];
+const SOURCE_KINDS = ["gdrive", "linear", "notion", "recording"] as const;
+type SourceKind = (typeof SOURCE_KINDS)[number];
 
 /** What the form says about each kind: the dialog's description, what a passed check
  *  read, and what to ask for when no credential is typed. */
@@ -237,7 +237,7 @@ export const RECORDING_PROVIDERS = [
     hint: "A server-to-server app's JSON (account_id, client_id, client_secret) with read-only scopes",
   },
 ] as const;
-export type RecordingProvider = (typeof RECORDING_PROVIDERS)[number]["value"];
+type RecordingProvider = (typeof RECORDING_PROVIDERS)[number]["value"];
 
 /** Each kind's id fields live side by side, so switching the kind keeps them; only the
  *  chosen kind's are sent, and the credential is cleared. */
@@ -439,7 +439,7 @@ export function sourceFormProblems(f: SourceForm): string[] {
 }
 
 /** The chosen kind's config, in the keys the server reads for it. */
-export function sourceConfig(f: SourceForm): Record<string, unknown> {
+function sourceConfig(f: SourceForm): Record<string, unknown> {
   switch (f.kind) {
     case "gdrive":
       return { folder_ids: folderIds(f.folders), include: [...f.include] };
