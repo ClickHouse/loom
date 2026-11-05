@@ -35,30 +35,29 @@ from server.knowledge.store import documents as documents_repo
 _NARROW = "a filter, fewer datasets, a join on a key that does not repeat"
 
 
-async def _live_documents(org: str, namespace: str, uris: list[str]) -> dict[str, Any]:
-    """Each source's live document row, in one read; a source with none is absent."""
-    return {d.source_uri: d for d in await documents_repo.get_many_by_uris(org, namespace, uris)}
-
-
-async def _catalogs(input: KnowledgeQueryInput, docs: dict[str, Any]) -> dict[str, dict[str, Any]]:
+async def _catalogs(
+    input: KnowledgeQueryInput, versions: dict[str, int]
+) -> dict[str, dict[str, Any]]:
     """Each alias's catalog row at its source's live document version."""
     out: dict[str, dict[str, Any]] = {}
     for d in input.datasets:
-        doc = docs.get(d.source_uri)
+        version = versions.get(d.source_uri)
         rows = (
             await datasets_repo.at_version(
-                input.org, input.namespace, d.source_uri, doc.version, dataset_id=d.dataset_id
+                input.org, input.namespace, d.source_uri, version, dataset_id=d.dataset_id
             )
-            if doc is not None
+            if version is not None
             else []
         )
         if not rows:
             # A publish of the source writes its document's new version, then deletes
             # the catalog rows of the one read: that is a change to retry, not a 404.
-            again = (await _live_documents(input.org, input.namespace, [d.source_uri])).get(
-                d.source_uri
+            again = (
+                await documents_repo.live_versions(input.org, input.namespace, [d.source_uri])
+                if version is not None
+                else {}
             )
-            if doc is not None and again is not None and again.version != doc.version:
+            if again.get(d.source_uri, version) != version:
                 raise PreconditionFailedError(
                     f"{d.source_uri!r} was published again as the query read it; run it again"
                 )
@@ -77,19 +76,18 @@ async def _catalogs(input: KnowledgeQueryInput, docs: dict[str, Any]) -> dict[st
     return out
 
 
-async def _still_served(
-    input: KnowledgeQueryInput, docs: dict[str, Any], catalogs: dict[str, dict[str, Any]]
-) -> None:
+async def _still_served(input: KnowledgeQueryInput, catalogs: dict[str, dict[str, Any]]) -> None:
     """Refuses unless every dataset is still served by the snapshot read: a
     publish or a retyping approval serves another and deletes the rows read
     without waiting, an erasure serves none. A metadata edit moves the
     document's version but keeps the snapshot, so it is not a change."""
-    after = await _live_documents(input.org, input.namespace, sorted(docs))
+    uris = sorted({d.source_uri for d in input.datasets})
+    after = await documents_repo.live_versions(input.org, input.namespace, uris)
     for d in input.datasets:
         now = after.get(d.source_uri)
         served = (
             await datasets_repo.at_version(
-                input.org, input.namespace, d.source_uri, now.version, dataset_id=d.dataset_id
+                input.org, input.namespace, d.source_uri, now, dataset_id=d.dataset_id
             )
             if now is not None
             else []
@@ -134,8 +132,8 @@ def _incomplete(s: QuerySnapshot) -> str:
 async def handle_knowledge_query(input: KnowledgeQueryInput) -> KnowledgeQueryOutput:
     uris = sorted({d.source_uri for d in input.datasets})
     with own_write_reads():  # a dataset an ingest or approval just published is read
-        docs = await _live_documents(input.org, input.namespace, uris)
-        catalogs = await _catalogs(input, docs)
+        versions = await documents_repo.live_versions(input.org, input.namespace, uris)
+        catalogs = await _catalogs(input, versions)
     plan = input.model_dump(exclude={"org", "namespace"})
     try:
         resolved = plan_domain.resolve(plan, catalogs)
@@ -146,7 +144,7 @@ async def handle_knowledge_query(input: KnowledgeQueryInput) -> KnowledgeQueryOu
     with own_write_reads(), caller_shaped(narrow=_NARROW):
         rows = await dataset_query.run(sql, params)
     with own_write_reads():  # released only while every snapshot read still serves
-        await _still_served(input, docs, catalogs)
+        await _still_served(input, catalogs)
 
     outputs = resolved.outputs
     truncated = len(rows) > input.limit

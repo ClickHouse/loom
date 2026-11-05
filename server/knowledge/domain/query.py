@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from server.knowledge.domain import datasets as ds
@@ -107,7 +108,7 @@ def resolve(plan: Mapping[str, Any], catalogs: Mapping[str, Mapping[str, Any]]) 
         raise ValueError("group_by needs an aggregate to calculate per group")
     if not aggregates and not plan.get("select"):
         raise ValueError("the plan needs aggregates, or columns to select")
-    selected = tuple(_selected(column(s), len(aliases), aliases) for s in plan.get("select") or ())
+    selected = tuple(_selected(column(s), aliases) for s in plan.get("select") or ())
     outputs = groups + aggregates + selected
     names = [o.name for o in outputs]
     repeated = sorted({n for n in names if names.count(n) > 1})
@@ -135,12 +136,29 @@ def _schema(catalog: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def _value(v: Any, col: ds.DatasetColumn, op: str) -> Any:
-    """A filter's value as its column's slot holds it."""
+    """A filter's value as its column's slot holds it. A number a decimal slot
+    would round is refused: compared rounded, `ge 0.0000000004` would match 0."""
     if v is None:
         raise ValueError(f"{op} on {col.name!r} needs a value; is_null finds nulls")
     if col.type == "duration" and isinstance(v, (int, float)) and not isinstance(v, bool):
-        return ds.slot_value(v, replace(col, type="number"))  # seconds, as the slot holds them
-    return ds.slot_value(v, col)
+        col = replace(col, type="number")  # seconds, as the slot holds them
+    held = ds.slot_value(v, col)
+    exact = _exact(v)
+    if isinstance(held, Decimal) and exact is not None and held != exact:
+        raise ValueError(
+            f"{op} on {col.name!r}: {str(v)[:40]} has more than the nine decimal places"
+            " a number column holds"
+        )
+    return held
+
+
+def _exact(v: Any) -> Decimal | None:
+    """`v` as the decimal it says, before any rounding; None for text that is no number
+    (a duration's H:MM:SS)."""
+    try:
+        return Decimal(repr(v)) if isinstance(v, float) else Decimal(str(v).strip())
+    except InvalidOperation:
+        return None
 
 
 def _filter(c: Column, f: Mapping[str, Any]) -> Filter:
@@ -207,6 +225,6 @@ def _aggregate(c: Column | None, a: Mapping[str, Any]) -> Output:
     return Output(name, "number" if fn.startswith("count") else t, c, fn=fn)
 
 
-def _selected(c: Column, n: int, aliases: list[str]) -> Output:
-    name = c.column.name if n == 1 else f"{aliases[c.index]}.{c.column.name}"
+def _selected(c: Column, aliases: list[str]) -> Output:
+    name = c.column.name if len(aliases) == 1 else f"{aliases[c.index]}.{c.column.name}"
     return Output(name, c.column.type, c)

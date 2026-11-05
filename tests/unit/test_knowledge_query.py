@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import json
 from decimal import Decimal
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -96,6 +95,9 @@ JOINED = [
         (dict(where=[{"column": _col("amount"), "op": "eq", "value": "lots"}]),
          "'lots' is not a number"),
         (dict(where=[{"column": _col("amount"), "op": "gt"}]), "gt on 'amount' needs a value"),
+        # Rounded to nine places, ge 0.0000000004 would match a row holding 0.
+        (dict(where=[{"column": _col("amount"), "op": "ge", "value": "0.0000000004"}]),
+         "has more than the nine decimal places a number column holds"),
         (dict(where=[{"column": _col("team"), "op": "in"}]), "in on 'team' needs values"),
         (dict(where=[{"column": _col("placed_at"), "op": "ge", "value": "soon"}]),
          "'soon' is not a datetime"),
@@ -191,6 +193,24 @@ def test_the_statement_holds_no_caller_text_and_reads_each_dataset_in_its_scope(
     }  # fmt: skip
 
 
+def test_lists_and_null_tests_compile_to_typed_arrays_and_bare_slots() -> None:
+    plan = plan_domain.resolve(
+        _plan(where=[
+            {"column": _col("amount"), "op": "in", "values": ["0.1", 2]},
+            {"column": _col("team"), "op": "not_in", "values": ["a"]},
+            {"column": _col("placed_at"), "op": "is_null"},
+            {"column": _col("score"), "op": "not_null"},
+        ]),
+        CATALOGS,
+    )  # fmt: skip
+    sql, params = dataset_query.compile_plan(plan, "o", "ns")
+    assert (
+        " AND n1 IN {p4:Array(Decimal128(9))} AND s1 NOT IN {p5:Array(String)}"
+        " AND t1 IS NULL AND f1 IS NOT NULL)"
+    ) in sql
+    assert params["p4"] == [Decimal("0.100000000"), Decimal("2.000000000")]
+
+
 def test_rows_are_selected_with_their_row_ids_in_source_order() -> None:
     plan = plan_domain.resolve(
         _plan(aggregates=[], select=[_col("team"), _col("score")],
@@ -238,17 +258,13 @@ class Stores:
         self.own_reads: list[bool] = []  # each lookup's and the scan's read-your-writes
         self.served = {7}  # the document versions whose catalog rows serve the datasets
         self.raises: BaseException | None = None
-        monkeypatch.setattr(app.documents_repo, "get_many_by_uris", self.get_many)
+        monkeypatch.setattr(app.documents_repo, "live_versions", self.live_versions)
         monkeypatch.setattr(app.datasets_repo, "at_version", self.at_version)
         monkeypatch.setattr(app.dataset_query, "run", self.run)
 
-    async def get_many(self, org: str, namespace: str, uris: list[str]) -> list[Any]:
+    async def live_versions(self, org: str, namespace: str, uris: list[str]) -> dict[str, int]:
         self.own_reads.append(sequential_reads_var.get())
-        return [
-            SimpleNamespace(source_uri=u, version=self.versions[u])
-            for u in uris
-            if self.versions.get(u) is not None
-        ]
+        return {u: v for u in uris if (v := self.versions.get(u)) is not None}
 
     async def at_version(
         self, org: str, ns: str, uri: str, v: int, *, dataset_id: str
@@ -358,14 +374,14 @@ def test_a_publish_that_lands_as_the_query_looks_a_dataset_up_is_a_retry(
     """A publish writes the document's new version, then deletes the catalog rows
     of the one the query read: the lookup finds none, and that is a change."""
     stores.served = set()
-    real = stores.get_many
+    real = stores.live_versions
 
-    async def publishing(org: str, namespace: str, uris: list[str]) -> list[Any]:
+    async def publishing(org: str, namespace: str, uris: list[str]) -> dict[str, int]:
         found = await real(org, namespace, uris)
         stores.versions["repo://orders.csv"] = 8  # lands after this read
         return found
 
-    monkeypatch.setattr(app.documents_repo, "get_many_by_uris", publishing)
+    monkeypatch.setattr(app.documents_repo, "live_versions", publishing)
     with pytest.raises(PreconditionFailedError, match="published again as the query read it"):
         _run()
 

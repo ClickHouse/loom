@@ -58,8 +58,8 @@ class QueryColumn(BaseModel):
 class QueryFilter(BaseModel):
     # The column compared; every filter must hold for a row to count (AND).
     column: QueryColumn
-    # The comparison: contains and starts_with apply to text, lt to ge to ordered types,
-    # and a null meets none but is_null (ne and not_in skip nulls too).
+    # The comparison: contains and starts_with (case-sensitive) apply to text; lt, le, gt
+    # and ge to ordered types; a null meets none but is_null (ne and not_in skip it too).
     op: FilterOp
     # The value compared with, read as the column's type; in, not_in and the null tests take none.
     value: Scalar | None = None
