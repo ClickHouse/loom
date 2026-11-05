@@ -120,8 +120,8 @@ Action = Literal[
 @dataclass
 class RecordReport:
     memory_key: str
-    # row_changed (a tag write found its row gone or moved on) is reported in `races`; the
-    # caller keeps it out of `records`.
+    # row_changed (the reconcile read or a tag write found its row gone or moved on) is
+    # reported in `races`; the caller keeps it out of `records`.
     action: Action
     # The decision.record body, with the identity the write goes (or would go) under.
     body: dict[str, Any]
@@ -130,8 +130,8 @@ class RecordReport:
     # Pull request numbers and setting names, for a human to resolve into files.
     unresolved: list[str] = field(default_factory=list)
     note: str = ""
-    # "deleted" or "rewritten": the row a tag write found deleted or rewritten since the run
-    # read it.
+    # "deleted" or "rewritten": the row the reconcile read or a tag write found deleted or
+    # rewritten since the run read it.
     race: str = ""
 
 
@@ -190,7 +190,7 @@ class ExtractReport:
     # `dropped` line, marked `refused`.
     refused: list[str] = field(default_factory=list)
     # "<key>: deleted since the run read it" or "<key>: rewritten since the run read it":
-    # a write that found its row gone or moved on, a race the next run settles.
+    # a read or a write that found its row gone or moved on, a race the next run settles.
     races: list[str] = field(default_factory=list)
     # The hold (`customer.HOLDS`) that stopped the run's model calls, its reads or its
     # writes: the org's calls are switched off or refused for now. A run held while

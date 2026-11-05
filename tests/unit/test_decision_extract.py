@@ -4240,7 +4240,7 @@ async def test_a_row_is_retired_only_when_a_second_check_finds_it_gone_too(monke
 
 
 def test_a_support_reply_is_read_by_id_and_a_missing_verdict_is_no() -> None:
-    asked = {"decision:a", "decision:b", "decision:c", "decision:d", "decision:e", "decision:f"}
+    asked = {f"decision:{c}" for c in "abcdefg"}
     assert dx.parse_support("no json", asked) is None and dx.parse_support("[]", asked) is None
     reply = {
         "claims": [{"id": "0.o", "supported": True}, {"id": "0.r0", "supported": "yes"}],
@@ -4253,6 +4253,7 @@ def test_a_support_reply_is_read_by_id_and_a_missing_verdict_is_no() -> None:
             {"id": "decision:e"},
             # A digit int() cannot read names no restatement.
             {"id": "decision:f", "still_stated": True, "same_as": "\u00b2"},
+            {"id": "decision:g", "still_stated": True, "same_as": "9" * 4400},
             "junk",
         ],
     }
@@ -4265,6 +4266,7 @@ def test_a_support_reply_is_read_by_id_and_a_missing_verdict_is_no() -> None:
         "decision:a": (True, 0),
         "decision:b": (False, 2),
         "decision:f": (True, None),
+        "decision:g": (True, None),
     }
     cand, notes = dx.supported(1, _cand(), v)
     assert cand is None and notes == [dx.UNSUPPORTED]

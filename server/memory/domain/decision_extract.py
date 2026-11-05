@@ -599,8 +599,10 @@ def parse_support(reply: str, asked: Collection[str]) -> Verdicts | None:
         still = v.get("still_stated") if isinstance(v, dict) else None
         if not isinstance(still, bool) or str(v.get("id")) not in asked:
             continue
-        same = v.get("same_as")
-        index = int(same) if isinstance(same, (int, str)) and str(same).isdecimal() else None
+        same = str(v.get("same_as")) if isinstance(v.get("same_as"), (int, str)) else ""
+        # A candidate index is short; a longer number is no index (and past 4,300 digits
+        # int() refuses it).
+        index = int(same) if same.isdecimal() and len(same) <= 6 else None
         stored[str(v.get("id"))] = (still, index)
     return Verdicts(supported, stored)
 
