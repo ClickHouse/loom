@@ -2,7 +2,7 @@
 name: loom-code
 license: Apache-2.0
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
 description: "Route-then-read code intelligence for a loom-indexed repository. WHEN: the repo is indexed by loom (LOOM_BASE_URL set, or a `.loom` marker), and you would otherwise read whole files, grep the tree, or guess who calls a function. Use loom's code.* tools to find the exact unit first, then read only that. FOR SINGLE OPERATIONS: call the code.* MCP tool directly."
 ---
 

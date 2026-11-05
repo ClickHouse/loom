@@ -2,7 +2,7 @@
 name: loom
 license: Apache-2.0
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
 description: "How an agent uses Loom: memory, documents, working state, runs and code intelligence that persist across sessions and are shared with other agents. WHEN: you have a Loom server (LOOM_BASE_URL, an SDK `Agent`, `loom_*` MCP tools) and you start a task, learn a durable fact, hold a document or a large blob, need to resume, hand work to another agent, or answer from what an earlier session knew. Covers MCP, the Python and TypeScript SDKs and plain HTTP."
 ---
 

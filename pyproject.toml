@@ -1,6 +1,6 @@
 [project]
 name = "clickhouse-loom-server"
-version = "1.0.1"
+version = "1.1.0"
 description = "Loom server (control plane). Shared-production agent memory + knowledge plane on ClickHouse. Distributed as a Docker image (ghcr.io/clickhouse/loom) — `pip install` is for local dev / Docker-image build only; do NOT run the server from pip in production."
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
