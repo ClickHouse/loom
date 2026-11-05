@@ -28,10 +28,11 @@ repository, its org and namespace) each name is looked up with read-only `code.s
 calls and a name with one defining file that is not a test or a page links the row to
 that file, the rule `loom decisions extract --repo` applies. The harness's own Loom has
 no code index, and an arm's org must not hold one another arm reads. Without
-`--code-index` arm 4 reads no pre-edit block and is served through `loom_search` only,
-and arm 5 is added so that arm 4 is compared with gold rows served the same way (the
-report then leaves out arm 4 against arm 3). With `--arm4-namespace` the sync's rows
-keep the files it linked, arm 4 reads the pre-edit block and is compared with arm 3.
+`--code-index` arms 4 and 6 read no pre-edit block and are served through `loom_search`
+only, and arm 5 is added so that they are compared with gold rows served the same way
+(the report then leaves out arms 4 and 6 against arm 3). With `--arm4-namespace` the
+sync's rows keep the files it linked, and arms 4 and 6 read the pre-edit block and are
+compared with arm 3.
 
 Each role's namespace lives in an org of its own: `<org>-<prefix>-<role>`, the prefix
 `dr-<hex>` fixed per run, since a search and the cost readback read a whole org. The

@@ -610,8 +610,9 @@ answered 3 times per arm; each answer is judged once in each order.
 | 4   | 53.6        | 32.9     | 36.7         | 63.3       | 54.4     | 52.2        | 96.7     | 10.0             | 65.0        | 26.9     | 37.2         | 92.1               | 63.8            |
 | 6   | 84.8        | 83.9     | 26.7         | 20.0       | 55.6     | 55.6        | 100.0    | 100.0            | 85.4        | 67.7     | 42.3         | 84.0               | 74.9            |
 
-Percentages. A and D precision and recall are claim-level against the gold arguments (A)
-or gold facts (D), and precision is over the answers that made a claim; A abstains is the
+Percentages. A and D precision is the share of an answer's claims that state a gold
+argument (A) or gold fact (D) or what a gold row states, over the answers that made a
+claim; recall is the share of the gold arguments or facts the answer states; A abstains is the
 share of A answers saying no recorded decision covers the question (in whole or in part);
 A and D misleading are the share of answers that would steer an engineer wrong. B avoids:
 no rejected option proposed (deterministic detectors first, the judge for the rest) and
@@ -619,11 +620,13 @@ the rubric passed where the task has one; B satisfies: no gold constraint broken
 rejected option detected, and the rubric passed where the task has one. C passes: a
 supersession answer does not present a reversed statement as the current design, an
 abstention answer says no decision is recorded and invents none. C states current is
-averaged over the 5 supersession tasks. Abstention tasks failed: 6.7% in arm 0, none in
-the other arms. Citation precision is the share of the answers' citations that resolve and
+averaged over the 5 supersession tasks. A reversed statement was presented as current on
+6.7% of the supersession tasks in arms 0 and 4, none in the other arms; abstention tasks
+failed on 6.7% in arm 0, none in the other arms. Citation precision is the share of the answers' citations that resolve and
 that the judge says support what they are cited for. Citation recall is the share of A and
-D claims with at least one of their own citations resolving and supporting them. A answers
-with no claim, which A precision leaves out: 6.7% in arm 4, none in the other arms.
+D claims with at least one of their own citations resolving and supporting them. Answers with
+no claim, which precision leaves out: of the A answers 6.7% in arm 4, of the D answers
+10.3% in arm 0 and 17.9% in arm 4, none in the other arms.
 
 Paired per task, bootstrap over documents, 95% interval, and the minimum detectable effect
 taken from that interval. With five clusters the bootstrap intervals and the MDEs taken
@@ -716,8 +719,8 @@ cost per arm is their recorded tokens priced at the current price table, and jud
 not split.
 
 **Reading.** Resolved against zero (the interval's lower bound above it, or its upper
-bound below it): the gold rows (arm 3) raise every A, B and D metric over no design
-knowledge. The whole document (arm 1) gives the highest D recall, 10.5 points over the gold
+bound below it): the gold rows (arm 3) raise A and D precision and recall and B
+avoidance and satisfaction over no design knowledge. The whole document (arm 1) gives the highest D recall, 10.5 points over the gold
 rows, and lowers B avoidance below arm 0 (-14.4). Extracted rows alone (arm 4) fall below
 the gold rows on A, B and D; adding the documents' knowledge hits to them (arm 6) raises A
 precision (+31.1) and recall (+51.0) and D precision (+22.4) and recall (+40.8) over arm 4,
@@ -754,7 +757,7 @@ set.
   auth and background workers off.
 - **Artifacts:** `bench/results/design_rationale.summary.json`, written by
   `score --summary`: the per-arm metrics, comparisons, injected tokens, treatment check,
-  judge agreement, unreadable passes and the A answers with no claim, the task set's
+  judge agreement, unreadable passes and the A and D answers with no claim, the task set's
   counts (documents, revisions, revised documents, tasks by kind and subtype, tasks with
   gold rows), the run's flags (arms, whether arm 4 had files, models, window, K, judge
   orders and repeats) and its spend by ledger stage and the answers' cost per arm; the

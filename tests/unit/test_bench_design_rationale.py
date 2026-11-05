@@ -299,7 +299,7 @@ def test_a_citation_counts_only_when_the_judge_names_it_exactly():
     assert score.pass_metrics("B", {}, entry, exact)["citations_good"] == 1
 
 
-def test_the_no_claim_share_counts_a_answers_whose_passes_made_no_claim():
+def test_the_no_claim_share_counts_answers_whose_passes_made_no_claim():
     ts = load(EXAMPLE)
     tid = ts.tasks["A"][0]["id"]
 
@@ -315,18 +315,22 @@ def test_the_no_claim_share_counts_a_answers_whose_passes_made_no_claim():
     # An abstaining answer can still make a graded claim: only the claimless one counts.
     claim = {"verdict": "correct", "cites": [], "cites_support": []}
     judged = {f"{tid}/arm0/s1": entry([]), f"{tid}/arm0/s2": entry([claim])}
-    assert score.a_answers_without_claims(ts, judged) == {0: 0.5}
+    assert score.answers_without_claims(ts, judged) == {"A": {0: 0.5}}
     # An unreadable pass is not a pass with no claim.
     unreadable = {"citations": [], "detectors": [], "passes": [{"verdict": {"claims": False}}]}
     judged[f"{tid}/arm0/s3"] = {
         **unreadable,
         "passes": [*unreadable["passes"], *entry([claim])["passes"]],
     }
-    assert score.a_answers_without_claims(ts, judged) == {0: round(1 / 3, 4)}
+    assert score.answers_without_claims(ts, judged) == {"A": {0: round(1 / 3, 4)}}
     # An answer whose only pass is unreadable is not scored at all.
     only = {**entry([])["passes"][0]["verdict"], "claims": False}
     judged[f"{tid}/arm0/s4"] = {"citations": [], "detectors": [], "passes": [{"verdict": only}]}
-    assert score.a_answers_without_claims(ts, judged) == {0: round(1 / 3, 4)}
+    assert score.answers_without_claims(ts, judged) == {"A": {0: round(1 / 3, 4)}}
+    # A feature answer is counted for its own kind.
+    did = ts.tasks["D"][0]["id"]
+    judged[f"{did}/arm0/s1"] = entry([])
+    assert score.answers_without_claims(ts, judged)["D"] == {0: 1.0}
 
 
 def test_a_verdict_without_its_keys_is_unreadable_not_a_pass():
@@ -760,10 +764,10 @@ def test_the_example_set_runs_end_to_end_over_a_fake_loom(tmp_path):
         run.run(ts, cfg, FakeLoom(), model, [model], ledger)
 
 
-def test_without_a_code_index_arm_4_is_compared_with_gold_rows_served_alike(tmp_path):
+def test_without_a_code_index_arms_4_and_6_are_compared_with_gold_rows_served_alike(tmp_path):
     ts = load(EXAMPLE)
     out = tmp_path / "run"
-    cfg = _config(out, arms=[3, 4, 5], k=1, judge_orders=1, arm4_files=False)
+    cfg = _config(out, arms=[3, 4, 5, 6], k=1, judge_orders=1, arm4_files=False)
     ledger = Ledger(out / "ledger.jsonl", cfg.max_usd)
     out.mkdir()
     model = _fake_model(ledger)
@@ -772,13 +776,17 @@ def test_without_a_code_index_arm_4_is_compared_with_gold_rows_served_alike(tmp_
     loom.extract_files = ["src/cache/segmented_lru.py", "src/upload/retry.py"]
     run.run(ts, cfg, loom, model, [model], ledger)
     surf = json.loads((out / "surfaces.json").read_text())
-    assert all(v["for_file"] == [] for k, v in surf.items() if k.endswith(("/arm4", "/arm5")))
+    assert all(
+        v["for_file"] == [] for k, v in surf.items() if k.endswith(("/arm4", "/arm5", "/arm6"))
+    )
     assert any(v["for_file"] for k, v in surf.items() if k.endswith("/arm3"))
     m = score.score(ts, out)
     assert "arm5_search_served" in m["treatment"]
     assert "arm4_for_file_served" not in m["treatment"]
+    assert "arm6_for_file_served" not in m["treatment"]
     pairs = {(c["treatment"], c["reference"]) for c in m["comparisons"]}
-    assert (4, 5) in pairs and (4, 3) not in pairs
+    assert {(4, 5), (6, 5)} <= pairs
+    assert not {(4, 3), (6, 3)} & pairs
 
 
 def test_a_run_stopped_by_the_cap_resumes_without_spending_again(tmp_path, capsys):
@@ -1002,6 +1010,11 @@ def test_arm_5_is_added_when_arm_4_has_no_code_index(tmp_path, capsys):
     # Whether arm 3 runs or not.
     assert main([*base[:5], "4", "--dry-run"]) == 0
     assert "5 = gold rows through loom_search only" in capsys.readouterr().out
+    # Arm 6 reads the pre-edit block only with files, as arm 4 does.
+    assert main([*base[:5], "6", "--dry-run"]) == 0
+    printed = capsys.readouterr().out
+    assert "arm 6: no code index" in printed
+    assert "5 = gold rows through loom_search only" in printed
 
 
 def test_a_resume_with_other_flags_is_refused(tmp_path):
@@ -1401,6 +1414,10 @@ def test_arm_6_serves_the_extracted_rows_with_the_documents_knowledge_hits(tmp_p
     pairs = {(c["treatment"], c["reference"]) for c in m["comparisons"]}
     assert {(6, 2), (6, 4)} <= pairs
     assert m["arms"][6]["D"]["tasks"] == 1
+    # A surface stored without its hits list is left out of the check, not a miss.
+    del surf["B1/arm2"]["knowledge_uris"]
+    (out / "surfaces.json").write_text(json.dumps(surf))
+    assert score.score(ts, out)["treatment"]["arm2_knowledge_served"] == "8/8"
 
 
 def test_scoring_with_the_unfilled_label_sheet_fails_clearly(tmp_path, capsys):
@@ -1474,7 +1491,7 @@ def test_score_writes_the_summary_without_per_task_rows(tmp_path):
     }
     assert summary["run"]["judge_orders"] == 2
     assert summary["run"]["judge_repeats"] == cfg.judge_repeats
-    assert set(summary["a_answers_without_claims"]) == {"0", "1", "3", "4"}
+    assert set(summary["answers_without_claims"]["A"]) == {"0", "1", "3", "4"}
     # Scoring again regenerates the same file.
     assert main([*argv, "--summary", str(path)]) == 0
     assert path.read_text() == first

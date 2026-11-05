@@ -241,8 +241,10 @@ def cmd_run(a: argparse.Namespace) -> int:
     # Rows a sync wrote carry the files it linked; rows this run extracts get theirs
     # from the code index, or have none.
     cfg.arm4_files = bool(a.code_index or a.arm4_namespace)
-    if 4 in cfg.arms and not cfg.arm4_files:
-        print("arm 4 has no code index: its rows reach loom_search only, no pre-edit block")
+    extracted = sorted(set(runner.EXTRACTED_ARMS) & set(cfg.arms))
+    if extracted and not cfg.arm4_files:
+        names = " and ".join(f"arm {n}" for n in extracted)
+        print(f"{names}: no code index, the rows reach loom_search only, no pre-edit block")
         if 5 not in cfg.arms:
             cfg.arms = [*cfg.arms, 5]
             print("arm 5 (gold rows through loom_search only) is added as its reference")

@@ -37,8 +37,21 @@ PLANNING_SD = 0.35
 # (treatment arm, reference arm) pairs reported when both ran. Arm 4 against arm 5 is
 # the like-for-like comparison when arm 4 had no code index (no pre-edit block).
 # Arm 6 against arms 2 and 4 asks whether serving the documents beside the extracted
-# rows adds to either alone.
-COMPARISONS = ((3, 0), (4, 0), (4, 3), (4, 5), (1, 0), (1, 3), (2, 3), (6, 2), (6, 4), (6, 3))
+# rows adds to either alone; against arm 3 (or arm 5 without files, as for arm 4), how
+# far both together stay from the gold rows.
+COMPARISONS = (
+    (3, 0),
+    (4, 0),
+    (4, 3),
+    (4, 5),
+    (1, 0),
+    (1, 3),
+    (2, 3),
+    (6, 2),
+    (6, 4),
+    (6, 3),
+    (6, 5),
+)
 # The keys a verdict must carry to be read; one without them is unreadable, not a pass.
 REQUIRED = {
     "A": ("claims", "gold_covered", "potentially_misleading"),
@@ -231,19 +244,23 @@ def unreadable(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, int]]
 # ---------------------------------------------------------------- per task and arm
 
 
-def a_answers_without_claims(ts: TaskSet, judged: dict[str, Any]) -> dict[int, float]:
-    """arm -> the share of scored A answers with no claim in any readable pass: the
-    answers A precision leaves out."""
-    tasks = {t["id"]: t for t in ts.tasks.get("A", [])}
-    counts: dict[int, list[bool]] = defaultdict(list)
+def answers_without_claims(ts: TaskSet, judged: dict[str, Any]) -> dict[str, dict[int, float]]:
+    """kind -> arm -> the share of scored answers with no claim in any readable pass, for
+    the kinds scored against a gold list: the answers their precision leaves out."""
+    tasks = {t["id"]: (kind, t) for kind in GOLD_LIST for t in ts.tasks.get(kind, [])}
+    counts: dict[str, dict[int, list[bool]]] = defaultdict(lambda: defaultdict(list))
     for key, entry in judged.items():
         tid, arm = parse_key(key)
         if tid not in tasks:
             continue
-        m = answer_metrics("A", tasks[tid], entry)
+        kind, task = tasks[tid]
+        m = answer_metrics(kind, task, entry)
         if m:
-            counts[arm].append(m.get("precision") is None)
-    return {arm: round(sum(v) / len(v), 4) for arm, v in sorted(counts.items())}
+            counts[kind][arm].append(m.get("precision") is None)
+    return {
+        kind: {arm: round(sum(v) / len(v), 4) for arm, v in sorted(by_arm.items())}
+        for kind, by_arm in sorted(counts.items())
+    }
 
 
 def per_task(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, dict[str, Any]]]:
@@ -292,14 +309,14 @@ def compare(
     ts: TaskSet, tasks_by_arm: dict[int, dict[str, dict[str, Any]]], arm4_files: bool
 ) -> list[dict[str, Any]]:
     """Paired per-task deltas (treatment minus reference) with a bootstrap over
-    documents and the MDE the run's own spread implies. Arm 4 without files is compared
-    with arm 5, not with arm 3, whose pre-edit block it lacks."""
+    documents and the MDE the run's own spread implies. Arms 4 and 6 without files are
+    compared with arm 5, not with arm 3, whose pre-edit block they lack."""
     out: list[dict[str, Any]] = []
     docs = {t["id"]: t["document"] for _, t in ts.all_tasks()}
     for treat, ref in COMPARISONS:
         if treat not in tasks_by_arm or ref not in tasks_by_arm:
             continue
-        if (treat, ref) == (4, 3) and not arm4_files:
+        if treat in (4, 6) and ref == 3 and not arm4_files:
             continue
         for kind, metrics in HEADLINE.items():
             for metric in metrics:
@@ -390,12 +407,15 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
             out[f"arm{arm}_{surface.removesuffix('_keys')}_served"] = f"{sum(hits)}/{len(hits)}"
     for arm in (2, 6):
         # The tasks whose knowledge hits include a section of the task's own document
-        # (any version of it: a revision shares the source_uri).
+        # (any version of it: a revision shares the source_uri). A surface that recorded
+        # no hits list is left out, not counted a miss.
         rows = [
-            (t, surf[surface_key(t["id"], arm)]) for t in tasks if surface_key(t["id"], arm) in surf
+            (t, r)
+            for t in tasks
+            if "knowledge_uris" in (r := surf.get(surface_key(t["id"], arm)) or {})
         ]
         if rows:
-            hits = [ts.document_of(t).source_uri in r.get("knowledge_uris", []) for t, r in rows]
+            hits = [ts.document_of(t).source_uri in r["knowledge_uris"] for t, r in rows]
             out[f"arm{arm}_knowledge_served"] = f"{sum(hits)}/{len(hits)}"
     extraction = state.get("extraction") or {}
     if extraction:
@@ -563,7 +583,7 @@ def score(
         "treatment": treatment_check(ts, surf, state),
         "judge_stability": judge_stability(ts, judged),
         "unreadable": unreadable(ts, judged),
-        "a_answers_without_claims": a_answers_without_claims(ts, judged),
+        "answers_without_claims": answers_without_claims(ts, judged),
         "per_task": by_arm,
     }
     if human:
