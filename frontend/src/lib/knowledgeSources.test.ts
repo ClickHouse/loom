@@ -237,7 +237,7 @@ describe("the add form's other kinds", () => {
     expect(sourceFormProblems({ ...meet, meetings: "" })).toEqual(["Add at least one space id."]);
   });
 
-  it("sends only the chosen kind's config, so switching kinds keeps what was typed but not in the body", () => {
+  it("sends only the chosen kind's config, so switching kinds keeps the other kinds' ids out of the body", () => {
     const f = { ...named, folders: FOLDER, projects: PROJECT };
     expect(sourceAddBody("o", "x", f, true).config).toEqual({
       folder_ids: [FOLDER],

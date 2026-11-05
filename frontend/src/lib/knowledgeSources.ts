@@ -239,8 +239,8 @@ export const RECORDING_PROVIDERS = [
 ] as const;
 export type RecordingProvider = (typeof RECORDING_PROVIDERS)[number]["value"];
 
-/** Each kind's fields live side by side, so switching the kind keeps what was typed;
- *  only the chosen kind's are sent. */
+/** Each kind's id fields live side by side, so switching the kind keeps them; only the
+ *  chosen kind's are sent, and the credential is cleared. */
 export interface SourceForm {
   name: string;
   kind: SourceKind;
