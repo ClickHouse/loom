@@ -523,6 +523,13 @@ def test_a_file_of_blank_rows_is_read_only_to_the_decode_bound(
     (unit,) = a.coverage.failed
     # Two batches decoded (8 values), the third past the bound: counted, not read.
     assert (unit.unit, unit.reason) == ("f.parquet rows 9-", "22 rows past what one file decodes")
+    # In groups of 10: the first read whole (10 values), the second's first batch
+    # past the bound, so its 10 rows and the third's are counted, not read.
+    a, tab = _one(_file(t, row_group_size=10))
+    assert tab.rows == ()
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        ("f.parquet rows 11-", "20 rows past what one file decodes")
+    ]
 
 
 def test_values_python_cannot_hold_are_searched_for_by_halves_to_a_bound(

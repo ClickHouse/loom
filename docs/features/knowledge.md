@@ -917,13 +917,13 @@ source, so a workbook of more sheets reads the others by `dataset_id`.
 | `needs_clarification` | a column or the header needs an answer (below) before it is trusted |
 | `approved`            | a writer approved the schema with `knowledge.dataset_approve`       |
 
-| Clarification      | Means                                                                                      |
-| ------------------ | ------------------------------------------------------------------------------------------ |
-| `mixed_types`      | the column holds values of more than one type; it is held as text                          |
-| `generated_name`   | the header cell is empty, so the column is named `column N`                                |
-| `duplicate_name`   | the header repeats a name, so the column is named `<name> (2)`, `(3)`, ...                 |
-| `header_like_data` | every column name reads as a number or a date: the first row may be data (not for Parquet) |
-| `past_capacity`    | every slot of a type is taken, so the columns of it past them are not stored               |
+| Clarification      | Means                                                                                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `mixed_types`      | the column holds values of more than one type; it is held as text                                                      |
+| `generated_name`   | the header cell is empty, so the column is named `column N`                                                            |
+| `duplicate_name`   | the header repeats a name, so the column is named `<name> (2)`, `(3)`, ...                                             |
+| `header_like_data` | every column name reads as a number or a date: the first row may be data (not when `header_rows` is 0, as for Parquet) |
+| `past_capacity`    | every slot of a type is taken, so the columns of it past them are not stored                                           |
 
 A column's type is `string`, `number`, `bool`, `date`, `datetime`, `time` or `duration`
 (in seconds). A row with a cell error (`#DIV/0!`) or a value its column's type cannot hold
