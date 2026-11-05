@@ -32,7 +32,8 @@ _KNOWLEDGE = {
     "results": [
         {
             "source_uri": "loom://runbooks/freeze",
-            "content_excerpt": "The freeze starts two days\nbefore the cut.",
+            "chunk_idx": 0,
+            "content": "The freeze starts two days\nbefore the cut.",
             "namespace": "team",
             "score": 0.03,
             "similarity": 0.52,
@@ -251,6 +252,40 @@ def test_every_scenario_answers_as_recorded(harness: Any) -> None:
         assert json.dumps(got[name], sort_keys=False) == json.dumps(
             recorded[name], sort_keys=False
         ), name
+
+
+def _knowledge_text(bodies: str) -> str:
+    """The loom_search text for one knowledge hit as `knowledge.search` serves it."""
+    from server.knowledge.api.models_knowledge import _SearchHit
+    from server.transport.mcp_tools import search_answer
+
+    hit = _SearchHit(
+        source_uri="docs/retention.md",
+        chunk_idx=0,
+        content="Audit rows are kept\nfor ninety days. " + "x" * 300,
+        tags=[],
+        distance=0.4,
+        similarity=0.6,
+    )
+    payload = {
+        "memory": {"results": []},
+        "knowledge": {"results": [hit.model_dump()]},
+        "profile": {"results": []},
+        "conversations": {"results": []},
+    }
+    out = search_answer(payload, {"query": "q", "bodies": bodies}, "team", "")
+    return out["content"][0]["text"]
+
+
+def test_a_knowledge_hit_line_carries_its_chunk_text() -> None:
+    line = _knowledge_text("excerpt").splitlines()[-1]
+    assert line.startswith("  - [docs/retention.md] Audit rows are kept for ninety days. xxx")
+    # Clipped as the memory and conversation lines are.
+    assert len(line) == len("  - [docs/retention.md] ") + 200
+
+
+def test_bodies_none_keeps_a_knowledge_hit_to_its_source() -> None:
+    assert _knowledge_text("none").splitlines()[-1] == "  - [docs/retention.md]"
 
 
 if __name__ == "__main__" and "--write" in sys.argv:

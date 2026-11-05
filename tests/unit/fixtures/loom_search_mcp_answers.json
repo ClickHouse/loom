@@ -40,7 +40,7 @@
       "results": [
        {
         "source_uri": "loom://runbooks/freeze",
-        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "content": "The freeze starts two days\nbefore the cut.",
         "namespace": "team",
         "similarity": 0.52,
         "section": "Release > Freeze"
@@ -131,7 +131,7 @@
       "results": [
        {
         "source_uri": "loom://runbooks/freeze",
-        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "content": "The freeze starts two days\nbefore the cut.",
         "namespace": "team",
         "similarity": 0.52,
         "section": "Release > Freeze"
@@ -224,7 +224,7 @@
       "results": [
        {
         "source_uri": "loom://runbooks/freeze",
-        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "content": "The freeze starts two days\nbefore the cut.",
         "namespace": "team",
         "similarity": 0.52,
         "section": "Release > Freeze"
@@ -319,7 +319,7 @@
       "results": [
        {
         "source_uri": "loom://runbooks/freeze",
-        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "content": "The freeze starts two days\nbefore the cut.",
         "namespace": "team",
         "similarity": 0.52,
         "section": "Release > Freeze"
@@ -377,7 +377,7 @@
     "content": [
      {
       "type": "text",
-      "text": "loom_search 'q': 2 memory, 1 profile, 1 knowledge, 2 conversation hits.\n\nProfile hits:\n  - [home_city] (ns=alice) Lives in Berlin\n\nHow to read the memories below: You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below.\n\nMemory hits (2 of 38; next_page serves the rest):\n[2026-09-18 18:42] [fav_place] (semantic) \"mountain\" (#fav_place)\n\nKnowledge hits:\n  - [loom://runbooks/freeze] The freeze starts two days before the cut.\n\nConversation hits:\n  - [thread=4ab6 2026-07-14 11:07:12] which location are you on?\n  - [thread=9c01 2026-07-15 08:00:00] the other thread"
+      "text": "loom_search 'q': 2 memory, 1 profile, 1 knowledge, 2 conversation hits.\n\nProfile hits:\n  - [home_city] (ns=alice) Lives in Berlin\n\nHow to read the memories below: You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below.\n\nMemory hits (2 of 38; next_page serves the rest):\n[2026-09-18 18:42] [fav_place] (semantic) \"mountain\" (#fav_place)\n\nKnowledge hits:\n  - [loom://runbooks/freeze]\n\nConversation hits:\n  - [thread=4ab6 2026-07-14 11:07:12] which location are you on?\n  - [thread=9c01 2026-07-15 08:00:00] the other thread"
      }
     ],
     "isError": false,
@@ -414,7 +414,6 @@
       "results": [
        {
         "source_uri": "loom://runbooks/freeze",
-        "content_excerpt": "The freeze starts two days\nbefore the cut.",
         "similarity": 0.52,
         "section": "Release > Freeze"
        }
@@ -506,7 +505,7 @@
       "results": [
        {
         "source_uri": "loom://runbooks/freeze",
-        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "content": "The freeze starts two days\nbefore the cut.",
         "namespace": "team",
         "similarity": 0.52,
         "section": "Release > Freeze"
@@ -599,7 +598,7 @@
       "results": [
        {
         "source_uri": "loom://runbooks/freeze",
-        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "content": "The freeze starts two days\nbefore the cut.",
         "namespace": "team",
         "similarity": 0.52,
         "section": "Release > Freeze"
@@ -708,7 +707,7 @@
       "results": [
        {
         "source_uri": "loom://runbooks/freeze",
-        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "content": "The freeze starts two days\nbefore the cut.",
         "namespace": "team",
         "similarity": 0.52,
         "section": "Release > Freeze"
@@ -922,7 +921,7 @@
       "results": [
        {
         "source_uri": "loom://runbooks/freeze",
-        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "content": "The freeze starts two days\nbefore the cut.",
         "namespace": "team",
         "similarity": 0.52,
         "section": "Release > Freeze"
