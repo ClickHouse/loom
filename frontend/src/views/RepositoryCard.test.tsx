@@ -789,7 +789,7 @@ describe("RepositoryCard — docs", () => {
     ];
     mount(rows, []);
     expect(screen.getByRole("group", { name: "Docs" })).toBeInTheDocument();
-    expect(await screen.findByText(/No documents yet\. A maintainer adds them\./)).toBeInTheDocument();
+    expect(await screen.findByText(/No documents yet\. A writer there adds them\./)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add a document" })).toBeNull();
     cleanup();
     mount([branch({ my_status: "member", my_role: "admin", docs_namespace: "code-clickhouse" })], []);

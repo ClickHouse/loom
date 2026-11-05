@@ -1,7 +1,7 @@
 /**
  * A repository's documents on its card — listed from the docs namespace with how often
  * agents opened each this week, a title opens the document (as the dashboard, never
- * counted as an agent), a maintainer adds one without typing an address and removes one
+ * counted as an agent), a writer adds one without typing an address and removes one
  * after a confirm; a refusal says "join".
  */
 import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
@@ -170,7 +170,7 @@ describe("RepoDocsList", () => {
     expect(screen.queryByRole("button", { name: "Add a document" })).toBeNull();
   });
 
-  it("a maintainer removes a document after confirming, and the list re-reads", async () => {
+  it("a writer removes a document after confirming, and the list re-reads", async () => {
     vi.mocked(listKnowledge)
       .mockResolvedValueOnce({ rows: [DOC], next_cursor: null })
       .mockResolvedValueOnce({ rows: [], next_cursor: null });
@@ -183,7 +183,7 @@ describe("RepoDocsList", () => {
     expect(await screen.findByText(/No documents yet/)).toBeInTheDocument();
   });
 
-  it("a maintainer adds pasted text under an address made from the title, never replacing one", async () => {
+  it("a writer adds pasted text under an address made from the title, never replacing one", async () => {
     vi.mocked(listKnowledge).mockResolvedValue({
       rows: [{ ...DOC, source_uri: "repo-doc://Acme/kj/runbook" }],
       next_cursor: null,

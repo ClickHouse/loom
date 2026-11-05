@@ -168,10 +168,11 @@ const CLAIM_RANK: Record<string, number> = { viewer: 1, writer: 2, admin: 3, org
  *   grant or a request is held to that grant (`claim_cap`).
  * A mirror to hide verbs the server would refuse; the server stays the authority. What
  * `/v1/whoami` and the row do not carry, it cannot follow: a scoped token's per-namespace
- * roles, a revoked grant that still caps a claim, a delegated token (the row states its
- * creator's grant; the server also caps by the token's own claim, and a restricted
- * namespace reads the token's own grant), and a service account with no grant of its own,
- * which the server admits on its creator's grant while the row states none.
+ * roles, a token's `ns_write` claim (a write outside it is refused), a revoked grant
+ * that still caps a claim, a delegated token (the row states its creator's grant; the
+ * server also caps by the token's own claim, and a restricted namespace reads the
+ * token's own grant), and a service account with no grant of its own, which the server
+ * admits on its creator's grant while the row states none.
  */
 export function canCallOn(
   op: GatedOp,
