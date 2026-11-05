@@ -179,10 +179,16 @@ export function AddSourceDialog({
   const [busy, setBusy] = useState<"check" | "add" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const set: SetField = (key, value) => {
-    // Another kind or provider: its credential and the last error were the old one's.
+    // Another kind or provider: its credential and the last error were the old one's,
+    // and so were the ids typed for the old provider (its rule reads them differently).
     const switched = (key === "kind" || key === "provider") && value !== form[key];
     if (switched) setError(null);
-    setForm((f) => ({ ...f, [key]: value, ...(switched ? { credential: "" } : {}) }));
+    setForm((f) => ({
+      ...f,
+      [key]: value,
+      ...(switched ? { credential: "" } : {}),
+      ...(switched && key === "provider" ? { meetings: "" } : {}),
+    }));
   };
   const problems = sourceFormProblems(form);
   const fingerprint = sourceFormFingerprint(form);

@@ -241,14 +241,13 @@ describe("AddSourceDialog's kinds", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
     expect(screen.getByRole("radio", { name: "meet" })).toHaveAttribute("aria-checked", "true");
     fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
-    await typeInto(/^Meeting spaces/, "spaces/abc-DEF_1");
     fireEvent.click(screen.getByRole("radio", { name: "zoom" }));
-    // A space id is no meeting id: the form says so before anything is sent.
-    expect(screen.getByLabelText(/^Meetings/)).toHaveValue("spaces/abc-DEF_1");
+    await typeInto(/^Meetings/, "abc-DEF_1");
     const credential = screen.getByLabelText(/^Read-only credential/);
     expect(credential).toHaveAttribute("type", "password");
     fireEvent.change(credential, { target: { value: KEY } });
-    expect(screen.getByText(/Not a meeting id \(9-12 digits\): spaces\/abc-DEF_1/)).toBeInTheDocument();
+    // A space id is no meeting id: the form says so before anything is sent.
+    expect(screen.getByText(/Not a meeting id \(9-12 digits\): abc-DEF_1/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
     await userEvent.setup().clear(screen.getByRole("textbox", { name: /^Meetings/ }));
     await typeInto(/^Meetings/, "81234567890");
@@ -261,6 +260,15 @@ describe("AddSourceDialog's kinds", () => {
     expectKeyNowhere();
     expect(unlabeledControls(document.body)).toEqual([]);
     expect(await axeViolations(document.body)).toEqual([]);
+  });
+
+  it("clears the ids when the provider changes, so one provider's ids are never read by the other's rule", async () => {
+    renderAdd();
+    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
+    fireEvent.click(screen.getByRole("radio", { name: "zoom" }));
+    await typeInto(/^Meetings/, "812 3456 7890");
+    fireEvent.click(screen.getByRole("radio", { name: "meet" }));
+    expect(screen.getByRole("textbox", { name: /^Meeting spaces/ })).toHaveValue("");
   });
 
   it("adds a meeting store's spaces with a meet credential", async () => {
