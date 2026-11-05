@@ -4079,7 +4079,8 @@ export interface KnowledgeSourceSyncNowOutput {
 export interface KnowledgeSynthesizeInput {
   org: string;
   namespace: string;
-  source_uris: string[];
+  source_uris?: string[];
+  datasets?: QueryDataset[];
   task: string;
   window_chars?: number;
   max_answer_chars?: number;
@@ -4091,6 +4092,17 @@ export interface CitedChunk {
   chunk_idx: number;
   revision?: number;
   locator?: Record<string, unknown> | null;
+}
+
+export interface SynthesizeCalculation {
+  citation: string;
+  plan: Record<string, unknown>;
+  columns: QueryResultColumn[];
+  rows: unknown[][];
+  truncated?: boolean;
+  complete: boolean;
+  incomplete?: string[];
+  receipt: QueryReceipt;
 }
 
 export interface KnowledgeSynthesizeOutput {
@@ -4105,6 +4117,8 @@ export interface KnowledgeSynthesizeOutput {
   truncated?: boolean;
   abstain?: boolean;
   abstain_reason?: string;
+  clarification?: string;
+  calculations?: SynthesizeCalculation[];
   model?: string;
 }
 

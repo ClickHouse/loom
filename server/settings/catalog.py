@@ -6004,6 +6004,8 @@ LLM_MAX_TOKENS: dict[str, int] = {
     "entity_extract": 160,
     # memory.search HyDE: the hypothetical answer embedded in place of the query.
     "hyde": 128,
+    # knowledge.synthesize with datasets: the knowledge.query plan proposed as JSON.
+    "knowledge_synthesize_plan": 1200,
     # observe: one transition pair's semantic memory.
     "observe_extract.event": 300,
     # observe: one session's procedure and hint.

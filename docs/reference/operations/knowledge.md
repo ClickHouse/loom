@@ -597,7 +597,8 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `source_uris` | `list[str]` | required | The documents to read in full (1-50); unknown URIs contribute nothing. |
+| `source_uris` | `list[str]` | *(computed)* | The documents to read in full (up to 50); unknown URIs contribute nothing. |
+| `datasets` | `list[QueryDataset]` | *(computed)* | Datasets to calculate over (up to 4, as knowledge.query takes them); one plan is proposed for the task, checked against their schemas and run over every row. |
 | `task` | `str` | required | What to do with the documents: a question to answer or a summary to write. |
 | `window_chars` | `int` | `24000` | Characters of document text per map call; the reduce folds notes into batches of the same size. |
 | `max_answer_chars` | `int` | `8000` | Cap on the answer's length in characters; a longer answer is cut and ends with `…`. |
@@ -615,7 +616,9 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | `unsupported_citations` | `list[str]` | Citations the model wrote naming a chunk the passes did not read; removed from `answer`. |
 | `truncated` | `bool` | True when the documents needed more than `max_windows` windows and only the first were read. |
 | `abstain` | `bool` | True when there is no answer to give; `abstain_reason` says why. |
-| `abstain_reason` | `str` | `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents have none) or `empty_answer` (no letter or digit once unread citations are removed); empty otherwise. |
+| `abstain_reason` | `str` | `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents have none and no dataset was named), `needs_clarification` (a dataset's schema needs a person's answer: knowledge.dataset_approve), `ambiguous` (the model… |
+| `clarification` | `str` | With `ambiguous`, the question to ask; with `invalid_plan` or `needs_clarification`, what was wrong; empty otherwise. |
+| `calculations` | `list[SynthesizeCalculation]` | The calculation run over the datasets, cited in `answer` as `[knowledge.query#1]`. |
 | `model` | `str` | LLM that wrote the notes and the answer; empty when it abstained before any call. |
 
 ## `knowledge.update_metadata`

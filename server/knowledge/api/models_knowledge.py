@@ -10,8 +10,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from server.knowledge.api.models_query import (
+    MAX_DATASETS,
+    QueryDataset,
+    QueryReceipt,
+    QueryResultColumn,
+)
 from server.knowledge.domain.datasets import DatasetType
 from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
 from server.memory.domain.rerank_names import RerankName
@@ -384,13 +390,18 @@ class KnowledgeSynthesizeInput(BaseModel):
     """Complete a task over WHOLE documents, not a search slice:
     every active chunk of the named documents is read in order, in windows
     that respect section boundaries, each window is noted once, and the notes
-    are folded into the answer. For summaries and questions whose evidence is
-    spread across a long text."""
+    are folded into the answer. With datasets, the task is also answered by a
+    calculation over all their rows (knowledge.query), proposed by the model
+    from their schemas and checked and run by the server. For summaries and
+    questions whose evidence is spread across a long text or a table."""
 
     org: str
     namespace: str
-    # The documents to read in full (1-50); unknown URIs contribute nothing.
-    source_uris: list[str] = Field(min_length=1, max_length=50)
+    # The documents to read in full (up to 50); unknown URIs contribute nothing.
+    source_uris: list[str] = Field(default_factory=list, max_length=50)
+    # Datasets to calculate over (up to 4, as knowledge.query takes them); one plan is
+    # proposed for the task, checked against their schemas and run over every row.
+    datasets: list[QueryDataset] = Field(default_factory=list, max_length=MAX_DATASETS)
     # What to do with the documents: a question to answer or a summary to write.
     task: str = Field(min_length=1, max_length=4000)
     # Characters of document text per map call; the reduce folds notes into
@@ -401,6 +412,32 @@ class KnowledgeSynthesizeInput(BaseModel):
     # Cap on map calls; a corpus needing more is answered from the first
     # `max_windows` windows and `truncated` is set.
     max_windows: int = Field(default=64, ge=1, le=512)
+
+    @model_validator(mode="after")
+    def _reads_something(self) -> KnowledgeSynthesizeInput:
+        if not self.source_uris and not self.datasets:
+            raise ValueError("name source_uris, datasets or both")
+        aliases = [d.alias for d in self.datasets]
+        if len(set(aliases)) != len(aliases):
+            raise ValueError("each dataset needs an alias of its own")
+        return self
+
+
+class SynthesizeCalculation(BaseModel):
+    # How the answer cites it: `knowledge.query#1`.
+    citation: str
+    # The plan as validated (knowledge.query's fields, without org and namespace).
+    plan: dict[str, Any]
+    # The result's columns and rows, as knowledge.query returns them.
+    columns: list[QueryResultColumn]
+    rows: list[list[Any]]
+    # True when more rows matched than the plan's limit returned.
+    truncated: bool = False
+    # False when a dataset read is incomplete or rejected rows; `incomplete` says why.
+    complete: bool
+    incomplete: list[str] = Field(default_factory=list)
+    # The snapshots read and the statement run.
+    receipt: QueryReceipt
 
 
 class _CitedChunk(BaseModel):
@@ -437,9 +474,17 @@ class KnowledgeSynthesizeOutput(BaseModel):
     # True when there is no answer to give; `abstain_reason` says why.
     abstain: bool = False
     # `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents have
-    # none) or `empty_answer` (no letter or digit once unread citations are removed);
+    # none and no dataset was named), `needs_clarification` (a dataset's schema needs a
+    # person's answer: knowledge.dataset_approve), `ambiguous` (the model would need to ask
+    # first: `clarification`), `invalid_plan` (no plan it proposed held: `clarification`
+    # says why) or `empty_answer` (no letter or digit once unread citations are removed);
     # empty otherwise.
     abstain_reason: str = ""
+    # With `ambiguous`, the question to ask; with `invalid_plan` or `needs_clarification`,
+    # what was wrong; empty otherwise.
+    clarification: str = ""
+    # The calculation run over the datasets, cited in `answer` as `[knowledge.query#1]`.
+    calculations: list[SynthesizeCalculation] = Field(default_factory=list)
     # LLM that wrote the notes and the answer; empty when it abstained before any call.
     model: str = ""
 

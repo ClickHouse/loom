@@ -38,6 +38,8 @@ _SENTENCE_OR_LINE_RE = re.compile(r"(?<=[.!?])\s+|\n")
 _DECISION_ANCHOR = "You read a design document and list the design decisions"
 _SUPPORT_ANCHOR = "You check claims extracted from a design document"
 _CLAIM_ID_RE = re.compile(r'"id": "(\d+\.[a-z]\d*)"')
+# server.knowledge.domain.answer_plan's plan prompt: the fake's plan counts the rows.
+_PLAN_ANCHOR = "You turn a question about tabular datasets into a calculation plan"
 _STORED_ID_RE = re.compile(r'\{"id": "([^"]+)", "statement"')
 _SECTION_RE = re.compile(
     r"^\[section: (?P<name>[^\]]*)\]\n\n(?P<body>.*?)(?=\n\n\[section: |\Z)", re.M | re.S
@@ -243,6 +245,8 @@ class FakeLLMClient:
             synthesized = json.dumps(_decisions_from_sections(user))
         elif _SUPPORT_ANCHOR in system:
             synthesized = json.dumps(_support_verdicts(user))
+        elif _PLAN_ANCHOR in system:
+            synthesized = json.dumps({"plan": {"aggregates": [{"fn": "count", "name": "rows"}]}})
         elif _EXTRACTION_ANCHOR in system:
             payload = _extract_facts_from_user_prompt(
                 user, agent_rules=_AGENT_RULES_ANCHOR in system

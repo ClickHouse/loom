@@ -1,0 +1,255 @@
+"""knowledge.synthesize with datasets: the plan a model proposes is checked and
+run by knowledge.query, its result is cited evidence, and the answer abstains
+when a schema needs an answer, the model would need to ask first, or no plan
+it proposes holds. The calculation itself is tested in test_knowledge_query.py
+and against a real server in tests/integration/test_knowledge_query_live.py."""
+
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+from typing import Any
+
+import pydantic
+import pytest
+
+from server.core.errors import ValidationError
+from server.knowledge.api.models_knowledge import (
+    DatasetColumnOut,
+    DatasetOut,
+    KnowledgeDatasetGetOutput,
+    KnowledgeSynthesizeInput,
+)
+from server.knowledge.api.models_query import (
+    KnowledgeQueryOutput,
+    QueryReceipt,
+    QueryResultColumn,
+    QuerySnapshot,
+)
+from server.knowledge.domain import answer_plan as ap
+from server.memory.domain import corpus_synthesis as cs
+
+ORDERS = {"alias": "o", "source_uri": "repo://orders.csv", "dataset_id": "ds_orders"}
+
+
+# ---- the model's reply, the prompt and the evidence ------------------------------
+
+
+def test_a_reply_reads_as_a_plan_a_question_or_neither() -> None:
+    fenced = 'Here it is:\n```json\n{"plan": {"aggregates": [{"fn": "count", "name": "n"}]}}\n```'
+    assert ap.read_proposal(fenced).plan == {"aggregates": [{"fn": "count", "name": "n"}]}
+    asked = ap.read_proposal('{"ambiguous": "Which currency is amount in?"}')
+    assert (asked.plan, asked.ask) == (None, "Which currency is amount in?")
+    for text, why in (
+        ("no object here", "held no JSON object"),
+        ("{not json}", "was not JSON"),
+        ('{"answer": 3}', 'neither "plan" nor "ambiguous"'),
+    ):
+        assert why in ap.read_proposal(text).unreadable
+    # The datasets are the caller's: a plan cannot name its own.
+    swapped = ap.read_proposal('{"plan": {"datasets": [{"dataset_id": "theirs"}], "limit": 5}}')
+    assert swapped.plan == {"limit": 5}
+
+
+def test_the_prompt_lists_each_dataset_and_says_why_a_plan_was_refused() -> None:
+    schemas = [{"alias": "o", "name": "orders.csv", "row_count": 5,
+                "columns": [{"name": "amount", "type": "number"}]}]  # fmt: skip
+    prompt = ap.plan_prompt("Total amount?", schemas)
+    assert (
+        "QUESTION: Total amount?" in prompt
+        and "- o: orders.csv (5 rows); columns: amount (number)" in prompt
+    )
+    assert "refused" not in prompt
+    assert "Your last plan was refused: no column 'amt'" in ap.plan_prompt(
+        "t", schemas, "no column 'amt'"
+    )
+
+
+def test_evidence_shows_the_result_and_what_it_may_not_cover() -> None:
+    cols = [{"name": "team", "type": "string"}, {"name": "n", "type": "number"}]
+    rows = [[f"t{i}", i] for i in range(ap.MAX_EVIDENCE_ROWS + 5)]
+    text = ap.evidence(1, cols, rows, truncated=False, incomplete=["o: 2 rows were rejected"])
+    assert (
+        text.startswith("CALCULATION [knowledge.query#1]") and "team (string) | n (number)" in text
+    )
+    assert f"t{ap.MAX_EVIDENCE_ROWS - 1} | {ap.MAX_EVIDENCE_ROWS - 1}" in text
+    assert f"t{ap.MAX_EVIDENCE_ROWS} |" not in text
+    assert "NOTE: only the first 50 result rows are shown" in text
+    assert "NOTE: o: 2 rows were rejected" in text
+
+
+# ---- the handler -------------------------------------------------------------------
+
+
+class _LLM:
+    """Plans as scripted, in turn; the answer cites what it is told to."""
+
+    def __init__(self, plans: list[str], answer: str = "") -> None:
+        self.plans = plans
+        self.answer = answer
+        self.calls: list[tuple[str, str]] = []
+        self.model = "fake-synth"
+
+    async def complete(self, system: str, user: str, max_tokens: int = 1024, **kw: Any) -> Any:
+        self.calls.append((system, user))
+        if system == ap.PLAN_SYSTEM:
+            return SimpleNamespace(text=self.plans.pop(0))
+        return SimpleNamespace(text=self.answer)
+
+
+def _dataset(state: str = "inferred") -> DatasetOut:
+    asks = [{"code": "mixed_types", "column": "amount", "detail": "holds number, string values"}]
+    return DatasetOut(
+        dataset_id="ds_orders", source_uri="repo://orders.csv", name="orders.csv", sheet="",
+        row_start=1, row_end=6, revision=1, snapshot_id="41", schema_state=state,
+        columns=[DatasetColumnOut(name="amount", type="number", inferred="number", stored=True),
+                 DatasetColumnOut(name="spare", type="number", inferred="number", stored=False)],
+        clarifications=asks if state == "needs_clarification" else [],
+        row_count=5, rejected_rows=0, rejected=[], complete=True,
+    )  # fmt: skip
+
+
+def _result() -> KnowledgeQueryOutput:
+    snap = QuerySnapshot(alias="o", source_uri="repo://orders.csv", dataset_id="ds_orders",
+                         revision=1, snapshot_id="41", row_count=5, rejected_rows=0,
+                         complete=True, schema_state="inferred")  # fmt: skip
+    return KnowledgeQueryOutput(
+        columns=[QueryResultColumn(name="total", type="number")],
+        rows=[["120.8"]],
+        complete=True,
+        receipt=QueryReceipt(snapshots=[snap], plan={"aggregates": []}, sql="SELECT 1", params={}),
+    )
+
+
+class Stores:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, llm: _LLM) -> None:
+        import server.knowledge.app.synthesize as kh
+        import server.llm.client as llm_client
+
+        self.state = "inferred"
+        self.queries: list[Any] = []
+        self.refuse: list[str] = []
+
+        async def _over_cap(org: str, ns: str) -> bool:
+            return False
+
+        async def _get(input: Any) -> KnowledgeDatasetGetOutput:
+            return KnowledgeDatasetGetOutput(
+                found=True, revision=1, datasets=[_dataset(self.state)]
+            )
+
+        async def _query(input: Any) -> KnowledgeQueryOutput:
+            self.queries.append(input)
+            if self.refuse:
+                raise ValidationError(self.refuse.pop(0))
+            return _result()
+
+        monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
+        monkeypatch.setattr(kh, "handle_knowledge_dataset_get", _get)
+        monkeypatch.setattr(kh, "handle_knowledge_query", _query)
+        monkeypatch.setattr(llm_client, "get_llm_client", lambda: llm)
+
+
+async def _synthesize(**kw: Any) -> Any:
+    import server.knowledge.app.synthesize as kh
+
+    args = {"org": "o", "namespace": "n", "task": "What is the total amount?", "datasets": [ORDERS]}
+    return await kh.handle_knowledge_synthesize(KnowledgeSynthesizeInput(**{**args, **kw}))
+
+
+PLAN = json.dumps({"plan": {
+    "datasets": [{"source_uri": "repo://theirs.csv", "dataset_id": "theirs"}],
+    "aggregates": [{"fn": "sum", "column": {"dataset": "o", "column": "amount"}, "name": "total"}],
+}})  # fmt: skip
+
+
+@pytest.mark.asyncio
+async def test_a_plan_the_model_proposes_runs_on_the_callers_datasets_and_is_cited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm = _LLM([PLAN], answer="The total is 120.8 [knowledge.query#1] [knowledge.query#2].")
+    stores = Stores(monkeypatch, llm)
+    out = await _synthesize()
+    (query,) = stores.queries
+    # The model named another dataset; the plan runs on the caller's, in its scope.
+    assert [(d.source_uri, d.dataset_id) for d in query.datasets] == [
+        ("repo://orders.csv", "ds_orders")
+    ]
+    assert (query.org, query.namespace) == ("o", "n")
+    plan_prompt = llm.calls[0][1]
+    assert "amount (number)" in plan_prompt and "spare" not in plan_prompt  # stored columns only
+    reduce_user = llm.calls[1][1]
+    assert "CALCULATION [knowledge.query#1]" in reduce_user and "120.8" in reduce_user
+    # One calculation was run: a citation of a second is no citation.
+    assert out.answer == "The total is 120.8 [knowledge.query#1]."
+    assert (out.citations, out.unsupported_citations) == (
+        ["knowledge.query#1"],
+        ["knowledge.query#2"],
+    )
+    (calc,) = out.calculations
+    assert (calc.citation, calc.rows, calc.receipt.snapshots[0].snapshot_id) == (
+        "knowledge.query#1",
+        [["120.8"]],
+        "41",
+    )
+    assert out.cited_chunks == [] and not out.abstain and out.model == "fake-synth"
+
+
+@pytest.mark.asyncio
+async def test_a_task_the_model_finds_ambiguous_abstains_with_the_question_to_ask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm = _LLM(['{"ambiguous": "Gross or net amount?"}'])
+    stores = Stores(monkeypatch, llm)
+    out = await _synthesize()
+    assert (out.abstain, out.abstain_reason, out.clarification) == (
+        True,
+        "ambiguous",
+        "Gross or net amount?",
+    )
+    assert stores.queries == [] and len(llm.calls) == 1 and out.answer == ""
+
+
+@pytest.mark.asyncio
+async def test_a_refused_plan_is_proposed_again_once_with_why_then_abstains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm = _LLM(["not json", PLAN], answer="Total [knowledge.query#1]")
+    stores = Stores(monkeypatch, llm)
+    out = await _synthesize()
+    assert "Your last plan was refused: the reply held no JSON object" in llm.calls[1][1]
+    assert out.calculations and not out.abstain
+    # A plan the wire model refuses and one the schemas refuse: both are told back.
+    llm = _LLM([json.dumps({"plan": {"aggregates": [{"fn": "median", "name": "m"}]}}), PLAN])
+    stores = Stores(monkeypatch, llm)
+    stores.refuse = ["dataset 'o' has no column 'amount'"]
+    out = await _synthesize()
+    assert "aggregates.0.fn" in llm.calls[1][1]
+    assert (out.abstain_reason, out.clarification) == (
+        "invalid_plan",
+        "dataset 'o' has no column 'amount'",
+    )
+    assert len(stores.queries) == 1  # the first plan never reached the query
+
+
+@pytest.mark.asyncio
+async def test_a_schema_that_needs_an_answer_abstains_before_any_model_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm = _LLM([PLAN])
+    stores = Stores(monkeypatch, llm)
+    stores.state = "needs_clarification"
+    out = await _synthesize()
+    assert (out.abstain, out.abstain_reason) == (True, "needs_clarification")
+    assert "(mixed_types amount): knowledge.dataset_approve" in out.clarification
+    assert llm.calls == [] and stores.queries == []
+
+
+def test_a_task_needs_documents_or_datasets_each_with_an_alias_of_its_own() -> None:
+    with pytest.raises(pydantic.ValidationError, match="name source_uris, datasets or both"):
+        KnowledgeSynthesizeInput(org="o", namespace="n", task="t")
+    with pytest.raises(pydantic.ValidationError, match="an alias of its own"):
+        KnowledgeSynthesizeInput(org="o", namespace="n", task="t", datasets=[ORDERS, ORDERS])
+    assert cs.ground_citations("x [knowledge.query#1]", {(ap.CALCULATION_SOURCE, 1)})[1] == [
+        "knowledge.query#1"
+    ]

@@ -11116,7 +11116,8 @@ class KnowledgeSynthesizeInput(TypedDict, total=False):
 
     org: Required[str]
     namespace: Required[str]
-    source_uris: Required[list[str]]
+    source_uris: NotRequired[list[str]]
+    datasets: NotRequired[list["QueryDataset"]]
     task: Required[str]
     window_chars: NotRequired[int]
     max_answer_chars: NotRequired[int]
@@ -11128,7 +11129,8 @@ class KnowledgeSynthesizeBody(TypedDict, total=False):
 
     org: NotRequired[str]
     namespace: NotRequired[str]
-    source_uris: Required[list[str]]
+    source_uris: NotRequired[list[str]]
+    datasets: NotRequired[list["QueryDataset"]]
     task: Required[str]
     window_chars: NotRequired[int]
     max_answer_chars: NotRequired[int]
@@ -11147,6 +11149,8 @@ class KnowledgeSynthesizeOutput(TypedDict, total=False):
     truncated: NotRequired[bool]
     abstain: NotRequired[bool]
     abstain_reason: NotRequired[str]
+    clarification: NotRequired[str]
+    calculations: NotRequired[list["SynthesizeCalculation"]]
     model: NotRequired[str]
 
 
@@ -11155,6 +11159,17 @@ class CitedChunk(TypedDict, total=False):
     chunk_idx: Required[int]
     revision: NotRequired[int]
     locator: NotRequired[Optional[dict[str, Any]]]
+
+
+class SynthesizeCalculation(TypedDict, total=False):
+    citation: Required[str]
+    plan: Required[dict[str, Any]]
+    columns: Required[list["QueryResultColumn"]]
+    rows: Required[list[list[Any]]]
+    truncated: NotRequired[bool]
+    complete: Required[bool]
+    incomplete: NotRequired[list[str]]
+    receipt: Required["QueryReceipt"]
 
 
 class KnowledgeUpdateMetadataInput(TypedDict, total=False):
