@@ -68,7 +68,8 @@ def _above_excerpt_k(input: Any) -> bool:
 def _apply_large_k_body_default(input: Any) -> Any:
     """A request above `memory_search_excerpt_bodies_k` that
     pinned no `bodies` reads the excerpt tier — keys, types and scores are
-    the same, the clip is memory_search_excerpt_chars long. A caller that
+    the same, the clip is memory_search_excerpt_chars long, and a decision or
+    constraint keeps its stored clip (`_apply_bodies`). A caller that
     pinned any tier (full included), a recipe that set one, and every
     in-process reader that passes `bodies` are untouched; so is every k at
     or below the threshold. Applied once: the copy marks `bodies` as set."""

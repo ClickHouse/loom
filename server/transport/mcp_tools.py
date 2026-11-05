@@ -179,7 +179,8 @@ def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
                         "default": "excerpt",
                         "description": (
                             "How much of each memory body to return: excerpt (200 chars, "
-                            "the default; fetch the rest with memory.get), full (the "
+                            "a decision or constraint as stored; the default; fetch the "
+                            "rest with memory.get), full (the "
                             "1,200-char stored clip), unit (whole stored values by rank "
                             "until body_budget_tokens), or none "
                             "(keys and scores only)."

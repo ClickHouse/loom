@@ -298,8 +298,8 @@ class MemorySearchInput(BaseModel):
     # body is context the agent can be made to repeat, so a
     # caller that only needs to know WHAT matched should not receive it.
     #   "full"    — content_excerpt as stored (write-time clip; the default).
-    #   "excerpt" — the first LOOM_MEMORY_SEARCH_EXCERPT_CHARS (200) chars, a
-    #               decision or constraint row its stored clip whole;
+    #   "excerpt" — the first LOOM_MEMORY_SEARCH_EXCERPT_CHARS (200) chars; a
+    #               decision or constraint row keeps its stored clip;
     #               memory.get fetches the rest on demand, and is itself a
     #               recorded exposure.
     #   "none"    — keys, types and scores only.
