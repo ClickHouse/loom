@@ -1361,7 +1361,7 @@
           "maximum": 49,
           "minimum": 1,
           "type": "integer",
-          "description": "Changed paths the `rationale` section reads. Below the 50 files a brief stores, so a PR with more always leaves one unread and the section is never `clear`."
+          "description": "Changed paths the `rationale` section reads. Below the 50 files a brief stores, so a PR with more always leaves one unread and `rationale` is never `clear` for it."
         },
         "code_review_brief_rationale_rows": {
           "default": 8,

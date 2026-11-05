@@ -2104,7 +2104,8 @@ settings:
   # code_review_brief_mirror_miss_ttl_s: 600.0
 
   # Changed paths the `rationale` section reads. Below the 50 files a brief stores, so a
-  # PR with more always leaves one unread and the section is never `clear`. [live]
+  # PR with more always leaves one unread and `rationale` is never `clear` for it.
+  # [live]
   # code_review_brief_rationale_paths: 10
 
   # Decision and constraint rows the `rationale` section serves. [live]

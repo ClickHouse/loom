@@ -1703,7 +1703,7 @@ class CodeSettings(BaseModel):
     # (the mirror may have fetched it); a hit is kept.
     code_review_brief_mirror_miss_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
     # Changed paths the `rationale` section reads. Below the 50 files a brief stores, so a
-    # PR with more always leaves one unread and the section is never `clear`.
+    # PR with more always leaves one unread and `rationale` is never `clear` for it.
     code_review_brief_rationale_paths: Annotated[int, LIVE] = Field(default=10, ge=1, le=49)
     # Decision and constraint rows the `rationale` section serves.
     code_review_brief_rationale_rows: Annotated[int, LIVE] = Field(default=8, ge=1, le=50)
