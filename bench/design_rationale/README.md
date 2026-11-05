@@ -2,9 +2,9 @@
 
 Measures whether the design decisions Loom serves from a repository's design documents
 keep a coding agent from re-proposing rejected options, and whether the agent answers
-"why" questions correctly, cited, and without stale or invented rationale. The manual is
-`python -m bench.design_rationale --help`; this page holds the arms, the task-set schema
-and the outputs.
+"why" and "how does this feature work" questions correctly, cited, and without stale or
+invented rationale. The manual is `python -m bench.design_rationale --help`; this page
+holds the arms, the task-set schema and the outputs.
 
 The real task set is private material and is never committed. The harness reads a task
 set from the directory given on the command line; `example/` is a small synthetic one
@@ -20,6 +20,7 @@ set from the directory given on the command line; `example/` is a small syntheti
 | 3   | The gold rows, through the pre-edit block (`memory.for_file` for each file the task touches) and the memory section of `loom_search`                                  |
 | 4   | The same surfaces over the rows `loom decisions extract --apply` mined from the documents, or with `--arm4-namespace` the rows a document source's sync already wrote |
 | 5   | The gold rows through the memory section of `loom_search` only                                                                                                        |
+| 6   | Arm 4's surfaces with the knowledge hits of the same `loom_search` beside its memory section: the documents and the rows mined from them, served together             |
 
 An extracted row names code by its names. Its files, which give it a pre-edit block,
 come from the repository's code index: with `--code-index` (a Loom that indexes the
@@ -27,14 +28,22 @@ repository, its org and namespace) each name is looked up with read-only `code.s
 calls and a name with one defining file that is not a test or a page links the row to
 that file, the rule `loom decisions extract --repo` applies. The harness's own Loom has
 no code index, and an arm's org must not hold one another arm reads. Without
-`--code-index` arm 4 reads no pre-edit block and is served through `loom_search` only,
-and arm 5 is added so that arm 4 is compared with gold rows served the same way (the
-report then leaves out arm 4 against arm 3). With `--arm4-namespace` the sync's rows
-keep the files it linked, arm 4 reads the pre-edit block and is compared with arm 3.
+`--code-index` arms 4 and 6 read no pre-edit block and are served through `loom_search`
+only, and arm 5 is added so that they are compared with gold rows served the same way
+(the report then leaves out arms 4 and 6 against arm 3). With `--arm4-namespace` the
+sync's rows keep the files it linked, and arms 4 and 6 read the pre-edit block and are
+compared with arm 3; arm 6's knowledge hits are then the documents the sync wrote to
+that namespace. The `arm4` names (`--arm4-namespace`, the `arm4_files` run flag, the
+`arm4_rows_*`, `arm4_extract_failures` and `arm4_code_lookups_failed` treatment keys)
+cover both extracted arms: arms 4 and 6 serve the same rows.
+
+For each of arms 2 and 6 that runs, the treatment check's `arm<N>_knowledge_served`
+counts the tasks with gold rows whose own document's `source_uri` is among the knowledge
+hits shown.
 
 Each role's namespace lives in an org of its own: `<org>-<prefix>-<role>`, the prefix
 `dr-<hex>` fixed per run, since a search and the cost readback read a whole org. The
-gold rows are never written where arm 4 extracts. A namespace given with
+gold rows are never written where the extracted rows are. A namespace given with
 `--arm4-namespace` is the exception: it is read in `--org` itself, the harness neither
 registers nor erases it, and its server spend is not read back (its daily cost cap, if
 any, is the deployment's).
@@ -69,11 +78,11 @@ run, whose erasure is refused, rerun the same command with the admin token, or r
 `loom namespaces-gc` command it printed.
 
 The server is a Loom server (and its ClickHouse) you started for this run, never one
-found listening, with real providers and the server's environment in the shell: arm 4
-runs `loom decisions extract` in a child process, on the model those settings name. The
-dry run prints the calls, tokens and spend, typical and at every output cap. Each task
-is answered K times per arm, each answer judged in both orders and twice per order; arms
-are compared paired per task with a bootstrap over documents, and each comparison
+found listening, with real providers and the server's environment in the shell: arms 4
+and 6 run `loom decisions extract` in a child process, on the model those settings name.
+The dry run prints the calls, tokens and spend, typical and at every output cap. Each
+task is answered K times per arm, each answer judged in both orders and twice per order;
+arms are compared paired per task with a bootstrap over documents, and each comparison
 reports its minimum detectable effect.
 
 ## Task kinds
@@ -89,6 +98,8 @@ reports its minimum detectable effect.
   revision of the document reversed: serving the stale statement as governing fails. An
   abstention task asks about something no document records: an answer that does not
   abstain, or that invents a rationale, fails.
+- **D, feature questions.** How a feature works, its limits, what must stay compatible
+  and what depends on it. Scored like A, against the gold facts of the document.
 
 ## Directory layout
 
@@ -122,14 +133,15 @@ reports its minimum detectable effect.
 | `image_only`                                          | Its source section carries no extractable text (counted per document in `score --extraction-labels`)                                                 |
 
 `tasks.json` holds `"system"` (how the prompts name the code base) and the lists `"A"`,
-`"B"`, `"C"`. Every task has `id` (without `/`), `document` and `gold_rows` (keys of
-`gold_rows.json`; an empty list for an abstention task).
+`"B"`, `"C"`, `"D"`. Every task has `id` (without `/`), `document` and `gold_rows` (keys
+of `gold_rows.json`; an empty list for an abstention task).
 
 | Kind | Fields                                                                                                                                                   |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A    | `question`, `gold_arguments` (list), `rejected_options` (list)                                                                                           |
+| A    | `question`, `gold_arguments` (a non-empty list), `rejected_options` (list)                                                                               |
 | B    | `task`, `gold_constraints`, `forbidden_options`, `detector` (list; a `judge` detector carries the rubric)                                                |
 | C    | `question`, `subtype` (`supersession` or `abstention`); a supersession task adds `current` (the design now) and `stale_claims` (the reversed statements) |
+| D    | `question`, `gold_facts` (a non-empty list)                                                                                                              |
 
 A detector is one of:
 
@@ -144,7 +156,7 @@ A changed default is caught with a `diff_added_regex` whose `path_glob` names th
 and whose `pattern` matches the declaration line with a value other than the old one.
 
 A detector that fires is a failure of the task. The paths detectors name are also the
-files whose pre-edit block arms 3 and 4 read. The harness applies no patch and runs no
+files whose pre-edit block arms 3, 4 and 6 read. The harness applies no patch and runs no
 test, so a change's test pass rate is not measured.
 
 ## Outputs

@@ -91,5 +91,22 @@
       "question": "Why does the thumbnail encoder use quality 82 for JPEG output?",
       "gold_rows": []
     }
+  ],
+  "D": [
+    {
+      "id": "D1",
+      "document": "thumbnail-cache",
+      "question": "How does the thumbnail cache evict entries, and what limits its size?",
+      "gold_rows": [
+        "design/thumbnail-cache/segmented-lru",
+        "design/thumbnail-cache/size-with-memory-limit"
+      ],
+      "gold_facts": [
+        "a probation segment holds entries seen once",
+        "a protected segment holds entries hit twice or more, capped at 80% of the cache",
+        "thumb_cache_bytes defaults to 512 MiB",
+        "the cache grows only with the container memory limit: the renderer needs 1 GiB of headroom"
+      ]
+    }
   ]
 }

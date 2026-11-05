@@ -20,7 +20,17 @@ from typing import Any
 
 from bench.bootstrap import paired_bootstrap
 from bench.design_rationale.llm import cost_usd, price, read_ledger
-from bench.design_rationale.taskset import TaskSet, parse_key, parse_sample, surface_key
+from bench.design_rationale.taskset import (
+    EXTRACTED_ARMS,
+    GOLD_LIST,
+    KINDS,
+    KNOWLEDGE_ARMS,
+    MEMORY_ARMS,
+    TaskSet,
+    parse_key,
+    parse_sample,
+    surface_key,
+)
 
 # z(0.975) + z(0.80): the effect a two-sided 5% test detects with 80% power is this many
 # standard errors.
@@ -29,13 +39,29 @@ MDE_Z = 1.96 + 0.84
 # run has a spread of its own: a pass/fail outcome averaged over K samples.
 PLANNING_SD = 0.35
 # (treatment arm, reference arm) pairs reported when both ran. Arm 4 against arm 5 is
-# the like-for-like comparison when arm 4 had no code index (no pre-edit block).
-COMPARISONS = ((3, 0), (4, 0), (4, 3), (4, 5), (1, 0), (1, 3), (2, 3))
+# the like-for-like comparison when the extracted rows had no files (no pre-edit block).
+# Arm 6 against arms 2 and 4 asks whether serving the documents beside the extracted
+# rows adds to either alone; against arm 3 (or arm 5 without files, as for arm 4), how
+# far both together stay from the gold rows.
+COMPARISONS = (
+    (3, 0),
+    (4, 0),
+    (4, 3),
+    (4, 5),
+    (1, 0),
+    (1, 3),
+    (2, 3),
+    (6, 2),
+    (6, 4),
+    (6, 3),
+    (6, 5),
+)
 # The keys a verdict must carry to be read; one without them is unreadable, not a pass.
 REQUIRED = {
     "A": ("claims", "gold_covered", "potentially_misleading"),
     "B": ("forbidden_proposed", "constraints_violated"),
     "C": ("stale_served", "abstained", "invented_rationale"),
+    "D": ("claims", "gold_covered", "potentially_misleading"),
 }
 # The run flags a summary publishes; the org and an --arm4-namespace name a deployment.
 SUMMARY_FLAGS = (
@@ -53,6 +79,7 @@ HEADLINE = {
     "A": ("precision", "recall"),
     "B": ("avoids", "satisfies"),
     "C": ("passed",),
+    "D": ("precision", "recall"),
 }
 # The change-task fields a fired detector decides: a human label on them says nothing about
 # the judge. `detector_fired` is never the judge's at all.
@@ -122,10 +149,10 @@ def pass_metrics(
         "citations": len(entry["citations"]),
         "citations_good": len(good),
     }
-    if kind == "A":
+    if kind in GOLD_LIST:
         claims = verdict.get("claims") or []
         correct = sum(c.get("verdict") == "correct" for c in claims)
-        gold_n = len(task["gold_arguments"])
+        gold_n = len(task[GOLD_LIST[kind]])
         covered = {
             i for i in verdict.get("gold_covered") or [] if isinstance(i, int) and 0 <= i < gold_n
         }
@@ -144,7 +171,7 @@ def pass_metrics(
                 "claims": len(claims),
                 "correct": correct,
                 "precision": correct / len(claims) if claims else None,
-                "recall": len(covered) / gold_n if gold_n else None,
+                "recall": len(covered) / gold_n,
                 "misleading": float(bool(verdict.get("potentially_misleading"))),
                 "abstained": float(bool(verdict.get("abstained"))),
                 "claims_cited": cited_ok,
@@ -219,19 +246,23 @@ def unreadable(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, int]]
 # ---------------------------------------------------------------- per task and arm
 
 
-def a_answers_without_claims(ts: TaskSet, judged: dict[str, Any]) -> dict[int, float]:
-    """arm -> the share of scored A answers with no claim in any readable pass: the
-    answers A precision leaves out."""
-    tasks = {t["id"]: t for t in ts.tasks.get("A", [])}
-    counts: dict[int, list[bool]] = defaultdict(list)
+def answers_without_claims(ts: TaskSet, judged: dict[str, Any]) -> dict[str, dict[int, float]]:
+    """kind -> arm -> the share of scored answers with no claim in any readable pass, for
+    the kinds scored against a gold list: the answers their precision leaves out."""
+    tasks = {t["id"]: (kind, t) for kind in GOLD_LIST for t in ts.tasks.get(kind, [])}
+    counts: dict[str, dict[int, list[bool]]] = defaultdict(lambda: defaultdict(list))
     for key, entry in judged.items():
         tid, arm = parse_key(key)
         if tid not in tasks:
             continue
-        m = answer_metrics("A", tasks[tid], entry)
+        kind, task = tasks[tid]
+        m = answer_metrics(kind, task, entry)
         if m:
-            counts[arm].append(m.get("precision") is None)
-    return {arm: round(sum(v) / len(v), 4) for arm, v in sorted(counts.items())}
+            counts[kind][arm].append(m.get("precision") is None)
+    return {
+        kind: {arm: round(sum(v) / len(v), 4) for arm, v in sorted(by_arm.items())}
+        for kind, by_arm in sorted(counts.items())
+    }
 
 
 def per_task(ts: TaskSet, judged: dict[str, Any]) -> dict[int, dict[str, dict[str, Any]]]:
@@ -258,6 +289,7 @@ def arm_summary(rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
         ("A", ("precision", "recall", "misleading", "abstained")),
         ("B", ("avoids", "satisfies", "pushed_back", "detector_fired")),
         ("C", ("passed", "current_stated", "stale", "abstention_failed")),
+        ("D", ("precision", "recall", "misleading", "abstained")),
     ):
         mine = [r for r in rows.values() if r["kind"] == kind]
         if not mine:
@@ -268,8 +300,8 @@ def arm_summary(rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
             out[kind][m] = round(mean(vals), 4) if vals else None
     n = sum(r.get("citations") or 0 for r in rows.values())
     good = sum(r.get("citations_good") or 0 for r in rows.values())
-    claims = sum(r.get("claims") or 0 for r in rows.values() if r["kind"] == "A")
-    cited = sum(r.get("claims_cited") or 0 for r in rows.values() if r["kind"] == "A")
+    claims = sum(r.get("claims") or 0 for r in rows.values() if r["kind"] in GOLD_LIST)
+    cited = sum(r.get("claims_cited") or 0 for r in rows.values() if r["kind"] in GOLD_LIST)
     out["citation_precision"] = round(good / n, 4) if n else None
     out["citation_recall"] = round(cited / claims, 4) if claims else None
     return out
@@ -279,14 +311,14 @@ def compare(
     ts: TaskSet, tasks_by_arm: dict[int, dict[str, dict[str, Any]]], arm4_files: bool
 ) -> list[dict[str, Any]]:
     """Paired per-task deltas (treatment minus reference) with a bootstrap over
-    documents and the MDE the run's own spread implies. Arm 4 without files is compared
-    with arm 5, not with arm 3, whose pre-edit block it lacks."""
+    documents and the MDE the run's own spread implies. Arms 4 and 6 without files are
+    compared with arm 5, not with arm 3, whose pre-edit block they lack."""
     out: list[dict[str, Any]] = []
     docs = {t["id"]: t["document"] for _, t in ts.all_tasks()}
     for treat, ref in COMPARISONS:
         if treat not in tasks_by_arm or ref not in tasks_by_arm:
             continue
-        if (treat, ref) == (4, 3) and not arm4_files:
+        if treat in EXTRACTED_ARMS and ref == 3 and not arm4_files:
             continue
         for kind, metrics in HEADLINE.items():
             for metric in metrics:
@@ -350,23 +382,27 @@ def token_summary(surf: dict[str, Any], arms: list[int]) -> dict[int, dict[str, 
 
 def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     """Proof the arms did what they mean, per surface: the tasks whose pre-edit block,
-    and whose loom_search section, served a row (for arm 3 and 5, one of the task's own
-    gold rows); for arm 4 the rows extracted, the rows given files, the failed runs."""
+    and whose loom_search section, served a row (for arms 3 and 5, one of the task's own
+    gold rows; for arms 4 and 6, any extracted row); for arms 2 and 6 the tasks whose
+    knowledge hits held the task's own document; and the rows extracted, the rows given
+    files and the failed runs."""
     out: dict[str, Any] = {}
     tasks = [t for _, t in ts.all_tasks()]
     arm4_files = (state.get("flags") or {}).get("arm4_files", True)
-    for arm in (3, 4, 5):
+    for arm in MEMORY_ARMS:
         rows = [
             (t, surf[surface_key(t["id"], arm)]) for t in tasks if surface_key(t["id"], arm) in surf
         ]
         if not rows:
             continue
         for surface in ("for_file_keys", "search_keys"):
-            if surface == "for_file_keys" and (arm == 5 or (arm == 4 and not arm4_files)):
+            if surface == "for_file_keys" and (
+                arm == 5 or (arm in EXTRACTED_ARMS and not arm4_files)
+            ):
                 continue  # this arm reads no pre-edit block
-            # Tasks with gold rows only: an abstention task has nothing to serve. Arm
-            # 4's rows have keys of their own, so any row it served counts.
-            if arm == 4:
+            # Tasks with gold rows only: an abstention task has nothing to serve. Arms 4
+            # and 6 serve rows with keys of their own, so any row they served counts.
+            if arm in EXTRACTED_ARMS:
                 hits = [bool(r.get(surface)) for t, r in rows if t.get("gold_rows")]
             else:
                 hits = [
@@ -375,6 +411,18 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
                     if t.get("gold_rows")
                 ]
             out[f"arm{arm}_{surface.removesuffix('_keys')}_served"] = f"{sum(hits)}/{len(hits)}"
+    for arm in KNOWLEDGE_ARMS:
+        # The tasks whose knowledge hits include a section of the task's own document
+        # (any version of it: a revision shares the source_uri). Tasks with gold rows only,
+        # as above: an abstention task asks about what no document records.
+        rows = [
+            (t, surf[surface_key(t["id"], arm)])
+            for t in tasks
+            if t.get("gold_rows") and surface_key(t["id"], arm) in surf
+        ]
+        if rows:
+            hits = [ts.document_of(t).source_uri in r["knowledge_uris"] for t, r in rows]
+            out[f"arm{arm}_knowledge_served"] = f"{sum(hits)}/{len(hits)}"
     extraction = state.get("extraction") or {}
     if extraction:
         # A key the run over a revision reported again is one row.
@@ -397,7 +445,7 @@ def judge_stability(ts: TaskSet, judged: dict[str, Any]) -> dict[str, Any]:
     between its repeats, and between judge models. A change answer whose detector fired
     is decided by the detector, so its passes cannot disagree: it is left out."""
     tasks = {t["id"]: (kind, t) for kind, t in ts.all_tasks()}
-    headline = {"A": "misleading", "B": "avoids", "C": "passed"}
+    headline = {"A": "misleading", "B": "avoids", "C": "passed", "D": "misleading"}
     agree: dict[str, list[bool]] = defaultdict(list)
     for key, entry in judged.items():
         tid, _arm = parse_key(key)
@@ -541,7 +589,7 @@ def score(
         "treatment": treatment_check(ts, surf, state),
         "judge_stability": judge_stability(ts, judged),
         "unreadable": unreadable(ts, judged),
-        "a_answers_without_claims": a_answers_without_claims(ts, judged),
+        "answers_without_claims": answers_without_claims(ts, judged),
         "per_task": by_arm,
     }
     if human:
@@ -570,7 +618,7 @@ def summary(ts: TaskSet, metrics: dict[str, Any], out_dir: Path) -> dict[str, An
         # A document can be revised more than once: entries and distinct bases.
         "revisions": sum(1 for d in ts.documents.values() if d.revision_of),
         "revised_documents": len({d.revision_of for d in ts.documents.values() if d.revision_of}),
-        "tasks": {kind: len(ts.tasks.get(kind, [])) for kind in ("A", "B", "C")},
+        "tasks": {kind: len(ts.tasks.get(kind, [])) for kind in KINDS},
         "c_subtypes": dict(sorted(subtypes.items())),
         "tasks_with_gold_rows": sum(1 for _, t in ts.all_tasks() if t["gold_rows"]),
     }
@@ -619,38 +667,52 @@ def _pct(v: float | None) -> str:
     return "-" if v is None else f"{v * 100:.1f}"
 
 
+def _signed(x: float) -> str:
+    """A share as signed points; a bootstrap bound of -0.0 prints as +0.0."""
+    return f"{round(x * 100, 1) + 0.0:+.1f}"
+
+
 def report(m: dict[str, Any]) -> str:
     """The aggregate numbers as markdown: per arm, per kind, no task text."""
+    columns = [
+        ("A", "precision", "A precision"),
+        ("A", "recall", "A recall"),
+        ("A", "misleading", "A misleading"),
+        ("A", "abstained", "A abstains"),
+        ("B", "avoids", "B avoids"),
+        ("B", "satisfies", "B satisfies"),
+        ("C", "passed", "C passes"),
+        ("C", "current_stated", "C states current"),
+        ("D", "precision", "D precision"),
+        ("D", "recall", "D recall"),
+        ("D", "misleading", "D misleading"),
+        ("D", "abstained", "D abstains"),
+    ]
+    head = [name for _, _, name in columns] + ["Citation precision", "Citation recall"]
     lines = [
-        "| Arm | A precision | A recall | A misleading | B avoids | B satisfies | "
-        "C passes | C states current | Citation precision | Citation recall |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Arm | " + " | ".join(head) + " |",
+        "| --- |" + " ---: |" * len(head),
     ]
     for arm, s in m["arms"].items():
-        a, b, c = s.get("A", {}), s.get("B", {}), s.get("C", {})
-        lines.append(
-            f"| {arm} | {_pct(a.get('precision'))} | {_pct(a.get('recall'))} | "
-            f"{_pct(a.get('misleading'))} | {_pct(b.get('avoids'))} | "
-            f"{_pct(b.get('satisfies'))} | {_pct(c.get('passed'))} | "
-            f"{_pct(c.get('current_stated'))} | "
-            f"{_pct(s.get('citation_precision'))} | {_pct(s.get('citation_recall'))} |"
-        )
+        cells = [_pct(s.get(kind, {}).get(metric)) for kind, metric, _ in columns]
+        cells += [_pct(s.get("citation_precision")), _pct(s.get("citation_recall"))]
+        lines.append(f"| {arm} | " + " | ".join(cells) + " |")
     lines += [
         "",
         "| Treatment vs reference | Kind | Metric | n (clusters) | Delta | 95% interval | MDE |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | ---: | ---: | --- | ---: |",
     ]
     for c in m["comparisons"]:
         mde = "-" if c["mde"] is None else f"{c['mde'] * 100:.1f}"
         lines.append(
             f"| {c['treatment']} vs {c['reference']} | {c['kind']} | {c['metric']} | "
-            f"{c['n']} ({c['clusters']}) | {c['delta'] * 100:+.1f} | "
-            f"{c['lb'] * 100:+.1f} .. {c['ub'] * 100:+.1f} | {mde} |"
+            f"{c['n']} ({c['clusters']}) | {_signed(c['delta'])} | "
+            f"{_signed(c['lb'])} .. {_signed(c['ub'])} | {mde} |"
         )
     lines += [
         "",
         "| Arm | Injected tokens per task (mean, max) | Pre-edit calls | Pre-edit max |",
-        "| --- | --- | --- | --- |",
+        "| --- | ---: | ---: | ---: |",
     ]
     for arm, t in m["tokens"].items():
         lines.append(

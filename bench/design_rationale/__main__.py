@@ -1,5 +1,6 @@
 """Design-rationale bench: does design knowledge served by Loom keep a coding agent from
-re-proposing rejected options, and does it answer "why" questions correctly and cited?
+re-proposing rejected options, and does it answer "why" and "how does this feature work"
+questions correctly and cited?
 
     PYTHONPATH=$PWD .venv/bin/python -m bench.design_rationale run <taskset> \\
         --out <dir> --dry-run
@@ -16,15 +17,18 @@ whole document through knowledge.get; 2 the document as knowledge through loom_s
 the gold rows through the pre-edit block (memory.for_file) and the loom_search memory
 section; 4 the same surfaces over the rows `loom decisions extract` mined from the
 documents (or, with --arm4-namespace, rows a document source's sync wrote); 5 the gold
-rows through the loom_search memory section only, added whenever arm 4 has no files.
+rows through the loom_search memory section only, added whenever arm 4 or 6 runs
+without files; 6 arm 4's surfaces with the knowledge hits of the same loom_search beside
+them.
 
-Arm 4's rows name code by its names; the files that give them a pre-edit block come from
-a code index of the repository (--code-index: read-only code.symbol calls on the Loom
-that indexes it, with the extractor's own rule: one defining file that is not a test or
-a page). Without one (and without --arm4-namespace), arm 4 is served through loom_search
-only, and arm 5 is added so that arm 4 is compared with gold rows served the same way.
+The extracted rows (arms 4 and 6) name code by its names; the files that give them a
+pre-edit block come from a code index of the repository (--code-index: read-only
+code.symbol calls on the Loom that indexes it, with the extractor's own rule: one
+defining file that is not a test or a page). Without one (and without --arm4-namespace),
+arms 4 and 6 are served through loom_search only, and arm 5 is added so that they are
+compared with gold rows served the same way.
 
-`run --dry-run` needs no server: it reads the task set and, with arm 4, this
+`run --dry-run` needs no server: it reads the task set and, with arm 4 or 6, this
 environment's server settings (the extraction's model), and prints the calls, tokens and
 spend a run would take. A real run needs a Loom server (and its ClickHouse) you started
 for this run, with the server's environment in this shell (the extraction runs the CLI
@@ -47,7 +51,7 @@ from pathlib import Path
 from bench.design_rationale import run as runner
 from bench.design_rationale import score as scorer
 from bench.design_rationale.llm import Ledger, Model, ProviderComplete, Reply, price
-from bench.design_rationale.taskset import TaskSetError, load
+from bench.design_rationale.taskset import EXTRACTED_ARMS, TaskSetError, load
 
 
 def _arms(text: str) -> list[int]:
@@ -100,8 +104,9 @@ def parser() -> argparse.ArgumentParser:
         "--arms",
         type=_arms,
         default=[0, 1, 2, 3, 4],
-        help="Comma list of arms (default 0,1,2,3,4; 5 is added when arm 4 has no "
-        "files: no --code-index or --arm4-namespace)",
+        help="Comma list of arms (default 0,1,2,3,4; 5 is added when arm 4 or 6 has no "
+        "files: no --code-index or --arm4-namespace; 6 serves arm 4's rows with the "
+        "documents' knowledge hits)",
     )
     r.add_argument(
         "--k",
@@ -146,7 +151,8 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--code-index",
         default="",
-        help="Base URL of the Loom whose code index resolves arm 4's code names",
+        help="Base URL of the Loom whose code index resolves the extracted rows' code names "
+        "(arms 4 and 6)",
     )
     r.add_argument("--code-index-org", default="")
     r.add_argument("--code-index-namespace", default="")
@@ -154,7 +160,7 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--arm4-namespace",
         default="",
-        help="Serve arm 4 from rows a document source's sync already wrote in this "
+        help="Serve arms 4 and 6 from rows a document source's sync already wrote in this "
         "namespace of --org, beside the documents they cite (a citation into another "
         "namespace counts as unresolved)",
     )
@@ -239,8 +245,10 @@ def cmd_run(a: argparse.Namespace) -> int:
     # Rows a sync wrote carry the files it linked; rows this run extracts get theirs
     # from the code index, or have none.
     cfg.arm4_files = bool(a.code_index or a.arm4_namespace)
-    if 4 in cfg.arms and not cfg.arm4_files:
-        print("arm 4 has no code index: its rows reach loom_search only, no pre-edit block")
+    extracted = sorted(set(EXTRACTED_ARMS) & set(cfg.arms))
+    if extracted and not cfg.arm4_files:
+        names = " and ".join(f"arm {n}" for n in extracted)
+        print(f"{names}: no code index, the rows reach loom_search only, no pre-edit block")
         if 5 not in cfg.arms:
             cfg.arms = [*cfg.arms, 5]
             print("arm 5 (gold rows through loom_search only) is added as its reference")
@@ -259,7 +267,7 @@ def cmd_run(a: argparse.Namespace) -> int:
             )
         if a.offline and provider != "fake":
             return _fail(
-                "--offline with arm 4 needs LOOM_LLM_PROVIDER=fake: the extraction "
+                "--offline with arm 4 or 6 needs LOOM_LLM_PROVIDER=fake: the extraction "
                 f"would call {provider}"
             )
         cfg.extract_model = model

@@ -12,7 +12,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-KINDS = ("A", "B", "C")
+KINDS = ("A", "B", "C", "D")
+# The kinds whose answers are claims scored against a gold list, and that list's field.
+GOLD_LIST = {"A": "gold_arguments", "D": "gold_facts"}
+# The arms served extracted rows, the arms whose loom_search answer an agent reads for its
+# memory section, and the arms whose knowledge hits it reads.
+EXTRACTED_ARMS = (4, 6)
+MEMORY_ARMS = (3, 4, 5, 6)
+KNOWLEDGE_ARMS = (2, 6)
 # Each detector type and the keys it needs (`path_glob` is optional).
 DETECTOR_TYPES = {
     "file_touched": ("paths",),
@@ -181,6 +188,7 @@ TEXT_LISTS = (
     "gold_constraints",
     "forbidden_options",
     "stale_claims",
+    "gold_facts",
 )
 
 
@@ -220,6 +228,7 @@ def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
         "A": ("question", "gold_arguments", "rejected_options"),
         "B": ("task", "gold_constraints", "forbidden_options", "detector"),
         "C": ("question", "subtype"),
+        "D": ("question", "gold_facts"),
     }[kind]
     for name in need:
         if name not in t:
@@ -234,6 +243,10 @@ def _check_task(kind: str, t: dict[str, Any], ts: TaskSet) -> None:
             isinstance(t[name], list) and all(isinstance(x, str) for x in t[name])
         ):
             raise TaskSetError(f"task {tid}: {name} is a list of strings")
+    # A why or feature answer is scored against its gold list: an empty one scores nothing.
+    gold = GOLD_LIST.get(kind)
+    if gold and not t[gold]:
+        raise TaskSetError(f"task {tid}: {kind} task with an empty {gold!r}")
     if kind == "C":
         if t["subtype"] not in C_SUBTYPES:
             raise TaskSetError(f"task {tid}: subtype is one of {C_SUBTYPES}")

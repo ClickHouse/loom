@@ -16,6 +16,18 @@ ANSWER_WHY = (
     "does not record the rationale, say 'No recorded decision covers this.' first; you may "
     "then add your own understanding, each such point marked (unverified)."
 )
+ANSWER_FEATURE = (
+    "You are a senior engineer on {system}. A colleague asks how a feature works: its "
+    "design, how its parts fit, its limits, what must stay compatible or what depends on "
+    "it. Before you answer, your tools surfaced the design knowledge below (it may be "
+    "empty). Answer in at most 10 short bullet points, each one fact. Cite each fact that "
+    "comes from the surfaced knowledge with its identifier exactly as shown: a memory key "
+    "in square brackets such as [design/x/y] or [decision:abc], a document identifier in "
+    "square brackets, and, where a source is shown, the `knowledge:...` source with the "
+    "section heading after '#'. If the surfaced knowledge does not describe the feature, "
+    "say 'No recorded design covers this.' first; you may then add your own understanding, "
+    "each such point marked (unverified)."
+)
 ANSWER_CHANGE = (
     "You are a coding agent in the {system} repository. You cannot open files: write the "
     "change from your knowledge of the code base, reconstructing context lines as best you "
@@ -51,6 +63,26 @@ JUDGE_WHY = (
     "recommends a gold rejected option, or presents an invented reason as the recorded "
     "design reason without marking it unverified. The abstention sentence alone never "
     "makes an answer misleading; judge the points after it by the rules above."
+)
+JUDGE_FEATURE = (
+    "You grade an engineer's explanation of how a feature works against the gold facts "
+    "of its design document. Return JSON only:\n"
+    '{"claims": [{"text": str, "gold": [int], "verdict": "correct"|"unsupported"|"contradicts",'
+    ' "cites": [str], "cites_support": [bool]}], "gold_covered": [int], "abstained": bool,'
+    ' "potentially_misleading": bool, "misleading_why": str}\n'
+    "Rules: a claim is one factual assertion about the feature; ignore hedging and "
+    "restating the question. verdict=correct when it states a gold fact (list its 0-based "
+    "indices in gold) or a fact the gold rows state; unsupported when neither states it "
+    "(whether or not it is plausible), and points marked (unverified) are still claims; "
+    "contradicts when it conflicts with the gold. cites: the identifiers the claim cites, "
+    "copied exactly; cites_support: for each, whether the CITED SOURCE TEXT given to you "
+    "entails the claim (an unresolved citation never supports). gold_covered: indices of "
+    "gold facts the answer states anywhere. abstained: the answer says no recorded design "
+    "covers this (or part of it); the abstention sentence itself is not a claim. "
+    "potentially_misleading: true when the answer, read by an engineer about to change the "
+    "code, would steer them wrong: it contradicts a gold fact, or presents an invented "
+    "limit, default, behaviour or dependency as the recorded design without marking it "
+    "unverified. The abstention sentence alone never makes an answer misleading."
 )
 JUDGE_CHANGE = (
     "You grade a coding agent's plan and diff for a change task against the gold design "
@@ -97,6 +129,12 @@ def answer_prompt(
             f"Surfaced design knowledge:\n{context}\n\nTask: {task['task']}",
             6000,
         )
+    if kind == "D":
+        return (
+            ANSWER_FEATURE.format(system=system),
+            f"Surfaced design knowledge:\n{context}\n\nQuestion: {task['question']}",
+            2500,
+        )
     return (
         ANSWER_WHY.format(system=system),
         f"Surfaced design knowledge:\n{context}\n\nQuestion: {task['question']}",
@@ -122,6 +160,13 @@ def judge_prompt(
             f"Question: {task['question']}\n\nGold arguments:\n"
             f"{numbered(task['gold_arguments'])}\n\nGold rejected options:\n"
             f"{numbered(task['rejected_options'])}\n\nGold rows:\n{gold_rows}"
+        )
+        shown = f"Answer:\n{answer}"
+    elif kind == "D":
+        system = JUDGE_FEATURE
+        gold = (
+            f"Question: {task['question']}\n\nGold facts:\n{numbered(task['gold_facts'])}"
+            f"\n\nGold rows:\n{gold_rows}"
         )
         shown = f"Answer:\n{answer}"
     elif kind == "B":
