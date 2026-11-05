@@ -375,7 +375,8 @@ test("the Codex header helper runs the newest loom@loom launcher and the helper 
     };
     cached("loom", "1.2.9");
     cached("loom", "1.2.10");
-    // Not picked: a version from before the launcher, and another marketplace's copy.
+    // Not picked: a newer copy without a launcher (an interrupted install), and
+    // another marketplace's copy.
     cached("loom", "1.2.11-pre", false);
     cached("zz", "1.3.0");
     const helper = JSON.parse(fs.readFileSync(path.join(codexRoot, ".mcp.json"), "utf8")).mcpServers.loom

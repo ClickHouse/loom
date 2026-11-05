@@ -70,6 +70,8 @@ def test_the_newest_codex_install_answers(home: Path) -> None:
     _install(home, ".codex", "1.2.10")
     _install(home, ".codex", "1.10.0")
     _install(home, ".codex", "1.2.9")
+    # A newer copy without a launcher (an interrupted install) is passed over.
+    _install(home, ".codex", "1.11.0").unlink()
     node = _node(home / ".volta" / "bin", "v22.1.0")
     # The newest launcher runs: an older one replaced by a stub would fail.
     for v in ("1.2.9", "1.2.10"):

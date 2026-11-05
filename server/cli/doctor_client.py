@@ -941,11 +941,11 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     if install is not None:
         out.append(_claude_node_check(home, env, install))
     # codex_plugin_enabled checks loom@loom, so read that marketplace's cache.
-    codex = max(
-        (p for p in home.glob(".codex/plugins/cache/loom/loom/*") if p.is_dir()),
-        key=lambda p: _plugin_version(p.name),
-        default=None,
-    )
+    # Like the header helper, take the newest copy with a launcher; with none,
+    # the newest copy, so a pre-launcher plugin is named.
+    cached = [p for p in home.glob(".codex/plugins/cache/loom/loom/*") if p.is_dir()]
+    launched = [p for p in cached if (p / "bin" / "loom-node").is_file()]
+    codex = max(launched or cached, key=lambda p: _plugin_version(p.name), default=None)
     enabled = codex_plugin_enabled(_read(home / ".codex" / "config.toml"))
     # On Windows, Codex runs hooks and the helper through cmd.exe, not the launcher.
     if codex is not None and enabled and not WINDOWS:
