@@ -138,12 +138,16 @@ def test_no_node_fails_with_the_launcher_line(home: Path) -> None:
     assert "the MCP entry gets no token" in line and line.endswith("Fix: /loom:loom-status.")
 
 
-def test_no_sh_fails_claude_code(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_sh_fails_both_clients(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _install(home, ".claude", "1.3.0")
     _install(home, ".codex", "1.3.0")
     monkeypatch.setattr(shutil, "which", lambda name: None)
     assert _checks(home) == {
-        "client:claude-code:node": (dc.FAIL, "no POSIX sh: on Windows the hooks need Git Bash.")
+        "client:claude-code:node": (dc.FAIL, "no POSIX sh: on Windows the hooks need Git Bash."),
+        "client:codex:node": (
+            dc.FAIL,
+            "no POSIX sh: the hooks and the MCP header helper run `sh`.",
+        ),
     }
 
 
@@ -269,7 +273,9 @@ def test_on_windows_git_bash_is_found_as_claude_code_finds_it(
         p.write_text("")
     monkeypatch.setattr(shutil, "which", lambda name: str(git) if name == "git" else None)
     assert dc.posix_sh({}) == str(bash)
-    assert dc.posix_sh({"CLAUDE_CODE_GIT_BASH_PATH": "D:/tools/bash.exe"}) == "D:/tools/bash.exe"
+    assert dc.posix_sh({"CLAUDE_CODE_GIT_BASH_PATH": str(bash)}) == str(bash)
+    # A CLAUDE_CODE_GIT_BASH_PATH that is gone is no sh either.
+    assert dc.posix_sh({"CLAUDE_CODE_GIT_BASH_PATH": str(tmp_path / "gone.exe")}) is None
     # Another sh on PATH is not what Claude Code runs hooks with.
     monkeypatch.setattr(shutil, "which", lambda name: "C:/msys64/usr/bin/sh.exe")
     assert dc.posix_sh({}) is None

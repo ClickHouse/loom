@@ -892,9 +892,10 @@ def posix_sh(env: dict[str, str]) -> str | None:
     if not WINDOWS:
         return shutil.which("sh")
     if env.get("CLAUDE_CODE_GIT_BASH_PATH"):
-        return env["CLAUDE_CODE_GIT_BASH_PATH"]
-    git = shutil.which("git")
-    bash = Path(git).parents[1] / "bin" / "bash.exe" if git else None
+        bash: Path | None = Path(env["CLAUDE_CODE_GIT_BASH_PATH"])
+    else:
+        git = shutil.which("git")
+        bash = Path(git).parents[1] / "bin" / "bash.exe" if git else None
     return str(bash) if bash and bash.is_file() else None
 
 
@@ -946,9 +947,8 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     )
     enabled = codex_plugin_enabled(_read(home / ".codex" / "config.toml"))
     # On Windows, Codex runs hooks and the helper through cmd.exe, not the launcher.
-    sh = shutil.which("sh")
-    if codex is not None and enabled and sh is not None and not WINDOWS:
-        out.append(_codex_node_check(env, codex, sh))
+    if codex is not None and enabled and not WINDOWS:
+        out.append(_codex_node_check(env, codex, shutil.which("sh")))
     return out
 
 
@@ -1001,10 +1001,12 @@ def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
     return (name, PASS, line)
 
 
-def _codex_node_check(env: dict[str, str], install: Path, sh: str) -> Check:
+def _codex_node_check(env: dict[str, str], install: Path, sh: str | None) -> Check:
     """Codex runs hooks through a login shell, and the MCP header helper
     with only a few variables kept, LOOM_NODE not among them."""
     name = "client:codex:node"
+    if sh is None:
+        return (name, FAIL, "no POSIX sh: the hooks and the MCP header helper run `sh`.")
     launcher = install / "bin" / "loom-node"
     if not launcher.is_file():
         return _predates_launcher(name, install, "Codex", "`codex plugin marketplace upgrade loom`")

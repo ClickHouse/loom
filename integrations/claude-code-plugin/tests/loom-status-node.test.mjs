@@ -166,12 +166,23 @@ test("loom-status Node check knows Claude Code by where it is installed", () => 
   const f = fixture();
   try {
     f.put("uname", "echo Linux");
-    f.put("node", "echo v22.0.0");
+    f.put("node", `if [ "$1" = --version ]; then echo v22.0.0; else exec "${process.execPath}" "$@"; fi`);
+    const settings = (dir, env) => {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ env }));
+    };
+    settings(path.join(f.dir, ".claude"), { LOOM_NODE_SYSTEM_DIRS: "" });
     const installed = installAt(path.join(f.dir, ".claude", "plugins", "cache", "loom", "loom", "1.2.7"));
     assert.match(f.runAt(installed, "--check").stdout, /Found only with this shell's environment: Claude Code/);
+    // A custom config directory: its settings.json is the one Claude Code reads.
     f.env.CLAUDE_CONFIG_DIR = path.join(f.dir, "claude config");
+    settings(f.env.CLAUDE_CONFIG_DIR, { LOOM_NODE_SYSTEM_DIRS: "" });
     const custom = installAt(path.join(f.env.CLAUDE_CONFIG_DIR, "plugins", "cache", "loom", "loom", "1.2.7"));
-    assert.match(f.runAt(custom, "--check").stdout, /Found only with this shell's environment: Claude Code/);
+    const r = f.runAt(custom, "--check");
+    assert.match(r.stdout, /Found only with this shell's environment: Claude Code/);
+    assert.ok(r.stdout.includes(`env block of ${path.join(f.env.CLAUDE_CONFIG_DIR, "settings.json")}.`), r.stdout);
+    settings(f.env.CLAUDE_CONFIG_DIR, { LOOM_NODE_SYSTEM_DIRS: "", LOOM_NODE: path.join(f.bin, "node") });
+    assert.doesNotMatch(f.runAt(custom, "--check").stdout, /Found only/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
   }

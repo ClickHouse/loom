@@ -7,6 +7,7 @@
 set -eu
 
 LAUNCHER="$(dirname "$0")/../../../bin/loom-node"
+CLAUDE_SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 SETUP_FILE=''
 trap 'if [ -n "$SETUP_FILE" ]; then rm -f "$SETUP_FILE"; fi' EXIT HUP INT TERM
 
@@ -39,9 +40,9 @@ gui_check() {
       const env = require(process.argv[1]).env || {};
       for (const [k, v] of Object.entries(env))
         if (typeof v === "string" && !v.includes("\n")) console.log(`${k}=${v}`);
-    } catch {}' "$HOME/.claude/settings.json" 2>/dev/null)
+    } catch {}' "$CLAUDE_SETTINGS" 2>/dev/null)
   while IFS= read -r kv; do
-    [ -n "$kv" ] && set -- "$@" "$kv"
+    case $kv in [A-Za-z_]*=*) set -- "$@" "$kv" ;; esac
   done <<SETTINGS
 $settings
 SETTINGS
@@ -69,7 +70,7 @@ if [ "${1:-}" = '--check' ]; then
   # On Windows a GUI app gets the user's PATH, and Codex runs no launcher.
   case "$(uname -s)" in Darwin | Linux) ;; *) exit 0 ;; esac
   if claude_code; then
-    gui_check || echo 'Found only with this shell'"'"'s environment: Claude Code started from the Dock or a desktop launcher finds no Node. Set LOOM_NODE to the path above in the env block of ~/.claude/settings.json.'
+    gui_check || echo 'Found only with this shell'"'"'s environment: Claude Code started from the Dock or a desktop launcher finds no Node. Set LOOM_NODE to the path above in the env block of '"$CLAUDE_SETTINGS."
   else
     codex_helper_check || echo 'The MCP header helper, which Codex runs without LOOM_NODE or a version manager'"'"'s variables, finds no Node. Put that Node'"'"'s directory on the PATH Codex starts with.'
   fi
