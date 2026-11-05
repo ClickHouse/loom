@@ -3,7 +3,7 @@
  * stores, page stores' pages and meeting transcripts its documents are pulled from,
  * each with its last sync. They live on the repository's trunk code namespace, the
  * docs namespace, so a reader of the repository sees them and an admin there manages
- * them: Add a source (a shared folder), Check, Sync now, Rotate credential, Retire.
+ * them: Add a source, Check, Sync now, Rotate credential, Retire.
  * Read once when the card is opened (a folded card asks nothing); the dialogs load on
  * first use. The counts are information only: nothing waits for a person to confirm
  * a row.
@@ -173,7 +173,7 @@ export function RepoSourcesList({
         <p className="text-xs text-text-muted">
           No document sources.{" "}
           {manageable
-            ? "Add a shared folder and Loom keeps the repository's documents in step with it."
+            ? "Add a source and Loom keeps the repository's documents in step with it."
             : "Anyone with admin on the repository adds them."}
         </p>
       )}
