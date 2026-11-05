@@ -10,7 +10,9 @@ client's point of view, with the client's own resolution order for the
 server URL and the token, and each line says what to do.
 
 Pure functions take their I/O as arguments (`get_json`, `post_json`, `home`,
-`tmp`, `now`) so the unit tests run them offline.
+`tmp`, `now`) so the unit tests run them offline. `node_check` is the
+exception: it runs the installed plugin's own launcher, so that one
+implementation decides which Node the hooks get.
 """
 
 from __future__ import annotations
@@ -858,7 +860,7 @@ def _claude_settings_env(home: Path) -> dict[str, str]:
     """~/.claude/settings.json `env`, which Claude Code applies to its hooks."""
     try:
         raw = json.loads(_read(home / ".claude" / "settings.json") or "{}").get("env") or {}
-        return {str(k): v for k, v in raw.items() if isinstance(v, str)}
+        return {k: v for k, v in raw.items() if isinstance(v, str)}
     except (ValueError, AttributeError):
         return {}
 
@@ -882,44 +884,47 @@ def newest_launcher(home: Path) -> Path | None:
 
 
 def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, str]:
-    """`sh <launcher> --check`: its exit code and its one line."""
-    try:
-        r = subprocess.run(
-            [sh, str(launcher), "--check"],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return 1, f"loom: {launcher} did not run ({e})."
+    """`sh <launcher> --check`: its exit code and its one line. Raises
+    OSError or TimeoutExpired when the launcher itself does not run."""
+    r = subprocess.run(
+        [sh, str(launcher), "--check"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
     return r.returncode, (r.stdout or r.stderr).strip()
 
 
 def node_check(home: Path, env: dict[str, str]) -> list[Check]:
     """The Node the plugin's hooks and MCP header helper run under, as the
     plugin's own launcher finds it: with this shell's environment, then with
-    only HOME and the PATH of an agent started from a GUI or IDE. Claude
-    Code's settings `env` applies to both."""
+    only HOME and the PATH of an agent started from a GUI or IDE."""
     launcher = newest_launcher(home)
     sh = shutil.which("sh")
     if launcher is None or sh is None:
         return []
     name = "client:node"
-    settings = _claude_settings_env(home)
-    code, line = _launcher_check(sh, launcher, {**env, **settings})
+    # Claude Code applies its settings env to its hooks; Codex does not read it.
+    claude = launcher.relative_to(home).parts[0] == ".claude"
+    settings = _claude_settings_env(home) if claude else {}
+    gui = {"HOME": str(home), "PATH": GUI_PATH, **settings}
+    try:
+        code, line = _launcher_check(sh, launcher, {**env, **settings})
+        gui_code, _ = _launcher_check(sh, launcher, gui)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return [(name, WARN, f"could not run {launcher}: {e}")]
     if code != 0:
         return [
             (
                 name,
                 FAIL,
                 f'{line} No hook runs, and the MCP entry gets no token ("needs '
-                'authentication"). Fix: the loom-status skill, or LOOM_NODE=/path/to/node.',
+                'authentication"). Fix: the loom-status skill.',
             )
         ]
-    gui = {"HOME": str(home), "PATH": GUI_PATH, **settings}
-    if _launcher_check(sh, launcher, gui)[0] != 0:
+    if gui_code != 0:
         return [
             (
                 name,

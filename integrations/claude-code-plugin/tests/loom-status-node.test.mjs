@@ -18,11 +18,11 @@ function fixture() {
     const p = path.join(bin, name);
     fs.writeFileSync(p, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   };
-  // Only what the test builds: no fixed directories, no n prefix of the host's.
-  const env = { HOME: dir, PATH: bin, LOOM_NODE_SYSTEM_DIRS: "", N_PREFIX: dir, TEST_BIN: bin, TMPDIR: dir };
+  // Only what the test builds: no fixed directories.
+  const env = { HOME: dir, PATH: bin, LOOM_NODE_SYSTEM_DIRS: "", TEST_BIN: bin, TMPDIR: dir };
   const run = (...args) => spawnSync("/bin/sh", [helper, ...args], { encoding: "utf8", env });
   // The helper and the launcher it calls run under these.
-  for (const command of ["sh", "dirname"]) fs.symlinkSync(whichSync(command), path.join(bin, command));
+  for (const command of ["sh", "dirname", "env"]) fs.symlinkSync(whichSync(command), path.join(bin, command));
   return { dir, bin, env, put, run };
 }
 
@@ -79,7 +79,7 @@ test("loom-status Node check names a too-old Node and the LOOM_NODE override", (
     f.put("node", "echo v16.20.2");
     const r = f.run("--check");
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /the only Node found is .*node \(v16\.20\.2\)\. .*LOOM_NODE=/);
+    assert.match(r.stderr, /the first Node found, .*node \(v16\.20\.2\), is older\. .*LOOM_NODE=/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
   }
@@ -112,6 +112,27 @@ test("loom-status Node helper installs nothing while a broken LOOM_NODE would st
       r.stderr,
       /^LOOM_NODE=.*gone is not Node\.js 18\+, and it wins over any install; fix or unset it\.\n$/,
     );
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("loom-status Node check warns when only this shell's environment finds Node", () => {
+  const f = fixture();
+  try {
+    f.put("uname", "echo Darwin");
+    f.put("node", "echo v22.0.0");
+    const shellOnly = f.run("--check");
+    assert.equal(shellOnly.status, 0, shellOnly.stderr);
+    assert.match(
+      shellOnly.stdout,
+      /ready: .*\nFound only with this shell's environment: .*LOOM_NODE.*settings\.json\)\.\n$/,
+    );
+    // A LOOM_NODE in the environment is what Claude Code's settings env sets: it counts.
+    f.env.LOOM_NODE = path.join(f.bin, "node");
+    const set = f.run("--check");
+    assert.equal(set.status, 0, set.stderr);
+    assert.doesNotMatch(set.stdout, /Found only/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
   }

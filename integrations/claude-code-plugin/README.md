@@ -65,8 +65,9 @@ SDK, no `node_modules`. They run on any Node ≥ 18 (global `fetch` +
 `sh bin/loom-node`, because the PATH an agent hands its hooks is its own: an
 agent started from a GUI or an IDE, or a version manager that sets PATH only
 in interactive shells, leaves `node` off it. The launcher runs the first
-Node 18+ among `LOOM_NODE`, `node` on PATH, a version manager's default and
-then its newest install, and the usual install directories; with none, the
+Node 18+ among `LOOM_NODE`, `node` on PATH, a version manager's default (or
+its newest install when the default cannot be read), and the usual install
+directories; with none, the
 hook exits 1 with one line naming the Node it found too old, or none, and
 `LOOM_NODE`. Set `LOOM_NODE=/path/to/node` (for Claude Code, in the `env`
 block of `~/.claude/settings.json`) for a Node it misses. On Windows the

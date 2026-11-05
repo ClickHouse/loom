@@ -26,10 +26,10 @@ set by this line, which finds it in Claude Code (`CLAUDE_PLUGIN_ROOT`) and in
 Codex (the plugin cache):
 
 ```bash
-LB="${CLAUDE_PLUGIN_ROOT:-$(ls -d ~/.codex/plugins/cache/*/loom/*/ 2>/dev/null | sort -V | tail -1)}"; LB="${LB%/}/bin/loom-brief.mjs"
+LR="${CLAUDE_PLUGIN_ROOT:-$(ls -d ~/.codex/plugins/cache/*/loom/*/ 2>/dev/null | sort -V | tail -1)}"; LB="${LR%/}/bin/loom-brief.mjs"; LN="${LR%/}/bin/loom-node"
 ```
 
-`get …` and `list` below mean `node "$LB" get …`. Use the helper, not an MCP
+`get …` and `list` below mean `sh "$LN" "$LB" get …`. Use the helper, not an MCP
 call: it prints the brief and what changed in the checkout since.
 
 ## Which one — let the user pick
@@ -67,7 +67,7 @@ Write the sections from your own context: file paths, PR numbers, error text,
 the reason behind each choice. Leave a section out rather than pad it.
 
 ```bash
-node "$LB" save [KEY] <<'JSON'
+sh "$LN" "$LB" save [KEY] <<'JSON'
 {"goal": "...", "status": "...",
  "decisions": [{"what": "...", "why": "..."}],
  "dead_ends": [{"tried": "...", "why_not": "..."}],

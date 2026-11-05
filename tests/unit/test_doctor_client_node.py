@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -28,7 +29,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _settings(home: Path, env: dict[str, str]) -> None:
     (home / ".claude").mkdir(exist_ok=True)
-    isolated = {"LOOM_NODE_SYSTEM_DIRS": "", "N_PREFIX": str(home / "n")}
+    isolated = {"LOOM_NODE_SYSTEM_DIRS": ""}
     (home / ".claude" / "settings.json").write_text(json.dumps({"env": {**isolated, **env}}))
 
 
@@ -98,7 +99,7 @@ def test_no_node_fails_with_the_launcher_line_and_the_fix(home: Path) -> None:
     grade, line = _check(home)
     assert grade == dc.FAIL
     assert line.startswith(
-        f"loom: Node.js 18+ is required; the only Node found is {old} (v16.20.2)."
+        f"loom: Node.js 18+ is required; the first Node found, {old} (v16.20.2), is older."
     )
     assert "the MCP entry gets no token" in line and "LOOM_NODE=/path/to/node" in line
 
@@ -109,3 +110,24 @@ def test_settings_env_keeps_only_strings(home: Path) -> None:
     )
     assert dc._claude_settings_env(home) == {"LOOM_NODE": "/x"}
     assert dc.hook_override_check(home, {}) == []
+
+
+def test_codex_hooks_do_not_get_claude_settings_env(home: Path) -> None:
+    _install(home, ".codex", "1.3.0")
+    node = _node(home / "elsewhere", "v24.0.0")
+    _settings(home, {"LOOM_NODE": str(node)})
+    grade, line = _check(home, LOOM_NODE_SYSTEM_DIRS="")
+    assert grade == dc.FAIL
+    assert line.startswith("loom: Node.js 18+ not found")
+
+
+def test_a_launcher_that_does_not_run_is_a_warning_not_a_verdict(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launcher = _install(home, ".claude", "1.3.0")
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(subprocess, "run", refuse)
+    assert _check(home) == (dc.WARN, f"could not run {launcher}: [Errno 13] Permission denied")

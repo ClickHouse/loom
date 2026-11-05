@@ -53,12 +53,13 @@ function fixture() {
     const argv = shell.endsWith("busybox") ? ["sh", launcher, ...args] : [launcher, ...args];
     return spawnSync(shell, argv, {
       encoding: "utf8",
-      // Only what the test builds: no node on PATH, no fixed directories,
-      // no n prefix of the host's.
-      env: { ...BASE_ENV, HOME: home, PATH: path.join(dir, "empty"), LOOM_NODE_SYSTEM_DIRS: "", N_PREFIX: dir, ...env },
+      // Only what the test builds: no node on PATH, no fixed directories.
+      env: { ...BASE_ENV, HOME: home, PATH: path.join(dir, "empty"), LOOM_NODE_SYSTEM_DIRS: "", ...env },
     });
   };
-  return { dir, home, script, node, run, done: () => fs.rmSync(dir, { recursive: true, force: true }) };
+  // Windows may still hold a just-run node.exe open for a moment.
+  const done = () => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  return { dir, home, script, node, run, done };
 }
 
 function found(f, r) {
@@ -113,13 +114,31 @@ const LAYOUTS = [
   ],
   ["volta", [".volta/bin"], {}, ".volta/bin"],
   ["asdf", [".asdf/installs/nodejs/20.11.1/bin"], {}, ".asdf/installs/nodejs/20.11.1/bin"],
+  [
+    "asdf default in ~/.tool-versions",
+    [".asdf/installs/nodejs/20.11.1/bin", ".asdf/installs/nodejs/22.2.0/bin", ".tool-versions-file"],
+    {},
+    ".asdf/installs/nodejs/20.11.1/bin",
+  ],
   ["mise", [".local/share/mise/installs/node/22.3.0/bin"], {}, ".local/share/mise/installs/node/22.3.0/bin"],
   ["nodenv", [".nodenv/versions/21.7.3/bin"], {}, ".nodenv/versions/21.7.3/bin"],
+  [
+    "nodenv default in its version file",
+    [".nodenv/versions/20.0.0/bin", ".nodenv/versions/21.7.3/bin", ".nodenv-version-file"],
+    {},
+    ".nodenv/versions/20.0.0/bin",
+  ],
   [
     "n",
     ["n/n/versions/node/22.0.0/bin"],
     (f) => ({ N_PREFIX: path.join(f.home, "n") }),
     "n/n/versions/node/22.0.0/bin",
+  ],
+  [
+    "n's active version over a newer cached one",
+    ["n/n/versions/node/22.0.0/bin", "n/bin"],
+    (f) => ({ N_PREFIX: path.join(f.home, "n") }),
+    "n/bin",
   ],
   ["nodebrew", [".nodebrew/current/bin"], {}, ".nodebrew/current/bin"],
   [
@@ -128,8 +147,8 @@ const LAYOUTS = [
     (f) => ({ LOOM_NODE_SYSTEM_DIRS: `${shPath(f.home)}/nowhere:${shPath(f.home)}/Program Files/nodejs` }),
     "Program Files/nodejs",
   ],
-  // Windows layouts, found under Git Bash through these variables; a
-  // backslash path is read as the forward-slash one.
+  // Windows layouts, found under Git Bash through these variables, which
+  // hold backslash paths there.
   [
     "nvm-windows active version",
     ["AppData/Roaming/nvm/v20.1.0", "nodejs"],
@@ -139,13 +158,16 @@ const LAYOUTS = [
   [
     "nvm-windows newest",
     ["AppData/Roaming/nvm/v20.1.0", "AppData/Roaming/nvm/v22.4.0"],
-    (f) => ({ APPDATA: path.join(f.home, "AppData", "Roaming"), NVM_HOME: `${f.home}\\AppData\\Roaming\\nvm` }),
+    (f) => ({
+      APPDATA: path.join(f.home, "AppData", "Roaming"),
+      NVM_HOME: path.join(f.home, "AppData", "Roaming", "nvm"),
+    }),
     "AppData/Roaming/nvm/v22.4.0",
   ],
   [
     "fnm on Windows",
     ["AppData/Roaming/fnm/aliases/default"],
-    (f) => ({ APPDATA: `${f.home}\\AppData\\Roaming` }),
+    (f) => ({ APPDATA: path.join(f.home, "AppData", "Roaming") }),
     "AppData/Roaming/fnm/aliases/default",
   ],
   [
@@ -168,7 +190,12 @@ for (const shell of SHELLS) {
     test(`${path.basename(shell)}: ${label}`, () => {
       const f = fixture();
       try {
-        for (const d of dirs) f.node(d);
+        for (const d of dirs) {
+          if (d === ".tool-versions-file")
+            fs.writeFileSync(path.join(f.home, ".tool-versions"), "python 3.12.1\nnodejs 20.11.1\n");
+          else if (d === ".nodenv-version-file") fs.writeFileSync(path.join(f.home, ".nodenv", "version"), "20.0.0\n");
+          else f.node(d);
+        }
         const r = f.run(typeof env === "function" ? env(f) : env, ["--check"], shell);
         assert.equal(found(f, r), exe(want));
       } finally {
@@ -196,7 +223,7 @@ test("node on PATH wins, and runs the script with its arguments, stdin and exit 
     const piped = spawnSync(SHELLS[0], [launcher, exit], {
       input: '{"hook":1}',
       encoding: "utf8",
-      env: { ...BASE_ENV, HOME: f.home, PATH: path.dirname(p), LOOM_NODE_SYSTEM_DIRS: "", N_PREFIX: f.dir },
+      env: { ...BASE_ENV, HOME: f.home, PATH: path.dirname(p), LOOM_NODE_SYSTEM_DIRS: "" },
     });
     assert.equal(piped.status, 3);
     assert.equal(piped.stdout, '{"hook":1}');
@@ -219,7 +246,13 @@ test("the nvm default alias wins over a newer install", () => {
     f.node(".nvm/versions/node/v20.1.0/bin");
     fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "20.1\n");
     assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v20.1.0/bin"));
+    // lts/* names lts/iron, whose file names the version
+    fs.mkdirSync(path.join(f.home, ".nvm", "alias", "lts"));
+    fs.writeFileSync(path.join(f.home, ".nvm", "alias", "lts", "*"), "lts/iron\n");
+    fs.writeFileSync(path.join(f.home, ".nvm", "alias", "lts", "iron"), "v20.11.0\n");
     fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "lts/*\n");
+    assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v20.11.0/bin"));
+    fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "node\n");
     assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v22.1.0/bin"));
   } finally {
     f.done();
@@ -261,18 +294,19 @@ test("no Node anywhere: one line naming LOOM_NODE, nothing on stdout, exit 1", {
   }
 });
 
-test("a too-old Node on PATH is skipped for a newer one, and named when it is the only one", { skip: WINDOWS }, () => {
+test("a too-old Node on PATH is skipped for a newer one, and the first old one is named", { skip: WINDOWS }, () => {
   const f = fixture();
   try {
     const old = f.node("old", "v16.20.2");
     f.node(".volta/bin");
     assert.equal(found(f, f.run({ PATH: path.dirname(old) })), ".volta/bin/node");
     fs.rmSync(path.join(f.home, ".volta"), { recursive: true });
+    f.node(".nvm/versions/node/v14.21.3/bin", "v14.21.3");
     const r = f.run({ PATH: path.dirname(old) });
     assert.equal(r.status, 1);
     assert.equal(
       r.stderr,
-      `loom: Node.js 18+ is required; the only Node found is ${old} (v16.20.2). Install a newer one, or set LOOM_NODE=/path/to/node.\n`,
+      `loom: Node.js 18+ is required; the first Node found, ${old} (v16.20.2), is older. Install a newer one, or set LOOM_NODE=/path/to/node.\n`,
     );
   } finally {
     f.done();
@@ -317,7 +351,14 @@ test("the Codex header helper finds the newest cached plugin and runs its helper
 }, () => {
   const f = fixture();
   try {
-    const p = f.node("bin");
+    f.node(".nvm/versions/node/v22.1.0/bin");
+    // Only the tools the helper's command line needs, and no node.
+    const tools = path.join(f.dir, "tools");
+    fs.mkdirSync(tools);
+    for (const t of ["sh", "ls", "sort", "tail"]) {
+      const real = spawnSync("/bin/sh", ["-c", `command -v ${t}`], { encoding: "utf8" }).stdout.trim();
+      fs.symlinkSync(real, path.join(tools, t));
+    }
     for (const v of ["1.2.9", "1.2.10"]) {
       const bin = path.join(f.home, ".codex", "plugins", "cache", "loom", "loom", v, "bin");
       fs.mkdirSync(bin, { recursive: true });
@@ -326,10 +367,10 @@ test("the Codex header helper finds the newest cached plugin and runs its helper
     }
     const helper = JSON.parse(fs.readFileSync(path.join(codexRoot, ".mcp.json"), "utf8")).mcpServers.loom
       .http_headers_helper;
-    // Codex's cleared environment: HOME, and the launcher's own search.
+    // Codex's cleared environment: HOME, and a Node only under nvm.
     const r = spawnSync("/bin/sh", ["-c", helper], {
       encoding: "utf8",
-      env: { HOME: f.home, PATH: `${path.dirname(p)}:/usr/bin:/bin`, LOOM_NODE_SYSTEM_DIRS: "", N_PREFIX: f.dir },
+      env: { HOME: f.home, PATH: tools, LOOM_NODE_SYSTEM_DIRS: "" },
     });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, "1.2.10");

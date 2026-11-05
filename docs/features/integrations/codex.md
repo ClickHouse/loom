@@ -153,15 +153,15 @@ smaller tool listing ([MCP reference](../../reference/mcp.md)). The
 
 ## Troubleshooting
 
-| Symptom                             | Cause                                                  | Fix                                                                   |
-| ----------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------- |
-| MCP connection fails with 401       | no token found by the helper                           | write `~/.loom/config.json`, or export `LOOM_API_KEY`                 |
-| "returned a reserved header"        | this Codex build rejects `Authorization` from a helper | override with `bearer_token_env_var = "LOOM_API_KEY"`                 |
-| tools talk to the wrong server      | the bundled URL is not your deployment                 | the `config.toml` override above, plus `url` in `~/.loom/config.json` |
-| tools listed twice                  | a second MCP entry under another name                  | remove it (`codex mcp remove <name>`)                                 |
-| a hook prints `loom: Node.js 18+ …` | the launcher found no Node 18+, or only an old one     | `LOOM_NODE=/path/to/node` where Codex starts, or `$loom-status`       |
-| hooks write nothing                 | viewer token, or the hooks read a different `url`      | writer token; check `~/.loom/config.json` and `LOOM_BASE_URL`         |
-| Sessions view empty                 | conversation logging is off for the namespace          | turn it on in the dashboard or with `conversation.set_logging`        |
+| Symptom                             | Cause                                                  | Fix                                                                            |
+| ----------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| MCP connection fails with 401       | no token found by the helper                           | write `~/.loom/config.json`, or export `LOOM_API_KEY`                          |
+| "returned a reserved header"        | this Codex build rejects `Authorization` from a helper | override with `bearer_token_env_var = "LOOM_API_KEY"`                          |
+| tools talk to the wrong server      | the bundled URL is not your deployment                 | the `config.toml` override above, plus `url` in `~/.loom/config.json`          |
+| tools listed twice                  | a second MCP entry under another name                  | remove it (`codex mcp remove <name>`)                                          |
+| a hook prints `loom: Node.js 18+ …` | the launcher found no Node 18+, or only an old one     | `LOOM_NODE=/path/to/node` where Codex starts (macOS, Linux), or `$loom-status` |
+| hooks write nothing                 | viewer token, or the hooks read a different `url`      | writer token; check `~/.loom/config.json` and `LOOM_BASE_URL`                  |
+| Sessions view empty                 | conversation logging is off for the namespace          | turn it on in the dashboard or with `conversation.set_logging`                 |
 
 ## Related
 
