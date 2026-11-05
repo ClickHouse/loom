@@ -285,19 +285,21 @@ own fields and sheet name, and the failed units; and the text the table blocks h
 block charged 760 more, since a block indexes to at most one chunk (blocks under one heading pack into fewer) and one
 longer than a chunk to one per stride, so an artifact's tables index to at most 15,800 chunks, under the 20,000 a source
 publishes by default; a sheet whose table does not fit leaves no heading behind. These budgets assume the defaults: a
-deployment that lowers the extractor's answer bound below about 41 MiB, or the server's chunk size, chunk stride (below
-760 characters) or chunk cap, refuses a large table (`resource_limit`, `too_large`) rather than cutting it. The rows
-past either budget are a failed unit, counted, their cells only checked for a value, and never laid out; a header past
-the bytes fails its table, and once the budget is spent (its cells, bytes or text) the sheets after it are one failed
-unit, never read; what is left of the cells still spreads the merges of the sheet the cut is in, so a merged header
-names its columns. A workbook's parts inflate to at most 512 MiB in all, as a DOCX's do (a streamed part is read up to
-that total whatever size it declares, and cut there, the rows read before standing; a tag of more than 16 MiB, its
-attributes included, nesting past 64 deep, or more than 4,096 distinct element and attribute names, or one over 1,024
-characters, cuts its part alone the same way), and hold at most 25 M elements in all, which bounds the time it is read
-for; the sheet the bound runs out in keeps the rows read before it. A workbook is read for its first 10,000 sheets (the
-rest one failed unit) and 65,536 styles and number formats (past them, the artifact loses `number_formats`), and its
-shared strings hold at most 256 MiB, each counted at four bytes a character and the object it takes (`lost:
-shared_strings` past it). A 64 MB sheet of 100,000 by 20 numbers extracts in about 9 seconds under the child's limits.
+deployment that raises the extractor's 64 MiB input bound (a CSV is read in time proportional to its size, 34 s for 64
+MiB of blank lines, against the child's 120 s) may see a large CSV run out of CPU time, and one that lowers the
+extractor's answer bound below about 41 MiB, or the server's chunk size, chunk stride (below 760 characters) or chunk
+cap, refuses a large table (`resource_limit`, `too_large`) rather than cutting it. The rows past any of them are a
+failed unit, counted, their cells only checked for a value, and never laid out; a header past the bytes fails its table,
+and once the budget is spent (its cells, bytes or text) the sheets after it are one failed unit, never read; what is
+left of the cells still spreads the merges of the sheet the cut is in, so a merged header names its columns. A
+workbook's parts inflate to at most 512 MiB in all, as a DOCX's do (a streamed part is read up to that total whatever
+size it declares, and cut there, the rows read before standing; a tag of more than 16 MiB, its attributes included,
+nesting past 64 deep, or more than 4,096 distinct element and attribute names, or one over 1,024 characters, cuts its
+part alone the same way), and hold at most 25 M elements in all, which bounds the time it is read for; the sheet the
+bound runs out in keeps the rows read before it. A workbook is read for its first 10,000 sheets (the rest one failed
+unit) and 65,536 styles and number formats (past them, the artifact loses `number_formats`), and its shared strings hold
+at most 256 MiB, each counted at four bytes a character and the object it takes (`lost: shared_strings` past it). A 64
+MB sheet of 100,000 by 20 numbers extracts in about 9 seconds under the child's limits.
 
 **Contract bounds.** Before it answers, the reference extractor fits every block to the contract's bounds: a key over
 1,024 characters is left out and the first 10,000 kept, and the section path keeps its first 64 entries, each cut to 500
