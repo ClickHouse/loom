@@ -520,9 +520,8 @@ def _apply_bodies(hits: list[Any], input: Any) -> None:
     body to LOOM_MEMORY_SEARCH_EXCERPT_CHARS; a decision or a constraint keeps its stored
     excerpt, because its reasons and rejected options follow its outcome. "none" blanks
     every body. Keys, types and scores are untouched, so a caller can still cite and
-    memory.get what it needs. The wire tier of the
-    per-hit explanation is decided here too — both are "what a hit carries", on the main and
-    the read-your-writes path alike."""
+    memory.get what it needs. The wire tier of the per-hit explanation is decided here
+    too — both are "what a hit carries", on the main and the read-your-writes path alike."""
     apply_explain_default(hits, input)
     bodies = getattr(input, "bodies", "full") or "full"
     if bodies in ("full", "unit", "source") or not hits:

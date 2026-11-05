@@ -317,3 +317,42 @@ def test_min_body_chars_drops_near_empty_bodies_and_is_off_by_default():
     assert _apply_min_body_chars(hits, SimpleNamespace(min_body_chars=0)) == hits
     kept = _apply_min_body_chars(hits, SimpleNamespace(min_body_chars=60))
     assert [h.memory_key for h in kept] == ["b"]
+
+
+def test_a_tier_hit_carries_its_row_tags_so_a_constraint_keeps_its_excerpt(monkeypatch):
+    import asyncio
+
+    from server.memory import store as memory_repo
+    from server.memory.app.search import tiers as ms
+    from server.settings import settings
+
+    rows = [
+        SimpleNamespace(
+            memory_key="c",
+            memory_type="semantic",
+            value="Never hold a lock across a read. " * 10,
+            tags=["constraint"],
+            created_at="2026-09-12T02:00:00",
+        )
+    ]
+
+    async def fake_list(identity, **kw):
+        return rows
+
+    monkeypatch.setattr(memory_repo, "list_by_namespace", fake_list)
+    monkeypatch.setattr(settings, "memory_search_excerpt_chars", 50)
+    inp = SimpleNamespace(
+        recent_first=1,
+        top_k=1,
+        run_id="",
+        org="o",
+        namespace="n",
+        agent="*",
+        user_id=None,
+        session_id=None,
+        bodies="excerpt",
+    )
+    (hit,) = asyncio.run(ms._prepend_recent([], inp))
+    assert hit._row_tags == ("constraint",)
+    _apply_bodies([hit], inp)
+    assert hit.content_excerpt == rows[0].value
