@@ -694,10 +694,13 @@ def search_answer(
         )
     if know_hits:
         lines.append("\nKnowledge hits:")
+        # A knowledge hit carries its whole chunk as `content`; bodies="none" keeps the
+        # line to its source, as the structured result drops the chunk.
+        show_body = arguments.get("bodies") != "none"
         for h in know_hits[:top_k]:
-            excerpt = (h.get("content_excerpt") or "").replace("\n", " ").strip()
             uri = h.get("source_uri") or "-"
-            lines.append(f"  - [{uri}] {excerpt[:200]}")
+            excerpt = " ".join(str(h.get("content") or "").split())[:200] if show_body else ""
+            lines.append(f"  - [{uri}] {excerpt}".rstrip())
     if conv_hits:
         lines.append("\nConversation hits:")
         for h in conv_hits[:top_k]:

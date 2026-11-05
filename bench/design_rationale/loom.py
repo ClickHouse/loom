@@ -62,9 +62,8 @@ def memory_section(text: str) -> str:
 
 def knowledge_section(text: str, results: list[dict[str, Any]]) -> str:
     """The knowledge hits of a loom_search, with the count line. Rendered from the
-    structured result (source, section, chunk text): the text summary prints a knowledge
-    hit's `content_excerpt`, which knowledge hits do not carry, so it lists bare
-    sources."""
+    structured result (source, section, whole chunk text): the text summary clips each
+    chunk to 200 characters and names no section."""
     if not results:
         return ""
     lines = [text.split("\n", 1)[0], "Knowledge hits:"]
