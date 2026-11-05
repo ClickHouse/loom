@@ -41,6 +41,7 @@ from bench.design_rationale.score import planning_mde
 from bench.design_rationale.taskset import (
     EXTRACTED_ARMS,
     KINDS,
+    KNOWLEDGE_ARMS,
     MEMORY_ARMS,
     Document,
     TaskSet,
@@ -559,9 +560,6 @@ def surfaces(ts: TaskSet, cfg: Config, loom: Loom, state: dict[str, Any]) -> dic
                 }
                 if arm == 6:
                     knowledge = knowledge_section(found["text"], found["knowledge"])
-                    if knowledge and section:
-                        # One answer, one count line: the memory section carries it.
-                        knowledge = knowledge.split("\n", 1)[1]
                     if knowledge:
                         parts.append("loom_search knowledge section:\n" + knowledge)
                     entry["tokens"]["search_knowledge"] = tokens(knowledge)
@@ -613,16 +611,19 @@ class Resolver:
         self.loom = loom
         self.ns = ns
         self.uris = [d.source_uri for d in ts.documents.values()]
-        self.cache: dict[tuple[str, str, str], tuple[bool, str]] = {}
+        self.cache: dict[tuple[str, str, str, str], tuple[bool, str]] = {}
 
     def resolve(self, cite: dict[str, Any], arm: int) -> tuple[bool, str]:
         rows_ns = self.ns[ARM_HOME[arm]] if arm in MEMORY_ARMS else ""
-        key = (cite["kind"], cite["cite"], rows_ns)
+        # Arm 6 shows the documents of the namespace it searched (a sync's, with
+        # --arm4-namespace); the other arms that show documents show the kb copy.
+        docs_ns = self.ns[ARM_HOME[arm]] if arm in KNOWLEDGE_ARMS else self.ns["kb"]
+        key = (cite["kind"], cite["cite"], rows_ns, docs_ns)
         if key not in self.cache:
-            self.cache[key] = self._resolve(cite, rows_ns)
+            self.cache[key] = self._resolve(cite, rows_ns, docs_ns)
         return self.cache[key]
 
-    def _resolve(self, cite: dict[str, Any], rows_ns: str) -> tuple[bool, str]:
+    def _resolve(self, cite: dict[str, Any], rows_ns: str, docs_ns: str) -> tuple[bool, str]:
         if cite["kind"] == "memory":
             if not rows_ns:
                 return False, "this arm served no memory rows"
@@ -632,7 +633,7 @@ class Resolver:
             return True, json.dumps(got["value"], ensure_ascii=False)[: detectors.CITED_TEXT_CHARS]
         if cite["kind"] == "document":
             uri, _, section = cite["cite"].partition("#")
-            ns = self.ns["kb"]
+            ns = docs_ns
         else:
             parsed = detectors.parse_knowledge(cite["cite"], self.uris)
             if parsed is None:

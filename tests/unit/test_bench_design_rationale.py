@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 import bench.design_rationale.__main__ as cli
-from bench.design_rationale import detectors, llm, run, score
+from bench.design_rationale import detectors, llm, prompts, run, score
 from bench.design_rationale.__main__ import main
 from bench.design_rationale.llm import (
     CHARS_PER_TOKEN_WORST,
@@ -1405,11 +1405,6 @@ def test_arm_6_serves_the_extracted_rows_with_the_documents_knowledge_hits(tmp_p
     # namespace the documents were extracted in.
     assert six["for_file_keys"] == surf["B1/arm4"]["for_file_keys"] != []
     assert "loom_search knowledge section:" in six["context"]
-    # The search's count line is printed once, as the real answer prints it, whichever
-    # section carries it.
-    for key, srf in surf.items():
-        if key.endswith("/arm6") and "knowledge section" in srf["context"]:
-            assert srf["context"].count("loom_search '") == 1, key
     assert six["tokens"]["search_knowledge"] > 0 and six["knowledge_uris"]
     assert "knowledge section" not in surf["B1/arm4"]["context"]
     m = score.score(ts, out)
@@ -1836,6 +1831,39 @@ def test_the_report_has_d_columns_and_prints_a_zero_bound_with_a_plus():
         "unreadable": {},
     }
     text = score.report(m)
-    assert "D precision | D recall | D misleading" in text
-    assert "| 6 | - | - | - | - | - | - | - | 50.0 | 25.0 | 0.0 |" in text
+    assert "D precision | D recall | D misleading | D abstains" in text
+    assert "| 6 | - | - | - | - | - | - | - | - | 50.0 | 25.0 | 0.0 | - | - | - |" in text
     assert "| 6 vs 4 | D | recall | 2 (1) | +10.0 | +0.0 .. +20.0 |" in text
+
+
+def test_a_feature_task_is_asked_and_judged_with_its_own_prompts():
+    task = {
+        "id": "D9",
+        "question": "How are entries evicted?",
+        "gold_facts": ["whole segments go", "a hit moves up"],
+    }
+    system, user, cap = prompts.answer_prompt("D", task, "ctx", "the system")
+    assert system == prompts.ANSWER_FEATURE.format(system="the system")
+    assert user.endswith("Question: How are entries evicted?") and cap == 2500
+    system, user = prompts.judge_prompt(
+        "D", task, answer="answer", gold_rows="rows", cited="", rubric=[], answer_first=False
+    )
+    assert system == prompts.JUDGE_FEATURE
+    assert "Gold facts:\n0. whole segments go\n1. a hit moves up" in user
+
+
+def test_arm_6_document_citations_resolve_in_the_namespace_it_searched():
+    ts = load(EXAMPLE)
+    seen: list[str] = []
+
+    class _Loom:
+        def knowledge_get(self, ns, uri):
+            seen.append(ns)
+            return {"found": False}
+
+    ns = {"kb": "kb-ns", "extract": "extract-ns", "gold": "gold-ns"}
+    resolver = run.Resolver(ts, _Loom(), ns)
+    cite = {"kind": "document", "cite": "doc://x#S"}
+    resolver.resolve(cite, 6)
+    resolver.resolve(cite, 2)
+    assert seen == ["extract-ns", "kb-ns"]

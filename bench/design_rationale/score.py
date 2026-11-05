@@ -672,26 +672,33 @@ def _signed(x: float) -> str:
 
 def report(m: dict[str, Any]) -> str:
     """The aggregate numbers as markdown: per arm, per kind, no task text."""
+    columns = [
+        ("A", "precision", "A precision"),
+        ("A", "recall", "A recall"),
+        ("A", "misleading", "A misleading"),
+        ("A", "abstained", "A abstains"),
+        ("B", "avoids", "B avoids"),
+        ("B", "satisfies", "B satisfies"),
+        ("C", "passed", "C passes"),
+        ("C", "current_stated", "C states current"),
+        ("D", "precision", "D precision"),
+        ("D", "recall", "D recall"),
+        ("D", "misleading", "D misleading"),
+        ("D", "abstained", "D abstains"),
+    ]
+    head = [name for _, _, name in columns] + ["Citation precision", "Citation recall"]
     lines = [
-        "| Arm | A precision | A recall | A misleading | B avoids | B satisfies | "
-        "C passes | C states current | D precision | D recall | D misleading | "
-        "Citation precision | Citation recall |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Arm | " + " | ".join(head) + " |",
+        "| --- |" + " ---: |" * len(head),
     ]
     for arm, s in m["arms"].items():
-        a, b, c, d = s.get("A", {}), s.get("B", {}), s.get("C", {}), s.get("D", {})
-        lines.append(
-            f"| {arm} | {_pct(a.get('precision'))} | {_pct(a.get('recall'))} | "
-            f"{_pct(a.get('misleading'))} | {_pct(b.get('avoids'))} | "
-            f"{_pct(b.get('satisfies'))} | {_pct(c.get('passed'))} | "
-            f"{_pct(c.get('current_stated'))} | {_pct(d.get('precision'))} | "
-            f"{_pct(d.get('recall'))} | {_pct(d.get('misleading'))} | "
-            f"{_pct(s.get('citation_precision'))} | {_pct(s.get('citation_recall'))} |"
-        )
+        cells = [_pct(s.get(kind, {}).get(metric)) for kind, metric, _ in columns]
+        cells += [_pct(s.get("citation_precision")), _pct(s.get("citation_recall"))]
+        lines.append(f"| {arm} | " + " | ".join(cells) + " |")
     lines += [
         "",
         "| Treatment vs reference | Kind | Metric | n (clusters) | Delta | 95% interval | MDE |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | ---: | ---: | --- | ---: |",
     ]
     for c in m["comparisons"]:
         mde = "-" if c["mde"] is None else f"{c['mde'] * 100:.1f}"
@@ -703,7 +710,7 @@ def report(m: dict[str, Any]) -> str:
     lines += [
         "",
         "| Arm | Injected tokens per task (mean, max) | Pre-edit calls | Pre-edit max |",
-        "| --- | --- | --- | --- |",
+        "| --- | ---: | ---: | ---: |",
     ]
     for arm, t in m["tokens"].items():
         lines.append(
