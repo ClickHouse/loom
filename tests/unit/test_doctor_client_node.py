@@ -253,7 +253,7 @@ def test_a_plugin_from_before_the_launcher_is_named(home: Path) -> None:
         "client:codex:node": (
             dc.WARN,
             f"the installed plugin at {codex.parent.parent} predates the Node launcher: its "
-            "hooks need `node` on Codex's PATH. Fix: `codex plugin add loom@loom`.",
+            "hooks need `node` on Codex's PATH. Fix: `codex plugin marketplace upgrade loom`.",
         ),
     }
 
@@ -298,5 +298,10 @@ def test_an_install_that_is_not_on_disk_is_named(home: Path) -> None:
 @pytest.mark.parametrize("settings", ["{not json", "[]", '{"enabledPlugins": []}'])
 def test_unreadable_settings_do_not_hide_the_row(home: Path, settings: str) -> None:
     _install(home, ".claude", "1.3.0")
+    node = _node(home / ".volta" / "bin", "v22.1.0")
     (home / ".claude" / "settings.json").write_text(settings)
-    assert "client:claude-code:node" in _checks(home, LOOM_NODE_SYSTEM_DIRS="")
+    # Read as no settings: the row is there, and Volta under HOME passes both runs.
+    assert _checks(home)["client:claude-code:node"] == (
+        dc.PASS,
+        f"Loom hook runtime ready: {node} (v22.1.0)",
+    )

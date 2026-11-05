@@ -295,8 +295,8 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 ## Clients, plugins and MCP
 
-- **The coding-agent plugins** have their own symptom tables (`node: not found` from a
-  hook, no primer, captures not arriving, tools listed twice):
+- **The coding-agent plugins** have their own symptom tables (a hook that finds no
+  Node, no primer, captures not arriving, tools listed twice):
   [Claude Code](../features/integrations/claude-code.md) and
   [Codex](../features/integrations/codex.md). The plugins' `loom-status` skill runs the
   client check without a Loom checkout.

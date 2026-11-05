@@ -164,6 +164,7 @@ smaller tool listing ([MCP reference](../../reference/mcp.md)). The
 | "returned a reserved header"                   | this Codex build rejects `Authorization` from a helper | override with `bearer_token_env_var = "LOOM_API_KEY"`                          |
 | tools talk to the wrong server                 | the bundled URL is not your deployment                 | the `config.toml` override above, plus `url` in `~/.loom/config.json`          |
 | tools listed twice                             | a second MCP entry under another name                  | remove it (`codex mcp remove <name>`)                                          |
+| `node: not found` from a hook                  | the installed plugin predates its Node launcher        | `codex plugin marketplace upgrade loom`                                        |
 | a hook prints a `loom:` line about Node.js 18+ | the launcher found no Node 18+, or only an old one     | `LOOM_NODE=/path/to/node` where Codex starts (macOS, Linux), or `$loom-status` |
 | hooks write nothing                            | viewer token, or the hooks read a different `url`      | writer token; check `~/.loom/config.json` and `LOOM_BASE_URL`                  |
 | Sessions view empty                            | conversation logging is off for the namespace          | turn it on in the dashboard or with `conversation.set_logging`                 |

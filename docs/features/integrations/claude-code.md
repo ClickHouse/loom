@@ -347,6 +347,7 @@ Start with `/loom:loom-status`; it names the cause in one line.
 
 | Symptom                                        | Cause                                              | Fix                                                            |
 | ---------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------- |
+| `node: not found` from a hook                  | the installed plugin predates its Node launcher    | `claude plugin update loom@loom`                               |
 | a hook prints a `loom:` line about Node.js 18+ | the launcher found no Node 18+, or only an old one | `LOOM_NODE=/path/to/node`, or the `loom-status` skill; restart |
 | MCP server "needs authentication"              | no Node for the header helper, or no token found   | the `loom-status` skill names which                            |
 | no primer, nothing captured                    | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                     |

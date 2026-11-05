@@ -1007,7 +1007,7 @@ def _codex_node_check(env: dict[str, str], install: Path, sh: str) -> Check:
     name = "client:codex:node"
     launcher = install / "bin" / "loom-node"
     if not launcher.is_file():
-        return _predates_launcher(name, install, "Codex", "`codex plugin add loom@loom`")
+        return _predates_launcher(name, install, "Codex", "`codex plugin marketplace upgrade loom`")
     helper_env = {k: env[k] for k in CODEX_HELPER_ENV if k in env}
     try:
         code, line = _launcher_check(sh, launcher, env)
