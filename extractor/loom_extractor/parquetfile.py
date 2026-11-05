@@ -219,7 +219,8 @@ def _readable(arrow_type: Any) -> Any:
         stored = _stored(t)
         if stored is t:  # a UUID: read as it is
             return None
-        return _readable(stored) or stored
+        inner = _readable(stored)
+        return stored if inner is None else inner
     if pa.types.is_timestamp(t) and t.unit == "ns":
         return pa.timestamp("us", tz=t.tz)
     if pa.types.is_time64(t) and t.unit == "ns":
@@ -228,13 +229,14 @@ def _readable(arrow_type: Any) -> Any:
         return pa.duration("us")
     if pa.types.is_float16(t):
         return pa.float32()
-    if pa.types.is_list(t) or pa.types.is_large_list(t) or pa.types.is_fixed_size_list(t):
+    # A list view stays as it is: Arrow casts none to another element type.
+    for is_list, make in ((pa.types.is_list, pa.list_), (pa.types.is_large_list, pa.large_list)):
+        if is_list(t):
+            inner = _readable(t.value_type)
+            return None if inner is None else make(inner)
+    if pa.types.is_fixed_size_list(t):
         inner = _readable(t.value_type)
-        if inner is None:
-            return None
-        if pa.types.is_fixed_size_list(t):
-            return pa.list_(inner, t.list_size)
-        return (pa.large_list if pa.types.is_large_list(t) else pa.list_)(inner)
+        return None if inner is None else pa.list_(inner, t.list_size)
     if pa.types.is_map(t):
         key, item = _readable(t.key_type), _readable(t.item_type)
         if key is None and item is None:
@@ -256,7 +258,7 @@ def _readable(arrow_type: Any) -> Any:
 def _values(column: Any, target: Any, kind: str) -> list[Any]:
     """A batch column's values as Python holds them. Bytes, and a column with a
     value Python cannot hold (a date past year 9999, a zone it does not know),
-    are LEFT_OUT, not None, so a row of them is still a row; the rows read
+    are LEFT_OUT, not None, so a row of them is still a row; the rows decoded
     count them (`_Reader.cell`). Bytes are never copied into Python."""
     import pyarrow as pa
 
@@ -275,6 +277,8 @@ def _values(column: Any, target: Any, kind: str) -> list[Any]:
             column = column.cast(target, safe=False)
         values: list[Any] = column.to_pylist()
         return values
+    except MemoryError:  # Arrow's too: a decode past the child's memory fails its rows
+        raise
     except (pa.ArrowException, ValueError, OverflowError, KeyError):
         return left_out()
 
@@ -336,12 +340,10 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
                         continue
                     # A row whose values were all left out (bytes, values Python
                     # cannot hold) is still a row.
-                    counts = dict(reader.left_out)
                     typed = (reader.cell(values[j], kinds[j]) for j in range(len(kept)))
-                    cells = {j: c for j, c in enumerate(typed) if c.kind != "empty"}
-                    rows.add(number, cells, budget)
-                    if rows.more:  # not held: the rows' failed unit counts it, not these
-                        reader.left_out = counts
+                    rows.add(
+                        number, {j: c for j, c in enumerate(typed) if c.kind != "empty"}, budget
+                    )
                 if rows.more:  # the budget ran out in this batch: the rest is counted
                     rest = group_rows - (number - start)
                     rows.count(number + 1, rest)

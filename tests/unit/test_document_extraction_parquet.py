@@ -163,9 +163,9 @@ def test_rows_past_the_budget_are_counted_from_the_metadata_not_decoded(
     decoded: list[int] = []
     real = parquetfile._values
 
-    def counting(column: Any, target: Any, reader: Any) -> list[Any]:
+    def counting(column: Any, target: Any, kind: str) -> list[Any]:
         decoded.append(len(column))
-        return real(column, target, reader)
+        return real(column, target, kind)
 
     monkeypatch.setattr(parquetfile, "_values", counting)
     monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 2)
@@ -247,9 +247,9 @@ def test_a_batch_holds_no_more_cells_than_the_budget(monkeypatch: pytest.MonkeyP
     sizes: list[int] = []
     real = parquetfile._values
 
-    def recording(column: Any, target: Any, reader: Any) -> list[Any]:
+    def recording(column: Any, target: Any, kind: str) -> list[Any]:
         sizes.append(len(column))
-        return real(column, target, reader)
+        return real(column, target, kind)
 
     monkeypatch.setattr(parquetfile, "_values", recording)
     t = pa.table({f"c{i}": list(range(5)) for i in range(4)})  # 4 wide: 3 rows a batch
@@ -409,12 +409,27 @@ def test_each_cause_of_a_value_left_out_is_named(monkeypatch: pytest.MonkeyPatch
     ]
 
 
-def test_values_left_out_are_counted_only_for_the_rows_read(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_values_left_out_are_counted_for_the_rows_decoded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tabular, "MAX_ROWS", 2)
     t = pa.table({"k": list("abcde"), "d": pa.array([3_000_000] * 5, pa.date32())})
     a, _ = _one(_file(t))
     units = {f.unit: f.reason for f in a.coverage.failed}
-    assert units["f.parquet values"] == "2 values past what Python holds"  # not the 3 past the cut
+    # The two held and the one the budget cut; the two after it are never decoded.
+    assert units["f.parquet values"] == "3 values past what Python holds"
     assert units["f.parquet rows 3-"] == "3 rows past what one artifact holds"
+
+
+def test_a_list_of_bool8_reads_as_bools_and_a_list_view_as_it_stores() -> None:
+    b8 = pa.ExtensionArray.from_storage(pa.bool8(), pa.array([1, 0], pa.int8()))
+    us = pa.array([1_700_000_000_123_456], pa.timestamp("us"))
+    t = pa.table(
+        {
+            "lb": pa.ListArray.from_arrays(pa.array([0, 2], pa.int32()), b8),
+            "lv": pa.ListViewArray.from_arrays(
+                pa.array([0], pa.int32()), pa.array([1], pa.int32()), us
+            ),
+        }
+    )
+    a, tab = _one(_file(t))
+    assert tab.rows == (("[true, false]", '["2023-11-14T22:13:20.123456"]'),)
+    assert a.coverage.complete
