@@ -25,8 +25,8 @@ columns`), the kept ones taken by position (a name may repeat); pages decode
 one at a time into batches no wider than the cell budget, so a row group's
 size does not decide what is held; the rows past the budget
 (`tabular.Budget`), and past _MAX_DECODED values or _MAX_DECODED_BYTES decoded
-(a file of blank rows, or of values too long to hold, is no cheaper to read),
-are counted from the metadata, never decoded. The
+or _MAX_GROUPS row groups read (a file of blank rows, or of values too long to
+hold, is no cheaper to read), are counted from the metadata, never decoded. The
 extractor's child limits (memory, CPU, no network) bound one decode (a single
 huge page, a decoder fault): what does not fit fails the rows from there
 (`<name> rows N-`).
@@ -56,8 +56,8 @@ _BATCH_ROWS = 1024  # not a setting: what one decode holds, at most
 # among them: past either, the rest is counted from the metadata, not read.
 _MAX_DECODED = 4 * tabular.MAX_CELLS  # not a setting: a bound on hostile input
 _MAX_DECODED_BYTES = tabular.MAX_HELD_BYTES  # not a setting: a bound on hostile input
-# The values Python cannot hold that one batch's column is searched for; past
-# them the rest of that batch's column is left out unread.
+# The values Python cannot hold that a column is searched for, across the file;
+# past them the rest of the column is left out unread.
 _MAX_UNHELD = 16  # not a setting: a bound on hostile input
 # The row groups a file has read: each costs its reader's setup, whatever it holds.
 _MAX_GROUPS = tabular.MAX_ROWS  # not a setting: a bound on hostile input
@@ -271,21 +271,21 @@ def _readable(arrow_type: Any) -> Any:
     return None
 
 
-def _values(column: Any, target: Any, kind: str) -> list[Any]:
+def _values(column: Any, target: Any, kind: str, failures: list[int]) -> list[Any]:
     """A batch column's values as Python holds them. Bytes, and a value Python
     cannot hold (a date past year 9999, a zone it does not know), are _LEFT_OUT,
     not None, so a row of them is still a row; the rows read count them
     (`_Reader.cell`). Bytes are never copied into Python. A batch with a value
     Python cannot hold is split in halves until each part converts or is one
-    value, so only that value is left out; past _MAX_UNHELD such values in a
-    batch, the rest of it is left out unread."""
+    value, so only that value is left out; past _MAX_UNHELD such values in the
+    column (`failures`, kept across its batches), the rest of it is left out
+    unread."""
     import pyarrow as pa
 
     if kind == "bytes":
         return _left_out(column)
     if isinstance(column.type, pa.BaseExtensionType) and _stored(column.type) is not column.type:
         column = column.storage
-    failures = [0]
     return _split(column, target, failures)
 
 
@@ -368,9 +368,11 @@ def _shared(views: Any) -> int:
     may share: what `nbytes` does not count and Python copies, a value each.
     A view's first four bytes are its length (Arrow's view layout)."""
     buffers = views.buffers()
+    if len(views) == 0 or buffers[1] is None:
+        return 0
     lengths = memoryview(buffers[1]).cast("i")[0::4][views.offset : views.offset + len(views)]
-    data = sum(int(b.size) for b in buffers[2:] if b is not None)
-    return max(0, int(sum(lengths)) - data)
+    data = sum(b.size for b in buffers[2:] if b is not None)
+    return max(0, int(sum(lengths) - data))  # int: pyarrow's values are untyped
 
 
 def _open(data: bytes) -> Any:
@@ -410,6 +412,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     number = blank = decoded = decoded_bytes = 0
     stopped = False
     read_groups = 0
+    unheld = [[0] for _ in kept]  # each column's values Python cannot hold, across the file
     if not kept:  # no column: every row is blank, counted from the metadata
         blank = sum(groups)
     for g, group_rows in enumerate(groups if kept else []):
@@ -450,7 +453,10 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
                     fail(budget, failed, f"{name} rows {number + 1}-", reason)
                     stopped = True
                     break
-                columns = [_values(batch.column(j), targets[j], kinds[j]) for j in range(len(kept))]
+                columns = [
+                    _values(batch.column(j), targets[j], kinds[j], unheld[j])
+                    for j in range(len(kept))
+                ]
                 for i in range(batch.num_rows):
                     if rows.more:  # past the budget: counted below, its rows not read
                         break
@@ -480,7 +486,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
         "bytes": "of bytes, no text",
         "long": f"over {MAX_VALUE_CHARS} characters",
         "unheld": "past what Python holds",
-        "unread": f"left out unread past {_MAX_UNHELD} values Python cannot hold in a batch",
+        "unread": f"left out unread past {_MAX_UNHELD} values Python cannot hold in a column",
     }
     reasons = [f"{counted(n, 'value')} {causes[k]}" for k, n in reader.left_out.items() if n]
     if reasons:

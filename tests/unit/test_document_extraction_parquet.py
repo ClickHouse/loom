@@ -163,9 +163,9 @@ def test_rows_past_the_budget_are_counted_from_the_metadata_not_decoded(
     decoded: list[int] = []
     real = parquetfile._values
 
-    def counting(column: Any, target: Any, kind: str) -> list[Any]:
+    def counting(column: Any, target: Any, kind: str, failures: list[int]) -> list[Any]:
         decoded.append(len(column))
-        return real(column, target, kind)
+        return real(column, target, kind, failures)
 
     monkeypatch.setattr(parquetfile, "_values", counting)
     monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 2)
@@ -247,9 +247,9 @@ def test_a_batch_holds_no_more_cells_than_the_budget(monkeypatch: pytest.MonkeyP
     sizes: list[int] = []
     real = parquetfile._values
 
-    def recording(column: Any, target: Any, kind: str) -> list[Any]:
+    def recording(column: Any, target: Any, kind: str, failures: list[int]) -> list[Any]:
         sizes.append(len(column))
-        return real(column, target, kind)
+        return real(column, target, kind, failures)
 
     monkeypatch.setattr(parquetfile, "_values", recording)
     t = pa.table({f"c{i}": list(range(5)) for i in range(4)})  # 4 wide: 3 rows a batch
@@ -504,7 +504,7 @@ def test_values_python_cannot_hold_are_searched_for_by_halves_to_a_bound(
     a, tab = _one(_file(pa.table({"d": days})))
     assert [f.reason for f in a.coverage.failed] == [
         "2 values past what Python holds; "
-        "2 values left out unread past 2 values Python cannot hold in a batch"
+        "2 values left out unread past 2 values Python cannot hold in a column"
     ]
 
 
@@ -610,3 +610,32 @@ def test_row_groups_past_the_bound_are_counted_not_read(monkeypatch: pytest.Monk
     assert [(f.unit, f.reason) for f in a.coverage.failed] == [
         ("f.parquet rows 4-", "7 rows past what one file decodes")
     ]
+
+
+def test_a_column_past_its_unheld_bound_is_not_searched_in_later_batches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(parquetfile, "_MAX_UNHELD", 2)
+    monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 2)
+    searched: list[int] = []
+    real = parquetfile._split
+
+    def counting(column: Any, target: Any, failures: list[int]) -> list[Any]:
+        searched.append(len(column))
+        return real(column, target, failures)
+
+    monkeypatch.setattr(parquetfile, "_split", counting)
+    a, _ = _one(_file(pa.table({"d": pa.array([3_000_000] * 10, pa.date32())})))
+    # The first batch finds the two; each later batch is one call, nothing converted.
+    assert searched == [2, 1, 1, 2, 2, 2, 2]
+    assert a.coverage.failed[-1].reason == (
+        "2 values past what Python holds; "
+        "8 values left out unread past 2 values Python cannot hold in a column"
+    )
+
+
+def test_a_view_array_of_no_values_costs_nothing() -> None:
+    empty = pa.array([], pa.string_view())
+    assert parquetfile._cost(empty) == (0, 0)
+    lists = pa.array([[], []], pa.list_(pa.string_view()))
+    assert parquetfile._cost(lists) == (2, 0)
