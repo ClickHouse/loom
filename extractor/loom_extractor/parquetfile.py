@@ -18,13 +18,14 @@ A value reads as its column's type says, decided once from the schema:
   it as base64);
 - bytes are no text: left out and counted as a failed unit (`<name> values`),
   as is a value over MAX_VALUE_CHARS, and a value Python cannot hold (a date
-  past year 9999), its batch's values of that column with it.
+  past year 9999), that value alone (`_split`).
 
 What is read is bounded: the columns past MAX_COLUMNS are left out (`<name>
 columns`), the kept ones taken by position (a name may repeat); pages decode
 one at a time into batches no wider than the cell budget, so a row group's
 size does not decide what is held; the rows past the budget
-(`tabular.Budget`) are counted from the metadata, never decoded. The
+(`tabular.Budget`), and past _MAX_DECODED values decoded (a file of blank rows
+is no cheaper to read), are counted from the metadata, never decoded. The
 extractor's child limits (memory, CPU, no network) bound one decode (a single
 huge page, a decoder fault): what does not fit fails the rows from there
 (`<name> rows N-`).
@@ -50,6 +51,12 @@ from loom_extractor.tabular import EMPTY, Budget, Cell, Rows, counted, fail, tab
 PARSER_VERSION = "1"
 MAX_VALUE_CHARS = 1 << 20  # not a setting: a value a table holds, as a CSV field
 _BATCH_ROWS = 1024  # not a setting: what one decode holds, at most
+# The values a file decodes, blank rows' among them: past them, the rest is
+# counted from the metadata, not read.
+_MAX_DECODED = 4 * tabular.MAX_CELLS  # not a setting: a bound on hostile input
+# The values Python cannot hold that one batch's column is searched for; past
+# them the rest of that batch's column is left out unread.
+_MAX_UNHELD = 16  # not a setting: a bound on hostile input
 _INT64 = range(-(2**63), 2**63)
 
 
@@ -260,39 +267,45 @@ def _values(column: Any, target: Any, kind: str) -> list[Any]:
     cannot hold (a date past year 9999, a zone it does not know), are LEFT_OUT,
     not None, so a row of them is still a row; the rows read count them
     (`_Reader.cell`). Bytes are never copied into Python. A batch with a value
-    Python cannot hold is converted a value at a time, so only that one is."""
+    Python cannot hold is split in halves until each part converts or is one
+    value, so only that value is left out; past _MAX_UNHELD such values in a
+    batch, the rest of it is left out unread."""
     import pyarrow as pa
 
     if kind == "bytes":
-        return [None if null else LEFT_OUT for null in column.is_null().to_pylist()]
+        return _left_out(column)
     if isinstance(column.type, pa.BaseExtensionType) and _stored(column.type) is not column.type:
         column = column.storage
+    failures = [0]
+    return _split(column, target, failures)
+
+
+def _left_out(column: Any) -> list[Any]:
+    return [None if null else LEFT_OUT for null in column.is_null().to_pylist()]
+
+
+def _split(column: Any, target: Any, failures: list[int]) -> list[Any]:
+    """`column` converted, or, where it fails, each half of it: a value that
+    fails alone is LEFT_OUT, and past _MAX_UNHELD failures what is left is."""
+    import pyarrow as pa
+
+    if failures[0] >= _MAX_UNHELD:
+        return _left_out(column)
     try:
-        return _converted(column, target)
+        if target is not None:
+            column = column.cast(target, safe=False)
+        values: list[Any] = column.to_pylist()
+        return values
     except MemoryError:  # Arrow's too: a decode past the child's memory fails its rows
         raise
     except (pa.ArrowException, ValueError, OverflowError, KeyError):
-        pass
-    values: list[Any] = []
-    for i in range(len(column)):
-        one = column.slice(i, 1)
-        if one.null_count:
-            values.append(None)
-            continue
-        try:
-            values.append(_converted(one, target)[0])
-        except MemoryError:
-            raise
-        except (pa.ArrowException, ValueError, OverflowError, KeyError):
-            values.append(LEFT_OUT)
-    return values
-
-
-def _converted(column: Any, target: Any) -> list[Any]:
-    if target is not None:
-        column = column.cast(target, safe=False)
-    values: list[Any] = column.to_pylist()
-    return values
+        if len(column) == 1:
+            failures[0] += 1
+            return [LEFT_OUT]
+    half = len(column) // 2
+    return _split(column.slice(0, half), target, failures) + _split(
+        column.slice(half), target, failures
+    )
 
 
 def _open(data: bytes) -> Any:
@@ -329,7 +342,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     # file: its leaf columns, a struct's fields each one, are what a batch decodes.
     batch_rows = max(1, min(_BATCH_ROWS, tabular.MAX_CELLS // max(1, meta.num_columns)))
     groups = [meta.row_group(g).num_rows for g in range(meta.num_row_groups)]
-    number = blank = 0
+    number = blank = decoded = 0
     for g, group_rows in enumerate(groups):
         if rows.more:
             # Past the budget: counted from the metadata, never decoded.
@@ -341,6 +354,11 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
             # Every column, the kept ones taken by position: a name may repeat,
             # so none is selected by name.
             for batch in pf.iter_batches(batch_size=batch_rows, row_groups=[g], use_threads=False):
+                decoded += batch.num_rows * max(1, meta.num_columns)
+                if decoded > _MAX_DECODED:  # a file of blank rows is read no further
+                    rows.count(number + 1, group_rows - (number - start))
+                    number = start + group_rows
+                    break
                 columns = [_values(batch.column(j), targets[j], kinds[j]) for j in range(len(kept))]
                 for i in range(batch.num_rows):
                     if rows.more:  # past the budget: counted below, its rows not read

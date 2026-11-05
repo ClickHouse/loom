@@ -456,14 +456,51 @@ def test_a_list_of_float16_is_the_double_each_widens_to() -> None:
     assert tab.rows == (("[0.5, 0.0999755859375]",),)
 
 
-def test_an_arrow_memory_error_in_a_conversion_fails_its_rows_not_its_values(
+def test_an_arrow_memory_error_in_a_conversion_is_raised_not_left_out() -> None:
+    class Column:
+        type = pa.int64()
+        null_count = 0
+
+        def __len__(self) -> int:
+            return 1
+
+        def to_pylist(self) -> list[Any]:
+            raise pa.ArrowMemoryError("out of memory")  # a MemoryError and an ArrowException
+
+    with pytest.raises(MemoryError):  # the loop fails the rows from there by name
+        parquetfile._split(Column(), None, [0])
+
+
+def test_a_file_of_blank_rows_is_read_only_to_the_decode_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def no_memory(column: Any, target: Any) -> list[Any]:
-        raise pa.ArrowMemoryError("out of memory")  # a MemoryError and an ArrowException
+    monkeypatch.setattr(parquetfile, "_MAX_DECODED", 10)
+    monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 4)
+    t = pa.table({"v": pa.array([None] * 30, pa.int64())})
+    a, tab = _one(_file(t))
+    assert tab.rows == ()
+    (unit,) = a.coverage.failed
+    # Two batches decoded (8 values), the third past the bound: counted, not read.
+    assert (unit.unit, unit.reason) == ("f.parquet rows 9-", "22 rows past what one artifact holds")
 
-    monkeypatch.setattr(parquetfile, "_converted", no_memory)
-    a = extract(_file(pa.table({"v": [1, 2]})), "f.parquet")
-    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
-        ("f.parquet rows 1-", "not decoded: out of memory")
-    ]
+
+def test_values_python_cannot_hold_are_searched_for_by_halves_to_a_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+    real = parquetfile._split
+
+    def counting(column: Any, target: Any, failures: list[int]) -> list[Any]:
+        calls.append(len(column))
+        return real(column, target, failures)
+
+    monkeypatch.setattr(parquetfile, "_split", counting)
+    days = [0] * 1023 + [3_000_000]  # one bad value at the end of a batch of 1,024
+    _, tab = _one(_file(pa.table({"d": pa.array(days, pa.date32())})))
+    assert tab.rows[-1] == (None,) and tab.rows[0] == ("1970-01-01",)
+    assert len(calls) <= 2 * 11  # halves to the one value: about two calls a level
+    monkeypatch.setattr(parquetfile, "_MAX_UNHELD", 2)
+    a, tab = _one(
+        _file(pa.table({"d": pa.array([3_000_000, 3_000_000, 3_000_000, 1], pa.date32())}))
+    )
+    assert [f.reason for f in a.coverage.failed] == ["4 values past what Python holds"]

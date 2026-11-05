@@ -246,8 +246,9 @@ row is a block alone, under a chunk's default 1,500 characters, so a chunk cites
 with no rows under it is a block of its own. A column's name is at most 500 characters of its header cell (one cut
 shorter is a failed unit, `<table> header`). A float's row text is what a sheet shows, to 15 significant digits
 (`0.1+0.2` reads `0.3`), and the table keeps its exact value. A number that is no JSON number (an integer past signed 64
-bits, an infinity, a NaN) is read as a float or as text, and a value no other rule reads (a style index of 5,000 digits,
-a date rounded past year 9999) reads as a number or as text, never failing the file.
+bits, an infinity, a NaN) is read as a float or as text, and in CSV and XLSX a value no other rule reads (a style index
+of 5,000 digits, a date rounded past year 9999) reads as a number or as text, never failing the file; Parquet leaves it
+out and counts it (below).
 
 **CSV.** The delimiter is sniffed from the whole lines of the file's first 64 KiB (a comma, semicolon, tab or pipe; a
 tab, with no quoting, for a `.tsv` name; a tab-separated file sent with no such name is sniffed, so it reads quotes as
@@ -290,12 +291,13 @@ other readers write them, a nanosecond unit to the microsecond (inside a list, s
 Arrow casts to no other element type); text is text, a UUID its text, and a list, struct or map is its JSON (bytes in it
 as base64); another extension type reads as what it stores, a `bool8` as a bool. Bytes are no text, and they, a value
 over 1 MiB and a value Python cannot hold (a date past year 9999) are left out and counted (`<name> values`, each cause
-named, over the rows read); a batch with such a value is converted a value at a time, so only that one is. A row of
-nulls is no row. Pages decode one at a time, so a row group's size does not decide what is held; the rows past the table
-budget are not read: those past the batch it ran out in are counted from the metadata, never decoded; a row group whose
-pages do not decode fails the rows from there (`<name> rows N-`). The child's limits bound one decode, and its
-environment holds the native libraries to one thread and the system allocator, which the address-space limit allows. A
-build without pyarrow does not declare Parquet.
+named, over the rows read); a batch with such a value is split in halves until each part converts, so only that one is,
+and past 16 of them the rest of the batch's column is left out unread. A row of nulls is no row. Pages decode one at a
+time, so a row group's size does not decide what is held; the rows past the table budget are not read: those past the
+batch it ran out in, and past four million values decoded (a file of blank rows is bounded too), are counted from the
+metadata, never decoded; a row group whose pages do not decode fails the rows from there (`<name> rows N-`). The child's
+limits bound one decode, and its environment holds the native libraries to one thread and the system allocator, which
+the address-space limit allows. A build without pyarrow does not declare Parquet.
 
 **Bounds.** One budget bounds all of an artifact's tables, in three parts: what a source holds, the bytes its tables
 write, and the text they index. A source holds at most 1,000,000 non-empty cells in all, merged cells included, their
