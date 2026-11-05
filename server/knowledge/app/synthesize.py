@@ -25,11 +25,10 @@ from server.knowledge.domain import datasets as ds
 from server.observability.genai import llm_stage
 from server.settings.budgets import llm_max_tokens
 
-# Plans proposed at most: one, and one more told why the first was refused.
-_PLAN_TRIES = 2  # not a setting: a second chance, not a tunable cost
-
 if TYPE_CHECKING:
     from server.memory.domain.corpus_synthesis import CorpusChunk
+
+_PLAN_TRIES = 2  # not a setting: one plan, and one more told why the first was refused
 
 
 async def handle_knowledge_synthesize(
@@ -223,7 +222,7 @@ async def _calculate(
             )
         proposal = ap.read_proposal(getattr(res, "text", "") or "")
         if proposal.ask:
-            return _abstain("ambiguous", proposal.ask[:1000], model)
+            return _abstain("ambiguous", ap.cut(proposal.ask, ap.MAX_REASON_CHARS), model)
         if proposal.plan is None:
             refused = proposal.unreadable
             continue
@@ -240,7 +239,7 @@ async def _calculate(
             refused = _why(e)
             continue
         return SynthesizeCalculation(citation=f"{ap.CALCULATION_SOURCE}#1", **out.model_dump())
-    return _abstain("invalid_plan", refused[:1000], model)
+    return _abstain("invalid_plan", ap.cut(refused, ap.MAX_REASON_CHARS), model)
 
 
 def _unknown_keys(model: type[pydantic.BaseModel], data: Any, path: str = "") -> list[str]:

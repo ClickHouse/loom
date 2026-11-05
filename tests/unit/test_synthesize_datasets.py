@@ -309,6 +309,14 @@ async def test_a_task_the_model_finds_ambiguous_abstains_with_the_question_to_as
 
 
 @pytest.mark.asyncio
+async def test_a_long_question_to_ask_is_cut_and_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm = _LLM([json.dumps({"ambiguous": "Which one? " * 500})])
+    Stores(monkeypatch, llm)
+    out = await _synthesize()
+    assert len(out.clarification) == ap.MAX_REASON_CHARS and out.clarification.endswith("…")
+
+
+@pytest.mark.asyncio
 async def test_a_refused_plan_is_proposed_again_once_with_why_then_abstains(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

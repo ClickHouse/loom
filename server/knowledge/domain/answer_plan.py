@@ -26,6 +26,8 @@ MAX_EVIDENCE_ROWS = 50  # not a setting: what one prompt shows of a result
 MAX_EVIDENCE_CELL = 200  # not a setting: what one prompt shows of a value
 MAX_PROMPT_COLUMNS = 100  # not a setting: what one prompt shows of a schema
 MAX_PROMPT_SCHEMA_CHARS = 24_000  # not a setting: what one prompt shows of the schemas
+# A question to ask or a refusal's reason, as an abstention or a retry carries it.
+MAX_REASON_CHARS = 1000  # not a setting: what one clarification holds
 
 PLAN_SYSTEM = (
     "You turn a question about tabular datasets into a calculation plan, or say "
@@ -64,9 +66,8 @@ def plan_prompt(task: str, schemas: Sequence[Mapping[str, Any]], refused: str = 
     count, and, on a second try, why the first plan was refused."""
     room = MAX_PROMPT_SCHEMA_CHARS // max(1, len(schemas))
     described = "\n".join(_described(s, room) for s in schemas)
-    retry = (
-        f"\n\nYour last plan was refused: {refused}\nPropose a corrected plan." if refused else ""
-    )
+    why = cut(refused, MAX_REASON_CHARS)
+    retry = f"\n\nYour last plan was refused: {why}\nPropose a corrected plan." if refused else ""
     return f"QUESTION: {task}\n\nDATASETS (alias: name; columns):\n{described}{retry}\n\nJSON:"
 
 
@@ -87,7 +88,8 @@ def _described(schema: Mapping[str, Any], room: int) -> str:
     return f"{head}; columns: {', '.join(shown)}{more}"
 
 
-def _cut(text: str, limit: int) -> str:
+def cut(text: str, limit: int) -> str:
+    """`text` to `limit` characters, ending `…` when it was cut."""
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
@@ -133,20 +135,20 @@ def evidence(
         separators=(",", ":"),
     )
     lines = [
-        " | ".join("" if v is None else _cut(str(v), MAX_EVIDENCE_CELL) for v in r)
+        " | ".join("" if v is None else cut(str(v), MAX_EVIDENCE_CELL) for v in r)
         for r in rows[:MAX_EVIDENCE_ROWS]
     ]
     # Each name cut like a value, and the line to a third of the room, so a wide
     # selection's heads leave its rows room.
-    head = _cut(
-        " | ".join(f"{_cut(c['name'], MAX_EVIDENCE_CELL)} ({c['type']})" for c in columns),
+    head = cut(
+        " | ".join(f"{cut(c['name'], MAX_EVIDENCE_CELL)} ({c['type']})" for c in columns),
         max(1, max_chars // 3),
     )
     warnings = list(incomplete)
     if truncated:
         warnings.insert(0, f"more rows matched than the {len(rows)} the calculation returned")
     # The plan takes at most a third of the room, so a long `in` list leaves rows room.
-    plan_text = _cut(ran, max(1, max_chars // 3))
+    plan_text = cut(ran, max(1, max_chars // 3))
 
     def note(kept: int) -> str:
         # Which of the rows returned are shown: the first MAX_EVIDENCE_ROWS, or fewer to fit.
