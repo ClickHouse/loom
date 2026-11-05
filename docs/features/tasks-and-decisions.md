@@ -414,11 +414,10 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
     namespace; there is no per-document access, so a repository reader who cannot read the document's namespace sees
     the row's decision but is refused the document it cites. The rows are the trunk's: erasing the document's namespace
     leaves them, and `memory.delete` in the trunk removes them.
-  - **Tags**: under `--into source` for a document outside the trunk, a row the run keeps as it is (pinned, attested
-    or with a recorded outcome, and still stated, or one the retire step keeps because it is still stated or was not
-    judged), and a row it tags `source-changed`, gains the `repo:<id>` tag by a tags-only write;
-    another writer's row that is not pinned or attested gains none, nor does a row that carries another repository's
-    tag already.
+  - **Tags**: under `--into source` for a document outside the trunk, a row of the extractor's the run keeps as it is
+    (pinned, attested or with a recorded outcome, still stated or not judged, or one the retire step keeps because it
+    is still stated or was not judged), and a row it tags `source-changed`, gains the `repo:<id>` tag by a tags-only
+    write; another writer's row gains none, nor does a row that carries another repository's tag already.
   - **Access**: the run reads the document's namespace and the repository's, and writes where the rows go. With an
     auth context bound it checks each (viewer, viewer, and writer, or viewer for a dry run) and refuses before any
     model call; the CLI runs with none, as the operator.

@@ -142,9 +142,9 @@ def exit_code(report: ExtractReport) -> int:
     repository's namespace, a --repo with no remote to tag rows with, the dashboard's
     repositories unread, the extractor's rows unreadable, left in another namespace or linked
     to another repository, no window read), 2 when a write, or a read it needed (a window
-    the model could not answer readably included), was refused or failed (in a dry run too),
-    else 0. A row deleted or rewritten since the run read it is reported, not counted: the
-    next run settles it."""
+    or its support check the model could not answer readably included), was refused or
+    failed (in a dry run too), else 0. A row deleted or rewritten since the run read it is
+    reported, not counted: the next run settles it."""
     if report.error:
         return 1
     return 2 if report.refused or any(d.refused for d in report.dropped) else 0
