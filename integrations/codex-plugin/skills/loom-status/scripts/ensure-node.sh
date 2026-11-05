@@ -1,27 +1,14 @@
 #!/bin/sh
-# Loom's coding-agent hooks are .mjs files launched by /bin/sh, so a Node
-# runtime in a login-shell-only version manager does not satisfy them.
+# Loom's coding-agent hooks run through bin/loom-node, which finds Node 18+
+# on PATH, under a version manager or in the usual install directories.
 #   ensure-node.sh --check   report only: exit 0 when ready, 1 when missing
 #   ensure-node.sh           install Node when missing (root or sudo -n);
 #                            exit 2 names what blocks the install
 set -eu
 
-HOOK_PATH=${LOOM_NODE_HOOK_PATH:-/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin}
-NODE_PATH=''
-NODE_VERSION=''
+LAUNCHER="$(dirname "$0")/../../../bin/loom-node"
 SETUP_FILE=''
 trap 'if [ -n "$SETUP_FILE" ]; then rm -f "$SETUP_FILE"; fi' EXIT HUP INT TERM
-
-hook_node_ready() {
-  NODE_PATH=$(PATH="$HOOK_PATH" /bin/sh -c 'command -v node' 2>/dev/null) || return 1
-  NODE_VERSION=$("$NODE_PATH" --version 2>/dev/null) || return 1
-  major=${NODE_VERSION#v}
-  major=${major%%.*}
-  case "$major" in
-    '' | *[!0-9]*) return 1 ;;
-  esac
-  [ "$major" -ge 18 ]
-}
 
 as_root() {
   if [ "$(id -u)" -eq 0 ]; then
@@ -43,14 +30,12 @@ download_setup() {
   curl -fsSL --connect-timeout 10 --max-time 120 "$1" -o "$SETUP_FILE"
 }
 
-if hook_node_ready; then
-  printf 'Loom hook runtime ready: %s (%s)\n' "$NODE_PATH" "$NODE_VERSION"
-  exit 0
+if [ "${1:-}" = '--check' ]; then
+  exec sh "$LAUNCHER" --check
 fi
 
-if [ "${1:-}" = '--check' ]; then
-  echo 'Loom hooks need Node.js 18+ in the system shell PATH.' >&2
-  exit 1
+if sh "$LAUNCHER" --check 2>/dev/null; then
+  exit 0
 fi
 
 case "$(uname -s)" in
@@ -76,7 +61,7 @@ case "$(uname -s)" in
     elif command -v apk >/dev/null 2>&1; then
       as_root apk add --no-cache nodejs
     else
-      echo 'Unsupported Linux package manager; install system-wide Node.js 18+ and retry.' >&2
+      echo 'Unsupported Linux package manager; install Node.js 18+, or set LOOM_NODE=/path/to/node.' >&2
       exit 2
     fi
     ;;
@@ -88,13 +73,10 @@ case "$(uname -s)" in
     brew upgrade node || brew install node
     ;;
   *)
-    echo 'Unsupported OS; install system-wide Node.js 18+ and retry.' >&2
+    echo 'No installer for this OS; install Node.js 18+, or set LOOM_NODE=/path/to/node.' >&2
     exit 2
     ;;
 esac
 
-if ! hook_node_ready; then
-  echo 'Node was installed, but /bin/sh still cannot find Node.js 18+ in its system PATH.' >&2
-  exit 1
-fi
-printf 'Loom hook runtime ready: %s (%s). Restart the coding-agent session.\n' "$NODE_PATH" "$NODE_VERSION"
+sh "$LAUNCHER" --check
+echo 'Restart the coding-agent session.'

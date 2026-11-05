@@ -64,7 +64,10 @@ def test_codex_wiring_names_codex_events_and_existing_scripts() -> None:
     hooks = _hooks(CODEX / "hooks" / "hooks.json")
     assert set(hooks) <= CODEX_EVENTS, set(hooks) - CODEX_EVENTS
     for event, cmd in _commands(hooks):
-        m = re.fullmatch(r'node "\$\{PLUGIN_ROOT\}/hooks/([a-z-]+\.mjs)" (\w+) codex', cmd)
+        m = re.fullmatch(
+            r'sh "\$\{PLUGIN_ROOT\}/bin/loom-node" "\$\{PLUGIN_ROOT\}/hooks/([a-z-]+\.mjs)" (\w+) codex',
+            cmd,
+        )
         assert m, f"{event}: unexpected command shape: {cmd}"
         script, argv_event = m.group(1), m.group(2)
         assert (CODEX / "hooks" / script).is_file(), f"{event}: {script} missing"
@@ -130,7 +133,10 @@ def test_claude_hooks_json_still_passes_no_client_argument() -> None:
     """Claude Code stays the default client: its wiring is unchanged and the
     scripts fall back to `claude-code` when argv[3] is absent."""
     for _, cmd in _commands(_hooks(CLAUDE / "hooks" / "hooks.json")):
-        assert re.fullmatch(r'node "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[a-z-]+\.mjs" \w+', cmd), cmd
+        assert re.fullmatch(
+            r'sh "\$\{CLAUDE_PLUGIN_ROOT\}/bin/loom-node" "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[a-z-]+\.mjs" \w+',
+            cmd,
+        ), cmd
 
 
 # ---- loom install --client codex -------------------------------------------

@@ -3,7 +3,7 @@
     "loom": {
       "type": "http",
       "url": "${user_config.server_url}/mcp?toolset=${user_config.toolset}",
-      "headersHelper": "node \"$CLAUDE_PLUGIN_ROOT/bin/loom-mcp-headers.mjs\""
+      "headersHelper": "sh \"$CLAUDE_PLUGIN_ROOT/bin/loom-node\" \"$CLAUDE_PLUGIN_ROOT/bin/loom-mcp-headers.mjs\""
     }
   }
 }

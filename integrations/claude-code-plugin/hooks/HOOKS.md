@@ -5,14 +5,16 @@ only and warns on any other key, so the notes live here. The Codex plugin
 runs byte-identical copies of these scripts with its own wiring
 (`integrations/codex-plugin/hooks/hooks.json`, which says what differs and
 why). `hooks.generic.json` maps the same scripts onto a hand-wired client's
-events. Every script is `node <script> <Event> [client]`: the event name is
-the first argument, the client (`codex`, …) the optional second; the payload
-is JSON on stdin.
+events. Every script is `sh bin/loom-node <script> <Event> [client]`: the
+launcher finds Node 18+ (README, "Which Node"), the event name is the first
+argument, the client (`codex`, …) the optional second; the payload is JSON
+on stdin.
 
 ## What every hook guarantees
 
 - **It never fails the host session.** Every path exits 0 and a thrown error
-  is swallowed. A hook that ends in `runHookMain` (`lib/loom-client.mjs`)
+  is swallowed; the one exception is the launcher finding no Node, which
+  exits 1 (a non-blocking error to both clients) with one line on stderr. A hook that ends in `runHookMain` (`lib/loom-client.mjs`)
   writes that error's first line to stderr under `LOOM_HOOK_DEBUG=on`, with
   bearer tokens and JWTs redacted; nothing else reaches stderr.
 - **It is bounded.** Each request is aborted at the request bound: 5× the

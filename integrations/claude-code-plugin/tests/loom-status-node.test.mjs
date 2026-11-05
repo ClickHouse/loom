@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const whichSync = (c) => spawnSync("/bin/sh", ["-c", `command -v ${c}`], { encoding: "utf8" }).stdout.trim();
 const helper = path.join(here, "..", "skills", "loom-status", "scripts", "ensure-node.sh");
 
 function fixture() {
@@ -20,12 +21,14 @@ function fixture() {
   const run = (...args) =>
     spawnSync("/bin/sh", [helper, ...args], {
       encoding: "utf8",
-      env: { ...process.env, PATH: bin, LOOM_NODE_HOOK_PATH: bin, TEST_BIN: bin, TMPDIR: dir },
+      env: { HOME: dir, PATH: bin, LOOM_NODE_SYSTEM_DIRS: "", TEST_BIN: bin, TMPDIR: dir },
     });
+  // The helper and the launcher it calls run under these.
+  for (const command of ["sh", "dirname"]) fs.symlinkSync(whichSync(command), path.join(bin, command));
   return { dir, bin, put, run };
 }
 
-test("loom-status Node helper is a no-op when the hook shell has Node 18+", () => {
+test("loom-status Node helper is a no-op when the launcher finds Node 18+", () => {
   const f = fixture();
   try {
     f.put("node", "echo v22.0.0");
@@ -42,7 +45,8 @@ test("loom-status Node check reports a missing runtime without installing", () =
   try {
     const r = f.run("--check");
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /Node\.js 18\+/);
+    assert.equal(r.stdout, "");
+    assert.match(r.stderr, /^loom: Node\.js 18\+ not found .* set LOOM_NODE=\/path\/to\/node\.\n$/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
   }
@@ -64,8 +68,34 @@ test("loom-status Node helper selects apt and verifies the installed binary", ()
     }
     const r = f.run();
     assert.equal(r.status, 0, `${r.stderr}\n${r.stdout}`);
-    assert.match(r.stdout, /Restart the coding-agent session/);
+    assert.match(r.stdout, /Loom hook runtime ready: .*node \(v22\.0\.0\)\nRestart the coding-agent session/);
     assert.equal(fs.existsSync(path.join(f.bin, "node")), true);
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("loom-status Node check names a too-old Node and the LOOM_NODE override", () => {
+  const f = fixture();
+  try {
+    f.put("node", "echo v16.20.2");
+    const r = f.run("--check");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /the only Node found is .*node \(v16\.20\.2\)\. .*LOOM_NODE=/);
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("loom-status Node check finds a version-manager Node the agent's PATH lacks", () => {
+  const f = fixture();
+  try {
+    const bin = path.join(f.dir, ".local", "share", "fnm", "aliases", "default", "bin");
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "node"), "#!/bin/sh\necho v24.1.0\n", { mode: 0o755 });
+    const r = f.run("--check");
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, `Loom hook runtime ready: ${path.join(bin, "node")} (v24.1.0)\n`);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
   }

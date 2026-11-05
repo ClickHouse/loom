@@ -19,6 +19,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
 import time
 import tomllib
 from collections.abc import Callable
@@ -39,6 +41,7 @@ PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 Check = tuple[str, str, str]
 GetJson = Callable[[str, str, float], tuple[int, dict[str, Any]]]
 PostJson = Callable[[str, str, dict[str, Any], str, float], tuple[int, dict[str, Any]]]
+RunLauncher = Callable[[Path, dict[str, str]], tuple[int, str]]
 
 STALE_FLUSH_S = 600
 EXPIRING_SOON_S = 7 * 86400
@@ -812,11 +815,7 @@ def hook_override_check(home: Path, env: dict[str, str]) -> list[Check]:
     """One WARN per hook override found in the environment or in
     ~/.claude/settings.json `env` (which Claude Code applies to its hooks),
     saying what each one does."""
-    try:
-        raw_settings = _read(home / ".claude" / "settings.json") or "{}"
-        settings_env = json.loads(raw_settings).get("env") or {}
-    except (ValueError, AttributeError):
-        settings_env = {}
+    settings_env = _claude_settings_env(home)
     found: list[tuple[str, str, str]] = []
     for name in _HOOK_OVERRIDES:
         sources = ((env, "the environment"), (settings_env, "~/.claude/settings.json env"))
@@ -854,6 +853,83 @@ def hook_override_check(home: Path, env: dict[str, str]) -> list[Check]:
             )
         out.append(("client:hook-override", WARN, why))
     return out
+
+
+def _claude_settings_env(home: Path) -> dict[str, str]:
+    """~/.claude/settings.json `env`, which Claude Code applies to its hooks."""
+    try:
+        raw = json.loads(_read(home / ".claude" / "settings.json") or "{}").get("env") or {}
+        return {str(k): str(v) for k, v in raw.items()}
+    except (ValueError, AttributeError):
+        return {}
+
+
+# The PATH a GUI or IDE launch hands the agent: no shell profile has run.
+_BARE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+
+def newest_launcher(home: Path) -> Path | None:
+    """`bin/loom-node` of the newest installed loom plugin, Claude Code's or
+    Codex's; None when no installed plugin ships one."""
+    found = [
+        *home.glob(".claude/plugins/cache/*/loom/*/bin/loom-node"),
+        *home.glob(".codex/plugins/cache/*/loom/*/bin/loom-node"),
+    ]
+
+    def version(p: Path) -> tuple[int, ...]:
+        return tuple(int(x) for x in re.findall(r"\d+", p.parent.parent.name))
+
+    return max(found, key=version, default=None)
+
+
+def run_launcher(launcher: Path, env: dict[str, str]) -> tuple[int, str]:
+    """`sh <launcher> --check`: its exit code and its one line."""
+    try:
+        r = subprocess.run(
+            [shutil.which("sh") or "sh", str(launcher), "--check"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 1, f"loom: {launcher} did not run ({e})."
+    return r.returncode, (r.stdout or r.stderr).strip()
+
+
+def node_check(home: Path, env: dict[str, str], run: RunLauncher) -> list[Check]:
+    """The Node the plugin's hooks and MCP header helper run under, as the
+    plugin's own launcher finds it: with this shell's environment, then with
+    the bare PATH of an agent started from a GUI or IDE; Claude Code's
+    settings `env` applies to both."""
+    launcher = newest_launcher(home)
+    if launcher is None or shutil.which("sh") is None:
+        return []
+    name = "client:node"
+    settings = _claude_settings_env(home)
+    code, line = run(launcher, {**env, **settings})
+    if code != 0:
+        return [
+            (
+                name,
+                FAIL,
+                f'{line} No hook runs, and the MCP entry gets no token ("needs '
+                'authentication"). Fix: the loom-status skill, or LOOM_NODE=/path/to/node.',
+            )
+        ]
+    if run(launcher, {**env, "PATH": _BARE_PATH, **settings})[0] != 0:
+        node = line.split(": ", 1)[-1].rsplit(" (", 1)[0]
+        return [
+            (
+                name,
+                WARN,
+                f"{line}, but only on this shell's PATH: an agent started from a GUI or "
+                f"IDE finds no Node. Fix: LOOM_NODE={node} in the agent's environment "
+                "(the `env` block of ~/.claude/settings.json for Claude Code).",
+            )
+        ]
+    return [(name, PASS, line)]
 
 
 def flush_check(tmp: Path, now: float) -> Check:
@@ -900,9 +976,10 @@ def client_checks(
     env: dict[str, str] | None = None,
     tmp: Path | None = None,
     now: float | None = None,
+    run_node: RunLauncher = run_launcher,
 ) -> list[Check]:
     """Every client-side line, in reading order: server, token, auth,
-    namespace, the two clients' wiring, stranded captures."""
+    namespace, the two clients' wiring, the hooks' Node, stranded captures."""
     home = home or Path.home()
     env = dict(os.environ if env is None else env)
     tmp = tmp or Path(env.get("TMPDIR") or "/tmp")
@@ -956,6 +1033,7 @@ def client_checks(
             )
         )
     checks.extend(codex_checks(home, base_url, env=env, post_json=probe, now=now))
+    checks.extend(node_check(home, env, run_node))
     checks.append(flush_check(tmp, now))
     return checks
 

@@ -4,7 +4,8 @@ description: >
   Use when Loom seems quiet or wrong: a loom tool answers "unauthenticated",
   "not available" or an empty result for something the user says was saved;
   the session-start primer did not appear; the user asks "is loom working",
-  "why didn't it remember", "is my token ok", or a Loom hook says `node: not found`.
+  "why didn't it remember", "is my token ok", or a Loom hook says `node: not found`
+  or `loom: Node.js 18+ …`.
   Checks the Node hook runtime, then runs the plugin's client check and reads
   its lines, so the answer names the cause (missing runtime, unreachable
   server, rejected or expired token, no writer grant on the write namespace,
@@ -28,15 +29,16 @@ Code; in Codex, the newest `~/.codex/plugins/cache/*/loom/*/` directory.
 ## Check in this order; the first failure is the cause
 
 1. **Local runtime.** `sh "<root>/skills/loom-status/scripts/ensure-node.sh" --check`
-   says whether `/bin/sh` finds Node 18+ (hooks run there, so a Node that
-   only a login shell's version manager provides does not count). On a
-   failure, tell the user the hooks cannot run and offer the fix: the same
-   script without `--check` installs Node (root or passwordless sudo, then
-   apt/dnf/yum, apk or Homebrew). Run it only when the user says yes; if it
-   exits 2, report its blocker line, do not retry. After an install the user
-   restarts the session: SessionStart hooks cannot rerun in this one.
+   prints the Node 18+ the hooks and the MCP header helper run under, or one
+   line saying none was found or the one found is too old. On a failure, tell
+   the user the hooks cannot run and offer the fix: `LOOM_NODE=/path/to/node`
+   for a Node the check missed, else the same script without `--check`
+   installs Node (root or passwordless sudo, then apt/dnf/yum, apk or
+   Homebrew). Run it only when the user says yes; if it exits 2, report its
+   blocker line, do not retry. After an install the user restarts the
+   session: SessionStart hooks cannot rerun in this one.
    An MCP-only client has no hooks and skips this step.
-2. **Server, token, auth, grant.** `node "<root>/bin/loom-client-status.mjs"`
+2. **Server, token, auth, grant.** `sh "<root>/bin/loom-node" "<root>/bin/loom-client-status.mjs"`
    prints JSON whose `checks` come in this order: `server`, `token`, `source`,
    `auth`, `namespace`, `flush` (`ok` is false when `server`, `token`, `auth`
    or `namespace` fails). `source` names the lookup that supplied the token.

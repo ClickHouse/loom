@@ -61,6 +61,17 @@ The scripts are standalone Node ESM (`.mjs`) with **zero dependencies** — no L
 SDK, no `node_modules`. They run on any Node ≥ 18 (global `fetch` +
 `AbortSignal.timeout`).
 
+**Which Node.** Every hook and the MCP header helper start through
+`sh bin/loom-node`, because the PATH an agent hands its hooks is its own: an
+agent started from a GUI or an IDE, or a version manager that sets PATH only
+in interactive shells, leaves `node` off it. The launcher runs the first
+Node 18+ among `LOOM_NODE`, `node` on PATH, a version manager's default and
+then its newest install, and the usual install directories; with none, the
+hook exits 1 with one line naming the Node it found too old, or none, and
+`LOOM_NODE`. Set `LOOM_NODE=/path/to/node` (for Claude Code, in the `env`
+block of `~/.claude/settings.json`) for a Node it misses. On Windows the
+launcher runs under Git Bash, Claude Code's hook shell there.
+
 ## Safety model: fire-and-forget, hard-bounded
 
 Loom's server is **remote** (not localhost). A capture hook fires on the agent's
@@ -307,7 +318,7 @@ Seven skills ship with the plugin and load on their triggers:
 | `loom-code`                | about to grep, glob or open files in a loom-indexed repo                                                                                                                                 | which `code.*` op replaces the reflex, how to read a result, when to stop                                                                                                                                                                                                    |
 | `loom-memory`              | about to write a fact; the user states, decides or corrects one; end of a substantial task                                                                                               | durable vs scratchpad, how to write a fact a future session can trust (no laundered inferences, source pointer, same key on change), how to read `memory_id` / `conflict` / `abstain` / `verification`, the end-of-task review                                               |
 | `improve-loom-for-my-repo` | end of a session in which loom's code tools missed                                                                                                                                       | turns this session's transcript into reproducible findings for the maintainers                                                                                                                                                                                               |
-| `loom-status`              | a loom tool answers "unauthenticated" or empty for something the user says was saved; the primer did not appear; "is loom working?"; a hook says `node: not found`                       | read-only checks in order — the hook runtime (`ensure-node.sh --check`), the packaged client check (`bin/loom-client-status.mjs`: server, token, where the token came from, auth, writer grant, stranded captures), plugin and MCP registration — and the one cause and fix  |
+| `loom-status`              | a loom tool answers "unauthenticated" or empty for something the user says was saved; the primer did not appear; "is loom working?"; a hook says it found no Node                        | read-only checks in order — the hook runtime (`ensure-node.sh --check`), the packaged client check (`bin/loom-client-status.mjs`: server, token, where the token came from, auth, writer grant, stranded captures), plugin and MCP registration — and the one cause and fix  |
 | `loom-optimize`            | "optimize my loom namespace", "audit memory", "my memory search is bad"; a mentor hint naming rows to rework                                                                             | runs `namespace.audit`, writes a plan the owner approves, reworks rows with `memory.move` so every old key stays readable through a redirect; retires nothing                                                                                                                |
 | `loom-session`             | only an explicit "save this session", "hand this off", "resume", "where was I on this branch"; a brief the primer mentions is not a request                                              | loads a session brief with what moved in the checkout since it was saved (`bin/loom-brief.mjs get`), or saves one the agent writes from its own context — goal, status, decisions and why, dead ends, done, next steps, files, rules, pointers                               |
 | `loom-mentor`              | a hint (a result's `hint`, or a "Loom mentor" line) names a plane or op you do not know how to use; "what can loom do", "am I using loom well" (a hint that names its op needs no skill) | the situation → plane → op table for every plane (code index, tracker record, documents, records, working memory, offload, graph, runs, decisions, procedures, duplicates, conflicts, bisect), what each hint code means and what to do, and `mentor.brief` for the evidence |

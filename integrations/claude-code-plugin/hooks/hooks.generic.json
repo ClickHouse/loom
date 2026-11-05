@@ -18,57 +18,57 @@
   "events": {
     "on_tool_success": {
       "description": "After any successful tool/MCP call.",
-      "command": "node ${LOOM_PLUGIN_DIR}/hooks/loom-capture.mjs PostToolUse",
+      "command": "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/loom-capture.mjs PostToolUse",
       "stdin": "json hook payload"
     },
     "on_tool_failure": {
       "description": "After a tool/MCP call errors — the bug-triage signal.",
-      "command": "node ${LOOM_PLUGIN_DIR}/hooks/loom-capture.mjs PostToolUseFailure",
+      "command": "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/loom-capture.mjs PostToolUseFailure",
       "stdin": "json hook payload"
     },
     "on_session_start": {
       "description": "Session start. Prints a context primer to stdout (on by default; LOOM_INJECT_CONTEXT=false disables).",
-      "command": "node ${LOOM_PLUGIN_DIR}/hooks/loom-session-start.mjs SessionStart",
+      "command": "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/loom-session-start.mjs SessionStart",
       "stdin": "json hook payload"
     },
     "on_pre_compact": {
       "description": "Before context window compaction — crystallize first.",
-      "command": "node ${LOOM_PLUGIN_DIR}/hooks/loom-capture.mjs PreCompact",
+      "command": "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/loom-capture.mjs PreCompact",
       "stdin": "json hook payload"
     },
     "on_session_end": {
       "description": "Session end — crystallize the finished session.",
-      "command": "node ${LOOM_PLUGIN_DIR}/hooks/loom-capture.mjs SessionEnd",
+      "command": "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/loom-capture.mjs SessionEnd",
       "stdin": "json hook payload"
     },
     "on_user_prompt": {
       "description": "Each user prompt. The first one of a session opens a loom run (run ledger); later ones are no-ops.",
-      "command": "node ${LOOM_PLUGIN_DIR}/hooks/loom-run.mjs UserPromptSubmit",
+      "command": "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/loom-run.mjs UserPromptSubmit",
       "stdin": "json hook payload (prompt, session_id, cwd)"
     },
     "on_session_end_run": {
       "description": "Session end — close the loom run opened by on_user_prompt (run.complete). Wire alongside on_session_end.",
-      "command": "node ${LOOM_PLUGIN_DIR}/hooks/loom-run.mjs SessionEnd",
+      "command": "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/loom-run.mjs SessionEnd",
       "stdin": "json hook payload (session_id, reason, transcript_path)"
     },
     "on_pre_compact_working_memory": {
       "description": "Before compaction — write the session's working-memory note (goal, tree, edited files, last text) so the primer after the drop starts from it. Wire alongside on_pre_compact.",
-      "command": "node ${LOOM_PLUGIN_DIR}/hooks/loom-working-memory.mjs PreCompact",
+      "command": "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/loom-working-memory.mjs PreCompact",
       "stdin": "json hook payload (session_id, transcript_path, cwd)"
     },
     "on_stop_working_memory": {
       "description": "After each assistant turn — refresh the working-memory note when it changed.",
-      "command": "node ${LOOM_PLUGIN_DIR}/hooks/loom-working-memory.mjs Stop",
+      "command": "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/loom-working-memory.mjs Stop",
       "stdin": "json hook payload (session_id, transcript_path, cwd)"
     },
     "on_pre_compact_session_brief": {
       "description": "Before compaction — send the events since the last save to session.brief_save, which revises the branch's session brief. Wire alongside on_pre_compact.",
-      "command": "node ${LOOM_PLUGIN_DIR}/hooks/loom-session-brief.mjs PreCompact",
+      "command": "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/loom-session-brief.mjs PreCompact",
       "stdin": "json hook payload (session_id, transcript_path, cwd)"
     },
     "on_session_end_session_brief": {
       "description": "Session end — the same save for whatever happened after the last compaction. Wire alongside on_session_end.",
-      "command": "node ${LOOM_PLUGIN_DIR}/hooks/loom-session-brief.mjs SessionEnd",
+      "command": "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/loom-session-brief.mjs SessionEnd",
       "stdin": "json hook payload (session_id, transcript_path, cwd)"
     }
   }

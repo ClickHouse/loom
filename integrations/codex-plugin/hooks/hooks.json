@@ -1,5 +1,5 @@
 {
-  "description": "Loom ambient-capture hooks for Codex. The scripts under hooks/ and lib/ are byte-identical to the Claude Code plugin's (checked by `python scripts/codegen/agent_plugin_sync.py --check`); only this wiring differs. Each command names the client as the script's third argument (`codex`), which sets the default agent label, the run-id prefix (cx-<session_id>), the `source:codex` tag and the consumer label.  What differs from the Claude Code wiring, and why: - Codex has no Read or Grep tool: it reads files and searches through its   shell tool, whose input may be an argv array. loom-code-shunt watches the   shell tool only (its `cat` / `rg` / `grep` branch); the whole-file-Read   branch has nothing to match. - Codex edits files with apply_patch: loom-file-context and loom-blast-radius   read the target path out of the patch text. - Codex may hand the hooks no transcript (`transcript_path` null) or one in   its own shape. loom-run journals every prompt (UserPromptSubmit), and   loom-conversation journals every reply from `last_assistant_message`   (Stop); the working-memory note, the run's final text, the conversation   plane and the session memory read that journal. loom-usage needs the   per-turn token counters only a Claude Code transcript carries, so it is   not wired here. - Codex's SessionEnd hook budget is one second: only the fire-and-forget   scripts (capture, run close, session memory hand-off) run there; the   conversation hook does its work at Stop. Identity (org/namespace) is derived from the token — drop a writer JWT in ~/.loom/token or ~/.loom/config.json, or set LOOM_API_KEY. The server is ~/.loom/config.json's url, else the plugin's plugin-defaults.json; LOOM_BASE_URL overrides both. Every knob the Claude Code README lists (LOOM_INJECT_CONTEXT, LOOM_CODE_SHUNT, LOOM_TEST_GATE, …) works here.",
+  "description": "Loom ambient-capture hooks for Codex. The scripts under hooks/ and lib/ are byte-identical to the Claude Code plugin's (checked by `python scripts/codegen/agent_plugin_sync.py --check`); only this wiring differs. Each command names the client as the script's third argument (`codex`), which sets the default agent label, the run-id prefix (cx-<session_id>), the `source:codex` tag and the consumer label.  What differs from the Claude Code wiring, and why: - Codex has no Read or Grep tool: it reads files and searches through its   shell tool, whose input may be an argv array. loom-code-shunt watches the   shell tool only (its `cat` / `rg` / `grep` branch); the whole-file-Read   branch has nothing to match. - Codex edits files with apply_patch: loom-file-context and loom-blast-radius   read the target path out of the patch text. - Codex may hand the hooks no transcript (`transcript_path` null) or one in   its own shape. loom-run journals every prompt (UserPromptSubmit), and   loom-conversation journals every reply from `last_assistant_message`   (Stop); the working-memory note, the run's final text, the conversation   plane and the session memory read that journal. loom-usage needs the   per-turn token counters only a Claude Code transcript carries, so it is   not wired here. - Codex's SessionEnd hook budget is one second: only the fire-and-forget   scripts (capture, run close, session memory hand-off) run there; the   conversation hook does its work at Stop. Each command runs its script through bin/loom-node, which finds Node 18+ when the PATH Codex hands the hook has none; Codex runs a hook through cmd.exe on Windows, where `commandWindows` calls `node` from the system PATH. Identity (org/namespace) is derived from the token — drop a writer JWT in ~/.loom/token or ~/.loom/config.json, or set LOOM_API_KEY. The server is ~/.loom/config.json's url, else the plugin's plugin-defaults.json; LOOM_BASE_URL overrides both. Every knob the Claude Code README lists (LOOM_INJECT_CONTEXT, LOOM_CODE_SHUNT, LOOM_TEST_GATE, …) works here.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +7,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-session-start.mjs\" SessionStart codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-session-start.mjs\" SessionStart codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-session-start.mjs\" SessionStart codex"
           }
         ]
       }
@@ -17,15 +18,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-run.mjs\" UserPromptSubmit codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-run.mjs\" UserPromptSubmit codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-run.mjs\" UserPromptSubmit codex"
           },
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-prompt-recall.mjs\" UserPromptSubmit codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-prompt-recall.mjs\" UserPromptSubmit codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-prompt-recall.mjs\" UserPromptSubmit codex"
           },
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-prompt-pack.mjs\" UserPromptSubmit codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-prompt-pack.mjs\" UserPromptSubmit codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-prompt-pack.mjs\" UserPromptSubmit codex"
           }
         ]
       }
@@ -36,7 +40,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-code-shunt.mjs\" PreToolUse codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-code-shunt.mjs\" PreToolUse codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-code-shunt.mjs\" PreToolUse codex"
           }
         ]
       },
@@ -45,7 +50,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-file-context.mjs\" PreToolUse codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-file-context.mjs\" PreToolUse codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-file-context.mjs\" PreToolUse codex"
           }
         ]
       }
@@ -56,7 +62,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-mentor-hint.mjs\" PostToolUse codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-mentor-hint.mjs\" PostToolUse codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-mentor-hint.mjs\" PostToolUse codex"
           }
         ]
       },
@@ -65,7 +72,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-blast-radius.mjs\" PostToolUse codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-blast-radius.mjs\" PostToolUse codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-blast-radius.mjs\" PostToolUse codex"
           }
         ]
       },
@@ -74,7 +82,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" PostToolUse codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" PostToolUse codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" PostToolUse codex"
           }
         ]
       }
@@ -84,15 +93,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" PreCompact codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" PreCompact codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" PreCompact codex"
           },
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" PreCompact codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" PreCompact codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" PreCompact codex"
           },
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" PreCompact codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" PreCompact codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" PreCompact codex"
           }
         ]
       }
@@ -102,27 +114,33 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" Stop codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" Stop codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" Stop codex"
           },
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-conversation.mjs\" Stop codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-conversation.mjs\" Stop codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-conversation.mjs\" Stop codex"
           },
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-test-gate.mjs\" Stop codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-test-gate.mjs\" Stop codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-test-gate.mjs\" Stop codex"
           },
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-validate-gate.mjs\" Stop codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-validate-gate.mjs\" Stop codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-validate-gate.mjs\" Stop codex"
           },
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-namespace-health.mjs\" Stop codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-namespace-health.mjs\" Stop codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-namespace-health.mjs\" Stop codex"
           },
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" Stop codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" Stop codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" Stop codex"
           }
         ]
       }
@@ -132,19 +150,23 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" SessionEnd codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" SessionEnd codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" SessionEnd codex"
           },
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-run.mjs\" SessionEnd codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-run.mjs\" SessionEnd codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-run.mjs\" SessionEnd codex"
           },
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-session-memory.mjs\" SessionEnd codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-session-memory.mjs\" SessionEnd codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-session-memory.mjs\" SessionEnd codex"
           },
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" SessionEnd codex"
+            "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" SessionEnd codex",
+            "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" SessionEnd codex"
           }
         ]
       }

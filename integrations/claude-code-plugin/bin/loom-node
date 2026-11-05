@@ -1,0 +1,147 @@
+#!/bin/sh
+# Runs a plugin script under Node.js 18+ wherever Node is installed. Hooks and
+# the MCP header helper start with the agent's own environment, and an agent
+# started from a GUI, an IDE or a shell whose version manager edits only the
+# interactive PATH has no `node` on it.
+#   loom-node <script> [args...]   exec the script under the Node found
+#   loom-node --check              print the Node found; exit 1 when none
+# The first Node 18+ wins: $LOOM_NODE, `node` on PATH, a version manager's
+# default, then its newest install, then the usual install directories.
+# Stdout is the script's own: a hook's stdout is its payload.
+
+found=''
+too_old=''
+
+# usable <file>: sets `found` when the file is Node 18+
+usable() {
+  [ -f "$1" ] && [ -x "$1" ] || return 1
+  v=$("$1" --version 2>/dev/null) || return 1
+  m=${v#v}
+  m=${m%%.*}
+  case $m in '' | *[!0-9]*) return 1 ;; esac
+  if [ "$m" -ge 18 ]; then
+    found=$1
+    found_version=$v
+    return 0
+  fi
+  [ -n "$too_old" ] || too_old="$1 ($v)"
+  return 1
+}
+
+# in_dir <dir>: node, or node.exe under Git Bash
+in_dir() {
+  [ -n "$1" ] || return 1
+  usable "$1/node" || usable "$1/node.exe"
+}
+
+# posix <path>: C:\Users\me -> C:/Users/me, which Git Bash opens as is
+posix() {
+  out=''
+  rest=$1
+  while :; do
+    case $rest in
+      *\\*)
+        out=$out${rest%%\\*}/
+        rest=${rest#*\\}
+        ;;
+      *)
+        printf '%s' "$out$rest"
+        return
+        ;;
+    esac
+  done
+}
+
+# newest <root> <bin> [prefix]: the highest version directory under <root>
+# whose name starts with [prefix], then <bin> inside it (empty: the directory)
+newest() {
+  best=''
+  best_key=-1
+  for d in "$1"/*; do
+    n=${d##*/}
+    n=${n#v}
+    case $n in "${3#v}"*) ;; *) continue ;; esac
+    case $n in [0-9]*.[0-9]*) ;; *) continue ;; esac
+    major=${n%%.*}
+    rest=${n#*.}
+    minor=${rest%%.*}
+    patch=${rest#*.}
+    [ "$patch" = "$rest" ] && patch=0
+    patch=${patch%%[!0-9]*}
+    case $major$minor in *[!0-9]*) continue ;; esac
+    key=$((major * 1000000 + minor * 1000 + ${patch:-0}))
+    if [ "$key" -gt "$best_key" ]; then
+      best=$d
+      best_key=$key
+    fi
+  done
+  [ -n "$best" ] && in_dir "$best${2:+/$2}"
+}
+
+# The default alias wins over the newest version, as in the user's shell.
+fnm() {
+  in_dir "$1/aliases/default/bin" || in_dir "$1/aliases/default" ||
+    newest "$1/node-versions" installation/bin || newest "$1/node-versions" installation
+}
+
+nvm() {
+  alias=''
+  [ -f "$1/alias/default" ] && read -r alias <"$1/alias/default"
+  case $alias in [0-9]* | v[0-9]*) newest "$1/versions/node" bin "$alias" && return 0 ;; esac
+  newest "$1/versions/node" bin
+}
+
+find_node() {
+  if [ -n "${LOOM_NODE:-}" ]; then
+    usable "$LOOM_NODE"
+    return
+  fi
+  p=$(command -v node 2>/dev/null) && usable "$p" && return 0
+  data=${XDG_DATA_HOME:-$HOME/.local/share}
+  [ -n "${FNM_DIR:-}" ] && fnm "$(posix "$FNM_DIR")" && return 0
+  fnm "$data/fnm" || fnm "$HOME/Library/Application Support/fnm" || fnm "$HOME/.fnm" && return 0
+  nvm "${NVM_DIR:-$HOME/.nvm}" && return 0
+  in_dir "${VOLTA_HOME:-$HOME/.volta}/bin" && return 0
+  newest "${ASDF_DATA_DIR:-$HOME/.asdf}/installs/nodejs" bin && return 0
+  newest "${MISE_DATA_DIR:-$data/mise}/installs/node" bin && return 0
+  newest "${NODENV_ROOT:-$HOME/.nodenv}/versions" bin && return 0
+  newest "${N_PREFIX:-/usr/local}/n/versions/node" bin && return 0
+  in_dir "$HOME/.nodebrew/current/bin" && return 0
+  # Windows, under Git Bash: nvm-windows, fnm, Volta, Scoop, the installer.
+  if [ -n "${APPDATA:-}${LOCALAPPDATA:-}" ]; then
+    in_dir "$(posix "${NVM_SYMLINK:-}")" && return 0
+    [ -n "${NVM_HOME:-}" ] && newest "$(posix "$NVM_HOME")" '' && return 0
+    [ -n "${APPDATA:-}" ] && fnm "$(posix "$APPDATA")/fnm" && return 0
+    [ -n "${LOCALAPPDATA:-}" ] && in_dir "$(posix "$LOCALAPPDATA")/Volta/bin" && return 0
+    in_dir "${SCOOP:-$HOME/scoop}/apps/nodejs/current" && return 0
+    in_dir "${SCOOP:-$HOME/scoop}/apps/nodejs-lts/current" && return 0
+    in_dir "$(posix "${PROGRAMFILES:-C:/Program Files}")/nodejs" && return 0
+  fi
+  # A colon-separated override of the fixed directories; tests point it at a fixture.
+  dirs=${LOOM_NODE_SYSTEM_DIRS-/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$HOME/.linuxbrew/bin:/usr/bin:/bin:/snap/bin:/opt/local/bin}
+  old_ifs=$IFS
+  IFS=:
+  for d in $dirs; do
+    IFS=$old_ifs
+    in_dir "$d" && return 0
+  done
+  IFS=$old_ifs
+  return 1
+}
+
+if ! find_node; then
+  if [ -n "${LOOM_NODE:-}" ]; then
+    echo "loom: LOOM_NODE=$LOOM_NODE is not Node.js 18 or newer${too_old:+: $too_old}." >&2
+  elif [ -n "$too_old" ]; then
+    echo "loom: Node.js 18+ is required; the only Node found is $too_old. Install a newer one, or set LOOM_NODE=/path/to/node." >&2
+  else
+    echo 'loom: Node.js 18+ not found on PATH or in the usual install locations. Install it, or set LOOM_NODE=/path/to/node.' >&2
+  fi
+  exit 1
+fi
+
+if [ "${1:-}" = --check ]; then
+  printf 'Loom hook runtime ready: %s (%s)\n' "$found" "$found_version"
+  exit 0
+fi
+exec "$found" "$@"

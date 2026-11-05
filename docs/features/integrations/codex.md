@@ -22,9 +22,10 @@ same name replaces the plugin's, and one under another name lists every tool twi
 
 ### Approve the hooks
 
-Codex runs a plugin's hooks only after the user approves them. Run `codex` interactively
-once after installing and approve the Loom hooks; Codex records each approval as a
-`trusted_hash` under `[hooks.state]` in `~/.codex/config.toml`. Until then the MCP tools
+Codex runs a plugin's hooks only after the user approves them, and again after an update
+that changes their commands. Run `codex` interactively once after installing and approve
+the Loom hooks; Codex records each approval as a `trusted_hash` under `[hooks.state]` in
+`~/.codex/config.toml`. Until then the MCP tools
 work but sessions are not captured, including under `codex exec`.
 
 ### The token
@@ -61,11 +62,12 @@ override replaces the plugin's entry whole, helper included), and put the same U
 ```toml
 [mcp_servers.loom]
 url = "https://loom.example.com/mcp?toolset=core,coding,tracker,tasks"
-http_headers_helper = 'node "$(ls -d "$HOME"/.codex/plugins/cache/*/loom/*/bin/loom-mcp-headers.mjs 2>/dev/null | sort -V | tail -1)"'
+http_headers_helper = 'h="$(ls -d "$HOME"/.codex/plugins/cache/*/loom/*/bin/loom-mcp-headers.mjs 2>/dev/null | sort -V | tail -1)"; sh "${h%/*}/loom-node" "$h"'
 ```
 
 Codex runs the helper through `sh -c` with a reduced environment and does not expand
-`${PLUGIN_ROOT}`, so the command finds the newest installed helper under `$HOME/.codex`;
+`${PLUGIN_ROOT}`, so the command finds the newest installed helper under `$HOME/.codex`
+and starts it through the plugin's `bin/loom-node`, which finds Node 18+ without `PATH`;
 with a custom `CODEX_HOME`, spell the path out. A Codex build that rejects `Authorization`
 from a header helper ("returned a reserved header") needs
 `bearer_token_env_var = "LOOM_API_KEY"` instead, with `LOOM_API_KEY` exported.
@@ -85,16 +87,17 @@ such an override with `bearer_token_env_var` and `?toolset=coding`, and writes `
 
 ## What differs from Claude Code
 
-| Codex                                                           | Effect                                                                                                                                                                                                                      |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| no `Read` / `Grep` tools; files are read through the shell tool | the code shunt watches the shell tool (`Bash`, `shell`, `exec_command`, `local_shell`) for `cat`, `rg`, `grep -r`; the command may be a string or an argv array                                                             |
-| edits go through `apply_patch`                                  | file context and blast radius read the target paths out of the patch text (`*** Update File:` / `*** Add File:`)                                                                                                            |
-| `transcript_path` may be missing or in Codex's own shape        | the hooks keep a turn journal: `loom-run` records each prompt, `loom-conversation` each reply (`last_assistant_message`) at Stop; the working-memory note, the run close, the conversation plane and session memory read it |
-| no per-turn token counters in the payload                       | `loom-usage` is not wired                                                                                                                                                                                                   |
-| `SessionEnd` hooks get about one second                         | only fire-and-forget scripts run there (capture, run close, session memory, session brief); conversation turns are sent at Stop                                                                                             |
-| no `PostToolUseFailure` event                                   | a `PostToolUse` result flagged as an error (`is_error`, `isError` or `error`) is observed as type `error`                                                                                                                   |
-| the mentor-hint hook matches every tool                         | it ignores results without a Loom `hint` and makes no request of its own                                                                                                                                                    |
-| identity                                                        | run ids are `cx-<session_id>`, the default agent is `codex`, session memories carry `source:codex`                                                                                                                          |
+| Codex                                                            | Effect                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| no `Read` / `Grep` tools; files are read through the shell tool  | the code shunt watches the shell tool (`Bash`, `shell`, `exec_command`, `local_shell`) for `cat`, `rg`, `grep -r`; the command may be a string or an argv array                                                             |
+| edits go through `apply_patch`                                   | file context and blast radius read the target paths out of the patch text (`*** Update File:` / `*** Add File:`)                                                                                                            |
+| `transcript_path` may be missing or in Codex's own shape         | the hooks keep a turn journal: `loom-run` records each prompt, `loom-conversation` each reply (`last_assistant_message`) at Stop; the working-memory note, the run close, the conversation plane and session memory read it |
+| no per-turn token counters in the payload                        | `loom-usage` is not wired                                                                                                                                                                                                   |
+| `SessionEnd` hooks get about one second                          | only fire-and-forget scripts run there (capture, run close, session memory, session brief); conversation turns are sent at Stop                                                                                             |
+| no `PostToolUseFailure` event                                    | a `PostToolUse` result flagged as an error (`is_error`, `isError` or `error`) is observed as type `error`                                                                                                                   |
+| the mentor-hint hook matches every tool                          | it ignores results without a Loom `hint` and makes no request of its own                                                                                                                                                    |
+| hooks run through `$SHELL -lc`, and through `cmd.exe` on Windows | each command starts its script through `bin/loom-node`, which finds Node 18+ as in Claude Code; on Windows `commandWindows` runs `node` from the system `PATH`                                                              |
+| identity                                                         | run ids are `cx-<session_id>`, the default agent is `codex`, session memories carry `source:codex`                                                                                                                          |
 
 SessionStart fires on `startup`, `resume`, `clear` and `compact`; the primer is printed
 to stdout, which Codex adds as developer context. Every command in `hooks/hooks.json`
@@ -150,15 +153,15 @@ smaller tool listing ([MCP reference](../../reference/mcp.md)). The
 
 ## Troubleshooting
 
-| Symptom                        | Cause                                                  | Fix                                                                   |
-| ------------------------------ | ------------------------------------------------------ | --------------------------------------------------------------------- |
-| MCP connection fails with 401  | no token found by the helper                           | write `~/.loom/config.json`, or export `LOOM_API_KEY`                 |
-| "returned a reserved header"   | this Codex build rejects `Authorization` from a helper | override with `bearer_token_env_var = "LOOM_API_KEY"`                 |
-| tools talk to the wrong server | the bundled URL is not your deployment                 | the `config.toml` override above, plus `url` in `~/.loom/config.json` |
-| tools listed twice             | a second MCP entry under another name                  | remove it (`codex mcp remove <name>`)                                 |
-| `node: not found` from a hook  | no Node 18+ on the system `PATH`                       | `$loom-status`, then restart Codex                                    |
-| hooks write nothing            | viewer token, or the hooks read a different `url`      | writer token; check `~/.loom/config.json` and `LOOM_BASE_URL`         |
-| Sessions view empty            | conversation logging is off for the namespace          | turn it on in the dashboard or with `conversation.set_logging`        |
+| Symptom                             | Cause                                                  | Fix                                                                   |
+| ----------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------- |
+| MCP connection fails with 401       | no token found by the helper                           | write `~/.loom/config.json`, or export `LOOM_API_KEY`                 |
+| "returned a reserved header"        | this Codex build rejects `Authorization` from a helper | override with `bearer_token_env_var = "LOOM_API_KEY"`                 |
+| tools talk to the wrong server      | the bundled URL is not your deployment                 | the `config.toml` override above, plus `url` in `~/.loom/config.json` |
+| tools listed twice                  | a second MCP entry under another name                  | remove it (`codex mcp remove <name>`)                                 |
+| a hook prints `loom: Node.js 18+ …` | the launcher found no Node 18+, or only an old one     | `LOOM_NODE=/path/to/node` where Codex starts, or `$loom-status`       |
+| hooks write nothing                 | viewer token, or the hooks read a different `url`      | writer token; check `~/.loom/config.json` and `LOOM_BASE_URL`         |
+| Sessions view empty                 | conversation logging is off for the namespace          | turn it on in the dashboard or with `conversation.set_logging`        |
 
 ## Related
 
