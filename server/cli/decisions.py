@@ -57,7 +57,7 @@ def register_decisions_cli(sub: Any) -> None:
     p_ext = dsub.add_parser(
         "extract",
         help="Mine one knowledge document into decision records: the model reads the document "
-        "whole (or in windows of whole sections past memory_decision_extract_window_chars; a "
+        "whole (or in windows of whole sections past LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS; a "
         "heading over only an image and its caption is not sent), again when its reply holds "
         "no decision, and writes each decision's outcome, reasons and rejected options in its "
         "own words, each claim citing quotes of the text. A claim none of whose quotes is in "

@@ -15,8 +15,8 @@ revises the extractor's own rows instead of writing beside them:
 - the key's active record is the extractor's and the support check finds it still stated,
   and its row carries the same files, source, constraint and repository tags: nothing is
   written (a pinned or attested row may still gain the repository's tag by a tags-only
-  write); with other row fields, it is recorded again in its stored words, unless its
-  outcome is recorded: then only its tags are reconciled;
+  write); with other row fields, an unfrozen one is recorded again in its stored words,
+  unless its outcome is recorded: then only its tags are reconciled;
 - it is found no longer stated and its row is the extractor's, not pinned or attested, and
   from this document: recorded again (Revise), unless its outcome is recorded: then it
   is tagged `source-changed`;
