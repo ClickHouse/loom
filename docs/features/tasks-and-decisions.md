@@ -417,7 +417,7 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   - **Tags**: under `--into source` for a document outside the trunk, a row of the extractor's the run keeps as it is
     (pinned, attested or with a recorded outcome, still stated or not judged, or one the retire step keeps because it
     is still stated or was not judged), and a row it tags `source-changed`, gains the `repo:<id>` tag by a tags-only
-    write; another writer's row gains none, nor does a row that carries another repository's tag already.
+    write; another writer's row gains none.
   - **Access**: the run reads the document's namespace and the repository's, and writes where the rows go. With an
     auth context bound it checks each (viewer, viewer, and writer, or viewer for a dry run) and refuses before any
     model call; the CLI runs with none, as the operator.

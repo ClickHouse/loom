@@ -1480,8 +1480,8 @@ async def symbol_definitions(org: str, namespace: str, name: str) -> list[tuple[
 
 
 def _tags_for(row: MemoryRow, *, source_changed: bool, repo_tag: str) -> list[str]:
-    """The row's tags with `source-changed` set or dropped and `repo_tag` added, unless the
-    row is linked to another repository already (another writer's row may be)."""
+    """The row's tags with `source-changed` set or dropped and `repo_tag` added when the row
+    carries no `repo:` tag yet."""
     tags = [t for t in row.tags if t != SOURCE_CHANGED_TAG]
     if repo_tag and not any(t.startswith("repo:") for t in tags):
         tags.append(repo_tag)
