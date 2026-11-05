@@ -30,11 +30,13 @@ Code; in Codex, the newest `~/.codex/plugins/cache/*/loom/*/` directory.
 
 1. **Local runtime.** `sh "<root>/skills/loom-status/scripts/ensure-node.sh" --check`
    prints the Node 18+ the hooks and the MCP header helper run under, or one
-   line saying none was found or the one found is too old. A second line,
-   "Found only with this shell's environment", means an agent started from a
-   GUI or IDE finds none: offer `LOOM_NODE`. On a failure, tell
-   the user the hooks cannot run and offer the fix: `LOOM_NODE=/path/to/node`
-   for a Node the check missed, else the same script without `--check`
+   line saying none was found or the one found is too old. A second line
+   names a launch that finds none: Claude Code started from the Dock (offer
+   `LOOM_NODE` in its settings `env`), or Codex's MCP header helper, which
+   never sees `LOOM_NODE` (offer that Node's directory on the PATH Codex
+   starts with). On a failure, tell the user the hooks cannot run and offer
+   the fix: `LOOM_NODE=/path/to/node` for a Node the check missed (under
+   Codex it reaches the hooks only), else the same script without `--check`
    installs Node (root or passwordless sudo, then apt/dnf/yum, apk or
    Homebrew). Run it only when the user says yes; if it exits 2, report its
    blocker line, do not retry. After an install the user restarts the

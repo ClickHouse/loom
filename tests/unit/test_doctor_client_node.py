@@ -25,7 +25,6 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     Claude Code's settings env and the Codex helper's env both carry
     LOOM_NODE_SYSTEM_DIRS=""."""
     monkeypatch.setattr(dc, "GUI_PATH", str(tmp_path / "gui-path"))
-    monkeypatch.setattr(dc, "CODEX_HELPER_ENV", (*dc.CODEX_HELPER_ENV, "LOOM_NODE_SYSTEM_DIRS"))
     _settings(tmp_path, {})
     return tmp_path
 
@@ -37,9 +36,14 @@ def _settings(home: Path, env: dict[str, str]) -> None:
 
 
 def _install(home: Path, client: str, version: str) -> Path:
+    """The plugin cached, and installed (Claude Code) or enabled (Codex)."""
     bin_dir = home / client / "plugins" / "cache" / "loom" / "loom" / version / "bin"
     bin_dir.mkdir(parents=True)
     shutil.copy(LAUNCHER, bin_dir / "loom-node")
+    if client == ".claude":
+        (home / ".claude" / "plugins" / "data" / "loom").mkdir(parents=True, exist_ok=True)
+    else:
+        (home / ".codex" / "config.toml").write_text('[plugins."loom@loom"]\nenabled = true\n')
     return bin_dir / "loom-node"
 
 
@@ -131,7 +135,7 @@ def test_no_sh_fails_claude_code(home: Path, monkeypatch: pytest.MonkeyPatch) ->
     _install(home, ".codex", "1.3.0")
     monkeypatch.setattr(shutil, "which", lambda name: None)
     assert _checks(home) == {
-        "client:claude-code:node": (dc.FAIL, "no POSIX sh: the hooks need Git Bash on Windows.")
+        "client:claude-code:node": (dc.FAIL, "no POSIX sh: on Windows the hooks need Git Bash.")
     }
 
 
@@ -168,3 +172,25 @@ def test_settings_env_keeps_only_strings(home: Path) -> None:
     )
     assert dc._claude_settings_env(home) == {"LOOM_NODE": "/x"}
     assert dc.hook_override_check(home, {}) == []
+
+
+def test_a_cache_left_after_uninstalling_or_disabling_gets_no_line(home: Path) -> None:
+    _install(home, ".claude", "1.3.0")
+    _install(home, ".codex", "1.3.0")
+    shutil.rmtree(home / ".claude" / "plugins" / "data")
+    (home / ".codex" / "config.toml").write_text('[plugins."loom@loom"]\nenabled = false\n')
+    assert _checks(home) == {}
+
+
+def test_on_windows_git_bash_is_found_as_claude_code_finds_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(dc, "WINDOWS", True)
+    git = tmp_path / "Git" / "cmd" / "git.exe"
+    bash = tmp_path / "Git" / "bin" / "bash.exe"
+    for p in (git, bash):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("")
+    monkeypatch.setattr(shutil, "which", lambda name: str(git) if name == "git" else None)
+    assert dc.posix_sh({}) == str(bash)
+    assert dc.posix_sh({"CLAUDE_CODE_GIT_BASH_PATH": "D:/tools/bash.exe"}) == "D:/tools/bash.exe"

@@ -130,8 +130,8 @@ def test_manifests_agree_and_marketplace_points_at_the_plugin() -> None:
 
 
 def test_claude_hooks_json_still_passes_no_client_argument() -> None:
-    """Claude Code stays the default client: its wiring is unchanged and the
-    scripts fall back to `claude-code` when argv[3] is absent."""
+    """Claude Code stays the default client: its wiring passes no client
+    argument, so the scripts fall back to `claude-code`."""
     for _, cmd in _commands(_hooks(CLAUDE / "hooks" / "hooks.json")):
         assert re.fullmatch(
             r'sh "\$\{CLAUDE_PLUGIN_ROOT\}/bin/loom-node" "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[a-z-]+\.mjs" \w+',

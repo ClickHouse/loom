@@ -864,13 +864,15 @@ def _claude_settings_env(home: Path) -> dict[str, str]:
         return {}
 
 
-# The PATH a GUI or IDE launch hands the agent: no shell profile has run.
+# The PATH an app started from the Dock or a desktop launcher gets: no shell
+# profile has run. (IDEs such as VS Code load the login shell's.)
 GUI_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 WINDOWS = sys.platform == "win32"
 # Of what Codex passes its MCP header helper (codex-rs rmcp-client
 # DEFAULT_ENV_VARS), the part the launcher reads: no LOOM_NODE, no version
-# manager's variables.
-CODEX_HELPER_ENV = ("HOME", "PATH")
+# manager's variables. LOOM_NODE_SYSTEM_DIRS is kept, as ensure-node.sh keeps
+# it, so a test can replace the fixed directories.
+CODEX_HELPER_ENV = ("HOME", "PATH", "LOOM_NODE_SYSTEM_DIRS")
 
 
 def _plugin_version(name: str) -> tuple[int, ...]:
@@ -881,6 +883,18 @@ def _plugin_version(name: str) -> tuple[int, ...]:
 def newest_launcher(launchers: Iterable[Path]) -> Path | None:
     """The `<version>/bin/loom-node` of the newest plugin version; None for none."""
     return max(launchers, key=lambda p: _plugin_version(p.parent.parent.name), default=None)
+
+
+def posix_sh(env: dict[str, str]) -> str | None:
+    """The sh Claude Code runs hooks with: Git Bash on Windows, found the
+    way Claude Code finds it (CLAUDE_CODE_GIT_BASH_PATH, else beside git)."""
+    if WINDOWS:
+        if env.get("CLAUDE_CODE_GIT_BASH_PATH"):
+            return env["CLAUDE_CODE_GIT_BASH_PATH"]
+        git = shutil.which("git")
+        if git and (Path(git).parents[1] / "bin" / "bash.exe").is_file():
+            return str(Path(git).parents[1] / "bin" / "bash.exe")
+    return shutil.which("sh")
 
 
 def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, str]:
@@ -905,14 +919,15 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     under, as that plugin's own launcher finds it in that client's
     environment."""
     out: list[Check] = []
-    sh = shutil.which("sh")
+    sh = posix_sh(env)
     claude = newest_launcher(home.glob(".claude/plugins/cache/*/loom/*/bin/loom-node"))
-    if claude is not None:
+    if claude is not None and claude_plugin_installed(home):
         out.append(_claude_node_check(home, env, claude, sh))
-    # The marketplace codex_plugin_mcp_url reads, too.
+    # loom@loom, the plugin codex_plugin_enabled looks for
     codex = newest_launcher(home.glob(".codex/plugins/cache/loom/loom/*/bin/loom-node"))
+    enabled = codex_plugin_enabled(_read(home / ".codex" / "config.toml"))
     # On Windows, Codex runs hooks and the helper through cmd.exe, not the launcher.
-    if codex is not None and sh is not None and not WINDOWS:
+    if codex is not None and enabled and sh is not None and not WINDOWS:
         out.append(_codex_node_check(env, codex, sh))
     return out
 
@@ -922,7 +937,7 @@ def _claude_node_check(home: Path, env: dict[str, str], launcher: Path, sh: str 
     its settings `env`: this shell's, or a GUI launch's with no profile."""
     name = "client:claude-code:node"
     if sh is None:
-        return (name, FAIL, "no POSIX sh: the hooks need Git Bash on Windows.")
+        return (name, FAIL, "no POSIX sh: on Windows the hooks need Git Bash.")
     settings = _claude_settings_env(home)
     try:
         code, line = _launcher_check(sh, launcher, {**env, **settings})
@@ -939,8 +954,8 @@ def _claude_node_check(home: Path, env: dict[str, str], launcher: Path, sh: str 
             name,
             WARN,
             f"{line}, but only with this shell's environment: Claude Code started from "
-            "a GUI or IDE finds no Node. Fix: set LOOM_NODE to that path in the `env` "
-            "block of ~/.claude/settings.json.",
+            "the Dock or a desktop launcher finds no Node. Fix: set LOOM_NODE to that "
+            "path in the `env` block of ~/.claude/settings.json.",
         )
     return (name, PASS, line)
 

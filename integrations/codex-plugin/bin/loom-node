@@ -1,8 +1,8 @@
 #!/bin/sh
 # Runs a plugin script under Node.js 18+ wherever Node is installed. Hooks and
 # the MCP header helper start with the agent's own environment, and an agent
-# started from a GUI, an IDE or a shell whose version manager edits only the
-# interactive PATH has no `node` on it.
+# started from the Dock, a desktop launcher or a shell whose version manager
+# edits only the interactive PATH has no `node` on it.
 #   loom-node <script> [args...]   exec the script under the Node found
 #   loom-node --check              print the Node found; exit 1 when none
 # The first Node 18+ wins: $LOOM_NODE, `node` on PATH, a version manager's
@@ -46,35 +46,44 @@ in_dir() {
   usable "$1/node" || usable "$1/node.exe"
 }
 
+# version_key <name>: sets key to v22.1.0 or 22.1 as one comparable number
+version_key() {
+  n=${1#v}
+  case $n in [0-9]*.[0-9]*) ;; *) return 1 ;; esac
+  major=${n%%.*}
+  rest=${n#*.}
+  minor=${rest%%.*}
+  patch=${rest#*.}
+  [ "$patch" = "$rest" ] && patch=0
+  patch=${patch%%[!0-9]*}
+  case $major$minor in *[!0-9]*) return 1 ;; esac
+  key=$((major * 1000000 + minor * 1000 + ${patch:-0}))
+}
+
 # newest <root> <bin> [version]: the Node in <bin> (empty: the directory
 # itself) of the highest version directory under <root> that has one, or the
-# highest within [version] (22, 22.1)
+# highest within [version] (22, 22.1). Versions are tried from the top, so
+# usually one Node runs.
 newest() {
-  best_key=-1
-  for d in "$1"/*; do
-    n=${d##*/}
-    n=${n#v}
-    if [ -n "${3:-}" ]; then
-      case $n in "${3#v}" | "${3#v}".*) ;; *) continue ;; esac
-    fi
-    case $n in [0-9]*.[0-9]*) ;; *) continue ;; esac
-    major=${n%%.*}
-    rest=${n#*.}
-    minor=${rest%%.*}
-    patch=${rest#*.}
-    [ "$patch" = "$rest" ] && patch=0
-    patch=${patch%%[!0-9]*}
-    case $major$minor in *[!0-9]*) continue ;; esac
-    key=$((major * 1000000 + minor * 1000 + ${patch:-0}))
-    if [ "$key" -gt "$best_key" ] && in_dir "$d${2:+/$2}"; then
-      best_key=$key
-      best_found=$found
-      best_version=$found_version
-    fi
+  below=1000000000000
+  while :; do
+    best=''
+    best_key=-1
+    for d in "$1"/*; do
+      n=${d##*/}
+      if [ -n "${3:-}" ]; then
+        case ${n#v} in "${3#v}" | "${3#v}".*) ;; *) continue ;; esac
+      fi
+      version_key "$n" || continue
+      if [ "$key" -lt "$below" ] && [ "$key" -gt "$best_key" ]; then
+        best=$d
+        best_key=$key
+      fi
+    done
+    [ -n "$best" ] || return 1
+    in_dir "$best${2:+/$2}" && return 0
+    below=$best_key
   done
-  [ "$best_key" -ge 0 ] || return 1
-  found=$best_found
-  found_version=$best_version
 }
 
 # default_or_newest <root> <bin> <version>: the install the manager's
@@ -182,10 +191,14 @@ if ! find_node; then
 fi
 
 if [ "${1:-}" = --check ]; then
-  # The real directory: a version manager's per-shell link goes away with the shell.
-  if dir=$(cd -P "${found%/*}" 2>/dev/null && pwd -P); then
-    found=$dir/${found##*/}
-  fi
+  # fnm's per-shell link goes away with the shell: name the directory it points at.
+  case $found in
+    */fnm_multishells/*)
+      if dir=$(cd -P "${found%/*}" 2>/dev/null && pwd -P); then
+        found=$dir/${found##*/}
+      fi
+      ;;
+  esac
   printf 'Loom hook runtime ready: %s (%s)\n' "$found" "$found_version"
   exit 0
 fi
