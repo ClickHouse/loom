@@ -719,6 +719,19 @@ def test_a_bytes_column_is_charged_no_copies_since_none_is_made(
     assert [f.unit for f in a.coverage.failed] == ["f.parquet values"]  # the bytes, left out
 
 
+def test_a_column_past_the_column_bound_is_charged_no_copies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(parquetfile, "MAX_COLUMNS", 1)
+    monkeypatch.setattr(parquetfile, "_MAX_DECODED_BYTES", 150_000)
+    monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 4)
+    # Its one 10,000-character entry would be 400,000 bytes copied, were it read.
+    text = pa.DictionaryArray.from_arrays(pa.array([0] * 40, pa.int32()), pa.array(["x" * 10_000]))
+    a, tab = _one(_file(pa.table({"k": [str(i) for i in range(40)], "t": text})))
+    assert len(tab.rows) == 40
+    assert [f.unit for f in a.coverage.failed] == ["f.parquet columns"]
+
+
 def test_a_dictionary_of_views_is_charged_by_its_views_lengths() -> None:
     # Arrow has no length kernel for views; the lengths come from the views, sliced or not.
     big = "x" * 100
