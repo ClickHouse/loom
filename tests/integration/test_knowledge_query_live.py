@@ -295,6 +295,11 @@ async def test_a_parquet_decimal_sums_exactly(control_plane_url: str) -> None:
                 {"column": _col("due"), "bucket": bucket, "name": "start"}
             ], aggregates=[{"fn": "count", "name": "n"}])  # fmt: skip
             assert r.json()["rows"] == [[s_, 1] for s_ in starts], (bucket, r.text)
+        r = await _query(c, org, ns, datasets=ds_, where=[
+            {"column": _col("settled"), "op": "in", "values": [True]},
+            {"column": _col("due"), "op": "in", "values": ["1950-03-15", "2290-12-31"]},
+        ], aggregates=[{"fn": "count", "name": "n"}])  # fmt: skip
+        assert r.json()["rows"] == [[1]], r.text  # lists of booleans and of dates bind
         r = await _query(c, org, ns, datasets=ds_, select=[_col("due")])
         assert [row for row in r.json()["rows"]] == [["1950-03-15"], ["2026-02-01"], ["2290-12-31"]]
 

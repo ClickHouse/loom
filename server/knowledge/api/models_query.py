@@ -7,6 +7,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, StrictBool, StrictFloat, StrictInt, model_validator
 
+from server.knowledge.domain.extract.artifact import MAX_COLUMN_CHARS
+
 # One filter value's text, and one list's bytes as the statement sends it: each
 # is one parameter, which ClickHouse takes up to 128 KiB of.
 MAX_VALUE_CHARS = 1024
@@ -23,11 +25,16 @@ Scalar = (
 )
 
 
+# What the client escapes with a backslash in a parameter (clickhouse-connect's
+# `binding.must_escape`).
+_ESCAPED = ("\\", "'", "`", "\t", "\n")
+
+
 def _sent_bytes(v: Any) -> int:
-    """`v`'s bytes in a list parameter: its UTF-8, a backslash before each quote
-    or backslash, and the quotes and comma around it."""
+    """`v`'s bytes in a list parameter: its UTF-8, a backslash before each
+    character the client escapes, its two quotes and the `, ` after it."""
     text = str(v)
-    return len(text.encode()) + text.count("'") + text.count("\\") + 3
+    return len(text.encode()) + sum(text.count(c) for c in _ESCAPED) + 4
 
 
 # Bounds of one plan: what one request may ask, not a tunable.
@@ -72,7 +79,7 @@ class QueryColumn(BaseModel):
     # The alias of the dataset that holds the column; empty when the plan has one dataset.
     dataset: str = ""
     # The column's name, as knowledge.dataset_get lists it.
-    column: str = Field(min_length=1, max_length=500)
+    column: str = Field(min_length=1, max_length=MAX_COLUMN_CHARS)
 
 
 class QueryFilter(BaseModel):
@@ -83,13 +90,19 @@ class QueryFilter(BaseModel):
     op: FilterOp
     # The value compared with, read as the column's type: a date or date-time as ISO text (an
     # offset read as UTC), a duration as seconds or H:MM:SS, a number to at most nine decimal
-    # places (more is refused); in, not_in and the null tests take none.
+    # places where its column is a decimal (more is refused); in, not_in and the null tests
+    # take none.
     value: Scalar | None = None
     # The values of in and not_in: at most 1,000, of about 100 KB in all as UTF-8.
     values: list[Scalar] = Field(default_factory=list, max_length=MAX_FILTER_VALUES)
 
     @model_validator(mode="after")
     def _values_fit_a_parameter(self) -> QueryFilter:
+        lists, takes_none = self.op in ("in", "not_in"), self.op in ("is_null", "not_null")
+        if self.value is not None and (lists or takes_none):
+            raise ValueError(f"{self.op} takes no value{'; its list is values' if lists else ''}")
+        if self.values and not lists:
+            raise ValueError(f"{self.op} takes one value, not values")
         if sum(_sent_bytes(v) for v in self.values) > MAX_LIST_BYTES:
             raise ValueError(f"in and not_in values may be {MAX_LIST_BYTES} bytes in all")
         return self

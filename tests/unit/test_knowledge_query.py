@@ -149,14 +149,31 @@ def test_a_filter_value_longer_than_a_statement_parameter_holds_is_refused_first
     where = [{"column": _col("team"), "op": "contains", "value": "x" * 1025}]
     with pytest.raises(pydantic.ValidationError, match="at most 1024 characters"):
         _plan(where=where)
-    # The list's bytes as sent: a € is three, a quote two (escaped).
-    for value in ("€" * 33, "'" * 49):
+    # The list's bytes as sent: a € is three, each character the client escapes two.
+    for value in ("€" * 33, "'" * 49, "`" * 49, "\n" * 49, "x" * 97):
         with pytest.raises(pydantic.ValidationError, match="100000 bytes in all"):
             _plan(where=[{"column": _col("team"), "op": "in", "values": [value] * 1000}])
     _plan(where=[{"column": _col("team"), "op": "in", "values": ["€" * 32] * 1000}])
     # A long run of digits is refused as text, not read as the integer it spells.
     with pytest.raises(pydantic.ValidationError, match="at most 1024 characters"):
         _plan(where=[{"column": _col("team"), "op": "eq", "value": "0" * 1030 + "123"}])
+
+
+@pytest.mark.parametrize(
+    ("where", "reason"),
+    [
+        ({"op": "in", "value": "a", "values": ["b"]}, "in takes no value; its list is values"),
+        ({"op": "eq", "value": "a", "values": ["b"]}, "eq takes one value, not values"),
+        ({"op": "is_null", "value": "a"}, "is_null takes no value"),
+    ],
+)
+def test_a_value_its_op_does_not_take_is_refused_not_dropped(
+    where: dict[str, Any], reason: str
+) -> None:
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError, match=reason):
+        _plan(where=[{"column": _col("team"), **where}])
 
 
 def test_a_date_compares_as_its_midnight_in_utc_and_refuses_a_date_time() -> None:
