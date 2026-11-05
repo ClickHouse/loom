@@ -414,8 +414,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
     namespace; there is no per-document access, so a repository reader who cannot read the document's namespace sees
     the row's decision but is refused the document it cites. The rows are the trunk's: erasing the document's namespace
     leaves them, and `memory.delete` in the trunk removes them.
-  - **Tags**: under `--into source` for a document outside the trunk, a row of the extractor's the run keeps as it is
-    (pinned, attested or with a recorded outcome, still stated or not judged, or one the retire step keeps because it
+  - **Tags**: under `--into source` for a document outside the trunk, a row of the extractor's that the run keeps as it
+    is (pinned, attested or with a recorded outcome, still stated or not judged, or one the retire step keeps because it
     is still stated or was not judged), and a row it tags `source-changed`, gains the `repo:<id>` tag by a tags-only
     write; another writer's row gains none.
   - **Access**: the run reads the document's namespace and the repository's, and writes where the rows go. With an
@@ -494,8 +494,9 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
 - **Stage**: the model marks each candidate `decided` or `proposed`; anything but a plain `decided` (a proposal, an RFC,
   a plan, future work, a follow-up, or no answer) is recorded with `stage: "proposed"`, because a proposal served as a
   choice made misleads an agent more than a choice served as a proposal. A stored decision the text still states keeps
-  its stage, and the run's note names the stage the document reads as when it differs. A pinned or attested row is
-  never re-recorded by a run, so its stage changes only by hand.
+  its stage, and the run's note names the stage the document reads as when it differs, except for a row whose outcome is
+  recorded, which reads as decided whatever the document says. A pinned or attested row is never re-recorded by a run,
+  so its stage changes only by hand.
 - **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), the reasons joined with
   `; ` as the reasoning (the outcome itself for a decision with none, which the statement reads as no stated reason),
   each rejected option as `<option> — rejected: <reason>` or the option alone, confidence 0.5,
