@@ -521,7 +521,12 @@ def test_a_file_whose_values_were_all_left_out_is_still_its_header_to_find() -> 
     # No row has text, so the names are its block, as for a table with no rows.
     assert [(b.text, b.locator.row_start) for b in a.blocks] == [("bin", 0)]
     served = parse_artifact(a.to_json(), fmt="parquet", max_bytes=1 << 24)
-    assert [c.text for c in chunk_artifact(served, size=760, stride=600)] != []
+    assert [c.text for c in chunk_artifact(served, size=760, stride=600)] == ["bin"]
+    # A block of such rows is no block; one with text after it is the table's text.
+    rows = tabular.ROWS_PER_BLOCK
+    mixed = pa.table({"bin": [b"\x00"] * rows + [None], "s": [None] * rows + ["x"]})
+    a = extract(_file(mixed), "m.parquet")
+    assert [(b.text, b.locator.row_start) for b in a.blocks] == [("s: x", rows + 1)]
 
 
 def test_a_file_of_blank_rows_is_read_only_to_the_decode_bound(
