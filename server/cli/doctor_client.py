@@ -41,7 +41,6 @@ PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 Check = tuple[str, str, str]
 GetJson = Callable[[str, str, float], tuple[int, dict[str, Any]]]
 PostJson = Callable[[str, str, dict[str, Any], str, float], tuple[int, dict[str, Any]]]
-RunLauncher = Callable[[Path, dict[str, str]], tuple[int, str]]
 
 STALE_FLUSH_S = 600
 EXPIRING_SOON_S = 7 * 86400
@@ -859,13 +858,13 @@ def _claude_settings_env(home: Path) -> dict[str, str]:
     """~/.claude/settings.json `env`, which Claude Code applies to its hooks."""
     try:
         raw = json.loads(_read(home / ".claude" / "settings.json") or "{}").get("env") or {}
-        return {str(k): str(v) for k, v in raw.items()}
+        return {str(k): v for k, v in raw.items() if isinstance(v, str)}
     except (ValueError, AttributeError):
         return {}
 
 
 # The PATH a GUI or IDE launch hands the agent: no shell profile has run.
-_BARE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+GUI_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 
 def newest_launcher(home: Path) -> Path | None:
@@ -882,11 +881,11 @@ def newest_launcher(home: Path) -> Path | None:
     return max(found, key=version, default=None)
 
 
-def run_launcher(launcher: Path, env: dict[str, str]) -> tuple[int, str]:
+def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, str]:
     """`sh <launcher> --check`: its exit code and its one line."""
     try:
         r = subprocess.run(
-            [shutil.which("sh") or "sh", str(launcher), "--check"],
+            [sh, str(launcher), "--check"],
             env=env,
             capture_output=True,
             text=True,
@@ -898,17 +897,18 @@ def run_launcher(launcher: Path, env: dict[str, str]) -> tuple[int, str]:
     return r.returncode, (r.stdout or r.stderr).strip()
 
 
-def node_check(home: Path, env: dict[str, str], run: RunLauncher) -> list[Check]:
+def node_check(home: Path, env: dict[str, str]) -> list[Check]:
     """The Node the plugin's hooks and MCP header helper run under, as the
     plugin's own launcher finds it: with this shell's environment, then with
-    the bare PATH of an agent started from a GUI or IDE; Claude Code's
-    settings `env` applies to both."""
+    only HOME and the PATH of an agent started from a GUI or IDE. Claude
+    Code's settings `env` applies to both."""
     launcher = newest_launcher(home)
-    if launcher is None or shutil.which("sh") is None:
+    sh = shutil.which("sh")
+    if launcher is None or sh is None:
         return []
     name = "client:node"
     settings = _claude_settings_env(home)
-    code, line = run(launcher, {**env, **settings})
+    code, line = _launcher_check(sh, launcher, {**env, **settings})
     if code != 0:
         return [
             (
@@ -918,15 +918,15 @@ def node_check(home: Path, env: dict[str, str], run: RunLauncher) -> list[Check]
                 'authentication"). Fix: the loom-status skill, or LOOM_NODE=/path/to/node.',
             )
         ]
-    if run(launcher, {**env, "PATH": _BARE_PATH, **settings})[0] != 0:
-        node = line.split(": ", 1)[-1].rsplit(" (", 1)[0]
+    gui = {"HOME": str(home), "PATH": GUI_PATH, **settings}
+    if _launcher_check(sh, launcher, gui)[0] != 0:
         return [
             (
                 name,
                 WARN,
-                f"{line}, but only on this shell's PATH: an agent started from a GUI or "
-                f"IDE finds no Node. Fix: LOOM_NODE={node} in the agent's environment "
-                "(the `env` block of ~/.claude/settings.json for Claude Code).",
+                f"{line}, but only with this shell's environment: an agent started from a "
+                "GUI or IDE finds no Node. Fix: set LOOM_NODE to that path in the agent's "
+                "environment (for Claude Code, the `env` block of ~/.claude/settings.json).",
             )
         ]
     return [(name, PASS, line)]
@@ -976,7 +976,6 @@ def client_checks(
     env: dict[str, str] | None = None,
     tmp: Path | None = None,
     now: float | None = None,
-    run_node: RunLauncher = run_launcher,
 ) -> list[Check]:
     """Every client-side line, in reading order: server, token, auth,
     namespace, the two clients' wiring, the hooks' Node, stranded captures."""
@@ -1033,7 +1032,7 @@ def client_checks(
             )
         )
     checks.extend(codex_checks(home, base_url, env=env, post_json=probe, now=now))
-    checks.extend(node_check(home, env, run_node))
+    checks.extend(node_check(home, env))
     checks.append(flush_check(tmp, now))
     return checks
 

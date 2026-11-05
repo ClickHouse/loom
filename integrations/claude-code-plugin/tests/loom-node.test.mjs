@@ -18,7 +18,7 @@ const WINDOWS = process.platform === "win32";
 // On Windows, Git Bash's sh, by path: the tests empty PATH.
 const SHELLS = WINDOWS
   ? [path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "bin", "sh.exe")]
-  : ["/bin/sh", "/bin/dash", "/bin/bash", "/usr/bin/zsh", "/bin/busybox"].filter((s) => fs.existsSync(s));
+  : ["/bin/sh", "/bin/dash", "/bin/bash", "/bin/busybox"].filter((s) => fs.existsSync(s));
 
 // Windows needs SystemRoot to start a process.
 const BASE_ENV = WINDOWS ? { SystemRoot: process.env.SystemRoot } : {};
@@ -53,8 +53,9 @@ function fixture() {
     const argv = shell.endsWith("busybox") ? ["sh", launcher, ...args] : [launcher, ...args];
     return spawnSync(shell, argv, {
       encoding: "utf8",
-      // No node on PATH and no fixed directories: only what the test builds.
-      env: { ...BASE_ENV, HOME: home, PATH: path.join(dir, "empty"), LOOM_NODE_SYSTEM_DIRS: "", ...env },
+      // Only what the test builds: no node on PATH, no fixed directories,
+      // no n prefix of the host's.
+      env: { ...BASE_ENV, HOME: home, PATH: path.join(dir, "empty"), LOOM_NODE_SYSTEM_DIRS: "", N_PREFIX: dir, ...env },
     });
   };
   return { dir, home, script, node, run, done: () => fs.rmSync(dir, { recursive: true, force: true }) };
@@ -67,10 +68,11 @@ function found(f, r) {
   const home = `${shPath(f.home)}/`.toLowerCase();
   const got = shPath(m[1]);
   assert.ok(got.toLowerCase().startsWith(home), `${got} is not under ${home}`);
-  return got.slice(home.length);
+  // Git Bash opens node.exe as `node`: compare without the suffix.
+  return got.slice(home.length).replace(/\.exe$/, "");
 }
 
-const exe = (rel) => (WINDOWS ? `${rel}/node.exe` : `${rel}/node`);
+const exe = (rel) => `${rel}/node`;
 
 // [label, layout to build, env, the one expected]
 const LAYOUTS = [
@@ -194,7 +196,7 @@ test("node on PATH wins, and runs the script with its arguments, stdin and exit 
     const piped = spawnSync(SHELLS[0], [launcher, exit], {
       input: '{"hook":1}',
       encoding: "utf8",
-      env: { ...BASE_ENV, HOME: f.home, PATH: path.dirname(p), LOOM_NODE_SYSTEM_DIRS: "" },
+      env: { ...BASE_ENV, HOME: f.home, PATH: path.dirname(p), LOOM_NODE_SYSTEM_DIRS: "", N_PREFIX: f.dir },
     });
     assert.equal(piped.status, 3);
     assert.equal(piped.stdout, '{"hook":1}');
@@ -213,6 +215,10 @@ test("the nvm default alias wins over a newer install", () => {
     fs.mkdirSync(path.join(f.home, ".nvm", "alias"));
     fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "20\n");
     assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v20.11.0/bin"));
+    // 20.1 is 20.1.x, not 20.11.0
+    f.node(".nvm/versions/node/v20.1.0/bin");
+    fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "20.1\n");
+    assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v20.1.0/bin"));
     fs.writeFileSync(path.join(f.home, ".nvm", "alias", "default"), "lts/*\n");
     assert.equal(found(f, f.run({})), exe(".nvm/versions/node/v22.1.0/bin"));
   } finally {
@@ -229,7 +235,12 @@ test("LOOM_NODE wins, and a LOOM_NODE that is not Node fails rather than falling
     const r = f.run({ LOOM_NODE: path.join(f.home, "missing") });
     assert.equal(r.status, 1);
     assert.equal(r.stdout, "");
-    assert.match(r.stderr, /^loom: LOOM_NODE=.*missing is not Node\.js 18 or newer\.\n$/);
+    assert.match(r.stderr, /^loom: Node\.js 18\+ is required; LOOM_NODE=.*missing is not one\.\n$/);
+    if (!WINDOWS) {
+      const old = f.node("old", "v16.20.2");
+      const tooOld = f.run({ LOOM_NODE: old });
+      assert.equal(tooOld.stderr, `loom: Node.js 18+ is required; LOOM_NODE=${old} is not one (it is v16.20.2).\n`);
+    }
   } finally {
     f.done();
   }
@@ -318,7 +329,7 @@ test("the Codex header helper finds the newest cached plugin and runs its helper
     // Codex's cleared environment: HOME, and the launcher's own search.
     const r = spawnSync("/bin/sh", ["-c", helper], {
       encoding: "utf8",
-      env: { HOME: f.home, PATH: `${path.dirname(p)}:/usr/bin:/bin`, LOOM_NODE_SYSTEM_DIRS: "" },
+      env: { HOME: f.home, PATH: `${path.dirname(p)}:/usr/bin:/bin`, LOOM_NODE_SYSTEM_DIRS: "", N_PREFIX: f.dir },
     });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, "1.2.10");

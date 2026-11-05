@@ -38,6 +38,11 @@ if sh "$LAUNCHER" --check 2>/dev/null; then
   exit 0
 fi
 
+if [ -n "${LOOM_NODE:-}" ]; then
+  echo "LOOM_NODE=$LOOM_NODE is not Node.js 18+, and it wins over any install; fix or unset it." >&2
+  exit 2
+fi
+
 case "$(uname -s)" in
   Linux)
     require_privilege

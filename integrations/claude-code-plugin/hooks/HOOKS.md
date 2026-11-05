@@ -13,10 +13,11 @@ on stdin.
 ## What every hook guarantees
 
 - **It never fails the host session.** Every path exits 0 and a thrown error
-  is swallowed; the one exception is the launcher finding no Node, which
-  exits 1 (a non-blocking error to both clients) with one line on stderr. A hook that ends in `runHookMain` (`lib/loom-client.mjs`)
+  is swallowed. A hook that ends in `runHookMain` (`lib/loom-client.mjs`)
   writes that error's first line to stderr under `LOOM_HOOK_DEBUG=on`, with
-  bearer tokens and JWTs redacted; nothing else reaches stderr.
+  bearer tokens and JWTs redacted; nothing else reaches stderr. The one
+  exception is the launcher finding no Node: it exits 1, a non-blocking
+  error to both clients, with one `loom:` line on stderr.
 - **It is bounded.** Each request is aborted at the request bound: 5× the
   round trip SessionStart measured against the server, clamped to
   3,000–8,000 ms (`lib/hook-bounds.mjs`); `LOOM_HOOK_TIMEOUT_MS` overrides it.

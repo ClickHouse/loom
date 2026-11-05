@@ -38,7 +38,7 @@ COMMAND = "python scripts/codegen/agent_plugin_sync.py"
 # (subdirectory, glob) mirrored from SOURCE into TARGET
 MIRRORED: tuple[tuple[str, str], ...] = (
     ("hooks", "*.mjs"),
-    ("bin", "*"),  # the Node launcher and the MCP header helper
+    ("bin", "*"),  # every bin/ helper
     ("lib", "*.mjs"),
     ("skills", "**/*"),
     ("assets", "*"),  # the listing icon
