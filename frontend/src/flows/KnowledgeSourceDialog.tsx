@@ -177,12 +177,12 @@ export function AddSourceDialog({
   const [checked, setChecked] = useState<{ fingerprint: string; probe: KnowledgeSourceProbe } | null>(null);
   const [busy, setBusy] = useState<"check" | "add" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const set: SetField = (key, value) =>
-    setForm((f) => {
-      const next = { ...f, [key]: value };
-      if ((key === "kind" || key === "provider") && value !== f[key]) next.credential = "";
-      return next;
-    });
+  const set: SetField = (key, value) => {
+    // Another kind or provider: its credential and the last error were the old one's.
+    const switched = (key === "kind" || key === "provider") && value !== form[key];
+    if (switched) setError(null);
+    setForm((f) => ({ ...f, [key]: value, ...(switched ? { credential: "" } : {}) }));
+  };
   const problems = sourceFormProblems(form);
   const fingerprint = sourceFormFingerprint(form);
   const passed = checked !== null && checked.fingerprint === fingerprint;

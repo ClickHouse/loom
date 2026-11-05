@@ -135,6 +135,9 @@ describe("the add form's other kinds", () => {
     expect(pageIds(`${dashed}, https://pages.example/team/Design-Notes-${PAGE}`)).toEqual([PAGE]);
     // A database link's view id (`?v=`) is not the database's id.
     expect(pageIds(`https://pages.example/team/${DATABASE}?v=${PAGE}`)).toEqual([DATABASE]);
+    // A peek link opens a page of the database: the page is its `p=`.
+    const VIEW = "0123456789abcdef0123456789abcdef";
+    expect(pageIds(`https://pages.example/team/${DATABASE}?v=${VIEW}&p=${PAGE}&pm=s`)).toEqual([PAGE]);
     // Kept as typed, so the problem names it: an id one digit long is not cut to 32.
     expect(pageIds(`${PAGE}0`)).toEqual([`${PAGE}0`]);
     // A link whose id is mistyped one digit long is not cut to another id.

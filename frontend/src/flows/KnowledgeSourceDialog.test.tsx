@@ -303,6 +303,9 @@ describe("AddSourceDialog's kinds", () => {
     fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: KEY } });
     fireEvent.click(screen.getByRole("button", { name: "Check" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    // The error was the meeting store's: another kind does not show it.
+    fireEvent.click(screen.getByRole("radio", { name: "Pages" }));
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
     expectKeyNowhere();
   });

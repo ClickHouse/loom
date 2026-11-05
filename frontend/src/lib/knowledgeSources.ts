@@ -316,8 +316,9 @@ export function projectIds(text: string): string[] {
   return pieces(text, (p) => p.toLowerCase());
 }
 
-/** Page or database ids: a bare id with or without dashes, or the id that ends a pasted
- *  link's last path segment (`Title-<id>`; the `?v=` view id is not the database's).
+/** Page or database ids: a bare id with or without dashes, or from a pasted link the
+ *  page a peek link opens (`p=<id>`), else the id that ends its last path segment
+ *  (`Title-<id>`; the `?v=` view id is not the database's).
  *  Sent lower-case without dashes; the server stores them dashed. A piece that is
  *  neither is kept as typed, so the form can name it. */
 export function pageIds(text: string): string[] {
@@ -326,6 +327,8 @@ export function pageIds(text: string): string[] {
       const hexes = p.toLowerCase().replace(/-/g, "");
       return PAGE_ID_RE.test(hexes) ? hexes : p;
     }
+    const peek = /[?&]p=([0-9a-f-]+)(?:[&#]|$)/i.exec(p)?.[1]?.toLowerCase().replace(/-/g, "");
+    if (peek && PAGE_ID_RE.test(peek)) return peek;
     // The id is the whole segment, or what follows the title's last `-`.
     const segment = (p.split(/[?#]/)[0] ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
     return /(?:^|-)([0-9a-f]{32})$/.exec(segment.toLowerCase())?.[1] ?? p;
