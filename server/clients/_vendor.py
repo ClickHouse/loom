@@ -163,12 +163,19 @@ async def read_capped(resp: httpx.Response, max_bytes: int) -> bytes | None:
 
 
 async def get_capped(
-    client: httpx.AsyncClient, url: str, what: str, *, max_bytes: int, **kw: Any
+    client: httpx.AsyncClient,
+    url: str,
+    token: str,
+    what: str,
+    *,
+    max_bytes: int,
+    params: dict[str, Any] | None = None,
 ) -> bytes:
-    """The body of a GET (`kw` goes to `client.stream`), read up to `max_bytes`;
-    TooLarge past it."""
+    """The body of a GET with `token` as the bearer credential, read up to
+    `max_bytes`; TooLarge past it."""
+    headers = {"Authorization": f"Bearer {token}"}
     try:
-        async with client.stream("GET", url, **kw) as resp:
+        async with client.stream("GET", url, headers=headers, params=params) as resp:
             if resp.status_code >= 400:
                 await resp.aread()  # the error body tells a rate limit from a refusal
                 raise_for_status(resp, what)

@@ -149,7 +149,7 @@ def test_a_capped_read_keeps_a_body_at_the_bound_and_stops_past_it() -> None:
     assert asyncio.run(_read(0, 1000)) == b""
 
 
-def test_a_capped_get_sends_its_arguments_and_refuses_a_body_past_the_bound() -> None:
+def test_a_capped_get_sends_the_token_and_params_and_refuses_a_body_past_the_bound() -> None:
     seen: list[httpx.Request] = []
 
     def _record(request: httpx.Request) -> httpx.Response:
@@ -158,21 +158,19 @@ def test_a_capped_get_sends_its_arguments_and_refuses_a_body_past_the_bound() ->
 
     client = _client(_record)
     body = asyncio.run(
-        _vendor.get_capped(
-            client, URL, "download", max_bytes=5000, headers={"X-A": "1"}, params={"p": "q"}
-        )
+        _vendor.get_capped(client, URL, "tok", "download", max_bytes=5000, params={"p": "q"})
     )
     assert body == b"x" * 5000
-    assert seen[0].headers["X-A"] == "1" and seen[0].url.params["p"] == "q"
+    assert seen[0].headers["Authorization"] == "Bearer tok" and seen[0].url.params["p"] == "q"
     with pytest.raises(_vendor.TooLarge, match="^download: over 4999 bytes$") as caught:
-        asyncio.run(_vendor.get_capped(client, URL, "download", max_bytes=4999))
+        asyncio.run(_vendor.get_capped(client, URL, "tok", "download", max_bytes=4999))
     assert caught.value.status == 0
 
 
 def test_a_capped_get_reads_the_error_body_to_tell_a_rate_limit_from_a_refusal() -> None:
     limited = _client(_answer(403, _google_reason("rateLimitExceeded")))
     with pytest.raises(_vendor.RateLimited):
-        asyncio.run(_vendor.get_capped(limited, URL, "download", max_bytes=10))
+        asyncio.run(_vendor.get_capped(limited, URL, "tok", "download", max_bytes=10))
     refused = _client(_answer(403, _google_reason("cannotDownloadFile")))
     with pytest.raises(_vendor.CredentialRefused, match="^download: http_403$"):
-        asyncio.run(_vendor.get_capped(refused, URL, "download", max_bytes=10))
+        asyncio.run(_vendor.get_capped(refused, URL, "tok", "download", max_bytes=10))

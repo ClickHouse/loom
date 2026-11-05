@@ -267,10 +267,7 @@ async def zoom_download(token: str, url: str, *, max_bytes: int) -> str:
     """A transcript file's text, read up to `max_bytes`; TooLarge past it."""
     if not zoom_download_allowed(url):
         raise ValueError("not a download link of the store")
-    headers = {"Authorization": f"Bearer {token}"}
-    body = await get_capped(
-        get_client(), url, "transcript download", max_bytes=max_bytes, headers=headers
-    )
+    body = await get_capped(get_client(), url, token, "transcript download", max_bytes=max_bytes)
     return body.decode("utf-8", errors="replace")
 
 

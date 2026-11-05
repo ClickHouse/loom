@@ -98,10 +98,7 @@ async def _get_bytes(
     url: str, token: str, params: dict[str, Any], what: str, max_bytes: int
 ) -> bytes:
     """The body of a GET, read up to `max_bytes`; TooLarge past it."""
-    headers = {"Authorization": f"Bearer {token}"}
-    return await get_capped(
-        get_client(), url, what, max_bytes=max_bytes, headers=headers, params=params
-    )
+    return await get_capped(get_client(), url, token, what, max_bytes=max_bytes, params=params)
 
 
 async def require_folder(token: str, folder_id: str) -> None:
