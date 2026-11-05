@@ -152,6 +152,14 @@ describe("the add form's other kinds", () => {
     const VIEW = "0123456789abcdef0123456789abcdef";
     const peekLink = `https://pages.example/team/${DATABASE}?v=${VIEW}&p=${PAGE}&pm=s`;
     expect(pageIds(peekLink)).toEqual([PAGE]);
+    // A row's peek link on its parent page (a `p=`, no `v=`) is a page: under Pages it
+    // gives the row, under Databases it is named, never read as the parent page.
+    const rowLink = `https://pages.example/team/Parent-${DATABASE}?p=${PAGE}&pm=s`;
+    expect(pageIds(rowLink)).toEqual([PAGE]);
+    expect(databaseIds(rowLink)).toEqual([rowLink]);
+    expect(sourceFormProblems({ ...named, kind: "notion", databases: rowLink })).toEqual([
+      `Paste a page link under Pages: ${rowLink}.`,
+    ]);
     // A mistyped page in a peek link is named, never read as the database.
     const badPeek = `https://pages.example/team/${DATABASE}?v=${VIEW}&p=${PAGE}0&pm=s`;
     expect(pageIds(badPeek)).toEqual([badPeek]);

@@ -324,14 +324,15 @@ export function projectIds(text: string): string[] {
 /** A page store id from a bare id with or without dashes, or from a pasted link the id
  *  that ends its last path segment (`Title-<id>`; the `?v=` view id is not the
  *  database's). With `peek` (the pages field), a link with a `p=` (the page a peek link
- *  opens) gives that page, and a database link (a `v=` without `p=`) is kept as typed.
- *  Lower-case without dashes; the server stores it dashed. A piece that is neither is
+ *  opens) gives that page, and a database link (a `v=` without `p=`) is kept as typed;
+ *  without it (the databases field), a page link (a `p=` without `v=`, a row's peek link
+ *  on its parent page) is kept as typed. Lower-case without dashes; the server stores it dashed. A piece that is neither is
  *  kept as typed, so the form can name it. */
 function pageStoreId(piece: string, peek: boolean): string {
   if (!piece.includes("/")) return bareId(piece) || piece;
   const page = peek ? /[?&]p=([^&#]*)/.exec(piece)?.[1] : undefined;
   if (page !== undefined) return bareId(page) || piece;
-  if (peek && isDatabaseLink(piece)) return piece;
+  if (peek ? isDatabaseLink(piece) : isPageLink(piece)) return piece;
   // The id is the whole segment, or what follows the title's last `-`.
   const segment = (piece.split(/[?#]/)[0] ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
   return /(?:^|-)([0-9a-f]{32})$/.exec(segment.toLowerCase())?.[1] ?? piece;
@@ -346,6 +347,11 @@ function bareId(text: string): string {
 /** A link to a database's view: a `v=` and no `p=`. */
 function isDatabaseLink(piece: string): boolean {
   return /[?&]v=/.test(piece) && !/[?&]p=/.test(piece);
+}
+
+/** A peek link to a page from its parent page: a `p=` and no `v=`. */
+function isPageLink(piece: string): boolean {
+  return /[?&]p=/.test(piece) && !/[?&]v=/.test(piece);
 }
 
 /** Page ids; a peek link gives the page it opens. */
@@ -411,7 +417,9 @@ function configProblems(f: SourceForm): string[] {
       const problems = all.length > MAX_IDS ? [`At most ${MAX_IDS} pages and databases in all.`] : [];
       const linked = pages.filter(isDatabaseLink);
       if (linked.length > 0) problems.push(`Paste a database link under Databases: ${linked.join(", ")}.`);
-      const bad = all.filter((id) => !PAGE_ID_RE.test(id) && !linked.includes(id));
+      const pageLinks = databases.filter(isPageLink);
+      if (pageLinks.length > 0) problems.push(`Paste a page link under Pages: ${pageLinks.join(", ")}.`);
+      const bad = all.filter((id) => !PAGE_ID_RE.test(id) && !linked.includes(id) && !pageLinks.includes(id));
       if (bad.length > 0) problems.push(`Not an id (32 hex digits): ${bad.join(", ")}.`);
       return problems;
     }
