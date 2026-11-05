@@ -593,7 +593,9 @@ gold decision rows through the pre-edit block and the memory section of `loom_se
 the rows `loom decisions extract --apply` mined from the same documents, through the same
 surfaces (4), and those extracted rows with the documents' knowledge hits of `loom_search`
 (6). Arm 4 approximates the sync leg: documents ingested as a document source's sync writes
-them, mined by the same extraction function. Extracted rows get files from a read-only code
+them, mined by the same extraction function. The extractor in this run read 6,000-character
+windows and kept a decision only when each reason was one verbatim span of the text; the
+whole-document extractor with cited, checked claims is not in these tables. Extracted rows get files from a read-only code
 index of the ClickHouse repository, so arms 4 and 6 read the pre-edit block too.
 
 The task set is private: five design documents for the ClickHouse repository, four of them
@@ -715,8 +717,9 @@ Arm 1 injects 1.58 times arm 3's tokens. By ledger stage the run spent 0.194 USD
 answers, 0.391 on 1,728 judge passes and 0.004 on the server's own model and embedding
 calls. For extraction this run's ledger charged an upper bound on the extractor it ran,
 once per document before its extraction run, 0.173 USD in all: the extraction's model
-calls cost at most 0.173, and its write embeddings are not recorded (the harness now
-charges an estimate, not a bound). The ledger does not split spend by arm: the answers'
+calls cost at most 0.173, and its write embeddings are not recorded. For the
+whole-document extractor the harness charges an estimate, not a bound
+(`bench/design_rationale/README.md`). The ledger does not split spend by arm: the answers'
 cost per arm is their recorded tokens priced at the current price table, and judging is
 not split.
 
