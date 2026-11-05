@@ -1214,8 +1214,11 @@ async def _reconcile(
             strong=True,
         )
         if row is None:
-            # A writer record with no live row under it: nothing of the extractor's to revise.
-            return _not_ours(rec, writer, None)
+            # The live row behind the writer record was deleted between the two reads: a
+            # race the next run settles.
+            rec.race = "deleted"
+            rec.action = "row_changed"
+            return rec
         if not complete:
             # The code index did not answer for every name: keep the files the row has
             # rather than drop one an earlier run resolved.
@@ -1299,16 +1302,14 @@ def _left_unjudged(row: MemoryRow, record: dict[str, Any], inp: DecisionRecordIn
     return _same_words(record, inp) and _same_row(row, inp)
 
 
-def _not_ours(rec: RecordReport, writer: Any, row: MemoryRow | None) -> RecordReport:
-    """Another writer's record, another document's row, or a writer record with no live
-    row behind it under the key: printed, never written."""
+def _not_ours(rec: RecordReport, writer: Any, row: MemoryRow) -> RecordReport:
+    """Another writer's record or another document's row under the key: printed, never
+    written."""
     rec.body.update(agent=writer.agent, user_id=writer.user_id, session_id=writer.session_id)
     rec.action = "not_ours"
     rec.note = (
         f"recorded by {writer.agent} from {row.source_resource_id or 'no document'}; "
         "the extractor revises only its own rows on this document"
-        if row is not None
-        else f"recorded by {writer.agent}, whose row under the key is gone; nothing to revise"
     )
     return rec
 

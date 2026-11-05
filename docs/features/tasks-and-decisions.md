@@ -578,11 +578,11 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   never drops it.
   By hand, a maintainer drops it with `memory.update_by_id` on the row's `memory_id` with `tags` less
   `source-changed`, or re-records the decision (after `memory.unpin`) or deletes it.
-- **Refusals and races**: a write the server refuses (a blacklisted decision, a row pinned during the run, a busy key,
-  a store timeout) is reported with its code, and one the embedding provider's error stops (`memory.set` and
-  `memory.search` embed in-process) with the error's name; a write that finds its row deleted or rewritten since the
-  run read it is reported as such, a race the next run settles. Either way the run goes on with the next candidate and
-  the retire step.
+- **Refusals and races**: a write the server refuses (a blacklisted decision, a row pinned during the run, a busy key, a
+  store timeout) is reported with its code, and one the embedding provider's error stops (`memory.set` and
+  `memory.search` embed in-process) with the error's name; a write that finds its row deleted or rewritten since the run
+  read it, or a key whose row is deleted between the run's reads, is reported as such, a race the next run settles.
+  Either way the run goes on with the next candidate and the retire step.
 - **Limits**: `--max-per-section` is at least 1 and `--window-chars` at least 500; a smaller value is refused. A reply
   cut at the model's token limit is reported with the cap it hit (`decision_extract`, 12000, or `decision_support`,
   8000, unless `LOOM_LLM_MAX_TOKENS_OVERRIDES` sets it) and the advice to lower either flag or raise that entry; a

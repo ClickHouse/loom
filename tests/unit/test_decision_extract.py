@@ -4149,7 +4149,9 @@ async def test_a_changed_text_is_recorded_at_the_stage_it_reads_as(monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_a_writer_record_with_no_row_behind_it_writes_nothing(monkeypatch) -> None:
+async def test_a_writer_record_whose_row_is_deleted_between_the_reads_is_a_race(
+    monkeypatch,
+) -> None:
     c = _candidate()
     world = _World(monkeypatch, [c])
     # The record's writer has no row (deleted between the reads); another identity's row
@@ -4158,11 +4160,8 @@ async def test_a_writer_record_with_no_row_behind_it_writes_nothing(monkeypatch)
     world.records[_key(c)] = (writer, _same_fields(c))
     world.add(_key(c), agent="claude")
     report = await _run()
-    (rec,) = report.records
-    assert rec.action == "not_ours" and world.recorded == []
-    assert rec.note == (
-        f"recorded by {de.EXTRACTOR_AGENT}, whose row under the key is gone; nothing to revise"
-    )
+    assert report.records == [] and world.recorded == [] and world.deletes == []
+    assert report.races == [f"{_key(c)}: deleted since the run read it"]
 
 
 @pytest.mark.asyncio
@@ -4241,7 +4240,7 @@ async def test_a_row_is_retired_only_when_a_second_check_finds_it_gone_too(monke
 
 
 def test_a_support_reply_is_read_by_id_and_a_missing_verdict_is_no() -> None:
-    asked = {"decision:a", "decision:b", "decision:c", "decision:d", "decision:e"}
+    asked = {"decision:a", "decision:b", "decision:c", "decision:d", "decision:e", "decision:f"}
     assert dx.parse_support("no json", asked) is None and dx.parse_support("[]", asked) is None
     reply = {
         "claims": [{"id": "0.o", "supported": True}, {"id": "0.r0", "supported": "yes"}],
@@ -4252,6 +4251,8 @@ def test_a_support_reply_is_read_by_id_and_a_missing_verdict_is_no() -> None:
             {"id": "decision:c", "still_stated": 1},
             {"id": "decision:d", "still_stated": "false"},
             {"id": "decision:e"},
+            # A digit int() cannot read names no restatement.
+            {"id": "decision:f", "still_stated": True, "same_as": "\u00b2"},
             "junk",
         ],
     }
@@ -4260,7 +4261,11 @@ def test_a_support_reply_is_read_by_id_and_a_missing_verdict_is_no() -> None:
     only_a = dx.parse_support(json.dumps(reply), {"decision:a"})
     assert only_a is not None and only_a.stored == {"decision:a": (True, 0)}
     assert v is not None and v.supported == {"0.o"}
-    assert v.stored == {"decision:a": (True, 0), "decision:b": (False, 2)}
+    assert v.stored == {
+        "decision:a": (True, 0),
+        "decision:b": (False, 2),
+        "decision:f": (True, None),
+    }
     cand, notes = dx.supported(1, _cand(), v)
     assert cand is None and notes == [dx.UNSUPPORTED]
 
