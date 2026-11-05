@@ -23,7 +23,7 @@ CALCULATION_SOURCE = "knowledge.query"
 # What one prompt shows: the result rows and each value's characters (the evidence
 # says when it cut), and each dataset's columns.
 MAX_EVIDENCE_ROWS = 50  # not a setting: what one prompt shows of a result
-MAX_EVIDENCE_CELL = 200  # not a setting: what one prompt shows of a value
+MAX_EVIDENCE_CELL = 200  # not a setting: what one prompt shows of a value or a dataset name
 MAX_PROMPT_COLUMNS = 100  # not a setting: what one prompt shows of a schema
 MAX_PROMPT_SCHEMA_CHARS = 24_000  # not a setting: what one prompt shows of the schemas
 # A question to ask or a refusal's reason, as an abstention or a retry carries it.
@@ -82,16 +82,18 @@ def _described(schema: Mapping[str, Any], room: int) -> str:
     name = json.dumps(cut(schema["name"], MAX_EVIDENCE_CELL), ensure_ascii=False)
     head = f"- {schema['alias']}: {name} ({schema['row_count']} rows); columns: "
     shown: list[str] = []
-    # Room kept for the count of columns not shown.
-    used = len(head) + len(f", and {len(cols)} more not shown")
-    for c in cols[:MAX_PROMPT_COLUMNS]:
-        entry = f"{json.dumps(c['name'], ensure_ascii=False)} ({c['type']})"
-        if shown and used + len(entry) + 2 > room:
+    used = len(head)
+    for i, c in enumerate(cols[:MAX_PROMPT_COLUMNS]):
+        entry = f"{', ' if shown else ''}{json.dumps(c['name'], ensure_ascii=False)} ({c['type']})"
+        # The line ends with the count of columns not shown when this one is the last.
+        rest = len(cols) - i - 1
+        tail = f", and {rest} more not shown" if rest else ""
+        if shown and used + len(entry) + len(tail) > room:
             break
         shown.append(entry)
-        used += len(entry) + 2
+        used += len(entry)
     more = f", and {len(cols) - len(shown)} more not shown" if len(cols) > len(shown) else ""
-    return f"{head}{', '.join(shown)}{more}"
+    return f"{head}{''.join(shown)}{more}"
 
 
 def _cell(value: Any) -> str:

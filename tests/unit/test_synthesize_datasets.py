@@ -190,6 +190,13 @@ def test_the_prompt_shares_its_schema_room_among_the_datasets() -> None:
     prompt = ap.plan_prompt("t", schemas)
     room = ap.MAX_PROMPT_SCHEMA_CHARS // 4
     assert all(len(line) <= room for line in prompt.split("\n") if line.startswith("- "))
+    # A line that fits exactly shows every column.
+    whole = ap._described({"alias": "o", "name": "n", "row_count": 1, "columns": long[:3]}, 10**6)
+    assert (
+        ap._described({"alias": "o", "name": "n", "row_count": 1, "columns": long[:3]}, len(whole))
+        == whole
+        and "more not shown" not in whole
+    )
     assert prompt.count("more not shown") == 4 and "n" * 490 + '0" (number)' in prompt
 
 
