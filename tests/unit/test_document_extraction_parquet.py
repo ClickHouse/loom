@@ -11,13 +11,12 @@ import json
 from decimal import Decimal
 from typing import Any
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
-pa = pytest.importorskip("pyarrow")
-pq = pytest.importorskip("pyarrow.parquet")
-
-from loom_extractor import parquetfile, tabular  # noqa: E402
-from loom_extractor.source import ExtractionError, extract  # noqa: E402
+from loom_extractor import parquetfile, tabular
+from loom_extractor.source import ExtractionError, extract
 
 
 def _file(table: Any, **kw: Any) -> bytes:
@@ -644,6 +643,24 @@ def test_a_row_count_a_footer_declares_below_zero_is_no_rows(
     monkeypatch.setattr(parquetfile, "_open", lambda data: File())
     a = parquetfile.extract_parquet(b"", "z.parquet")
     assert (a.coverage.to_dict()["total"], a.coverage.failed) == (0, ())
+
+
+def test_a_footer_declaring_rows_past_64_bits_is_corrupt(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Meta:
+        num_row_groups = 2
+        num_columns = 1
+
+        def row_group(self, g: int) -> Any:
+            return type("Group", (), {"num_rows": 1 << 62})()
+
+    class File:
+        metadata = Meta()
+        schema_arrow = [pa.field("v", pa.int64())]
+
+    monkeypatch.setattr(parquetfile, "_open", lambda data: File())
+    with pytest.raises(ExtractionError) as e:
+        extract(b"PAR1 footer PAR1", "z.parquet")
+    assert e.value.code == "corrupt"
 
 
 def test_a_batch_of_rows_with_no_values_still_costs_its_rows(
