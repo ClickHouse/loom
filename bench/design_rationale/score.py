@@ -414,9 +414,12 @@ def treatment_check(ts: TaskSet, surf: dict[str, Any], state: dict[str, Any]) ->
             out[f"arm{arm}_{surface.removesuffix('_keys')}_served"] = f"{sum(hits)}/{len(hits)}"
     for arm in KNOWLEDGE_ARMS:
         # The tasks whose knowledge hits include a section of the task's own document
-        # (any version of it: a revision shares the source_uri).
+        # (any version of it: a revision shares the source_uri). Tasks with gold rows only,
+        # as above: an abstention task asks about what no document records.
         rows = [
-            (t, surf[surface_key(t["id"], arm)]) for t in tasks if surface_key(t["id"], arm) in surf
+            (t, surf[surface_key(t["id"], arm)])
+            for t in tasks
+            if t.get("gold_rows") and surface_key(t["id"], arm) in surf
         ]
         if rows:
             hits = [ts.document_of(t).source_uri in r["knowledge_uris"] for t, r in rows]

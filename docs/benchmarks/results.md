@@ -736,9 +736,9 @@ the arms also differ in the rows themselves, and no arm varies the block's reach
 **Treatment check.** Of the 43 tasks with gold rows, arm 3's pre-edit block served 39 and
 search 42 (a task counts when it served one of its own gold rows); arm 4's and arm 6's
 pre-edit block served 9 and search 33 (a task counts when it served any extracted row).
-The knowledge hits held the task's own document on 47 of 48 tasks in arms 2 and 6.
-Extraction wrote 19 rows across the documents and their revisions, 12 with files, with no
-extraction failure and no failed code lookup.
+The knowledge hits held the task's own document on all 43 tasks with gold rows in arms 2
+and 6. Extraction wrote 19 rows across the documents and their revisions, 12 with files,
+with no extraction failure and no failed code lookup.
 
 **Judge stability.** The headline verdict (A and D misleading, B avoids, C passed) agreed
 across the two orders on 90.0% of 827 answers; an answer whose compared pass is

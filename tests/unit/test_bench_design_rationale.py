@@ -1415,7 +1415,7 @@ def test_arm_6_serves_the_extracted_rows_with_the_documents_knowledge_hits(tmp_p
     assert "knowledge section" not in surf["B1/arm4"]["context"]
     m = score.score(ts, out)
     t = m["treatment"]
-    assert t["arm6_knowledge_served"] == t["arm2_knowledge_served"] == "9/9"
+    assert t["arm6_knowledge_served"] == t["arm2_knowledge_served"] == "8/8"  # gold-row tasks
     assert t["arm6_for_file_served"].split("/")[0] != "0"
     pairs = {(c["treatment"], c["reference"]) for c in m["comparisons"]}
     assert {(6, 2), (6, 4)} <= pairs
