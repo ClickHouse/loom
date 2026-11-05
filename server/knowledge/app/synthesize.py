@@ -242,6 +242,7 @@ async def _calculate(
             citation=f"{ap.CALCULATION_SOURCE}#1",
             columns=out.columns,
             rows=out.rows,
+            row_ids=out.row_ids,
             truncated=out.truncated,
             complete=out.complete,
             incomplete=out.incomplete,

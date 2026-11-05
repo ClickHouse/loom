@@ -24,8 +24,10 @@ CALCULATION_SOURCE = "knowledge.query"
 # says when it cut), and each dataset's columns.
 MAX_EVIDENCE_ROWS = 50  # not a setting: what one prompt shows of a result
 MAX_EVIDENCE_CELL = 200  # not a setting: what one prompt shows of a value
-# Each name whole (a cut name could not be planned over), at most MAX_COLUMN_CHARS.
+# Each name whole (a cut name could not be planned over), at most MAX_COLUMN_CHARS;
+# the datasets share the schema listing's characters.
 MAX_PROMPT_COLUMNS = 100  # not a setting: what one prompt shows of a schema
+MAX_PROMPT_SCHEMA_CHARS = 24_000  # not a setting: what one prompt shows of the schemas
 
 PLAN_SYSTEM = (
     "You turn a question about tabular datasets into a calculation plan, or say "
@@ -62,24 +64,29 @@ class Proposal:
 def plan_prompt(task: str, schemas: Sequence[Mapping[str, Any]], refused: str = "") -> str:
     """The plan call's prompt: the task, each dataset's alias, columns and row
     count, and, on a second try, why the first plan was refused."""
-    described = "\n".join(_described(s) for s in schemas)
+    room = MAX_PROMPT_SCHEMA_CHARS // max(1, len(schemas))
+    described = "\n".join(_described(s, room) for s in schemas)
     retry = (
         f"\n\nYour last plan was refused: {refused}\nPropose a corrected plan." if refused else ""
     )
     return f"QUESTION: {task}\n\nDATASETS (alias: name; columns):\n{described}{retry}\n\nJSON:"
 
 
-def _described(schema: Mapping[str, Any]) -> str:
-    """One dataset as the prompt lists it, its columns and their names bounded."""
+def _described(schema: Mapping[str, Any], room: int) -> str:
+    """One dataset as the prompt lists it: its first columns, each name whole, as
+    many as MAX_PROMPT_COLUMNS and `room` characters hold, and how many more."""
     cols = list(schema["columns"])
-    shown = ", ".join(f"{c['name']} ({c['type']})" for c in cols[:MAX_PROMPT_COLUMNS])
-    more = (
-        f", and {len(cols) - MAX_PROMPT_COLUMNS} more not shown"
-        if len(cols) > MAX_PROMPT_COLUMNS
-        else ""
-    )
     head = f"- {schema['alias']}: {schema['name']} ({schema['row_count']} rows)"
-    return f"{head}; columns: {shown}{more}"
+    shown: list[str] = []
+    used = len(head)
+    for c in cols[:MAX_PROMPT_COLUMNS]:
+        entry = f"{c['name']} ({c['type']})"
+        if shown and used + len(entry) + 2 > room:
+            break
+        shown.append(entry)
+        used += len(entry) + 2
+    more = f", and {len(cols) - len(shown)} more not shown" if len(cols) > len(shown) else ""
+    return f"{head}; columns: {', '.join(shown)}{more}"
 
 
 def _cut(text: str, limit: int) -> str:
@@ -120,9 +127,9 @@ def evidence(
     max_chars: int,
 ) -> str:
     """A calculation as a note the answer reads and cites, at most `max_chars`: what
-    it may not cover and the plan that ran first (so the answer can tell what was
-    counted, and no cut loses either), then the result's columns and as many of its
-    first rows as fit."""
+    it may not cover first (no cut loses a warning), then the plan that ran (so the
+    answer can tell what was counted; cut to a third of the room), the result's
+    columns and as many of its first rows as fit."""
     ran = json.dumps(
         {k: v for k, v in plan.items() if k != "datasets" and v not in (None, [], {})},
         separators=(",", ":"),

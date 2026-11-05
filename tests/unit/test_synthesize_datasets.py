@@ -69,14 +69,20 @@ def test_the_prompt_lists_each_dataset_and_says_why_a_plan_was_refused() -> None
 
 
 def test_the_prompt_lists_a_wide_schema_only_to_its_bound_each_name_whole() -> None:
-    cols = [
-        {"name": f"c{i}" + "x" * 300, "type": "string"} for i in range(ap.MAX_PROMPT_COLUMNS + 7)
-    ]
-    schema = {"alias": "o", "name": "wide.csv", "row_count": 1, "columns": cols}
-    prompt = ap.plan_prompt("t", [schema])
+    cols = [{"name": f"c{i}", "type": "string"} for i in range(ap.MAX_PROMPT_COLUMNS + 7)]
+    prompt = ap.plan_prompt(
+        "t", [{"alias": "o", "name": "wide.csv", "row_count": 1, "columns": cols}]
+    )
     assert ", and 7 more not shown" in prompt
-    # A name is shown whole, as a plan must name it; past the bound, none is shown.
-    assert f"c0{'x' * 300} (string)" in prompt and f"c{ap.MAX_PROMPT_COLUMNS}x" not in prompt
+    assert (
+        f"c{ap.MAX_PROMPT_COLUMNS - 1} (string)" in prompt
+        and f"c{ap.MAX_PROMPT_COLUMNS} (" not in prompt
+    )
+    # A long name is shown whole, as a plan must name it.
+    long = [{"name": "x" * 400, "type": "string"}]
+    assert "x" * 400 + " (string)" in ap.plan_prompt(
+        "t", [{"alias": "o", "name": "n", "row_count": 1, "columns": long}]
+    )
 
 
 def test_evidence_shows_the_plan_the_result_and_what_it_may_not_cover() -> None:
@@ -133,6 +139,39 @@ def test_a_wide_selection_leaves_its_rows_room_at_the_smallest_window() -> None:
     text = ap.evidence(1, {}, cols, rows, truncated=False, incomplete=[], max_chars=1000)
     assert len(text) <= 1000 and text.rstrip().endswith("31")  # a row is shown whole
     assert "no result row" not in text
+
+
+def test_a_valid_plan_of_every_shape_the_prompt_lists_has_no_unknown_key() -> None:
+    """A false positive would turn every such plan into invalid_plan."""
+    from server.knowledge.api.models_query import KnowledgeQueryInput
+    from server.knowledge.app.synthesize import _unknown_keys
+
+    col = {"dataset": "o", "column": "amount"}
+    plan = {
+        "where": [{"column": col, "op": "gt", "value": 0},
+                  {"column": col, "op": "in", "values": [1, 2]}],
+        "joins": [{"left": col, "right": {"dataset": "t", "column": "amount"}}],
+        "group_by": [{"column": col, "bucket": "month", "name": "m"}],
+        "aggregates": [{"fn": "sum", "column": col, "name": "s"}, {"fn": "count", "name": "n"}],
+        "select": [col],
+        "order_by": [{"by": "s", "desc": True}],
+        "limit": 10,
+    }  # fmt: skip
+    assert _unknown_keys(KnowledgeQueryInput, plan) == []
+
+
+def test_the_fake_provider_recognises_the_plan_prompt() -> None:
+    from server.llm import fake
+
+    assert ap.PLAN_SYSTEM.startswith(fake._PLAN_ANCHOR)
+
+
+def test_the_prompt_shares_its_schema_room_among_the_datasets() -> None:
+    long = [{"name": "n" * 490 + str(i), "type": "number"} for i in range(ap.MAX_PROMPT_COLUMNS)]
+    schemas = [{"alias": a, "name": f"{a}.csv", "row_count": 1, "columns": long} for a in "abcd"]
+    prompt = ap.plan_prompt("t", schemas)
+    assert len(prompt) < ap.MAX_PROMPT_SCHEMA_CHARS + 2_000
+    assert prompt.count("more not shown") == 4 and "n" * 490 + "0 (number)" in prompt
 
 
 # ---- the handler -------------------------------------------------------------------
@@ -244,6 +283,7 @@ async def test_a_plan_the_model_proposes_runs_on_the_callers_datasets_and_is_cit
         ["knowledge.query#2"],
     )
     (calc,) = out.calculations
+    assert calc.row_ids == []  # an aggregate has no source row
     assert (calc.citation, calc.rows, calc.receipt.snapshots[0].snapshot_id) == (
         "knowledge.query#1",
         [["120.8"]],

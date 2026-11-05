@@ -11165,6 +11165,7 @@ class SynthesizeCalculation(TypedDict, total=False):
     citation: Required[str]
     columns: Required[list["QueryResultColumn"]]
     rows: Required[list[list[Any]]]
+    row_ids: NotRequired[list[list[int]]]
     truncated: NotRequired[bool]
     complete: Required[bool]
     incomplete: NotRequired[list[str]]

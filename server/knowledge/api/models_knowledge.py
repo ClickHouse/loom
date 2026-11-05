@@ -430,9 +430,11 @@ class KnowledgeSynthesizeInput(BaseModel):
 class SynthesizeCalculation(BaseModel):
     # How the answer cites it: `knowledge.query#1`.
     citation: str
-    # The result's columns and rows, as knowledge.query returns them.
+    # The result's columns and rows, as knowledge.query returns them, and with no
+    # aggregates each row's id in each dataset (its source row).
     columns: list[QueryResultColumn]
     rows: list[list[Any]]
+    row_ids: list[list[int]] = Field(default_factory=list)
     # True when more rows matched than the plan's limit returned.
     truncated: bool = False
     # False when a dataset read is incomplete or rejected rows; `incomplete` says why.
@@ -475,8 +477,9 @@ class KnowledgeSynthesizeOutput(BaseModel):
     truncated: bool = False
     # True when there is no answer to give; `abstain_reason` says why.
     abstain: bool = False
-    # Why it abstained: budget_capped, no_chunks, needs_clarification, ambiguous,
-    # invalid_plan or empty_answer (see `clarification` for the three that explain).
+    # budget_capped (the namespace is over its cost cap), no_chunks (no document had chunks
+    # and no dataset was named), needs_clarification, ambiguous or invalid_plan (each
+    # explained in `clarification`), empty_answer (no answer once unread citations go).
     abstain_reason: str = ""
     # ambiguous: the question to ask; invalid_plan: why no plan held; needs_clarification:
     # the dataset to approve (knowledge.dataset_approve); empty otherwise.

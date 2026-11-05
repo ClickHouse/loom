@@ -4098,6 +4098,7 @@ export interface SynthesizeCalculation {
   citation: string;
   columns: QueryResultColumn[];
   rows: unknown[][];
+  row_ids?: number[][];
   truncated?: boolean;
   complete: boolean;
   incomplete?: string[];

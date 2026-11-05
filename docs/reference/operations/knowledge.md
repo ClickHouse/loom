@@ -616,7 +616,7 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | `unsupported_citations` | `list[str]` | Citations the model wrote naming a chunk the passes did not read; removed from `answer`. |
 | `truncated` | `bool` | True when the documents needed more than `max_windows` windows and only the first were read. |
 | `abstain` | `bool` | True when there is no answer to give; `abstain_reason` says why. |
-| `abstain_reason` | `str` | Why it abstained: budget_capped, no_chunks, needs_clarification, ambiguous, invalid_plan or empty_answer (see `clarification` for the three that explain). |
+| `abstain_reason` | `str` | budget_capped (the namespace is over its cost cap), no_chunks (no document had chunks and no dataset was named), needs_clarification, ambiguous or invalid_plan (each explained in `clarification`), empty_answer (no answer once unread… |
 | `clarification` | `str` | ambiguous: the question to ask; invalid_plan: why no plan held; needs_clarification: the dataset to approve (knowledge.dataset_approve); empty otherwise. |
 | `calculations` | `list[SynthesizeCalculation]` | The calculation run over the datasets, cited in `answer` as `[knowledge.query#1]`. |
 | `model` | `str` | LLM that wrote the notes and the answer; empty when it abstained before any call. |

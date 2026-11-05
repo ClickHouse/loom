@@ -191,19 +191,18 @@ class KnowledgeClient:
         "reduce_rounds", "citations", "cited_chunks", "unsupported_citations",
         "truncated", "abstain", "abstain_reason", "clarification", "calculations",
         "model"}`."""
-        return await self._agent.transport.post(
-            "/v1/knowledge.synthesize",
-            {
-                "org": self._agent.org,
-                "namespace": self._agent.namespace,
-                "source_uris": list(source_uris or []),
-                "datasets": list(datasets or []),
-                "task": task,
-                "window_chars": window_chars,
-                "max_answer_chars": max_answer_chars,
-                "max_windows": max_windows,
-            },
-        )
+        body: dict[str, Any] = {
+            "org": self._agent.org,
+            "namespace": self._agent.namespace,
+            "source_uris": list(source_uris or []),
+            "task": task,
+            "window_chars": window_chars,
+            "max_answer_chars": max_answer_chars,
+            "max_windows": max_windows,
+        }
+        if datasets:  # only when named, so an older server names nothing as ignored
+            body["datasets"] = list(datasets)
+        return await self._agent.transport.post("/v1/knowledge.synthesize", body)
 
     async def outline(
         self,

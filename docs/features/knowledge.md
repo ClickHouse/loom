@@ -49,7 +49,7 @@ the operations reference.
 | `knowledge.get`             | viewer | One document's full text and metadata by `source_uri`.                                 |
 | `knowledge.list`            | viewer | Documents of a namespace, paged by an opaque cursor, filterable by tag and URI prefix. |
 | `knowledge.outline`         | viewer | A document's table of contents, and optionally one section's assembled text.           |
-| `knowledge.synthesize`      | viewer | Complete a task over whole documents (summaries, spread-out evidence) with the LLM.    |
+| `knowledge.synthesize`      | viewer | Complete a task over whole documents, or calculate over datasets, with the LLM.        |
 | `knowledge.update_metadata` | writer | Edit `title`, `description` or `tags`; `reindex=true` rewrites the chunks' context.    |
 | `knowledge.delete`          | writer | Supersede a document and its chunks.                                                   |
 | `knowledge.bulk_delete`     | writer | The same for up to 500 `source_uris`.                                                  |
