@@ -174,6 +174,7 @@ OpName = Literal[
     "knowledge.inspect",
     "knowledge.list",
     "knowledge.outline",
+    "knowledge.query",
     "knowledge.reads",
     "knowledge.search",
     "knowledge.source.add",
@@ -530,6 +531,7 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.inspect",
     "knowledge.list",
     "knowledge.outline",
+    "knowledge.query",
     "knowledge.reads",
     "knowledge.search",
     "knowledge.source.add",
@@ -2368,6 +2370,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         80,
+        False,
+        True,
+    ),
+    "knowledge.query": OpSpec(
+        "knowledge.query",
+        "KnowledgeQueryInput",
+        "KnowledgeQueryBody",
+        "KnowledgeQueryOutput",
+        True,
+        "viewer",
+        "experimental",
+        1500,
         False,
         True,
     ),
@@ -10654,6 +10668,125 @@ class OutlineEntry(TypedDict, total=False):
     depth: Required[int]
     chunk_idxs: Required[list[int]]
     chars: Required[int]
+
+
+class KnowledgeQueryInput(TypedDict, total=False):
+    "Calculate over the live snapshots of ingested datasets with a typed"
+
+    org: Required[str]
+    namespace: Required[str]
+    datasets: Required[list["QueryDataset"]]
+    where: NotRequired[list["QueryFilter"]]
+    joins: NotRequired[list["QueryJoin"]]
+    group_by: NotRequired[list["QueryGroup"]]
+    aggregates: NotRequired[list["QueryAggregate"]]
+    select: NotRequired[list["QueryColumn"]]
+    order_by: NotRequired[list["QueryOrder"]]
+    limit: NotRequired[int]
+
+
+class QueryDataset(TypedDict, total=False):
+    alias: NotRequired[str]
+    source_uri: Required[str]
+    dataset_id: Required[str]
+
+
+class QueryFilter(TypedDict, total=False):
+    column: Required["QueryColumn"]
+    op: Required[
+        Literal[
+            "eq",
+            "ne",
+            "lt",
+            "le",
+            "gt",
+            "ge",
+            "in",
+            "not_in",
+            "is_null",
+            "not_null",
+            "contains",
+            "starts_with",
+        ]
+    ]
+    value: NotRequired[Union[str, int, float, bool, None]]
+    values: NotRequired[list[Union[str, int, float, bool]]]
+
+
+class QueryColumn(TypedDict, total=False):
+    dataset: NotRequired[str]
+    column: Required[str]
+
+
+class QueryJoin(TypedDict, total=False):
+    left: Required["QueryColumn"]
+    right: Required["QueryColumn"]
+
+
+class QueryGroup(TypedDict, total=False):
+    column: Required["QueryColumn"]
+    bucket: NotRequired[Literal["", "day", "month", "year"]]
+    name: NotRequired[str]
+
+
+class QueryAggregate(TypedDict, total=False):
+    fn: Required[Literal["count", "count_distinct", "sum", "avg", "min", "max"]]
+    column: NotRequired[Optional["QueryColumn"]]
+    name: Required[str]
+
+
+class QueryOrder(TypedDict, total=False):
+    by: Required[str]
+    desc: NotRequired[bool]
+
+
+class KnowledgeQueryBody(TypedDict, total=False):
+    "Calculate over the live snapshots of ingested datasets with a typed"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    datasets: Required[list["QueryDataset"]]
+    where: NotRequired[list["QueryFilter"]]
+    joins: NotRequired[list["QueryJoin"]]
+    group_by: NotRequired[list["QueryGroup"]]
+    aggregates: NotRequired[list["QueryAggregate"]]
+    select: NotRequired[list["QueryColumn"]]
+    order_by: NotRequired[list["QueryOrder"]]
+    limit: NotRequired[int]
+
+
+class KnowledgeQueryOutput(TypedDict, total=False):
+    columns: Required[list["QueryResultColumn"]]
+    rows: Required[list[list[Any]]]
+    row_ids: NotRequired[list[list[int]]]
+    truncated: NotRequired[bool]
+    complete: Required[bool]
+    incomplete: NotRequired[list[str]]
+    receipt: Required["QueryReceipt"]
+
+
+class QueryResultColumn(TypedDict, total=False):
+    name: Required[str]
+    type: Required[str]
+
+
+class QueryReceipt(TypedDict, total=False):
+    snapshots: Required[list["QuerySnapshot"]]
+    plan: Required[dict[str, Any]]
+    sql: Required[str]
+    params: Required[dict[str, str]]
+
+
+class QuerySnapshot(TypedDict, total=False):
+    alias: Required[str]
+    source_uri: Required[str]
+    dataset_id: Required[str]
+    revision: Required[int]
+    snapshot_id: Required[str]
+    row_count: Required[int]
+    rejected_rows: Required[int]
+    complete: Required[bool]
+    schema_state: Required[str]
 
 
 class KnowledgeReadsInput(TypedDict, total=False):

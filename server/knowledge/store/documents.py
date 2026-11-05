@@ -217,6 +217,24 @@ async def get_many_by_uris(
     return [_hydrate(r) for r in rows]
 
 
+async def live_versions(
+    org: str, namespace: str, source_uris: list[str], *, ch: _CHClient | None = None
+) -> dict[str, int]:
+    """Each source's live document version, in one read of each source's version
+    only, not its content; a source with no live document is absent."""
+    if not source_uris:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT source_uri, version FROM loom.documents FINAL"
+        " WHERE org = {org:String} AND namespace = {ns:String}"
+        " AND source_uri IN {uris:Array(String)} AND superseded_at IS NULL"
+        " LIMIT {n:UInt32}",
+        params={"org": org, "ns": namespace, "uris": source_uris, "n": len(source_uris)},
+    )
+    return {str(r["source_uri"]): int(r["version"]) for r in rows}
+
+
 class DocumentListRow(TypedDict):
     """One `knowledge.list` row: the document's listing columns and its live
     chunk count."""

@@ -110,15 +110,21 @@ def set_quota_key(key: str) -> None:
 # lowers the statement's own value, so neither a request nor a per-call setting
 # widens it, and a row cap fails the read rather than truncating it.
 caller_shaped_var: ContextVar[bool] = ContextVar("ch_caller_shaped", default=False)
+# How a caller narrows the request when a caller-shaped read hits a cap.
+_NARROW = "a path prefix or globs, a more selective pattern, a filter"
+_narrow_var: ContextVar[str] = ContextVar("ch_caller_shaped_narrow", default=_NARROW)
 
 
 @contextmanager
-def caller_shaped() -> Iterator[None]:
-    """Every read statement in this block runs under the caller-shaped ceilings."""
+def caller_shaped(narrow: str = _NARROW) -> Iterator[None]:
+    """Every read statement in this block runs under the caller-shaped ceilings;
+    `narrow` says, in the error a cap raises, how to ask for less."""
     token = caller_shaped_var.set(True)
+    hint = _narrow_var.set(narrow)
     try:
         yield
     finally:
+        _narrow_var.reset(hint)
         caller_shaped_var.reset(token)
 
 
@@ -229,7 +235,7 @@ def _raise_if_caller_cap(e: BaseException) -> None:
 
         raise ValidationError(
             "the query needs more rows, time or memory than this deployment allows one "
-            "request; narrow it (a path prefix or globs, a more selective pattern, a filter)"
+            f"request; narrow it ({_narrow_var.get()})"
         ) from None
 
 
