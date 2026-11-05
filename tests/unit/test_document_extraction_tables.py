@@ -1396,3 +1396,15 @@ def test_an_empty_header_cell_is_named_by_its_column_in_the_sheet() -> None:
     rows = {1: [cell("C1", "c", t="str"), cell("E1", "e", t="str")], 2: [cell("D2", 1)]}
     a = extract(workbook([("S", sheet(rows))]), "b.xlsx")
     assert [c.name for c in a.tables[0].columns] == ["c", "column 4", "e"]
+
+
+def test_an_xlsx_cell_of_only_whitespace_is_empty_as_a_csv_field_is() -> None:
+    rows = {
+        1: [cell("A1", 0, t="s")],  # a space typed to clear the cell
+        2: [cell("A2", "Name", t="str"), cell("B2", "Age", t="inlineStr")],
+        3: [cell("A3", "Ann", t="str"), cell("B3", 30)],
+        4: [cell("A4", "Bo", t="str"), cell("B4", "  ", t="str")],
+    }
+    a = extract(workbook([("S", sheet(rows))], shared=("   ",)), "b.xlsx")
+    assert _columns(a) == [("Name", "string"), ("Age", "number")]
+    assert a.tables[0].rows == (("Ann", 30), ("Bo", None))

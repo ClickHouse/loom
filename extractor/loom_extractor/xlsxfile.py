@@ -54,6 +54,7 @@ _WORKBOOK = "xl/workbook.xml"
 _CELL_REF = re.compile(r"([A-Z]{1,3})([1-9][0-9]{0,6})")
 _RANGE = re.compile(r"([A-Z]{1,3})([1-9][0-9]{0,6}):([A-Z]{1,3})([1-9][0-9]{0,6})")
 _INDEX = re.compile(r"[0-9]{1,9}")  # a shared-string, style or row index
+_HAS_TEXT = re.compile(r"\S")
 _INTEGER = re.compile(r"-?[0-9]{1,19}")  # exact as written, within signed 64 bits
 # Built-in date and time-of-day formats, East Asian Excel's included.
 _DATE_FORMATS = {14, 15, 16, 17, 22, *range(27, 32), 36, *range(50, 59)}
@@ -132,6 +133,12 @@ _EPOCH_1904 = datetime(1904, 1, 1)
 
 class StrictWorkbook(Exception):
     """A workbook saved as Strict Open XML."""
+
+
+def _string(text: str) -> Cell:
+    """A string cell; one of only whitespace (a space typed to clear a cell) is
+    empty, as a CSV field is."""
+    return Cell(text, "string") if _HAS_TEXT.search(text) else EMPTY
 
 
 def _rooted(tag: str, root: str, what: str) -> None:
@@ -350,7 +357,7 @@ class _Reader:
         """A `<c>` as its value: its type (`t`), style (`s`), `<v>` text (None
         when it has none), whether it has a formula, and its inline string."""
         if kind == "inlineStr":
-            return Cell(inline, "string") if inline else EMPTY
+            return _string(inline)
         if not raw:  # no `<v>`, or an empty one
             if formula and raw is None:
                 self.uncalculated += 1
@@ -360,10 +367,9 @@ class _Reader:
             if not 0 <= i < len(self.shared):
                 self.unshared += 1  # a string the workbook does not hold: its text is lost
                 return EMPTY
-            text = self.shared[i]
-            return Cell(text, "string") if text else EMPTY
+            return _string(self.shared[i])
         if kind == "str":
-            return Cell(raw, "string")
+            return _string(raw)
         if kind == "d":
             return _iso(raw)
         if kind == "b":

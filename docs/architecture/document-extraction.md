@@ -262,18 +262,19 @@ shared string the workbook does not hold reads empty, and the artifact loses `sh
 500 characters (one cut shorter is a failed unit, `sheet names`). Worksheets are read in the workbook's order (a chart
 or dialog sheet holds no cells; a macro sheet, or a sheet of any other kind, is not read and fails alone), each a table;
 a Strict Open XML workbook is refused as `unsupported_format`; a sheet whose relationship names no part fails alone. A
-cell is read as the workbook holds it: a shared or inline string without its phonetic reading, a number, a bool, an
-error as `{"error": "#DIV/0!"}`, or a date when its number format is one (built-in formats 14-17 and 22, East Asian
-Excel's 27-31, 36 and 50-58, or a custom code of at most 255 characters, Excel's own bound, with a date letter), from
-the 1900 system with Excel's 1900-02-29 read as text, or the 1904 one, to the nearest second. A time-of-day format reads
-as a `time`, and an elapsed-time format such as `[h]:mm` as a `duration`. A formula reads as its cached value; one with
-none reads empty, and the artifact loses `formula_values`. A value over a megabyte, inline or shared, and one past
-column 16,384, is left out and counted, as is a cell written twice at one position (its earlier value lost). A merged
-range's first value fills each of its cells, so a header merged over columns names each; it fills no row past the last
-one held, and a merge that would add rows past those a table holds stops there and is a failed unit. A row or cell that
-names no position takes the one after the one before it. A hidden sheet is read and marked `attrs.hidden`, and a damaged
-sheet, or one whose root is no worksheet (another namespace), fails alone; shared strings or styles that cannot be read
-to their end keep what was read, and the artifact loses `shared_strings` or `number_formats`.
+cell is read as the workbook holds it: a shared or inline string without its phonetic reading (one of only whitespace is
+empty, as a CSV field is), a number, a bool, an error as `{"error": "#DIV/0!"}`, or a date when its number format is one
+(built-in formats 14-17 and 22, East Asian Excel's 27-31, 36 and 50-58, or a custom code of at most 255 characters,
+Excel's own bound, with a date letter), from the 1900 system with Excel's 1900-02-29 read as text, or the 1904 one, to
+the nearest second. A time-of-day format reads as a `time`, and an elapsed-time format such as `[h]:mm` as a `duration`.
+A formula reads as its cached value; one with none reads empty, and the artifact loses `formula_values`. A value over a
+megabyte, inline or shared, and one past column 16,384, is left out and counted, as is a cell written twice at one
+position (its earlier value lost). A merged range's first value fills each of its cells, so a header merged over columns
+names each; it fills no row past the last one held, and a merge that would add rows past those a table holds stops there
+and is a failed unit. A row or cell that names no position takes the one after the one before it. A hidden sheet is read
+and marked `attrs.hidden`, and a damaged sheet, or one whose root is no worksheet (another namespace), fails alone;
+shared strings or styles that cannot be read to their end keep what was read, and the artifact loses `shared_strings` or
+`number_formats`.
 
 **Bounds.** One budget bounds all of an artifact's tables, in three parts: what a source holds, the bytes its tables
 write, and the text they index. A source holds at most 1,000,000 non-empty cells in all, merged cells included, their
@@ -298,8 +299,8 @@ nesting past 64 deep, or more than 4,096 distinct element and attribute names, o
 part alone the same way), and hold at most 25 M elements in all, which bounds the time it is read for; the sheet the
 bound runs out in keeps the rows read before it. A workbook is read for its first 10,000 sheets (the rest one failed
 unit) and 65,536 styles and number formats (past them, the artifact loses `number_formats`), and its shared strings hold
-at most 256 MiB, each counted at four bytes a character and the object it takes (`lost: shared_strings` past it). A 64
-MB sheet of 100,000 by 20 numbers extracts in about 9 seconds under the child's limits.
+at most 256 MiB, each counted at four bytes a character and the object it takes (`lost: shared_strings` past it). A
+sheet of 100,000 by 20 numbers (62 MB inflated, 4 MB zipped) extracts in about 9 seconds under the child's limits.
 
 **Contract bounds.** Before it answers, the reference extractor fits every block to the contract's bounds: a key over
 1,024 characters is left out and the first 10,000 kept, and the section path keeps its first 64 entries, each cut to 500
