@@ -494,6 +494,7 @@ async def test_pr_diff_reads_the_posted_diff_else_the_mirror(
         return "/m.git" if cfg is not None else ""
 
     async def _run(git_dir: str, *args: str, max_bytes: int, **kw: Any) -> tuple[str, bool]:
+        assert kw.get("check") is True  # a diff git failed part way is not read as whole
         runs.append((git_dir, *args))
         return DIFF, False
 
@@ -709,3 +710,38 @@ async def test_a_linked_row_is_read_with_the_whole_only_filter_bound(
     assert stmt.params["whole_only"] == 1 and stmt.params["linked"] == ["m-linked"]
     assert "(memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))" in stmt.sql
     assert [(r["memory_key"], r["code_state"]) for r in read.served] == [("design/linked", "fresh")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("check", [True, False])
+async def test_run_bounded_with_check_refuses_output_from_a_failed_git(
+    monkeypatch: pytest.MonkeyPatch, check: bool
+) -> None:
+    """git that writes part of a diff and then exits non-zero: with `check` the output is
+    an error (the brief reads the diff as unread), without it the output stands."""
+    import asyncio
+
+    from server.code.app.index import gitrepo
+
+    real = asyncio.create_subprocess_exec
+
+    async def _failing_git(*args: Any, **kw: Any) -> Any:
+        return await real("sh", "-c", "printf '+partial'; exit 3", **kw)
+
+    monkeypatch.setattr(gitrepo.asyncio, "create_subprocess_exec", _failing_git)
+    if check:
+        with pytest.raises(gitrepo.GitError):
+            await gitrepo.run_bounded("/m.git", "diff", max_bytes=100, check=True)
+    else:
+        assert await gitrepo.run_bounded("/m.git", "diff", max_bytes=100) == ("+partial", False)
+
+
+def test_the_impact_seed_count_is_code_impacts_own_file_cap() -> None:
+    from server.code.api.models_symbol import CodeImpactInput
+
+    caps = [
+        m.max_length
+        for m in CodeImpactInput.model_fields["files"].metadata
+        if hasattr(m, "max_length")
+    ]
+    assert caps == [rb.IMPACT_SEED_FILES]

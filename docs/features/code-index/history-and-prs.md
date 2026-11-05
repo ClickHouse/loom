@@ -93,23 +93,24 @@ qualified (`Setting::distinct_spill_ratio`). It is a whole-word match on the lin
 diff adds, read up to 200,000 characters of a posted diff or 200,000 bytes of the
 mirror's, so `check` means "read this row against the diff", not a violation found.
 
-| Row verdict | Meaning                                                                                                                                                                                    |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `check`     | the diff adds one of the row's checked names (`names`)                                                                                                                                     |
-| `clear`     | the row has checked names and the diff adds none of them                                                                                                                                   |
-| `unknown`   | no name found, but the diff could not be read here, was cut, or has a hunk that miscounts its lines, or the row's value was cut (`diff_unread`, `diff_cut`, `diff_malformed`, `value_cut`) |
-| `""`        | the row names nothing to check                                                                                                                                                             |
+| Row verdict | Meaning                                                                                                                                                                                                                |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `check`     | the diff adds one of the row's checked names (`names`)                                                                                                                                                                 |
+| `clear`     | the row has checked names and the diff adds none of them                                                                                                                                                               |
+| `unknown`   | no name found, but the diff could not be read here (git failed, even part way), was cut, or has a hunk that miscounts its lines, or the row's value was cut (`diff_unread`, `diff_cut`, `diff_malformed`, `value_cut`) |
+| `""`        | the row names nothing to check                                                                                                                                                                                         |
 
 The section's verdict is `check` when any row says so, then `unknown`, then `clear`, and
 `none` when no row has anything to check. It says `clear` or `none` only when every
 changed path and every matching row was checked; otherwise it says `unknown`, and the
-causes say what was left: the caller may not read the trunk namespace
-(`trunk_not_readable`), a stored changed-path list that may be cut (`paths_maybe_cut`: the
-brief stores the first 50 changed files plus the files of the diff's hunks, up to 200, so
-a list of 50 or more may hold fewer than the PR changed), changed paths of that list not
-read (`paths_not_read`), a path whose read reached its 50 rows (`paths_at_row_ceiling`), a
-path whose code-links read failed (`links_not_read`), or rows the row cap left out that
-had something to check (`rows_not_read`).
+causes say what was left: no repository is configured for the namespace (`no_repo`), the
+caller may not read the trunk namespace (`trunk_not_readable`), a stored changed-path list
+that may be cut (`paths_maybe_cut`: the brief stores the first 50 changed files plus the
+files of the diff's hunks, up to 200, so a list of 50 or more may hold fewer than the PR
+changed), changed paths of that list not read (`paths_not_read`), a path whose read
+reached its 50 rows (`paths_at_row_ceiling`), a path whose code-links read failed
+(`links_not_read`), or rows the row cap left out that had something to check
+(`rows_not_read`).
 
 `code.conventions` states the repository's
 recurring maintainer checks as facts over one PR's diff (`pr_number`, `head_sha`,

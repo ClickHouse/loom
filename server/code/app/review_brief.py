@@ -287,9 +287,13 @@ async def _rationale_section(
     rows = ((payload.get("sections") or {}).get("paths") or {}).get("rows") or []
     paths = [str(r["path"]) for r in sorted(rows, key=lambda r: r.get("class") != "src")]
     try:
+        trunk = trunk_namespace(org, ns)
+        if not trunk:
+            # no repository is configured for the namespace: no trunk to read decisions from
+            return rb.rationale_section([], None, no_repo=True, budget_tokens=0)
         read = await decisions_for_paths(
             org,
-            trunk_namespace(org, ns) or ns,
+            trunk,
             paths[:most],
             limit=settings.code_review_brief_rationale_rows,
             first=rb.has_check,
@@ -343,7 +347,7 @@ async def _pr_diff(
         if not (git_dir and base and head):
             return None, False
         return await gitrepo.run_bounded(
-            git_dir, "diff", "--no-renames", base, head, max_bytes=rb.MAX_DIFF_CHARS
+            git_dir, "diff", "--no-renames", base, head, max_bytes=rb.MAX_DIFF_CHARS, check=True
         )
     except Exception as e:  # noqa: BLE001 — a diff that cannot be read leaves the check unknown
         logger.info("code.review_brief: diff for the rationale check of PR %s: %s", pr_number, e)
