@@ -149,7 +149,8 @@ class _SearchHit(BaseModel):
     # For a chunk of an extracted file: its blocks' type (`sql_statement`, `toml_table`,
     # `paragraph`, `mixed`, ...) and where it sits in the source (`line_start`,
     # `line_end`, a key path, `page_start`/`page_end` for a PDF's pages or a deck's
-    # slides, `sheet` and `row_start`/`row_end` for a sheet's or a CSV file's rows).
+    # slides, `sheet` and `row_start`/`row_end` for a sheet's, a CSV or a Parquet
+    # file's rows).
     # '' and None for text a caller extracted.
     block_type: str = ""
     locator: dict[str, Any] | None = None
@@ -857,11 +858,13 @@ class DatasetOut(BaseModel):
     dataset_id: str
     # The ingested source it was published from.
     source_uri: str
-    # The sheet's name, or the CSV file's.
+    # The sheet's name, or the CSV or Parquet file's.
     name: str
-    # The XLSX sheet the table came from; empty for a CSV file.
+    # The XLSX sheet the table came from; empty for a CSV or Parquet file.
     sheet: str = ""
-    # The source's first row the table came from (its header), from 1.
+    # The source's first row the table came from: its header row (from 1), or for a
+    # source whose names are no row of it (a Parquet file) its first row of data,
+    # 0 when it has none.
     row_start: int = 0
     # The source's last row the table came from.
     row_end: int = 0
