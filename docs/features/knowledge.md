@@ -465,8 +465,9 @@ document: the document is written as the sync worker with `user_id` `-`, so a
 namespace's erasure removes it and an erasure scoped to one user does not; a speaker's
 words are removed with `knowledge.delete` of the document (and at the store, or the next
 full listing writes them again). Decision records mined from a transcript
-(by the sync's [mining](#mining-decisions), or `loom decisions extract`) can quote a speaker too; deleting the transcript leaves them,
-and `memory.delete` of each decision's row (which retires its record) or the
+(by the sync's [mining](#mining-decisions), or `loom decisions extract`) can
+name or paraphrase a speaker too; deleting the transcript leaves them, and
+`memory.delete` of each decision's row (which retires its record) or the
 namespace's erasure removes them.
 
 `loom knowledge sync --org O --namespace <trunk namespace> [--source NAME] [--full]` runs

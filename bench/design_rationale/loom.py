@@ -36,8 +36,8 @@ LOOM_TIMEOUT_S = 180.0
 CODE_INDEX_TIMEOUT_S = 120.0
 # The pre-edit block's token budget per file, as the coding-agent hook asks for it.
 PRE_EDIT_BUDGET = 300
-# One document's extraction: a model call per window, each with its own provider
-# timeout.
+# One document's extraction: per window, its reads and support checks, each with its
+# own provider timeout.
 EXTRACT_TIMEOUT_S = 3600
 
 

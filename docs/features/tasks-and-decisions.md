@@ -287,7 +287,7 @@ decision whose outcome is recorded reads as decided).
 caller's own `decision:proposed` tag; `memory.update`, which replaces a row's tags, edits the tag like any other, and
 the readers follow it.
 
-A `loom decisions extract` run keeps the stage of a row whose words stay the same ([Extract decisions from a
+A `loom decisions extract` run keeps the stage of a row the document still states ([Extract decisions from a
 document](#extract-decisions-from-a-document), **Stage**), so a proposal later marked accepted keeps its rows proposed.
 Mark such a decision decided by sending the body a `--dry-run` reports for it (it carries the extractor's identity, so
 it replaces the row) with `stage: "decided"`, record its outcome with `decision.outcome`, or delete the document's
@@ -385,8 +385,9 @@ await agent.decision.outcome(rec["memory_key"], "no replay gaps in the quarter",
 ### Extract decisions from a document
 
 `loom decisions extract` reads one [knowledge](knowledge.md) document and records the decisions it states. It runs
-in-process with no token, so it is an operator command, and it calls the configured LLM once per window of the
-document's sections, twice for a window read again (below), also in a dry run. Its model calls are not gated by the
+in-process with no token, so it is an operator command, and it calls the configured LLM per window of the
+document's sections: a read (twice for a window read again, below) and a support check, plus one more check per window
+when a stored decision looks gone, also in a dry run. Its model calls are not gated by the
 namespace's cost cap. A model call held for the org (its model calls switched off, or refused or deferred by the
 inference gateway), for a model read or for an embedding a write needs, stops the run: nothing more is written,
 nothing is retired, and it exits 1. The document-source sync runs the same extraction on each document it writes,
@@ -411,13 +412,12 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   - `--into repo` (the default for a document in a code namespace): the repository's trunk code namespace, where every
     reader of the repository gets the row before an edit. `source_resource_id` still cites the document in its own
     namespace; there is no per-document access, so a repository reader who cannot read the document's namespace sees
-    the row's quote but is refused the document it cites. The rows are the trunk's: erasing the document's namespace
+    the row's decision but is refused the document it cites. The rows are the trunk's: erasing the document's namespace
     leaves them, and `memory.delete` in the trunk removes them.
-  - **Tags**: under `--into source` for a document outside the trunk, a row the run keeps as it is (pinned, attested
-    or with a recorded outcome, and the same verbatim fields, or one the retire step keeps because its reasoning is
-    still in the document), and a row it tags `source-changed`, gains the `repo:<id>` tag by a tags-only write;
-    another writer's row that is not pinned or attested gains none, nor does a row that carries another repository's
-    tag already.
+  - **Tags**: under `--into source` for a document outside the trunk, a row of the extractor's that the run keeps as it
+    is (pinned, attested or with a recorded outcome, still stated or not judged, or one the retire step keeps because it
+    is still stated or was not judged), and a row it tags `source-changed`, gains the `repo:<id>` tag by a tags-only
+    write; another writer's row gains none.
   - **Access**: the run reads the document's namespace and the repository's, and writes where the rows go. With an
     auth context bound it checks each (viewer, viewer, and writer, or viewer for a dry run) and refuses before any
     model call; the CLI runs with none, as the operator.
@@ -440,34 +440,44 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
       repository's code and be read in the other's);
     - the repositories added from the dashboard could not be read.
 
-- **Windows**: the document's live chunks for the current embedding model, grouped by section, at most
-  `--window-chars` (default 6000) per call. A document chunked under another embedding model has none: the command
-  says to run `loom rechunk` first and writes nothing. A `--source-uri` with no live document exits 1 and writes
-  nothing. The prompt lists the category, scenario and outcome of up to `LOOM_MEMORY_DECISION_EXTRACT_KNOWN_MAX`
-  (default 30) decisions the extractor already holds for the document, and asks the model to reuse that wording for a
-  decision the text still states, so a re-run reads the same keys. Category and scenario are shown whole, since the
-  key is built from them; an outcome over 160 characters is shortened and ends in `…`.
-- **Prompt**: the model is asked for the reason the text gives for each choice (the cost, constraint or failure it
-  avoids), never the decision restated, for nothing from a section that sums up other sections, and never to give as
-  the outcome what the text marks as former, replaced or superseded (an old default, a previous behaviour). A decision
-  the text gives no reason for is left out, except a ban or an invariant stated without one: the model emits it with
-  `is_constraint` true and its own sentence as the reasoning, which the restatement check keeps (below). It says
-  nothing about images or captions: what is image-only is the filter's call below, and a section it sends, such as a
-  one-line caption over a diagram beside more text, may state a decision. When the document has a title, the window's
-  text opens with a `[document: <title>]` line (its first 200 characters), so a proposal's sentences read as a
-  proposal.
-- **Second read**: a window gets at most one extra model call, reported as `read again`. When the reply holds no
-  decision and the window's text is more than a caption (80 characters once images and link markup are removed), the
-  window is read once more with the same prompt and the second reply is the window's. When a candidate's quote is in the
-  text but its reasoning or a rejected option's reason is not (a model often joins one from two places), and no span is
-  under 12 characters, and the quote is not in a recap section, the window is read once more with those spans named,
-  asking for each such decision again with one contiguous span, or none; the first reply's other candidates stand, and
-  the failed ones are reported as dropped. Of the second reply, a candidate is checked only when it has a failed
-  decision's outcome or a reasoning none of the window's kept decisions has: a kept decision given again under a
-  reworded scenario is dropped with the line `the second read repeats a decision the first reply gave`. After an empty
-  reply, a second read that fails or comes back unreadable loses the window as any window is: the exit code reads the
-  final outcome. After a joined reason the window is answered already: a lost second read is a `read again` line, and
-  the first reply's decisions are recorded with the exit code unchanged.
+- **Windows**: the document's live chunks for the current embedding model, grouped by section, at most `--window-chars`
+  per call (default `LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS`, 24,000): a document that fits is read whole, so a
+  reason the document gives in another section than the choice (a problem statement, a measurement, a list of missing
+  cases) is read with it. The default keeps a dense design document's reply, about as many tokens as the window, inside
+  the read's output cap (`decision_extract` in `LOOM_LLM_MAX_TOKENS_OVERRIDES`); a reply cut at the cap loses its
+  window, and the dropped line says to lower `--window-chars` (the sync reads the setting) or raise the cap. A document
+  chunked under another embedding model has no chunks: the command says to run `loom rechunk` first and writes nothing.
+  A `--source-uri` with no live document exits 1 and writes nothing. The prompt lists the category and scenario of up to
+  `LOOM_MEMORY_DECISION_EXTRACT_KNOWN_MAX` (default 30) decisions the extractor already holds for the document and asks
+  the model to reuse them for a decision the text still records, so a re-run reads the same keys; the old outcome is not
+  shown, so a changed outcome is read from the text as it is now.
+- **Read**: for each decision the model writes its outcome, the reasons the document gives and the options it rejects
+  (with the reason given, or none), in its own concise words, and each of these claims cites one to three short quotes
+  of the document (`server/memory/domain/decision_extract.py`, `SYSTEM`). A decision the document states with no reason
+  is written with none. The current or former approach a new design replaces is a rejected option of the new design;
+  a measurement, a recap, an agenda or a benchmark result is no decision. When the reply holds no decision and the
+  window's text is more than a caption (80 characters once images and link markup are removed), the window is read
+  once more with the same prompt, reported as `read again`. When the document has a title, the window's text opens
+  with a `[document: <title>]` line (its first 200 characters).
+- **Grounding**: each quote must be in the text the model read: whitespace runs as one space, letter case ignored, and
+  up to three label lines read across between two words, as a model copies a sentence a slide or diagram export splits
+  (`find_span`). A found quote is kept as the document's own words on one line, its label lines left out, and one
+  under 12 characters rests on nothing. A reason or rejected option none of whose quotes is found is left out
+  (`reason '...' left out: none of its quotes is in the document text`); a decision none of whose outcome quotes is
+  found is dropped (`none of the outcome's quotes is in the document text`). An outcome quote in a section with
+  `recap`, `summary` or `background` as a word of a heading at any level of its breadcrumb locates no decision; a
+  decision with no other outcome quote is dropped (`the quote is in a recap, summary or background section`), while a
+  reason may rest on such a section's text.
+- **Support check**: a second call over the same window reads each kept claim with its quotes and supports it only
+  when the quotes, read in the context of the document, state or directly imply it; summarising and combining quotes is
+  fine, adding a reason, a cause, a number, a name or a rejected option is not. A claim it does not support is left out
+  (`... left out: the support check found it not stated`), and a decision whose outcome it does not support is dropped.
+  It does not judge whether a decision was decided or only proposed: that is the read's stage. The same call reads each
+  of the extractor's stored decisions on the document (up to the known-decision cap) against the text: still stated,
+  and which candidate restates it. A stored decision is stated when any window's check states it, and found no longer
+  stated only when every window says so; it is then read once more without candidates, and counts as no longer stated
+  only when every window's second check agrees. Anything else (a check that fails or comes back unreadable, a reply
+  that leaves the decision out) gives no verdict, and a check that is lost also loses its window's candidates.
 - **Image-only sections**: a section whose own text has no words (a heading alone or over an image), or holds an image
   and at most 80 characters of other text (a caption), is not sent to the model and gets the line
   `image-only, rationale not extracted`; a heading alone over its subsections is not one. The text above the first
@@ -478,91 +488,18 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   link targets, reference labels, the empty brackets a link around an image leaves, and bare URLs, so a badge wrapped in
   a link adds none; a tag is a lower-case name on one line, so `x < 10k` and `Option<A>` stay text. Image markup inside
   code (`![d](f.png)` or `<img>` in a code span or block) is text. A chunk with no words is not sent either.
-- **Verbatim check**: the model returns, per decision, a `quote` and a `reasoning` and a reason for each rejected
-  option. A candidate is kept only when its quote, its reasoning and every reason are each a substring of one chunk,
-  with every run of whitespace read as one space, letter case ignored, and up to 3 label lines read across between two
-  of its words: a model copying a span drops line breaks and doubled spaces and capitalises a sentence's first word,
-  and a slide or diagram converted to text puts short labels between a sentence's two halves. A label line is one to
-  three words on a line of its own, with a line break before and after it (blank lines around it are read too), that
-  is title-like: its first letter or digit, after any markup, is an upper-case letter or a digit ("Proxy", "API",
-  "Shard A", "3 replicas"), since a lower-case line of narrow-wrapped prose continues its sentence ("We keep the / old
-  / index"), and a line of a script without case (Chinese, Japanese) is never read across, the check failing closed
-  where case says nothing; that does not start as a list item or a bullet (`•`, `◦`, `▪`, `‣`, `·`, `‧`, or `-`, `*`,
-  `+` followed by a space, or `1.`, `1)` followed by a space or alone; so `**Proxy**`, `_Proxy_`, `+3 nodes` and
-  `2.5 GB` are labels), a fence or code (a backtick, `~`), a table row (`|`), a heading (`#`), a heading's underline
-  or a rule (`===`, `-`, `---`, `***`, `___`: a line with no letter or digit is never title-like), a line starting
-  with `=` (an AsciiDoc heading), an HTML tag (`<`), a quote (`>`) or a definition (`:`); that does not end in `.`,
-  `!`, `?` or `;` (or their full-width forms), closing brackets, quotes and emphasis after the mark aside, as the last
-  line of a wrapped paragraph does; and that holds none of the ban words of a reason-less ban below, nor the contrast
-  words of the inverted-alternatives check, nor a word that hedges a sentence (`rarely`, `seldom`, `hardly`, `barely`,
-  `scarcely`, `nor`, `neither`, `none`, `nothing`, `nobody`, `nowhere`, `unless`, `except`, `but`, `although`,
-  `though`, `however`, `yet`), nor a word ending in `n't`: skipping `not` would read "Retries are / not / safe" as
-  "Retries are safe". A fourth label line, a line of four words, a line that is no label, or a label inside a line
-  ends the match. A label sits inside a sentence, so none is read after a word that ends in `.`, `!`, `?` or `;` (or
-  their full-width forms), closing brackets, quotes and emphasis after the mark aside: "We cache plans per tenant. /
-  Costs / Each plan expires after an hour." is two sentences with a heading between, never one span. Between two
-  words, the fewest label lines that reach the next word are read, so a later line reading as that word is not taken
-  for a label. Each word of the span but the last ends where a word of the text ends, so `so` does not take the start
-  of a label `Something`. The word right after the whitespace is read before any label, so a label line whose first
-  word reads as the next word ("The proxy" over "the nearest replica") is taken as that word and the span is not
-  found. Likewise a last word that would end inside a document word ("cache plan" over "cache / plans / not / plan")
-  is tried after the label reading of its gap, so a rejected label reading there leaves that start unmatched. This is
-  the trade-off the check makes: a label is recognised by its shape and these word lists, so a one-to-three-word line
-  of another kind that the sentence needs can still be read across; what is recorded is the document's words, so a
-  reader can check it against the source. What is recorded is the document's own span on one line, its words and case,
-  with the label lines it read across left out: the same text on every run, and a recorded span reads as the
-  document's span again, across the same labels, when the retire step looks for it. Each is at least 12 characters
-  long, counted on the model's span: a shorter span ("We", "the") is in every document, so a decision resting on it
-  could never retire. At most `--max-per-section` (default 3) are kept per section. A candidate whose category or
-  scenario holds no letter or digit in any script has no key and is dropped. Of two candidates with one key, or with
-  one outcome and reasoning (whitespace and letter case aside; overlapping chunks give two windows the same text), the
-  first is kept.
-- **Restated reasoning**: a candidate whose reasoning has no word its outcome lacks is dropped with the line
-  `reasoning only restates the outcome: it has no word the outcome lacks`. Words are compared in lower case, without
-  punctuation, as their English (Snowball) stems, so `stored` meets `store` and `running` meets `run`. Filler words
-  (`we`, `the`, `will`, `decided`, `chose`, `proposed`, `use`, `instead`, `because` and the like) are skipped in any
-  form: "We decided on spilling into sorted runs." restates the outcome `spill into sorted runs`; "Sorted runs avoid
-  random reads on disk." gives a reason. An outcome that carries its own reason leaves the reasoning nothing to add, so
-  the candidate is dropped, which is why the prompt asks for the outcome without its reason. One exception: a ban stated
-  with no reason ("Client-side retries only; no server retry setting."), a candidate the model marks `is_constraint`
-  whose reasoning holds `only`, `no`, `never`, `must`, `not`, `always`, `at most` or `at least` as a word, whose
-  reasoning restates its outcome or is its whole quote (an outcome shorter than the sentence), and whose reasoning fits
-  an outcome (1000 characters; a longer one is judged as any other candidate), is kept with its reasoning as its outcome
-  (a reasoning with fewer words than the outcome, such as "no server retry setting" of that ban, gives way to the quote
-  when the quote holds a ban word too), so it is recorded with the `constraint` tag and reads `Decided <outcome>.`
-  (`Proposed <outcome>.` when proposed) with no reason. The flag alone is not enough: models mark plain descriptions as
-  constraints too.
+- **Duplicates and limits per section**: a candidate under a key, or with an outcome (whitespace and letter case aside),
+  an earlier candidate of the run has is dropped, as are a candidate that does not fit `decision.record` and one past
+  `--max-per-section` (default 3) for the section its first outcome quote is in.
 - **Stage**: the model marks each candidate `decided` or `proposed`; anything but a plain `decided` (a proposal, an RFC,
-  a feature request, a plan, future work, an action item, or no answer) is recorded with `stage: "proposed"`, because a
-  proposal served as a choice made misleads an agent more than a choice served as a proposal. The stage is the model's
-  reading and flips between runs on an unchanged document, so the same words keep the row's stage in either direction,
-  also under a key the model reworded when its outcome, reasoning and rejected options' reasons are those of one of the
-  extractor's rows on the document; a stage taken from each run would drift with every re-run. The run's note names the
-  stage the document reads as when it differs, except for a row whose outcome is recorded, which reads as decided
-  whatever the document says. A changed text is recorded at the stage it reads as. A pinned or attested row is never
-  re-recorded by a run, so its stage changes only by hand.
-- **Recaps**: a candidate whose quote is in a section with `recap`, `summary` or `background` as a word of a heading at
-  any level of its breadcrumb is dropped with the line `the quote is in a recap, summary or background section`. The
-  section stays in the window, since its text may give a later decision's reason.
-- **Inverted alternatives**: a rejected option the candidate's own quote, the span of the chosen design, states as
-  part of the choice is left out of the record and reported
-  (`rejected option '<option>' left out: the quote states it as part of the choice`); the decision is kept. An option
-  is such when every word of it, as the restatement check compares words, is in one sentence of the quote (a sentence
-  ends at `.`, `!` or `?` before whitespace, except after `vs.`, `e.g.` or `i.e.`, at a blank line or before a list
-  item; a single line break does not end one) and that sentence holds none of `not`, `no`, `never`, `cannot`, `can't`,
-  `instead`, `rather`, `without`, `fail`, `reject`, `than`, `avoid`, `slow`, `over`, `against`, `versus`, `vs`,
-  `unlike`, `replace` (and `replaces`, `replaced`, `replacing`), `favor`, `favour` (and `favored`, `favours` and the
-  like), `prefer` (and `prefers`, `preferred`), `outperform` (and its forms), `beat`, `beats`, `compare`, `drop`, each
-  of `fail`, `reject`, `avoid`, `compare` and `drop` in any form (`fails`, `rejected`, `avoids`, `compared`,
-  `dropped`), so "We chose sorted runs over a plain set on disk." and "We prefer sorted runs to a plain set on disk."
-  still reject the set. The list leans wide on purpose: a missed contrast word drops a true alternative's `Rejected:`
-  part, while an inverted option kept would tell an agent the chosen design was rejected. The sentence that holds the
-  option's own rejection reason is not read: it is the rejection. The quote is read as the document writes it, its
-  line breaks kept and its label lines left out, so a label naming an option states nothing. Text outside the quote is
-  not read either: a document often names an option in one sentence ("We looked at a plain set on disk.", a list item,
-  "benchmarked … against …") and rejects it in the next. A quote "…; sharding by tenant is deferred to v2." states
-  "Defer sharding by tenant"; "so v1 cannot evict it" still rejects "evict the largest job".
-- **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), confidence 0.5,
+  a plan, future work, a follow-up, or no answer) is recorded with `stage: "proposed"`, because a proposal served as a
+  choice made misleads an agent more than a choice served as a proposal. A stored decision the text still states keeps
+  its stage, and the run's note names the stage the document reads as when it differs, except for a row whose outcome is
+  recorded, which reads as decided whatever the document says. A pinned or attested row is never re-recorded by a run,
+  so its stage changes only by hand.
+- **Write**: through `decision.record` as agent `loom-decisions` (user and session `-`), the reasons joined with
+  `; ` as the reasoning (the outcome itself for a decision with none, which the statement reads as no stated reason),
+  each rejected option as `<option> — rejected: <reason>` or the option alone, confidence 0.5,
   `source_class="derived"`, `source_resource_id` `knowledge:<namespace>/<source_uri>#<section breadcrumb>`, tags
   `source-kind:design_doc`, `constraint` for a ban or an invariant and `repo:<id>` under `--into source` for a document
   outside the repository's trunk. The row's `actor` is `process:cli:decisions`. Each `decision.record`, and each
@@ -575,32 +512,40 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   run says `only a test or a page defines it` and lists the name as unresolved (`only tests or pages`) for a human to
   add the code file, or as a setting when it is snake_case and a page documents it; a snake_case name only tests define
   is a helper and is not listed. Which paths count as tests is `governs` in `server/memory/domain/decision_extract.py`:
-  common test, mock and end-to-end layouts; one it misses keeps its link. A repository path the quote or the reasoning
+  common test, mock and end-to-end layouts; one it misses keeps its link. A repository path a cited quote
   writes out (`src/Storages/MergeTreeData.cpp`) is added as well, as `memory.set` detects one. When the code index
   cannot be read for a name, a decision already recorded keeps the files its row has, and a new one is written with the
   files that did resolve. Pull request numbers and setting names are printed as unresolved in a dry run, for a human to
   add; a backticked snake_case name is looked up first and reported as a setting when the index does not define it. A
   name defined in several files is printed as unresolved, for a human to pick the file.
-- **Reconcile**: the document says otherwise only when a verbatim field differs: the reasoning, or the set of rejected
-  options' reasons, each matched as a prefix where `decision.record` cut a long alternative at its 300-character cap.
-  The category, scenario, outcome and option wording are the model's, and a change there alone is no change. Nor is a
-  change in whitespace or letter case alone (a re-wrapped line, a capitalised first word): the row keeps its stored
-  span, which the retire step still finds, and `decision.record` stores rejected options' reasons on one line already.
-  A row is frozen against re-extraction when it is pinned or attested in its current form (`memory.verify`). By the
-  row the key's active record belongs to:
-  - **The extractor's own, not pinned or attested, from this document**: same verbatim fields and the same `files`,
-    `source_resource_id`, `constraint` tag and `repo:` tag: no write. A verbatim field differs, or only those row
-    fields do (a file that resolves once the code is indexed, a renamed heading, a first run with `--repo`): recorded
-    again (the record is superseded, history keeps it).
-  - **Pinned or attested, citing this document** (whoever wrote it): a verbatim field differs: no write; the full
+- **Reconcile**: the document says otherwise when the support check finds the key's stored decision no longer
+  stated; the model's wording alone is no change. A decision still stated is recorded again only for its row fields,
+  in its stored words. A row is frozen against re-extraction when it is pinned or attested in its current form
+  (`memory.verify`). A decision the document still states keeps its stored words even when a revision adds a reason
+  or a rejected option to it: the check asks whether the text still says what the row says, not whether it says more.
+  By the row the key's active record belongs to:
+  - **The extractor's own, not pinned or attested, from this document**: still stated with the same `files`,
+    `source_resource_id`, `constraint` tag and `repo:` tag: no write. No longer stated: recorded again as the text now
+    reads (the record is superseded, history keeps it); still stated with other row fields (a file that resolves once
+    the code is indexed, a renamed heading, a first run with `--repo`): recorded again in its stored words.
+  - **No verdict** (a stored row past the known-decision cap, one a reply left out or answered with neither true nor
+    false, or one whose check was lost): a pinned, attested or acted-on row is left as it is; any other is recorded
+    again when the run gives its key, as the text now reads when the words differ, or in its stored words and stage
+    when only its files, source or tags changed.
+  - **The extractor's own, pinned or attested, citing this document**: no longer stated: no write; the full
     `decision.record` body is printed with the row's agent, user and session, and the row is tagged `source-changed`
     unless it already carries the tag. To accept the body, a maintainer unpins a pinned row with `memory.unpin`
     (`decision.record` on a pinned writer row answers 409 `PINNED_CONFLICT`) and sends it; an attested row takes the
     body, and its attestation then reads stale until `memory.verify` binds it again.
-  - **Another writer's row that is not pinned or attested, or a row from another document**: neither revised nor
-    tagged; its body is printed.
+  - **Another writer's row, or a row from another document**: neither revised nor tagged; its body is printed. The
+    support check reads only the extractor's own rows.
   - **Its outcome recorded** (`decision.outcome`): never recorded again, since `decision.record` would rebuild it
-    without the outcome; a verbatim field that differs tags it `source-changed`, as a pinned or attested row is.
+    without the outcome; one no longer stated is tagged `source-changed`, as a pinned or attested row is.
+  - **A restatement**: a candidate the support check names as restating a stored decision it does not find gone is
+    not written (`restates <key>, not found gone`) when its key is new or is the key of a stored decision not found
+    stated: the stored row and its stage stand, and the row under the candidate's key is retired when found gone and
+    keeps its stored words when it has no verdict. This comes before the re-record of a row no longer stated and of
+    a row with no verdict.
   - **No record under the key**: of the `LOOM_MEMORY_DECISION_EXTRACT_RESTATEMENT_TOP_K` (default 20) decision keys
     closest to the candidate (cosine only), a pinned or attested one under another key that reads the same at or above
     the namespace's conflict threshold skips the candidate: `already recorded by <agent> under <key>`. The query is the
@@ -617,49 +562,48 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
 - **Races**: `decision.record` takes no precondition, so a `decision.outcome` that lands between the run's read and
   its re-record is replaced with the rest of the record; the tag write's precondition covers the value, not a
   tags-only change in the gap.
-- **Retire**: a `loom-decisions` row, not pinned or attested, citing the document whose reasoning is no longer in the
-  document's text, read as in the verbatim check, is deleted with `memory.delete_version`, which also retires its
-  record; a pinned or attested one, or one whose outcome `decision.outcome` recorded, is tagged `source-changed`
-  instead. The reasoning read is the extractor's own record: a key whose active record another identity wrote is left
-  alone. An unpinned, unattested row whose outcome and reasoning (whitespace and letter case aside) this run recorded
-  under another key (the model worded the scenario differently) is deleted too, so the decision is not served twice,
-  unless its realized outcome is recorded; another decision resting on the same reasoning has another outcome and stays.
-  Otherwise a row whose reasoning is still there stays, whether or not the run emitted it again.
+- **Retire**: a `loom-decisions` row, not pinned or attested, citing the document, that is no longer stated (above) is
+  deleted with `memory.delete_version`, which also retires its record; a pinned or attested one, or one whose outcome
+  `decision.outcome` recorded, is tagged `source-changed` instead. One whose decision this run recorded under another
+  key in its place is reported as replaced by that key. A row still stated stays, whether or not the run emitted it
+  again, and so does a row with no verdict (one past the known-decision cap, or one a check left out or lost). The
+  verdict reads the extractor's own record: a key whose active record another identity wrote is left alone. A
+  decision whose statement spans two windows of a long document can read as no longer stated in each.
 - **Citing the document**: a row cites it when its `source_resource_id` starts
   `knowledge:<document namespace>/<source_uri>#`, the namespace that holds the document (not where the row is), so a
   heading holding `#` (`C# bindings`) is no obstacle, unless a document `<source_uri>#<part>` it also starts with was
   ever ingested in that namespace: `doc#v2#Intro` cites `doc#v2` once that document exists.
-- **Clearing `source-changed`**: when a run's candidate for a tagged row's key has the row's verbatim fields again,
-  the run drops the tag, pinned or not, as long as the row cites this document. The retire step never drops it: it
-  reads the reasoning alone, and the tag may stand for a rejected option's reason the document still contradicts, or
-  a tag a maintainer set.
+- **Clearing `source-changed`**: when the run emits a candidate under a tagged row's key and the support check finds
+  the row stated again, the run drops the tag, pinned or not, as long as the row cites this document. The retire step
+  never drops it.
   By hand, a maintainer drops it with `memory.update_by_id` on the row's `memory_id` with `tags` less
   `source-changed`, or re-records the decision (after `memory.unpin`) or deletes it.
-- **Refusals and races**: a write the server refuses (a blacklisted decision, a row pinned during the run, a busy key,
-  a store timeout) is reported with its code, and one the embedding provider's error stops (`memory.set` and
-  `memory.search` embed in-process) with the error's name; a write that finds its row deleted or rewritten since the
-  run read it is reported as such, a race the next run settles. Either way the run goes on with the next candidate and
-  the retire step.
+- **Refusals and races**: a write the server refuses (a blacklisted decision, a row pinned during the run, a busy key, a
+  store timeout) is reported with its code, and one the embedding provider's error stops (`memory.set` and
+  `memory.search` embed in-process) with the error's name; a write that finds its row deleted or rewritten since the run
+  read it, or a key whose row is deleted between the run's reads, is reported as such, a race the next run settles.
+  Either way the run goes on with the next candidate and the retire step.
 - **Limits**: `--max-per-section` is at least 1 and `--window-chars` at least 500; a smaller value is refused. A reply
-  cut at the model's token limit is reported with the cap it hit (`decision_extract`, 4000 unless
-  `LOOM_LLM_MAX_TOKENS_OVERRIDES` sets it) and the advice to lower either flag or raise that entry; a window's first
-  model call, or its second after an empty reply, that fails (a provider error, a timeout) loses that window only; a
-  failed second read for a joined reason loses nothing, its first reply's decisions recorded.
+  cut at the model's token limit is reported with the cap it hit (`decision_extract`, 12000, or `decision_support`,
+  8000, unless `LOOM_LLM_MAX_TOKENS_OVERRIDES` sets it) and the advice to lower either flag or raise that entry; a
+  window's read, or its second read after an empty reply, or its support check, that fails (a provider error, a
+  timeout) loses that window only.
 - **Model and exit code**: the run refuses before any model call when it would read the document with the fake model,
-  whose decisions pass the verbatim check by construction: a keyed provider (`LOOM_LLM_PROVIDER=openai` or `anthropic`)
+  whose decisions pass grounding by construction: a keyed provider (`LOOM_LLM_PROVIDER=openai` or `anthropic`)
   with no API key set, or no provider configured at all. `LOOM_LLM_PROVIDER=fake` set explicitly runs on it on purpose.
   Otherwise a window the fake model answers (a fallback model, `LOOM_LLM_FALLBACK_MODEL`, with no key) is dropped as
   unread. A run whose every window's model call failed or came back unreadable, or answered nothing and failed when read
   again, reads nothing and retires nothing. The command exits 1 when it could not run on the document (no document, no
   chunks, no usable model, a refusal under **Repository** above, the extractor's own rows unreadable before any model
   call, no window read), 2 when a write, or a read it needed, was refused or failed (a dry run's reads count too, and
-  so does a window the model could not answer readably while others were read), else 0; a race does not change the
-  exit code.
+  so does a window or a support check the model could not answer readably while others were read), else 0; a race
+  does not change the exit code.
 
-The reasoning is the verbatim span the retire step reads: the record has no field for the quote. An extracted row is
-served as it is; nobody needs to review it. Pinning is optional: to freeze a row against re-extraction, read its
-identity with `memory.get` and call `memory.pin` under it, or attest its current value with `memory.verify`; a later run
-whose document no longer says it then tags the row `source-changed` instead of revising or deleting it. Before an edit,
+The quotes ground the claims and are not stored: the record keeps the decision in the model's words and cites the
+document's section. An extracted row is served as it is; nobody needs to review it. Pinning is optional: to freeze a
+row against re-extraction, read its identity with `memory.get` and call `memory.pin` under it, or attest its current
+value with `memory.verify`; a later run whose document no longer says it then tags the row `source-changed` instead of
+revising or deleting it. Before an edit,
 `memory.for_file` marks a pinned extracted row `(pinned)` and one tagged `source-changed` `(source changed)`, as it does
 every decision row ([Decisions](#decisions)). Extracted into a repository's trunk code namespace, the rows also reach
 `loom_search` from a checkout of the repository, as every decision recorded there does

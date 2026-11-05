@@ -322,6 +322,17 @@ schema. These rules keep that safe. The operator procedure is in
     `completed`: once N-1 stops serving, request the erasures completed since the
     rollout began again, which N's saga runs through every table. No gate holds the
     rollout.
+30. **Extracted decisions in the model's words** (`loom decisions extract`, the
+    document-source sync's mining step): N records a decision's reasons in the model's
+    words and retires a row only when its support check finds it gone twice; N-1
+    retires the extractor's row whose reasoning is not a span of the document. So an
+    N-1 run on a document N mined (an operator's N-1 command, an N-1 replica's sync
+    turn on a changed document, every changed document after a rollback) deletes the
+    extractor's unpinned rows N wrote and tags its pinned, attested or acted-on ones
+    `source-changed`, and writes its own. The rows are the extractor's own and the next
+    run by N writes them again from the document; a `source-changed` tag stays until a
+    run by N emits the key and finds it stated. No gate holds the rollout: the cost is
+    that churn while N-1 serves, and after a rollback until the document is mined by N.
 
 ## What checks them
 

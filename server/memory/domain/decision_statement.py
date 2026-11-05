@@ -7,6 +7,8 @@ import re
 from typing import Any
 
 _ELLIPSIS = "..."
+# How a rejected option and its reason are stored: `<option> — rejected: <reason>`.
+REJECTED = " — rejected: "
 
 
 # What a part ends without: its own full stop, comma, semicolon or colon, ASCII or
@@ -51,7 +53,7 @@ def _part(value: Any) -> str:
 
 def states_reason(payload: dict[str, Any]) -> bool:
     """The reasoning is not the outcome itself, case, whitespace and the closing
-    punctuation aside. One that is records a ban or an invariant stated with no reason."""
+    punctuation aside. One that is records a decision stated with no reason."""
     reasoning = _part(payload.get("reasoning")).rstrip(_SENTENCE_ENDS + " ")
     outcome = _part(payload.get("outcome")).rstrip(_SENTENCE_ENDS + " ")
     return bool(reasoning) and reasoning.casefold() != outcome.casefold()

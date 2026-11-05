@@ -1,39 +1,46 @@
 """`loom decisions extract`: mine one knowledge document into decision records.
 
-Each window of the document's live chunks goes to the model once, and once more when its
-reply holds no decision or a reason that is not one span of the text. A candidate that is
-not the document's own words, whose reasoning only restates its outcome (a ban stated
-with no reason aside), or whose quote is in a recap section, is dropped
-(`server.memory.domain.decision_extract`). A kept candidate is reconciled against what
-the namespace already holds, then written through `decision.record` under one fixed
-identity, so a re-run revises the extractor's own rows instead of writing beside them:
+The model reads the document whole, or in windows of whole sections when it is longer
+than `memory_decision_extract_window_chars`, once, and once more when its reply holds no
+decision. It writes each decision as a maintainer would (outcome, reasons, rejected
+options, in its own words), each claim citing quotes of the text; a claim none of whose
+quotes is in the text is left out, and a decision whose outcome has none is dropped
+(`server.memory.domain.decision_extract`). A second call over the same text, the support
+check, keeps only the claims their quotes state or directly imply, and reads each of the
+extractor's stored decisions on this document against the text: still stated, and which
+candidate restates it. A kept candidate is reconciled against what the namespace already
+holds, then written through `decision.record` under one fixed identity, so a re-run
+revises the extractor's own rows instead of writing beside them:
 
-- the key's active record has the same verbatim fields (reasoning, rejected options'
-  reasons; the rest is the model's wording) and its row carries the same files, source,
-  constraint and repository tags: nothing is written (a pinned or attested row may still
-  gain the repository's tag by a tags-only write);
-- it differs and its row is the extractor's, not pinned or attested, and from this
-  document: recorded again (Revise), unless its outcome is recorded: then it is tagged
-  `source-changed`;
-- it differs and its row is frozen (pinned, or attested in its current form) and from
-  this document: nothing is written, the new body is printed in the run's report, and
-  the row is tagged `source-changed`, a tag a later run drops once the document says the
-  same again;
-- it differs and its row is another writer's or another document's: nothing is written;
+- the key's active record is the extractor's and the support check finds it still stated,
+  and its row carries the same files, source, constraint and repository tags: nothing is
+  written but a tags-only write that clears a `source-changed` tag (a pinned or attested
+  row may also gain the repository's tag); with other row fields, an unfrozen one is
+  recorded again in its stored words, unless its outcome is recorded: then only its tags
+  are reconciled;
+- it is found no longer stated and its row is the extractor's, not pinned or attested, and
+  from this document: recorded again (Revise), unless its outcome is recorded: then it
+  is tagged `source-changed`;
+- it is found no longer stated and its row is frozen (pinned, or attested in its current
+  form) and from this document: nothing is written, the new body is printed in the run's
+  report, and the row is tagged `source-changed`, a tag a later run drops once the
+  document says the same again;
+- its row is another writer's or another document's: nothing is written;
 - no record under the key, but a pinned or attested decision row reads the same at or
   above the conflict threshold: skipped as already recorded.
 
-The same words keep a row's stage on every path (the stage is the model's reading and flips
-between runs), also under a key the model reworded when its outcome, reasoning and rejected
-options' reasons are those of one of the extractor's rows (`_carried_stage`). A changed text
-is written at the stage it reads as.
-
-After the writes, the extractor deletes its rows citing this document, unless pinned or
-attested, whose reasoning (a span of the document) is no longer in its text, read as in
-the verbatim check, or whose outcome and reasoning this run recorded under another key. A
-row it keeps (pinned, attested, or with a recorded outcome) whose reasoning left is
-tagged `source-changed` instead. A refused write is reported and the run goes on; a
-model call held for the org (`customer.HOLDS`) stops the run before any write.
+A stored row's verdict holds over every window: stated when any window states it, no
+longer stated only when every window says so in two checks (the second without
+candidates), else not judged. A candidate that restates a stored decision not found gone
+is not written, under a new key or the key of a stored decision not found stated: the
+stored row and its stage stand. After the writes, the extractor deletes its rows citing
+this document, unless pinned or attested, that are no longer stated. A row it keeps
+(pinned, attested, or with a recorded outcome) that is no longer stated is tagged
+`source-changed` instead. A row not judged is never flagged or deleted; one that is not
+frozen or acted on is recorded again when the run gives its key and that candidate
+restates no other row not found gone: as the text reads when the words differ, in its
+stored words when only its row fields do. A refused write is reported and the run goes
+on; a model call held for the org (`customer.HOLDS`) stops the run before any write.
 
 A document outside a repository's code namespace names the repository: its code names
 resolve in the repository's trunk, and the rows go there or stay beside the document,
@@ -52,7 +59,7 @@ import logging
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal
 
 import httpx
 from fastapi import HTTPException
@@ -68,12 +75,7 @@ from server.memory.api.models_decision import DecisionRecordInput
 from server.memory.app import decisions as svc
 from server.memory.domain import decision_extract as dx
 from server.memory.domain.corpus_synthesis import CorpusChunk, Window, windows
-from server.memory.domain.decision_schema import (
-    CONSTRAINT_TAG,
-    PROPOSED_TAG,
-    SOURCE_CHANGED_TAG,
-    Stage,
-)
+from server.memory.domain.decision_schema import CONSTRAINT_TAG, PROPOSED_TAG, SOURCE_CHANGED_TAG
 from server.memory.domain.decision_statement import alternatives, collapse_ws, memory_value
 from server.memory.domain.files import detect_value_files, normalize_files
 from server.memory.domain.trust import confirmed, row_content_sha256, verification_state
@@ -119,8 +121,8 @@ Action = Literal[
 @dataclass
 class RecordReport:
     memory_key: str
-    # row_changed (a tag write found its row gone or moved on) is reported in `races`; the
-    # caller keeps it out of `records`.
+    # row_changed (the reconcile read or a tag write found its row gone or moved on) is
+    # reported in `races`; the caller keeps it out of `records`.
     action: Action
     # The decision.record body, with the identity the write goes (or would go) under.
     body: dict[str, Any]
@@ -129,14 +131,8 @@ class RecordReport:
     # Pull request numbers and setting names, for a human to resolve into files.
     unresolved: list[str] = field(default_factory=list)
     note: str = ""
-    # The extractor's own row on this document now holds the decision (written, revised,
-    # or unchanged and ours), so the retire step may count it as the reworded one's heir.
-    holds: bool = False
-    # The outcome that row's record holds: the candidate's when written or revised, the
-    # stored one when unchanged (the model may word it anew).
-    held_outcome: str = ""
-    # "deleted" or "rewritten": the row a tag write found deleted or rewritten since the run
-    # read it.
+    # "deleted" or "rewritten": the row the reconcile read or a tag write found deleted or
+    # rewritten since the run read it.
     race: str = ""
 
 
@@ -156,7 +152,7 @@ class Dropped:
 
 @dataclass
 class Retried:
-    """A second read of a window, or its loss: the section it is reported under and why."""
+    """A second read of a window: the section it is reported under and why."""
 
     section: str
     reason: str
@@ -175,13 +171,14 @@ class ExtractReport:
     records: list[RecordReport] = field(default_factory=list)
     dropped: list[Dropped] = field(default_factory=list)
     image_only: list[str] = field(default_factory=list)
-    # A second read of a window, or its loss, and why: its reply held no decision, or a
-    # reason that is not one span of the text. A window gets at most one extra call.
+    # A second read of a window, and why: its reply held no decision. A window gets at
+    # most one extra read.
     retried: list[Retried] = field(default_factory=list)
-    # Keys deleted (or, in a dry run, to delete): the extractor's rows whose text left.
+    # Keys deleted (or, in a dry run, to delete): the extractor's rows the support check
+    # found no longer stated, twice.
     retired: list[str] = field(default_factory=list)
-    # "<old key> -> <key>" for each extractor row deleted (or to delete) because this run
-    # recorded its reasoning under another key: the model worded the scenario anew.
+    # "<old key> -> <key>" for each extractor row deleted (or to delete) because it is no
+    # longer stated and this run recorded the decision under another key in its place.
     replaced: list[str] = field(default_factory=list)
     # Keys tagged (or to tag) `source-changed`: frozen rows (pinned or attested), and
     # rows with a recorded outcome, whose document now says otherwise.
@@ -194,7 +191,7 @@ class ExtractReport:
     # `dropped` line, marked `refused`.
     refused: list[str] = field(default_factory=list)
     # "<key>: deleted since the run read it" or "<key>: rewritten since the run read it":
-    # a write that found its row gone or moved on, a race the next run settles.
+    # a read or a write that found its row gone or moved on, a race the next run settles.
     races: list[str] = field(default_factory=list)
     # The hold (`customer.HOLDS`) that stopped the run's model calls, its reads or its
     # writes: the org's calls are switched off or refused for now. A run held while
@@ -255,14 +252,14 @@ async def cites_document(org: str, resource_id: str, namespace: str, source_uri:
     return True
 
 
-def _unread_reply(stop_reason: str, cap: int) -> str:
-    """Why a model reply could not be read as the candidates' JSON; `cap` is the call's
-    max_tokens."""
+def _unread_reply(stop_reason: str, cap: int, call: str) -> str:
+    """Why a model reply could not be read as the JSON asked for; `cap` is the call's
+    max_tokens and `call` its LLM_MAX_TOKENS entry."""
     if stop_reason in ("length", "max_tokens"):
         return (
-            f"reply cut at the token limit ({cap}); lower "
-            "--window-chars or --max-per-section, or raise decision_extract in "
-            "LOOM_LLM_MAX_TOKENS_OVERRIDES"
+            f"reply cut at the token limit ({cap}); lower --window-chars "
+            "(LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS) or --max-per-section, or raise "
+            f"{call} in LOOM_LLM_MAX_TOKENS_OVERRIDES"
         )
     reason = "the model's reply is not the JSON asked for"
     return f"{reason} (stop reason: {stop_reason})" if stop_reason else reason
@@ -283,7 +280,7 @@ def _fake_chosen() -> bool:
 
 def no_model_error() -> str:
     """Why the run must not start: it would read the document with the fake model, whose
-    decisions pass the verbatim check by construction and would be recorded as the
+    decisions pass grounding by construction and would be recorded as the
     document's. That is so when a keyed provider has no key (the client falls back to the
     fake) or when nothing chose a provider (it resolves to `fake`). A provider set to
     `fake` explicitly, with LOOM_LLM_PROVIDER, runs."""
@@ -447,7 +444,7 @@ async def extract_document(
     repo: str = "",
     into: Into | None = None,
     max_per_section: int = 3,
-    window_chars: int = 6000,
+    window_chars: int | None = None,
     read_deadline: float | None = None,
     may_write: Callable[[], bool] | None = None,
     writes: TaskSet | None = None,
@@ -485,11 +482,13 @@ async def extract_document(
             "--apply` first"
         )
         return report
-    live_texts = [doc.content or "", *(c.text for c in chunks)]
+    from server.settings import settings
+
     report.image_only = dx.image_only_sections(doc.content or "")
-    wins = _windows(chunks, set(report.image_only), window_chars)
+    chars = window_chars or settings.memory_decision_extract_window_chars
+    wins = _windows(chunks, set(report.image_only), chars)
     report.windows = len(wins)
-    # One scan of the extractor's rows on this document and their records, for the prompt
+    # One scan of the extractor's rows on this document and their records, for the prompts
     # and the retire step; rows this run writes are skipped by the retire step.
     try:
         own, report.error = await _read_own(org, t, source_uri)
@@ -499,9 +498,18 @@ async def extract_document(
     if report.error:
         return report
     known = _known_decisions(own)
-    own_by_words = _prior_rows_by_words(own)
-    kept, answered = await _candidates(
-        org, t, source_uri, wins, max_per_section, report, known, doc.title or "", read_deadline
+    statements = {row.memory_key: dx.stored_statement(record) for row, record in own}
+    state, answered = await _candidates(
+        org,
+        t,
+        source_uri,
+        wins,
+        max_per_section,
+        report,
+        known,
+        statements,
+        doc.title or "",
+        read_deadline,
     )
     if wins and not answered and not report.error:
         report.error = (
@@ -513,11 +521,9 @@ async def extract_document(
         return report
     # An empty TaskSet is falsy: the caller's is told apart from none by `is None`.
     units = TaskSet() if writes is None else writes
-    done = await _write_kept(
-        org, t, source_uri, kept, dry_run, report, own_by_words, may_write, units
-    )
-    if done is not None:
-        await _retire(report, own, live_texts, *done, t.row_tag, may_write, units)
+    written = await _write_kept(org, t, source_uri, state, dry_run, report, may_write, units)
+    if written is not None:
+        await _retire(report, own, state, written, t.row_tag, may_write, units)
     return report
 
 
@@ -525,28 +531,46 @@ async def _write_kept(
     org: str,
     t: Target,
     source_uri: str,
-    kept: list[tuple[dx.Candidate, str, list[str]]],
+    state: _Kept,
     dry_run: bool,
     report: ExtractReport,
-    own_by_words: dict[tuple[str, str], _PriorRow],
     may_write: Callable[[], bool] | None,
     writes: TaskSet,
-) -> tuple[set[str], dict[tuple[str, str], str]] | None:
-    """Reconcile and write each kept candidate; the keys handled and the decisions held
-    (`_held_key` -> key) for the retire step, or None when a hold on an embedding or
-    `may_write` stopped the writes: the run then retires nothing, and a later run goes
-    on from what it wrote."""
+) -> set[str] | None:
+    """Reconcile and write each kept candidate; the keys handled, for the retire step, or
+    None when a hold on an embedding or `may_write` stopped the writes: the run then
+    retires nothing, and a later run goes on from what it wrote. A candidate that restates
+    a stored decision not found gone is not written, under a new key or the key of a
+    stored decision not found stated."""
     written: set[str] = set()
-    # The key of each decision this document now holds, keyed by _held_key(outcome,
-    # reasoning), for the retire step: the same outcome on the same verbatim reasoning is
-    # the same decision, however the model worded its scenario and category.
-    held: dict[tuple[str, str], str] = {}
-    for cand, section, texts in kept:
+    # One under the key of a row the text states is reconciled as that row's candidate.
+    kept_by = {
+        heir: key
+        for key, heir in state.heirs.items()
+        if state.still.get(key) is not False and state.still.get(heir) is not True
+    }
+    for cand, section, texts in state.kept:
         if not _may_go_on(report, may_write):
             return None
+        key = svc.decision_key(cand.category, cand.scenario)
+        if key in kept_by:
+            report.dropped.append(
+                Dropped(section, f"restates {kept_by[key]}, not found gone", cand.quote)
+            )
+            continue
         try:
             rec = await _whole(
-                writes, _reconcile(org, t, source_uri, cand, section, texts, dry_run, own_by_words)
+                writes,
+                _reconcile(
+                    org,
+                    t,
+                    source_uri,
+                    cand,
+                    section,
+                    texts,
+                    dry_run,
+                    still=state.still.get(key),
+                ),
             )
         except customer.HOLDS as e:
             report.held = e
@@ -556,7 +580,6 @@ async def _write_kept(
             # A blacklisted or newly pinned decision, a busy key, a store that timed out:
             # the other candidates and the retire step still run, and a re-run does not
             # stop at the same place.
-            key = svc.decision_key(cand.category, cand.scenario)
             reason = f"{key}: {_refusal(e)}"
             permanent = _code(e) in PERMANENT_REFUSALS
             report.dropped.append(
@@ -566,6 +589,8 @@ async def _write_kept(
             written.add(key)
             continue
         written.add(rec.memory_key)
+        if rec.action in ("written", "revised"):
+            state.recorded.add(rec.memory_key)
         if rec.race:
             report.races.append(f"{rec.memory_key}: {rec.race} since the run read it")
         if rec.action == "row_changed":
@@ -573,9 +598,7 @@ async def _write_kept(
         report.records.append(rec)
         if rec.action == "flagged":
             report.flagged.append(rec.memory_key)
-        if rec.holds:
-            held.setdefault(_held_key(rec.held_outcome, cand.reasoning), rec.memory_key)
-    return written, held
+    return written
 
 
 def _held_error(org: str, e: LoomServerError) -> str:
@@ -583,7 +606,8 @@ def _held_error(org: str, e: LoomServerError) -> str:
 
 
 def _windows(chunks: list[CorpusChunk], skipped: set[str], window_chars: int) -> list[Window]:
-    """The windows sent to the model. A section judged image-only (`skipped`) is not sent.
+    """The windows sent to the model: one when the sent text fits `window_chars`, else
+    windows of whole sections. A section judged image-only (`skipped`) is not sent.
     An empty-path chunk of an image-only preamble is skipped only when its own text is
     image-only too."""
 
@@ -594,7 +618,12 @@ def _windows(chunks: list[CorpusChunk], skipped: set[str], window_chars: int) ->
             return True
         return not c.section_path and not dx.image_only(c.text)
 
-    return windows([c for c in chunks if sent(c)], window_chars=window_chars)
+    kept = [c for c in chunks if sent(c)]
+    # A document that fits is read whole: `windows` closes a window at a section change
+    # once it is a third full.
+    if kept and sum(len(c.text) for c in kept) <= window_chars:
+        return [Window(kept)]
+    return windows(kept, window_chars=window_chars)
 
 
 async def _read_own(
@@ -669,21 +698,68 @@ async def _own_records(
 
 
 def _known_decisions(own: list[tuple[MemoryRow, dict[str, Any]]]) -> list[tuple[str, str, str]]:
-    """(category, scenario, outcome) of the extractor's decisions on this document, pinned
-    or not, for the prompt: a model told how a decision was worded before reuses the
-    wording, so its key and its outcome stay put across runs. At most
-    memory_decision_extract_known_max of them, to bound the prompt."""
+    """(key, category, scenario) of the extractor's decisions on this document, pinned or
+    not, for the read prompt, whose keys a still-recorded decision keeps, and for the
+    support check, which reads each row's statement. At most
+    memory_decision_extract_known_max of them, to bound the prompts; a row past the cap
+    gets no verdict and stays."""
     from server.settings import settings
 
     known = [
-        (
-            str(record.get("category") or ""),
-            str(record.get("scenario") or ""),
-            str(record.get("outcome") or ""),
-        )
-        for _row, record in own
+        (row.memory_key, str(record.get("category") or ""), str(record.get("scenario") or ""))
+        for row, record in own
     ]
     return known[: settings.memory_decision_extract_known_max]
+
+
+async def _call(
+    llm: Any,
+    system: str,
+    user: str,
+    section: str,
+    report: ExtractReport,
+    *,
+    cap: int,
+    stage: str,
+    fake_chosen: bool,
+    deadline: float | None,
+) -> tuple[str, str] | None:
+    """(reply text, stop reason) of one model call of the run under `stage`, a read or a
+    support check, capped at `cap` output tokens, or None when it is lost: held for the
+    org (`report.held`), past `deadline` (`report.out_of_time`), failed, or answered by
+    the fake model for a real provider; the last two are a dropped line marked
+    `refused` under `section`."""
+    label = "the support check" if stage == "decision_support" else "the model call"
+
+    def late() -> bool:
+        return deadline is not None and time.monotonic() >= deadline
+
+    if late():
+        report.out_of_time = True
+        return None
+    left = None if deadline is None else deadline - time.monotonic()
+    try:
+        with llm_stage(stage):
+            async with asyncio.timeout(left):
+                res = await llm.complete(
+                    system, user, max_tokens=cap, response_format={"type": "json_object"}
+                )
+    except customer.HOLDS as e:
+        # Every later call of the run would be held too: the run stops.
+        report.held = e
+        return None
+    except (httpx.HTTPError, TimeoutError, LoomServerError) as e:
+        if late():
+            report.out_of_time = True
+            return None
+        # A provider error, a timeout or a refused call loses this window only.
+        report.dropped.append(Dropped(section, f"{label} failed: {type(e).__name__}", refused=True))
+        return None
+    if not fake_chosen and res.provider == "fake":
+        # A fallback with no key answered: its decisions pass grounding by construction.
+        report.dropped.append(Dropped(section, _FAKE_ANSWER, refused=True))
+        return None
+    return res.text, res.stop_reason
 
 
 async def _read_window(
@@ -696,80 +772,155 @@ async def _read_window(
     fake_chosen: bool,
     title: str,
     deadline: float | None = None,
-    note: str = "",
-    answered_already: bool = False,
 ) -> list[dx.Candidate] | None:
-    """The model's candidates for one window, or None when the read is lost: the call
-    failed, the fake model answered for a real provider, or the reply is unreadable; each
-    is a dropped line marked `refused`, a read the run needed, reported under `section`.
-    `note` goes before the window's text, which opens with the document's `title` when it
-    has one. When the window is `answered_already` (a second read for what the first reply
-    got wrong), a lost read is a `read again` line under `section`, never refused. A read
-    not done by `deadline` sets `out_of_time`."""
+    """The model's candidates for one window, or None when the read is lost (`_call`) or
+    its reply is unreadable, a dropped line marked `refused` under `section`. The
+    window's text opens with the document's `title` when it has one."""
     from server.llm.json_text import strip_code_fence
 
-    def late() -> bool:
-        return deadline is not None and time.monotonic() >= deadline
-
-    body = dx.user_prompt(w, title)
-    user = f"{note}\n\n{body}" if note else body
-
-    def lost(reason: str) -> None:
-        if answered_already:
-            report.retried.append(Retried(section, f"the second read was lost: {reason}"))
-        else:
-            report.dropped.append(Dropped(section, reason, refused=True))
-
-    # Read once: the override is live, and a cut reply names the cap this call used.
+    # Read once per call: the override is live, and a cut reply names the cap it used.
     cap = llm_max_tokens("decision_extract")
-    if late():
-        report.out_of_time = True
+    got = await _call(
+        llm,
+        system,
+        dx.user_prompt(w, title),
+        section,
+        report,
+        cap=cap,
+        stage="decision_extract",
+        fake_chosen=fake_chosen,
+        deadline=deadline,
+    )
+    if got is None:
         return None
-    left = None if deadline is None else deadline - time.monotonic()
-    try:
-        with llm_stage("decision_extract"):
-            async with asyncio.timeout(left):
-                res = await llm.complete(
-                    system,
-                    user,
-                    max_tokens=cap,
-                    response_format={"type": "json_object"},
-                )
-    except customer.HOLDS as e:
-        # Every later call of the run would be held too: the run stops.
-        report.held = e
-        return None
-    except (httpx.HTTPError, TimeoutError, LoomServerError) as e:
-        if late():
-            report.out_of_time = True
-            return None
-        # A provider error, a timeout or a refused call loses this window only.
-        lost(f"the model call failed: {type(e).__name__}")
-        return None
-    if not fake_chosen and res.provider == "fake":
-        # A fallback with no key answered: its decisions pass the check by construction.
-        lost(_FAKE_ANSWER)
-        return None
-    cands = dx.parse_candidates(strip_code_fence(res.text))
+    text, stop = got
+    cands = dx.parse_candidates(strip_code_fence(text))
     if cands is None:
-        lost(_unread_reply(res.stop_reason, cap))
+        report.dropped.append(
+            Dropped(section, _unread_reply(stop, cap, "decision_extract"), refused=True)
+        )
     return cands
+
+
+async def _read_support(
+    llm: Any,
+    w: Window,
+    grounded: list[tuple[dx.Candidate, str, list[str]]],
+    stored: list[tuple[str, str]],
+    section: str,
+    report: ExtractReport,
+    *,
+    fake_chosen: bool,
+    title: str,
+    deadline: float | None = None,
+) -> dx.Verdicts | None:
+    """The support check's verdicts on one window's grounded candidates and the stored
+    rows, or None when the call is lost (`_call`) or its reply is unreadable, a dropped
+    line marked `refused` under `section`."""
+    from server.llm.json_text import strip_code_fence
+
+    user = dx.support_prompt(dx.user_prompt(w, title), [c for c, _s, _t in grounded], stored)
+    cap = llm_max_tokens("decision_support")
+    got = await _call(
+        llm,
+        dx.support_system(bool(stored)),
+        user,
+        section,
+        report,
+        cap=cap,
+        stage="decision_support",
+        fake_chosen=fake_chosen,
+        deadline=deadline,
+    )
+    if got is None:
+        return None
+    text, stop = got
+    verdicts = dx.parse_support(strip_code_fence(text), {key for key, _s in stored})
+    if verdicts is None:
+        reason = "support check: " + _unread_reply(stop, cap, "decision_support")
+        report.dropped.append(Dropped(section, reason, refused=True))
+    return verdicts
 
 
 @dataclass
 class _Kept:
-    """The candidates kept so far in a run, and what a later one is checked against."""
+    """The candidates kept so far in a run, and the support check's verdicts on the
+    extractor's stored rows."""
 
     max_per_section: int
     # (candidate, its section, the texts it was checked against)
     kept: list[tuple[dx.Candidate, str, list[str]]] = field(default_factory=list)
     per_section: dict[str, int] = field(default_factory=dict)
     keys: set[str] = field(default_factory=set)
-    pairs: set[tuple[str, str]] = field(default_factory=set)  # _held_key(outcome, reasoning)
+    # Kept outcome, whitespace and case aside -> its key: windows that overlap read one
+    # decision twice.
+    outcomes: dict[str, str] = field(default_factory=dict)
+    # stored key -> each window's verdict, in the order the windows were checked
+    verdicts: dict[str, list[bool]] = field(default_factory=dict)
+    # stored key -> the verdict over the document (`_verdict`): True stated, False no
+    # longer stated (every window, twice), None not judged
+    still: dict[str, bool | None] = field(default_factory=dict)
+    # stored key -> the key of a candidate that restates it
+    heirs: dict[str, str] = field(default_factory=dict)
+    # stored key -> (a window's verdict, the candidate key that window named), settled
+    # into `heirs` with the verdict (`_confirm_gone`)
+    heir_votes: dict[str, list[tuple[bool, str]]] = field(default_factory=dict)
+    # Keys this run recorded (written or revised), which can take a retired row's place.
+    recorded: set[str] = field(default_factory=set)
+
+
+def _verdict(verdicts: list[bool], windows: int) -> bool | None:
+    """One stored row's verdict over a document read in `windows` windows: stated when any
+    window states it (one window may hold what another does not), no longer stated only
+    when every window said so, else not judged."""
+    if any(verdicts):
+        return True
+    # No window read is no verdict, never a "gone" from no check at all.
+    return False if windows and len(verdicts) == windows else None
+
+
+async def _confirm_gone(
+    read_support: Callable[..., Coroutine[Any, Any, dx.Verdicts | None]],
+    wins: list[Window],
+    stored: list[tuple[str, str]],
+    state: _Kept,
+    report: ExtractReport,
+) -> None:
+    """Settle each stored row's verdict (`_verdict`), and read the rows found no longer
+    stated once more, without candidates: a row stays no longer stated only when this
+    second check agrees in every window, since the retire step deletes on that verdict. A
+    second check that is lost, or leaves a row out, leaves it not judged. A row's heir is
+    named by a window that states it when one does: a window without its text may name
+    another decision."""
+    for key, _text in stored:
+        state.still[key] = _verdict(state.verdicts.get(key, []), len(wins))
+        votes = state.heir_votes.get(key, [])
+        if state.still[key]:
+            # A window that states the row names its restatement; another may not hold it.
+            named = [heir for still, heir in votes if still]
+        else:
+            named = [heir for _still, heir in votes]
+        if named:
+            state.heirs[key] = named[0]
+    gone = [(key, text) for key, text in stored if state.still[key] is False]
+    if not gone:
+        return
+    again: dict[str, list[bool]] = {}
+    for w in wins:
+        verdicts = await read_support(w, [], gone, dx.breadcrumb(w.chunks[0].section_path), report)
+        if report.reads_stopped():
+            break
+        if verdicts is None:
+            continue
+        for key, (still, _heir) in verdicts.stored.items():
+            again.setdefault(key, []).append(still)
+    for key, _text in gone:
+        # Gone only when the second check agrees; a split between the two is no verdict.
+        if _verdict(again.get(key, []), len(wins)) is not False:
+            state.still[key] = None
 
 
 _EMPTY_REPLY = "the model's reply held no decision; the window was read once more"
-_STITCHED = "a reason is not one span of the text; the window was read once more for those"
 
 
 async def _candidates(
@@ -780,30 +931,31 @@ async def _candidates(
     max_per_section: int,
     report: ExtractReport,
     known: list[tuple[str, str, str]],
+    statements: dict[str, str],
     title: str,
     deadline: float | None = None,
-) -> tuple[list[tuple[dx.Candidate, str, list[str]]], int]:
-    """(candidate, its section, the texts it was checked against) for every candidate
-    that passes the checks of `_check_window` (verbatim spans, restatement with a
-    reason-less ban kept, recap sections, duplicates, fit), its spans the document's own
-    and its inverted rejected options removed, at most `max_per_section` per section;
-    and how many windows the model answered with a readable reply.
+) -> tuple[_Kept, int]:
+    """The run's kept candidates and verdicts (`_Kept`), and how many windows the model
+    answered with a readable reply. Each window is read, its candidates grounded in its
+    text (`dx.ground`), and the support check run over them and over the stored rows
+    (`statements`, key -> statement); a candidate kept passes the check, is no
+    duplicate, fits decision.record, and is within `max_per_section` for its section.
 
-    A window gets at most one extra call: when its reply holds no decision though its
-    text is more than a caption (the second reply is the window's), or when a reason is
-    not one span of the text while its quote is (the second reply adds to the first)."""
+    A window gets at most one extra read: when its reply holds no decision though its
+    text is more than a caption. A window whose support check is lost keeps nothing and
+    gives no verdict."""
     from server.llm.client import get_llm_client
 
-    system = dx.system_prompt(max_per_section, known)
+    llm = get_llm_client()
+    system = dx.system_prompt(max_per_section, [(c, s) for _k, c, s in known])
     read = functools.partial(
-        _read_window,
-        get_llm_client(),
-        system,
-        fake_chosen=_fake_chosen(),
-        title=title,
-        deadline=deadline,
+        _read_window, llm, system, fake_chosen=_fake_chosen(), title=title, deadline=deadline
+    )
+    read_support = functools.partial(
+        _read_support, llm, fake_chosen=_fake_chosen(), title=title, deadline=deadline
     )
     state = _Kept(max_per_section)
+    stored = [(key, statements[key]) for key, _c, _s in known]
     answered = 0
     # Not gated here by the namespace's cost cap: the operator's command spends as asked,
     # and the sync worker checks the cap before each document.
@@ -812,8 +964,7 @@ async def _candidates(
         cands = await read(w, first, report)
         if report.reads_stopped():
             break
-        retried = cands == [] and dx.more_than_a_caption("\n\n".join(c.text for c in w.chunks))
-        if retried:
+        if cands == [] and dx.more_than_a_caption("\n\n".join(c.text for c in w.chunks)):
             report.retried.append(Retried(first, _EMPTY_REPLY))
             cands = await read(w, first, report)
         if report.reads_stopped():
@@ -821,51 +972,50 @@ async def _candidates(
         if cands is None:
             continue
         answered += 1
-        before = len(state.kept)
-        failed = _check_window(org, t, source_uri, w, cands, state, report)
-        if failed and not retried:
-            # Named by the first failed decision's section, not the window's first.
-            section = failed[0][2]
-            report.retried.append(Retried(section, _STITCHED))
-            note = dx.stitched_note([(outcome, span) for outcome, span, _ in failed])
-            again = await read(w, section, report, note=note, answered_already=True)
-            if report.reads_stopped():
-                break
-            repaired = _repairs(w, again or [], failed, state.kept[before:], report)
-            _check_window(org, t, source_uri, w, repaired, state, report)
+        grounded = _ground_window(w, cands, report)
+        if not grounded and not stored:
+            continue
+        verdicts = await read_support(w, grounded, stored, first, report)
+        if report.reads_stopped():
+            break
+        if verdicts is not None:
+            _check_window(org, t, source_uri, grounded, verdicts, state, report)
+    if not report.reads_stopped():
+        await _confirm_gone(read_support, wins, stored, state, report)
     if report.held is not None:
         report.error = _held_error(org, report.held)
     elif report.out_of_time:
         report.error = "the run's time to read the document ran out; nothing was written"
-    return state.kept, answered
+    return state, answered
 
 
-_REPEATED = "the second read repeats a decision the first reply gave"
-
-
-def _repairs(
-    w: Window,
-    again: list[dx.Candidate],
-    failed: list[tuple[str, str, str]],
-    kept: list[tuple[dx.Candidate, str, list[str]]],
-    report: ExtractReport,
-) -> list[dx.Candidate]:
-    """The second read's candidates that repair a failed one: a candidate with a failed
-    outcome, or one whose reasoning none of the window's kept candidates has. A kept
-    decision given again, its scenario reworded, would be written twice."""
-    # Case aside, as the held keys and pairs read an outcome.
-    outcomes = {collapse_ws(outcome).casefold() for outcome, _span, _section in failed}
-    reasonings = {collapse_ws(c.reasoning) for c, _section, _texts in kept}
+def _ground_window(
+    w: Window, cands: list[dx.Candidate], report: ExtractReport
+) -> list[tuple[dx.Candidate, str, list[str]]]:
+    """(candidate, its section, the window's texts) for each candidate whose outcome has
+    a quote in the window's text outside a recap section, its claims grounded
+    (`dx.ground`); each dropped candidate and left-out claim reported."""
     texts = [c.text for c in w.chunks]
-    out: list[dx.Candidate] = []
-    for cand in again:
-        # Stored as a kept candidate's reasoning is: the model's copy may differ in case.
-        reasoning = dx.stored_span(cand.reasoning, texts)
-        if collapse_ws(cand.outcome).casefold() in outcomes or reasoning not in reasonings:
-            out.append(cand)
-        else:
-            section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
-            report.dropped.append(Dropped(section, _REPEATED, cand.quote))
+
+    def section_of(quote: str) -> str:
+        # Located by the text's own span: a stored quote is on one line, without labels.
+        return dx.quote_section(w, dx.find_span(quote, texts) or quote)
+
+    out: list[tuple[dx.Candidate, str, list[str]]] = []
+    for cand in cands:
+        grounded, notes = dx.ground(cand, texts)
+        section = section_of(grounded.quote if grounded else cand.quote)
+        for note in notes:
+            report.dropped.append(Dropped(section, note, cand.quote))
+        if grounded is None:
+            continue
+        # A quote in a recap restates a decision made elsewhere: it locates none.
+        evidence = [q for q in grounded.evidence if not dx.in_recap(section_of(q))]
+        if not evidence:
+            report.dropped.append(Dropped(section, dx.RECAP, cand.quote))
+            continue
+        grounded = replace(grounded, evidence=evidence)
+        out.append((grounded, section_of(grounded.quote), texts))
     return out
 
 
@@ -873,50 +1023,46 @@ def _check_window(
     org: str,
     t: Target,
     source_uri: str,
-    w: Window,
-    cands: list[dx.Candidate],
+    grounded: list[tuple[dx.Candidate, str, list[str]]],
+    verdicts: dx.Verdicts,
     state: _Kept,
     report: ExtractReport,
-) -> list[tuple[str, str, str]]:
-    """Check one reply's candidates, keeping each that passes in `state` and reporting
-    each dropped; the (outcome, span, section) of each whose reason span is not in the
-    text while its quote is, for a second call."""
-    texts = [c.text for c in w.chunks]
-    failed: list[tuple[str, str, str]] = []
-    for cand in cands:
-        reason = dx.verbatim_failure(cand, texts)
-        span = dx.unfound_reason(cand, texts) if reason else ""
-        if not reason:
-            cand = dx.document_spans(cand, texts)
-            # A reason-less ban is kept as one; any other restatement is dropped.
-            if dx.reasonless_ban(cand):
-                cand = dx.without_reason(cand)
-            elif dx.restates_outcome(cand):
-                reason = dx.RESTATED
-        # The quote as the chunk writes it, so a re-wrapped one still names its section.
-        section = dx.quote_section(w, dx.find_span(cand.quote, texts) or cand.quote)
-        if dx.in_recap(section):
-            reason, span = reason or dx.RECAP, ""
-        if span:
-            failed.append((cand.outcome, span, section))
-        key = ""
-        if not reason:
-            reason, key = _duplicate_or_unfit(org, t, source_uri, cand, section, state)
+) -> None:
+    """Keep each grounded candidate of one window that the support check supports, with
+    only its supported claims, in `state`, reporting each dropped one and each left-out
+    claim; and record the window's verdicts on the stored rows."""
+    keys: dict[int, str] = {}
+    for i, (cand, section, texts) in enumerate(grounded):
+        checked, notes = dx.supported(i, cand, verdicts)
+        for note in notes:
+            report.dropped.append(Dropped(section, note, cand.quote))
+        if checked is None:
+            continue
+        reason, key = _duplicate_or_unfit(org, t, source_uri, checked, section, state)
+        outcome = collapse_ws(checked.outcome).casefold()
         if reason:
             report.dropped.append(Dropped(section, reason, cand.quote))
+            # A restatement names a kept decision: the earlier one with this key or outcome.
+            if key in state.keys:
+                keys[i] = key
+            elif outcome in state.outcomes:
+                keys[i] = state.outcomes[outcome]
             continue
-        cand = _drop_inverted(cand, section, texts, report)
+        keys[i] = key
         state.per_section[section] = state.per_section.get(section, 0) + 1
         state.keys.add(key)
-        state.pairs.add(_held_key(cand.outcome, cand.reasoning))
-        state.kept.append((cand, section, texts))
-    return failed
+        state.outcomes[outcome] = key
+        state.kept.append((checked, section, texts))
+    for key, (still, heir) in verdicts.stored.items():
+        state.verdicts.setdefault(key, []).append(still)
+        if heir is not None and heir in keys and keys[heir] != key:
+            state.heir_votes.setdefault(key, []).append((still, keys[heir]))
 
 
 def _duplicate_or_unfit(
     org: str, t: Target, source_uri: str, cand: dx.Candidate, section: str, state: _Kept
 ) -> tuple[str, str]:
-    """(why a candidate that passed the text checks is still dropped, or ''; its key)."""
+    """(why a candidate the support check kept is still dropped, or ''; its key)."""
     try:
         key = svc.decision_key(cand.category, cand.scenario)
     except ValueError:
@@ -924,8 +1070,7 @@ def _duplicate_or_unfit(
         return "no letters or digits to build a key from", ""
     if key in state.keys:
         return "same key as an earlier candidate", key
-    if _held_key(cand.outcome, cand.reasoning) in state.pairs:
-        # Overlapping chunks feed one span to two windows, worded apart.
+    if collapse_ws(cand.outcome).casefold() in state.outcomes:
         return "same decision as an earlier candidate", key
     if not _fits(org, t, source_uri, cand, section):
         # Checked before it takes a slot, a key or a code lookup.
@@ -935,29 +1080,13 @@ def _duplicate_or_unfit(
     return "", key
 
 
-def _drop_inverted(
-    cand: dx.Candidate, section: str, texts: list[str], report: ExtractReport
-) -> dx.Candidate:
-    """`cand` without the rejected options the text states as part of the choice, each
-    reported; the decision itself stays. The quote is read on the document's own lines
-    without the labels (`unlabelled_span`): the stored quote is on one line, without the
-    list items and blank lines that end a sentence, and a label naming an option states
-    nothing. The stored reasons have the same words, which is all their match reads."""
-    inverted = dx.inverted_options(replace(cand, quote=dx.unlabelled_span(cand.quote, texts)))
-    for option in inverted:
-        reason = f"rejected option {option!r} left out: the quote states it as part of the choice"
-        report.dropped.append(Dropped(section, reason, cand.quote))
-    if not inverted:
-        return cand
-    kept = [(o, r) for o, r in cand.alternatives if o not in inverted]
-    return replace(cand, alternatives=kept)
-
-
 def _record_input(
     org: str, t: Target, source_uri: str, cand: dx.Candidate, section: str, files: list[str]
 ) -> DecisionRecordInput:
     """The decision.record input for a candidate; raises ValidationError when it does not
-    fit the op's field limits (`_fits` checks first)."""
+    fit the op's field limits (`_fits` checks first). A decision the document gives no
+    reason for is recorded with its outcome as its reasoning, which its statement reads
+    as no stated reason."""
     tags = [DESIGN_DOC_TAG, *([CONSTRAINT_TAG] if cand.is_constraint else [])]
     if t.row_tag:
         tags.append(t.row_tag)
@@ -967,10 +1096,10 @@ def _record_input(
         agent=EXTRACTOR_AGENT,
         category=cand.category,
         scenario=cand.scenario,
-        reasoning=cand.reasoning,
+        reasoning=cand.reasoning or cand.outcome,
         outcome=cand.outcome,
         # As decision.record will keep them (deduplicated once cut, at most
-        # MAX_ALTERNATIVES), but uncut, so a reason can be compared whole.
+        # MAX_ALTERNATIVES), but uncut.
         alternatives=svc.clean_alternatives(cand.rejected(), cut=False),
         confidence=EXTRACTED_CONFIDENCE,
         stage=cand.stage,
@@ -1000,60 +1129,41 @@ def record_body(inp: DecisionRecordInput) -> dict[str, Any]:
     }
 
 
-def _same_reasons(stored: list[str], candidate: list[str]) -> bool:
-    """Each stored reason is one of the candidate's, the two sets alike. A stored
-    alternative the record cut (`svc.is_cut`) keeps only the start of its reason, and where
-    the cut falls moves with the option's wording, so it matches as a prefix. One cut before
-    its reason (inside the option or the marker) holds none, and matches whichever
-    candidate reason is left. Letter case aside, as the verbatim check reads a span."""
-    # `candidate` is the input's list, already kept as decision.record keeps it, uncut.
-    remaining = [a.rpartition(dx.REJECTED)[2].casefold() for a in candidate]
-    if len(remaining) != len(stored):
-        return False
-    # Reasoned before reasonless, uncut before cut, the longest cut reason first.
-    order = sorted(
-        stored,
-        key=lambda a: (
-            dx.REJECTED not in a,
-            svc.is_cut(a),
-            -len(a.rpartition(dx.REJECTED)[2]),
-        ),
-    )
-    for alt in order:
-        cut = svc.is_cut(alt)
-        kept = alt.removesuffix(svc.CUT_MARK) if cut else alt
-        reason = kept.rpartition(dx.REJECTED)[2].casefold()
-        if dx.REJECTED not in alt:
-            match = remaining[0] if cut and remaining else None
-        else:
-            match = next(
-                (r for r in remaining if r == reason or (cut and r.startswith(reason))), None
-            )
-        if match is None:
-            return False
-        remaining.remove(match)
-    return True
-
-
-def _same_decision(record: dict[str, Any], inp: DecisionRecordInput) -> bool:
-    """The document still says what the record says: the verbatim fields, the reasoning
-    and the rejected options' reasons, as decision.record stores them, are the same. The
-    model words the category, scenario, outcome and options anew on each run; a change
-    there alone is no change in the document. Nor is a change in whitespace or letter
-    case alone: a re-wrapped line leaves every row as it is, the stored span still found
-    by the retire step, which reads case as the verbatim check does."""
-    stored = collapse_ws(str(record.get("reasoning") or "")).casefold()
-    if stored != collapse_ws(inp.reasoning).casefold():
-        return False
-    return _same_reasons(alternatives(record), inp.alternatives)
-
-
 def _same_row(row: MemoryRow, inp: DecisionRecordInput) -> bool:
     """The row carries the files, source and tags the candidate would write."""
     return (
         sorted(row.files) == sorted(inp.files or [])
         and row.source_resource_id == inp.source_resource_id
         and _own_tags(row.tags) == _own_tags(inp.tags)
+    )
+
+
+def _same_words(record: dict[str, Any], inp: DecisionRecordInput) -> bool:
+    """The candidate words the decision as the record stores it, whitespace and case
+    aside."""
+    stored = [record.get(k) or "" for k in ("category", "scenario", "outcome", "reasoning")]
+    given = [inp.category, inp.scenario, inp.outcome, inp.reasoning]
+    flat = [collapse_ws(x).casefold() for x in [*stored, *given]]
+    alts = [collapse_ws(a).casefold() for a in alternatives(record)]
+    # As decision.record stores them: a long one cut and marked.
+    given_alts = svc.clean_alternatives(inp.alternatives, cut=True)
+    return flat[:4] == flat[4:] and alts == [collapse_ws(a).casefold() for a in given_alts]
+
+
+def _in_stored_words(
+    inp: DecisionRecordInput, record: dict[str, Any], row: MemoryRow
+) -> DecisionRecordInput:
+    """`inp` with the stored record's words and stage: a decision the text still states
+    is recorded again for its row fields only, never reworded."""
+    return inp.model_copy(
+        update={
+            "category": str(record.get("category") or inp.category),
+            "scenario": str(record.get("scenario") or inp.scenario),
+            "outcome": str(record.get("outcome") or inp.outcome),
+            "reasoning": str(record.get("reasoning") or inp.reasoning),
+            "alternatives": alternatives(record),
+            "stage": svc.stage_of(PROPOSED_TAG in row.tags, record),
+        }
     )
 
 
@@ -1071,25 +1181,26 @@ async def _reconcile(
     section: str,
     texts: list[str],
     dry_run: bool,
-    own_by_words: dict[tuple[str, str], _PriorRow],
+    *,
+    still: bool | None,
 ) -> RecordReport:
     """Decide what the candidate does to the target namespace, and do it unless `dry_run`.
-    `own_by_words` holds the extractor's rows on this document by outcome and reasoning, so
-    a decision whose key the model reworded keeps its stage."""
+    `still`: the support check's verdict on the key's stored row, when it is the
+    extractor's on this document (None: not judged, and a frozen or acted-on row is then
+    left as it is)."""
     namespace = t.rows_namespace
     files, signals, unresolved, complete = await resolve_mentions(
         org, t.code_namespace, cand, texts
     )
     # A path the document writes out (`src/Storages/MergeTreeData.cpp`) is a file too; the
     # explicit list turns off decision.record's own detection, so it is merged in here.
-    files = normalize_files([*files, *detect_value_files(f"{cand.quote}\n{cand.reasoning}")])
+    cited = "\n".join(cand.quotes())
+    files = normalize_files([*files, *detect_value_files(cited)])
     inp = _record_input(org, t, source_uri, cand, section, files)
     key = svc.decision_key(inp.category, inp.scenario)
     rec = RecordReport(key, "written", record_body(inp), signals, unresolved)
     writer = await live_writer_record(org, namespace, key)
     if writer is None:
-        inp, rec.note = _carried_stage(inp, own_by_words)
-        rec.body["stage"] = inp.stage
         peer = await _frozen_restatement(org, namespace, key, inp)
         if peer is not None:
             rec.action = "already_recorded"
@@ -1109,41 +1220,42 @@ async def _reconcile(
             fresh=True,
             strong=True,
         )
-        if row is not None and not complete:
+        if row is None:
+            # The live row behind the writer record was deleted between the two reads: a
+            # race the next run settles.
+            rec.race = "deleted"
+            rec.action = "row_changed"
+            return rec
+        if not complete:
             # The code index did not answer for every name: keep the files the row has
             # rather than drop one an earlier run resolved.
             inp = inp.model_copy(update={"files": list(row.files)})
             rec.body["files"] = list(row.files)
-        this_doc = row is not None and await cites_document(
-            org, row.source_resource_id, t.doc_namespace, source_uri
-        )
+        this_doc = await cites_document(org, row.source_resource_id, t.doc_namespace, source_uri)
         ours = this_doc and _is_extractor(writer.agent, writer.user_id, writer.session_id)
         record = svc.parse_record_json(writer.record_json)
-        same = _same_decision(record, inp)
-        inp, rec.note = _stage_reading(inp, row, record, same)
-        rec.body["stage"] = inp.stage
+        same = ours and still is True
+        if same:
+            read_as = inp.stage
+            inp = _in_stored_words(inp, record, row)
+            rec.body = record_body(inp)
+            if read_as != inp.stage and not svc.has_outcome(record):
+                rec.note = f"the document reads as {read_as}; the row keeps its stage {inp.stage}"
         # Our own row is revised for its files, source, constraint or repository tag too: a
         # document extracted before its code was indexed gains its files on a later run.
-        stale_row = row is not None and ours and not _frozen(row) and not _same_row(row, inp)
+        stale_row = ours and not _frozen(row) and not _same_row(row, inp)
         if same and not stale_row:
-            return await _unchanged(
-                rec, row, record, t, ours=ours, this_doc=this_doc, dry_run=dry_run
-            )
-        if row is not None and _frozen(row) and this_doc:
+            return await _unchanged(rec, row, t, dry_run=dry_run)
+        if ours and still is None:
+            again = await _unjudged(rec, row, record, inp, t, dry_run=dry_run)
+            if again is None:
+                return rec
+            inp = again
+        if _frozen(row) and ours:
             return await _flag_frozen(rec, row, t, dry_run)
         if not ours:
-            rec.body.update(
-                agent=writer.agent, user_id=writer.user_id, session_id=writer.session_id
-            )
-            rec.action = "not_ours"
-            rec.note = (
-                f"recorded by {writer.agent} from {row.source_resource_id or 'no document'}; "
-                "the extractor revises only its own rows on this document"
-                if row is not None
-                else f"recorded by {writer.agent}; the extractor revises only its own rows"
-            )
-            return rec
-        if row is not None and svc.has_outcome(record):
+            return _not_ours(rec, writer, row)
+        if svc.has_outcome(record):
             # decision.record rebuilds the record from the body, so a re-record would drop
             # the outcome.
             rec.note = "its outcome is recorded; re-recording would lose it"
@@ -1153,8 +1265,6 @@ async def _reconcile(
                 await _reconcile_tags(rec, row, dry_run, t.row_tag)
             return rec
         rec.action = "revised"
-    rec.holds = True
-    rec.held_outcome = inp.outcome.strip()
     if not dry_run:
         from server.memory.app.decision import handle_decision_record
 
@@ -1165,85 +1275,60 @@ async def _reconcile(
     return rec
 
 
-class _PriorRow(NamedTuple):
-    """One of the extractor's rows on this document, as a reworded key finds it."""
+async def _unjudged(
+    rec: RecordReport,
+    row: MemoryRow,
+    record: dict[str, Any],
+    inp: DecisionRecordInput,
+    t: Target,
+    *,
+    dry_run: bool,
+) -> DecisionRecordInput | None:
+    """The extractor's row the support check gave no verdict on: None when it is left as
+    it is (`rec` unchanged, linked to the repository as the retire step links a row it
+    keeps), else the input to record again, in the stored words when only the row's fields
+    changed. Either way its `source-changed` tag stays: no verdict clears nothing."""
+    if _left_unjudged(row, record, inp):
+        rec.action = "unchanged"
+        rec.note = "the support check gave no verdict on the row; left as it is"
+        await _reconcile_tags(rec, row, dry_run, t.row_tag, judged=False)
+        return None
+    if _same_words(record, inp):
+        inp = _in_stored_words(inp, record, row)
+    if SOURCE_CHANGED_TAG in row.tags:
+        inp = inp.model_copy(update={"tags": [*inp.tags, SOURCE_CHANGED_TAG]})
+    rec.body = record_body(inp)
+    return inp
 
-    memory_key: str
-    stage: Stage
-    acted: bool
-    alternatives: list[str]
+
+def _left_unjudged(row: MemoryRow, record: dict[str, Any], inp: DecisionRecordInput) -> bool:
+    """A row the support check gave no verdict on stays as it is when it is frozen or acted
+    on (flagged only on a verdict), or when the read words it as stored."""
+    if _frozen(row) or svc.has_outcome(record):
+        return True
+    return _same_words(record, inp) and _same_row(row, inp)
 
 
-def _prior_rows_by_words(
-    own: list[tuple[MemoryRow, dict[str, Any]]],
-) -> dict[tuple[str, str], _PriorRow]:
-    """The extractor's rows on this document by _held_key(outcome, reasoning), the identity
-    the retire step names an heir by: the model rewords a decision's scenario and category
-    between runs."""
-    out: dict[tuple[str, str], _PriorRow] = {}
-    for row, record in own:
-        key = _held_key(str(record.get("outcome") or ""), str(record.get("reasoning") or ""))
-        stage = svc.stage_of(PROPOSED_TAG in row.tags, record)
-        acted = svc.has_outcome(record)
-        out.setdefault(key, _PriorRow(row.memory_key, stage, acted, alternatives(record)))
-    return out
-
-
-def _carried_stage(
-    inp: DecisionRecordInput, own_by_words: dict[tuple[str, str], _PriorRow]
-) -> tuple[DecisionRecordInput, str]:
-    """(the input with the stage to write, a note): a new key on the same words as one of
-    the extractor's rows (outcome, reasoning and rejected options' reasons) takes that row's
-    stage, as the same words under the same key do."""
-    found = own_by_words.get(_held_key(inp.outcome, inp.reasoning))
-    if found is None or found.stage == inp.stage:
-        return inp, ""
-    if not _same_reasons(found.alternatives, inp.alternatives):
-        return inp, ""
-    note = (
-        ""
-        if found.acted
-        else (
-            f"the document reads as {inp.stage}; written at the stage {found.stage} of "
-            f"{found.memory_key}"
-        )
+def _not_ours(rec: RecordReport, writer: Any, row: MemoryRow) -> RecordReport:
+    """Another writer's record or another document's row under the key: printed, never
+    written."""
+    rec.body.update(agent=writer.agent, user_id=writer.user_id, session_id=writer.session_id)
+    rec.action = "not_ours"
+    rec.note = (
+        f"recorded by {writer.agent} from {row.source_resource_id or 'no document'}; "
+        "the extractor revises only its own rows on this document"
     )
-    return inp.model_copy(update={"stage": found.stage}), note
-
-
-def _stage_reading(
-    inp: DecisionRecordInput, row: MemoryRow | None, record: dict[str, Any], same: bool
-) -> tuple[DecisionRecordInput, str]:
-    """(the input at the row's stage when the words are the same, a note when this run
-    reads otherwise); the module docstring has the rule."""
-    if row is None or not same:
-        return inp, ""
-    stage = svc.stage_of(PROPOSED_TAG in row.tags, record)
-    note = ""
-    if inp.stage != stage and not svc.has_outcome(record):
-        note = f"the document reads as {inp.stage}; the row keeps its stage {stage}"
-    return inp.model_copy(update={"stage": stage}), note
+    return rec
 
 
 async def _unchanged(
-    rec: RecordReport,
-    row: MemoryRow | None,
-    record: dict[str, Any],
-    t: Target,
-    *,
-    ours: bool,
-    this_doc: bool,
-    dry_run: bool,
+    rec: RecordReport, row: MemoryRow, t: Target, *, dry_run: bool
 ) -> RecordReport:
-    """The candidate says what the key's record says: nothing is written but tags."""
+    """The extractor's own row on this document, still stated: nothing is written but
+    tags. A row that is not frozen reached here with its repository and constraint tags
+    the same already; only a `source-changed` tag can still be cleared."""
     rec.action = "unchanged"
-    rec.holds = ours
-    rec.held_outcome = str(record.get("outcome") or "").strip()
-    if row is not None and this_doc:
-        # Another writer's row that is not frozen gains no repository tag.
-        # (Our own such row reached here with its tags the same already.)
-        link = t.row_tag if _frozen(row) else ""
-        await _reconcile_tags(rec, row, dry_run, link)
+    await _reconcile_tags(rec, row, dry_run, t.row_tag if _frozen(row) else "")
     return rec
 
 
@@ -1401,8 +1486,8 @@ async def symbol_definitions(org: str, namespace: str, name: str) -> list[tuple[
 
 
 def _tags_for(row: MemoryRow, *, source_changed: bool, repo_tag: str) -> list[str]:
-    """The row's tags with `source-changed` set or dropped and `repo_tag` added, unless the
-    row is linked to another repository already (another writer's row may be)."""
+    """The row's tags with `source-changed` set or dropped and `repo_tag` added when the row
+    carries no `repo:` tag yet."""
     tags = [t for t in row.tags if t != SOURCE_CHANGED_TAG]
     if repo_tag and not any(t.startswith("repo:") for t in tags):
         tags.append(repo_tag)
@@ -1420,11 +1505,14 @@ def _tag_note(row: MemoryRow, tags: list[str], dry_run: bool) -> str:
     return "; ".join(notes)
 
 
-async def _reconcile_tags(rec: RecordReport, row: MemoryRow, dry_run: bool, repo_tag: str) -> None:
+async def _reconcile_tags(
+    rec: RecordReport, row: MemoryRow, dry_run: bool, repo_tag: str, *, judged: bool = True
+) -> None:
     """On a row the document still states: drop its `source-changed` tag and add the
     repository's tag. A row the run does not record again gets the tag this way, so the
-    pre-edit block serves it too."""
-    tags = _tags_for(row, source_changed=False, repo_tag=repo_tag)
+    pre-edit block serves it too. One not `judged` keeps its `source-changed` tag."""
+    flag = not judged and SOURCE_CHANGED_TAG in row.tags
+    tags = _tags_for(row, source_changed=flag, repo_tag=repo_tag)
     if set(tags) == set(row.tags):
         return
     if not dry_run and (moved := await _set_tags(row, tags)):
@@ -1535,70 +1623,60 @@ async def _extractor_rows(
 async def _retire(
     report: ExtractReport,
     own: list[tuple[MemoryRow, dict[str, Any]]],
-    live_texts: list[str],
+    state: _Kept,
     written: set[str],
-    held: dict[tuple[str, str], str],
     repo_tag: str,
     may_write: Callable[[], bool] | None,
     writes: TaskSet,
 ) -> None:
-    """Contract the extractor's own rows on this document whose reasoning left its text:
-    delete one that is not frozen; tag a frozen one (pinned or attested), or one with a
-    recorded outcome, `source-changed`. An unfrozen one whose outcome and reasoning
-    this run holds under another key (`held`) is deleted too: the model worded the
-    scenario anew, and the decision is not served twice. Another decision resting on the
-    same reasoning has another outcome and stays. A row whose reasoning is still there
-    stays, even when this run's model did not emit it again. The step never drops a
-    `source-changed` tag: it sees the reasoning alone, and the tag may stand for another
-    field the document still contradicts; reconcile drops it when the verbatim fields
-    match again. A row it keeps gains `repo_tag`, as a row reconcile keeps does."""
+    """Contract the extractor's own rows on this document that the support check found no
+    longer stated: delete one that is not frozen; tag a frozen one (pinned or attested),
+    or one with a recorded outcome, `source-changed`. An unfrozen one that this run
+    recorded under another key (its heir) is deleted too, so the decision is not served
+    twice. A row still stated stays, even when this run's model did not emit it again,
+    and so does a row the check gave no verdict on. The step never drops a
+    `source-changed` tag; reconcile drops it when the row is still stated again. A row it
+    keeps gains `repo_tag`, as a row reconcile keeps does."""
     for row, record in own:
         if row.memory_key in written:
             continue
         if not _may_go_on(report, may_write):
             return
         try:
-            await _whole(writes, _retire_one(report, row, record, live_texts, held, repo_tag))
+            await _whole(writes, _retire_one(report, row, record, state, repo_tag))
         except _REPORTED_ERRORS as e:
             report.refused.append(f"{row.memory_key}: {_refusal(e)}")
-
-
-def _held_key(outcome: str, reasoning: str) -> tuple[str, str]:
-    """A decision as the retire step compares it with this run's: its outcome and
-    reasoning, whitespace and case aside, so a case-only change in the document under a
-    reworded scenario still names its heir."""
-    return collapse_ws(outcome).casefold(), collapse_ws(reasoning).casefold()
 
 
 async def _retire_one(
     report: ExtractReport,
     row: MemoryRow,
     record: dict[str, Any],
-    live_texts: list[str],
-    held: dict[tuple[str, str], str],
+    state: _Kept,
     repo_tag: str,
 ) -> None:
     """The retire step for one of the extractor's rows and its own record; its writes
     raise to the caller, which reports them."""
     key = row.memory_key
-    reasoning = str(record.get("reasoning") or "")
-    if not reasoning:
-        return
-    outcome = str(record.get("outcome") or "")
-    restated = held.get(_held_key(outcome, reasoning))
-    # A row with a recorded outcome is kept: deleting it would lose the outcome.
-    if not _frozen(row) and restated is not None and not svc.has_outcome(record):
+    still = state.still.get(key)
+    heir = state.heirs.get(key, "")
+    # Replaced: no longer stated, and this run wrote the decision under another key in its
+    # place. A row with a recorded outcome is kept: deleting it would lose the outcome.
+    if (
+        still is False
+        and heir in state.recorded
+        and not _frozen(row)
+        and not svc.has_outcome(record)
+    ):
         if await _delete_row(report, row):
-            report.replaced.append(f"{key} -> {restated}")
+            report.replaced.append(f"{key} -> {heir}")
         return
-    # As the verbatim check reads it: a re-wrapped line, a change of case or a label line
-    # read across is the same text.
-    if not dx.find_span(reasoning, live_texts):
+    if still is False:
         # A row with a recorded outcome is tagged, never deleted, like a pinned one.
         keep = _frozen(row) or svc.has_outcome(record)
         await _retire_row(report, row, keep=keep, repo_tag=repo_tag)
     elif repo_tag:
-        # Its reasoning is still there though the model did not emit it: it stays, linked.
+        # Still stated, or not judged, though the model did not emit it: it stays, linked.
         await _retire_tags(report, row, SOURCE_CHANGED_TAG in row.tags, repo_tag)
 
 

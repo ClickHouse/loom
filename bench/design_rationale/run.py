@@ -49,6 +49,9 @@ from bench.design_rationale.taskset import (
     parse_key,
     surface_key,
 )
+from server.memory.api.models_decision import DecisionRecordInput
+from server.memory.app.decisions import ALTERNATIVE_CHARS, MAX_ALTERNATIVES
+from server.settings import Settings
 
 ARMS = (0, 1, 2, 3, 4, 5, 6)
 ARM_NAMES = {
@@ -69,20 +72,32 @@ ARM_HOME = {2: "kb", 3: "gold", 4: "extract", 5: "gold", 6: "extract"}
 SEARCH_SECTION_TOKENS = 800  # a loom_search section with the reading rule
 CITED_TEXT_TOKENS = 1200  # the cited source text a judge reads
 JUDGE_FRAME_TOKENS = 900  # the judge's instructions and gold lists
-TYPICAL_OUT = {"A": 400, "B": 900, "C": 400, "D": 500, "judge": 500, "extract": 800}
+# "extract" is per extraction call, averaged over a window's calls: a whole-document read
+# writes about as many tokens as it reads (some 3,500 for a 14,000-character document),
+# the read again is rare and a support check writes some 500.
+TYPICAL_OUT = {"A": 400, "B": 900, "C": 400, "D": 500, "judge": 500, "extract": 1500}
 JUDGE_OUT_CAP = 4000
 # The left-out line of a pre-edit block, outside both of its budgets; the render test
 # keeps it honest.
 PRE_EDIT_FIXED_TOKENS = 300
-# The longest category and scenario decision.record accepts
-# (server/memory/api/models_decision.py, DecisionRecordInput).
-DECISION_CATEGORY_MAX_CHARS = 120
-DECISION_SCENARIO_MAX_CHARS = 2000
+
+
+def _max_chars(model: Any, field_name: str) -> int:
+    """The `max_length` a pydantic model declares for `field_name`."""
+    return next(
+        m.max_length for m in model.model_fields[field_name].metadata if hasattr(m, "max_length")
+    )
+
+
+# The longest category and scenario decision.record accepts.
+DECISION_CATEGORY_MAX_CHARS = _max_chars(DecisionRecordInput, "category")
+DECISION_SCENARIO_MAX_CHARS = _max_chars(DecisionRecordInput, "scenario")
 # Decisions kept per section, which the extractor's prompt states: the run uses the
 # default of `loom decisions extract --max-per-section` (server/cli/decisions.py).
 EXTRACT_MAX_PER_SECTION = 3
-# Characters per extraction window, the CLI's `--window-chars` default.
-EXTRACT_WINDOW_CHARS = 6000
+# Characters per extraction window: the default of the setting the CLI reads when
+# `--window-chars` is not given, so a document of up to this length is read whole.
+EXTRACT_WINDOW_CHARS: int = Settings.model_fields["memory_decision_extract_window_chars"].default
 
 
 class RunError(RuntimeError):
@@ -137,31 +152,35 @@ def pre_edit(cfg: Config, arm: int) -> bool:
     return arm == 3 or (arm in EXTRACTED_ARMS and cfg.arm4_files)
 
 
-# ---------------------------------------------------------------- extraction bound
+# ---------------------------------------------------------------- extraction estimate
 
 
-def longest_known_decision() -> tuple[str, str, str]:
-    """The longest (category, scenario, outcome) a re-run's prompt can list: the most
-    decision.record accepts for the category and the scenario, and the outcome at the
-    length the prompt cuts it to."""
-    from server.memory.domain import decision_extract as dx
-
-    return (
-        "x" * DECISION_CATEGORY_MAX_CHARS,
-        "x" * DECISION_SCENARIO_MAX_CHARS,
-        "x" * dx._KNOWN_OUTCOME_CHARS,
-    )
+def longest_known_decision() -> tuple[str, str]:
+    """The longest (category, scenario) a re-run's prompt can list: the most
+    decision.record accepts for each."""
+    return ("x" * DECISION_CATEGORY_MAX_CHARS, "x" * DECISION_SCENARIO_MAX_CHARS)
 
 
-def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:
-    """(calls, input tokens, output tokens) one extraction run on `doc` may spend at
-    most. Two calls per window: a reply with no decision, or with a reason that is not
-    one span of the text, is read again. Each call carries the system prompt (with the
-    known decisions a re-run over a revision lists) and the window as the extractor
-    sends it, its `[document: ...]` and `[section: ...]` lines included (`user_prompt`).
-    The second call may also carry the note listing the first reply's failed spans,
-    which the first reply wrote, so it is bounded by the output cap. Each call writes up
-    to that cap."""
+# The longest entry a stored decision takes in the support check's list: its key and the
+# JSON around it, and its statement with every field at its limit (scenario, outcome,
+# reasoning and the rejected options as decision.record keeps them).
+STORED_STATEMENT_MAX_CHARS = (
+    200
+    + sum(_max_chars(DecisionRecordInput, f) for f in ("scenario", "outcome", "reasoning"))
+    + MAX_ALTERNATIVES * ALTERNATIVE_CHARS
+)
+
+
+def extraction_estimate(doc: Document, window_chars: int) -> tuple[int, int, int]:
+    """(calls, input tokens, output tokens) one extraction run on `doc` may spend: an estimate,
+    not a bound, and the only guard before the run spends: the extraction CLI's calls never
+    reach `cost.summary`, so this estimate is also their only record. Per window: two reads
+    (a reply with no decision is read again), each with the system prompt (the known
+    decisions a re-run over a revision lists) and the window as the extractor sends it, its
+    `[document: ...]` and `[section: ...]` lines included (`user_prompt`); and the support
+    check, carrying the window, the claims (estimated from the read's output cap) and the
+    stored decisions' statements. A re-run adds one more check per window for stored
+    decisions found no longer stated. Each call writes up to its cap."""
     from server.knowledge.app.writes import _chunk_text
     from server.memory.app.decision_extract import _windows
     from server.memory.domain import decision_extract as dx
@@ -177,13 +196,22 @@ def extraction_bound(doc: Document, window_chars: int) -> tuple[int, int, int]:
     windows = _windows(chunks, set(), window_chars)
     known = settings.memory_decision_extract_known_max if doc.revision_of else 0
     system = len(dx.system_prompt(EXTRACT_MAX_PER_SECTION, [longest_known_decision()] * known))
-    cap = llm_max_tokens("decision_extract")
-    tin = 0
+    check_system = len(dx.support_system(bool(known)))
+    stored = known * STORED_STATEMENT_MAX_CHARS
+    read_cap = llm_max_tokens("decision_extract")
+    check_cap = llm_max_tokens("decision_support")
+    checks = 2 if known else 1
+    tin = tout = 0
     for w in windows:
-        one = (system + len(dx.user_prompt(w, doc.title))) // CHARS_PER_TOKEN_WORST
-        tin += 2 * one + cap
-    calls = 2 * len(windows)
-    return calls, tin, calls * cap
+        body = len(dx.user_prompt(w, doc.title))
+        read = (system + body) // CHARS_PER_TOKEN_WORST
+        check = (check_system + body + stored) // CHARS_PER_TOKEN_WORST
+        # The claims ride the first check only: what the read wrote, each with up to 200
+        # characters of its outcome again; twice the read's cap is an estimate, not a
+        # bound (many short claims weigh more).
+        tin += 2 * read + checks * check + 2 * read_cap
+        tout += 2 * read_cap + checks * check_cap
+    return (2 + checks) * len(windows), tin, tout
 
 
 # ---------------------------------------------------------------- plan (dry run)
@@ -224,12 +252,12 @@ def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
     k = cfg.k
     answer_calls = len(rows) * k
     judge_calls = answer_calls * passes
-    bounds = (
-        [extraction_bound(d, cfg.extract_window_chars) for d in ts.documents.values()]
+    estimates = (
+        [extraction_estimate(d, cfg.extract_window_chars) for d in ts.documents.values()]
         if own_extraction(cfg)
         else []
     )
-    n_extract = sum(b[0] for b in bounds)
+    n_extract = sum(b[0] for b in estimates)
     usage = {
         "answer": {
             "model": cfg.reader,
@@ -248,8 +276,8 @@ def plan(ts: TaskSet, cfg: Config) -> dict[str, Any]:
         "extract": {
             "model": cfg.extract_model,
             "calls": n_extract,
-            "in": sum(b[1] for b in bounds),
-            "out_at_caps": sum(b[2] for b in bounds),
+            "in": sum(b[1] for b in estimates),
+            "out_at_caps": sum(b[2] for b in estimates),
             "out_typical": n_extract * TYPICAL_OUT["extract"],
         },
     }
@@ -450,12 +478,12 @@ def link_files(code: CodeIndex, names: list[str]) -> tuple[list[str], list[str]]
 def run_extraction(
     cfg: Config, loom: Loom, ledger: Ledger, namespace: str, doc: Document, code: CodeIndex | None
 ) -> dict[str, Any]:
-    """`loom decisions extract --apply` on one document, its worst-case spend charged to
-    the ledger first: the calls run in the server's code, out of the ledger's sight.
-    With a code index, each kept row's code names are resolved there and the files
-    written on it, so arms 4 and 6 reach the pre-edit block as arm 3 does; a name the
-    index did not answer for is listed in `lookup_failures`."""
-    calls, tin, tout = extraction_bound(doc, cfg.extract_window_chars)
+    """`loom decisions extract --apply` on one document, its estimated spend checked
+    against and charged to the ledger first: the calls run in the server's code, out of
+    the ledger's sight. With a code index, each kept row's code names are resolved there
+    and the files written on it, so arms 4 and 6 reach the pre-edit block as arm 3 does;
+    a name the index did not answer for is listed in `lookup_failures`."""
+    calls, tin, tout = extraction_estimate(doc, cfg.extract_window_chars)
     ledger.check(cfg.extract_model, tin, tout)
     ledger.record("extract", cfg.extract_model, tin, tout, estimated=True)
     rc, report = loom.extract(namespace, doc.source_uri, cfg.extract_window_chars)
