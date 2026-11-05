@@ -661,3 +661,51 @@ async def test_an_untagged_row_typed_decision_is_read_and_checked(
     assert [r["memory_key"] for r in read.served] == ["design/spill"]
     sec = _section(read.served, DIFF)
     assert sec["verdict"] == "check" and sec["rows"][0]["names"] == ["DB::SpillingHashSet"]
+
+
+@pytest.mark.asyncio
+async def test_a_linked_row_is_read_with_the_whole_only_filter_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A trunk with a code link reaches memory.for_file's linked-rows statement, which
+    carries the same decisions-and-constraints filter as the files match."""
+    from server.memory.app import code_link_reads
+    from server.memory.store import code_links as store_links
+    from tests.unit.ch_fake import RecordingCH
+
+    linked = {
+        "memory_id": "m-linked",
+        "memory_key": "design/linked",
+        "memory_type": "decision",
+        "value": json.dumps(DECISION),
+        "tags": [],
+        "confidence": 1.0,
+        "pinned": 0,
+        "agent": "alice",
+        "matched_files": [],
+    }
+    ch = RecordingCH().on("memory_id IN", [linked]).on("FROM loom.memory FINAL", [])
+    ch.install(monkeypatch, "server.memory.app.for_file")
+
+    async def one_link(*a: Any, **k: Any) -> list[dict[str, Any]]:
+        return [{"memory_id": "m-linked", "code_namespace": "code-widgets", "state": "fresh"}]
+
+    async def current(org: str, links: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return links
+
+    async def _readable(org: str, nss: set[str]) -> set[str]:
+        return set(nss)
+
+    monkeypatch.setattr(store_links, "for_paths", one_link)
+    monkeypatch.setattr(code_link_reads, "current_links", current)
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
+    monkeypatch.setattr(
+        "server.code.app.memory_links.trunk_namespace", lambda org, ns: "code-widgets"
+    )
+    read = await code_plane_reads.decisions_for_paths(
+        "acme", "code-widgets", ["src/a.cpp"], limit=8
+    )
+    (stmt,) = ch.statements("memory_id IN")
+    assert stmt.params["whole_only"] == 1 and stmt.params["linked"] == ["m-linked"]
+    assert "(memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))" in stmt.sql
+    assert [(r["memory_key"], r["code_state"]) for r in read.served] == [("design/linked", "fresh")]

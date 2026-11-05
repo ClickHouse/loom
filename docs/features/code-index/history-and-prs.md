@@ -75,12 +75,12 @@ the repository's trunk code namespace whose `files` or code links touch the PR's
 is read on every call, from the trunk namespace only when the caller may read it, and
 never stored with the brief, so a decision recorded or changed after the merge shows up on
 the next read. It reads the first `LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` (10) changed
-files, source files first, of the up to 200 the brief stores, up to 50 rows each, and
-serves at most `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` (8) rows, those with something to
-check first, in whole rows up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` (250) tokens:
-rows that say `check` first, then constraints; within that budget of its own the first row
-is always served, and the tier's budget may still trim the section like any other. Each
-row carries the line the pre-edit block prints for it (value, source, `(pinned)`, a
+files, source files first, of those the brief stores, up to 50 rows each, and serves at
+most `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` (8) rows, those with something to check
+first, in whole rows up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` (250) tokens: rows
+that say `check` first, then constraints; within that budget of its own the first row is
+always served, and the tier's budget may still trim the section like any other. Each row
+carries the line the pre-edit block prints for it (value, source, `(pinned)`, a
 code-change note), `pinned`, `code_state` and a `verdict`. Each changed file read is one
 `memory.for_file` read: four ClickHouse reads (files match, code links, their memories,
 the linked rows; a file with many links slices the last), each keeping up to 50 rows with
@@ -104,10 +104,12 @@ The section's verdict is `check` when any row says so, then `unknown`, then `cle
 `none` when no row has anything to check. It says `clear` or `none` only when every
 changed path and every matching row was checked; otherwise it says `unknown`, and the
 causes say what was left: the caller may not read the trunk namespace
-(`trunk_not_readable`), changed paths not read (`paths_not_read`, exact up to the 200
-changed files a brief stores and a lower bound past that), a path whose read reached its
-50 rows (`paths_at_row_ceiling`), a path whose code-links read failed (`links_not_read`),
-or rows the row cap left out that had something to check (`rows_not_read`).
+(`trunk_not_readable`), a stored changed-path list that may be cut (`paths_maybe_cut`: the
+brief stores the first 50 changed files plus the files of the diff's hunks, up to 200, so
+a list of 50 or more may hold fewer than the PR changed), changed paths of that list not
+read (`paths_not_read`), a path whose read reached its 50 rows (`paths_at_row_ceiling`), a
+path whose code-links read failed (`links_not_read`), or rows the row cap left out that
+had something to check (`rows_not_read`).
 
 `code.conventions` states the repository's
 recurring maintainer checks as facts over one PR's diff (`pr_number`, `head_sha`,

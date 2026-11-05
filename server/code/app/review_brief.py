@@ -311,6 +311,8 @@ async def _rationale_section(
         paths_full=read.paths_full,
         links_skipped=read.links_skipped,
         refused=read.refused,
+        # the stored list may hold fewer paths than the PR changed once it is this long
+        paths_maybe_cut=len(rows) >= rb.IMPACT_SEED_FILES,
         budget_tokens=settings.code_review_brief_rationale_tokens,
     )
 

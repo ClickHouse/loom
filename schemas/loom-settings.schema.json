@@ -1361,7 +1361,7 @@
           "maximum": 50,
           "minimum": 1,
           "type": "integer",
-          "description": "Changed paths the `rationale` section reads, of the up to 200 a review brief stores."
+          "description": "Changed paths the `rationale` section reads. A brief storing 50 or more may hold fewer than the PR changed, and `rationale` is then never `clear`."
         },
         "code_review_brief_rationale_rows": {
           "default": 8,

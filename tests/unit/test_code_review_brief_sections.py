@@ -838,6 +838,48 @@ async def test_rationale_is_unknown_when_the_trunk_is_refused(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("stored", "verdict"), [(50, "unknown"), (49, "clear")])
+async def test_a_stored_path_list_of_fifty_may_be_cut_and_is_never_clear(
+    wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch, stored: int, verdict: str
+) -> None:
+    from server.code.app import memory_links
+    from server.memory.app import code_plane_reads
+    from server.settings import settings
+
+    rule = "Keep `distinct_spill_ratio` on by default."
+    row = {
+        "memory_key": "design/ratio",
+        "tags": ["constraint"],
+        "pinned": True,
+        "code_state": "",
+        "line": "- design/ratio [constraint] (pinned): Keep `distinct_spill_ratio` on.",
+        "text": rule,
+    }
+
+    async def _decisions(org: str, trunk: str, paths: Any, *, limit: int, **kw: Any) -> Any:
+        return code_plane_reads.DecisionRows([row], [])
+
+    async def _diff(*a: Any, **kw: Any) -> tuple[str, bool]:
+        return DIFF, False  # adds no `distinct_spill_ratio`
+
+    monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
+    monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _decisions)
+    monkeypatch.setattr(h, "_pr_diff", _diff)
+    monkeypatch.setattr(settings, "code_review_brief_rationale_paths", 50)
+    paths = [{"path": f"src/f{i}.cpp", "class": "src"} for i in range(stored)]
+    payload = {
+        "pr_number": 117354,
+        "merge_sha": SHA,
+        "sections": {"paths": rb.section(rb.SERVED, verdict="src", rows=paths)},
+    }
+    wired["repo"] = _HandlerRepo(stored={"payload": json.dumps(payload)})
+    out = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354))
+    sec = out.sections["rationale"]
+    assert sec["rows"][0]["verdict"] == "clear" and sec["verdict"] == verdict
+    assert sec["causes"] == (["paths_maybe_cut"] if stored == 50 else [])
+
+
+@pytest.mark.asyncio
 async def test_rationale_fails_open_to_a_failed_section(
     wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:

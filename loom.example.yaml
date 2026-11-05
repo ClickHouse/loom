@@ -2103,8 +2103,8 @@ settings:
   # (the mirror may have fetched it); a hit is kept. [live]
   # code_review_brief_mirror_miss_ttl_s: 600.0
 
-  # Changed paths the `rationale` section reads, of the up to 200 a review brief stores.
-  # [live]
+  # Changed paths the `rationale` section reads. A brief storing 50 or more may hold
+  # fewer than the PR changed, and `rationale` is then never `clear`. [live]
   # code_review_brief_rationale_paths: 10
 
   # Decision and constraint rows the `rationale` section serves. [live]

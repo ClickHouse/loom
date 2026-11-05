@@ -122,6 +122,10 @@ MAX_SETTINGS = 8
 MAX_COVERAGE_SETTINGS = 4
 MAX_BLAME_RANGES = 5
 MAX_DIFF_CHARS = 200_000  # CodeImpactInput.diff's cap
+# The changed files the brief's impact read seeds from; the stored paths section lists
+# these plus the files of the diff's hunks, so a list this long may be cut.
+# not a setting: CodeImpactInput.files' max_length
+IMPACT_SEED_FILES = 50
 MAX_BLAME_RANGE_LINES = 400  # code.blame_range's own cap
 
 CallOp = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -633,6 +637,7 @@ def rationale_section(
     paths_full: int = 0,
     links_skipped: int = 0,
     refused: bool = False,
+    paths_maybe_cut: bool = False,
     budget_tokens: int,
 ) -> dict[str, Any]:
     """The `rationale` section over the rows `decisions_for_paths` read and the PR's diff
@@ -644,8 +649,9 @@ def rationale_section(
     `budget_tokens` (the first always). The verdict reads every row: check | unknown |
     clear | none (no row has anything to check). It is `clear` or `none` only when every
     changed path and every matching row was checked; otherwise `unknown`, with the cause:
-    the caller may not read the trunk namespace (`refused`), `paths_left` changed paths
-    were not read, `paths_full` paths' reads reached their row ceiling, `links_skipped`
+    the caller may not read the trunk namespace (`refused`), the stored changed-path list
+    may be shorter than the PR's (`paths_maybe_cut`), `paths_left` changed paths were
+    not read, `paths_full` paths' reads reached their row ceiling, `links_skipped`
     paths' code-links reads failed, or a row the row cap left out (`left_out`) had
     something to check."""
     added, malformed = added_text(diff) if diff is not None else (None, False)
@@ -657,7 +663,7 @@ def rationale_section(
     verdict = next((v for v in ("check", "unknown", "clear") if v in verdicts), "none")
     left_to_check = sum(1 for d in left_out if has_check(d))
     counts = (paths_left, paths_full, links_skipped, left_to_check)
-    incomplete = refused or any(n > 0 for n in counts)
+    incomplete = refused or paths_maybe_cut or any(n > 0 for n in counts)
     if incomplete and verdict in ("clear", "none"):
         verdict = "unknown"
     causes = ["trunk_not_readable"] if refused else []
@@ -669,6 +675,8 @@ def rationale_section(
         causes.append("diff_malformed")
     if any(d.get("value_truncated") for d in decisions):
         causes.append("value_cut")
+    if paths_maybe_cut:
+        causes.append("paths_maybe_cut")
     if paths_left > 0:
         causes.append(f"paths_not_read:{paths_left}")
     if left_to_check:
@@ -733,6 +741,7 @@ __all__ = [
     "DEFAULT_TIER",
     "EMPTY",
     "FAILED",
+    "IMPACT_SEED_FILES",
     "NOT_BOUND",
     "NOT_BUILT",
     "OPTIONAL_SECTIONS",
