@@ -4,6 +4,7 @@ import {
   emptySourceForm,
   folderIds,
   kindLabel,
+  databaseIds,
   meetingIds,
   pageIds,
   probeCount,
@@ -137,7 +138,13 @@ describe("the add form's other kinds", () => {
     expect(pageIds(`https://pages.example/team/${DATABASE}?v=${PAGE}`)).toEqual([DATABASE]);
     // A peek link opens a page of the database: the page is its `p=`.
     const VIEW = "0123456789abcdef0123456789abcdef";
-    expect(pageIds(`https://pages.example/team/${DATABASE}?v=${VIEW}&p=${PAGE}&pm=s`)).toEqual([PAGE]);
+    const peekLink = `https://pages.example/team/${DATABASE}?v=${VIEW}&p=${PAGE}&pm=s`;
+    expect(pageIds(peekLink)).toEqual([PAGE]);
+    // In the databases field the same link is its database.
+    expect(databaseIds(peekLink)).toEqual([DATABASE]);
+    expect(sourceAddBody("o", "x", { ...emptySourceForm(), kind: "notion", databases: peekLink }, true).config).toEqual(
+      { page_ids: [], database_ids: [DATABASE] },
+    );
     // Kept as typed, so the problem names it: an id one digit long is not cut to 32.
     expect(pageIds(`${PAGE}0`)).toEqual([`${PAGE}0`]);
     // A link whose id is mistyped one digit long is not cut to another id.

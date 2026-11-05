@@ -295,7 +295,7 @@ const MEETING_ID_RE: Record<RecordingProvider, RegExp> = {
 const MAX_IDS = 20;
 
 /** The pieces of what was typed, one per line or comma-separated, duplicates dropped. */
-function pieces(text: string, normal: (piece: string) => string = (p) => p): string[] {
+function pieces(text: string, normal: (piece: string) => string): string[] {
   const out: string[] = [];
   for (const piece of text.split(/[\s,]+/)) {
     if (!piece) continue;
@@ -316,23 +316,33 @@ export function projectIds(text: string): string[] {
   return pieces(text, (p) => p.toLowerCase());
 }
 
-/** Page or database ids: a bare id with or without dashes, or from a pasted link the
- *  page a peek link opens (`p=<id>`), else the id that ends its last path segment
- *  (`Title-<id>`; the `?v=` view id is not the database's).
- *  Sent lower-case without dashes; the server stores them dashed. A piece that is
+/** A page store id from a bare id with or without dashes, or from a pasted link the id
+ *  that ends its last path segment (`Title-<id>`; the `?v=` view id is not the
+ *  database's). With `peek`, a link's `p=<id>` (the page a peek link opens) comes
+ *  first. Lower-case without dashes; the server stores it dashed. A piece that is
  *  neither is kept as typed, so the form can name it. */
+function pageStoreId(piece: string, peek: boolean): string {
+  if (!piece.includes("/")) {
+    const hexes = piece.toLowerCase().replace(/-/g, "");
+    return PAGE_ID_RE.test(hexes) ? hexes : piece;
+  }
+  if (peek) {
+    const page = /[?&]p=([0-9a-f-]+)(?:[&#]|$)/i.exec(piece)?.[1]?.toLowerCase().replace(/-/g, "");
+    if (page && PAGE_ID_RE.test(page)) return page;
+  }
+  // The id is the whole segment, or what follows the title's last `-`.
+  const segment = (piece.split(/[?#]/)[0] ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
+  return /(?:^|-)([0-9a-f]{32})$/.exec(segment.toLowerCase())?.[1] ?? piece;
+}
+
+/** Page ids; a peek link gives the page it opens. */
 export function pageIds(text: string): string[] {
-  return pieces(text, (p) => {
-    if (!p.includes("/")) {
-      const hexes = p.toLowerCase().replace(/-/g, "");
-      return PAGE_ID_RE.test(hexes) ? hexes : p;
-    }
-    const peek = /[?&]p=([0-9a-f-]+)(?:[&#]|$)/i.exec(p)?.[1]?.toLowerCase().replace(/-/g, "");
-    if (peek && PAGE_ID_RE.test(peek)) return peek;
-    // The id is the whole segment, or what follows the title's last `-`.
-    const segment = (p.split(/[?#]/)[0] ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
-    return /(?:^|-)([0-9a-f]{32})$/.exec(segment.toLowerCase())?.[1] ?? p;
-  });
+  return pieces(text, (p) => pageStoreId(p, true));
+}
+
+/** Database ids; a peek link gives its database, never the page it opens. */
+export function databaseIds(text: string): string[] {
+  return pieces(text, (p) => pageStoreId(p, false));
 }
 
 /** Meeting space ids (a `spaces/` prefix dropped) or meeting ids. */
@@ -364,7 +374,7 @@ function configProblems(f: SourceForm): string[] {
       return idProblems(projectIds(f.projects), PROJECT_ID_RE, "project", "a project id (a UUID)");
     case "notion": {
       const pages = pageIds(f.pages);
-      const databases = pageIds(f.databases);
+      const databases = databaseIds(f.databases);
       const all = [...pages, ...databases];
       if (all.length === 0) return ["Add at least one page or database."];
       const problems = all.length > MAX_IDS ? [`At most ${MAX_IDS} pages and databases in all.`] : [];
@@ -397,7 +407,7 @@ export function sourceConfig(f: SourceForm): Record<string, unknown> {
     case "linear":
       return { project_ids: projectIds(f.projects) };
     case "notion":
-      return { page_ids: pageIds(f.pages), database_ids: pageIds(f.databases) };
+      return { page_ids: pageIds(f.pages), database_ids: databaseIds(f.databases) };
     case "recording":
       return { provider: f.provider, ids: meetingIds(f.meetings, f.provider) };
   }
