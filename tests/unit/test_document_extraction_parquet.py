@@ -493,6 +493,18 @@ def test_an_arrow_memory_error_in_a_conversion_is_raised_not_left_out() -> None:
         parquetfile._split(Column(), None, [0], 0)
 
 
+def test_a_file_of_only_blank_rows_is_its_header_block_at_row_0() -> None:
+    from server.knowledge.domain.extract.validate import parse_artifact
+
+    t = pa.table({"v": pa.array([None] * 3, pa.int64()), "s": pa.array([None] * 3, pa.string())})
+    a = extract(_file(t), "f.parquet")
+    (tab,) = a.tables
+    assert (tab.rows, tab.header_rows, tab.locator.row_start, tab.locator.row_end) == ((), 0, 0, 0)
+    assert [(b.text, b.locator.row_start, b.locator.row_end) for b in a.blocks] == [("v; s", 0, 0)]
+    served = parse_artifact(a.to_json(), fmt="parquet", max_bytes=1 << 24)
+    assert [b.text for b in served.blocks] == ["v; s"] and served.coverage.complete
+
+
 def test_a_file_of_blank_rows_is_read_only_to_the_decode_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -692,6 +704,19 @@ def test_the_extractor_imports_without_pyarrow() -> None:
         [sys.executable, "-c", code], cwd=extractor, capture_output=True, text=True, timeout=60
     )
     assert (run.returncode, run.stdout.strip()) == (0, "False"), run.stderr
+
+
+def test_a_bytes_column_is_charged_no_copies_since_none_is_made(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(parquetfile, "_MAX_DECODED_BYTES", 150_000)
+    monkeypatch.setattr(parquetfile, "_BATCH_ROWS", 4)
+    # One entry of 10,000 bytes named by every row: each batch decodes it once
+    # (about 100,000 bytes in all), and 400,000 bytes were it copied.
+    blob = pa.DictionaryArray.from_arrays(pa.array([0] * 40, pa.int32()), pa.array([b"x" * 10_000]))
+    a, tab = _one(_file(pa.table({"k": [str(i) for i in range(40)], "b": blob})))
+    assert len(tab.rows) == 40
+    assert [f.unit for f in a.coverage.failed] == ["f.parquet values"]  # the bytes, left out
 
 
 def test_a_dictionary_of_views_is_charged_by_its_views_lengths() -> None:

@@ -465,11 +465,14 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
             # Every column, the kept ones taken by position: a name may repeat,
             # so none is selected by name.
             for batch in pf.iter_batches(batch_size=batch_rows, row_groups=[g], use_threads=False):
-                # Every column read, those past MAX_COLUMNS too (they are decoded),
-                # and at least a value a row, so a batch of empty rows costs too.
+                # Every column's values, those past MAX_COLUMNS too (they are
+                # decoded), and at least a value a row, so a batch of empty rows
+                # costs too; the copies only of the columns read into Python (a
+                # bytes column, or one past MAX_COLUMNS, is never copied).
                 costs = [_cost(batch.column(j)) for j in range(batch.num_columns)]
+                copies = (c for j, (_, c) in enumerate(costs[: len(kept)]) if kinds[j] != "bytes")
                 decoded += max(batch.num_rows, sum(v for v, _ in costs))
-                decoded_bytes += int(batch.nbytes) + sum(c for _, c in costs)
+                decoded_bytes += int(batch.nbytes) + sum(copies)
                 # A file of blank rows, of long lists or of values each too long to
                 # hold is read no further: the rest is its own failed unit.
                 if decoded > _MAX_DECODED or decoded_bytes > _MAX_DECODED_BYTES:

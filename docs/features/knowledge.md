@@ -884,18 +884,19 @@ there, or by a process that stopped, runs again from its start and counts the at
 job that fails, or is cancelled, publishes nothing, so the earlier revision keeps
 serving. `knowledge.ingest_cancel` stops a pending job at once and a running one before
 it publishes; a job past its publish check finishes. The reference extractor reads
-Markdown, HTML, plain text, SQL, TOML, CSV, PDF (its text layer: a scanned page needs
-OCR, so the job needs `allow_partial`), DOCX, PPTX, XLSX (a table of each sheet, and its
-rows as passages) and Parquet (a table, a decimal's digits kept; its dataset holds them as
-[Datasets](#datasets) says); any unit of a tabular file the extractor could not read, or a capability it
-lost, such as a table cut at its budget, a workbook saved without its formulas' values
-or a Parquet column of bytes, makes the job partial, and it needs `allow_partial`: see
+Markdown, HTML, plain text, SQL, TOML, CSV, PDF (its text layer: a scanned page needs OCR,
+so the job needs `allow_partial`), DOCX, PPTX, XLSX (a table of each sheet, and its rows
+as passages) and Parquet (a table, a decimal's digits kept; its dataset holds them as
+[Datasets](#datasets) says); any unit of a tabular file the extractor could not read, or a
+capability it lost, such as a table cut at its budget, a workbook saved without its
+formulas' values or a Parquet column of bytes, makes the job partial, and it needs
+`allow_partial`: see
 [tables](../architecture/document-extraction.md#formats-in-the-reference-extractor);
 another format fails `format_unavailable` until an extractor that declares it is
-configured. `knowledge.update_metadata` with `reindex=true` refuses an
-ingested document (its chunks come from the artifact): ingest it again to re-index it. A
-chunk's context (the title, description and section breadcrumb both search legs read) is
-filled as for `knowledge.add`.
+configured. `knowledge.update_metadata` with `reindex=true` refuses an ingested document
+(its chunks come from the artifact): ingest it again to re-index it. A chunk's context
+(the title, description and section breadcrumb both search legs read) is filled as for
+`knowledge.add`.
 
 ## Datasets
 
