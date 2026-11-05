@@ -412,6 +412,105 @@ def _open(data: bytes) -> Any:
         raise ParquetError(str(e)[:250]) from e  # source.py names it a corrupt parquet file
 
 
+class _Walk:
+    """One file's rows as they are read: the numbering, the blank rows and what
+    has been decoded so far, across its row groups."""
+
+    def __init__(self, pf: Any, name: str, kept: list[Any], rows: Rows, budget: Budget) -> None:
+        self.pf, self.name, self.rows, self.budget = pf, name, rows, budget
+        self.kinds = [_kind(f.type) for f in kept]
+        self.targets = [_readable(f.type) for f in kept]
+        self.unheld = [0] * len(kept)  # each column's values Python cannot hold, across the file
+        self.reader = _Reader()
+        self.failed: list[Failure] = []
+        self.number = self.blank = self.decoded = self.decoded_bytes = 0
+        # No more values to a batch than the budget holds cells, however wide the
+        # file: its leaf columns, a struct's fields each one, are what a batch decodes.
+        self.batch_rows = max(
+            1, min(_BATCH_ROWS, tabular.MAX_CELLS // max(1, pf.metadata.num_columns))
+        )
+
+    def cut(self, rest: int, why: str) -> None:
+        fail(
+            self.budget,
+            self.failed,
+            f"{self.name} rows {self.number + 1}-",
+            f"{counted(rest, 'row')} {why}",
+        )
+
+    def group(self, groups: list[int], g: int) -> bool:
+        """Read row group `g` of `groups` (each one's row count); True when the
+        file is read no further."""
+        import pyarrow as pa
+
+        start, group_rows = self.number, groups[g]
+        try:
+            # Every column, the kept ones taken by position: a name may repeat,
+            # so none is selected by name.
+            batches = self.pf.iter_batches(
+                batch_size=self.batch_rows, row_groups=[g], use_threads=False
+            )
+            for batch in batches:
+                # A file of blank rows, of long lists or of values each too long to
+                # hold is read no further: the rest is its own failed unit.
+                if self._charge(batch):
+                    rest = group_rows - (self.number - start) + sum(groups[g + 1 :])
+                    self.cut(rest, "past what one file decodes")
+                    return True
+                self._read(batch)
+                if self.rows.more:  # the budget ran out in this batch: the rest is counted
+                    rest = group_rows - (self.number - start)
+                    self.rows.count(self.number + 1, rest)
+                    self.number += rest
+                    return False
+        except (pa.ArrowException, OSError, ValueError, MemoryError) as e:
+            # The group's rows from the first not decoded (or not held: a list
+            # value past the child's memory), and every group after.
+            why = str(e) or type(e).__name__  # a MemoryError has no message
+            fail(
+                self.budget,
+                self.failed,
+                f"{self.name} rows {self.number + 1}-",
+                f"not decoded: {why}"[:200],
+            )
+            return True
+        return False
+
+    def _charge(self, batch: Any) -> bool:
+        """Charge `batch` to the decode bound before it is read into Python;
+        True when it is past it. Every column's values, those past MAX_COLUMNS
+        too (they are decoded), and at least a value a row, so a batch of empty
+        rows costs too; the copies only of the columns read into Python (a bytes
+        column, or one past MAX_COLUMNS, is never copied)."""
+        costs = [_cost(batch.column(j)) for j in range(batch.num_columns)]
+        copies = (
+            c for j, (_, c) in enumerate(costs[: len(self.kinds)]) if self.kinds[j] != "bytes"
+        )
+        self.decoded += max(batch.num_rows, sum(v for v, _ in costs))
+        self.decoded_bytes += int(batch.nbytes) + sum(copies)
+        return self.decoded > _MAX_DECODED or self.decoded_bytes > _MAX_DECODED_BYTES
+
+    def _read(self, batch: Any) -> None:
+        kinds, reader = self.kinds, self.reader
+        columns = [
+            _values(batch.column(j), self.targets[j], kinds[j], self.unheld, j)
+            for j in range(len(kinds))
+        ]
+        for i in range(batch.num_rows):
+            if self.rows.more:  # past the budget: counted by the caller, its rows not read
+                return
+            self.number += 1
+            left = reader.total
+            typed = (reader.cell(columns[j][i], kinds[j]) for j in range(len(kinds)))
+            cells = {j: c for j, c in enumerate(typed) if c.kind != "empty"}
+            # A row of nothing (nulls, NaNs, blank text) is no row, as a blank
+            # CSV record; one whose values were left out is still a row.
+            if not cells and reader.total == left:
+                self.blank += 1
+                continue
+            self.rows.add(self.number, cells, self.budget)
+
+
 def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     import pyarrow as pa
 
@@ -420,95 +519,34 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     meta = pf.metadata
     fields = list(pf.schema_arrow)
     kept = fields[:MAX_COLUMNS]
-    kinds = [_kind(f.type) for f in kept]
-    targets = [_readable(f.type) for f in kept]
     budget = Budget()
-    failed: list[Failure] = []
+    rows = Rows([Cell(f.name, "string") if f.name.strip() else EMPTY for f in kept], header_row=0)
+    walk = _Walk(pf, name, kept, rows, budget)
+    failed = walk.failed
     if len(fields) > MAX_COLUMNS:
         reason = f"{counted(len(fields) - MAX_COLUMNS, 'column')} past column {MAX_COLUMNS}"
         fail(budget, failed, f"{name} columns", reason)
-    rows = Rows([Cell(f.name, "string") if f.name.strip() else EMPTY for f in kept], header_row=0)
     budget.collect([c for c in rows.header if c.text])  # held, as a sheet's is
-    reader = _Reader()
-    # No more values to a batch than the budget holds cells, however wide the
-    # file: its leaf columns, a struct's fields each one, are what a batch decodes.
-    batch_rows = max(1, min(_BATCH_ROWS, tabular.MAX_CELLS // max(1, meta.num_columns)))
-    groups = [meta.row_group(g).num_rows for g in range(meta.num_row_groups)]
-    number = blank = decoded = decoded_bytes = 0
-    stopped = False
+    # A count a footer declares below 0 is no rows.
+    groups = [max(0, meta.row_group(g).num_rows) for g in range(meta.num_row_groups)]
     read_groups = 0
-    unheld = [0] * len(kept)  # each column's values Python cannot hold, across the file
     if not kept:  # no column: every row is blank, counted from the metadata
-        blank = sum(groups)
+        walk.blank = sum(groups)
     for g, group_rows in enumerate(groups if kept else []):
-        if stopped:
-            break
         if not group_rows:  # nothing to decode: no reader is set up for it
             continue
         if rows.more:
             # Past the budget: counted from the metadata, never decoded.
-            rows.count(number + 1, group_rows)
-            number += group_rows
+            rows.count(walk.number + 1, group_rows)
+            walk.number += group_rows
             continue
         read_groups += 1
         if read_groups > _MAX_GROUPS:  # each costs a reader's setup: past them, the rest is counted
-            rest = sum(groups[g:])
-            fail(
-                budget,
-                failed,
-                f"{name} rows {number + 1}-",
-                f"{counted(rest, 'row')} past what one file decodes",
-            )
+            walk.cut(sum(groups[g:]), "past what one file decodes")
             break
-        start = number
-        try:
-            # Every column, the kept ones taken by position: a name may repeat,
-            # so none is selected by name.
-            for batch in pf.iter_batches(batch_size=batch_rows, row_groups=[g], use_threads=False):
-                # Every column's values, those past MAX_COLUMNS too (they are
-                # decoded), and at least a value a row, so a batch of empty rows
-                # costs too; the copies only of the columns read into Python (a
-                # bytes column, or one past MAX_COLUMNS, is never copied).
-                costs = [_cost(batch.column(j)) for j in range(batch.num_columns)]
-                copies = (c for j, (_, c) in enumerate(costs[: len(kept)]) if kinds[j] != "bytes")
-                decoded += max(batch.num_rows, sum(v for v, _ in costs))
-                decoded_bytes += int(batch.nbytes) + sum(copies)
-                # A file of blank rows, of long lists or of values each too long to
-                # hold is read no further: the rest is its own failed unit.
-                if decoded > _MAX_DECODED or decoded_bytes > _MAX_DECODED_BYTES:
-                    rest = group_rows - (number - start) + sum(groups[g + 1 :])
-                    reason = f"{counted(rest, 'row')} past what one file decodes"
-                    fail(budget, failed, f"{name} rows {number + 1}-", reason)
-                    stopped = True
-                    break
-                columns = [
-                    _values(batch.column(j), targets[j], kinds[j], unheld, j)
-                    for j in range(len(kept))
-                ]
-                for i in range(batch.num_rows):
-                    if rows.more:  # past the budget: counted below, its rows not read
-                        break
-                    number += 1
-                    left = reader.total
-                    typed = (reader.cell(columns[j][i], kinds[j]) for j in range(len(kept)))
-                    cells = {j: c for j, c in enumerate(typed) if c.kind != "empty"}
-                    # A row of nothing (nulls, NaNs, blank text) is no row, as a blank
-                    # CSV record; one whose values were left out is still a row.
-                    if not cells and reader.total == left:
-                        blank += 1
-                        continue
-                    rows.add(number, cells, budget)
-                if rows.more:  # the budget ran out in this batch: the rest is counted
-                    rest = group_rows - (number - start)
-                    rows.count(number + 1, rest)
-                    number += rest
-                    break
-        except (pa.ArrowException, OSError, ValueError, MemoryError) as e:
-            # The group's rows from the first not decoded (or not held: a list
-            # value past the child's memory), and every group after.
-            why = str(e) or type(e).__name__  # a MemoryError has no message
-            fail(budget, failed, f"{name} rows {number + 1}-", f"not decoded: {why}"[:200])
+        if walk.group(groups, g):
             break
+    reader = walk.reader
     causes = {
         "bytes": "of bytes, no text",
         "infinite": "infinite, no number a cell holds",
@@ -529,7 +567,10 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
         blocks=tuple(acc.blocks),
         # The row groups' rows (the count each declares, as they are read), less the blank.
         coverage=Coverage(
-            "rows", sum(groups) - blank, len(t.rows) if t is not None else 0, failed=tuple(failed)
+            "rows",
+            sum(groups) - walk.blank,
+            len(t.rows) if t is not None else 0,
+            failed=tuple(failed),
         ),
         tables=(t,) if t is not None else (),
     )

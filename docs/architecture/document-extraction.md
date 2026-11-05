@@ -391,9 +391,9 @@ longest ago first), and a run cut off at that deadline or by a stopped process c
 
 ## Datasets
 
-A table of the artifact (a sheet, a CSV file) also becomes a typed dataset (`server/knowledge/app/datasets.py`), so its
-values can be read as values rather than as passages. Two tables hold every dataset, whatever the files' shapes, so no
-upload creates a table:
+A table of the artifact (a sheet, a CSV or Parquet file) also becomes a typed dataset
+(`server/knowledge/app/datasets.py`), so its values can be read as values rather than as passages. Two tables hold every
+dataset, whatever the files' shapes, so no upload creates a table:
 
 - `loom.datasets`, the catalog: a ReplacingMergeTree row per (source, dataset, document version), read with `FINAL`,
   with the schema, its state (`inferred`, `needs_clarification`, `approved`), what needs an answer, the rows stored and
@@ -414,11 +414,12 @@ number formats).
 The schema asks for an answer (`needs_clarification`) for a mixed column, a generated name (an empty header cell), a
 repeated name (an extractor other than the reference one may send one; the dataset names it `<name> (2)`, as the
 reference extractor does, since a column is addressed by its name), a header whose every name reads as a number or a
-date (the first row may be data), and the columns no slot holds (one answer for each type, naming the first of them).
-The answers about single columns stop at 100; past them, a column's `inferred` type says the rest. Inference runs off
-the event loop, since a table may be 16,384 columns wide. A dataset's id is the same in every revision of its source: a
-sheet by its name, a CSV file's table by its id, and a sheet an extractor split into more than one table by its name and
-the table's id.
+date (the first row may be data; not asked of a table whose names are no row of its source, `header_rows` 0, as a
+Parquet file's schema), and the columns no slot holds (one answer for each type, naming the first of them). The answers
+about single columns stop at 100; past them, a column's `inferred` type says the rest. Inference runs off the event
+loop, since a table may be 16,384 columns wide. A dataset's id is the same in every revision of its source: a sheet by
+its name, a CSV or Parquet file's table by its id, and a sheet an extractor split into more than one table by its name
+and the table's id.
 
 The ingest job writes each dataset after the chunks and before the source's claim: an empty catalog row, so a run that
 stops midway finds the rows it wrote, its rows in batches of 5,000 under a new snapshot (typed off the event loop, the

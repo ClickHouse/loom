@@ -322,6 +322,13 @@ def test_the_artifact_reads_back_and_types_its_decimals_exactly() -> None:
     assert [(c.type, c.slot) for c in schema.columns] == [("string", "s1"), ("number", "n1")]
     assert [r["n1"] for r in ds.typed_rows(tab, schema.columns, 0, 9).rows] == amounts
     assert json.loads(a.to_json())["tables"][0]["rows"][0][1] == "99999999999999999999.123456789"
+    # Names that read as numbers are the schema's, no first row of data: the
+    # server asks no header question of them.
+    years = pa.table({"2023": [1], "2024": [2]})
+    served = parse_artifact(
+        extract(_file(years), "y.parquet").to_json(), fmt="parquet", max_bytes=1 << 24
+    )
+    assert served.tables[0].header_rows == 0 and ds.infer(served.tables[0]).clarifications == ()
 
 
 def test_nanoseconds_inside_a_struct_a_map_or_a_dictionary_and_a_float16_column_read_alike() -> (
@@ -607,6 +614,29 @@ def test_a_schema_of_no_columns_is_counted_not_iterated(monkeypatch: pytest.Monk
     a = parquetfile.extract_parquet(b"", "z.parquet")
     assert [(t.columns, t.rows, t.header_rows) for t in a.tables] == [((), (), 0)]
     assert (a.coverage.to_dict()["total"], a.coverage.to_dict()["extracted"]) == (0, 0)
+
+
+def test_a_row_count_a_footer_declares_below_zero_is_no_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Meta:
+        num_row_groups = 2
+        num_columns = 1
+        num_rows = -5
+
+        def row_group(self, g: int) -> Any:
+            return type("Group", (), {"num_rows": -5})()
+
+    class File:
+        metadata = Meta()
+        schema_arrow = [pa.field("v", pa.int64())]
+
+        def iter_batches(self, **_: Any) -> Any:
+            raise AssertionError("a group of no rows is not read")
+
+    monkeypatch.setattr(parquetfile, "_open", lambda data: File())
+    a = parquetfile.extract_parquet(b"", "z.parquet")
+    assert (a.coverage.to_dict()["total"], a.coverage.failed) == (0, ())
 
 
 def test_a_batch_of_rows_with_no_values_still_costs_its_rows(
