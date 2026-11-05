@@ -548,7 +548,7 @@ def _order_key(r: dict[str, Any]) -> tuple[Any, ...]:
     confidence, then newest."""
     conf = r.get("confidence")
     return (
-        "constraint" not in (r.get("tags") or []),
+        CONSTRAINT_TAG not in (r.get("tags") or []),
         not r.get("pinned"),
         -(float(conf) if conf is not None else 1.0),
         -_stamp(r),
