@@ -81,10 +81,10 @@ rows, those with something to check first. It serves whole rows, `check` rows fi
 then constraints, up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` (250) tokens, and always
 the first row; the tier's budget may still trim the section like any other. Each row
 carries the pre-edit block's line for it with its value cut at the line length (source,
-`(pinned)` and the code-change note kept), `pinned`, `code_state` and a `verdict`. Each changed file read is one
-`memory.for_file` read: four ClickHouse reads (files match, code links, their memories,
-the linked rows; a file with many links slices the last), each keeping up to 50 rows with
-up to `LOOM_MEMORY_FOR_FILE_WHOLE_TOKENS` × 48 bytes of value.
+`(pinned)` and the code-change note kept), `pinned`, `code_state` and a `verdict`. Each
+changed file read is one `memory.for_file` read: four ClickHouse reads (files match, code
+links, their memories, the linked rows; a file with many links slices the last), each
+keeping up to 50 rows with up to `LOOM_MEMORY_FOR_FILE_WHOLE_TOKENS` × 48 bytes of value.
 
 The check looks for two kinds of name: the code-shaped names in a row's `Rejected:`
 clause, up to a `Realized:` one (backticked, qualified like `A::b`, or calls like `f()`),
@@ -112,10 +112,9 @@ read (`paths_not_read`), a path whose read reached its 50 rows (`paths_at_row_ce
 path whose code-links read failed (`links_not_read`), or rows the row cap left out that
 had something to check (`rows_not_read`).
 
-`code.conventions` states the repository's
-recurring maintainer checks as facts over one PR's diff (`pr_number`, `head_sha`,
-`files` or `diff`), never as opinions; `rules` narrows which checks run. The diff it
-reads is capped at `LOOM_CODE_CONVENTIONS_DIFF_MAX_BYTES`.
+`code.conventions` states the repository's recurring maintainer checks as facts over one
+PR's diff (`pr_number`, `head_sha`, `files` or `diff`), never as opinions; `rules` narrows
+which checks run. The diff it reads is capped at `LOOM_CODE_CONVENTIONS_DIFF_MAX_BYTES`.
 
 ## Pre-PR duplicate check: `code.pr_check`
 
