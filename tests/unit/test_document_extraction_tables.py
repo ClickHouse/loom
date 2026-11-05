@@ -219,12 +219,12 @@ def test_a_float_is_searched_as_a_sheet_shows_it() -> None:
     assert a.blocks[-1].text == "Total: 0.3"
 
 
-def test_xlsx_and_csv_are_parsed_and_parquet_is_not() -> None:
+def test_xlsx_and_csv_are_parsed_and_a_file_that_is_no_parquet_is_corrupt() -> None:
     assert extract(b"a\n1\n", "t.csv").format == "csv"
     assert extract(_book(), "t.xlsx").format == "xlsx"
     with pytest.raises(ExtractionError) as e:
         extract(b"PAR1 not read PAR1", "t.parquet")
-    assert e.value.code == "format_unavailable"
+    assert e.value.code == "corrupt"
 
 
 def test_a_csv_whose_rows_are_wider_than_its_header_is_bounded_by_its_rows(

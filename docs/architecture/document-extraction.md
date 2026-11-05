@@ -135,7 +135,7 @@ in undeclared UTF-8 text (behind a byte-order mark or not) is binary; neither is
 | PPTX       | the standard library's zip and XML readers                            | per slide: its title as a heading, each text shape, tables, speaker notes    |
 | CSV        | the standard library's `csv`                                          | one table; its rows as blocks of up to 20 rows                               |
 | XLSX       | the standard library's zip and XML readers                            | per sheet: a table, its name as a heading, its rows as blocks of up to 20    |
-| Parquet    | none in this build                                                    | none: detected and reported `format_unavailable`                             |
+| Parquet    | `pyarrow`, from the bytes in memory                                   | one table; its rows as blocks of up to 20 rows                               |
 
 **Markdown.** Headings are ATX, setext and one-line `<hN>`. A paragraph over a setext underline (indented up to three
 spaces) is one heading; a list item, a quote or a thematic break over `---` is not. A fenced block keeps its body's
@@ -237,7 +237,7 @@ text, is a failed unit. So is a slide id whose relationship names no slide part,
 reader walks. A table, in either format, is one block, a row per line with its cells joined by a pipe, and `attrs.table`
 its `rows` and `columns`.
 
-**Tables (CSV, XLSX).** A tabular source is `tables` in the artifact: each a header (the first row with a value), its
+**Tables (CSV, XLSX, Parquet).** A tabular source is `tables` in the artifact: each a header (the first row with a value), its
 columns typed by every value they hold (`string`, `number`, `bool`, `date`, `datetime`, `time`, `duration`, or `mixed`;
 empty cells and errors do not count; a column of dates and date-times is `datetime`), and its rows of values. The same
 rows are blocks, twenty to a block and at most 1,000 characters (a longer row is a block alone, under a chunk's default
@@ -275,6 +275,20 @@ and is a failed unit. A row or cell that names no position takes the one after t
 and marked `attrs.hidden`, and a damaged sheet, or one whose root is no worksheet (another namespace), fails alone;
 shared strings or styles that cannot be read to their end keep what was read, and the artifact loses `shared_strings` or
 `number_formats`.
+
+**Parquet.** pyarrow reads the file from the bytes in memory, with no file system, no threads and its system memory
+pool: its columns from the schema (the first 16,384; the rest are a failed unit, `<name> columns`) and its rows a row
+group at a time in batches of 1,024. The names are no row of the file, so the table has no header row (`header_rows` 0)
+and its rows count from 1. An integer is a number, one past signed 64 bits (a `uint64`) its digits as text; a float is a
+number, a `float32` its shortest decimal and NaN or an infinity its text; a decimal is a number written as its exact
+text, since a JSON number reads back as a double; a bool, a date, a timestamp (its zone kept, none when the column has
+none), a time of day and a duration read as the other readers write them; text is text and a list, struct or map is its
+JSON. Bytes are no text, and they and a value over 1 MiB are left out and counted (`<name> values`). A value Python
+cannot hold (a nanosecond timestamp, a date past year 9999) reads as Arrow's text of it, its column as text. A row of
+nulls is no row. Pages decode one at a time, so a row group's size does not decide what is held; the rows past the table
+budget are counted from the metadata, never decoded; a row group whose pages do not decode fails the rows from there
+(`<name> rows N-`). The child's limits bound one decode, and its environment holds the native libraries to one thread
+and the system allocator, which the address-space limit allows. A build without pyarrow does not declare Parquet.
 
 **Bounds.** One budget bounds all of an artifact's tables, in three parts: what a source holds, the bytes its tables
 write, and the text they index. A source holds at most 1,000,000 non-empty cells in all, merged cells included, their
@@ -428,7 +442,7 @@ tables' rows of the scope with the documents (`documents.tombstone`).
 ## Dependencies
 
 The reference extractor's parsers need `sqlglot` for SQL, `pypdf` (and `cryptography`, for a PDF encrypted with AES) for
-PDF, and the standard library otherwise. They are installed with the service (`extractor/pyproject.toml`), and in a
+PDF, `pyarrow` for Parquet, and the standard library otherwise. They are installed with the service (`extractor/pyproject.toml`), and in a
 development environment by the `extractor` extra; the server's image carries none of them. Its image
 (`extractor/Dockerfile`, `ghcr.io/clickhouse/loom-extractor`) installs the package and its locked dependencies
 (`extractor/uv.lock`) into a venv root owns and runs the service as a user that owns nothing in it, so no file on a

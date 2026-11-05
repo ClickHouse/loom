@@ -118,8 +118,11 @@ async def test_with_no_service_configured_nothing_is_extracted(
     assert hosts.calls == []
 
 
-async def test_a_format_its_service_does_not_declare_is_unavailable(hosts: _Hosts) -> None:
+async def test_a_format_its_service_does_not_declare_is_unavailable(
+    hosts: _Hosts, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # A FormatUnavailable, which is an ExtractorUnavailable: configuration, not an outage.
+    _ref_without_parquet(monkeypatch)
     with pytest.raises(extractors.FormatUnavailable, match="does not declare"):
         await extractors.extract(b"PAR1PAR1", name="a.parquet")
     assert await extractors.available_formats() == {
@@ -464,9 +467,16 @@ def test_a_token_for_no_configured_url_or_not_a_string_is_refused_at_load(tokens
         )
 
 
+def _ref_without_parquet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reference service as a build without pyarrow: it does not declare Parquet."""
+    declared = {f: o for f, o in service._FORMAT_OPTIONS.items() if f != "parquet"}
+    monkeypatch.setattr(service, "_FORMAT_OPTIONS", declared)
+
+
 async def test_a_format_routed_only_by_media_type_is_available(
-    hosts: _Hosts, settings_override: Any
+    hosts: _Hosts, settings_override: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _ref_without_parquet(monkeypatch)
     hosts.apps["stub"] = _stub(lambda r: Response(status_code=500), formats=["parquet"])
     settings_override(document_extractors_json='{"application/vnd.apache.parquet": "http://stub"}')
     assert (await extractors.available_formats())["parquet"] == "http://stub"
@@ -515,8 +525,9 @@ async def test_a_deep_toml_value_from_the_reference_extractor_passes_the_contrac
 
 
 async def test_a_formats_own_route_hides_its_media_types_when_listing_too(
-    hosts: _Hosts, settings_override: Any
+    hosts: _Hosts, settings_override: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _ref_without_parquet(monkeypatch)
     hosts.apps["stub"] = _stub(lambda r: Response(status_code=500), formats=["parquet"])
     settings_override(
         document_extractors_json='{"parquet": "http://ref", "application/vnd.apache.parquet": "http://stub"}'

@@ -124,6 +124,17 @@ async def _read_capped(
     return None if out is None else bytes(out)
 
 
+# The native readers' own threads and allocators, held to what the child's
+# address-space limit allows: OpenBLAS (numpy, loaded with pyarrow) reserves a
+# buffer per thread, and Arrow's default pool reserves arenas the system
+# allocator does not.
+_NATIVE_ENV = {
+    "OPENBLAS_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "ARROW_DEFAULT_MEMORY_POOL": "system",
+}
+
+
 async def _tail(stream: asyncio.StreamReader) -> bytes:
     tail = b""
     while chunk := await stream.read(_READ_CHUNK):
@@ -152,7 +163,7 @@ async def run_child(config: Config, data: bytes, request: dict[str, object]) -> 
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd="/",
-        env={"PYTHONPATH": _PACKAGE_ROOT, "PATH": os.defpath, "LC_ALL": "C.UTF-8"},
+        env={"PYTHONPATH": _PACKAGE_ROOT, "PATH": os.defpath, "LC_ALL": "C.UTF-8", **_NATIVE_ENV},
         start_new_session=True,
     )
     stdin, stdout, stderr = proc.stdin, proc.stdout, proc.stderr

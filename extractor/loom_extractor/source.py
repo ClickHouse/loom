@@ -15,6 +15,7 @@ Pure and I/O-free.
 from __future__ import annotations
 
 import codecs
+import importlib.util
 import io
 import zipfile
 from dataclasses import dataclass, replace
@@ -25,6 +26,7 @@ from loom_extractor.artifact import Artifact, within_contract
 from loom_extractor.csvfile import extract_csv
 from loom_extractor.docxfile import extract_docx
 from loom_extractor.ooxml import PartError
+from loom_extractor.parquetfile import ParquetError
 from loom_extractor.pdffile import EncryptedPdf, extract_pdf
 from loom_extractor.pptxfile import extract_pptx
 from loom_extractor.sql import UnknownDialect, extract_sql
@@ -32,11 +34,16 @@ from loom_extractor.text import extract_text
 from loom_extractor.tomlfile import extract_toml
 from loom_extractor.xlsxfile import StrictWorkbook, extract_xlsx
 
+# Parquet is read with pyarrow, an install of its own: a build without it reads
+# every other format and does not declare this one.
+_PARQUET = ("parquet",) if importlib.util.find_spec("pyarrow") is not None else ()
 # Every format a source can be, and whether this build parses it.
-PARSED_FORMATS = ("markdown", "html", "text", "sql", "toml", "csv", "pdf", "docx", "pptx", "xlsx")
+PARSED_FORMATS = (
+    "markdown", "html", "text", "sql", "toml", "csv", "pdf", "docx", "pptx", "xlsx", *_PARQUET,
+)  # fmt: skip
 # Formats read from their bytes: no encoding applies.
-BINARY_PARSED = ("pdf", "docx", "pptx", "xlsx")
-KNOWN_FORMATS = (*PARSED_FORMATS, "parquet")
+BINARY_PARSED = ("pdf", "docx", "pptx", "xlsx", *_PARQUET)
+KNOWN_FORMATS = (*PARSED_FORMATS, *(() if _PARQUET else ("parquet",)))
 
 _EXTENSIONS = {
     "md": "markdown",
@@ -194,7 +201,7 @@ def extract(data: bytes, filename: str, options: Options | None = None) -> Artif
     if fmt in BINARY_PARSED:
         if opts.encoding:
             raise ExtractionError("invalid_option", f"{fmt} takes no encoding")
-        return within_contract(_parse_binary(data, fmt))
+        return within_contract(_parse_binary(data, fmt, filename))
     artifact = within_contract(_parse(decode(data, opts.encoding), fmt, opts, filename))
     if opts.encoding:
         # The codec's own name, so `utf8` and `UTF-8` address one artifact.
@@ -216,14 +223,20 @@ def _parse(text: str, fmt: str, opts: Options, filename: str) -> Artifact:
     return extract_text(text, fmt)
 
 
-def _parse_binary(data: bytes, fmt: str) -> Artifact:
+def _parse_binary(data: bytes, fmt: str, filename: str) -> Artifact:
     try:
         if fmt == "pdf":
             return extract_pdf(data)
         if fmt == "xlsx":
             return extract_xlsx(data)
+        if fmt == "parquet":
+            from loom_extractor.parquetfile import extract_parquet  # pyarrow loads only here
+
+            return extract_parquet(data, filename)
         return extract_docx(data) if fmt == "docx" else extract_pptx(data)
     except (EncryptedPdf, StrictWorkbook) as e:
         raise ExtractionError("unsupported_format", str(e)) from e
+    except ParquetError as e:
+        raise ExtractionError("corrupt", str(e)) from e
     except (PyPdfError, PartError, zipfile.BadZipFile) as e:
         raise ExtractionError("corrupt", f"not a readable {fmt} file: {e}"[:300]) from e

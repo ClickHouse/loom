@@ -120,15 +120,17 @@ class Rows:
     header: list[Cell]
     # A row is a map of column to its non-empty cells, so what it holds is what the budget counts.
     rows: list[tuple[int, dict[int, Cell]]] = field(default_factory=list)
+    # The header's row in the source; 0 for a source whose names are no row of it
+    # (a Parquet file's schema), whose rows count from 1.
     header_row: int = 1
     more: int = 0
     more_from: int = 0
     first_column: int = 0  # the source's column the table starts at, from 0
 
-    def count(self, number: int) -> None:
-        """Count row `number` without holding it."""
+    def count(self, number: int, n: int = 1) -> None:
+        """Count rows `number` on (`n` of them) without holding them."""
         self.more_from = self.more_from or number
-        self.more += 1
+        self.more += n
 
     def add(self, number: int, cells: dict[int, Cell], budget: Budget) -> None:
         """Collect row `number` when the budget allows, else count it."""
@@ -289,6 +291,8 @@ def table(
         budget.text -= len(head) + CHUNK_FLOOR
         loc = Locator(sheet=sheet, row_start=rows.header_row, row_end=rows.header_row)
         acc.add("paragraph", head, loc, table_id=tid)
+    # The rows the table came from: its header row, or with none, its first row.
+    first = rows.header_row or (grid[0][0] if grid else 0)
     last = grid[-1][0] if grid else rows.header_row
     return (
         Table(
@@ -296,8 +300,8 @@ def table(
             name=name,
             columns=columns,
             rows=tuple(tuple(c.value for c in r) for _, r in grid),
-            header_rows=1,
-            locator=Locator(sheet=sheet, row_start=rows.header_row, row_end=last),
+            header_rows=1 if rows.header_row else 0,
+            locator=Locator(sheet=sheet, row_start=first, row_end=last),
         ),
         failed,
     )

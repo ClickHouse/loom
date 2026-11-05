@@ -715,6 +715,10 @@ def test_a_number_json_would_round_goes_out_as_text() -> None:
     assert app._value(Decimal(2**53)) == str(2**53)
     assert app._value(Decimal("12345678901234567.500000000")) == "12345678901234567.5"
     assert app._value(Decimal("0.100000000")) == 0.1
+    # 38 digits, past what the default decimal context holds: every one kept.
+    wide = Decimal("99999999999999999999.123456789")
+    assert app._value(wide) == "99999999999999999999.123456789"
+    assert app._value(Decimal("-12345678901234567890.500000000")) == "-12345678901234567890.5"
 
 
 def test_an_approval_stamped_before_another_that_switched_first_still_outranks_it(
