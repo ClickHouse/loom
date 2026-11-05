@@ -5,7 +5,7 @@ and runs the plan; the model never sees a database or writes SQL. Its result is
 evidence the answer cites as `[knowledge.query#1]`, checked like any other
 citation.
 
-Column names and the task are source and caller text: they shape a plan the
+Column names, dataset names and the task are source and caller text: they shape a plan the
 server checks against the schemas, never anything run as given.
 
 Pure and I/O-free.
@@ -73,14 +73,17 @@ def plan_prompt(task: str, schemas: Sequence[Mapping[str, Any]], refused: str = 
 
 
 def _described(schema: Mapping[str, Any], room: int) -> str:
-    """One dataset as the prompt lists it: its first columns, each name whole, as
-    many as MAX_PROMPT_COLUMNS and `room` characters hold, and how many more. A name
-    is a JSON string, so one holding a line break or a comma reads as one name and
-    the plan can copy it back exactly."""
+    """One dataset as the prompt lists it, on one line of at most `room` characters
+    unless its first column alone is longer: its name, its first columns, each name
+    whole, as many as MAX_PROMPT_COLUMNS and the room hold, and how many more. Names
+    are JSON strings, so one holding a line break or a comma reads as one name and
+    the plan can copy a column's back exactly."""
     cols = list(schema["columns"])
-    head = f"- {schema['alias']}: {schema['name']} ({schema['row_count']} rows)"
+    name = json.dumps(cut(schema["name"], MAX_EVIDENCE_CELL), ensure_ascii=False)
+    head = f"- {schema['alias']}: {name} ({schema['row_count']} rows); columns: "
     shown: list[str] = []
-    used = len(head)
+    # Room kept for the count of columns not shown.
+    used = len(head) + len(f", and {len(cols)} more not shown")
     for c in cols[:MAX_PROMPT_COLUMNS]:
         entry = f"{json.dumps(c['name'], ensure_ascii=False)} ({c['type']})"
         if shown and used + len(entry) + 2 > room:
@@ -88,7 +91,7 @@ def _described(schema: Mapping[str, Any], room: int) -> str:
         shown.append(entry)
         used += len(entry) + 2
     more = f", and {len(cols) - len(shown)} more not shown" if len(cols) > len(shown) else ""
-    return f"{head}; columns: {', '.join(shown)}{more}"
+    return f"{head}{', '.join(shown)}{more}"
 
 
 def _cell(value: Any) -> str:
