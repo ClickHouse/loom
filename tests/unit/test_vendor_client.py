@@ -5,6 +5,7 @@ size-capped read. No error carries the vendor's response body."""
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -36,9 +37,24 @@ def _google_reason(reason: str) -> dict[str, Any]:
         (403, _google_reason("userRateLimitExceeded"), _vendor.RateLimited, "thing: rate_limited"),
         (403, _google_reason("dailyLimitExceeded"), _vendor.RateLimited, "thing: rate_limited"),
         (403, _google_reason("rateLimitExceeded"), _vendor.RateLimited, "thing: rate_limited"),
-        (403, {"error": {"status": "RESOURCE_EXHAUSTED"}}, _vendor.RateLimited, "rate_limited"),
-        (403, _google_reason("insufficientPermissions"), _vendor.CredentialRefused, "http_403"),
-        (403, {"code": "restricted_resource", "message": SECRET}, _vendor.CredentialRefused, "403"),
+        (
+            403,
+            {"error": {"status": "RESOURCE_EXHAUSTED"}},
+            _vendor.RateLimited,
+            "thing: rate_limited",
+        ),
+        (
+            403,
+            _google_reason("insufficientPermissions"),
+            _vendor.CredentialRefused,
+            "thing: http_403",
+        ),
+        (
+            403,
+            {"code": "restricted_resource", "message": SECRET},
+            _vendor.CredentialRefused,
+            "thing: http_403",
+        ),
         (401, {"message": SECRET}, _vendor.CredentialRefused, "thing: http_401"),
         (404, {"message": SECRET}, _vendor.NotFound, "thing: http_404"),
         (400, {"message": SECRET}, _vendor.VendorError, "thing: http_400"),
@@ -48,7 +64,7 @@ def _google_reason(reason: str) -> dict[str, Any]:
 def test_an_error_answer_maps_to_its_error_without_the_body(
     status: int, body: Any, raised: type, text: str
 ) -> None:
-    with pytest.raises(raised, match=text) as caught:
+    with pytest.raises(raised, match=f"^{re.escape(text)}$") as caught:
         _vendor.raise_for_status(httpx.Response(status, json=body), "thing")
     assert caught.value.status == status
     assert SECRET not in str(caught.value)
@@ -116,18 +132,33 @@ def test_a_network_failure_names_its_type_only() -> None:
         (400, {"error": "invalid_grant"}, _vendor.CredentialRefused, "token exchange: http_400"),
         (401, {}, _vendor.CredentialRefused, "token exchange: http_401"),
         (403, {}, _vendor.CredentialRefused, "token exchange: http_403"),
-        (403, {"error": "rate_limit_exceeded"}, _vendor.RateLimited, "rate_limited"),
+        (
+            403,
+            {"error": "rate_limit_exceeded"},
+            _vendor.RateLimited,
+            "token exchange: rate_limited",
+        ),
         (429, {}, _vendor.RateLimited, "token exchange: rate_limited"),
         (404, {}, _vendor.NotFound, "token exchange: http_404"),
         (500, {}, _vendor.VendorError, "token exchange: http_500"),
-        (200, {"token_type": "Bearer"}, _vendor.VendorError, "no access_token in the answer"),
-        (200, {"access_token": ""}, _vendor.VendorError, "no access_token in the answer"),
+        (
+            200,
+            {"token_type": "Bearer"},
+            _vendor.VendorError,
+            "token exchange: no access_token in the answer",
+        ),
+        (
+            200,
+            {"access_token": ""},
+            _vendor.VendorError,
+            "token exchange: no access_token in the answer",
+        ),
     ],
 )
 def test_a_token_exchange_failure_says_which(
     status: int, body: Any, raised: type, text: str
 ) -> None:
-    with pytest.raises(raised, match=text) as caught:
+    with pytest.raises(raised, match=f"^{re.escape(text)}$") as caught:
         asyncio.run(_vendor.exchange_token(_client(_answer(status, body)), URL, "token exchange"))
     assert caught.value.status == (status if status >= 400 else 0)
 
