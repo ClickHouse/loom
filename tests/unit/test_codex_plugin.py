@@ -218,7 +218,7 @@ def test_codex_plugin_bundles_its_mcp_entry() -> None:
     # the newest installed copy of this plugin's own launcher under $HOME and
     # runs the helper beside it.
     helper = entry["http_headers_helper"]
-    assert '"$HOME"/.codex/plugins/cache/*/loom/*/bin/loom-node' in helper
+    assert '"$HOME"/.codex/plugins/cache/loom/loom/*/bin/loom-node' in helper
     assert '"${l%/*}/loom-mcp-headers.mjs"' in helper
     assert "sort -V | tail -1" in helper
     assert "bearer_token_env_var" not in entry  # the token comes from ~/.loom/config.json

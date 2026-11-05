@@ -3,7 +3,7 @@
     "loom": {
       "type": "http",
       "url": "http://localhost:7777/mcp?toolset=core,coding,tracker,tasks",
-      "http_headers_helper": "l=\"$(ls -d \"$HOME\"/.codex/plugins/cache/*/loom/*/bin/loom-node 2>/dev/null | sort -V | tail -1)\"; sh \"$l\" \"${l%/*}/loom-mcp-headers.mjs\""
+      "http_headers_helper": "l=\"$(ls -d \"$HOME\"/.codex/plugins/cache/loom/loom/*/bin/loom-node 2>/dev/null | sort -V | tail -1)\"; sh \"$l\" \"${l%/*}/loom-mcp-headers.mjs\""
     }
   }
 }

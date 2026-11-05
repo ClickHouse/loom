@@ -62,13 +62,13 @@ override replaces the plugin's entry whole, helper included), and put the same U
 ```toml
 [mcp_servers.loom]
 url = "https://loom.example.com/mcp?toolset=core,coding,tracker,tasks"
-http_headers_helper = 'l="$(ls -d "$HOME"/.codex/plugins/cache/*/loom/*/bin/loom-node 2>/dev/null | sort -V | tail -1)"; sh "$l" "${l%/*}/loom-mcp-headers.mjs"'
+http_headers_helper = 'l="$(ls -d "$HOME"/.codex/plugins/cache/loom/loom/*/bin/loom-node 2>/dev/null | sort -V | tail -1)"; sh "$l" "${l%/*}/loom-mcp-headers.mjs"'
 ```
 
 Codex runs the helper through `sh -c` with a reduced environment (`HOME`, `PATH`, the
 locale and a few others) and does not expand `${PLUGIN_ROOT}`, so the command finds the
-newest installed helper under `$HOME/.codex` and starts it through the plugin's
-`bin/loom-node`. The launcher finds Node 18+ on that `PATH`, in a version manager's
+newest installed `loom@loom` launcher (`bin/loom-node`) under `$HOME/.codex` and runs the
+header helper beside it. The launcher finds Node 18+ on that `PATH`, in a version manager's
 default directory under `HOME` or in the usual install directories; `LOOM_NODE` and
 variables such as `NVM_DIR` do not reach it. With a custom `CODEX_HOME`, spell the path
 out. On Windows Codex runs the helper through `cmd.exe`, which cannot run this command:

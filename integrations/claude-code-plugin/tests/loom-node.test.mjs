@@ -354,7 +354,7 @@ test("every hook and both header helpers start Node through the launcher", () =>
   );
 });
 
-test("the Codex header helper finds the newest cached plugin and runs its helper through its launcher", {
+test("the Codex header helper runs the newest loom@loom launcher and the helper beside it", {
   skip: WINDOWS,
 }, () => {
   const f = fixture();
@@ -367,16 +367,17 @@ test("the Codex header helper finds the newest cached plugin and runs its helper
       const real = spawnSync("/bin/sh", ["-c", `command -v ${t}`], { encoding: "utf8" }).stdout.trim();
       fs.symlinkSync(real, path.join(tools, t));
     }
-    for (const v of ["1.2.9", "1.2.10"]) {
-      const bin = path.join(f.home, ".codex", "plugins", "cache", "loom", "loom", v, "bin");
+    const cached = (marketplace, v, withLauncher = true) => {
+      const bin = path.join(f.home, ".codex", "plugins", "cache", marketplace, "loom", v, "bin");
       fs.mkdirSync(bin, { recursive: true });
-      fs.copyFileSync(launcher, path.join(bin, "loom-node"));
+      if (withLauncher) fs.copyFileSync(launcher, path.join(bin, "loom-node"));
       fs.writeFileSync(path.join(bin, "loom-mcp-headers.mjs"), `process.stdout.write(${JSON.stringify(v)});\n`);
-    }
-    // An older copy without a launcher, under a marketplace that sorts later, is not picked.
-    const stale = path.join(f.home, ".codex", "plugins", "cache", "zz", "loom", "1.2.6", "bin");
-    fs.mkdirSync(stale, { recursive: true });
-    fs.writeFileSync(path.join(stale, "loom-mcp-headers.mjs"), 'process.stdout.write("stale");\n');
+    };
+    cached("loom", "1.2.9");
+    cached("loom", "1.2.10");
+    // Not picked: a version from before the launcher, and another marketplace's copy.
+    cached("loom", "1.2.11-pre", false);
+    cached("zz", "1.3.0");
     const helper = JSON.parse(fs.readFileSync(path.join(codexRoot, ".mcp.json"), "utf8")).mcpServers.loom
       .http_headers_helper;
     // Codex's cleared environment: HOME, and a Node only under nvm.
