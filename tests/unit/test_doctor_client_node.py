@@ -65,12 +65,19 @@ def test_no_installed_launcher_no_line(home: Path) -> None:
     assert _checks(home) == {}
 
 
-def test_the_newest_codex_install(home: Path) -> None:
+def test_the_newest_codex_install_answers(home: Path) -> None:
     _install(home, ".codex", "1.2.10")
-    _install(home, ".codex", "1.2.9")
     newest = _install(home, ".codex", "1.10.0")
-    assert dc.newest_launcher(home.glob(".codex/plugins/cache/*/loom/*/bin/loom-node")) == newest
-    assert dc.newest_launcher([]) is None
+    _install(home, ".codex", "1.2.9")
+    node = _node(home / ".volta" / "bin", "v22.1.0")
+    # The newest launcher runs: an older one replaced by a stub would fail.
+    for v in ("1.2.9", "1.2.10"):
+        (home / ".codex/plugins/cache/loom/loom" / v / "bin/loom-node").write_text("exit 1\n")
+    assert newest.read_text() == LAUNCHER.read_text()
+    assert _checks(home)["client:codex:node"] == (
+        dc.PASS,
+        f"Loom hook runtime ready: {node} (v22.1.0)",
+    )
 
 
 def test_a_version_manager_node_passes_without_the_shell_path(home: Path) -> None:
@@ -198,9 +205,50 @@ def test_a_disabled_claude_code_plugin_gets_no_line(home: Path) -> None:
 
 
 def test_the_installed_version_is_checked_not_the_newest_cached(home: Path) -> None:
+    record = home / ".claude" / "plugins" / "installed_plugins.json"
     installed = _install(home, ".claude", "1.2.7")
-    (home / ".claude" / "plugins" / "cache" / "loom" / "loom" / "9.9.9" / "bin").mkdir(parents=True)
-    assert dc.claude_plugin_launcher(home) == installed
+    kept = record.read_text()
+    _install(home, ".claude", "9.9.9")  # a newer cache with a real launcher
+    record.write_text(kept)
+    assert dc.claude_plugin_install(home, home) == installed.parent.parent
+
+
+def test_the_install_for_this_checkout_wins_over_the_user_install(home: Path) -> None:
+    def entry(version: str, **extra: str) -> dict[str, str]:
+        path = home / ".claude" / "plugins" / "cache" / "loom" / "loom" / version
+        return {"installPath": str(path), **extra}
+
+    installs = [
+        entry("1.2.5", scope="project", projectPath="/elsewhere"),
+        entry("1.2.6", scope="user"),
+        entry("1.2.7", scope="project", projectPath=str(home / "repo")),
+    ]
+    record = home / ".claude" / "plugins" / "installed_plugins.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"version": 2, "plugins": {"loom@loom": installs}}))
+    cache = home / ".claude" / "plugins" / "cache" / "loom" / "loom"
+    assert dc.claude_plugin_install(home, home / "repo") == cache / "1.2.7"
+    assert dc.claude_plugin_install(home, home / "other") == cache / "1.2.6"
+
+
+@pytest.mark.parametrize("installs", [[{"scope": "user"}], {"scope": "user"}, [], "loom"], ids=str)
+def test_a_malformed_install_record_gets_no_line(home: Path, installs: object) -> None:
+    record = home / ".claude" / "plugins" / "installed_plugins.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"plugins": {"loom@loom": installs}}))
+    assert _checks(home) == {}
+
+
+def test_a_plugin_from_before_the_launcher_is_named(home: Path) -> None:
+    launcher = _install(home, ".claude", "1.2.6")
+    launcher.unlink()
+    assert _checks(home) == {
+        "client:claude-code:node": (
+            dc.WARN,
+            "the installed plugin (1.2.6) predates the Node launcher: its hooks need `node` "
+            "on Claude Code's PATH. Fix: `claude plugin update loom@loom`.",
+        )
+    }
 
 
 def test_on_windows_git_bash_is_found_as_claude_code_finds_it(

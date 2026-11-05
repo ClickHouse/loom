@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 import tomllib
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -880,11 +880,6 @@ def _plugin_version(name: str) -> tuple[int, ...]:
     return tuple(int(n) for n in re.findall(r"\d+", name))
 
 
-def newest_launcher(launchers: Iterable[Path]) -> Path | None:
-    """The `<version>/bin/loom-node` of the newest plugin version; None for none."""
-    return max(launchers, key=lambda p: _plugin_version(p.parent.parent.name), default=None)
-
-
 def posix_sh(env: dict[str, str]) -> str | None:
     """The sh Claude Code runs hooks with: on Windows Git Bash, found the
     way Claude Code finds it (CLAUDE_CODE_GIT_BASH_PATH, else beside git)."""
@@ -897,20 +892,22 @@ def posix_sh(env: dict[str, str]) -> str | None:
     return str(bash) if bash and bash.is_file() else None
 
 
-def claude_plugin_launcher(home: Path) -> Path | None:
-    """`bin/loom-node` of the loom plugin Claude Code has installed and not
-    disabled, from its own records; None otherwise."""
+def claude_plugin_install(home: Path, cwd: Path) -> Path | None:
+    """The loom plugin directory Claude Code runs for `cwd`, from its own
+    records: the project-scope install for that checkout, else the user's.
+    None when it is not installed or settings disable it."""
     try:
         installed = json.loads(_read(home / ".claude" / "plugins" / "installed_plugins.json"))
         installs = installed["plugins"]["loom@loom"]
         settings = json.loads(_read(home / ".claude" / "settings.json") or "{}")
-        enabled = (settings.get("enabledPlugins") or {}).get("loom@loom", True)
-    except (ValueError, KeyError, TypeError, AttributeError):
+        if (settings.get("enabledPlugins") or {}).get("loom@loom") is False:
+            return None
+        project = [i for i in installs if i.get("projectPath") == str(cwd)]
+        user = [i for i in installs if i.get("scope") == "user"]
+        chosen = (project or user or installs)[0]
+        return Path(chosen["installPath"])
+    except (ValueError, KeyError, TypeError, AttributeError, IndexError):
         return None
-    if enabled is False or not installs:
-        return None
-    launcher = Path(installs[0]["installPath"]) / "bin" / "loom-node"
-    return launcher if launcher.is_file() else None
 
 
 def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, str]:
@@ -935,11 +932,27 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     under, as that plugin's own launcher finds it in that client's
     environment."""
     out: list[Check] = []
-    claude = claude_plugin_launcher(home)
-    if claude is not None:
-        out.append(_claude_node_check(home, env, claude))
-    # loom@loom, the plugin codex_plugin_enabled looks for
-    codex = newest_launcher(home.glob(".codex/plugins/cache/loom/loom/*/bin/loom-node"))
+    install = claude_plugin_install(home, Path(env.get("PWD") or os.getcwd()))
+    if install is not None:
+        launcher = install / "bin" / "loom-node"
+        if launcher.is_file():
+            out.append(_claude_node_check(home, env, launcher))
+        else:
+            out.append(
+                (
+                    "client:claude-code:node",
+                    WARN,
+                    f"the installed plugin ({install.name}) predates the Node launcher: its "
+                    "hooks need `node` on Claude Code's PATH. Fix: "
+                    "`claude plugin update loom@loom`.",
+                )
+            )
+    # codex_plugin_enabled checks loom@loom, so read that marketplace's cache.
+    codex = max(
+        home.glob(".codex/plugins/cache/loom/loom/*/bin/loom-node"),
+        key=lambda p: _plugin_version(p.parent.parent.name),
+        default=None,
+    )
     enabled = codex_plugin_enabled(_read(home / ".codex" / "config.toml"))
     # On Windows, Codex runs hooks and the helper through cmd.exe, not the launcher.
     sh = shutil.which("sh")
@@ -953,11 +966,12 @@ def _claude_node_check(home: Path, env: dict[str, str], launcher: Path) -> Check
     its settings `env`: this shell's, or a GUI launch's with no profile."""
     name = "client:claude-code:node"
     settings = _claude_settings_env(home)
-    sh = posix_sh({**env, **settings})
+    client_env = {**env, **settings}
+    sh = posix_sh(client_env)
     if sh is None:
         return (name, FAIL, "no POSIX sh: on Windows the hooks need Git Bash.")
     try:
-        code, line = _launcher_check(sh, launcher, {**env, **settings})
+        code, line = _launcher_check(sh, launcher, client_env)
         if code != 0:
             return (name, FAIL, f"{line} {_NO_NODE} Fix: /loom:loom-status.")
         if WINDOWS:  # a Windows GUI app gets the user's PATH
