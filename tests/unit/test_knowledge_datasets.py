@@ -713,15 +713,15 @@ def test_dataset_get_reads_every_datasets_sample_in_one_read(stores: Stores) -> 
 
 
 def test_a_number_json_would_round_goes_out_as_text() -> None:
-    assert app._value(Decimal("10.500000000")) == 10.5
-    assert app._value(Decimal("7.000000000")) == 7
-    assert app._value(Decimal(2**53)) == str(2**53)
-    assert app._value(Decimal("12345678901234567.500000000")) == "12345678901234567.5"
-    assert app._value(Decimal("0.100000000")) == 0.1
+    assert app.json_value(Decimal("10.500000000")) == 10.5
+    assert app.json_value(Decimal("7.000000000")) == 7
+    assert app.json_value(Decimal(2**53)) == str(2**53)
+    assert app.json_value(Decimal("12345678901234567.500000000")) == "12345678901234567.5"
+    assert app.json_value(Decimal("0.100000000")) == 0.1
     # 38 digits, past what the default decimal context holds: every one kept.
     wide = Decimal("99999999999999999999.123456789")
-    assert app._value(wide) == "99999999999999999999.123456789"
-    assert app._value(Decimal("-12345678901234567890.500000000")) == "-12345678901234567890.5"
+    assert app.json_value(wide) == "99999999999999999999.123456789"
+    assert app.json_value(Decimal("-12345678901234567890.500000000")) == "-12345678901234567890.5"
 
 
 def test_an_approval_stamped_before_another_that_switched_first_still_outranks_it(

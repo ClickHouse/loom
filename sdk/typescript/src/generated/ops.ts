@@ -3752,6 +3752,93 @@ export interface KnowledgeOutlineOutput {
   section_chunk_idxs?: number[];
 }
 
+export interface QueryDataset {
+  alias?: string;
+  source_uri: string;
+  dataset_id: string;
+}
+
+export interface QueryFilter {
+  column: QueryColumn;
+  op: "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "in" | "not_in" | "is_null" | "not_null" | "contains" | "starts_with";
+  value?: string | number | boolean | null;
+  values?: Array<string | number | boolean>;
+}
+
+export interface QueryColumn {
+  dataset?: string;
+  column: string;
+}
+
+export interface QueryJoin {
+  left: QueryColumn;
+  right: QueryColumn;
+}
+
+export interface QueryGroup {
+  column: QueryColumn;
+  bucket?: "" | "day" | "month" | "year";
+  name?: string;
+}
+
+export interface QueryAggregate {
+  fn: "count" | "count_distinct" | "sum" | "avg" | "min" | "max";
+  column?: QueryColumn | null;
+  name: string;
+}
+
+export interface QueryOrder {
+  by: string;
+  desc?: boolean;
+}
+
+export interface KnowledgeQueryInput {
+  org: string;
+  namespace: string;
+  datasets: QueryDataset[];
+  where?: QueryFilter[];
+  joins?: QueryJoin[];
+  group_by?: QueryGroup[];
+  aggregates?: QueryAggregate[];
+  select?: QueryColumn[];
+  order_by?: QueryOrder[];
+  limit?: number;
+}
+
+export interface QueryResultColumn {
+  name: string;
+  type: string;
+}
+
+export interface QueryReceipt {
+  snapshots: QuerySnapshot[];
+  plan: Record<string, unknown>;
+  sql: string;
+  params: Record<string, string>;
+}
+
+export interface QuerySnapshot {
+  alias: string;
+  source_uri: string;
+  dataset_id: string;
+  revision: number;
+  snapshot_id: string;
+  row_count: number;
+  rejected_rows: number;
+  complete: boolean;
+  schema_state: string;
+}
+
+export interface KnowledgeQueryOutput {
+  columns: QueryResultColumn[];
+  rows: unknown[][];
+  row_ids?: number[][];
+  truncated?: boolean;
+  complete: boolean;
+  incomplete?: string[];
+  receipt: QueryReceipt;
+}
+
 export interface KnowledgeReadsInput {
   org: string;
   namespace: string;
@@ -9934,6 +10021,7 @@ export type OpName =
   | "knowledge.inspect"
   | "knowledge.list"
   | "knowledge.outline"
+  | "knowledge.query"
   | "knowledge.reads"
   | "knowledge.search"
   | "knowledge.source.add"
@@ -10290,6 +10378,7 @@ export interface OpMap {
   "knowledge.inspect": { input: KnowledgeInspectInput; output: KnowledgeInspectOutput };
   "knowledge.list": { input: KnowledgeListInput; output: KnowledgeListOutput };
   "knowledge.outline": { input: KnowledgeOutlineInput; output: KnowledgeOutlineOutput };
+  "knowledge.query": { input: KnowledgeQueryInput; output: KnowledgeQueryOutput };
   "knowledge.reads": { input: KnowledgeReadsInput; output: KnowledgeReadsOutput };
   "knowledge.search": { input: KnowledgeSearchInput; output: KnowledgeSearchOutput };
   "knowledge.source.add": { input: KnowledgeSourceAddInput; output: KnowledgeSourceAddOutput };
@@ -10646,6 +10735,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.inspect", group: "knowledge", method: "inspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 4000, audit: false, readOnly: true },
   { name: "knowledge.list", group: "knowledge", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "knowledge.outline", group: "knowledge", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
+  { name: "knowledge.query", group: "knowledge", method: "query", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "knowledge.reads", group: "knowledge", method: "reads", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "knowledge.search", group: "knowledge", method: "search", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 250, audit: false, readOnly: true },
   { name: "knowledge.source.add", group: "knowledge", method: "sourceAdd", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
@@ -10870,4 +10960,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 353;
+export const GENERATED_OP_COUNT = 354;

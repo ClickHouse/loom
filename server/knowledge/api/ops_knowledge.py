@@ -43,6 +43,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeUpsertInput,
     KnowledgeUpsertOutput,
 )
+from server.knowledge.api.models_query import KnowledgeQueryInput, KnowledgeQueryOutput
 from server.knowledge.app.datasets import (
     handle_knowledge_dataset_approve,
     handle_knowledge_dataset_get,
@@ -60,6 +61,7 @@ from server.knowledge.app.ingest import (
 )
 from server.knowledge.app.inspect import handle_knowledge_inspect
 from server.knowledge.app.knowledge_search import handle_knowledge_search
+from server.knowledge.app.query import handle_knowledge_query
 from server.knowledge.app.reads import handle_knowledge_reads
 from server.knowledge.app.synthesize import handle_knowledge_synthesize
 from server.knowledge.app.writes import (
@@ -282,6 +284,17 @@ knowledge_dataset_approve = Operation(
     maturity="experimental",
 )
 
+knowledge_query = Operation(
+    name="knowledge.query",
+    input_model=KnowledgeQueryInput,
+    output_model=KnowledgeQueryOutput,
+    handler=handle_knowledge_query,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+    maturity="experimental",
+)
+
 knowledge_inspect = Operation(
     name="knowledge.inspect",
     maturity="experimental",
@@ -314,4 +327,5 @@ OPERATIONS: list[Operation] = [
     knowledge_ingest_cancel,
     knowledge_dataset_get,
     knowledge_dataset_approve,
+    knowledge_query,
 ]

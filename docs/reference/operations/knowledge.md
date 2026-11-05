@@ -365,6 +365,35 @@ A document's table of contents, as recorded on its chunks at ingest, and optiona
 | `section_content` | `str \| None` | When `section_path` was given: the section's text (its chunks in order) and the chunk indices it came from. |
 | `section_chunk_idxs` | `list[int]` | Chunk indices `section_content` was assembled from; empty when none matched. |
 
+## `knowledge.query`
+
+Calculate over the live snapshots of ingested datasets with a typed plan: filters, inner joins, groups and aggregates, or the rows themselves.
+
+`POST /v1/knowledge.query` · MCP `loom_knowledge_query` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `datasets` | `list[QueryDataset]` | required | The datasets the plan reads, each under its alias. |
+| `where` | `list[QueryFilter]` | *(computed)* | The conditions every row read must meet, applied in each dataset before any join. |
+| `joins` | `list[QueryJoin]` | *(computed)* | How the datasets past the first join one already in the plan: one join each. |
+| `group_by` | `list[QueryGroup]` | *(computed)* | The columns the aggregates are calculated per; empty for one result row. |
+| `aggregates` | `list[QueryAggregate]` | *(computed)* | The calculations; empty to return the rows themselves (`select`). |
+| `select` | `list[QueryColumn]` | *(computed)* | The columns of each row returned when the plan has no aggregates. |
+| `order_by` | `list[QueryOrder]` | *(computed)* | The result's order, by result column names; groups, or rows in source order, by default. |
+| `limit` | `int` | `100` | The result rows returned at most; `truncated` says when more matched. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `columns` | `list[QueryResultColumn]` | The result's columns, in order. |
+| `rows` | `list[list[Any]]` | The result's rows; a decimal or an integer JSON cannot hold exactly is its text. |
+| `row_ids` | `list[list[int]]` | With no aggregates, each returned row's row id in each dataset, in the plan's dataset order. |
+| `truncated` | `bool` | True when more rows matched than `limit` returned. |
+| `complete` | `bool` | False when a dataset read is incomplete or rejected rows: the result may not cover the source. |
+| `incomplete` | `list[str]` | Why the result is not complete, one reason per dataset. |
+| `receipt` | `QueryReceipt` | What was read and how. |
+
 ## `knowledge.reads`
 
 How often agents opened each document over the last `days` (`knowledge.get` ledger rows; dashboard, assistant and bench traffic left out).

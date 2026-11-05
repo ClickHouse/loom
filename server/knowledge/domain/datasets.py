@@ -352,6 +352,15 @@ def _slot_value(v: Any, col: DatasetColumn) -> Any:
     return _instant(v, col.type)
 
 
+def slot_value(v: Any, col: DatasetColumn) -> Any:
+    """`v` as its column's slot holds it; ValueError, with the reason, when it
+    does not fit."""
+    try:
+        return _slot_value(v, col)
+    except _Unfit as e:
+        raise ValueError(str(e)) from None
+
+
 @dataclass
 class Typed:
     """A table's rows as slot values: `rows` (each a map of slot to value, in

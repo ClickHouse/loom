@@ -851,6 +851,10 @@
               "body",
               "options"
             ],
+            "query": [
+              "body",
+              "options"
+            ],
             "reads": [
               "body",
               "options"

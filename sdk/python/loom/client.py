@@ -1330,6 +1330,14 @@ class KnowledgeOps:
             await self._agent.call("knowledge.outline", body, **options),
         )
 
+    async def query(
+        self, body: _ops.KnowledgeQueryBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeQueryOutput:
+        """`knowledge.query`."""
+        return cast(
+            "_ops.KnowledgeQueryOutput", await self._agent.call("knowledge.query", body, **options)
+        )
+
     async def reads(
         self, body: _ops.KnowledgeReadsBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeReadsOutput:

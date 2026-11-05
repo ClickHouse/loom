@@ -5588,6 +5588,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.inspect": 4000,
     "knowledge.list": 150,
     "knowledge.outline": 80,
+    # Each source's live document read twice (before and after) and a catalog row a
+    # dataset, then one scan of up to four snapshots of at most 100,000 rows each.
+    "knowledge.query": 1500,
     "knowledge.reads": 500,
     "knowledge.search": 250,
     # add and rotate: a probe bounded by knowledge_source_probe_timeout_s, up to 5 s
