@@ -143,11 +143,8 @@ def test_no_sh_fails_both_clients(home: Path, monkeypatch: pytest.MonkeyPatch) -
     _install(home, ".codex", "1.3.0")
     monkeypatch.setattr(shutil, "which", lambda name: None)
     assert _checks(home) == {
-        "client:claude-code:node": (dc.FAIL, "no POSIX sh: on Windows the hooks need Git Bash."),
-        "client:codex:node": (
-            dc.FAIL,
-            "no POSIX sh: the hooks and the MCP header helper run `sh`.",
-        ),
+        "client:claude-code:node": (dc.FAIL, dc._NO_SH),
+        "client:codex:node": (dc.FAIL, dc._NO_SH),
     }
 
 
@@ -311,3 +308,12 @@ def test_unreadable_settings_do_not_hide_the_row(home: Path, settings: str) -> N
         dc.PASS,
         f"Loom hook runtime ready: {node} (v22.1.0)",
     )
+
+
+def test_a_pre_launcher_codex_plugin_is_named_even_without_sh(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install(home, ".codex", "1.2.6").unlink()
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    grade, line = _checks(home)["client:codex:node"]
+    assert grade == dc.WARN and "codex plugin marketplace upgrade loom" in line

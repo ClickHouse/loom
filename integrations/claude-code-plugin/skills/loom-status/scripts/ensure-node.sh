@@ -39,10 +39,11 @@ gui_check() {
     try {
       const env = require(process.argv[1]).env || {};
       for (const [k, v] of Object.entries(env))
-        if (typeof v === "string" && !v.includes("\n")) console.log(`${k}=${v}`);
+        if (/^[A-Za-z_]\w*$/.test(k) && typeof v === "string" && !v.includes("\n"))
+          console.log(`${k}=${v}`);
     } catch {}' "$CLAUDE_SETTINGS" 2>/dev/null)
   while IFS= read -r kv; do
-    case $kv in [A-Za-z_]*=*) set -- "$@" "$kv" ;; esac
+    [ -n "$kv" ] && set -- "$@" "$kv"
   done <<SETTINGS
 $settings
 SETTINGS

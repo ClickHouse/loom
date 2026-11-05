@@ -929,6 +929,7 @@ def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, 
 
 
 _NO_NODE = 'No hook runs, and the MCP entry gets no token ("needs authentication").'
+_NO_SH = "no POSIX sh: the hooks and the MCP header helper run `sh` (Git Bash on Windows)."
 
 
 def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
@@ -948,7 +949,7 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     enabled = codex_plugin_enabled(_read(home / ".codex" / "config.toml"))
     # On Windows, Codex runs hooks and the helper through cmd.exe, not the launcher.
     if codex is not None and enabled and not WINDOWS:
-        out.append(_codex_node_check(env, codex, shutil.which("sh")))
+        out.append(_codex_node_check(env, codex))
     return out
 
 
@@ -979,7 +980,7 @@ def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
     client_env = {**env, **settings}
     sh = posix_sh(client_env)
     if sh is None:
-        return (name, FAIL, "no POSIX sh: on Windows the hooks need Git Bash.")
+        return (name, FAIL, _NO_SH)
     try:
         code, line = _launcher_check(sh, launcher, client_env)
         if code != 0:
@@ -1001,15 +1002,16 @@ def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
     return (name, PASS, line)
 
 
-def _codex_node_check(env: dict[str, str], install: Path, sh: str | None) -> Check:
+def _codex_node_check(env: dict[str, str], install: Path) -> Check:
     """Codex runs hooks through a login shell, and the MCP header helper
     with only a few variables kept, LOOM_NODE not among them."""
     name = "client:codex:node"
-    if sh is None:
-        return (name, FAIL, "no POSIX sh: the hooks and the MCP header helper run `sh`.")
     launcher = install / "bin" / "loom-node"
     if not launcher.is_file():
         return _predates_launcher(name, install, "Codex", "`codex plugin marketplace upgrade loom`")
+    sh = shutil.which("sh")
+    if sh is None:
+        return (name, FAIL, _NO_SH)
     helper_env = {k: env[k] for k in CODEX_HELPER_ENV if k in env}
     try:
         code, line = _launcher_check(sh, launcher, env)

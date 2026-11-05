@@ -8,6 +8,9 @@ import test from "node:test";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const whichSync = (c) => spawnSync("/bin/sh", ["-c", `command -v ${c}`], { encoding: "utf8" }).stdout.trim();
+// The GUI run's PATH is fixed; a Node in it is found whatever the test hides.
+const GUI_NODE = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].some((d) => fs.existsSync(path.join(d, "node")));
+const NEEDS_NO_GUI_NODE = { skip: GUI_NODE && "this host has a Node on the GUI launch's PATH" };
 const helper = path.join(here, "..", "skills", "loom-status", "scripts", "ensure-node.sh");
 
 function fixture() {
@@ -118,7 +121,7 @@ test("loom-status Node helper installs nothing while a broken LOOM_NODE would st
   }
 });
 
-test("loom-status Node check warns when only this shell's environment finds Node", () => {
+test("loom-status Node check warns when only this shell's environment finds Node", NEEDS_NO_GUI_NODE, () => {
   const f = fixture();
   try {
     f.put("uname", "echo Darwin");
@@ -143,6 +146,9 @@ test("loom-status Node check warns when only this shell's environment finds Node
     assert.doesNotMatch(f.run("--check").stdout, /Found only/);
     settings({ LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin });
     assert.doesNotMatch(f.run("--check").stdout, /Found only/);
+    // A key that is no variable name is not passed on to the GUI run.
+    settings({ LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin, "two\nlines": "x", "": "y" });
+    assert.doesNotMatch(f.run("--check").stdout, /Found only/);
     // A LOOM_NODE exported in this shell only does not.
     settings({ LOOM_NODE_SYSTEM_DIRS: "" });
     f.env.LOOM_NODE = path.join(f.bin, "node");
@@ -162,7 +168,7 @@ function installAt(root) {
   return path.join(scripts, "ensure-node.sh");
 }
 
-test("loom-status Node check knows Claude Code by where it is installed", () => {
+test("loom-status Node check knows Claude Code by where it is installed", NEEDS_NO_GUI_NODE, () => {
   const f = fixture();
   try {
     f.put("uname", "echo Linux");
