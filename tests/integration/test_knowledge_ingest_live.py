@@ -260,9 +260,15 @@ async def test_a_csv_publishes_its_rows_as_passages_cited_by_row(control_plane_u
     org, ns, uri = unique_org("ingest-csv"), "docs", "repo://retention.csv"
     data = b"Table,Days,Owner\nevents,30,platform\nrollups,365,analytics\n"
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
-        up = (await _upload(c, org, ns, data, "retention.csv")).json()
+        up = await _upload(c, org, ns, data, "retention.csv")
+        assert up.status_code == 201, up.text
         job = await _op(
-            c, "knowledge.ingest", org=org, namespace=ns, upload_id=up["upload_id"], source_uri=uri
+            c,
+            "knowledge.ingest",
+            org=org,
+            namespace=ns,
+            upload_id=up.json()["upload_id"],
+            source_uri=uri,
         )
         await _work(org, ns, job["ingestion_id"])
         status = await _op(
@@ -282,7 +288,8 @@ async def test_a_csv_publishes_its_rows_as_passages_cited_by_row(control_plane_u
             namespace_scope="this",
             search_mode="lexical",
         )
-    hit = next(h for h in hits["results"] if "rollups" in h["content"])
+    hit = next((h for h in hits["results"] if "rollups" in h["content"]), None)
+    assert hit is not None, hits
     assert hit["locator"] == {"row_start": 2, "row_end": 3} and hit["format"] == "csv"
     assert "Table: rollups; Days: 365; Owner: analytics" in hit["content"]
 

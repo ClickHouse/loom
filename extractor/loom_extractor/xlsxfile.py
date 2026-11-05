@@ -113,11 +113,6 @@ _WORKSHEET_ROOT, _STYLES_ROOT, _SHARED_ROOT = (
 )
 
 
-def _rooted(tag: str, root: str, what: str) -> None:
-    if tag != root:
-        raise PartError(f"the {what} part is no {what}: {tag[:100]}")
-
-
 # Strict Open XML names its parts' elements in namespaces of its own, which this
 # reader does not take: refused, not read as an empty workbook.
 _STRICT_WORKBOOK = "{http://purl.oclc.org/ooxml/spreadsheetml/main}workbook"
@@ -137,6 +132,11 @@ _EPOCH_1904 = datetime(1904, 1, 1)
 
 class StrictWorkbook(Exception):
     """A workbook saved as Strict Open XML."""
+
+
+def _rooted(tag: str, root: str, what: str) -> None:
+    if tag != root:
+        raise PartError(f"the {what} part is no {what}: {tag[:100]}")
 
 
 def _column(letters: str) -> int:
@@ -640,11 +640,11 @@ class _WorkbookStream:
         self.date1904 = False
         self.cut = ""  # why the part was read no further
         self.names_cut = 0  # sheet names cut to the contract
-        self._root = ""
+        self._open = False  # past the root element
 
     def start(self, tag: str, attrs: dict[str, str]) -> None:
-        if not self._root:
-            self._root = tag
+        if not self._open:
+            self._open = True
             if tag == _STRICT_WORKBOOK:
                 raise StrictWorkbook("a Strict Open XML workbook; save it as an Excel workbook")
             if tag != _WORKBOOK_ROOT:
