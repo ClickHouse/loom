@@ -134,13 +134,16 @@ describe("the add form's other kinds", () => {
   it("sends a page store's page and database ids, from ids with or without dashes or from links", () => {
     const dashed = `${PAGE.slice(0, 8)}-${PAGE.slice(8, 12)}-${PAGE.slice(12, 16)}-${PAGE.slice(16, 20)}-${PAGE.slice(20)}`;
     expect(pageIds(`${dashed}, https://pages.example/team/Design-Notes-${PAGE}`)).toEqual([PAGE]);
+    // A link with no title, and one to a block on the page.
+    expect(pageIds(`https://pages.example/${PAGE}?pvs=4`)).toEqual([PAGE]);
+    expect(pageIds(`https://pages.example/team/Design-Notes-${PAGE}#${DATABASE}`)).toEqual([PAGE]);
     // A database link's view id (`?v=`) is not the database's id; under Databases it
     // gives the database, under Pages it is named as a database link.
     const dbLink = `https://pages.example/team/${DATABASE}?v=${PAGE}`;
     expect(databaseIds(dbLink)).toEqual([DATABASE]);
     expect(pageIds(dbLink)).toEqual([dbLink]);
     expect(sourceFormProblems({ ...named, kind: "notion", pages: dbLink })).toEqual([
-      `A database link: paste it under Databases: ${dbLink}.`,
+      `Paste a database link under Databases: ${dbLink}.`,
     ]);
     // A peek link opens a page of the database: the page is its `p=`.
     const VIEW = "0123456789abcdef0123456789abcdef";
@@ -205,6 +208,10 @@ describe("the add form's other kinds", () => {
       "Not a meeting id (9-12 digits): https://meet.example/j/81234567890.",
     ]);
     expect(meetingIds("a b", "meet")).toEqual(["a", "b"]);
+    // Two ids on one line are named as typed, not joined into one long number.
+    expect(sourceFormProblems({ ...zoom, meetings: "812 3456 7890 912 3456 7890" })).toEqual([
+      "Put one meeting id per line, or comma-separated: 812 3456 7890 912 3456 7890.",
+    ]);
     expect(sourceFormProblems({ ...meet, meetings: "" })).toEqual(["Add at least one space id."]);
   });
 

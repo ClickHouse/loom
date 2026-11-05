@@ -358,11 +358,25 @@ export function databaseIds(text: string): string[] {
 }
 
 /** Meeting space ids (a `spaces/` prefix dropped), or meeting ids with the spaces they
- *  are shown with dropped (`812 3456 7890`). */
+ *  are shown with dropped (`812 3456 7890`). Spaced digits too long for one meeting id
+ *  are kept as typed: they are two ids on one line. */
 export function meetingIds(text: string, provider: RecordingProvider): string[] {
-  return provider === "meet"
-    ? pieces(text, ANY_SPACE, (p) => p.replace(/^spaces\//, ""))
-    : pieces(text, LINES, (p) => p.replace(/\s+/g, ""));
+  if (provider === "meet") return pieces(text, ANY_SPACE, (p) => p.replace(/^spaces\//, ""));
+  return pieces(text, LINES, (p) => {
+    const digits = p.replace(/\s+/g, "");
+    return /^[0-9]{13,}$/.test(digits) ? p.trim() : digits;
+  });
+}
+
+/** Meeting ids' problems; a piece with spaces left in it is two ids on one line. */
+function zoomProblems(ids: string[]): string[] {
+  if (ids.length === 0) return ["Add at least one meeting id."];
+  const problems = ids.length > MAX_IDS ? [`At most ${MAX_IDS} meeting ids.`] : [];
+  const joined = ids.filter((id) => /\s/.test(id));
+  const bad = ids.filter((id) => !MEETING_ID_RE.zoom.test(id) && !joined.includes(id));
+  if (bad.length > 0) problems.push(`Not a meeting id (9-12 digits): ${bad.join(", ")}.`);
+  if (joined.length > 0) problems.push(`Put one meeting id per line, or comma-separated: ${joined.join("; ")}.`);
+  return problems;
 }
 
 export function normalisedName(name: string): string {
@@ -394,7 +408,7 @@ function configProblems(f: SourceForm): string[] {
       if (all.length === 0) return ["Add at least one page or database."];
       const problems = all.length > MAX_IDS ? [`At most ${MAX_IDS} pages and databases in all.`] : [];
       const linked = pages.filter(isDatabaseLink);
-      if (linked.length > 0) problems.push(`A database link: paste it under Databases: ${linked.join(", ")}.`);
+      if (linked.length > 0) problems.push(`Paste a database link under Databases: ${linked.join(", ")}.`);
       const bad = all.filter((id) => !PAGE_ID_RE.test(id) && !linked.includes(id));
       if (bad.length > 0) problems.push(`Not an id (32 hex digits): ${bad.join(", ")}.`);
       return problems;
@@ -402,7 +416,7 @@ function configProblems(f: SourceForm): string[] {
     case "recording":
       return f.provider === "meet"
         ? idProblems(meetingIds(f.meetings, "meet"), MEETING_ID_RE.meet, "space id", "a space id")
-        : idProblems(meetingIds(f.meetings, "zoom"), MEETING_ID_RE.zoom, "meeting id", "a meeting id (9-12 digits)");
+        : zoomProblems(meetingIds(f.meetings, "zoom"));
   }
 }
 
