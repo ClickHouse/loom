@@ -13,6 +13,7 @@ from server.code.domain.anchor import Definition, bare_name, local_name
 from server.code.domain.declaration import fingerprint_version
 from server.identity.domain.read_scope import ReadFilters
 from server.memory.domain.code_change import worst
+from server.memory.domain.decision_schema import CONSTRAINT_TAG
 from server.memory.store import code_links as links_store
 from server.memory.store import code_plane_reads as reads
 from server.memory.store.code_links import LinkRow
@@ -180,7 +181,7 @@ async def decisions_for_paths(
     found.sort(
         key=lambda r: (
             first is not None and not first(r),
-            "constraint" not in r["tags"],
+            CONSTRAINT_TAG not in r["tags"],
             not r["pinned"],
             -r["confidence"],
         )
