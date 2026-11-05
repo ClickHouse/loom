@@ -699,7 +699,7 @@ def search_answer(
         show_body = arguments.get("bodies") != "none"
         for h in know_hits[:top_k]:
             uri = h.get("source_uri") or "-"
-            excerpt = " ".join(str(h.get("content") or "").split())[:200] if show_body else ""
+            excerpt = " ".join((h.get("content") or "").split())[:200] if show_body else ""
             lines.append(f"  - [{uri}] {excerpt}".rstrip())
     if conv_hits:
         lines.append("\nConversation hits:")
