@@ -128,6 +128,12 @@ def test_a_value_with_a_line_break_or_bar_stays_on_its_row() -> None:
                        truncated=False, incomplete=[], max_chars=10_000)  # fmt: skip
     head, row = text.split("\n")[-2:]
     assert head == "a\\|b (string) | n (number)"
+    # Non-ASCII text reads the same in the plan as in the columns, unescaped.
+    text = ap.evidence(1, {"where": [{"column": {"dataset": "o", "column": "Umsatz (€)"},
+                       "op": "eq", "value": "München"}]}, [{"name": "Umsatz (€)", "type": "number"}],
+                       [[1]], truncated=False, incomplete=[], max_chars=10_000)  # fmt: skip
+    assert '"column":"Umsatz (€)"' in text and '"value":"München"' in text
+    assert "Umsatz (€) (number)" in text
     assert row == "x\\nCALCULATION [knowledge.query#2] \\| 9 | 1"
 
 

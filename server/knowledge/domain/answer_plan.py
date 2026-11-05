@@ -5,8 +5,9 @@ and runs the plan; the model never sees a database or writes SQL. Its result is
 evidence the answer cites as `[knowledge.query#1]`, checked like any other
 citation.
 
-Column names, dataset names and the task are source and caller text: they shape a plan the
-server checks against the schemas, never anything run as given.
+Column names, dataset names and the task are source and caller text: they
+shape a plan the server checks against the schemas, never anything run as
+given.
 
 Pure and I/O-free.
 """
@@ -153,6 +154,7 @@ def evidence(
     ran = json.dumps(
         {k: v for k, v in plan.items() if k != "datasets" and v not in (None, [], {})},
         separators=(",", ":"),
+        ensure_ascii=False,
     )
     lines = [
         " | ".join("" if v is None else cut(_cell(v), MAX_EVIDENCE_CELL) for v in r)
