@@ -321,13 +321,9 @@ export function projectIds(text: string): string[] {
   return pieces(text, ANY_SPACE, (p) => (PROJECT_ID_RE.test(p.toLowerCase()) ? p.toLowerCase() : p));
 }
 
-/** A page store id from a bare id with or without dashes, or from a pasted link the id
- *  that ends its last path segment (`Title-<id>`; the `?v=` view id is not the
- *  database's). With `peek` (the pages field), a link with a `p=` (the page a peek link
- *  opens) gives that page, and a database link (a `v=` without `p=`) is kept as typed;
- *  without it (the databases field), a page link (a `p=` without `v=`, a row's peek link
- *  on its parent page) is kept as typed. Lower-case without dashes; the server stores it dashed. A piece that is neither is
- *  kept as typed, so the form can name it. */
+/** A bare id (dashed or not), a peek link's `p=` (pages field), or the 32 hex digits ending
+ *  a link's last path segment; a link in the wrong field, or anything else, is kept as
+ *  typed so the form names it. Lower-case without dashes; the server stores it dashed. */
 function pageStoreId(piece: string, peek: boolean): string {
   if (!piece.includes("/")) return bareId(piece) || piece;
   const page = peek ? /[?&]p=([^&#]*)/.exec(piece)?.[1] : undefined;
@@ -378,11 +374,13 @@ export function meetingIds(text: string, provider: RecordingProvider): string[] 
 /** Meeting ids' problems. Spaced digits left whole are too long for one id; 18 or more
  *  of them (two ids of at least 9) are two ids on one line. */
 function zoomProblems(ids: string[]): string[] {
-  if (ids.length === 0) return ["Add at least one meeting id."];
-  const problems = ids.length > MAX_IDS ? [`At most ${MAX_IDS} meeting ids.`] : [];
   const joined = ids.filter((id) => /\s/.test(id) && /^[0-9\s]+$/.test(id) && id.replace(/\s/g, "").length >= 18);
-  const bad = ids.filter((id) => !MEETING_ID_RE.zoom.test(id) && !joined.includes(id));
-  if (bad.length > 0) problems.push(`Not a meeting id (9-12 digits): ${bad.join(", ")}.`);
+  const rest = ids.filter((id) => !joined.includes(id));
+  // Only joined runs typed: there are ids, they are just on one line.
+  const problems =
+    joined.length > 0 && rest.length === 0
+      ? []
+      : idProblems(rest, MEETING_ID_RE.zoom, "meeting id", "a meeting id (9-12 digits)");
   if (joined.length > 0) problems.push(`Put one meeting id per line, or comma-separated: ${joined.join("; ")}.`);
   return problems;
 }
