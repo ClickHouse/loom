@@ -15,8 +15,8 @@ from server.knowledge.domain.extract.artifact import MAX_COLUMN_CHARS
 # Python text, within a few bytes of the text sent (`1.23456789012346e+15` for
 # 1234567890123456.0), and any other list's values send at most about 42 bytes
 # each (a decimal's 38 digits): 1,000 of either stay far under the cap.
-MAX_VALUE_CHARS = 1024  # not a setting: under ClickHouse's 128 KiB parameter
-MAX_LIST_BYTES = 100_000  # not a setting: under ClickHouse's 128 KiB parameter
+MAX_VALUE_CHARS = 1024  # not a setting: the wire contract's bound
+MAX_LIST_BYTES = 100_000  # not a setting: held under ClickHouse's 128 KiB parameter cap
 
 # A value a filter compares with: read as the column's type (a date as ISO text).
 # Strict, so a text value is never read as another type (a long run of digits as
@@ -41,7 +41,7 @@ def _sent_bytes(v: Any) -> int:
     return len(text.encode()) + sum(text.count(c) for c in _ESCAPED) + 4
 
 
-# Bounds of one plan: what one request may ask, not a tunable.
+# Bounds of one plan: what one request may ask.
 MAX_DATASETS = 4  # not a setting: the wire contract's bound
 MAX_FILTERS = 32  # not a setting: the wire contract's bound
 MAX_GROUPS = 8  # not a setting: the wire contract's bound
