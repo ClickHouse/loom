@@ -700,6 +700,8 @@ def test_a_dictionary_of_views_is_charged_by_its_views_lengths() -> None:
     entries = pa.array(["q", "ab", big, None], pa.string_view()).slice(1)
     d = pa.DictionaryArray.from_arrays(pa.array([0, 1, 1, None, 2], pa.int32()), entries)
     assert parquetfile._cost(d) == (5, 2 + 100 + 100)
+    none = pa.DictionaryArray.from_arrays(pa.array([], pa.int32()), pa.array([], pa.binary_view()))
+    assert parquetfile._cost(none) == (0, 0)
 
 
 def test_a_view_array_of_no_values_costs_nothing() -> None:

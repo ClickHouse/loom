@@ -375,8 +375,9 @@ def _cost(array: Any) -> tuple[int, int]:
 
 def _lengths(values: Any) -> Any:
     """Each string or binary value's length in bytes, read without copying one;
-    a view's from its view (Arrow has no length kernel for views, and casting
-    would copy the bytes views share)."""
+    a view's from its view, whose first four bytes are its length (Arrow's view
+    layout: Arrow has no length kernel for views, and casting would copy the
+    bytes views share)."""
     import pyarrow as pa
     import pyarrow.compute as pc
 
@@ -392,14 +393,11 @@ def _lengths(values: Any) -> Any:
 
 def _shared(views: Any) -> int:
     """The bytes a view array's values are beyond its data buffers, which views
-    may share: what `nbytes` does not count and Python copies, a value each.
-    A view's first four bytes are its length (Arrow's view layout)."""
-    buffers = views.buffers()
-    if len(views) == 0 or buffers[1] is None:
-        return 0
-    lengths = memoryview(buffers[1]).cast("i")[0::4][views.offset : views.offset + len(views)]
-    data = sum(b.size for b in buffers[2:] if b is not None)
-    return max(0, int(sum(lengths) - data))  # int: pyarrow's values are untyped
+    may share: what `nbytes` does not count and Python copies, a value each."""
+    import pyarrow.compute as pc
+
+    data = sum(b.size for b in views.buffers()[2:] if b is not None)
+    return max(0, int(pc.sum(_lengths(views)).as_py() or 0) - int(data))
 
 
 def _open(data: bytes) -> Any:

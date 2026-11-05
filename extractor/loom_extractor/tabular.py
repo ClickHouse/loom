@@ -2,8 +2,9 @@
 blocks its rows are searched by: one block per run of rows (ROWS_PER_BLOCK,
 BLOCK_CHARS), each row a line of `column: value` pairs, cited by its sheet and
 rows (a table with no rows under its header is one block of the header row, at
-row 0 when the names are no row of the file, as a Parquet file's schema). A column's type is what
-every value it holds is, over the values that are not empty or errors.
+row 0 when the names are no row of the file, as a Parquet file's schema). A
+column's type is what every value it holds is, over the values that are not
+empty or errors.
 
 One `Budget` bounds what all of an artifact's tables hold. A source collects
 a row's non-empty cells from it as it reads (`MAX_CELLS` in all, their text
