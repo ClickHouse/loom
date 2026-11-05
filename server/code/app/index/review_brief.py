@@ -165,13 +165,16 @@ class DiffFacts:
 @dataclass
 class HunkLine:
     """One line inside a hunk: `marker` is `+`, `-` or ` `, `old_no` its old-side line
-    number (`-` and ` ` lines), the paths those of the file it is in."""
+    number (`-` and ` ` lines), the paths those of the file it is in. `stray` for a line
+    after its hunk's counts ran out (a header that undercounts): `parse_diff` still reads
+    it, the token check does not."""
 
     old_path: str
     new_path: str
     marker: str
     body: str
     old_no: int
+    stray: bool = False
 
 
 @dataclass
@@ -200,6 +203,7 @@ class _Cursor:
     new_left: int = 0
     old_no: int = 0
     ended: bool = False  # a hunk's counts just ran out
+    stray: bool = False  # hunk lines go on past the counts (until the next header)
 
     def in_hunk(self) -> bool:
         return self.old_left > 0 or self.new_left > 0
@@ -249,11 +253,21 @@ def _hunk_line(out: Hunks, cur: _Cursor, line: str) -> bool:
 
 def _between_hunks(out: Hunks, cur: _Cursor, line: str) -> None:
     """Read one line outside a hunk: a file header, a hunk header, or anything else."""
-    if cur.ended and line.startswith("\\"):
+    if (cur.ended or cur.stray) and line.startswith("\\"):
         return  # "\ No newline at end of file" after the hunk's last line
-    if cur.ended and not line.startswith(_AFTER_HUNK):
+    header = line.startswith((*_AFTER_HUNK, "+++ "))
+    if (cur.ended or cur.stray) and not header:
         out.malformed = True  # lines go on after the counts ran out
-    cur.ended = False
+        cur.ended, cur.stray = False, True
+        marker = line[:1] or " "
+        if marker in "+- ":
+            out.lines.append(
+                HunkLine(cur.old_path, cur.new_path, marker, line[1:], cur.old_no, True)
+            )
+            if marker != "+":
+                cur.old_no += 1
+        return
+    cur.ended = cur.stray = False
     if line.startswith("--- "):
         p = line[4:].strip()
         cur.old_path = "" if p == "/dev/null" else (p[2:] if p.startswith("a/") else p)
@@ -576,7 +590,8 @@ def checked_names(text: str, *, constraint: bool) -> list[str]:
 def added_text(diff: str) -> tuple[str, bool]:
     """(the lines a unified diff adds without their `+`, whether a hunk miscounted)."""
     hunks = read_hunks(diff)
-    return "\n".join(h.body for h in hunks.lines if h.marker == "+"), hunks.malformed
+    added = (h.body for h in hunks.lines if h.marker == "+" and not h.stray)
+    return "\n".join(added), hunks.malformed
 
 
 def names_in(added: str, names: list[str]) -> list[str]:
