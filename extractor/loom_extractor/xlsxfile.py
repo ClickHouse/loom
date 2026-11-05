@@ -439,7 +439,13 @@ class _Reader:
         numbers = sorted(sheet.grid)
         right = max(col for row in sheet.grid.values() for col in row)
         header = [sheet.grid[numbers[0]].get(col, EMPTY) for col in range(left, right + 1)]
-        out = Rows(header, header_row=numbers[0], more=rest.more, more_from=rest.more_from)
+        out = Rows(
+            header,
+            header_row=numbers[0],
+            more=rest.more,
+            more_from=rest.more_from,
+            first_column=left,
+        )
         out.rows = [(n, {col - left: c for col, c in sheet.grid[n].items()}) for n in numbers[1:]]
         return out, failed, unread
 

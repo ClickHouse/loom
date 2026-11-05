@@ -123,6 +123,7 @@ class Rows:
     header_row: int = 1
     more: int = 0
     more_from: int = 0
+    first_column: int = 0  # the source's column the table starts at, from 0
 
     def count(self, number: int) -> None:
         """Count row `number` without holding it."""
@@ -137,7 +138,7 @@ class Rows:
             self.count(number)
 
 
-def _names(header: list[Cell], width: int) -> tuple[list[str], int]:
+def _names(header: list[Cell], width: int, first: int = 0) -> tuple[list[str], int]:
     """Column names from the header, one per column, unique and at most
     MAX_COLUMN_CHARS: an empty one is `column N`, a repeated one gets ` (2)`,
     ` (3)`, ... after it (its text cut to make room)."""
@@ -156,7 +157,7 @@ def _names(header: list[Cell], width: int) -> tuple[list[str], int]:
             tail = _NON_SPACE.search(cell.text, 2 * MAX_COLUMN_CHARS + 1) is not None
             hit = read[id(cell)] = folded, tail
         folded, tail = hit
-        base = folded[:MAX_COLUMN_CHARS] or f"column {i + 1}"
+        base = folded[:MAX_COLUMN_CHARS] or f"column {first + i + 1}"  # as the source counts
         name = base
         # Cut when the folded name is too long, or text lies past what was read of the cell.
         was_cut = len(folded) > MAX_COLUMN_CHARS or tail
@@ -236,7 +237,7 @@ def table(
     MAX_COLUMNS itself, and counts them."""
     failed: list[Failure] = []
     width = max([len(rows.header), *(max(r) + 1 for _, r in rows.rows if r)], default=0)
-    names, cut = _names(rows.header, width)
+    names, cut = _names(rows.header, width, rows.first_column)
     if cut:  # the header's text past the names a table holds is not in the artifact
         reason = f"{counted(cut, 'column name')} cut to {MAX_COLUMN_CHARS} characters"
         fail(budget, failed, f"{name} header", reason)

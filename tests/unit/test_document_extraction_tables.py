@@ -542,6 +542,8 @@ def test_a_workbook_is_read_for_a_bounded_number_of_elements(
     a = extract(workbook([("One", rows), ("Two", rows)]), "b.xlsx")
     assert [t.name for t in a.tables] == ["One"] and 0 < len(a.tables[0].rows) < 28
     assert [f.unit.split(" rows ")[0] for f in a.coverage.failed] == ["One", "sheets 2-"]
+    # The sheets past it name the bound that stopped them.
+    assert "elements a package is read for" in a.coverage.failed[-1].reason
 
 
 def test_column_names_are_unique_and_within_the_contract() -> None:
@@ -1186,14 +1188,6 @@ def test_a_date_time_on_the_last_day_reads_as_one() -> None:
     )
 
 
-def test_sheets_the_package_bounds_stop_name_that_bound(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ooxml, "MAX_ELEMENTS", 40)
-    rows = sheet({n: [cell(f"A{n}", n)] for n in range(1, 30)})
-    a = extract(workbook([("One", rows), ("Two", rows)]), "b.xlsx")
-    reasons = {f.unit: f.reason for f in a.coverage.failed}
-    assert "elements a package is read for" in reasons["sheets 2-"]
-
-
 def test_workbook_relationships_past_their_bound_refuse_the_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1205,9 +1199,10 @@ def test_workbook_relationships_past_their_bound_refuse_the_file(
     assert e.value.code == "corrupt"
 
 
-def test_a_wide_csv_is_sniffed_from_whole_lines() -> None:
-    line = ";".join(["v" * 20] * 430) + "\n"  # 9 KB a line: the 64 KiB sample cuts the eighth
-    data = (";".join(f"c{i}" for i in range(430)) + "\n" + line * 8).encode()
+@pytest.mark.parametrize("end", ["\n", "\r"])
+def test_a_wide_csv_is_sniffed_from_whole_lines(end: str) -> None:
+    line = ";".join(["v" * 20] * 430) + end  # 9 KB a line: the 64 KiB sample cuts the eighth
+    data = (";".join(f"c{i}" for i in range(430)) + end + line * 8).encode()
     a = extract(data, "s.csv")
     assert len(a.tables[0].columns) == 430 and a.coverage.to_dict()["complete"]
 
@@ -1260,9 +1255,15 @@ def test_a_header_cut_to_the_contract_is_a_failed_unit(head: str, cut: int) -> N
     assert not a.coverage.to_dict()["complete"]
 
 
-def test_a_cell_written_twice_is_a_failed_unit() -> None:
-    rows = '<row r="1"><c r="A1" t="str"><v>h</v></c></row>'
-    rows += '<row r="2"><c r="A2"><v>1</v></c></row><row r="2"><c r="A2"><v>2</v></c></row>'
+@pytest.mark.parametrize(
+    "second",
+    [
+        '<row r="2"><c r="A2"><v>1</v></c></row><row r="2"><c r="A2"><v>2</v></c></row>',
+        '<row r="2"><c r="A2"><v>1</v></c><c r="A2"><v>2</v></c></row>',  # in one row
+    ],
+)
+def test_a_cell_written_twice_is_a_failed_unit(second: str) -> None:
+    rows = '<row r="1"><c r="A1" t="str"><v>h</v></c></row>' + second
     data = sheet({}).replace("<sheetData></sheetData>", f"<sheetData>{rows}</sheetData>")
     a = extract(workbook([("S", data)]), "b.xlsx")
     assert [(f.unit, f.reason) for f in a.coverage.failed] == [
@@ -1275,22 +1276,6 @@ def test_a_sheet_of_a_name_too_long_is_cut_there() -> None:
     long = rows.replace("</sheetData>", f'<row r="3"><{"e" * 1_100}/></row></sheetData>')
     a = extract(workbook([("S", long)]), "b.xlsx")
     assert a.tables[0].rows == ((1,),) and [f.unit for f in a.coverage.failed] == ["S rows 3-"]
-
-
-def test_a_wide_csv_of_carriage_returns_is_sniffed_from_whole_lines() -> None:
-    line = ";".join(["v" * 20] * 430) + "\r"
-    data = (";".join(f"c{i}" for i in range(430)) + "\r" + line * 8).encode()
-    assert len(extract(data, "s.csv").tables[0].columns) == 430
-
-
-def test_a_cell_written_twice_in_one_row_is_a_failed_unit() -> None:
-    rows = '<row r="1"><c r="A1" t="str"><v>h</v></c></row>'
-    rows += '<row r="2"><c r="A2"><v>1</v></c><c r="A2"><v>2</v></c></row>'
-    data = sheet({}).replace("<sheetData></sheetData>", f"<sheetData>{rows}</sheetData>")
-    a = extract(workbook([("S", data)]), "b.xlsx")
-    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
-        ("S cells", "1 cell at a position already read")
-    ]
 
 
 def test_parts_whose_root_is_in_another_namespace_fail_and_are_not_read_as_empty() -> None:
@@ -1406,3 +1391,9 @@ def test_a_damaged_sheets_merges_stay_read(monkeypatch: pytest.MonkeyPatch) -> N
     assert [(f.unit, f.reason) for f in a.coverage.failed][1:] == [
         ("Good merges", "1 merged range not spread")
     ]
+
+
+def test_an_empty_header_cell_is_named_by_its_column_in_the_sheet() -> None:
+    rows = {1: [cell("C1", "c", t="str"), cell("E1", "e", t="str")], 2: [cell("D2", 1)]}
+    a = extract(workbook([("S", sheet(rows))]), "b.xlsx")
+    assert [c.name for c in a.tables[0].columns] == ["c", "column 4", "e"]

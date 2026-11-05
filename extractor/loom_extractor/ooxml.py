@@ -60,7 +60,7 @@ class PartError(Exception):
 class Cut(PartError):
     """A streamed part read no further: what a handler took before it stands, and
     the parts after it are still read (a tag too large, nesting too deep, too
-    many names)."""
+    many names or a name too long; a handler raises it too, to stop reading)."""
 
 
 class Exhausted(Cut):
@@ -132,9 +132,9 @@ class Package:
         chunk at a time, so a large part (a sheet's cells) is never a tree in
         memory, with the DOCTYPE refusal `xml` has. Its size is no refusal: what
         the package inflates to and its elements are counted as it is read, and
-        past either it raises `Exhausted`; a tag too large, nesting too deep or
-        too many names raise `Cut`. Either way what the handler took
-        stands."""
+        past either it raises `Exhausted`; a tag too large, nesting too deep, too
+        many names or a name too long raise `Cut`. Either way what the handler
+        took stands."""
         info = self._entry(name)
         parser = _expat(name)
 
