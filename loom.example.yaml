@@ -2103,8 +2103,8 @@ settings:
   # (the mirror may have fetched it); a hit is kept. [live]
   # code_review_brief_mirror_miss_ttl_s: 600.0
 
-  # Changed paths the rationale section reads, source paths first; paths past it make
-  # `rationale` unknown (paths_not_read). [live]
+  # Changed paths the `rationale` section reads, source paths first; paths past it make
+  # `rationale` say `unknown` (`paths_not_read`). [live]
   # code_review_brief_rationale_paths: 10
 
   # Decision and constraint rows the `rationale` section serves. [live]

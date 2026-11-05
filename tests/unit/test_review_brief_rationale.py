@@ -626,46 +626,6 @@ async def test_rows_sharing_a_writer_and_key_stay_two_rows_and_a_failed_links_re
 
 
 @pytest.mark.asyncio
-async def test_an_untagged_row_typed_decision_is_read_and_checked(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """memory.set takes any memory_type: a row typed `decision` with no tag is still a
-    decision the pre-edit block prints whole, and the brief reads and checks it."""
-    from server.memory.app import code_link_reads
-    from tests.unit.ch_fake import RecordingCH
-
-    row = {
-        "memory_id": "m1",
-        "memory_key": "design/spill",
-        "memory_type": "decision",
-        "value": json.dumps(DECISION),
-        "tags": [],
-        "confidence": 1.0,
-        "pinned": 0,
-        "agent": "alice",
-        "matched_files": ["src/a.cpp"],
-    }
-    ch = RecordingCH().on("FROM loom.memory FINAL", [row])
-    ch.install(monkeypatch, "server.memory.app.for_file")
-
-    async def _readable(org: str, nss: set[str]) -> set[str]:
-        return nss
-
-    monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
-    monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda org, ns: "")
-    read = await code_plane_reads.decisions_for_paths(
-        "acme", "code-widgets", ["src/a.cpp"], limit=8, first=rb.has_check
-    )
-    # selected by type or tag, not by tag alone
-    (stmt,) = ch.statements("FROM loom.memory FINAL")
-    assert stmt.params["whole_only"] == 1 and stmt.params["tags"] == []
-    assert "(memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))" in stmt.sql
-    assert [r["memory_key"] for r in read.served] == ["design/spill"]
-    sec = _section(read.served, DIFF)
-    assert sec["verdict"] == "check" and sec["rows"][0]["names"] == ["DB::SpillingHashSet"]
-
-
-@pytest.mark.asyncio
 async def test_a_linked_row_is_read_with_the_whole_only_filter_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -749,8 +709,18 @@ def test_the_impact_seed_count_is_code_impacts_own_file_cap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_conflicted_decision_is_read_and_checked(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("tags", "status"),
+    [
+        # memory.set takes any memory_type: a row typed `decision` with no tag is still a
+        # decision the pre-edit block prints whole
+        ([], "active"),
+        # a conflicted row is live: the pre-edit block shows it
+        (["decision"], "conflicted"),
+    ],
+)
+async def test_a_typed_untagged_or_conflicted_decision_is_read_and_checked(
+    monkeypatch: pytest.MonkeyPatch, tags: list[str], status: str
 ) -> None:
     from server.memory.app import code_link_reads
     from tests.unit.ch_fake import RecordingCH
@@ -760,10 +730,10 @@ async def test_a_conflicted_decision_is_read_and_checked(
         "memory_key": "design/spill",
         "memory_type": "decision",
         "value": json.dumps(DECISION),
-        "tags": ["decision"],
+        "tags": tags,
         "confidence": 1.0,
         "pinned": 0,
-        "status_text": "conflicted",
+        "status_text": status,
         "agent": "alice",
         "matched_files": ["src/a.cpp"],
     }
@@ -778,8 +748,11 @@ async def test_a_conflicted_decision_is_read_and_checked(
     read = await code_plane_reads.decisions_for_paths(
         "acme", "code-widgets", ["src/a.cpp"], limit=8, first=rb.has_check
     )
+    # selected by type or tag, not by tag alone, among active and conflicted rows
     (stmt,) = ch.statements("FROM loom.memory FINAL")
+    assert stmt.params["whole_only"] == 1 and stmt.params["tags"] == []
     assert stmt.params["statuses"] == ["active", "conflicted"]
-    assert [(r["memory_key"], r["status"]) for r in read.served] == [("design/spill", "conflicted")]
+    assert "(memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))" in stmt.sql
+    assert [(r["memory_key"], r["status"]) for r in read.served] == [("design/spill", status)]
     sec = _section(read.served, DIFF)
     assert sec["verdict"] == "check" and sec["rows"][0]["names"] == ["DB::SpillingHashSet"]

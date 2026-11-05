@@ -1361,7 +1361,7 @@
           "maximum": 50,
           "minimum": 1,
           "type": "integer",
-          "description": "Changed paths the rationale section reads, source paths first; paths past it make `rationale` unknown (paths_not_read)."
+          "description": "Changed paths the `rationale` section reads, source paths first; paths past it make `rationale` say `unknown` (`paths_not_read`)."
         },
         "code_review_brief_rationale_rows": {
           "default": 8,

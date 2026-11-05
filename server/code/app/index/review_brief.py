@@ -654,7 +654,7 @@ def rationale_section(
     always). The verdict reads every row: check | unknown | clear | none (no row has
     anything to check). It is `clear` or `none` only when every changed path and every
     matching row was checked; otherwise `unknown`, each flag and count naming its cause
-    (the causes table on the review-brief page of the docs)."""
+    (the causes are listed under `rationale` in docs/features/code-index/history-and-prs.md)."""
     added, malformed = added_text(diff) if diff is not None else (None, False)
     malformed = malformed and not diff_cut  # a cut diff ends inside a hunk anyway
     unsure = added is None or diff_cut or malformed
