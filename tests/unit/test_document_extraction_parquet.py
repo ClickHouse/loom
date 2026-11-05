@@ -587,3 +587,26 @@ def test_a_batch_of_rows_with_no_values_still_costs_its_rows(
     assert [(f.unit, f.reason) for f in a.coverage.failed] == [
         ("f.parquet rows 5-", "16 rows past what one file decodes")
     ]
+
+
+def test_views_sharing_one_buffer_are_charged_for_every_value() -> None:
+    long = pa.array(["x" * 1_000] * 4, pa.string_view())
+    assert parquetfile._cost(long) == (4, 0)  # each value its own data: nbytes counts it
+    # Four views of one 1,000-byte value: one buffer, four copies read into Python.
+    one = pa.array(["x" * 1_000], pa.string_view())
+    buffers = one.buffers()
+    view = bytes(buffers[1])
+    shared = pa.Array.from_buffers(
+        pa.string_view(), 4, [None, pa.py_buffer(view * 4), *buffers[2:]]
+    )
+    assert shared.to_pylist() == ["x" * 1_000] * 4
+    assert parquetfile._cost(shared) == (4, 3_000)
+
+
+def test_row_groups_past_the_bound_are_counted_not_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(parquetfile, "_MAX_GROUPS", 3)
+    t = pa.table({"v": pa.array([None] * 10, pa.int64())})  # blank rows: no other bound moves
+    a, _ = _one(_file(t, row_group_size=1))
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        ("f.parquet rows 4-", "7 rows past what one file decodes")
+    ]

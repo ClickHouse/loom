@@ -59,6 +59,8 @@ _MAX_DECODED_BYTES = tabular.MAX_HELD_BYTES  # not a setting: a bound on hostile
 # The values Python cannot hold that one batch's column is searched for; past
 # them the rest of that batch's column is left out unread.
 _MAX_UNHELD = 16  # not a setting: a bound on hostile input
+# The row groups a file has read: each costs its reader's setup, whatever it holds.
+_MAX_GROUPS = tabular.MAX_ROWS  # not a setting: a bound on hostile input
 _INT64 = range(-(2**63), 2**63)
 
 
@@ -356,7 +358,19 @@ def _cost(array: Any) -> tuple[int, int]:
     if pa.types.is_struct(t):
         parts = [_cost(f) for f in array.flatten()]
         return len(array) + sum(v for v, _ in parts), sum(c for _, c in parts)
+    if pa.types.is_string_view(t) or pa.types.is_binary_view(t):
+        return len(array), _shared(array)
     return len(array), 0
+
+
+def _shared(views: Any) -> int:
+    """The bytes a view array's values are beyond its data buffers, which views
+    may share: what `nbytes` does not count and Python copies, a value each.
+    A view's first four bytes are its length (Arrow's view layout)."""
+    buffers = views.buffers()
+    lengths = memoryview(buffers[1]).cast("i")[0::4][views.offset : views.offset + len(views)]
+    data = sum(int(b.size) for b in buffers[2:] if b is not None)
+    return max(0, int(sum(lengths)) - data)
 
 
 def _open(data: bytes) -> Any:
@@ -395,6 +409,7 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
     groups = [meta.row_group(g).num_rows for g in range(meta.num_row_groups)]
     number = blank = decoded = decoded_bytes = 0
     stopped = False
+    read_groups = 0
     if not kept:  # no column: every row is blank, counted from the metadata
         blank = sum(groups)
     for g, group_rows in enumerate(groups if kept else []):
@@ -407,6 +422,16 @@ def extract_parquet(data: bytes, filename: str = "") -> Artifact:
             rows.count(number + 1, group_rows)
             number += group_rows
             continue
+        read_groups += 1
+        if read_groups > _MAX_GROUPS:  # each costs a reader's setup: past them, the rest is counted
+            rest = sum(groups[g:])
+            fail(
+                budget,
+                failed,
+                f"{name} rows {number + 1}-",
+                f"{counted(rest, 'row')} past what one file decodes",
+            )
+            break
         start = number
         try:
             # Every column, the kept ones taken by position: a name may repeat,

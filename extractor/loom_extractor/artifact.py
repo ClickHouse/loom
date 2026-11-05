@@ -167,10 +167,11 @@ class Column:
 
 @dataclass(frozen=True)
 class Table:
-    """A sheet or a CSV file's rows as values: each row a list as long as
-    `columns`, each value a JSON scalar (a date as ISO text, a cell error as
-    `{"error": "#DIV/0!"}`). `locator` names its sheet and the rows its values
-    came from; `header_rows` how many rows above them named the columns."""
+    """A sheet's, a CSV file's or a Parquet file's rows as values: each row a
+    list as long as `columns`, each value a JSON scalar (a date as ISO text, a
+    cell error as `{"error": "#DIV/0!"}`). `locator` names its sheet and the
+    rows its values came from; `header_rows` how many rows above them named the
+    columns (0 for a Parquet schema, whose names are no row)."""
 
     id: str
     name: str
