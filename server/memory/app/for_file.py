@@ -85,9 +85,9 @@ WHERE org = {{org:String}} AND namespace = {{ns:String}}
   AND (length({{tags:Array(String)}}) = 0 OR hasAny(tags, {{tags:Array(String)}}))
   AND ({{whole_only:UInt8}} = 0 OR {_WHOLE_ROW})
 """
-_ORDER = """
-ORDER BY has(tags, 'constraint') DESC, pinned DESC, confidence DESC, updated_at DESC
-LIMIT {lim:UInt32}
+_ORDER = f"""
+ORDER BY has(tags, '{CONSTRAINT_TAG}') DESC, pinned DESC, confidence DESC, updated_at DESC
+LIMIT {{lim:UInt32}}
 """
 _FILES_SQL = f"{_SELECT}  AND arrayExists(f -> {_FILE_MATCH}, files){_ORDER}"
 _LINKED_SQL = f"{_SELECT}  AND memory_id IN {{linked:Array(UUID)}}{_ORDER}"

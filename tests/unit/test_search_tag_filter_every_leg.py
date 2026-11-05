@@ -484,3 +484,31 @@ async def test_a_hit_made_from_a_set_chunk_is_judged_by_its_own_row() -> None:
         [tagged, untagged], _inp(tags=["kind:lesson"]), work, ["ns"]
     )
     assert kept == [tagged] and work == {"tag_filter_dropped": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_tier_hit_meets_the_belt_on_its_own_tags_with_no_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.memory.store as repo
+    from server.memory.app import search_tag_filter
+
+    rows = [
+        SimpleNamespace(
+            memory_key="k", memory_type="semantic", value="v", tags=["x"], created_at=""
+        )
+    ]
+
+    async def fake_list(ident: Any, **kw: Any) -> list[Any]:
+        return rows
+
+    async def no_read(*a: Any, **k: Any) -> Any:
+        raise AssertionError("a stamped tier hit needs no point read")
+
+    monkeypatch.setattr(repo, "list_by_namespace", fake_list)
+    monkeypatch.setattr(search_tag_filter, "read_row_tags", no_read)
+    base = dict(org="o", namespace="ns", agent="*", user_id="-", session_id="-", run_id="", top_k=3)
+    inp = SimpleNamespace(recent_first=1, tags=["x"], tags_soft=False, **base)
+    hits = await _prepend_recent([], inp)
+    kept = await search_tag_filter.enforce_hard_tag_filter(hits, inp, {})
+    assert [h.memory_key for h in kept] == ["k"]
