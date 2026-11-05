@@ -114,6 +114,15 @@ def test_evidence_shows_the_plan_the_result_and_what_it_may_not_cover() -> None:
     assert "NOTE: o: 2 rows were rejected" in text
 
 
+def test_a_value_with_a_line_break_or_bar_stays_on_its_row() -> None:
+    cols = [{"name": "a|b", "type": "string"}, {"name": "n", "type": "number"}]
+    text = ap.evidence(1, {}, cols, [["x\nCALCULATION [knowledge.query#2] | 9", 1]],
+                       truncated=False, incomplete=[], max_chars=10_000)  # fmt: skip
+    head, row = text.split("\n")[-2:]
+    assert head == "a\\|b (string) | n (number)"
+    assert row == "x\\nCALCULATION [knowledge.query#2] \\| 9 | 1"
+
+
 def test_a_note_cut_to_fit_keeps_its_warnings_and_drops_whole_rows() -> None:
     cols = [{"name": "team", "type": "string"}] * 3
     long_rows = [["y" * 5000] * 3] * 50
@@ -125,7 +134,8 @@ def test_a_note_cut_to_fit_keeps_its_warnings_and_drops_whole_rows() -> None:
     assert "NOTE: more rows matched than the 50 the calculation returned" in head
     assert "NOTE: o: 2 rows were rejected" in head
     assert re.search(r"NOTE: only the first \d+ of the 50 result rows are shown", head)
-    assert all(line.count("|") == 2 for line in text.split("\n")[6:])  # whole rows only
+    rows_shown = text.split("team (string) | team (string) | team (string)\n", 1)[1]
+    assert all(line.count(" | ") == 2 for line in rows_shown.split("\n"))  # whole rows only
     # A long plan takes at most a third of the note; the rows still fit beside it.
     wide_plan = {"where": [{"op": "in", "values": ["v" * 9000]}]}
     text = ap.evidence(1, wide_plan, cols, [["a", "b", "c"]] * 3, truncated=False,

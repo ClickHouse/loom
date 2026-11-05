@@ -228,7 +228,7 @@ async def _calculate(
             continue
         unknown = _unknown_keys(KnowledgeQueryInput, proposal.plan)
         if unknown:
-            refused = f"unknown fields {', '.join(unknown[:10])}; use only the fields listed"
+            refused = f"unknown fields {', '.join(unknown)}; use only the fields listed"
             continue
         try:
             query = KnowledgeQueryInput(
@@ -281,7 +281,7 @@ def _why(e: Exception) -> str:
     where it is used)."""
     if isinstance(e, pydantic.ValidationError):
         return "; ".join(
-            f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors()[:5]
+            f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors()
         )
     return str(e)
 

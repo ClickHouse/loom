@@ -88,6 +88,18 @@ def _described(schema: Mapping[str, Any], room: int) -> str:
     return f"{head}; columns: {', '.join(shown)}{more}"
 
 
+def _cell(value: Any) -> str:
+    """A value on one line of a row: a line break or `|` in source text would split
+    the row or shift its columns, so each is escaped."""
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("|", "\\|")
+    )
+
+
 def cut(text: str, limit: int) -> str:
     """`text` to `limit` characters, ending `…` when it was cut."""
     return text if len(text) <= limit else text[: limit - 1] + "…"
@@ -135,13 +147,13 @@ def evidence(
         separators=(",", ":"),
     )
     lines = [
-        " | ".join("" if v is None else cut(str(v), MAX_EVIDENCE_CELL) for v in r)
+        " | ".join("" if v is None else cut(_cell(v), MAX_EVIDENCE_CELL) for v in r)
         for r in rows[:MAX_EVIDENCE_ROWS]
     ]
     # Each name cut like a value, and the line to a third of the room, so a wide
     # selection's heads leave its rows room.
     head = cut(
-        " | ".join(f"{cut(c['name'], MAX_EVIDENCE_CELL)} ({c['type']})" for c in columns),
+        " | ".join(f"{cut(_cell(c['name']), MAX_EVIDENCE_CELL)} ({c['type']})" for c in columns),
         max(1, max_chars // 3),
     )
     warnings = list(incomplete)
