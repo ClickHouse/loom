@@ -2,7 +2,7 @@
  * A repository's document sources on its card: the shared folders, project document
  * stores, page stores' pages and meeting transcripts its documents are pulled from,
  * each with its last sync. They live on the repository's trunk code namespace, the
- * docs namespace, so a reader of the repository sees them and its maintainers manage
+ * docs namespace, so a reader of the repository sees them and an admin there manages
  * them: Add a source (a shared folder), Check, Sync now, Rotate credential, Retire.
  * Read once when the card is opened (a folded card asks nothing); the dialogs load on
  * first use. The counts are information only: nothing waits for a person to confirm
@@ -103,14 +103,14 @@ export function RepoSourcesList({
   org,
   docsNamespace,
   repo,
-  maintained,
+  manageable,
   busy,
 }: {
   org: string;
   docsNamespace: string;
   repo: string;
-  /** The caller administers the docs namespace: every verb. */
-  maintained: boolean;
+  /** The caller may call the source ops on the docs namespace: every verb. */
+  manageable: boolean;
   busy: boolean;
 }) {
   const [state, setState] = useState<State>({ kind: "loading" });
@@ -136,7 +136,7 @@ export function RepoSourcesList({
   );
 
   const menu = (s: KnowledgeSource): RowMenuItem[] => {
-    if (!maintained) return [];
+    if (!manageable) return [];
     const act = (verb: Verb) => () => setActing({ verb, source: s });
     const items: RowMenuItem[] = [
       { label: "Check", icon: "check", onSelect: act("check") },
@@ -172,9 +172,9 @@ export function RepoSourcesList({
       {state.kind === "ready" && state.sources.length === 0 && (
         <p className="text-xs text-text-muted">
           No document sources.{" "}
-          {maintained
+          {manageable
             ? "Add a shared folder and Loom keeps the repository's documents in step with it."
-            : "A maintainer adds them."}
+            : "Anyone with admin on the repository adds them."}
         </p>
       )}
       {state.kind === "ready" && state.sources.length > 0 && (
@@ -184,7 +184,7 @@ export function RepoSourcesList({
           ))}
         </ul>
       )}
-      {maintained && state.kind === "ready" && (
+      {manageable && state.kind === "ready" && (
         <Button type="empty" htmlType="button" iconLeft="plus" disabled={busy} onClick={() => setAdding(true)}>
           Add a source
         </Button>

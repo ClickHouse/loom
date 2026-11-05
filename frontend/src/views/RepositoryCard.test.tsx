@@ -773,10 +773,10 @@ describe("RepositoryCard — the tracker links", () => {
   });
 });
 
-// The Docs facet reads the docs namespace the rows name, and offers Add to the maintainer
-// of that branch only.
+// The Docs facet reads the docs namespace the rows name, and offers Add to a writer
+// of that namespace only.
 describe("RepositoryCard — docs", () => {
-  it("shows the Docs facet for the trunk's docs namespace; Add only for its maintainer", async () => {
+  it("shows the Docs facet for the trunk's docs namespace; Add only for a writer there", async () => {
     const rows = [
       branch({ my_status: "member", my_role: "", docs_namespace: "code-clickhouse" }),
       branch({

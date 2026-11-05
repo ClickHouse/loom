@@ -72,7 +72,7 @@ Markdown built from its text, and the `X-Loom-Download-Source` header says `blob
 
 ## Document sources
 
-A repository's maintainers register the document sources Loom pulls the repository's
+A repository's admins register the document sources Loom pulls the repository's
 documents from. A source lives on the repository's trunk code namespace, the one its
 documents live in, so whoever reads the repository sees where its documents come from,
 and only the namespace's admins change that. Four kinds are served: `gdrive`, a shared

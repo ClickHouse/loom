@@ -154,7 +154,8 @@ export function canCall(op: GatedOp, role: NamespaceRole | null, whoami: WhoAmI 
   return RANK[role] >= RANK[gate.min];
 }
 
-const CLAIM_RANK: Record<string, number> = { viewer: 1, writer: 2, admin: 3, org_admin: 3, platform_admin: 3 };
+// The flat claims, lowercased: org and platform admin reach no more than admin here.
+const CLAIM_RANK: Record<string, number> = { ...RANK, org_admin: RANK.admin, platform_admin: RANK.admin };
 
 /**
  * Whether the caller may call `op` on the namespace of one `code.repos` row, by the rule
@@ -171,8 +172,12 @@ const CLAIM_RANK: Record<string, number> = { viewer: 1, writer: 2, admin: 3, org
  * roles, a token's `ns_write` claim (a write outside it is refused), a revoked grant
  * that still caps a claim, a delegated token (the row states its creator's grant; the
  * server also caps by the token's own claim, and a restricted namespace reads the
- * token's own grant), and a service account with no grant of its own, which the server
- * admits on its creator's grant while the row states none.
+ * token's own grant), a service account with no grant of its own, which the server
+ * admits on its creator's grant while the row states none, and the restricted kill
+ * switch (`LOOM_RESTRICTED_SERVE=false` refuses everyone on a restricted namespace).
+ * The row's `my_role` and `my_status` can also differ from the grant the server checks
+ * when the subject has grants under several alias spellings or a differently cased
+ * subject.
  */
 export function canCallOn(
   op: GatedOp,
@@ -186,7 +191,8 @@ export function canCallOn(
   const claim = Math.max(0, ...(whoami.roles ?? []).map((r) => CLAIM_RANK[r.toLowerCase()] ?? 0));
   const namespaces = whoami.namespaces ?? [];
   const named = (whoami.org === "*" || whoami.org === row.org) && namespaces.includes(row.namespace);
-  if (row.classification === "restricted") return whoami.org === row.org && named && claim >= min && grant >= min;
+  if (row.classification === "restricted")
+    return whoami.org === row.org && namespaces.includes(row.namespace) && claim >= min && grant >= min;
   const covered = named || ((whoami.org === "*" || whoami.org === row.org) && namespaces.includes("*"));
   const capped = named && (row.my_status === "member" || row.my_status === "pending");
   return grant >= min || (covered && !capped && claim >= min);

@@ -849,7 +849,7 @@ export const RepositoryCard = memo(function RepositoryCard({
                   org={docs.org}
                   docsNamespace={docs.namespace}
                   repo={card.repo}
-                  maintained={canCallOn("knowledge.source.add", docs, whoami)}
+                  manageable={canCallOn("knowledge.source.add", docs, whoami)}
                   busy={anyBusy}
                 />
               </FacetRow>
