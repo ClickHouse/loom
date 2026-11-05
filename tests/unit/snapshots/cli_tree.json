@@ -3580,7 +3580,7 @@
            "nargs": null,
            "type": "server.cli.decisions:_window_chars",
            "required": false,
-           "help": "Characters of the document per model call, at least 500 (default memory_decision_extract_window_chars)",
+           "help": "Characters of the document per model call, at least 500 (default LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS)",
            "metavar": null
           },
           {

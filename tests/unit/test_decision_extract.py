@@ -1661,7 +1661,7 @@ async def test_the_restatement_search_makes_no_model_call(monkeypatch) -> None:
 def _cut(cap: int) -> str:
     return (
         f"reply cut at the token limit ({cap}); lower --window-chars "
-        "(memory_decision_extract_window_chars) or --max-per-section, or "
+        "(LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS) or --max-per-section, or "
         "raise decision_extract in LOOM_LLM_MAX_TOKENS_OVERRIDES"
     )
 
@@ -4410,7 +4410,7 @@ async def test_a_cut_support_reply_names_its_own_cap(monkeypatch) -> None:
     cap = llm_max_tokens("decision_support")
     assert [d.reason for d in report.dropped if d.refused] == [
         f"support check: reply cut at the token limit ({cap}); lower --window-chars "
-        "(memory_decision_extract_window_chars) or --max-per-section, or raise "
+        "(LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS) or --max-per-section, or raise "
         "decision_support in LOOM_LLM_MAX_TOKENS_OVERRIDES"
     ]
     assert world.recorded == []

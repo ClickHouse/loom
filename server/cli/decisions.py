@@ -109,7 +109,7 @@ def register_decisions_cli(sub: Any) -> None:
         type=_window_chars,
         default=None,
         help=f"Characters of the document per model call, at least {_MIN_WINDOW_CHARS} "
-        "(default memory_decision_extract_window_chars)",
+        "(default LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS)",
     )
     add_apply_flags(p_ext, writes="write the decision records")
     p_ext.set_defaults(func=_cmd_extract)
