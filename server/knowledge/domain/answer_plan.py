@@ -115,22 +115,29 @@ def cut(text: str, limit: int) -> str:
 
 
 def read_proposal(text: str) -> Proposal:
-    """The plan or the question in a model's reply: the first JSON object in it, so
-    a reply wrapped in prose or a code fence, or with braces in a note after the
-    object, still reads."""
+    """The plan or the question in a model's reply: the first JSON object in it
+    that holds `plan` or `ambiguous`, so a reply wrapped in prose or a code fence,
+    or with braces or other objects in a note around it, still reads."""
     start = text.find("{")
     if start < 0:
         return Proposal(unreadable="the reply held no JSON object")
     obj: Any = None
     error = ""
-    while start >= 0 and not isinstance(obj, dict):
+    while start >= 0:
         try:
-            obj, _ = json.JSONDecoder().raw_decode(text, start)
+            found, _ = json.JSONDecoder().raw_decode(text, start)
         except json.JSONDecodeError as e:
             error = error or e.msg
+        else:
+            if isinstance(found, dict) and ("plan" in found or "ambiguous" in found):
+                obj = found
+                break
         start = text.find("{", start + 1)
-    if not isinstance(obj, dict):
-        return Proposal(unreadable=f"the reply was not JSON: {error}")
+    if obj is None:
+        # A reply cut at its output cap is incomplete JSON, not one with neither key.
+        if error:
+            return Proposal(unreadable=f"the reply was not JSON: {error}")
+        return Proposal(unreadable='the reply had neither "plan" nor "ambiguous"')
     if isinstance(obj.get("ambiguous"), str) and obj["ambiguous"].strip():
         return Proposal(ask=obj["ambiguous"].strip())
     plan = obj.get("plan")

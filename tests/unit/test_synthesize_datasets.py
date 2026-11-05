@@ -44,6 +44,11 @@ def test_a_reply_reads_as_a_plan_a_question_or_neither() -> None:
     assert noted.plan == {"limit": 5}
     braced = ap.read_proposal('Counting {orders}: {"plan": {"limit": 5}}')
     assert braced.plan == {"limit": 5}
+    quoted = ap.read_proposal('Using {"dataset": "o", "column": "amount"}: {"plan": {"limit": 5}}')
+    assert quoted.plan == {"limit": 5}
+    # A reply cut at its output cap says it was incomplete, not that it lacked a key.
+    cut_off = '{"plan": {"where": [{"column": {"dataset": "d", "column": "x"}, "op": "eq"'
+    assert "was not JSON" in ap.read_proposal(cut_off).unreadable
     asked = ap.read_proposal('{"ambiguous": "Which currency is amount in?"}')
     assert (asked.plan, asked.ask) == (None, "Which currency is amount in?")
     for text, why in (
