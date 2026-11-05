@@ -462,8 +462,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   with a `[document: <title>]` line (its first 200 characters).
 - **Grounding**: each quote must be in the text the model read: whitespace runs as one space, letter case ignored, and
   up to three label lines read across between two words, as a model copies a sentence a slide or diagram export splits
-  (`find_span`). A quote is stored as the document's own words on one line, its label lines left out, and one under 12
-  characters rests on nothing. A reason or rejected option none of whose quotes is found is left out
+  (`find_span`). A found quote is kept as the document's own words on one line, its label lines left out, and one
+  under 12 characters rests on nothing. A reason or rejected option none of whose quotes is found is left out
   (`reason '...' left out: none of its quotes is in the document text`); a decision none of whose outcome quotes is
   found is dropped (`none of the outcome's quotes is in the document text`). An outcome quote in a section with
   `recap`, `summary` or `background` as a word of a heading at any level of its breadcrumb locates no decision; a

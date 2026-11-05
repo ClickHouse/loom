@@ -426,8 +426,7 @@ def find_span(span: str, texts: Sequence[str]) -> str:
     document word where a rejected label reading of its gap comes first ("cache plan"
     over "cache / plans / not / plan"): the label reading is tried before the partial
     end. A label is recognised by its shape and the word lists of `_NOT_A_LABEL`, so a
-    short line of another kind that the sentence needs can still be read across; the
-    stored span is the document's words, so a reader can check it against the source."""
+    short line of another kind that the sentence needs can still be read across."""
     m = _span_match(span, texts)
     return m.group(0) if m else ""
 
@@ -447,21 +446,21 @@ def _without_labels(span: str, texts: Sequence[str]) -> list[str] | None:
     return pieces
 
 
-def stored_span(span: str, texts: Sequence[str]) -> str:
-    """The text's span that reads as `span` (`find_span`) as it is stored: the
-    document's own words and case on one line, its label lines left out, or ''."""
+def document_span(span: str, texts: Sequence[str]) -> str:
+    """The text's span that reads as `span` (`find_span`) as the document words it: its
+    own words and case on one line, its label lines left out, or ''."""
     pieces = _without_labels(span, texts)
     return collapse_ws(" ".join(pieces)) if pieces else ""
 
 
 def _grounded(quotes: Sequence[str], texts: Sequence[str]) -> tuple[str, ...]:
-    """The quotes found in the text, each as the text stores it (`stored_span`); a quote
+    """The quotes found in the text, each as the document words it (`document_span`); a quote
     shorter than MIN_SPAN_CHARS rests on nothing and is left out."""
     out = []
     for q in quotes:
         if len(collapse_ws(q)) < MIN_SPAN_CHARS:
             continue
-        span = stored_span(q, texts)
+        span = document_span(q, texts)
         if span and span not in out:
             out.append(span)
     return tuple(out)

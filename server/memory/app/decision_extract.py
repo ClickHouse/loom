@@ -14,9 +14,10 @@ revises the extractor's own rows instead of writing beside them:
 
 - the key's active record is the extractor's and the support check finds it still stated,
   and its row carries the same files, source, constraint and repository tags: nothing is
-  written (a pinned or attested row may still gain the repository's tag by a tags-only
-  write); with other row fields, an unfrozen one is recorded again in its stored words,
-  unless its outcome is recorded: then only its tags are reconciled;
+  written but a tags-only write that clears a `source-changed` tag (a pinned or attested
+  row may also gain the repository's tag); with other row fields, an unfrozen one is
+  recorded again in its stored words, unless its outcome is recorded: then only its tags
+  are reconciled;
 - it is found no longer stated and its row is the extractor's, not pinned or attested, and
   from this document: recorded again (Revise), unless its outcome is recorded: then it
   is tagged `source-changed`;
@@ -1318,7 +1319,8 @@ async def _unchanged(
     rec: RecordReport, row: MemoryRow, t: Target, *, dry_run: bool
 ) -> RecordReport:
     """The extractor's own row on this document, still stated: nothing is written but
-    tags. A row that is not frozen reached here with its tags the same already."""
+    tags. A row that is not frozen reached here with its repository and constraint tags
+    the same already; only a `source-changed` tag can still be cleared."""
     rec.action = "unchanged"
     await _reconcile_tags(rec, row, dry_run, t.row_tag if _frozen(row) else "")
     return rec
