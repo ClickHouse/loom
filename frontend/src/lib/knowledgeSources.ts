@@ -315,9 +315,10 @@ export function folderIds(text: string): string[] {
   return pieces(text, ANY_SPACE, (p) => /\/folders\/([^/?#]+)/.exec(p)?.[1] ?? p);
 }
 
-/** Project ids, lower-cased as the server stores them. */
+/** Project ids, lower-cased as the server stores them; any other piece (a pasted link)
+ *  is kept as typed, so the form can name it. */
 export function projectIds(text: string): string[] {
-  return pieces(text, ANY_SPACE, (p) => p.toLowerCase());
+  return pieces(text, ANY_SPACE, (p) => (PROJECT_ID_RE.test(p.toLowerCase()) ? p.toLowerCase() : p));
 }
 
 /** A page store id from a bare id with or without dashes, or from a pasted link the id
@@ -327,19 +328,19 @@ export function projectIds(text: string): string[] {
  *  Lower-case without dashes; the server stores it dashed. A piece that is neither is
  *  kept as typed, so the form can name it. */
 function pageStoreId(piece: string, peek: boolean): string {
-  if (!piece.includes("/")) {
-    const hexes = piece.toLowerCase().replace(/-/g, "");
-    return PAGE_ID_RE.test(hexes) ? hexes : piece;
-  }
+  if (!piece.includes("/")) return bareId(piece) || piece;
   const page = peek ? /[?&]p=([^&#]*)/.exec(piece)?.[1] : undefined;
-  if (page !== undefined) {
-    const hexes = page.toLowerCase().replace(/-/g, "");
-    return PAGE_ID_RE.test(hexes) ? hexes : piece;
-  }
+  if (page !== undefined) return bareId(page) || piece;
   if (peek && isDatabaseLink(piece)) return piece;
   // The id is the whole segment, or what follows the title's last `-`.
   const segment = (piece.split(/[?#]/)[0] ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
   return /(?:^|-)([0-9a-f]{32})$/.exec(segment.toLowerCase())?.[1] ?? piece;
+}
+
+/** A page store id with or without dashes as its 32 lower-case hex digits, or "". */
+function bareId(text: string): string {
+  const hexes = text.toLowerCase().replace(/-/g, "");
+  return PAGE_ID_RE.test(hexes) ? hexes : "";
 }
 
 /** A link to a database's view: a `v=` and no `p=`. */

@@ -125,7 +125,10 @@ describe("the add form's other kinds", () => {
       credential: "k",
       dry_run: true,
     });
-    expect(projectIds("A, b")).toEqual(["a", "b"]);
+    // A project id is lower-cased; anything else, such as a pasted link, is named as typed.
+    const link = "https://tracker.example/Team/project/Roadmap-3f2a";
+    expect(projectIds(`${PROJECT.toUpperCase()} ${link}`)).toEqual([PROJECT, link]);
+    expect(sourceFormProblems({ ...f, projects: link })).toEqual([`Not a project id (a UUID): ${link}.`]);
     expect(sourceFormProblems({ ...f, projects: "" })).toEqual(["Add at least one project."]);
     expect(sourceFormProblems({ ...f, projects: "my-project" })).toEqual(["Not a project id (a UUID): my-project."]);
     expect(sourceFormProblems({ ...f, credential: "" })).toEqual(["Paste the read-only API key."]);
