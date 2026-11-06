@@ -25,7 +25,7 @@ import hashlib
 import os
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -263,6 +263,55 @@ async def _document(ch: Any, org: str, ns: str, sha: str, uri: str = "", user: s
 
 
 @pytest.mark.asyncio
+async def test_an_extraction_artifact_and_an_unexpired_upload_count_as_needed(
+    s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns = unique_org("objstore-needed"), "docs"
+    monkeypatch.setattr(settings, "document_object_store", "clickhouse")
+    original = await blobs.put(org, ns, b"the document's original", ch=ch)
+    artifact = await blobs.put(org, ns, b"its extraction artifact", ch=ch)
+    uploaded = await blobs.put(org, ns, b"uploaded, not yet ingested", ch=ch)
+    # A live document names the first as its original and the second as its artifact.
+    await ch.insert(
+        "loom.documents",
+        [
+            {
+                "org": org,
+                "namespace": ns,
+                "source_uri": "docs/with-artifact.md",
+                "content": "",
+                "tags": [],
+                "version": 1,
+                "blob_path": original,
+                "artifact_sha256": artifact,
+            }
+        ],
+        settings={"async_insert": 0},
+    )
+    # An upload that has not expired holds the third.
+    await ch.insert(
+        "loom.knowledge_uploads",
+        [
+            {
+                "org": org,
+                "namespace": ns,
+                "upload_id": str(uuid.uuid4()),
+                "sha256": uploaded,
+                "size": 26,
+                "expires_at": datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1),
+            }
+        ],
+        settings={"async_insert": 0},
+    )
+    monkeypatch.setattr(settings, "document_object_store", "s3")
+    result = await migrate_originals(org=org, namespace=ns)
+    assert (result.moved, result.unneeded, result.errors) == (3, 0, [])
+    for sha in (original, artifact, uploaded):
+        stored = await blobs.locate(org, ns, sha, ch=ch)
+        assert stored is not None and stored.location.startswith("s3://")
+
+
+@pytest.mark.asyncio
 async def test_originals_in_clickhouse_move_to_checked_objects(
     s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -378,7 +427,7 @@ async def _erasure(ch: Any, org: str, scope_type: str, scope_value: str, status:
 
 
 @pytest.mark.asyncio
-async def test_a_move_waits_out_an_unfinished_erasure_of_its_scope(
+async def test_an_unfinished_erasure_of_its_namespace_refuses_the_move(
     s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     org, ns = unique_org("objstore-fence"), "docs"

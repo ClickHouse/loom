@@ -101,7 +101,7 @@ def _covers(scope_type: str, scope_value: str, namespace: str) -> bool:
     to at any moment, so the move does not guess whose an original is. A list it cannot
     read, or a scope it does not know, counts as covering."""
     named = _names_namespace(scope_type, scope_value, namespace)
-    return True if named is None else named
+    return named is not False
 
 
 def _fence_advice(erasures: list[_Erasure], what: str) -> str:

@@ -18,6 +18,11 @@ document naming a fresh original may be racing that write.
 Every S3 write is a new object, written before the row that names it; an object
 no row names (a replaced row's, a write whose row never landed) is the sweep's
 once it is older than the same age.
+
+The move of originals to the bucket (`server/knowledge/app/originals.py`) deletes
+only what it wrote: an object of its own that no row names, at once, and, after an
+erasure took the original as its switch landed, its switching row by the location
+only that row names (`unwrite`).
 """
 
 from __future__ import annotations
