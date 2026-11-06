@@ -631,7 +631,10 @@ its value.
 
 **Route policies.** The dashboard page carries a Content-Security-Policy whose
 `script-src` admits the bundle's origin and the one boot snippet by a per-response nonce,
-never `unsafe-inline`, and whose `frame-src 'none'` allows no frame. An uploaded document
+never `unsafe-inline`, and whose `frame-src 'none'` allows no frame. It also carries
+`Cross-Origin-Opener-Policy: same-origin`: a page of another origin that opened the
+dashboard keeps no handle on its window, so it cannot navigate it to a sign-in link of its
+own. An uploaded document
 is attacker-chosen bytes under an attacker-chosen type, so `knowledge.download` previews
 inline only plain text (text, Markdown, CSV and JSON, all served as `text/plain`) and PNG,
 JPEG, GIF and WebP whose bytes match their type; anything else (HTML, SVG, XML, PDF,

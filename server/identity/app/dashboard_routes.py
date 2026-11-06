@@ -167,7 +167,13 @@ async def _page(request: Request) -> Response:
     # build; a cached HTML would point at a bundle hash that no longer exists.
     return HTMLResponse(
         content=html,
-        headers={"Cache-Control": "no-store", "Content-Security-Policy": dashboard_csp(nonce)},
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": dashboard_csp(nonce),
+            # No other origin's window keeps a handle on the dashboard's: a page that opened
+            # it cannot navigate it to a sign-in link of its own choosing.
+            "Cross-Origin-Opener-Policy": "same-origin",
+        },
     )
 
 

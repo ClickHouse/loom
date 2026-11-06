@@ -30,9 +30,9 @@ import {
 } from "./lib/namespace";
 import {
   claimsFromToken,
-  linkTokenTrusted,
   provisionalNamespace,
   rememberKinds,
+  sameAccount,
   takeLinkToken,
   takeSignInStarted,
 } from "./lib/boot";
@@ -318,17 +318,23 @@ export default function App() {
       let link: ReturnType<typeof takeLinkToken> = null;
       // The token boot asks whoami about; the catch reads it too.
       let sent: string | null = null;
+      // The token a same-account link replaced, given back should the server refuse the link's.
+      let replaced: string | null = null;
       try {
         // A login link (federation redirect) carries the token in the #token= fragment: taken
         // and scrubbed before anything can fail. The return to the page its sign-in started on
         // is a chunk of its own, and boot goes on without it.
-        const started = takeSignInStarted();
         link = takeLinkToken();
+        const started = takeSignInStarted(link?.nonce ?? null);
         if (link) {
-          // A token this tab did not ask for waits, in memory only, for the person to confirm
-          // the account it names; a cancelled one is dropped and boot goes on as before.
+          // Only the sign-in this tab started, carrying its nonce back, is stored unasked. A
+          // token for the account already held is too, and the held one comes back should the
+          // server refuse it. Any other waits, in memory only, for the person to confirm the
+          // account it names; a cancelled one is dropped and boot goes on as before.
           const token = link.token;
-          if (token && !linkTokenTrusted(token, storedToken(), started)) {
+          const held = storedToken();
+          if (token && !started && sameAccount(token, held)) replaced = held;
+          else if (token && !started) {
             const ok = await new Promise<boolean>((answer) => setLinkAsk({ token, answer }));
             setLinkAsk(null);
             if (!ok) link = { ...link, token: null };
@@ -392,6 +398,13 @@ export default function App() {
         }
         // A refused read (here or in another tab) dropped the token while whoami answered.
         const dropped = !!sent && !storedToken();
+        if (replaced && (!w.authenticated || dropped)) {
+          // A same-account link the server refused signs nobody out: the held token comes
+          // back, and the page boots on it afresh.
+          setToken(replaced);
+          reloadPage();
+          return;
+        }
         if (!w.authenticated || dropped) {
           // A stored token the server no longer accepts is dead — drop it so the next
           // load doesn't retry it, and tell the gate why it is showing instead of a
@@ -554,6 +567,7 @@ export default function App() {
       <Suspense fallback={null}>
         <LinkTokenConfirm
           claims={claimsFromToken(linkAsk.token)}
+          current={claimsFromToken(storedToken())}
           onConfirm={() => linkAsk.answer(true)}
           onCancel={() => linkAsk.answer(false)}
         />

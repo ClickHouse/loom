@@ -4,9 +4,10 @@ import {
   provisionalNamespace,
   rememberKinds,
   rememberedKinds,
+  SIGN_IN_PENDING,
   sameIdentity,
-  linkTokenTrusted,
   markSignInStarted,
+  sameAccount,
   takeLinkToken,
   takeSignInStarted,
 } from "./boot";
@@ -132,13 +133,13 @@ describe("login link token", () => {
 
   it("takes a #token= fragment and scrubs it from the address bar", () => {
     history.replaceState(null, "", "/setup?tab=a#token=abc.def%2Eghi");
-    expect(takeLinkToken()).toEqual({ token: "abc.def.ghi", atRoot: false });
+    expect(takeLinkToken()).toEqual({ token: "abc.def.ghi", atRoot: false, nonce: null });
     expect(address()).toBe("/setup?tab=a");
   });
 
   it("never takes a ?token= query, and removes it anyway", () => {
     history.replaceState(null, "", "/?token=leaked.jwt.value&tab=a#memories");
-    expect(takeLinkToken()).toEqual({ token: null, atRoot: false });
+    expect(takeLinkToken()).toEqual({ token: null, atRoot: false, nonce: null });
     expect(window.location.search).toBe("?tab=a");
     expect(window.location.hash).toBe("#memories");
     expect(window.location.href).not.toContain("leaked");
@@ -153,7 +154,7 @@ describe("login link token", () => {
   it("says when the token came back to the bare root, where a sign-in returns to its page", () => {
     for (const root of ["/", "/me"]) {
       history.replaceState(null, "", `${root}#token=abc`);
-      expect(takeLinkToken(), root).toEqual({ token: "abc", atRoot: true });
+      expect(takeLinkToken(), root).toEqual({ token: "abc", atRoot: true, nonce: null });
       expect(address(), root).toBe(root);
     }
     history.replaceState(null, "", "/?tab=a#token=abc");
@@ -168,7 +169,7 @@ describe("login link token", () => {
 
   it("scrubs a fragment that does not decode, and takes no token from it", () => {
     history.replaceState(null, "", "/#token=%E0%A4%A");
-    expect(takeLinkToken()).toEqual({ token: null, atRoot: true });
+    expect(takeLinkToken()).toEqual({ token: null, atRoot: true, nonce: null });
     expect(address()).toBe("/");
   });
 });
@@ -176,28 +177,40 @@ describe("login link token", () => {
 describe("a sign-in this tab started", () => {
   beforeEach(() => sessionStorage.clear());
 
-  it("is fresh for ten minutes and used up once taken", () => {
-    markSignInStarted(1_000);
-    expect(takeSignInStarted(1_000 + 10 * 60 * 1000)).toBe(true);
-    expect(takeSignInStarted(1_000 + 1)).toBe(false);
+  it("trusts only its own nonce, for ten minutes, once", () => {
+    const nonce = markSignInStarted(1_000);
+    expect(nonce).toMatch(/^[A-Za-z0-9_-]{32}$/);
+    expect(markSignInStarted(1_000)).not.toBe(nonce);
+    const again = markSignInStarted(1_000);
+    expect(takeSignInStarted(again, 1_000 + 10 * 60 * 1000)).toBe(true);
+    expect(takeSignInStarted(again, 1_000 + 1)).toBe(false);
   });
 
-  it("is none once older than ten minutes, or never marked", () => {
+  it("is none for another nonce, no nonce, a mark over ten minutes old, or no mark", () => {
+    const nonce = markSignInStarted(1_000);
+    expect(takeSignInStarted("someone-elses-nonce-0000", 1_001)).toBe(false);
+    expect(sessionStorage.getItem(SIGN_IN_PENDING)).toBeNull(); // used up by a wrong one too
     markSignInStarted(1_000);
-    expect(takeSignInStarted(1_000 + 10 * 60 * 1000 + 1)).toBe(false);
-    expect(takeSignInStarted()).toBe(false);
+    expect(takeSignInStarted(null, 1_001)).toBe(false);
+    const late = markSignInStarted(1_000);
+    expect(takeSignInStarted(late, 1_000 + 10 * 60 * 1000 + 1)).toBe(false);
+    expect(takeSignInStarted(nonce)).toBe(false);
   });
 
-  it("trusts a link token only for that sign-in or the subject and org already held", () => {
+  it("reads the sign-in's nonce after the token, and only a well-formed one", () => {
+    history.replaceState(null, "", "/me#token=abc.def.ghi&n=Ab_-Ab_-Ab_-Ab_-");
+    expect(takeLinkToken()).toEqual({ token: "abc.def.ghi", atRoot: true, nonce: "Ab_-Ab_-Ab_-Ab_-" });
+    history.replaceState(null, "", "/me#token=abc&n=short");
+    expect(takeLinkToken()).toEqual({ token: "abc", atRoot: true, nonce: null });
+    expect(window.location.hash).toBe("");
+  });
+
+  it("names the same account only for the same subject and org", () => {
     const alice = jwt({ sub: "alice", org: "acme" });
-    const alice2 = jwt({ sub: "alice", org: "acme", iat: 2 });
-    const aliceElsewhere = jwt({ sub: "alice", org: "other" });
-    const bob = jwt({ sub: "bob", org: "acme" });
-    expect(linkTokenTrusted(bob, alice, true)).toBe(true);
-    expect(linkTokenTrusted(alice2, alice, false)).toBe(true);
-    expect(linkTokenTrusted(bob, alice, false)).toBe(false);
-    expect(linkTokenTrusted(aliceElsewhere, alice, false)).toBe(false);
-    expect(linkTokenTrusted(alice, null, false)).toBe(false);
-    expect(linkTokenTrusted("garbage", "garbage", false)).toBe(false);
+    expect(sameAccount(jwt({ sub: "alice", org: "acme", iat: 2 }), alice)).toBe(true);
+    expect(sameAccount(jwt({ sub: "bob", org: "acme" }), alice)).toBe(false);
+    expect(sameAccount(jwt({ sub: "alice", org: "other" }), alice)).toBe(false);
+    expect(sameAccount(alice, null)).toBe(false);
+    expect(sameAccount("garbage", "garbage")).toBe(false);
   });
 });

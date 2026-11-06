@@ -169,8 +169,11 @@ describe("TokenGate", () => {
       expect(JSON.parse(sessionStorage.getItem(SIGN_IN_FROM) ?? "{}")).toMatchObject({
         path: "/knowledge?namespace=group-a-shared",
       });
-      // The token that comes back is this tab's own, stored without asking.
-      expect(Number(sessionStorage.getItem(SIGN_IN_PENDING))).toBeGreaterThan(0);
+      // The sign-in carries the nonce this tab keeps: the token that brings it back is stored
+      // without asking.
+      const { nonce } = JSON.parse(sessionStorage.getItem(SIGN_IN_PENDING) ?? "{}");
+      expect(nonce).toMatch(/^[A-Za-z0-9_-]{16,64}$/);
+      expect(goToSso).toHaveBeenCalledWith(nonce);
       history.replaceState(null, "", "/");
     });
 
@@ -220,8 +223,10 @@ describe("TokenGate", () => {
       history.replaceState(null, "", "/");
       fireEvent.click(link);
       expect(sessionStorage.getItem(SIGN_IN_FROM)).toBeNull();
-      // The sign-in is still this tab's own.
-      expect(Number(sessionStorage.getItem(SIGN_IN_PENDING))).toBeGreaterThan(0);
+      // Each start is marked with a nonce of its own.
+      const { nonce } = JSON.parse(sessionStorage.getItem(SIGN_IN_PENDING) ?? "{}");
+      expect(goToSso).toHaveBeenLastCalledWith(nonce);
+      expect(vi.mocked(goToSso).mock.calls[0][0]).not.toBe(nonce);
     });
 
     it("shows the password gate when it is off", () => {

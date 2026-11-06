@@ -33,21 +33,25 @@ follows the redirect to another origin.
 
 Sign-in depends on the deployment's identity mode:
 
-| Deployment                                                                    | What the person sees                                                                                                                                                                                                              |
-| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Auth off (`LOOM_AUTH_REQUIRED=false` or `LOOM_IDENTITY_PROVIDER=single-user`) | No sign-in. The page serves the one namespace `LOOM_DEFAULT_NAMESPACE` names (`local` by default). A laptop mode only.                                                                                                            |
-| Auth on, password accounts                                                    | **Sign in** with an email or namespace and a password; the server mints the token and the page stores it without showing it.                                                                                                      |
-| Auth on, `LOOM_SELF_SIGNUP=open`                                              | A **Sign up** tab creates an account on a fresh namespace.                                                                                                                                                                        |
-| Auth on, `LOOM_OAUTH_LOGIN_PROVIDER=oidc`                                     | One **Sign in with SSO** button to the identity provider ([single sign-on](../operations/sso.md)); no password or sign-up form.                                                                                                   |
-| A token minted with `loom mint-token`                                         | Open `<server>/me#token=<jwt>`, the sign-in landing page, which never redirects. The page scrubs the token from the URL and, after the person confirms the account it names, stores it. A `?token=` query is ignored and removed. |
-| Behind a reverse proxy that adds `Authorization`                              | The page sends no token of its own; the proxy's header authenticates every call.                                                                                                                                                  |
+| Deployment                                                                    | What the person sees                                                                                                                                                                                                                                       |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth off (`LOOM_AUTH_REQUIRED=false` or `LOOM_IDENTITY_PROVIDER=single-user`) | No sign-in. The page serves the one namespace `LOOM_DEFAULT_NAMESPACE` names (`local` by default). A laptop mode only.                                                                                                                                     |
+| Auth on, password accounts                                                    | **Sign in** with an email or namespace and a password; the server mints the token and the page stores it without showing it.                                                                                                                               |
+| Auth on, `LOOM_SELF_SIGNUP=open`                                              | A **Sign up** tab creates an account on a fresh namespace.                                                                                                                                                                                                 |
+| Auth on, `LOOM_OAUTH_LOGIN_PROVIDER=oidc`                                     | One **Sign in with SSO** button to the identity provider ([single sign-on](../operations/sso.md)); no password or sign-up form.                                                                                                                            |
+| A token minted with `loom mint-token`                                         | Open `<server>/me#token=<jwt>`, the sign-in landing page, which never redirects. The page scrubs the token from the URL and asks to confirm the account it names, unless it names the account already signed in. A `?token=` query is ignored and removed. |
+| Behind a reverse proxy that adds `Authorization`                              | The page sends no token of its own; the proxy's header authenticates every call.                                                                                                                                                                           |
 
 A `#token=` link signs this browser in as whoever the token names, so the page stores one
-without asking only when this tab started the sign-in it answers (an SSO sign-in within the
-last ten minutes) or when it names the same subject and org as the token already held. Any
-other link waits on a screen that names the token's subject and org: **Sign in as …**
-stores it, and **Cancel** drops it and keeps the session the browser had.
-Until then the token is held only in the page's memory.
+without asking only when it answers the SSO sign-in this tab started from the sign-in screen
+within the last ten minutes, or when it names the same subject and org as the token already
+held. The sign-in screen sends a nonce it keeps in the tab to `/oauth/sso?n=<nonce>`, and
+the server hands it back as `/me#token=<jwt>&n=<nonce>`; a token without that nonce, such
+as one from an SSO sign-in started by typing `/oauth/sso`, is not the tab's own. Any other
+link waits on a screen that names the token's subject and org, and the account the browser
+is signed in as: **Sign in as …** stores it, and **Cancel** drops it and keeps the session
+the browser had. Until then the token is held only in the page's memory. A same-account
+token the server refuses gives the held token back.
 
 `loom init --agent NAME` signs an agent up on its own and prints a one-time code a person
 enters in the dashboard to claim the namespace. The token sits in the browser's local storage;

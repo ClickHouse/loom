@@ -57,48 +57,59 @@ export function claimsFromToken(jwt: string | null | undefined): TokenClaims | n
  *  writes it, and the return to it (`lib/linkToken.ts`) reads it. */
 export const SIGN_IN_FROM = "loom_sign_in_from_v1";
 
-/** The session key for when this tab last sent the browser to single sign-on: the sign-in
- *  gate writes it beside {@link SIGN_IN_FROM}, and boot takes it with the token that comes
- *  back. A link token with no fresh mark is one this tab never asked for. */
+/** The session key for the mark of the single sign-on this tab started, `{ nonce, at }`: the
+ *  sign-in gate writes it beside {@link SIGN_IN_FROM} and sends the nonce to `/oauth/sso?n=`,
+ *  and the server hands it back beside the token (`#token=…&n=…`). A link token without this
+ *  tab's nonce is one it never asked for, even one that arrives while the tab is away at the
+ *  identity provider. */
 export const SIGN_IN_PENDING = "loom_sign_in_pending_v1";
 
 /** How long a sign-in this tab started stays its own. */
 const SIGN_IN_PENDING_TTL_MS = 10 * 60 * 1000;
 
-/** Mark that this tab starts a sign-in now. */
-export function markSignInStarted(now: number = Date.now()): void {
+/** Mark that this tab starts a sign-in now; the nonce goes to `/oauth/sso?n=`. */
+export function markSignInStarted(now: number = Date.now()): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  const nonce = btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
   try {
-    sessionStorage.setItem(SIGN_IN_PENDING, String(now));
+    sessionStorage.setItem(SIGN_IN_PENDING, JSON.stringify({ nonce, at: now }));
   } catch {
     /* no session storage: the returning token asks to be confirmed */
   }
+  return nonce;
 }
 
-/** Whether this tab started a sign-in in the last ten minutes; the mark is used up. */
-export function takeSignInStarted(now: number = Date.now()): boolean {
+/** Whether `nonce`, from a link's fragment, is the mark of a sign-in this tab started in the
+ *  last ten minutes; the mark is used up either way. */
+export function takeSignInStarted(nonce: string | null, now: number = Date.now()): boolean {
   try {
-    const at = Number(sessionStorage.getItem(SIGN_IN_PENDING));
+    const raw = sessionStorage.getItem(SIGN_IN_PENDING);
     sessionStorage.removeItem(SIGN_IN_PENDING);
-    return at > 0 && now - at >= 0 && now - at <= SIGN_IN_PENDING_TTL_MS;
+    const mark: unknown = raw ? JSON.parse(raw) : null;
+    if (!nonce || !isRecord(mark) || typeof mark.nonce !== "string" || typeof mark.at !== "number") return false;
+    return mark.nonce === nonce && now - mark.at >= 0 && now - mark.at <= SIGN_IN_PENDING_TTL_MS;
   } catch {
     return false;
   }
 }
 
-/** Whether a link token may replace the stored one without asking: this tab started the
- *  sign-in it answers, or it signs in the same subject of the same org as the token held
- *  (a session refreshed). Anyone holding a token can send a link; storing it unasked would
- *  sign this browser in as them. */
-export function linkTokenTrusted(link: string, held: string | null, started: boolean): boolean {
-  if (started) return true;
+/** Whether a link token names the same subject of the same org as the token held: a session
+ *  refreshed, stored without asking (and given back should the server refuse it). Anyone
+ *  holding a token can send a link; storing any other unasked would sign this browser in as
+ *  them. */
+export function sameAccount(link: string, held: string | null): boolean {
   const a = claimsFromToken(link);
   const b = claimsFromToken(held);
   return !!a?.subject && !!a.org && a.subject === b?.subject && a.org === b?.org;
 }
 
 /** Accept fragment tokens only; scrub both token forms before boot can fail.
- * Query tokens reach server logs and are never accepted. */
-export function takeLinkToken(): { token: string | null; atRoot: boolean } | null {
+ * Query tokens reach server logs and are never accepted. A sign-in's fragment carries its
+ * tab's nonce after the token, `#token=<jwt>&n=<nonce>`. */
+export function takeLinkToken(): { token: string | null; atRoot: boolean; nonce: string | null } | null {
   const { hash, search, pathname } = window.location;
   const fromHash = hash.startsWith("#token=");
   const query = new URLSearchParams(search);
@@ -107,12 +118,19 @@ export function takeLinkToken(): { token: string | null; atRoot: boolean } | nul
   const qs = query.toString();
   history.replaceState(history.state, "", pathname + (qs ? `?${qs}` : "") + (fromHash ? "" : hash));
   let token: string | null = null;
-  try {
-    token = fromHash ? decodeURIComponent(hash.slice("#token=".length)) || null : null;
-  } catch {
-    /* a fragment that does not decode carries no token */
+  let nonce: string | null = null;
+  if (fromHash) {
+    const body = hash.slice("#token=".length);
+    const at = body.indexOf("&n=");
+    const n = at < 0 ? "" : body.slice(at + "&n=".length);
+    nonce = /^[A-Za-z0-9_-]{16,64}$/.test(n) ? n : null;
+    try {
+      token = decodeURIComponent(at < 0 ? body : body.slice(0, at)) || null;
+    } catch {
+      /* a fragment that does not decode carries no token */
+    }
   }
-  return { token, atRoot: fromHash && !qs && (pathname === "/" || pathname === "/me") };
+  return { token, atRoot: fromHash && !qs && (pathname === "/" || pathname === "/me"), nonce };
 }
 
 /** Namespace kinds from the last membership answer this browser saw, so a

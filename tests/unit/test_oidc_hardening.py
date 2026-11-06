@@ -434,3 +434,80 @@ def test_no_email_resolves_to_nobody_whatever_rows_have_none(
     assert asyncio.run(sso_links.unlinked_accounts(email)) == []
     # Nor a blank sign-in identifier: unclaimed agents hold claim-code passwords.
     assert asyncio.run(login.resolve_user_credentials(email, "a-claim-code")) is None
+
+
+class _StartReq:
+    """The dashboard's `/oauth/sso`, with the tab's mark as `?n=` when given."""
+
+    client = None
+
+    def __init__(self, n: str | None) -> None:
+        self.query_params = {} if n is None else {"n": n}
+
+
+async def _sealed_dashboard_start(monkeypatch: pytest.MonkeyPatch, n: str | None) -> dict[str, Any]:
+    """The sign-in record `/oauth/sso?n=` seals into its cookie."""
+    from server.core.secrets_at_rest import open_sealed
+
+    async def authorize_url(**kw: Any) -> str:
+        return "https://idp/authorize"
+
+    monkeypatch.setattr(oidc, "build_authorize_url", authorize_url)
+    monkeypatch.setattr(settings, "oauth_login_provider", "oidc")
+    response = await oauth.dashboard_sso(_StartReq(n))  # type: ignore[arg-type]
+    [cookie] = [v for k, v in response.headers.items() if k == "set-cookie"]
+    sealed = cookie.split("=", 1)[1].split(";", 1)[0].strip('"')
+    record: dict[str, Any] = json.loads(open_sealed(oauth._PENDING_PURPOSE, sealed))
+    return record
+
+
+async def test_the_dashboard_tab_mark_is_sealed_with_its_sign_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mark = "Ab_-" * 8
+    assert (await _sealed_dashboard_start(monkeypatch, mark))["tab_nonce"] == mark
+
+
+@pytest.mark.parametrize(
+    "n", [None, "", "short", "has space in it padded", "x" * 65, "<script>x</script>xx"]
+)
+async def test_a_missing_or_malformed_tab_mark_is_not_sealed(
+    monkeypatch: pytest.MonkeyPatch, n: str | None
+) -> None:
+    assert "tab_nonce" not in await _sealed_dashboard_start(monkeypatch, n)
+
+
+async def _landing(monkeypatch: pytest.MonkeyPatch, pending: dict[str, Any]) -> str:
+    from server.auth import revocation
+
+    async def not_revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return False
+
+    async def emit(event_type: str, **kw: Any) -> str:
+        return ""
+
+    monkeypatch.setattr(revocation, "subjects_revoked", not_revoked)
+    monkeypatch.setattr(oauth.audit, "emit", emit)
+    response = await oauth._dashboard_signed_in(
+        ("alice@x.io", "acme", ["team"], ["writer"]), pending
+    )
+    location: str = response.headers["location"]
+    return location
+
+
+async def test_the_dashboard_landing_hands_back_the_tab_mark_beside_the_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mark = "Ab_-" * 8
+    location = await _landing(monkeypatch, {"kind": "dashboard", "tab_nonce": mark})
+    assert location.startswith("/me#token=") and location.endswith(f"&n={mark}")
+
+
+@pytest.mark.parametrize(
+    "pending", [{"kind": "dashboard"}, {"kind": "dashboard", "tab_nonce": "bad&n=x"}]
+)
+async def test_the_dashboard_landing_echoes_no_mark_it_was_not_given(
+    monkeypatch: pytest.MonkeyPatch, pending: dict[str, Any]
+) -> None:
+    location = await _landing(monkeypatch, pending)
+    assert location.startswith("/me#token=") and "&" not in location

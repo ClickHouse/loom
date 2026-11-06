@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { PasswordField } from "@clickhouse/click-ui/PasswordField";
@@ -48,8 +48,8 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
  *  comes back is stored without asking (`lib/boot.ts`), and the identity provider sends
  *  the browser back to the root, where boot returns here within ten minutes
  *  (`lib/linkToken.ts`). From the bare root there is nothing to come back to. */
-function rememberSignInStart(): void {
-  markSignInStarted();
+function rememberSignInStart(): string {
+  const nonce = markSignInStarted();
   const path = window.location.pathname + window.location.search;
   try {
     if (path === "/") sessionStorage.removeItem(SIGN_IN_FROM);
@@ -57,6 +57,15 @@ function rememberSignInStart(): void {
   } catch {
     /* no session storage: the sign-in lands on the root */
   }
+  return nonce;
+}
+
+/** The SSO button's plain click starts this tab's own marked sign-in; a click that opens a
+ *  new tab or window follows the bare link, whose token there asks to be confirmed. */
+function startSso(e: MouseEvent<HTMLAnchorElement>): void {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  goToSso(rememberSignInStart());
 }
 
 // When the gate last started an SSO sign-in on its own in this tab, so a provider that
@@ -83,8 +92,7 @@ export function resumeSsoOnce(now: number = Date.now()): boolean {
 function SsoGate({ reason }: { reason?: GateReason }) {
   useEffect(() => {
     if (reason !== "expired" || !resumeSsoOnce()) return;
-    rememberSignInStart();
-    goToSso();
+    goToSso(rememberSignInStart());
   }, [reason]);
   return (
     <GateShell>
@@ -92,7 +100,7 @@ function SsoGate({ reason }: { reason?: GateReason }) {
         <GateNotice reason={reason} />
         <a
           href="/oauth/sso"
-          onClick={rememberSignInStart}
+          onClick={startSso}
           className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-on-accent hover:opacity-90"
         >
           <Icon name="lock" size="sm" aria-hidden="true" /> Sign in with SSO
@@ -116,10 +124,13 @@ function GateNotice({ reason }: { reason?: GateReason }) {
  *  writes next in the sender's account. */
 export function LinkTokenConfirm({
   claims,
+  current,
   onConfirm,
   onCancel,
 }: {
   claims: TokenClaims | null;
+  /** The account of the token this browser holds, when it holds one. */
+  current: TokenClaims | null;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -128,6 +139,12 @@ export function LinkTokenConfirm({
     <GateShell>
       <Panel className="space-y-4">
         <h2 className="m-0 text-base">Sign in from a link?</h2>
+        {current?.subject ? (
+          <p className="m-0 text-sm">
+            You are signed in as <strong>{current.subject}</strong>
+            {current.org ? ` (${current.org})` : ""}.
+          </p>
+        ) : null}
         <p className="m-0 text-sm">
           This link signs this browser in as <strong>{subject}</strong>
           {claims?.org ? (

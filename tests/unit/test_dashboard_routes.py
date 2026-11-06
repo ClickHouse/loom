@@ -144,6 +144,8 @@ def test_page_paths_serve_the_dashboard(client, path: str) -> None:
     assert r.headers["cache-control"] == "no-store"
     [csp] = r.headers.get_list("content-security-policy")
     assert "nonce-" in csp
+    # No window of another origin keeps a handle on the dashboard to navigate it.
+    assert r.headers["cross-origin-opener-policy"] == "same-origin"
 
 
 def test_the_sign_in_landing_never_follows_the_aggregator_redirect(client, monkeypatch) -> None:

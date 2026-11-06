@@ -17,6 +17,7 @@ import hashlib
 import html
 import json
 import logging
+import re
 import secrets
 import time
 from collections.abc import Coroutine
@@ -553,12 +554,25 @@ def _warn_once_a_minute(kind: str, message: str, *args: object) -> None:
         log.warning(message, *args)
 
 
+# The dashboard tab's own mark for one sign-in (`?n=`), sealed with the sign-in and handed
+# back beside the token: the tab stores without asking only the token that carries the mark
+# it wrote, so a token another page sends it while it is away at the IdP still asks.
+_TAB_NONCE = re.compile(r"[A-Za-z0-9_-]{16,64}")
+
+
+def _tab_nonce(value: object) -> str:
+    """`value` when it is a well-formed tab mark, else empty."""
+    return value if isinstance(value, str) and _TAB_NONCE.fullmatch(value) else ""
+
+
 @router.get("/oauth/sso")
 async def dashboard_sso(request: Request) -> Response:
     """The dashboard's "Sign in with SSO" button."""
     if settings.oauth_login_provider != "oidc":
         raise OAuthError("sso_not_configured", 404)
-    return await start_oidc_login("dashboard", client_address(request))
+    nonce = _tab_nonce(request.query_params.get("n", ""))
+    data = {"tab_nonce": nonce} if nonce else {}
+    return await start_oidc_login("dashboard", client_address(request), **data)
 
 
 async def _signin_denied(email: str, reason: str) -> None:
@@ -1162,7 +1176,9 @@ async def _dashboard_signed_in(identity: Identity, pending: dict[str, Any]) -> R
         actor=subject,
         subject={"client": "dashboard", "family": family, "namespaces": namespaces, "roles": roles},
     )
-    return RedirectResponse(url=f"/me#token={token}", status_code=302)
+    nonce = _tab_nonce(pending.get("tab_nonce"))
+    fragment = f"token={token}&n={nonce}" if nonce else f"token={token}"
+    return RedirectResponse(url=f"/me#{fragment}", status_code=302)
 
 
 # --------------------------------------------------------------------------
