@@ -3,7 +3,8 @@
 This page lists only numbers that a committed file reproduces. Each result is one of three
 kinds:
 
-- a **measurement** of Loom under a real provider, recorded in a committed artifact;
+- a **measurement** of Loom, under a real provider unless its section says otherwise,
+  recorded in a committed artifact;
 - a **reference computation** the code produces on fixed input;
 - a **scorer self-check** that proves a harness counts correctly.
 
@@ -843,15 +844,15 @@ MB without (OCR adds 44 MB unpacked); the baseline's image is 3.46 GB
 
 **Downstream.** Each system's artifacts are ingested into a running Loom through a stub
 extractor, and up to three paragraphs and two table rows of every file in both splits (212
-queries) go to `knowledge.search` within their own document and system's namespace. Unlike
-the page's other measurements, it runs under fake providers by design: the embedder and the
-LLM provider are fakes, the same for every system (`docparse_models_downstream.json`), so
-the table ranks parses; it does not measure Loom's retrieval under a real embedder. Found: a
-top-5 hit holds 70% of the answer's words; cited: that hit's locator holds the answer's
-page. Ingests that failed score zero: the text layer's four scans (no text without OCR). The
-whiteboard photo, whose ingest failed for the text layer and the baseline, holds no query.
-The text layer and layout and OCR are served their extractor's own artifacts, the baseline
-the artifacts `artifacts` builds from its normalized parses.
+queries) go to `knowledge.search` within their own document and system's namespace. It runs
+under fake providers by design: the embedder and the LLM provider are fakes, the same for
+every system (`docparse_models_downstream.json`), so the table ranks parses; it does not
+measure Loom's retrieval under a real embedder. Found: a top-5 hit holds 70% of the answer's
+words; cited: that hit's locator holds the answer's page. Ingests that failed score zero:
+the text layer's four scans (no text without OCR). The whiteboard photo, whose ingest failed
+for the text layer and the baseline, holds no query. The text layer and layout and OCR are
+served their extractor's own artifacts, the baseline the artifacts `artifacts` builds from
+its normalized parses.
 
 | Measure                           | Text layer | Layout and OCR | Baseline |
 | --------------------------------- | ---------: | -------------: | -------: |
