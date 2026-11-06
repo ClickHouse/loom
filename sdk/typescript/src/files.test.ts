@@ -223,12 +223,26 @@ describe("knowledge.ingestFile", () => {
   it("types its answer by wait: the status, the job, or either when wait is not a literal", () => {
     const { loom } = server();
     const input = { ...scope, data: new Uint8Array([1]), filename: "a.md", source_uri: "repo://a" };
-    const follow = Math.random() < 2;
+    const follow = true as boolean; // a `wait` whose value is not known to the type
     expectTypeOf(loom.knowledge.ingestFile(input)).resolves.toHaveProperty("found");
     expectTypeOf(loom.knowledge.ingestFile({ ...input, wait: false })).resolves.toHaveProperty("ingestion_id");
     expectTypeOf(loom.knowledge.ingestFile({ ...input, wait: follow })).resolves.toEqualTypeOf<
       OpOutput<"knowledge.ingest_status"> | OpOutput<"knowledge.ingest">
     >();
+  });
+
+  it("stops its wait at call.signal's abort, and past waitTimeoutMs", async () => {
+    const input = { ...scope, data: new Uint8Array([1]), filename: "a.md", source_uri: "repo://a" };
+    const aborted = server({ running: 1_000 });
+    const ctrl = new AbortController();
+    const wait = aborted.loom.knowledge.ingestFile({ ...input, pollMs: 60_000, call: { signal: ctrl.signal } });
+    await new Promise((r) => setTimeout(r, 10));
+    ctrl.abort();
+    await expect(wait).rejects.toThrow(/knowledge.ingest_status: aborted by caller/);
+
+    const late = server({ running: 1_000 });
+    await expect(late.loom.knowledge.ingestFile({ ...input, waitTimeoutMs: 0 })).rejects.toBeInstanceOf(TimeoutError);
+    expect(late.sent.filter((s) => s.url.pathname.endsWith("ingest_status")).length).toBe(1);
   });
 
   it("with wait: false returns the job, and keeps a title given", async () => {

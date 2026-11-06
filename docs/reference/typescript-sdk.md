@@ -133,16 +133,18 @@ const same = await loom.memory.search({ org, namespace, query: "deploy window" }
 
 `loom.knowledge` also sends a file for the server's extractor to parse
 ([ingesting files](../features/knowledge.md#ingesting-files)); the SDK parses nothing.
-`upload(scope, data, filename)` posts the bytes (`Uint8Array`, `ArrayBuffer` or a
-`Blob` such as a browser `File`) to `/v1/knowledge.upload` with their sha256. It is
-paced on a 429 as an op is, and retried only on an answer that proves the server never
-ran it. `waitForIngest(scope, ingestionId)` polls `knowledge.ingest_status` until the job
-ends (`TimeoutError` after `timeoutMs`, 600 s by default; a job not found returns at
-once; an abort through `signal` stops it; it polls on real timers, not a `Transport`'s injected `sleep`). `ingestFile(...)` does both around
-`knowledge.ingest`, titling the document by the file name less its extension unless
-`title` says otherwise; `waitTimeoutMs` bounds the wait, and `call` holds the upload's and
-the ingest's own request options (`timeoutMs` for a large file over a slow link; `call.signal` also
-stops the wait):
+
+- `upload(scope, data, filename)` posts the bytes (`Uint8Array`, `ArrayBuffer` or a `Blob`
+  such as a browser `File`) to `/v1/knowledge.upload` with their sha256. It is paced on a
+  429 as an op is, and retried only on an answer that proves the server never ran it.
+- `waitForIngest(scope, ingestionId)` polls `knowledge.ingest_status` until the job ends: a
+  `TimeoutError` after `timeoutMs` (600 s by default), at once for a job not found, and an
+  abort through `signal` stops it. It polls on real timers, not a `Transport`'s injected
+  `sleep`.
+- `ingestFile(...)` does both around `knowledge.ingest`, titling the document by the file
+  name less its extension unless `title` says otherwise. `waitTimeoutMs` bounds the wait;
+  `call` holds the upload's and the ingest's own request options (`timeoutMs` for a large
+  file over a slow link), and `call.signal` also stops the wait.
 
 ```ts
 const status = await loom.knowledge.ingestFile({
