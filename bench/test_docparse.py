@@ -618,6 +618,81 @@ def test_a_hit_is_found_by_its_words_and_cited_by_its_pages() -> None:
     row = {**q, "within": True, "page": 2, "page_end": 4}
     assert judge(row, [{**hit, "locator": {"page_start": 3, "page_end": 4}}])["cited"] == 1
     assert judge(row, [{**hit, "locator": {"page_start": 1, "page_end": 2}}])["cited"] == 0
+    # another system's copy of the document, in its own namespace, is not this one's hit
+    theirs = {**hit, "namespace": "docparse-other"}
+    assert judge(q, [theirs, {**hit, "namespace": "docparse-mine"}], "docparse-mine") == {
+        "found": 2,
+        "cited": 2,
+    }
+
+
+def test_decision_counts_come_from_where_extraction_grounds_its_quotes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import types
+
+    from bench.docparse import downstream
+    from server.cli import _ch
+    from server.memory.app import decision_extract as app
+    from server.memory.domain import decision_extract as dx
+
+    def ground(cand: dx.Candidate, texts: list[str]) -> tuple[dx.Candidate | None, list[str]]:
+        return (cand if "keep" in cand.outcome else None), []
+
+    async def extract_document(org: str, namespace: str, uri: str, *, dry_run: bool) -> object:
+        for outcome in ("keep the queue", "drop it"):
+            cand = dx.Candidate(
+                "design",
+                "s",
+                outcome,
+                evidence=["the queue drains first"],
+                alternatives=[dx.Rejected("a lock", "", ("a lock was slower",))],
+            )
+            dx.ground(cand, [])
+        return types.SimpleNamespace(error="")
+
+    monkeypatch.setattr(dx, "ground", ground)
+    monkeypatch.setattr(app, "extract_document", extract_document)
+    monkeypatch.setattr(_ch, "run_connected", lambda run: asyncio.run(run(None)))
+    gold = {"docparse://a.pdf": S.words("first the queue drains first, then the rest")}
+    out = downstream.decisions("o", {"new": "docparse-new"}, ["docparse://a.pdf"], gold)
+    c = out["new"]
+    # two candidates of two claims each, one kept; its two quotes, the rejected option's too
+    assert (c["claims"], c["kept"], c["quotes"], c["in_gold"]) == (4, 2, 2, 1)
+    assert c["quote_match"] == 0.5 and c["in_gold_rate"] == 0.5
+    assert dx.ground is ground  # put back
+
+
+def test_a_parse_that_fails_leaves_no_artifact_from_before(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from bench.docparse import run as R
+
+    art = tmp_path / "art"
+    art.mkdir()
+    stale = art / f"{_gold()[0]['file']}.json"
+    stale.write_text("{}")
+    monkeypatch.setattr(R, "_one", lambda *a: {"error": "boom", "wall_seconds": 0.0})
+    R.run(CORPUS, tmp_path / "out.jsonl", tmp_path, only={_gold()[0]["file"]}, artifacts=art)
+    assert not stale.exists()
+
+
+def test_downstream_refuses_what_would_mix_or_stall_its_systems(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    from bench.docparse.__main__ import main
+
+    base = ["downstream", "--base-url", "http://127.0.0.1:1", "--out", str(tmp_path / "o")]
+    for argv, why in [
+        (["a=x", "A=y", "--token", "t"], "share a namespace"),
+        (["a=x", "a=y", "--token", "t"], "share a namespace"),
+        (["a=x", "--token", ""], "--token"),
+        (["a=x", "--token", "t", "--decisions", "99"], "--decisions is at most"),
+    ]:
+        with pytest.raises(SystemExit):
+            main([*base, *argv])
+        assert why in capsys.readouterr().err
 
 
 def test_the_stub_serves_a_systems_artifact_to_the_token_alone(tmp_path: Path) -> None:
@@ -654,6 +729,11 @@ def test_the_stub_serves_a_systems_artifact_to_the_token_alone(tmp_path: Path) -
             f"{base}/v1/extract?format=pdf&name=../a.pdf", headers=auth, content=b""
         )
         assert outside.status_code == 422  # a corpus file's name, never a path
+        wrong = {"authorization": "Bearer " + "w" * 16}
+        assert httpx.get(f"{base}/v1/capabilities", headers=wrong).status_code == 401
+        post = f"{base}/v1/extract?format=pdf&name=a.pdf"
+        assert httpx.post(post, headers=wrong, content=b"%PDF").status_code == 401
+        assert httpx.post(post, content=b"%PDF").status_code == 401
     finally:
         stub.shutdown()
         stub.server_close()

@@ -34,7 +34,8 @@ hit cited by its page); with `--decisions N`, N documents are mined by
 decision extraction in a dry run (the share of claims whose quotes are in the
 parsed text, and of those quotes in the gold text). The server's document
 extractor must be the stub (`LOOM_DOCUMENT_EXTRACTOR_URL=http://127.0.0.1:7882`,
-its token in `LOOM_DOCUMENT_EXTRACTOR_TOKEN`), and `--decisions` runs in this
+its token in `LOOM_DOCUMENT_EXTRACTOR_TOKEN`), the Loom must run with auth off on
+this host (the stub binds 127.0.0.1), and `--decisions` runs in this
 process with the server's settings and a real LLM (`downstream.py` says which):
 
     PYTHONPATH=$PWD .venv/bin/python -m bench.docparse run --out new.jsonl --artifacts art/new
@@ -156,6 +157,14 @@ def main(argv: list[str] | None = None) -> int:
 
         if bad := [p for p in args.artifacts if "=" not in p]:
             ap.error(f"artifacts are NAME=DIR, not {bad[0]}")
+        names = [p.split("=", 1)[0] for p in args.artifacts]
+        spaces = [downstream.namespace_of(n) for n in names]
+        if len(set(spaces)) < len(spaces):
+            ap.error(f"two systems share a namespace: {', '.join(names)}")
+        if not args.token:
+            ap.error("--token (or LOOM_DOCUMENT_EXTRACTOR_TOKEN): the token the server sends")
+        if args.decisions > len(downstream.DECISION_FILES):
+            ap.error(f"--decisions is at most {len(downstream.DECISION_FILES)}")
         systems = {p.split("=", 1)[0]: Path(p.split("=", 1)[1]) for p in args.artifacts}
         out = downstream.run(
             args.base_url,
@@ -175,6 +184,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "artifacts":
         from bench.docparse.downstream import artifact_from_parse
 
+        if args.out.is_dir() and any(args.out.iterdir()):
+            ap.error(f"{args.out} is not empty: an artifact left there would be served as a parse")
         args.out.mkdir(parents=True, exist_ok=True)
         for line in args.parses.read_text().splitlines():
             parse = json.loads(line)

@@ -204,8 +204,7 @@ def _send(client: httpx.Client, method: str, url: str, **kw: Any) -> httpx.Respo
             r.raise_for_status()
             return r
         time.sleep(float(r.headers.get("retry-after", "1") or 1))
-    r.raise_for_status()
-    return r
+    raise RuntimeError(f"{url} still answers 429 after 60 tries")
 
 
 def _post(client: httpx.Client, op: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -295,14 +294,17 @@ def queries(gold: list[dict]) -> list[dict]:
     return out
 
 
-def judge(q: dict, hits: list[dict]) -> dict[str, Any]:
-    """Where the answer is found, and cited, in the hits (1-based rank, 0 for not)."""
+def judge(q: dict, hits: list[dict], namespace: str = "") -> dict[str, Any]:
+    """Where the answer is found, and cited, in the hits (1-based rank, 0 for
+    not): a hit of the query's document in `namespace`, the system's own."""
     found = cited = 0
     want = set(q["answer"])
     for rank, h in enumerate(hits, start=1):
         if h.get("source_uri") != f"docparse://{q['file']}":
             continue
-        have = set(words(h.get("text", "") or h.get("content", "")))
+        if namespace and h.get("namespace", namespace) != namespace:
+            continue  # another system's copy of the document
+        have = set(words(h.get("content", "")))
         if len(want & have) < 0.7 * len(want):
             continue
         found = found or rank
@@ -322,15 +324,17 @@ def search(client: httpx.Client, org: str, namespace: str, qs: list[dict], k: in
     for q in qs:
         # within the query's own document: the parse decides what its chunks hold and
         # cite, while ranking against other documents is the search's own question
+        # and within the system's own namespace: every system's copy has the same URI
         payload = {
             "org": org,
             "namespace": namespace,
+            "namespace_scope": "this",
             "query": q["query"],
             "top_k": k,
             "uri_prefix": [f"docparse://{q['file']}"],
         }
         res = _post(client, "knowledge.search", payload)
-        out.append(judge(q, res.get("results", [])))
+        out.append(judge(q, res.get("results", []), namespace))
     return out
 
 
@@ -361,6 +365,11 @@ def report(systems: list[str], qs: list[dict], results: dict[str, list[dict]], k
     return out
 
 
+def namespace_of(system: str) -> str:
+    """The namespace a system's documents are ingested into."""
+    return f"docparse-{re.sub(r'[^a-z0-9-]', '-', system.lower())}"
+
+
 DECISION_FILES = [f"pep{n}.pdf" for n in (518, 621, 668, 723, 735, 691)] + [
     f"web_doc_{k}.pdf" for k in range(6)
 ]
@@ -378,11 +387,14 @@ def run(
 ) -> dict:
     """Ingest each system's artifacts into its own namespace (`docparse-<name>`)
     through the stub on `stub_port`, run the query set, and with `decide` mine
-    the first `decide` of DECISION_FILES; the report of each."""
+    the first `decide` of DECISION_FILES; the report of each. A Loom with auth
+    off, on this host (the stub binds 127.0.0.1). A file whose ingest is still
+    running at the deadline stops the run: the stub would serve it the next
+    system's artifact."""
     gold = [json.loads(line) for line in (corpus / "gold.jsonl").read_text().splitlines()]
     files = [g["file"] for g in gold]
     qs = queries(gold)
-    namespaces = {name: f"docparse-{re.sub(r'[^a-z0-9-]', '-', name.lower())}" for name in systems}
+    namespaces = {name: namespace_of(name) for name in systems}
     stub = _Stub(stub_port, token, systems)
     threading.Thread(target=stub.serve_forever, daemon=True).start()
     results: dict[str, list[dict]] = {}
@@ -392,9 +404,12 @@ def run(
             for name, namespace in namespaces.items():
                 stub.system = name
                 states[name] = ingest(client, org, namespace, corpus, files)
+                if late := [f for f, st in states[name].items() if st == "timeout"]:
+                    raise SystemExit(f"{name}: {len(late)} ingests still running, {late[0]} first")
                 results[name] = search(client, org, namespace, qs, k)
     finally:
         stub.shutdown()
+        stub.server_close()
     out: dict[str, Any] = {
         "states": states,
         "queries": qs,
@@ -444,8 +459,7 @@ def decisions(
         c["claims"] += 1 + len(cand.reasons) + len(cand.alternatives)
         if grounded is not None:
             c["kept"] += 1 + len(grounded.reasons) + len(grounded.alternatives)
-            quotes = list(grounded.evidence) + [q for r in grounded.reasons for q in r.evidence]
-            for q in quotes:
+            for q in grounded.quotes():
                 c["quotes"] += 1
                 c["in_gold"] += _in(words(q), gold_text[current[1]])
         return grounded, notes
@@ -472,11 +486,15 @@ def decisions(
         run_connected(_run)
     finally:
         dx.ground = real
-    for c in counts.values():
-        c_claims, c_quotes = c["claims"] or 1, c["quotes"] or 1
-        c["quote_match"] = c["kept"] / c_claims  # type: ignore[assignment]
-        c["in_gold_rate"] = c["in_gold"] / c_quotes  # type: ignore[assignment]
-    return counts
+    out: dict[str, dict[str, Any]] = {}
+    for system, c in counts.items():
+        # None where nothing was measured (every document failed, no quote kept)
+        out[system] = {
+            **c,
+            "quote_match": c["kept"] / c["claims"] if c["claims"] else None,
+            "in_gold_rate": c["in_gold"] / c["quotes"] if c["quotes"] else None,
+        }
+    return out
 
 
 def _in(probe: list[str], stream: list[str]) -> int:

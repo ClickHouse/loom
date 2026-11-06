@@ -88,8 +88,10 @@ def run(
         for g in gold:
             if only and g["file"] not in only:
                 continue
-            art = str(artifacts / f"{g['file']}.json") if artifacts else ""
-            res = _one(python, corpus / g["file"], env, art)
+            art = artifacts / f"{g['file']}.json" if artifacts else None
+            if art is not None:
+                art.unlink(missing_ok=True)  # a parse that fails this time leaves none
+            res = _one(python, corpus / g["file"], env, str(art or ""))
             res["file"] = g["file"]
             f.write(json.dumps(res) + "\n")
             f.flush()
