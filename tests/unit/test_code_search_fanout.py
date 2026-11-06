@@ -216,6 +216,30 @@ def test_one_unreadable_namespace_refuses_the_whole_request(
     assert len(_fan(_inp(namespaces=["ns-b", "ns-a"]), single).results) == 4
 
 
+def test_a_one_entry_list_is_authorized_before_it_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gate checks `namespace`; a one-entry `namespaces` becomes the namespace the
+    search runs on, so it is authorized first, as each entry of a longer list is."""
+
+    async def _no_grant(org: str, namespace: str, subject: str) -> Role | None:
+        return None
+
+    monkeypatch.setattr(authz, "_lookup_grant", _no_grant)
+    set_current_auth(
+        AuthInfo(
+            subject="bob@x",
+            org="acme",
+            namespaces=("code-default",),
+            roles=(Role.VIEWER,),
+            is_service_account=False,
+        )
+    )
+    try:
+        with pytest.raises(AuthInsufficientError, match="code-secret"):
+            asyncio.run(h.handle_code_search(_inp(namespaces=["code-secret"])))
+    finally:
+        set_current_auth(None)
+
+
 # ---- interleave ------------------------------------------------------------------
 
 

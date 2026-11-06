@@ -42,10 +42,15 @@ _RISK_ORDER: dict[str, int] = {"low": 0, "medium": 1, "high": 2, "abstain": 3}
 Answered = dict[str, tuple["CodeSearchOutput", int]]
 
 
-def normalize(inp: CodeSearchInput) -> CodeSearchInput:
-    """A one-entry list is the plain single-namespace search on that entry."""
+async def normalize(inp: CodeSearchInput) -> CodeSearchInput:
+    """A one-entry list is the plain single-namespace search on that entry, once
+    the entry is authorized: the gate checked `namespace`, not the list."""
+    from server.code.app.common import resolve_code_identity
+
     if len(inp.namespaces) != 1:
         return inp
+    org, _ = resolve_code_identity(inp.org, inp.namespaces[0])
+    await authorize(org, inp.namespaces)
     return inp.model_copy(update={"namespace": inp.namespaces[0], "namespaces": []})
 
 
