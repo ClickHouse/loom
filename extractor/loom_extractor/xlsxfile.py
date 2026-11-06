@@ -449,14 +449,15 @@ class _Reader:
         header = [sheet.grid[top].get(col, EMPTY) for col in range(left, right + 1)]
         # A header over two rows: a range merged across columns of the first row
         # groups the names the row under it gives (`2025` over `H1` and `H2`), when
-        # what that row holds under the range is text.
+        # that row holds text under the range and, elsewhere, only cells merged down
+        # from the first row; a row of anything else is data.
         spans = [(c, r) for t, c, b, r in sheet.merges if t == b == top and r > c]
-        under = sheet.grid.get(top + 1, {})
-        named = [under[col] for c, r in spans for col in range(c, r + 1) if col in under]
-        grouped = bool(named) and all(
-            cell.kind == "string" and cell is not sheet.grid[top].get(col)
-            for col, cell in under.items()
-            if any(c <= col <= r for c, r in spans)
+        above, under = sheet.grid[top], sheet.grid.get(top + 1, {})
+        # The second row's own cells: those not merged down from the first.
+        own = {col: cell for col, cell in under.items() if cell is not above.get(col)}
+        grouped = bool(own) and all(
+            cell.kind == "string" and any(c <= col <= r for c, r in spans)
+            for col, cell in own.items()
         )
         if grouped:
             header = [

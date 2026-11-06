@@ -242,6 +242,7 @@ def table(
     failed units (rows past the budget). A source leaves out the values past
     MAX_COLUMNS itself, and counts them."""
     failed: list[Failure] = []
+    header_end = rows.header_row + rows.header_rows - 1 if rows.header_row else 0
     width = max([len(rows.header), *(max(r) + 1 for _, r in rows.rows if r)], default=0)
     names, cut = _names(rows.header, width, rows.first_column)
     if cut:  # the header's text past the names a table holds is not in the artifact
@@ -300,12 +301,11 @@ def table(
             fail(budget, failed, name, "its header is past what one artifact holds")
             return None, failed
         budget.text -= len(head) + CHUNK_FLOOR
-        end = rows.header_row + rows.header_rows - 1
-        loc = Locator(sheet=sheet, row_start=rows.header_row, row_end=end)
+        loc = Locator(sheet=sheet, row_start=rows.header_row, row_end=header_end)
         acc.add("paragraph", head, loc, table_id=tid)
-    # The rows the table came from: its header row, or with none, its first row.
+    # The rows the table came from: its header rows, or with none, its first row.
     first = rows.header_row or (grid[0][0] if grid else 0)
-    last = grid[-1][0] if grid else rows.header_row
+    last = grid[-1][0] if grid else header_end
     return (
         Table(
             id=tid,

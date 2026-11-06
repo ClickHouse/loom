@@ -147,6 +147,35 @@ def test_an_xlsx_header_over_two_rows_names_each_column_from_both() -> None:
     assert rows_block.locator.row_start == 3
 
 
+@pytest.mark.parametrize(
+    "first",
+    [cell("A2", "Alice", t="inlineStr"), cell("A2", 17)],
+    ids=["text", "number"],
+)
+def test_a_data_row_under_an_xlsx_merged_header_stays_data(first: str) -> None:
+    rows = {
+        1: [cell("A1", "Name", t="inlineStr"), cell("B1", "Contact", t="inlineStr")],
+        2: [first, cell("B2", "alice@x.io", t="inlineStr"), cell("C2", "Bob", t="inlineStr")],
+    }
+    a = extract(workbook([("S", sheet(rows, merges=("B1:C1",)))]), "s.xlsx")
+    # A cell outside the merge that is not merged down from the header: the row is data.
+    assert [name for name, _ in _columns(a)] == ["Name", "Contact", "Contact (2)"]
+    assert len(a.tables[0].rows) == 1 and a.tables[0].header_rows == 1
+
+
+def test_an_xlsx_header_over_two_rows_with_no_rows_under_it_cites_both() -> None:
+    rows = {
+        1: [cell("B1", "2025", t="inlineStr")],
+        2: [cell("B2", "H1", t="inlineStr"), cell("C2", "H2", t="inlineStr")],
+    }
+    a = extract(workbook([("S", sheet(rows, merges=("B1:C1",)))]), "s.xlsx")
+    (table,) = a.tables
+    assert table.header_rows == 2 and table.rows == ()
+    assert table.locator.to_dict() == {"sheet": "S", "row_start": 1, "row_end": 2}
+    (block,) = [b for b in a.blocks if b.attrs.get("table_id") == "t0"]
+    assert (block.locator.row_start, block.locator.row_end) == (1, 2)
+
+
 def test_an_xlsx_title_merged_over_its_header_row_heads_each_name() -> None:
     rows = {
         1: [cell("A1", "Sales 2025", t="inlineStr")],
