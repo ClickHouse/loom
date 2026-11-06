@@ -69,7 +69,7 @@ export type IngestFileInput = Omit<IngestInput, "upload_id" | "title"> & {
 
 /** The `loom.knowledge` methods beside the generated ops. */
 export interface KnowledgeFiles {
-  /** Store a file's bytes for `knowledge.ingest`, sent with their sha256 for the server to check. */
+  /** Store a file's bytes for `knowledge.ingest`, sent with their sha256 for the server to check (where Web Crypto is available). */
   upload(
     scope: { org: string; namespace: string },
     data: FileData,
@@ -95,8 +95,14 @@ async function bytesOf(data: FileData): Promise<Uint8Array> {
   return new Uint8Array(await data.arrayBuffer());
 }
 
+/**
+ * The bytes' sha256, for the server to check them against; "" where Web Crypto is
+ * missing (a browser page on plain http), as the server checks only a hash it is sent.
+ */
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return "";
+  const digest = await subtle.digest("SHA-256", bytes as BufferSource);
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -116,12 +122,13 @@ export function knowledgeFiles(transport: Transport): KnowledgeFiles {
   ): Promise<Upload> => {
     const bytes = await bytesOf(data);
     const { contentType = "", ...call } = opts;
+    const sha256 = await sha256Hex(bytes);
     const query = {
       org: scope.org,
       namespace: scope.namespace,
       filename,
       content_type: contentType,
-      sha256: await sha256Hex(bytes),
+      ...(sha256 ? { sha256 } : {}),
     };
     return transport.postBytes<Upload>("knowledge.upload", query, bytes, call);
   };

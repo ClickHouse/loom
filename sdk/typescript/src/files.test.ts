@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { LoomClient, type OpOutput } from "./client.js";
 import { RateLimited, TimeoutError } from "./errors.js";
 import {
@@ -116,6 +116,18 @@ describe("knowledge.upload", () => {
     });
   });
 
+  it("sends no sha256 where Web Crypto is missing (a browser page on plain http)", async () => {
+    vi.stubGlobal("crypto", {});
+    try {
+      const { loom, sent } = server();
+      await loom.knowledge.upload(scope, new Uint8Array([1, 2]), "n.txt");
+      expect(sent[0].url.searchParams.has("sha256")).toBe(false);
+      expect(Array.from(sent[0].init.body as Uint8Array)).toEqual([1, 2]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("takes a Blob or an ArrayBuffer, and a view of part of a buffer as just those bytes", async () => {
     const { loom, sent } = server();
     await loom.knowledge.upload(scope, new Blob(["# Notes"]), "notes.md");
@@ -197,15 +209,17 @@ describe("knowledge.waitForIngest", () => {
 
 describe("knowledge.ingestFile", () => {
   it("uploads, ingests and waits, titled by the file name less its extension", async () => {
-    const { loom, body } = server();
+    const { loom, body, sent } = server();
     const status = await loom.knowledge.ingestFile({
       ...scope,
       data: new TextEncoder().encode("# Runbook"),
       filename: "runbook.md",
       source_uri: "repo://runbook.md",
       tags: ["ops"],
+      contentType: "text/markdown",
       pollMs: 0,
     });
+    expect(sent[0].url.searchParams.get("content_type")).toBe("text/markdown");
     expect(status.state).toBe("ready");
     const [ingest] = body("knowledge.ingest");
     expect(ingest).toMatchObject({
@@ -217,6 +231,7 @@ describe("knowledge.ingestFile", () => {
       tags: ["ops"],
     });
     expect(ingest).not.toHaveProperty("data");
+    expect(ingest).not.toHaveProperty("contentType");
     expect(ingest).not.toHaveProperty("filename");
   });
 
