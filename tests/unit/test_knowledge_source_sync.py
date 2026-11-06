@@ -40,6 +40,7 @@ DOCS = "application/vnd.google-apps.document"
 SLIDES = "application/vnd.google-apps.presentation"
 PDF = "application/pdf"
 PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 KEY = '{"type": "service_account", "client_email": "a@b", "private_key": "k"}'
 
 
@@ -844,13 +845,18 @@ def test_a_file_the_extractor_refuses_is_unconverted(world: _World) -> None:
     assert world.states["decks"]["state_value"] == "2026-01-03T00:00:00.000Z"
 
 
-def test_a_pptx_file_goes_to_the_extractor_with_its_bytes_kept(world: _World) -> None:
-    world.files = [_file("deck2", PPTX, "2026-01-03T00:00:00.000Z", size="14")]
+@pytest.mark.parametrize(("mime", "fmt"), [(PPTX, "pptx"), (DOCX, "docx")])
+def test_an_uploaded_deck_or_document_goes_to_the_extractor_with_its_bytes_kept(
+    world: _World, mime: str, fmt: str
+) -> None:
+    world.routes.add(fmt)
+    world.declared.add(fmt)
+    world.files = [_file("file2", mime, "2026-01-03T00:00:00.000Z", size="14")]
     asyncio.run(source_sync.run_sync())
     [(inp, _)] = world.upserts
-    assert inp.metadata["ingested_format"] == "pptx"
+    assert inp.metadata["ingested_format"] == fmt
     assert inp.metadata["extraction_coverage"]["complete"] is True
-    assert inp.blob_content_type == PPTX and inp.original_bytes_b64
+    assert inp.blob_content_type == mime and inp.original_bytes_b64
 
 
 def test_a_changed_address_retires_the_old_one(world: _World) -> None:

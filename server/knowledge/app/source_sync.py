@@ -144,6 +144,7 @@ _FULL_READ_SHARE = 0.75  # not a setting: a bound on how much of a pass one docu
 _FORMAT_OF_MIME = {
     GDRIVE_MIME_TYPES["pdf"]: "pdf",
     GDRIVE_MIME_TYPES["pptx"]: "pptx",
+    GDRIVE_MIME_TYPES["docx"]: "docx",
 }
 # Namespaces whose model calls are held, each until its hold ends: the extraction leg
 # leaves their documents pending.

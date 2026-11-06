@@ -144,7 +144,10 @@ def test_add_probes_then_stores_the_credential_sealed(fake: _Store) -> None:
     out = asyncio.run(app.handle_knowledge_source_add(_add(name=" Design-Decks ")))
     assert not out.dry_run and out.name == "design-decks"
     assert out.probe.documents == 3 and out.probe.sample == ["Deck"]
-    assert out.config == {"folder_ids": [FOLDER], "include": ["docs", "slides", "pdf", "pptx"]}
+    assert out.config == {
+        "folder_ids": [FOLDER],
+        "include": ["docs", "slides", "pdf", "pptx", "docx"],
+    }
     src = fake.rows[(ORG, NS, "design-decks")]
     assert src.kind == "gdrive" and src.active and src.config == out.config
     assert SECRET not in src.credential_enc

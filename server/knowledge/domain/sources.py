@@ -26,6 +26,7 @@ GDRIVE_MIME_TYPES = {
     "slides": "application/vnd.google-apps.presentation",
     "pdf": "application/pdf",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 # A folder id goes into the store's query string, so only its own alphabet passes.
 _FOLDER_ID_RE = re.compile(r"[A-Za-z0-9_-]{10,128}")

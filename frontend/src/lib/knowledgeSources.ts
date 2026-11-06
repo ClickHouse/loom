@@ -226,6 +226,7 @@ export const INCLUDE_OPTIONS = [
   { value: "slides", label: "Presentations" },
   { value: "pdf", label: "PDF files" },
   { value: "pptx", label: ".pptx decks" },
+  { value: "docx", label: ".docx documents" },
 ] as const;
 
 /** A meeting store's providers, with the credential each takes. */
