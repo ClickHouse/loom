@@ -124,6 +124,21 @@ def test_a_block_whose_lines_are_reordered_is_not_lost() -> None:
     assert S.lost_blocks(g, p) == 0
 
 
+def test_a_list_items_number_is_no_extra_word() -> None:
+    g = {
+        "blocks": [
+            {"kind": "item", "text": "Alpha beta", "page": 1},
+            {"kind": "item", "text": "Gamma", "page": 1},
+        ],
+        "tables": [],
+    }
+    block = {"type": "list", "page_start": 1, "page_end": 1, "level": 0, "notes": False}
+    one = {"blocks": [{**block, "text": "1. Alpha beta\n2. Gamma"}], "tables": []}
+    each = {"blocks": [{**block, "text": "1. Alpha beta"}, {**block, "text": "2. Gamma"}]}
+    for p in (one, {**each, "tables": []}):
+        assert S.text_scores(g, p) == {"text_recall": 1.0, "text_precision": 1.0}
+
+
 def test_a_heading_matches_without_its_number_and_levels_compare_by_rank() -> None:
     g = {
         "blocks": [

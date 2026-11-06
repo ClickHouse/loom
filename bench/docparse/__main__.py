@@ -14,7 +14,8 @@ difference of each from the first with a 95% bootstrap interval:
 
 - text recall and precision: the gold text's words found in the parse, and the
   parse's words found in the gold (word multisets; a table counted as its cells);
-- reading order: the share of consecutive gold paragraphs held in order;
+- reading order: the share of consecutive gold text units (paragraphs, items,
+  headings, code; five words or more) held in order;
 - heading F1 and level accuracy (levels compared by rank, numbering aside);
 - table cell F1 (cells at their row and column) and table detection F1;
 - locator accuracy: blocks and tables cited by the page (or slide) they are on;

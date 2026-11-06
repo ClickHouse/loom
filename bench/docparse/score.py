@@ -80,10 +80,14 @@ def text_scores(g: dict, p: dict) -> dict:
 
 
 def _stream(p: dict) -> list[str]:
-    """The words of the parse's blocks in order, a table block's left to its table."""
+    """The words of the parse's blocks in order, a table block's left to its
+    table and a list item's number left out, as the gold holds its items."""
     out: list[str] = []
     for b in p.get("blocks", []):
-        if b["type"] != "table":
+        if b["type"] == "list":
+            for line in b["text"].split("\n"):
+                out.extend(words(unnumbered(line)))
+        elif b["type"] != "table":
             out.extend(words(b["text"]))
     return out
 
