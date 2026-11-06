@@ -63,9 +63,8 @@ export type IngestFileInput = Omit<IngestInput, "upload_id" | "title"> & {
   waitTimeoutMs?: number;
   /** Between polls, default 1 s. */
   pollMs?: number;
-  /** Options for the upload and ingest requests: their timeout, retry policy, request id. */
+  /** Options for the upload and ingest requests (timeout, retry policy, request id); `call.signal` also stops the wait. */
   call?: CallOptions;
-  signal?: AbortSignal;
 };
 
 /** The `loom.knowledge` methods beside the generated ops. */
@@ -146,22 +145,22 @@ export function knowledgeFiles(transport: Transport): KnowledgeFiles {
           `ingestion ${ingestionId} is still ${status.state} after ${timeoutMs} ms; knowledge.ingest_status follows it`,
           { op: "knowledge.ingest_status" },
         );
-      // Cut short by an abort; the next poll then throws the transport's "aborted by caller".
+      // Real timers, not a Transport's injected `sleep`; an abort cuts the sleep short and
+      // the next poll then throws the transport's "aborted by caller".
       await defaultSleep(pollMs, signal);
     }
   };
 
   async function ingestFile(input: IngestFileInput): Promise<IngestStatus | OpOutput<"knowledge.ingest">> {
-    const { data, filename, contentType, wait = true, waitTimeoutMs, pollMs, call, signal, ...fields } = input;
-    const opts = { ...call, signal: signal ?? call?.signal };
-    const up = await upload(fields, data, filename, { ...opts, contentType });
+    const { data, filename, contentType, wait = true, waitTimeoutMs, pollMs, call = {}, ...fields } = input;
+    const up = await upload(fields, data, filename, { ...call, contentType });
     const job = await transport.post<OpOutput<"knowledge.ingest">>(
       "knowledge.ingest",
       { ...fields, title: fields.title ?? stem(filename), upload_id: up.upload_id },
-      opts,
+      call,
     );
     if (!wait) return job;
-    return waitForIngest(fields, job.ingestion_id, { timeoutMs: waitTimeoutMs, pollMs, signal: opts.signal });
+    return waitForIngest(fields, job.ingestion_id, { timeoutMs: waitTimeoutMs, pollMs, signal: call.signal });
   }
 
   return { upload, waitForIngest, ingestFile: ingestFile as KnowledgeFiles["ingestFile"] };

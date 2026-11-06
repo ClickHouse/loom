@@ -81,7 +81,7 @@ const status = await loom.knowledge.ingestFile({
 // status.state: ready | partial | failed | cancelled; status.revision, status.chunks
 ```
 
-`loom.knowledge.upload` and `loom.knowledge.waitForIngest` are the two steps on their own.
+`loom.knowledge.upload`, `loom.knowledge.ingest` and `loom.knowledge.waitForIngest` are its steps on their own.
 
 `OpMap` binds every operation name (`GENERATED_OP_COUNT` of them) to its input and output interface; `OPS` is the table of specs (group, method, required role, idempotency, maturity, latency budget). An op the SDK does not know yet (a newer server) is reachable through `loom.callRaw(name, body)`.
 

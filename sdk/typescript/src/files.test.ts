@@ -2,7 +2,14 @@ import { createHash } from "node:crypto";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { LoomClient, type OpOutput } from "./client.js";
 import { RateLimited, TimeoutError } from "./errors.js";
-import { INGEST_DONE } from "./files.js";
+import {
+  type FileData,
+  INGEST_DONE,
+  type IngestFileInput,
+  type KnowledgeFiles,
+  type UploadOptions,
+  type WaitOptions,
+} from "./files.js";
 import { Transport } from "./transport.js";
 
 interface Sent {
@@ -74,6 +81,19 @@ function server(opts: Script = {}) {
 }
 
 const scope = { org: "acme", namespace: "support" };
+
+describe("the file types", () => {
+  it("are what loom.knowledge takes and answers", () => {
+    const { loom } = server();
+    expectTypeOf(loom.knowledge).toMatchTypeOf<KnowledgeFiles>();
+    expectTypeOf<Uint8Array>().toMatchTypeOf<FileData>();
+    expectTypeOf<Blob>().toMatchTypeOf<FileData>();
+    expectTypeOf<{ contentType: string; timeoutMs: number }>().toMatchTypeOf<UploadOptions>();
+    expectTypeOf<{ timeoutMs: number; pollMs: number }>().toMatchTypeOf<WaitOptions>();
+    expectTypeOf<IngestFileInput>().toHaveProperty("waitTimeoutMs");
+    expectTypeOf<IngestFileInput>().not.toHaveProperty("upload_id");
+  });
+});
 
 describe("knowledge.upload", () => {
   it("sends the bytes as they are with their sha256, as octet-stream", async () => {
