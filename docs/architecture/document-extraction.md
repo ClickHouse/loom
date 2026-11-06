@@ -31,7 +31,7 @@ declaration is read again after a minute. A `.doc`, `.xls` or `.ppt` name is ref
 format name or a media type that names one, matched without its parameters and case; any other key is refused when the
 settings load. What a deployment advertises is what these declarations say: `knowledge.formats` reports a format as
 available when a service a file of it can go to declares it (a format served only by a media type's route is read when
-the upload carries that media type). It reads the services together within 5 s; one that is not read in time declares
+the upload carries that media type). It reads the services together within 5 s; one it cannot read within 5 s declares
 nothing for up to a minute, until a capabilities read of it succeeds.
 
 **Fail closed.** A format with no configured service, a service that does not declare it, is unreachable, takes longer

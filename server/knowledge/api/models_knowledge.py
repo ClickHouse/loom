@@ -873,8 +873,10 @@ class KnowledgeFormat(BaseModel):
     # The media types that name it, when the file name does not.
     media_types: list[str] = Field(default_factory=list)
     # True when an extractor a file of this format can go to declares it; a file of a
-    # format that is not fails `format_unavailable`. A format served only by a route
-    # keyed by its media type is read when the upload carries that media type.
+    # format no service declares fails `format_unavailable`. False also while that
+    # service cannot be read (within 5 s, or for a minute after a failed read): an ingest
+    # then waits for it and retries. A format served only by a route keyed by its media
+    # type is read when the upload carries that media type.
     available: bool = False
 
 

@@ -910,10 +910,11 @@ that select it and whether an extractor a file of it can go to declares it (each
 capabilities are cached a minute; a listing waits at most 5 s for them, and a service it
 could not read declares nothing for up to a minute, until a capabilities read succeeds),
 with `max_upload_bytes` and the extensions the upload refuses; a client can tell a person
-before sending a file that it would not be read. `knowledge.update_metadata` with
-`reindex=true` refuses an ingested document (its chunks come from the artifact): ingest it
-again to re-index it. A chunk's context (the title, description and section breadcrumb
-both search legs read) is filled as for
+before sending a file that it would not be read (false also while the service cannot be
+read, when an ingest waits for it and retries instead of failing).
+`knowledge.update_metadata` with `reindex=true` refuses an ingested document (its chunks
+come from the artifact): ingest it again to re-index it. A chunk's context (the title,
+description and section breadcrumb both search legs read) is filled as for
 `knowledge.add`.
 
 The Python and TypeScript SDKs run the two steps (TypeScript: `loom.knowledge.upload`,
