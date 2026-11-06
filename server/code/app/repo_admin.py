@@ -618,9 +618,12 @@ async def handle_code_repo_set_source(input: Any) -> Any:
     cfg = repo_for_namespace(input.org, input.namespace)
     if cfg is None:
         raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
-    await binding.refresh_overrides(force=True, strict=True)
+    await binding.refresh_overrides(force=True)
     previous = binding.tracker_namespaces_for(input.namespace)
-    stored = binding.parse_binding(binding.override_for(input.namespace) or "")
+    # This repository's own stored links, read for its org and raising when unread.
+    stored = binding.parse_binding(
+        await CodeRepo().get_state(input.org, input.namespace, binding.OVERRIDE_KEY)
+    )
     wanted = binding.parse_binding(input.tracker_namespaces)
     # Linking decides who reads a tracker, so a link this call stores needs the tracker's
     # admin unless a maintainer link already holds it: one only the operator map holds

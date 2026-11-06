@@ -32,7 +32,6 @@ class _Ns:
 
 
 NAMESPACES = {QA: _Ns(), DESK: _Ns(), PRIV: _Ns(True)}
-_REAL_REFRESH = b.refresh_overrides
 
 
 @pytest.fixture
@@ -281,6 +280,9 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
     written: list[str] = []
 
     class _Repo:
+        async def get_state(self, org, ns, key):
+            return b.override_for(ns) or ""
+
         async def set_state(self, org, ns, key, value, detail=""):
             written.append(value)
             b.reset_overrides_for_tests({CODE: value})
@@ -416,43 +418,58 @@ async def test_memory_ask_names_a_tracker_it_could_not_read(wired, monkeypatch) 
     assert key == f"key:{DESK}"
 
 
-async def test_set_source_reads_the_stored_links_fail_closed(monkeypatch) -> None:
-    """The stored links decide which trackers need their admin, so set_source refuses
-    when they cannot be read, rather than deciding on a stale snapshot; other reads
-    keep the snapshot."""
+async def test_set_source_reads_its_own_stored_links_fail_closed(monkeypatch) -> None:
+    """The repository's own stored links, read for its org, decide which trackers need
+    their admin: an unread row refuses the write; a link stored under the same
+    namespace name in another org counts for nothing here."""
     import server.code.app.repo_admin as adm
     from server.code.api.models_repos import CodeRepoSetSourceInput
+    from server.core.errors import AuthInsufficientError
 
-    b.reset_overrides_for_tests({CODE: QA})
     written: list[str] = []
-
-    class _Index:
-        async def state_values_for_key(self, key):
-            raise ConnectionError("ClickHouse is down")
+    stored: dict[tuple[str, str], str] = {("other-org", CODE): QA}
+    down = [True]
 
     class _Repo:
+        async def get_state(self, org, ns, key):
+            if down[0]:
+                raise ConnectionError("ClickHouse is down")
+            return stored.get((org, ns), "")
+
         async def set_state(self, *a, **k):
             written.append("x")
 
-    async def _refresh(**_):
-        return None
+    async def _none(**_):
+        return {}
 
-    monkeypatch.setattr("server.code.app.reads.code_index", lambda: _Index())
-    monkeypatch.setattr("server.core.ch.get_client", lambda: type("C", (), {"_client": object()})())
+    async def _scope(org, ns, role=None, *, hides_answer=True):
+        from server.operations.base import Role
+
+        return role is not Role.ADMIN
+
     monkeypatch.setattr("server.code.store.index.CodeRepo", _Repo)
-    monkeypatch.setattr(adm.reg, "refresh_db_repos", _refresh)
+    monkeypatch.setattr(adm.reg, "refresh_db_repos", _none)
+    monkeypatch.setattr(b, "refresh_overrides", _none)
     monkeypatch.setattr(adm, "_require_same_org", lambda org: None)
+    monkeypatch.setattr(
+        "server.tracker.domain.namespaces.tracker_namespace", lambda org, n: NAMESPACES.get(n)
+    )
+    monkeypatch.setattr(authz, "row_in_scope", _scope)
     monkeypatch.setattr(
         "server.code.domain.index.repos.repo_for_namespace",
         lambda org, ns: SimpleNamespace(repo="Acme/widgets"),
     )
-    monkeypatch.setattr(b, "refresh_overrides", _REAL_REFRESH)
+    b.reset_overrides_for_tests({CODE: QA})  # the deployment-wide snapshot names it
     try:
         with pytest.raises(ConnectionError):
             await adm.handle_code_repo_set_source(
                 CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[QA])
             )
+        down[0] = False
+        with pytest.raises(AuthInsufficientError, match="needs an admin"):
+            await adm.handle_code_repo_set_source(
+                CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[QA])
+            )
         assert written == []
-        assert await b.refresh_overrides(force=True) == {CODE: QA}  # not strict: the snapshot
     finally:
         b.reset_overrides_for_tests({})

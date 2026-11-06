@@ -77,10 +77,10 @@ _OVERRIDES: dict[str, str] = {}
 _OVERRIDES_AT = 0.0
 
 
-async def refresh_overrides(*, force: bool = False, strict: bool = False) -> dict[str, str]:
+async def refresh_overrides(*, force: bool = False) -> dict[str, str]:
     """Re-read the `tracker_binding` state rows when the snapshot is older than
-    `code_repos_refresh_seconds` (or `force`). A directory that cannot be read keeps
-    the last snapshot, or raises with `strict` (a write that decides on the rows)."""
+    `code_repos_refresh_seconds` (or `force`); never raises — a directory that
+    cannot be read keeps the last snapshot."""
     global _OVERRIDES, _OVERRIDES_AT
     now = time.monotonic()
     if not force and now - _OVERRIDES_AT < float(settings.code_repos_refresh_seconds):
@@ -90,14 +90,10 @@ async def refresh_overrides(*, force: bool = False, strict: bool = False) -> dic
         from server.core.ch import get_client
 
         if getattr(get_client(), "_client", "absent") is None:
-            if strict:
-                raise RuntimeError("ClickHouse client is not connected")
             return dict(_OVERRIDES)
         _OVERRIDES = await code_index().state_values_for_key(OVERRIDE_KEY)
         _OVERRIDES_AT = now
-    except Exception as e:  # keep the last snapshot, unless strict
-        if strict:
-            raise
+    except Exception as e:  # noqa: BLE001 — keep the last snapshot
         log.warning("qa bindings: override refresh failed, keeping %d: %s", len(_OVERRIDES), e)
     return dict(_OVERRIDES)
 

@@ -163,6 +163,9 @@ async def test_a_binding_rereads_the_registry_before_refusing(monkeypatch) -> No
         return []
 
     class _Repo:
+        async def get_state(self, org, ns, key):
+            return binding.override_for(ns) or ""
+
         async def set_state(self, org, ns, key, value, detail=""):
             binding.reset_overrides_for_tests({ns: value})
 
