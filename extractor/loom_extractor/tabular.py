@@ -126,6 +126,7 @@ class Rows:
     # The header's row in the source; 0 for a source whose names are no row of it
     # (a Parquet file's schema), whose rows count from 1.
     header_row: int = 1
+    header_rows: int = 1  # the rows the header is read from, from `header_row` on
     more: int = 0
     more_from: int = 0
     first_column: int = 0  # the source's column the table starts at, from 0
@@ -299,7 +300,8 @@ def table(
             fail(budget, failed, name, "its header is past what one artifact holds")
             return None, failed
         budget.text -= len(head) + CHUNK_FLOOR
-        loc = Locator(sheet=sheet, row_start=rows.header_row, row_end=rows.header_row)
+        end = rows.header_row + rows.header_rows - 1
+        loc = Locator(sheet=sheet, row_start=rows.header_row, row_end=end)
         acc.add("paragraph", head, loc, table_id=tid)
     # The rows the table came from: its header row, or with none, its first row.
     first = rows.header_row or (grid[0][0] if grid else 0)
@@ -310,7 +312,7 @@ def table(
             name=name,
             columns=columns,
             rows=tuple(tuple(c.value for c in r) for _, r in grid),
-            header_rows=1 if rows.header_row else 0,
+            header_rows=rows.header_rows if rows.header_row else 0,
             locator=Locator(sheet=sheet, row_start=first, row_end=last),
         ),
         failed,

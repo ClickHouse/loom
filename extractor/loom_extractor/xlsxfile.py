@@ -1,17 +1,18 @@
-"""An XLSX workbook as tables, read from its XML parts with the standard
-library: each worksheet in the workbook's order is a table, its first row with
-a value its header, the rows under it its values. A cell reads as the workbook
-holds it: a shared or inline string, a number, a bool, an error
-(`{"error": "#DIV/0!"}`), a date when its number format is one (the 1900 date
-system, Excel's 1900-02-29 read as text, or 1904 when the workbook says so), a
-time of day when the format holds a time and no date, or a duration when it is
-an elapsed-time format (`[h]:mm`). A value over MAX_VALUE_CHARS is left out and
-counted. A formula reads its cached value; one with none (a workbook saved
-without calculating) reads empty, and the artifact loses `formula_values`. A
-merged range takes its first cell's value in every cell, so a header merged
-over columns names each of them, as far as the artifact's budget of cells
-allows. A row or cell that names no position (`r`) takes the one after the row
-or cell before it.
+"""An XLSX workbook as tables, read from its XML parts with the standard library:
+each worksheet in the workbook's order is a table, its first row with a value
+its header, the rows under it its values. A cell reads as the workbook holds it:
+a shared or inline string, a number, a bool, an error (`{"error": "#DIV/0!"}`),
+a date when its number format is one (the 1900 date system, Excel's 1900-02-29
+read as text, or 1904 when the workbook says so), a time of day when the format
+holds a time and no date, or a duration when it is an elapsed-time format
+(`[h]:mm`). A value over MAX_VALUE_CHARS is left out and counted. A formula
+reads its cached value; one with none (a workbook saved without calculating)
+reads empty, and the artifact loses `formula_values`. A merged range takes its
+first cell's value in every cell, so a header merged over columns names each of
+them, as far as the artifact's budget of cells allows; a range merged across
+columns of the header row over text cells in the row under it makes a header of
+both rows (`2025 / H1`). A row or cell that names no position (`r`) takes the
+one after the row or cell before it.
 
 The rows are blocks too, cited by sheet and rows (`tabular`).
 
@@ -49,7 +50,7 @@ from loom_extractor.tabular import (
     table,
 )
 
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"
 _WORKBOOK = "xl/workbook.xml"
 _CELL_REF = re.compile(r"([A-Z]{1,3})([1-9][0-9]{0,6})")
 _RANGE = re.compile(r"([A-Z]{1,3})([1-9][0-9]{0,6}):([A-Z]{1,3})([1-9][0-9]{0,6})")
@@ -444,15 +445,34 @@ class _Reader:
         left = min(col for row in sheet.grid.values() for col in row)
         numbers = sorted(sheet.grid)
         right = max(col for row in sheet.grid.values() for col in row)
-        header = [sheet.grid[numbers[0]].get(col, EMPTY) for col in range(left, right + 1)]
+        top = numbers[0]
+        header = [sheet.grid[top].get(col, EMPTY) for col in range(left, right + 1)]
+        # A header over two rows: a range merged across columns of the first row
+        # groups the names the row under it gives (`2025` over `H1` and `H2`), when
+        # what that row holds under the range is text.
+        spans = [(c, r) for t, c, b, r in sheet.merges if t == b == top and r > c]
+        under = sheet.grid.get(top + 1, {})
+        named = [under[col] for c, r in spans for col in range(c, r + 1) if col in under]
+        grouped = bool(named) and all(
+            cell.kind == "string" and cell is not sheet.grid[top].get(col)
+            for col, cell in under.items()
+            if any(c <= col <= r for c, r in spans)
+        )
+        if grouped:
+            header = [
+                _named_over(cell, under.get(col, EMPTY))
+                for cell, col in zip(header, range(left, right + 1), strict=True)
+            ]
         out = Rows(
             header,
-            header_row=numbers[0],
+            header_row=top,
+            header_rows=2 if grouped else 1,
             more=rest.more,
             more_from=rest.more_from,
             first_column=left,
         )
-        out.rows = [(n, {col - left: c for col, c in sheet.grid[n].items()}) for n in numbers[1:]]
+        values = numbers[2:] if grouped else numbers[1:]
+        out.rows = [(n, {col - left: c for col, c in sheet.grid[n].items()}) for n in values]
         return out, failed, unread
 
 
@@ -621,6 +641,17 @@ class _SheetStream:
         """Whether the open row is past the budget: only checked for a value."""
         over = self._row_held > self.budget.held
         return over or bool(self.past.more) or len(self.grid) > MAX_ROWS or self.budget.cut
+
+
+def _named_over(above: Cell, below: Cell) -> Cell:
+    """A column's name from a header over two rows: the first row's cell, the
+    second's under it joined after ` / `; one merged down both rows (the same
+    cell) or with nothing under it is its own name."""
+    if below is above or below.kind == "empty":
+        return above
+    if above.kind == "empty":
+        return below
+    return Cell(f"{above.text} / {below.text}", "string")
 
 
 def _spread(

@@ -117,6 +117,48 @@ def _book() -> bytes:
     return workbook([("Sales", sales), ("Notes", hidden)], shared=shared, hidden=("Notes",))
 
 
+def test_an_xlsx_header_over_two_rows_names_each_column_from_both() -> None:
+    rows = {
+        1: [
+            cell("A1", "Region", t="inlineStr"),
+            cell("B1", "2025", t="inlineStr"),
+            cell("D1", "Note", t="inlineStr"),
+        ],
+        2: [cell("B2", "H1", t="inlineStr"), cell("C2", "H2", t="inlineStr")],
+        3: [
+            cell("A3", "EMEA", t="inlineStr"),
+            cell("B3", 1),
+            cell("C3", 2),
+            cell("D3", "ok", t="inlineStr"),
+        ],
+    }
+    a = extract(workbook([("Plan", sheet(rows, merges=("A1:A2", "B1:C1", "D1:D2")))]), "plan.xlsx")
+    (table,) = a.tables
+    # "2025" over its halves names both; a name merged down both rows is its own.
+    assert _columns(a) == [
+        ("Region", "string"),
+        ("2025 / H1", "number"),
+        ("2025 / H2", "number"),
+        ("Note", "string"),
+    ]
+    assert table.rows == (("EMEA", 1, 2, "ok"),) and table.header_rows == 2
+    assert table.locator.to_dict() == {"sheet": "Plan", "row_start": 1, "row_end": 3}
+    rows_block = next(b for b in a.blocks if b.attrs.get("table_id") == "t0")
+    assert rows_block.locator.row_start == 3
+
+
+def test_an_xlsx_title_merged_over_its_header_row_heads_each_name() -> None:
+    rows = {
+        1: [cell("A1", "Sales 2025", t="inlineStr")],
+        2: [cell("A2", "Region", t="inlineStr"), cell("B2", "Q1", t="inlineStr")],
+        3: [cell("A3", "EMEA", t="inlineStr"), cell("B3", 10)],
+    }
+    a = extract(workbook([("S", sheet(rows, merges=("A1:B1",)))]), "s.xlsx")
+    # Its text is kept, in each name, rather than read as a row of data.
+    assert _columns(a) == [("Sales 2025 / Region", "string"), ("Sales 2025 / Q1", "number")]
+    assert a.tables[0].rows == (("EMEA", 10),)
+
+
 def test_xlsx_cells_read_as_the_workbook_holds_them() -> None:
     a = extract(_book(), "book.xlsx")
     sales, notes = a.tables
