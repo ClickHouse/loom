@@ -1024,22 +1024,25 @@ and then writes the catalog row naming the object. That row switches every docum
 those bytes at once. The ClickHouse copy stays until `loom.document_blobs` merges the two
 rows; `OPTIMIZE TABLE loom.document_blobs FINAL` drops it at once.
 
-A move is fenced by the erasure ledger. An erasure covers an original when it names its
-namespace or one of its users: its uploaders, known from their upload records, and the
-writers of documents that name it. A move does not start while a covering erasure is
-unfinished (or failed and not yet resumed). One registered while the object was written
-ends the move before its row: the move deletes its own object, which no row names, and an
-original that erasure kept (a user's erasure keeps one another writer still needs) is
-reported. One registered as the row lands may have deleted the original first. A
-namespace's erasure deletes every original of its namespace, so the move deletes its row
-and object at once. A user's erasure deletes every object of an original it takes, so the
-move waits for it to finish and deletes its row when its object is gone; when the object
-is still there, the erasure kept the original and the switch stands. One that has not
-finished after 600 seconds is named, and the switched row is left to it.
+A move is fenced by the erasure ledger. An erasure covers an original when it is its
+namespace's or any user's of the org: a user's erasure finds that user's originals through
+their upload records and documents, which any write can add to, so the move does not guess
+whose an original is. A move does not start while the ledger holds a covering erasure that
+is unfinished (or failed and not yet resumed) or finished within the last minute; run the
+command again once it has finished. One registered while the object was written ends the
+move before its row: the move deletes its own object, which no row names, and an original
+that erasure kept (a user's erasure keeps one another writer still needs) is reported. One
+registered as the row lands may have deleted the original first. A namespace's erasure
+deletes every original of its namespace, so the move deletes its row and object at once. A
+user's erasure deletes every object of an original it takes, so the move waits for it to
+finish and deletes its row when its object is gone; when the object is still there, the
+erasure kept the original and the switch stands. One that has not finished after 600
+seconds, or a check that fails after the switch, is named, and the switched row is left to
+it.
 
-The row is written only within the time an upload has to write its object (the bucket
-walk may take an object no row names once it is older than that), so a copy that takes
-longer deletes its object and is reported.
+The row is written only within the time an upload has to write its object, well inside
+`LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`, after which the bucket walk may take an object no
+row names; a copy that takes longer deletes its object and is reported.
 
 An original whose bytes do not hash to their sha256 or fill their size, one an erasure
 held back or kept, or one the bucket refused or was too slow for is reported and stays

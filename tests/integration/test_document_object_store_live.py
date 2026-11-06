@@ -11,9 +11,8 @@ local S3-compatible store (`LOOM_TEST_S3_ENDPOINT`, skipped without it).
 - `loom knowledge migrate-originals` moves the originals held in ClickHouse to
   checked objects and switches their rows, refuses bytes that do not hash to
   their sha or fill their size, keeps a row replaced or gone since the walk read
-  it, and is fenced by the erasure ledger: it does not start under an unfinished
-  erasure of the namespace or of an uploader (one known from their upload record
-  or their document), reports an original an erasure kept while it was copied,
+  it, and is fenced by the erasure ledger: it does not start under an unfinished or
+  just finished erasure of the namespace or of any user of the org, reports an original an erasure kept while it was copied,
   takes back a move a namespace erasure overtook, and leaves one a user erasure
   overtook to that erasure's outcome, read from the moved object.
 """
@@ -25,6 +24,7 @@ import hashlib
 import os
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -407,34 +407,68 @@ async def test_an_original_an_erasure_kept_during_the_copy_is_reported(
 
 
 @pytest.mark.asyncio
-async def test_an_author_known_only_from_their_document_fences_the_move(
+async def test_any_user_erasure_of_the_org_fences_the_move(
     s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     org, ns = unique_org("objstore-author"), "docs"
-    held = await _held(ch, org, ns, b"older than upload records", monkeypatch)
-    # No upload record: the writer of a document naming it is its author.
-    await ch.insert(
-        "loom.documents",
-        [
-            {
-                "org": org,
-                "namespace": ns,
-                "source_uri": "docs/old.md",
-                "content": "",
-                "tags": [],
-                "version": 1,
-                "user_id": "bob",
-                "blob_path": held.sha,
-            }
-        ],
-        settings={"async_insert": 0},
-    )
-    await _erasure(ch, org, "user_id", "carol", "in_progress")  # another user's
-    await _erasure(ch, org, "user_id", "bob", "in_progress")
+    held = await _held(ch, org, ns, b"whose is it", monkeypatch)
+    # Carol never uploaded it; a document of hers could name it at any moment.
+    await _erasure(ch, org, "user_id", "carol", "in_progress")
     result = await migrate_originals(org=org)
     assert (result.moved, len(result.errors)) == (0, 1)
     assert "user_id, in_progress" in result.errors[0]
     assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(held.size, "")
+
+
+@pytest.mark.asyncio
+async def test_an_erasure_that_just_finished_fences_the_move(
+    s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns = unique_org("objstore-recent"), "docs"
+    held = await _held(ch, org, ns, b"just erased around", monkeypatch)
+    await ch.insert(
+        "loom.erasure_requests",
+        [
+            {
+                "id": str(uuid.uuid4()),
+                "org": org,
+                "scope_type": "user_id",
+                "scope_value": "alice",
+                "requester": "it",
+                "status": "completed",
+                "version": 1,
+                "completed_at": datetime.now(UTC).replace(tzinfo=None),
+            }
+        ],
+        settings={"async_insert": 0},
+    )
+    with pytest.raises(blobs.ErasureOpen, match="run again once it has finished"):
+        await blobs.move_to_bucket(held, ch=ch)
+    assert _keys(s3) == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_check_after_the_switch_is_reported_as_switched(
+    s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns = unique_org("objstore-unchecked"), "docs"
+    held = await _held(ch, org, ns, b"checked after", monkeypatch)
+    erasures = blobs._erasures_since
+    calls: list[int] = []
+
+    async def third_fails(*a: Any, **kw: Any) -> Any:
+        calls.append(1)
+        if len(calls) == 3:
+            raise RuntimeError("ClickHouse went away")
+        return await erasures(*a, **kw)
+
+    monkeypatch.setattr(blobs, "_erasures_since", third_fails)
+    result = await migrate_originals(org=org)
+    assert (result.moved, result.errors) == (1, [])
+    (line,) = result.left_to_erasure
+    assert "ClickHouse went away" in line
+    stored = await blobs.locate(org, ns, held.sha, ch=ch)
+    assert stored is not None and stored.location.startswith("s3://")
 
 
 async def _raced(

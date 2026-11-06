@@ -27,8 +27,8 @@ class Migrated:
     pending: int = 0  # a dry run's originals still held in ClickHouse
     bytes: int = 0  # of the originals moved, or with a dry run of those held
     errors: list[str] = field(default_factory=list)
-    # Switched as an erasure of one of its users started that had not finished: what it
-    # decides for the original holds for the switched row.
+    # Switched as an erasure that may cover it started and had not finished (or its check
+    # failed): what that erasure decides for the original holds for the switched row.
     left_to_erasure: list[str] = field(default_factory=list)
 
 
@@ -39,16 +39,15 @@ async def migrate_originals(
     the bucket; with `dry_run`, count them. An original that fails (bytes that do
     not hash to their sha or fill their size, an erasure of its scope not yet
     finished, a bucket that refuses) is reported and left where it is; the walk
-    goes on with the next."""
+    goes on with the next. A ClickHouse error stops the run: the next run goes on."""
     set_query_tag("cli:knowledge-migrate-originals")
     out = Migrated()
     for org_, ns in await _scopes(org, namespace):
         after = ""
         while True:
             page = await blobs.held_in_clickhouse(org_, ns, after, _PAGE)
-            users = {} if dry_run else await blobs.uploaders(org_, ns, [h.sha for h in page.held])
             for held in page.held:
-                await _one(held, users.get(held.sha, set()), dry_run, out)
+                await _one(held, dry_run, out)
             if not page.after:
                 break
             after = page.after
@@ -69,13 +68,13 @@ async def _scopes(org: str, namespace: str) -> list[tuple[str, str]]:
         after = page[-1]
 
 
-async def _one(held: blobs.Held, users: set[str], dry_run: bool, out: Migrated) -> None:
+async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> None:
     if dry_run:
         out.pending += 1
         out.bytes += held.size
         return
     try:
-        if await blobs.move_to_bucket(held, users):
+        if await blobs.move_to_bucket(held):
             out.moved += 1
             out.bytes += held.size
         else:
