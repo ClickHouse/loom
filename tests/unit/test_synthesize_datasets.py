@@ -60,6 +60,11 @@ def test_a_reply_reads_as_a_plan_a_question_or_neither() -> None:
         ('{"ambiguous": 5}', '"ambiguous" must be the question'),
     ):
         assert why in ap.read_proposal(text).unreadable
+    for both in (
+        '{"plan": {"limit": 5}, "ambiguous": null}',
+        '{"plan": {"limit": 5}, "ambiguous": ""}',
+    ):
+        assert ap.read_proposal(both).plan == {"limit": 5}
     asked = ap.read_proposal('{"ambiguous": "Which currency is amount in?"}')
     assert (asked.plan, asked.ask) == (None, "Which currency is amount in?")
     for text, why in (

@@ -156,9 +156,11 @@ def read_proposal(text: str) -> Proposal:
         if object_error or prose_error:
             return Proposal(unreadable=f"the reply was not JSON: {object_error or prose_error}")
         return Proposal(unreadable='the reply had neither "plan" nor "ambiguous"')
-    if "ambiguous" in obj:
-        if isinstance(obj["ambiguous"], str) and obj["ambiguous"].strip():
-            return Proposal(ask=obj["ambiguous"].strip())
+    ask = obj.get("ambiguous")
+    if isinstance(ask, str) and ask.strip():
+        return Proposal(ask=ask.strip())
+    # A plan beside an empty `ambiguous` (`null`, `""`) is still the plan.
+    if "plan" not in obj:
         return Proposal(unreadable='"ambiguous" must be the question to ask, as a string')
     plan = obj["plan"]
     if not isinstance(plan, dict):
