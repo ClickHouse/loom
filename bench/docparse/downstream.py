@@ -263,7 +263,7 @@ def ingest(
                 "knowledge.ingest_status",
                 {"org": org, "namespace": namespace, "ingestion_id": jid},
             )
-            if st.get("state") in ("ready", "partial", "failed", "cancelled"):
+            if st.get("state") in (*FINISHED, "failed", "cancelled"):
                 states[f] = st["state"]
         time.sleep(1)
     if refused():

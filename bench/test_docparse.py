@@ -711,8 +711,6 @@ def test_the_stub_serves_a_systems_artifact_to_the_token_alone(tmp_path: Path) -
     import socket
     import threading
 
-    import httpx
-
     from bench.docparse.downstream import _Stub
 
     (tmp_path / "a.pdf.json").write_text('{"schema_version": 1}')
