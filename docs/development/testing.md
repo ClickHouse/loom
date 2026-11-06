@@ -30,10 +30,9 @@ or the embedder.
 - **No ClickHouse.** A unit test stubs the client; anything that needs real SQL
   semantics belongs in the integration or analyzer suite.
 - **Random order, in parallel.** CI runs the suite with `-n auto -p randomly` on one
-  worker process per core and prints the seed first. A test must not depend on the one
-  before it, and must not share a file, port or directory with a test running beside it:
-  use `tmp_path` and port 0. [`tests/README.md`](../../tests/README.md) says how to
-  reproduce a failure from the seed and the log.
+  worker process per core and prints the seed first, so a test must pass after any other
+  and beside any other. [`tests/README.md`](../../tests/README.md#rules-every-test-keeps)
+  has the rules and how to reproduce a failure from the seed and the log.
 - **Async tests sleep with `await asyncio.sleep(...)`**, never `time.sleep`.
 - **Wall-clock dates.** A fixture with a fixed date that a staleness check compares to
   `now()` passes until the date ages past the threshold. Pin the clock through the code's

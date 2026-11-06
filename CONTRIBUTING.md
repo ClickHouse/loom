@@ -96,7 +96,7 @@ LOOM_API_KEY=$(cat ~/.loom/token 2>/dev/null) \
   pytest tests/integration -q
 ```
 
-Unit tests run in random order on every core in CI (`pytest -n auto -p randomly`), so a test must not depend on the one before it or share a file or port with one running beside it. Tests skip cleanly when their env config is absent: use `os.environ.get(...) or pytest.skip(...)` in new fixtures. Two ratchets only shrink: `scripts/gates/function_length_gate.py` (no file gains an oversized function) and `scripts/gates/mypy_gate.py` (no new type errors). A failing gate is fixed at the source (regenerate the file, write the test), not by loosening the gate. [`tests/README.md`](./tests/README.md) covers the suite's layers, tiers, isolation guards and skip policy.
+Unit tests run in random order on every core in CI (`pytest -n auto -p randomly`), so a test must pass after any other and beside any other ([`tests/README.md`](./tests/README.md#rules-every-test-keeps)). Tests skip cleanly when their env config is absent: use `os.environ.get(...) or pytest.skip(...)` in new fixtures. Two ratchets only shrink: `scripts/gates/function_length_gate.py` (no file gains an oversized function) and `scripts/gates/mypy_gate.py` (no new type errors). A failing gate is fixed at the source (regenerate the file, write the test), not by loosening the gate. [`tests/README.md`](./tests/README.md) covers the suite's layers, tiers, isolation guards and skip policy.
 
 ## Formatting
 
