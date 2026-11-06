@@ -3,7 +3,7 @@
  * as an agent would cite it: its document, the revision it was read from and where it
  * sits (lines, a key, pages or slides, a sheet's rows). A hit opens its document.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { type Identity, type KnowledgeHit, searchKnowledge } from "../api";
@@ -14,8 +14,10 @@ import { humanizeError, truncate } from "../lib/format";
 import { citation } from "../lib/locator";
 import { useRowNav } from "../lib/useRowNav";
 
-// The passages one search lists: the best this many.
+// The passages a search lists first, and how many more each "Show more" adds.
 const TOP_K = 10;
+// The most knowledge.search lists (`MAX_SEARCH_TOP_K`, server/knowledge/domain/documents.py).
+const MAX_TOP_K = 100;
 
 // What a hit shows of its passage; the document holds the rest.
 const EXCERPT_CHARS = 280;
@@ -55,6 +57,8 @@ export function LibraryPassages({
 }) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<KnowledgeHit[] | null>(null);
+  // What the hits on screen answer: the query searched and how many were asked for.
+  const [asked, setAsked] = useState({ query: "", topK: TOP_K });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const searching = useRef<AbortController | null>(null);
@@ -67,8 +71,7 @@ export function LibraryPassages({
     return () => onHitsShown(false);
   }, [shown, onHitsShown]);
 
-  const search = async () => {
-    const q = query.trim();
+  const search = async (q: string, topK: number) => {
     if (!q) return;
     searching.current?.abort();
     const ctrl = new AbortController();
@@ -76,8 +79,11 @@ export function LibraryPassages({
     setBusy(true);
     setError(null);
     try {
-      const found = await searchKnowledge(identity, q, TOP_K, { signal: ctrl.signal });
-      if (!ctrl.signal.aborted) setHits(found);
+      const found = await searchKnowledge(identity, q, topK, { signal: ctrl.signal });
+      if (!ctrl.signal.aborted) {
+        setHits(found);
+        setAsked({ query: q, topK });
+      }
     } catch (e) {
       if (!ctrl.signal.aborted) setError(humanizeError(e));
     } finally {
@@ -85,14 +91,69 @@ export function LibraryPassages({
     }
   };
 
+  // A full answer may have more behind it, up to the most the op lists.
+  const more = !!hits && hits.length >= asked.topK && asked.topK < MAX_TOP_K;
   const count =
     hits === null || error
       ? ""
       : hits.length === 0
         ? "No passage answers that."
-        : hits.length >= TOP_K
-          ? `The best ${TOP_K} passages`
+        : hits.length >= asked.topK
+          ? `The best ${hits.length} passages`
           : `${hits.length} passage${hits.length === 1 ? "" : "s"}`;
+
+  // Built once per answer, not per keystroke in the field above it.
+  const list = useMemo(
+    () =>
+      hits && (
+        <ol ref={nav} className="space-y-2" aria-label="Passages found" aria-busy={busy || undefined}>
+          {hits.map((h, i) => {
+            const cited = citation(h);
+            const name = shortName(h.source_uri);
+            const excerptId = `${PASSAGES_PANEL_ID}-excerpt-${i}`;
+            return (
+              <li key={`${h.source_uri}#${h.chunk_idx}`}>
+                <ListRow>
+                  <button
+                    type="button"
+                    data-row-open=""
+                    // Named by what the row shows but the excerpt, which is its description.
+                    aria-label={[
+                      `Open ${h.source_uri}`,
+                      h.section,
+                      cited,
+                      h.keys_matched?.length ? `matched ${h.keys_matched.join(", ")}` : "",
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
+                    aria-describedby={excerptId}
+                    onClick={() => onOpen(h.source_uri)}
+                    className="list-row-open block w-full"
+                  >
+                    <span className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="font-medium break-all">{name}</span>
+                      {/* The whole address too, so two files of one name tell apart. */}
+                      {name !== h.source_uri && (
+                        <span className="min-w-0 truncate font-mono text-xs text-text-muted">{h.source_uri}</span>
+                      )}
+                      {h.section && <span className="text-text-muted">{h.section}</span>}
+                      {cited && <Badge size="sm" state="neutral" text={cited} />}
+                      {(h.keys_matched ?? []).map((k) => (
+                        <Badge key={k} size="sm" state="neutral" text={k} />
+                      ))}
+                    </span>
+                    <span id={excerptId} className="mt-1 line-clamp-2 text-sm text-text-muted">
+                      {excerpt(h.content)}
+                    </span>
+                  </button>
+                </ListRow>
+              </li>
+            );
+          })}
+        </ol>
+      ),
+    [hits, busy, nav, onOpen],
+  );
 
   return (
     <section id={PASSAGES_PANEL_ID} aria-label="Find a passage" className="mb-4 rounded-sm border border-border p-3">
@@ -105,7 +166,7 @@ export function LibraryPassages({
           className="flex gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            void search();
+            void search(query.trim(), TOP_K);
           }}
         >
           <div className="min-w-0 flex-1">
@@ -126,52 +187,16 @@ export function LibraryPassages({
         <p role="status" className="text-xs text-text-muted">
           {count}
         </p>
-        {shown && hits && (
-          <ol ref={nav} className="space-y-2" aria-label="Passages found" aria-busy={busy || undefined}>
-            {hits.map((h, i) => {
-              const cited = citation(h);
-              const name = shortName(h.source_uri);
-              const excerptId = `${PASSAGES_PANEL_ID}-excerpt-${i}`;
-              return (
-                <li key={`${h.source_uri}#${h.chunk_idx}`}>
-                  <ListRow>
-                    <button
-                      type="button"
-                      data-row-open=""
-                      // Named by what the row shows but the excerpt, which is its description.
-                      aria-label={[
-                        `Open ${h.source_uri}`,
-                        h.section,
-                        cited,
-                        h.keys_matched?.length ? `matched ${h.keys_matched.join(", ")}` : "",
-                      ]
-                        .filter(Boolean)
-                        .join(", ")}
-                      aria-describedby={excerptId}
-                      onClick={() => onOpen(h.source_uri)}
-                      className="list-row-open block w-full"
-                    >
-                      <span className="flex flex-wrap items-center gap-2 text-sm">
-                        <span className="font-medium break-all">{name}</span>
-                        {/* The whole address too, so two files of one name tell apart. */}
-                        {name !== h.source_uri && (
-                          <span className="min-w-0 truncate font-mono text-xs text-text-muted">{h.source_uri}</span>
-                        )}
-                        {h.section && <span className="text-text-muted">{h.section}</span>}
-                        {cited && <Badge size="sm" state="neutral" text={cited} />}
-                        {(h.keys_matched ?? []).map((k) => (
-                          <Badge key={k} size="sm" state="neutral" text={k} />
-                        ))}
-                      </span>
-                      <span id={excerptId} className="mt-1 line-clamp-2 text-sm text-text-muted">
-                        {excerpt(h.content)}
-                      </span>
-                    </button>
-                  </ListRow>
-                </li>
-              );
-            })}
-          </ol>
+        {shown && list}
+        {shown && more && (
+          <BusyButton
+            type="secondary"
+            htmlType="button"
+            busy={busy}
+            onClick={() => void search(asked.query, Math.min(asked.topK + TOP_K, MAX_TOP_K))}
+          >
+            Show more
+          </BusyButton>
         )}
       </div>
     </section>

@@ -2,7 +2,7 @@
 // entry), closing drops it, and a `?doc=` link opens the preview on arrival. Finding a
 // passage shares the page and its mocks: its toggle, a hit opening its document (through
 // the same open path as a link), the row keys and when the toggle shows.
-import { act, cleanup, fireEvent, render, screen, within } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { Documents } from "./Documents";
@@ -338,6 +338,30 @@ describe("Find a passage in the Library", () => {
     api.listKnowledge.mockRejectedValue(new Error("boom"));
     act(() => useStore.setState({ identity: { org: "acme", namespace: "broken", agent: "loom-ui" } }));
     await settle();
+    expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
+  });
+
+  it("a library that became empty takes the panel away", async () => {
+    history.replaceState(null, "", "/library");
+    api.searchKnowledge.mockResolvedValue([]);
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
+    expect(screen.getByLabelText("Passage to find")).toBeInTheDocument();
+    // A filtered read that finds nothing keeps it; an unfiltered one that finds nothing
+    // (the last document gone) is an empty library.
+    api.listKnowledge.mockResolvedValue({ rows: [], next_cursor: null });
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:billing" } });
+    await waitFor(() =>
+      expect(api.listKnowledge).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ tags: ["billing"] }),
+      ),
+    );
+    await settle();
+    expect(screen.getByLabelText("Passage to find")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "" } });
+    await waitFor(() => expect(screen.queryByLabelText("Passage to find")).toBeNull());
     expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
   });
 

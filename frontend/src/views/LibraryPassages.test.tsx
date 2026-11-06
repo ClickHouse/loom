@@ -104,6 +104,20 @@ describe("LibraryPassages", () => {
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 10 passages"));
   });
 
+  it("shows more of a full answer, ten at a time, for the query that was searched", async () => {
+    const page = (n: number) => Array.from({ length: n }, (_, i) => ({ ...HIT, chunk_idx: i }));
+    vi.mocked(searchKnowledge).mockResolvedValueOnce(page(10)).mockResolvedValueOnce(page(14));
+    const { user } = await openAndFind("events");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 10 passages"));
+    // Text typed since does not change what "Show more" asks.
+    await user.type(screen.getByLabelText("Passage to find"), " and more");
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("14 passages"));
+    expect(vi.mocked(searchKnowledge).mock.calls[1].slice(1, 3)).toEqual(["events", 20]);
+    // Fewer than were asked for: that is all of them.
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+  });
+
   it("shows a hit from a server older than revisions and locators, uncited", async () => {
     const { revision, format, block_type, locator, keys_matched, ...old } = HIT;
     vi.mocked(searchKnowledge).mockResolvedValue([old]);

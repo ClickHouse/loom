@@ -238,8 +238,8 @@ export function Documents() {
   const [loadErrorFor, setLoadErrorFor] = useState("");
   // The place ("org/namespace") the rows on screen were read for.
   const [rowsScope, setRowsScope] = useState("");
-  // The place whose list returned a document on this visit: a later filtered, empty or
-  // failed read there keeps the passages.
+  // The place whose list returned a document on this visit: a later filtered or failed
+  // read there keeps the passages (an unfiltered empty one is an empty library).
   const [listedScope, setListedScope] = useState("");
   // Every reload (Retry, a delete, an add, an edit) goes through the effect below, so an
   // answer for a namespace the page has left is aborted and dropped.
@@ -494,6 +494,11 @@ export function Documents() {
   // on them or rendering every row again.
   const handlers = useRef({ onOpen, onDownload, onDelete, openByUri });
   handlers.current = { onOpen, onDownload, onDelete, openByUri };
+  // Stable, so the passage list is not built again on each render of the page.
+  const openPassage = useCallback(
+    (uri: string) => handlers.current.openByUri(uri, () => toast(`${uri} is no longer in this library`, "info")),
+    [],
+  );
 
   const closePreview = () => {
     linkRead.current?.abort();
@@ -902,9 +907,7 @@ export function Documents() {
             identity={{ org: identity.org, namespace: identity.namespace }}
             navEnabled={!dialogOpen && keysIn === "passages"}
             onHitsShown={setPassageHitsShown}
-            onOpen={(uri) =>
-              handlers.current.openByUri(uri, () => toast(`${uri} is no longer in this library`, "info"))
-            }
+            onOpen={openPassage}
           />
         </div>
       )}
