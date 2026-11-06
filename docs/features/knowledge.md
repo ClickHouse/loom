@@ -1051,13 +1051,14 @@ the row lands may have deleted the original first. A namespace's erasure deletes
 original of its namespace, so the move deletes its row and object at once. A user's
 erasure deletes every object of an original it takes, so the move waits for it to finish
 and deletes its row when its object is gone; when the object is still there and its row
-too, the erasure kept the original and the switch stands, and when only the row went (a
-replica without the bucket set deletes rows only), the move deletes the object. The fence
-counts on every replica running with `LOOM_DOCUMENT_OBJECT_STORE=s3`: a replica without
-the bucket that runs a user's erasure may keep a moved row it did not see, and no check
-can tell that from an erasure that kept the original. One that has not finished after 600
-seconds (a failed one is waited for too), or a check that fails after the switch, is
-named, and the switched row is left to it.
+too, the erasure kept the original and the switch stands (unless a later write outranks
+it, as below), and when only the row went (a replica without the bucket set deletes rows
+only), the move deletes the object. The fence counts on every replica running with
+`LOOM_DOCUMENT_OBJECT_STORE=s3`: a replica without the bucket that runs a user's erasure
+may keep a moved row it did not see, and no check can tell that from an erasure that kept
+the original. One that has not finished after 600 seconds (a failed one is waited for
+too), or a check that fails after the switch, is named, and the switched row is left to
+it.
 
 The row is written only within the time an upload has to write its object, counted from
 the write as an upload's is and well inside `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`, after

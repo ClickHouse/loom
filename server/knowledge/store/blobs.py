@@ -147,18 +147,23 @@ async def locate(
     return Stored(int(row["size"]), str(row["location"])) if row else None
 
 
-async def still_held(held: Held, *, ch: _CHClient | None = None) -> bool:
-    """Whether the original's latest row is still the ClickHouse-held version the walk
-    read: a later write of any kind outranks a switch versioned after that one."""
+@dataclass(frozen=True)
+class Latest:
+    location: str  # '' when the row holds the bytes in ClickHouse
+    version_ms: int  # its created_at in epoch milliseconds
+
+
+async def latest(held: Held, *, ch: _CHClient | None = None) -> Latest | None:
+    """The original's latest row, read with sequential consistency for a decision on it;
+    None when no row holds it. Reads no data."""
     ch = ch or _default_client()
-    row = await ch.query_one(
-        f"SELECT location, toUnixTimestamp64Milli(created_at) AS version_ms FROM {TABLE} "
-        f"WHERE {_KEY} ORDER BY created_at DESC LIMIT 1",
-        params={"org": held.org, "ns": held.namespace, "sha": held.sha},
-    )
-    if not row:
-        return False
-    return not row["location"] and int(row["version_ms"]) == held.version_ms
+    with sequential_reads():
+        row = await ch.query_one(
+            f"SELECT location, toUnixTimestamp64Milli(created_at) AS version_ms FROM {TABLE} "
+            f"WHERE {_KEY} ORDER BY created_at DESC LIMIT 1",
+            params={"org": held.org, "ns": held.namespace, "sha": held.sha},
+        )
+    return Latest(str(row["location"]), int(row["version_ms"])) if row else None
 
 
 async def read(
@@ -314,17 +319,6 @@ async def row_names(held: Held, loc: objects.Location, *, ch: _CHClient | None =
             params={"org": held.org, "ns": held.namespace, "sha": held.sha, "loc": loc.uri()},
         )
     return bool(row and int(row["n"]))
-
-
-async def latest_names(held: Held, loc: objects.Location, *, ch: _CHClient | None = None) -> bool:
-    """Whether the original's latest row names the object at `loc`."""
-    ch = ch or _default_client()
-    with sequential_reads():
-        row = await ch.query_one(
-            f"SELECT location FROM {TABLE} WHERE {_KEY} ORDER BY created_at DESC LIMIT 1",
-            params={"org": held.org, "ns": held.namespace, "sha": held.sha},
-        )
-    return row is not None and str(row["location"]) == loc.uri()
 
 
 async def unwrite(held: Held, loc: objects.Location, *, ch: _CHClient | None = None) -> None:

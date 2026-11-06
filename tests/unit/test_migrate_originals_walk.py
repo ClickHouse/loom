@@ -194,15 +194,15 @@ async def test_a_refused_cleanup_delete_leaves_the_object_to_the_bucket_walk(
     async def read_back(loc: Any) -> bytes:
         return data
 
-    async def still_held(*a: Any, **kw: Any) -> bool:
-        return False  # replaced since the walk
+    async def latest(*a: Any, **kw: Any) -> blobs.Latest:
+        return blobs.Latest("s3://bucket/a-re-upload", 1)  # replaced since the walk
 
     async def refused(*a: Any) -> None:
         raise objects.ObjectStoreError("object store delete failed (503)", operation="delete")
 
     monkeypatch.setattr(blobs, "ch_now_s", ch_now_s)
     monkeypatch.setattr(blobs, "read", read)
-    monkeypatch.setattr(blobs, "still_held", still_held)
+    monkeypatch.setattr(blobs, "latest", latest)
     monkeypatch.setattr(objects, "transfer", transfer)
     monkeypatch.setattr(objects, "put", put)
     monkeypatch.setattr(objects, "read", read_back)
@@ -260,18 +260,64 @@ async def test_a_switch_a_later_write_outranked_does_not_stand(
     async def no_erasures(*a: Any) -> list[Any]:
         return []
 
-    async def outranked(*a: Any, **kw: Any) -> bool:
-        return False
+    async def outranked(*a: Any, **kw: Any) -> blobs.Latest:
+        return blobs.Latest("", 2)  # a later ClickHouse-store write
+
+    async def nothing_deleted(*a: Any, **kw: Any) -> None:
+        pytest.fail(
+            "an outranked switch leaves its row and object to the merge and the bucket walk"
+        )
 
     monkeypatch.setattr(originals, "_erasures_since", no_erasures)
-    monkeypatch.setattr(blobs, "latest_names", outranked)
+    monkeypatch.setattr(blobs, "latest", outranked)
+    monkeypatch.setattr(blobs, "unwrite", nothing_deleted)
+    monkeypatch.setattr(objects, "delete", nothing_deleted)
     assert await originals._settle(_held(0), 0, loc, None) is False
 
-    async def unread(*a: Any, **kw: Any) -> bool:
+    async def unread(*a: Any, **kw: Any) -> blobs.Latest:
         raise RuntimeError("ClickHouse went away")
 
     # An unread latest row is reported with what to check, not as an erasure's.
-    monkeypatch.setattr(blobs, "latest_names", unread)
+    monkeypatch.setattr(blobs, "latest", unread)
     with pytest.raises(originals.SwitchUnconfirmed, match="later write outranked it") as e:
         await originals._settle(_held(0), 0, loc, None)
     assert "erasure" not in str(e.value)
+
+
+@pytest.mark.asyncio
+async def test_a_kept_switch_a_later_write_outranked_does_not_stand(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import object_store as objects
+
+    loc = objects.Location("bucket", "k")
+
+    async def a_users_erasure(*a: Any) -> list[Any]:
+        return [originals._Erasure("e1", "user_id", "alice", "in_progress")]
+
+    async def finished(*a: Any) -> None:
+        return None
+
+    async def present(*a: Any) -> int:
+        return 1  # the erasure kept the moved object
+
+    async def still_named(*a: Any, **kw: Any) -> bool:
+        return True
+
+    async def outranked(*a: Any, **kw: Any) -> blobs.Latest:
+        return blobs.Latest("", 2)
+
+    async def nothing_deleted(*a: Any, **kw: Any) -> None:
+        pytest.fail(
+            "an outranked switch leaves its row and object to the merge and the bucket walk"
+        )
+
+    monkeypatch.setattr(originals, "_erasures_since", a_users_erasure)
+    monkeypatch.setattr(originals, "_await_erasures", finished)
+    monkeypatch.setattr(objects, "count_under", present)
+    monkeypatch.setattr(blobs, "row_names", still_named)
+    monkeypatch.setattr(blobs, "latest", outranked)
+    monkeypatch.setattr(blobs, "unwrite", nothing_deleted)
+    monkeypatch.setattr(objects, "delete", nothing_deleted)
+    # The erasure kept the original, but a later write outranks the switch: not moved.
+    assert await originals._settle(_held(0), 0, loc, None) is False

@@ -208,9 +208,7 @@ async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bo
         raise CorruptOriginal("bytes read back from the bucket do not hash to its sha256")
     # The latest row read again just before the switch: an erasure or any write since the
     # walk keeps what it left (a later version outranks the switch).
-    with sequential_reads():
-        held_still = await blobs.still_held(held, ch=ch)
-    if not held_still:
+    if await blobs.latest(held, ch=ch) != blobs.Latest("", held.version_ms):
         await _drop(loc)  # no row names it, nor will
         return False
     overtaken = await _erasures_since(held.org, held.namespace, since)
@@ -262,7 +260,8 @@ async def _stands(held: blobs.Held, loc: objects.Location, ch: _CHClient | None)
     """Whether the switched row is still the original's latest; False leaves its object
     to the bucket walk, which takes it once no row names it."""
     try:
-        return await blobs.latest_names(held, loc, ch=ch)
+        now = await blobs.latest(held, ch=ch)
+        return now is not None and now.location == loc.uri()
     except Exception as e:  # the row is switched: an unread latest row is reported, not lost
         raise SwitchUnconfirmed(
             f"switched to {loc.uri()}, but reading whether a later write outranked it failed "
@@ -310,7 +309,8 @@ async def _settle(
             taken = not await objects.count_under(loc.bucket, loc.key)
         if not taken:
             if await blobs.row_names(held, loc, ch=ch):
-                return True  # the erasure kept the original
+                # The erasure kept the original; the switch stands as an unraced one does.
+                return await _stands(held, loc, ch)
             # It took the row but not the object: a replica without the bucket set that
             # read the scope's rows before this one landed deletes rows only. The object
             # holds bytes nothing names, and goes now.
