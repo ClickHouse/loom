@@ -410,10 +410,12 @@ def score(
             agg = (
                 (lambda v: sum(v))
                 if m in SUMMED
-                else (lambda v: sum(v) / len(v) if v else float("nan"))
+                else (lambda v: sum(v) / len(v) if v else None)  # None: no file has it
             )
             row = {n: agg(vals[n]) for n in names}
-            line = f"{m:<20}" + "".join(f"{row[n]:>14.3f}" for n in names)
+            line = f"{m:<20}" + "".join(
+                f"{'-':>14}" if row[n] is None else f"{row[n]:>14.3f}" for n in names
+            )
             report[grp][m] = row
             for n in names[1:]:
                 paired = [
@@ -427,5 +429,8 @@ def score(
                     report[grp].setdefault("diff", {}).setdefault(n, {})[m] = [b.mean, b.lb, b.ub]
             print(line)
     if out_json:
-        out_json.write_text(json.dumps({"report": report, "files": scores}, indent=1))
+        # strict JSON: an empty mean is null, never NaN
+        out_json.write_text(
+            json.dumps({"report": report, "files": scores}, indent=1, allow_nan=False)
+        )
     return report
