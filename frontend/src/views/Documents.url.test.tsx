@@ -259,6 +259,46 @@ describe("Library keeps the open document in its URL", () => {
     await settle();
   }
 
+  it("the arrows move through the list focus is in, the passages or the documents", async () => {
+    history.replaceState(null, "", "/library");
+    const second = { ...ROWS[0], source_uri: "docs/runbook.md", title: "Runbook" };
+    api.listKnowledge.mockResolvedValue({ rows: [...ROWS, second], next_cursor: null });
+    api.searchKnowledge.mockResolvedValue([
+      { source_uri: "docs/handbook.md", chunk_idx: 0, content: "One.", section: "", score: 1 },
+      { source_uri: "docs/runbook.md", chunk_idx: 0, content: "Two.", section: "", score: 1 },
+    ]);
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /Find a passage/ }));
+    fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "passage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Find" }));
+    await settle();
+    const [hitOne, hitTwo] = within(screen.getByRole("list", { name: "Passages found" })).getAllByRole("button");
+    act(() => hitOne.focus());
+    fireEvent.keyDown(hitOne, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(hitTwo);
+    const docOne = screen.getByRole("button", { name: "Preview Handbook" });
+    act(() => docOne.focus());
+    fireEvent.keyDown(docOne, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Preview Runbook" }));
+  });
+
+  it("another namespace folds the passages, and a list that failed to load shows none", async () => {
+    history.replaceState(null, "", "/library");
+    api.searchKnowledge.mockResolvedValue([]);
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /Find a passage/ }));
+    expect(screen.getByLabelText("Passage to find")).toBeInTheDocument();
+    act(() => useStore.setState({ identity: { org: "acme", namespace: "ops", agent: "loom-ui" } }));
+    await settle();
+    expect(screen.getByRole("button", { name: /Find a passage/ })).toHaveAttribute("aria-expanded", "false");
+    api.listKnowledge.mockRejectedValue(new Error("boom"));
+    act(() => useStore.setState({ identity: { org: "acme", namespace: "broken", agent: "loom-ui" } }));
+    await settle();
+    expect(screen.queryByRole("button", { name: /Find a passage/ })).toBeNull();
+  });
+
   it("a passage in a document past the first page reads that document and opens it", async () => {
     history.replaceState(null, "", "/library");
     const late = { ...ROWS[0], source_uri: "docs/late.md", title: "Late doc" };

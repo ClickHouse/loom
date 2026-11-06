@@ -11,7 +11,7 @@ vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   searchKnowledge: vi.fn(),
 }));
-import { type KnowledgeHit, searchKnowledge } from "../api";
+import { type KnowledgeHit, PASSAGES_TOP_K, searchKnowledge } from "../api";
 import { axeViolations } from "../test/axe";
 import { LibraryPassages } from "./LibraryPassages";
 
@@ -31,7 +31,12 @@ const HIT: KnowledgeHit = {
 };
 
 async function openAndFind(query: string, onOpen = vi.fn(), onHitsShown = vi.fn()) {
-  render(<LibraryPassages identity={identity} navEnabled onHitsShown={onHitsShown} onOpen={onOpen} />);
+  // Inside the page's main landmark, as the Library renders it.
+  render(
+    <main>
+      <LibraryPassages identity={identity} navEnabled onHitsShown={onHitsShown} onOpen={onOpen} />
+    </main>,
+  );
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: /Find a passage/ }));
   await user.type(screen.getByLabelText("Passage to find"), query);
@@ -81,13 +86,18 @@ describe("LibraryPassages", () => {
     expect(await axeViolations(document.body)).toEqual([]);
     await user.click(within(first).getByRole("button"));
     expect(onOpen).toHaveBeenCalledWith("repo://handbook/retention.pdf");
+    // Folded, the hits no longer show and the list below takes its keys back.
+    await user.click(screen.getByRole("button", { name: /Find a passage/ }));
+    expect(onHitsShown).toHaveBeenLastCalledWith(false);
   });
 
   it("says a full page is the best passages, not all of them", async () => {
-    vi.mocked(searchKnowledge).mockResolvedValue(Array.from({ length: 10 }, (_, i) => ({ ...HIT, chunk_idx: i })));
+    vi.mocked(searchKnowledge).mockResolvedValue(
+      Array.from({ length: PASSAGES_TOP_K }, (_, i) => ({ ...HIT, chunk_idx: i })),
+    );
     await openAndFind("events");
-    expect(await screen.findByText("The best 10 passages")).toBeInTheDocument();
-    expect(vi.mocked(searchKnowledge).mock.calls[0][2]).toMatchObject({ topK: 10 });
+    expect(await screen.findByText(`The best ${PASSAGES_TOP_K} passages`)).toBeInTheDocument();
+    expect(vi.mocked(searchKnowledge).mock.calls[0][2]).toMatchObject({ topK: PASSAGES_TOP_K });
   });
 
   it("shows a hit from a server older than revisions and locators, uncited", async () => {

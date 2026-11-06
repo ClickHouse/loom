@@ -191,6 +191,8 @@ export function Documents() {
   const focusSearchOnRead = useRef(false);
   const [sortBy, setSortBy] = useState<SortBy>("recency");
   const [passagesShown, setPassagesShown] = useState(false);
+  // The arrows and j/k move through the list focus was last in: the passages or the documents.
+  const [keysIn, setKeysIn] = useState<"documents" | "passages">("documents");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<KnowledgeEntry | null>(null);
   const [previewDoc, setPreviewDoc] = useState<KnowledgeDocument | null>(null);
@@ -592,8 +594,8 @@ export function Documents() {
   const { selected } = selection;
   const clearSelection = selection.clear;
   // One tab stop over the rows: arrows and j/k move, Enter previews, Space selects.
-  // While passages show, the arrows and j/k move through them instead.
-  const listNav = useRowNav({ enabled: !dialogOpen && rowKeys.length > 0 && !passagesShown });
+  const passagesHaveKeys = passagesShown && keysIn === "passages";
+  const listNav = useRowNav({ enabled: !dialogOpen && rowKeys.length > 0 && !passagesHaveKeys });
   const listRef = useCallback(
     (el: HTMLDivElement | null) => {
       listNav(el);
@@ -601,6 +603,16 @@ export function Documents() {
     },
     [listNav],
   );
+  const passagesBox = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      const at = e.target instanceof Node ? e.target : null;
+      if (passagesBox.current?.contains(at)) setKeysIn("passages");
+      else if (listBox.current?.contains(at)) setKeysIn("documents");
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
 
   const onBulkDelete = async () => {
     if (selected.size === 0 || bulkBusy) return;
@@ -853,14 +865,18 @@ export function Documents() {
 
       {/* Inside the documents: a passage, cited by revision and place, opens its document.
           Kept through a list filter (it searches the whole namespace); a new place resets it. */}
-      {rows !== null && !emptyLibrary && (
-        <LibraryPassages
-          key={`${identity.org}/${identity.namespace}`}
-          identity={{ org: identity.org, namespace: identity.namespace }}
-          navEnabled={!dialogOpen}
-          onHitsShown={setPassagesShown}
-          onOpen={(uri) => handlers.current.openByUri(uri, () => toast(`${uri} is no longer in this library`, "info"))}
-        />
+      {rows !== null && !emptyLibrary && !failed && (
+        <div ref={passagesBox}>
+          <LibraryPassages
+            key={`${identity.org}/${identity.namespace}`}
+            identity={{ org: identity.org, namespace: identity.namespace }}
+            navEnabled={!dialogOpen && keysIn === "passages"}
+            onHitsShown={setPassagesShown}
+            onOpen={(uri) =>
+              handlers.current.openByUri(uri, () => toast(`${uri} is no longer in this library`, "info"))
+            }
+          />
+        </div>
       )}
 
       {/* Mounted while open, not on every render. */}

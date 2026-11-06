@@ -207,13 +207,16 @@ export interface KnowledgeHit {
   content: string;
   section: string;
   score: number;
-  // A server older than revisions and locators sends none of these four.
+  // A server older than revisions and locators sends none of the fields below.
   revision?: number;
   format?: string;
   block_type?: string;
   locator?: Locator | null;
   keys_matched?: string[];
 }
+
+/** The passages one search lists by default: the best this many. */
+export const PASSAGES_TOP_K = 10;
 
 /** The namespace's passages that answer `query`, best first (`knowledge.search`). */
 export async function searchKnowledge(
@@ -223,7 +226,7 @@ export async function searchKnowledge(
 ): Promise<KnowledgeHit[]> {
   const r = await post<{ results: KnowledgeHit[] }>(
     "/v1/knowledge.search",
-    { org: id.org, namespace: id.namespace, query, top_k: opts.topK ?? 10, namespace_scope: "this" },
+    { org: id.org, namespace: id.namespace, query, top_k: opts.topK ?? PASSAGES_TOP_K, namespace_scope: "this" },
     opts.signal,
   );
   return r.results ?? [];
