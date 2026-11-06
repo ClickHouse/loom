@@ -250,13 +250,17 @@ def test_a_cid_fonts_widths_come_through_its_unicode_map() -> None:
     assert w.of("x") == 1000  # a character the map does not give: the font's default
 
 
-def test_a_fonts_widths_past_their_budget_are_read_in_bounded_time() -> None:
-    import time
+def test_a_fonts_widths_past_their_budget_are_read_in_bounded_work() -> None:
+    class Counted(int):
+        reads = 0
 
-    start = time.perf_counter()
-    layout._Widths(_cid_font([0, 65_534, 500] * 50_000, b""))
-    # a loose bound: a loop not charged per value written would take hours
-    assert time.perf_counter() - start < 60
+        def __float__(self) -> float:
+            Counted.reads += 1
+            return float(int(self))
+
+    # each range charges the values it writes, so repeats of a whole range stop at once
+    layout._Widths(_cid_font([Counted(0), Counted(65_534), Counted(500)] * 50_000, b""))
+    assert Counted.reads <= 3
 
 
 def test_a_table_over_three_pages_is_one_table_and_rows_at_the_margins_stay_rows() -> None:
@@ -325,17 +329,15 @@ def test_an_outlines_headings_sit_under_a_larger_title_on_every_page(
     ]
 
 
-def test_a_very_wide_page_and_a_long_outline_are_read_in_bounded_time() -> None:
-    import time
-
+def test_a_very_wide_page_and_a_long_outline_are_read_in_bounded_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from pypdf import PdfWriter
 
     lines = b"".join(
         text_at(72, 700 - 12 * i, f"Line {i} of a page wider than any screen") for i in range(40)
     )
-    data = laid_out_pdf([lines], width=1e9)
-    start = time.perf_counter()
-    a = extract(data, "w.pdf")
+    a = extract(laid_out_pdf([lines], width=1e9), "w.pdf")  # a gutter search of a billion points
     assert "Line 39" in "\n".join(b.text for b in a.blocks)
     w = PdfWriter()
     w.add_page(PdfReader(BytesIO(laid_out_pdf([lines]))).pages[0])
@@ -343,10 +345,18 @@ def test_a_very_wide_page_and_a_long_outline_are_read_in_bounded_time() -> None:
         w.add_outline_item(f"Entry {i}", 0)
     out = BytesIO()
     w.write(out)
+    keys = [0]
+    real = pdffile._key
+
+    def counted(text: str) -> str:
+        keys[0] += 1
+        return real(text)
+
+    monkeypatch.setattr(pdffile, "_key", counted)
     a = extract(out.getvalue(), "o.pdf")
     assert sum(1 for b in a.blocks if b.type == "heading") == 3_000
-    # a loose bound: a placement quadratic in the entries would take minutes
-    assert time.perf_counter() - start < 120
+    # one key per entry and per slot (a line, a paragraph whole): linear, not entries x lines
+    assert keys[0] <= 2 * (3_000 + 2 * 40)
 
 
 def test_a_cell_is_a_number_only_when_it_reads_back_as_the_page_shows_it() -> None:
@@ -414,3 +424,47 @@ def test_an_outline_entry_after_a_title_paragraph_takes_its_own_line() -> None:
     heads = [(b.depth, b.text) for b in a.blocks if b.type == "heading"]
     assert heads == [(1, "Introduction and Scope"), (2, "Scope")]
     assert a.blocks[-1].section_path == ("Introduction and Scope", "Scope")
+
+
+def test_a_borderless_table_over_pages_keeps_its_rows_at_the_margins_and_drops_a_running_header() -> (
+    None
+):
+    pages = []
+    n = 0
+    for _ in range(3):
+        page = text_at(72, 778, "Annual report", size=8) + text_at(400, 778, "Section 3", size=8)
+        y = 740  # the table's header, in the page's top tenth
+        page += text_at(72, y, "Node") + text_at(220, y, "State") + text_at(360, y, "Uptime")
+        while y > 40:  # down into the bottom tenth
+            y -= 14
+            page += (
+                text_at(72, y, f"node-{n}")
+                + text_at(220, y, "running")
+                + text_at(360, y, f"{n % 9}d")
+            )
+            n += 1
+        pages.append(page)
+    a = extract(laid_out_pdf(pages), "n.pdf")
+    (t,) = a.tables
+    assert [c.name for c in t.columns] == ["Node", "State", "Uptime"]
+    assert len(t.rows) == n and t.rows[-1][0] == f"node-{n - 1}"
+    assert a.attrs["furniture"] == [{"text": "Annual report Section 3", "pages": 3}]
+
+
+def test_the_same_text_again_in_another_font_is_text_not_a_copy() -> None:
+    page = b"BT /F1 11 Tf 72 700 Td (ha) Tj /F2 11 Tf (ha) Tj ET\n"
+    a = extract(laid_out_pdf([page]), "h.pdf")
+    assert [b.text for b in a.blocks] == ["haha"]
+
+
+def test_a_borderless_run_past_its_line_bound_is_read_whole_in_two_tables() -> None:
+    page = b"".join(
+        text_at(72, 780 - 2.5 * i, f"key{i}", size=2)
+        + text_at(200, 780 - 2.5 * i, f"value{i}", size=2)
+        for i in range(300)
+    )
+    a = extract(laid_out_pdf([page]), "r.pdf")
+    cells = {
+        v for t in a.tables for v in [c.name for c in t.columns] + [x for r in t.rows for x in r]
+    }
+    assert {f"key{i}" for i in range(300)} <= cells and len(a.tables) == 2

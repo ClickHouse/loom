@@ -228,10 +228,12 @@ after the page's own (`attrs.orientation`). Then, in order:
 - a run of lines cut into segments that sit in two or more bands of the page is a borderless table: a line with text in
   the first band opens a row, one without adds to the cells of the row above (a wrapped cell); a list marker set apart
   from its item's text (`•`, `1.`, a symbol font's bullet) is no column;
-- page furniture, a line no ruled table holds (it never opens or joins a borderless one), in the top or bottom tenth of a page, that holds a letter and whose text,
-  digits aside, recurs there on at least two pages and two fifths of them, or a page number alone, is left out of the
-  blocks; the artifact names each kind (one entry for a footer whose page number changes) with its first text and the
-  pages it is on (`attrs.furniture`, the first 200 kinds) and warns that it did;
+- page furniture, a line no table holds (a running header that sits apart from a borderless table below it, its gap half
+  again the table's row spacing, is not one of its rows; a table's own header repeated at the top of each page is), in
+  the top or bottom tenth of a page, that holds a letter and whose text, digits aside, recurs there on at least two
+  pages and two fifths of them, or a page number alone, is left out of the blocks; the artifact names each kind (one
+  entry for a footer whose page number changes) with its first text and the number of pages it is on (`attrs.furniture`,
+  the first 200 kinds) and warns that it did;
 - the rest are paragraphs (lines of one style, split where the gap passes the document's most common line spacing for
   that size by more than 30%), list items (a marker first) and code (a monospaced font, its indentation kept), and
   headings: a paragraph of up to three lines and twenty words (a numbered one that reads as a list item, one line), set

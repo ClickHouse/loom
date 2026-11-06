@@ -335,8 +335,9 @@ def spans(
         last[0] = here
         if same and raw and raw[-1][5] == here:
             run = raw[-1]
-            if body.strip() and run[4].strip() == body.strip():
-                # the same text at the same place again: drawn twice (a faked bold), read once
+            if body.strip() and run[3] is fw and run[4].strip() == body.strip():
+                # the same text, in the same font, at the same place again: drawn
+                # twice (a faked bold, a shadow), read once
                 if dropped is not None:
                     dropped.append(Span(0, 0, 0, fsize, fw.bold, fw.mono, body.strip()))
                 return
@@ -634,8 +635,9 @@ def shape(text: str) -> str:
 def furniture(pages: list[tuple[list[Line], float]]) -> dict[int, set[int]]:
     """Per page, the indexes of its lines that may be page furniture: a header
     or footer line with a letter whose shape (digits aside) recurs in that zone
-    on other pages, or a page number alone in it. A table's line is not, which
-    the caller decides once it has found the tables."""
+    on other pages, or a page number alone in it. A line a ruled table holds,
+    or a borderless one it sits next to, is not, which the caller decides once
+    it has found the tables."""
     zone: list[list[tuple[int, str]]] = []
     for lines, height in pages:
         cand = [(i, ln) for i, ln in enumerate(lines) if ln.y < 0.1 * height or ln.y > 0.9 * height]
@@ -848,10 +850,16 @@ def _cell_text(found: list[Span]) -> str:
     return " ".join(ln.text for ln in lines_of(found)).strip()
 
 
-def borderless_tables(lines: list[Line], skip: set[int], width: float) -> list[TableBox]:
+def borderless_tables(
+    lines: list[Line], skip: set[int], width: float, edges: set[int] | None = None
+) -> list[TableBox]:
     """Runs of lines whose segments sit in the same two or more bands of the
     page: a line with text in the first band opens a row, one without adds to
-    the row above it."""
+    the row above it. A line of `edges` (a furniture candidate) at either end of
+    a run that sits apart from it, its gap to the run half again its rows'
+    spacing, is left out of the run: a running header above a table is no row,
+    while a table's own header repeated at the top of each page is one."""
+    edges = edges or set()
     out: list[TableBox] = []
     i = 0
     while i < len(lines):
@@ -866,6 +874,7 @@ def borderless_tables(lines: list[Line], skip: set[int], width: float) -> list[T
                 break
             run.append(j)
             j += 1
+        run = _apart(lines, run, edges)
         # trim to the lines that fit the bands of the multi-segment lines
         multis = [k for k in run if _multi(lines[k], width)]
         if len(multis) < 2:
@@ -911,6 +920,21 @@ def borderless_tables(lines: list[Line], skip: set[int], width: float) -> list[T
         else:
             i += 1
     return out
+
+
+def _apart(lines: list[Line], run: list[int], edges: set[int]) -> list[int]:
+    """`run` without the `edges` lines at its ends that sit apart from it."""
+    if len(run) < 3:
+        return run
+    gaps = sorted(lines[b].y - lines[a].y for a, b in zip(run, run[1:], strict=False))
+    spacing = gaps[len(gaps) // 2]
+    while len(run) >= 3 and run[0] in edges and lines[run[1]].y - lines[run[0]].y > 1.5 * spacing:
+        run = run[1:]
+    while (
+        len(run) >= 3 and run[-1] in edges and lines[run[-1]].y - lines[run[-2]].y > 1.5 * spacing
+    ):
+        run = run[:-1]
+    return run
 
 
 def _multi(ln: Line, width: float) -> bool:

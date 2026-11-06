@@ -486,7 +486,7 @@ def extract_pdf(data: bytes) -> Artifact:
         for t in read.furniture:
             furniture.setdefault(layout.shape(t), (_unicode(t)[0], set()))[1].add(read.number)
     if furniture:
-        kinds = [(t, len(pages)) for t, pages in furniture.values()]
+        kinds = [(t, len(on)) for t, on in furniture.values()]
         attrs["furniture"] = [{"text": t, "pages": n} for t, n in kinds[:_MAX_FURNITURE]]
         cut = (
             f"; the first {_MAX_FURNITURE} of {len(kinds)} kinds named"
@@ -531,7 +531,7 @@ def _lay_out(
     warnings: list[str],
 ) -> int:
     """Each readable page's elements, from its lines: columns in order, tables
-    found, furniture out (a line no table holds), headings marked. A page whose
+    found, furniture out (a candidate no table holds), headings marked. A page whose
     elements hold less of its letters and digits than its text layer does, past
     the reader's line bound, or whose layout fails, is read as its text layer.
     The outline's level shift (`_outline_shift`), 0 without one."""
@@ -585,15 +585,15 @@ def _lay_out(
 def _lay_out_page(r: _Page, found: list[layout._Rule], candidates: set[int], spacing: Any) -> None:
     gx = layout.gutter(r.lines, r.width)
     lines = layout.split_columns(r.lines, gx) if gx is not None else r.lines
-    # A furniture candidate holds a letter (a row of numbers is none): it may
-    # sit in a ruled table's box, which makes it a cell, but never opens or
-    # joins a borderless one.
+    # A furniture candidate holds a letter (a row of numbers is none): in a
+    # ruled table's box it is a cell, and at a borderless table's end it is a
+    # row unless it sits apart from the table (a running header).
     maybe = {
         i for i, ln in enumerate(lines) if ln.spans and all(id(s) in candidates for s in ln.spans)
     }
     tables = layout.ruled_tables(lines, found)
     held = set().union(*(t.lines for t in tables)) if tables else set()
-    tables += layout.borderless_tables(lines, held | maybe, r.width)
+    tables += layout.borderless_tables(lines, held, r.width, maybe)
     held = set().union(*(t.lines for t in tables)) if tables else set()
     furniture = maybe - held
     r.furniture = [lines[i].text for i in sorted(furniture)]
