@@ -235,7 +235,7 @@ def locator_scores(g: dict, p: dict) -> dict:
     note_ok = note_n = 0
     last = 0
     for gb in g["blocks"]:
-        probe = " ".join(words(gb["text"])[:6])
+        probe = " ".join(words(unnumbered(gb["text"]))[:6])
         if not gb.get("page") or not probe:
             continue
         n += 1
@@ -305,13 +305,12 @@ def lost_blocks(g: dict, p: dict) -> int:
 
 def score_file(g: dict, p: dict) -> dict:
     """One file's scores. A parse that failed is scored as an empty one that
-    says it is incomplete: 0 on every metric the gold defines, its time kept."""
+    says it is incomplete: 0 on every metric the gold defines, and no time or
+    memory, which the means leave out."""
     if "error" in p:
-        s = score_file(
-            g,
-            {"complete": False, "blocks": [], "tables": [], "seconds": p.get("wall_seconds", 0.0)},
-        )
-        s["error"] = 1
+        s = score_file(g, {"complete": False, "blocks": [], "tables": []})
+        # no time or memory: a failed parse is not faster or leaner for failing
+        s.update(error=1, seconds=None, peak_mb=None)
         return s
     s: dict = {**text_scores(g, p), "error": 0}
     o = order_score(g, p)
