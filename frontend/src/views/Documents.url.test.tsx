@@ -372,8 +372,12 @@ describe("Find a passage in the Library", () => {
     await settle();
     expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
     fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:billing" } });
-    await settle();
-    await settle();
+    await waitFor(() =>
+      expect(api.listKnowledge).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ tags: ["billing"] }),
+      ),
+    );
     await settle();
     expect(api.listKnowledge).toHaveBeenLastCalledWith(
       expect.anything(),

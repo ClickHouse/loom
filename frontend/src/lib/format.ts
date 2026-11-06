@@ -144,24 +144,25 @@ function characters(s: string): Iterable<string> {
   if (graphemes === undefined)
     graphemes =
       typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
-  return graphemes ? Array.from(graphemes.segment(s), (g) => g.segment) : s;
+  if (!graphemes) return s; // by code point
+  const segments = graphemes.segment(s);
+  return (function* () {
+    for (const { segment } of segments) yield segment;
+  })();
 }
 
-/** The first `max` characters of `s`, the ellipsis included, cut between the characters a
- *  reader sees, so an emoji, a flag or an accented letter at the cut stays whole (between
- *  code points where the browser has no Intl.Segmenter). */
+/** `s` cut to at most `max` UTF-16 units, the ellipsis included, when it is longer, at the
+ *  last boundary between the characters a reader sees (between code points where the
+ *  browser has no Intl.Segmenter), so an emoji, a flag or an accented letter at the cut
+ *  is never split; a string of `max` units or fewer comes back whole. */
 export function truncate(s: string, max: number): string {
   if (!s || s.length <= max) return s;
-  const kept: string[] = [];
+  let kept = "";
   for (const c of characters(s)) {
-    if (kept.length === max)
-      return `${kept
-        .slice(0, max - 1)
-        .join("")
-        .trimEnd()}…`;
-    kept.push(c);
+    if (kept.length + c.length > max - 1) break;
+    kept += c;
   }
-  return s;
+  return `${kept.trimEnd()}…`;
 }
 
 /** A bounded preview of a value for a card: the first `max` characters of the string, or

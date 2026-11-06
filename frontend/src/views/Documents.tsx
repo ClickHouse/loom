@@ -626,8 +626,7 @@ export function Documents() {
     <Button
       type="empty"
       htmlType="button"
-      iconLeft="search"
-      iconRight={passagesOpen ? "chevron-down" : "chevron-right"}
+      iconLeft={passagesOpen ? "chevron-down" : "chevron-right"}
       className={className}
       aria-expanded={passagesOpen}
       aria-controls={passagesOpen ? PASSAGES_PANEL_ID : undefined}

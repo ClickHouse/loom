@@ -10,7 +10,7 @@ import { confirmAction } from "../components/ConfirmDialog";
 import { toast, toastError } from "../components/Toast";
 import { CreateCollectionDialog, parentChoices } from "../flows/CreateCollectionDialog";
 import { MembersDialog } from "../flows/MembersDialog";
-import { humanizeError, truncate } from "../lib/format";
+import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { useStore } from "../lib/state";
 
@@ -29,7 +29,14 @@ const LABEL_TEXT = 80;
  *  for the user's own (`@me`). */
 export function collectionLabel(c: CollectionEntry): string {
   if (c.personal) return "My files";
-  const d = truncate(c.description ?? "", LABEL_TEXT);
+  // By character as a reader sees it, so a cut never splits an emoji.
+  // (By code point where the browser has no Intl.Segmenter.)
+  const description = c.description ?? "";
+  const text =
+    typeof Intl.Segmenter === "function"
+      ? Array.from(new Intl.Segmenter().segment(description), (s) => s.segment)
+      : Array.from(description);
+  const d = text.length > LABEL_TEXT ? `${text.slice(0, LABEL_TEXT - 1).join("")}…` : text.join("");
   return d ? `${c.namespace} · ${d}` : c.namespace;
 }
 

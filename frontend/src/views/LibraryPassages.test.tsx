@@ -174,10 +174,13 @@ describe("LibraryPassages", () => {
     expect(signal?.aborted).toBe(true);
   });
 
-  it("cuts a long excerpt between characters, not inside one", async () => {
+  it("cuts a long excerpt before a character that does not fit, not inside it", async () => {
     vi.mocked(searchKnowledge).mockResolvedValue([{ ...HIT, content: `${"a".repeat(278)}😀 and more after it` }]);
     await openAndFind("events");
     const [row] = within(await screen.findByRole("list", { name: "Passages found" })).getAllByRole("listitem");
-    expect(row.textContent).toContain(`${"a".repeat(278)}😀…`);
+    // 280 units with the ellipsis: the emoji would take the 279th and 280th, so the cut
+    // falls before it rather than inside it.
+    expect(row.textContent).toContain(`${"a".repeat(278)}…`);
+    expect(row.textContent).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   });
 });

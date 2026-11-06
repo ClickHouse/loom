@@ -184,13 +184,25 @@ describe("truncate", () => {
     expect(truncate("", 3)).toBe("");
   });
 
-  it("cuts between characters, not inside an emoji", () => {
-    expect(truncate("ab😀cd", 4)).toBe("ab😀…");
-    expect(truncate("😀😀😀", 3)).toBe("😀😀😀");
-    expect(truncate("ab🇺🇸cd", 4)).toBe("ab🇺🇸…");
-    expect(truncate("ab👍🏽cd", 4)).toBe("ab👍🏽…");
-    expect(truncate("ab👩‍💻cd", 4)).toBe("ab👩‍💻…");
-    expect(truncate("abe\u0301cd", 4)).toBe("abe\u0301…");
+  it("cuts at a boundary between the characters a reader sees, within max units", () => {
+    // max counts UTF-16 units, as the callers' length checks do; the cut steps back to
+    // the last whole character that fits.
+    expect(truncate("abc😀d", 5)).toBe("abc…");
+    expect(truncate("ab😀cd", 5)).toBe("ab😀…");
+    expect(truncate("😀😀😀", 6)).toBe("😀😀😀");
+    expect(truncate("ab🇺🇸cd", 7)).toBe("ab🇺🇸…");
+    expect(truncate("ab🇺🇸cd", 6)).toBe("ab…");
+    expect(truncate("ab👍🏽cd", 7)).toBe("ab👍🏽…");
+    expect(truncate("ab👩‍💻cd", 8)).toBe("ab👩‍💻…");
+    expect(truncate("abe\u0301cd", 5)).toBe("abe\u0301…");
+    expect(truncate("abe\u0301cd", 4)).toBe("ab…");
+  });
+
+  it("marks a value one unit over its limit as cut, emoji or not", () => {
+    const value = `😀${"word ".repeat(100)}`;
+    const cut = truncate(value.slice(0, 321), 320);
+    expect(cut.endsWith("…")).toBe(true);
+    expect(cut.length).toBeLessThanOrEqual(320);
   });
 
   it("cuts between code points where the browser has no Intl.Segmenter", async () => {
@@ -199,8 +211,9 @@ describe("truncate", () => {
     Object.defineProperty(Intl, "Segmenter", { value: undefined, configurable: true, writable: true });
     try {
       const fresh = await import("./format");
-      expect(fresh.truncate("ab😀cd", 4)).toBe("ab😀…");
-      expect(fresh.truncate("ab🇺🇸cd", 4)).toBe("ab🇺…");
+      expect(fresh.truncate("ab😀cd", 5)).toBe("ab😀…");
+      expect(fresh.truncate("ab🇺🇸cd", 7)).toBe("ab🇺🇸…");
+      expect(fresh.truncate("ab🇺🇸cd", 6)).toBe("ab🇺…");
     } finally {
       if (segmenter) Object.defineProperty(Intl, "Segmenter", segmenter);
     }
