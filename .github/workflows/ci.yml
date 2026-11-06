@@ -414,10 +414,16 @@ jobs:
       - name: node --test (bin/loom-node)
         shell: bash
         run: node --test integrations/claude-code-plugin/tests/loom-node.test.mjs
-  frontend-tests:
-    name: frontend tests (vitest + axe + playwright)
+  # The dashboard's vitest and Playwright suites share nothing but `npm ci`, so
+  # each runs as its own job, split into parts on separate runners.
+  frontend-vitest:
+    name: frontend vitest part ${{ matrix.part }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -433,22 +439,40 @@ jobs:
       # isolation. jsdom, no browser.
       - name: vitest (unit + component + axe)
         working-directory: frontend
-        run: npm run test
+        run: npm run test -- --shard=${{ matrix.part }}/${{ strategy.job-total }}
+
+  # With fullyParallel: false, --shard splits by spec file per project, not by test.
+  frontend-e2e:
+    name: frontend playwright part ${{ matrix.part }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
       - name: Install Chromium for Playwright
         working-directory: frontend
         run: npx playwright install --with-deps chromium
-      # The Graph smoke against the production build with every /v1/* call
-      # answered from fixtures: no read before a gesture, one read per deep
-      # link, zero layout-shift entries over 200 hovers, an unmoved canvas,
-      # Walk walks, Back returns.
-      - name: playwright (Graph smoke + layout-shift assertion)
+      # The e2e specs in frontend/e2e/ against the production build, every /v1/*
+      # call answered from fixtures.
+      - name: playwright (e2e specs)
         working-directory: frontend
-        run: npx playwright test
+        run: npm run e2e -- --shard=${{ matrix.part }}/${{ strategy.job-total }}
       - name: Upload screenshots and traces
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: frontend-e2e
+          name: frontend-e2e-${{ matrix.part }}
           path: |
             frontend/e2e-screenshots
             frontend/test-results

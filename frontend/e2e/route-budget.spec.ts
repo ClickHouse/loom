@@ -1,11 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { installApi } from "./fixtures";
+import { installApi, warmUp } from "./fixtures";
 
-// Every route has a budget. One parametrized test over the twenty-two dashboard routes with
+// Every route has a budget. One parametrized test over every dashboard route in ROUTES with
 // the default fixtures at 4x CPU: the page paints (a heading in <main>), its largest
 // contentful paint and its long tasks stay under budget, and its reads stay one per
 // question. The budgets are set for CI's slower runners — they catch a doubling, not a
 // drift (the drift shows in the ui.vitals rows).
+
+test.beforeAll(({ browser }, testInfo) => warmUp(browser, testInfo));
+
 const LCP_BUDGET_MS = 2000;
 const LONG_TASK_BUDGET_MS = 1500;
 // Every route reads at most 12 times, the sidebar's Auto-resolved audit.list included

@@ -1,4 +1,4 @@
-import type { Locator, Page } from "@playwright/test";
+import type { Browser, Locator, Page, TestInfo } from "@playwright/test";
 
 /** A plain JSON object: not null and not an array. Same body as src/lib/guards.ts, which sits
  *  outside the e2e project; request bodies and nested values narrow through this, not a cast. */
@@ -1716,4 +1716,17 @@ function runListFixture(all: Record<string, unknown>[], body: Record<string, unk
   const offset = Number(body.offset ?? 0);
   const page = kept.slice(offset, offset + Number(body.limit ?? 50));
   return { runs: projectRows(page, body, "run_id"), total: kept.length };
+}
+
+/** One unmeasured boot of /memories before a file's budgets run: on a fresh CI runner the
+ *  first pages run slower than later ones, and this boot takes that cost so no budget does. */
+export async function warmUp(browser: Browser, testInfo: TestInfo): Promise<void> {
+  const page = await browser.newPage({ baseURL: testInfo.project.use.baseURL });
+  try {
+    await installApi(page);
+    await page.goto("/memories", { waitUntil: "load" });
+    await page.locator("main h1, main h2").first().waitFor();
+  } finally {
+    await page.close();
+  }
 }
