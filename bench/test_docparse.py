@@ -171,16 +171,17 @@ def test_a_list_items_number_is_no_extra_word() -> None:
 
 
 def test_a_short_number_ending_a_sentence_is_left_out_on_both_sides() -> None:
-    assert S.text_words("The queue grew to 12. Then 3.11 shipped") == [
-        "the",
-        "queue",
-        "grew",
-        "to",
-        "then",
-        "3",
-        "11",
-        "shipped",
-    ]
+    merged = "The queue grew to 12. Then 3.11 shipped"
+    assert S.text_words(merged) == ["the", "queue", "grew", "to", "then", "3", "11", "shipped"]
+    # gold and parse that split the text into blocks differently score alike
+    split = ["The queue grew to 12.", "Then 3.11 shipped"]
+    block = {"page_start": 1, "page_end": 1, "level": 0, "notes": False}
+    g = {"blocks": [{"kind": "paragraph", "text": t, "page": 1} for t in split], "tables": []}
+    p = {"blocks": [{**block, "type": "paragraph", "text": merged}], "tables": []}
+    assert S.text_scores(g, p) == {"text_recall": 1.0, "text_precision": 1.0}
+    g = {"blocks": [{"kind": "paragraph", "text": merged, "page": 1}], "tables": []}
+    p = {"blocks": [{**block, "type": "paragraph", "text": t} for t in split], "tables": []}
+    assert S.text_scores(g, p) == {"text_recall": 1.0, "text_precision": 1.0}
 
 
 def test_a_numbered_heading_counts_its_words_the_same_however_it_is_written() -> None:

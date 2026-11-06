@@ -35,7 +35,7 @@ def key(s: str) -> str:
 NUMBERING = re.compile(r"^\s*(?:\d{1,2}(?:\.\d{1,2})*\.?|[a-z][.)])\s+", re.I)
 # an enumerator ("1.", "2)", "a.") wherever it stands, as a list's gold leaves it
 # out; a "3.11" stays, and a sentence-ending "12." goes too, on both sides
-ENUMERATOR = re.compile(r"(?:^|(?<=\s))(?:\d{1,3}|[a-z])[.)](?=\s)", re.I)
+ENUMERATOR = re.compile(r"(?:^|(?<=\s))(?:\d{1,3}|[a-z])[.)](?=\s|$)", re.I)
 
 
 def text_words(text: str) -> list[str]:
