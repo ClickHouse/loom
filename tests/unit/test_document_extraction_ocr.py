@@ -576,7 +576,7 @@ _UNSIZED = (
             _layout(
                 _holder('<p:ph type="body" idx="1"/>', 1_000_000)
                 + _holder('<p:ph sz="quarter" idx="2"/>', 9_000_000),
-                "",
+                _holder('<p:ph type="body"/>', 1_000_000),
             ),
             True,
         ),
