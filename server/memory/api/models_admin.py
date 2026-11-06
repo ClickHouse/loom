@@ -139,7 +139,8 @@ class MemoryHealthInput(_Identity):
 
     agent: str = "-"
     user_id: str = "-"
-    # A live row older than this and never returned by an agent read is "silent".
+    # A live row older than this with no recall credit and no agent read in this many days
+    # is "silent"; also the window of agent reads counted.
     silent_after_days: int = Field(default=30, ge=1, le=3650)
     # How many entries `top_recalled` lists.
     top_k: int = Field(default=10, ge=1, le=50)
@@ -188,13 +189,13 @@ class MemoryHealthFootprint(BaseModel):
 class MemoryHealthOutput(BaseModel):
     # Active, untombstoned rows in the namespace, across every agent and user.
     live: int
-    # Live rows whose key an agent read returned at least once (a recall credit or a
-    # `served` event on any live row of the key: a search, context pack or memory.ask).
+    # Live rows whose key (per user) carries a recall credit, or was returned by an agent
+    # read (a search, context pack or memory.ask) in the last `silent_after_days` days.
     recalled_ever: int
     # Live rows with at least one reported use.
     used_ever: int
     harmed_ever: int = 0  # live rows with at least one harm event
-    silent: int  # live and never returned by an agent read
+    silent: int  # live, no recall credit, and no agent read in the last silent_after_days
     silent_older: int  # silent AND older than silent_after_days
     # `silent` / `live`, 0..1; 0 when the namespace holds no live row.
     silent_share: float

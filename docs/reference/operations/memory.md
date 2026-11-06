@@ -958,16 +958,16 @@ Knowledge-base health for (org, namespace): how much of what is stored is ever r
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `silent_after_days` | `int` | `30` | A live row older than this and never returned by an agent read is "silent". |
+| `silent_after_days` | `int` | `30` | A live row older than this with no recall credit and no agent read in this many days is "silent"; also the window of agent reads counted. |
 | `top_k` | `int` | `10` | How many entries `top_recalled` lists. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `live` | `int` | Active, untombstoned rows in the namespace, across every agent and user. |
-| `recalled_ever` | `int` | Live rows whose key an agent read returned at least once (a recall credit or a `served` event on any live row of the key: a search, context pack or memory.ask). |
+| `recalled_ever` | `int` | Live rows whose key (per user) carries a recall credit, or was returned by an agent read (a search, context pack or memory.ask) in the last `silent_after_days` days. |
 | `used_ever` | `int` | Live rows with at least one reported use. |
 | `harmed_ever` | `int` | live rows with at least one harm event |
-| `silent` | `int` | live and never returned by an agent read |
+| `silent` | `int` | live, no recall credit, and no agent read in the last silent_after_days |
 | `silent_older` | `int` | silent AND older than silent_after_days |
 | `silent_share` | `float` | `silent` / `live`, 0..1; 0 when the namespace holds no live row. |
 | `silent_after_days` | `int` | Echo of the request's `silent_after_days`. |

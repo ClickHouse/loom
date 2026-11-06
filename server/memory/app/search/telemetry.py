@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections import OrderedDict
 from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Any
 
@@ -314,35 +315,72 @@ def _disclose_and_expose(ctx: SearchContext, output: MemorySearchOutput) -> None
     _schedule_exposure(ctx.input, list(output.results))
 
 
-# The ops whose caller sets `auto_touch` on the search itself: their `auto_touch: false` is
-# the caller's "record no usage". Every other op that runs a search (context.pack, memory.ask,
-# procedure.match, ...) turns its inner pass's auto_touch off to keep the ranking credit
-# out, and still serves what the pass finds.
+# The ops that return memory to an agent: what a `served` event counts. The rest of the ops
+# that run a search (decision.precedents, memory.apply, the workers' passes) filter, fetch
+# past what they return, or select rows to change, and record none.
+SERVED_OPERATIONS = frozenset(
+    {"memory.search", "search.query", "context.pack", "memory.ask", "procedure.match"}
+)
+# Of those, the ops whose caller sets `auto_touch` on the search itself: their
+# `auto_touch: false` is the caller's "record no usage". context.pack, memory.ask and
+# procedure.match turn their inner pass's auto_touch off to keep the ranking credit out,
+# and still serve what the pass finds.
 _CALLER_TOUCH_OPERATIONS = frozenset({"memory.search", "search.query"})
 
+# The keys each recent request has already written a `served` event for: memory.ask runs
+# several passes whose pools overlap, and one ask is one read. Process-local (a request
+# runs in one process) and bounded to the most recent requests.
+_SERVED_IN_REQUEST: OrderedDict[str, set[tuple[str, str]]] = OrderedDict()
+_SERVED_IN_REQUEST_MAX = 1024
 
-def _records_served(input: MemorySearchInput) -> bool:
-    """Is an uncredited pass still counted as served? Not for the dashboard or the assistant
-    (a person inspecting), a bench label, a caller that asked for no usage, or a search with
-    no wire operation behind it (a worker's)."""
+
+def _served_agent(input: MemorySearchInput) -> str | None:
+    """The agent a `served` event names, or None when this pass records none: not for an op
+    that does not return memory to an agent, the dashboard or the assistant (a person
+    inspecting), a bench label on the consumer or the calling agent, or a caller that asked
+    for no usage. A context pack or an ask searches as `*`; the event names the agent that
+    called it."""
     from server.memory.app import recall_credit
     from server.observability.consumer import INSPECTOR_CONSUMERS
-    from server.observability.genai import current_operation
+    from server.observability.genai import current_operation, request_identity
 
     operation = current_operation()
-    if not operation:
-        return False
+    if operation not in SERVED_OPERATIONS:
+        return None
     if operation in _CALLER_TOUCH_OPERATIONS and not input.auto_touch:
-        return False
+        return None
     consumer = recall_credit.current_named_consumer()
-    if consumer in INSPECTOR_CONSUMERS:
-        return False
-    return not (recall_credit.is_bench_label(input.agent) or recall_credit.is_bench_label(consumer))
+    if consumer in INSPECTOR_CONSUMERS or recall_credit.is_bench_label(consumer):
+        return None
+    agent = str(input.agent or "")
+    if recall_credit.is_agent_sentinel(agent):
+        agent = request_identity().get("agent") or agent
+    return None if recall_credit.is_bench_label(agent) else agent
+
+
+def _not_yet_served(input: MemorySearchInput, hits: list[Any]) -> list[Any]:
+    """The hits this request has not written a `served` event for yet."""
+    from server.core.logging_config import request_id_var
+
+    rid = request_id_var.get()
+    if not rid:
+        return hits
+    seen = _SERVED_IN_REQUEST.setdefault(rid, set())
+    _SERVED_IN_REQUEST.move_to_end(rid)
+    while len(_SERVED_IN_REQUEST) > _SERVED_IN_REQUEST_MAX:
+        _SERVED_IN_REQUEST.popitem(last=False)
+    fresh = []
+    for h in hits:
+        key = (h.namespace or input.namespace, h.memory_key)
+        if key not in seen:
+            seen.add(key)
+            fresh.append(h)
+    return fresh
 
 
 async def _record_usage(input: MemorySearchInput, hits: list[Any]) -> str | None:
     """The usage a served pass writes: a `recall` credit when the reader is credited, else a
-    `served` event when `_records_served` allows one. Returns the credit verdict for the
+    `served` event when `_served_agent` names one. Returns the credit verdict for the
     response (None when auto_touch was off)."""
     disclosure: str | None = None
     if input.auto_touch:
@@ -351,16 +389,13 @@ async def _record_usage(input: MemorySearchInput, hits: list[Any]) -> str | None
         if decision.credited:
             _schedule_usage_events(input, hits, "recall")
             return disclosure
-    if _records_served(input):
-        from server.memory.app.recall_credit import is_agent_sentinel
+    agent = _served_agent(input)
+    if agent is not None:
         from server.memory.store.usage import SERVED_EVENT
-        from server.observability.genai import request_identity
 
-        # A context pack or an ask searches as `*`; the event names the agent that called it.
-        agent = input.agent
-        if is_agent_sentinel(agent):
-            agent = request_identity().get("agent") or agent
-        _schedule_usage_events(input, hits, SERVED_EVENT, agent=agent)
+        fresh = _not_yet_served(input, hits)
+        if fresh:
+            _schedule_usage_events(input, fresh, SERVED_EVENT, agent=agent)
     return disclosure
 
 

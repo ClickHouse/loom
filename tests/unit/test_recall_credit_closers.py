@@ -279,10 +279,13 @@ def _run_auto_touch(
     closer_rows: list[dict[str, Any]] | None = None,
     operation: str = "",
     request_agent: str = "",
+    worker: str = "",
+    request_id: str = "",
 ) -> list[dict[str, Any]]:
+    from server.core.logging_config import request_id_var
     from server.memory.app.search import telemetry as h
     from server.memory.store import usage as mru
-    from server.observability.genai import set_identity
+    from server.observability.genai import set_identity, set_worker_identity
 
     written: list[dict[str, Any]] = []
 
@@ -313,6 +316,9 @@ def _run_auto_touch(
     async def _go() -> None:
         consumer_mod.set_current_consumer(*consumer)
         set_identity(org="o" if operation else "", agent=request_agent, operation=operation)
+        if worker:
+            set_worker_identity(worker, org="o", namespace="n")
+        request_id_var.set(request_id or None)
         try:
             await h._schedule_auto_touch(ctx)
             await _drain()
@@ -627,7 +633,7 @@ def test_reads_that_record_no_served_event(monkeypatch: pytest.MonkeyPatch) -> N
             monkeypatch, ctx, consumer=(consumer, SOURCE_SELF_REPORTED), operation="context.pack"
         )
         assert written == []
-    # a bench label, on the agent or the consumer
+    # a bench label, on the agent, the consumer, or the agent calling a pack
     ctx = _ctx(agent="latency-bench")
     assert _run_auto_touch(monkeypatch, ctx, operation="memory.search") == []
     ctx = _ctx(agent="*", auto_touch=False)
@@ -635,6 +641,35 @@ def test_reads_that_record_no_served_event(monkeypatch: pytest.MonkeyPatch) -> N
         monkeypatch, ctx, consumer=("eval-w8", SOURCE_SELF_REPORTED), operation="context.pack"
     )
     assert written == []
-    # no wire operation: a worker's search
+    ctx = _ctx(agent="*", auto_touch=False)
+    written = _run_auto_touch(
+        monkeypatch, ctx, operation="context.pack", request_agent="latency-bench"
+    )
+    assert written == []
+    # a worker's search, stamped the way the supervisor stamps a pass
     ctx = _ctx(auto_touch=False)
-    assert _run_auto_touch(monkeypatch, ctx) == []
+    assert _run_auto_touch(monkeypatch, ctx, worker="knowledge_source_sync") == []
+    # ops that run a search without returning memory to an agent
+    for op in ("decision.precedents", "memory.apply"):
+        ctx = _ctx(agent="*", auto_touch=False)
+        assert _run_auto_touch(monkeypatch, ctx, consumer=("", ""), operation=op) == []
+
+
+def test_one_request_writes_one_served_event_per_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """memory.ask runs several passes whose pools overlap; one ask is one read."""
+    first = _ctx(agent="*", auto_touch=False)
+    written = _run_auto_touch(
+        monkeypatch, first, consumer=("", ""), operation="memory.ask", request_id="rid-1"
+    )
+    assert _types(written) == ["served"]
+    again = _ctx(agent="*", auto_touch=False)
+    written = _run_auto_touch(
+        monkeypatch, again, consumer=("", ""), operation="memory.ask", request_id="rid-1"
+    )
+    assert written == []
+    # another request reads it again
+    other = _ctx(agent="*", auto_touch=False)
+    written = _run_auto_touch(
+        monkeypatch, other, consumer=("", ""), operation="memory.ask", request_id="rid-2"
+    )
+    assert _types(written) == ["served"]

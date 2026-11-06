@@ -172,6 +172,18 @@ describe("MemoryInspector reads what is open", () => {
     open();
     await screen.findByText("hello");
     expect(screen.getByText("No agent read recorded")).toBeInTheDocument();
+    cleanup();
+    // A bulk import seeded a count with no time and no events.
+    vi.mocked(getMemory).mockResolvedValueOnce({
+      ...base,
+      recall_count: 9,
+      last_recalled_at: null,
+      served_count: 9,
+      last_served_at: null,
+    } as MemoryDetail);
+    open();
+    await screen.findByText("hello");
+    expect(screen.getAllByText("9×")).toHaveLength(2); // Last recalled and Recall credit
   });
 
   it("opening History reads it once and shows the versions; a second open reads nothing", async () => {

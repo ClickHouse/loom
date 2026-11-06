@@ -76,6 +76,7 @@ from clickhouse_connect.driver.external import ExternalData
 
 from server.core.ch_names import split_table
 from server.core.datetimes import UNIX_EPOCH
+from server.memory.store.usage import SERVED_EVENT
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import record_pass
@@ -270,6 +271,14 @@ class _Target:
     changes_memory: bool = True
 
 
+def _last_counted(ident: dict[str, Any]) -> datetime:
+    """When the memory's last event other than `served` landed: the decay anchor of the
+    reinforcement boost. The totals' `bumped` moves on a `served` event too, which would
+    keep a memory that context packs return on every turn at full boost, so the identity
+    read takes the time from the events themselves."""
+    return _utc(ident.get("last_counted_at"))
+
+
 def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> list[_Target]:
     out: list[_Target] = []
     used_w = _used_weight()
@@ -341,7 +350,7 @@ def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> li
                 # search-side reinforcement signal; last_reinforced_at tracks
                 # the most recent reinforcing activity of either kind, which
                 # the rank's efficacy-decay term reads.
-                last_activity=max(last_recalled, _utc(row.get("bumped"))),
+                last_activity=max(last_recalled, _last_counted(ident)),
                 changes_memory=changes_memory,
             )
         )
@@ -475,7 +484,8 @@ IDENTITY_STATEMENT = """
                m.reinforcement_count AS reinforcement_count,
                m.evidence_count AS evidence_count, m.recall_count AS recall_count,
                m.last_recalled_at AS last_recalled_at,
-               coalesce(c.used_cited_total, 0) AS used_cited_total
+               coalesce(c.used_cited_total, 0) AS used_cited_total,
+               c.last_counted_at AS last_counted_at
         FROM (
             SELECT memory_id, org, namespace, agent, user_id, memory_key, reinforcement_count,
                    evidence_count, recall_count, last_recalled_at
@@ -486,12 +496,14 @@ IDENTITY_STATEMENT = """
               AND tombstoned_at IS NULL
         ) AS m
         LEFT JOIN (
-            SELECT org, namespace, memory_id, sum(event_count) AS used_cited_total
+            SELECT org, namespace, memory_id,
+                   sumIf(event_count, event_type = 'used_cited') AS used_cited_total,
+                   max(ts) AS last_counted_at
             FROM loom.memory_usage_events
             WHERE org IN {orgs:Array(String)}
               AND namespace IN {nss:Array(String)}
               AND memory_id IN {ids:Array(UUID)}
-              AND event_type = 'used_cited'
+              AND event_type != {served:String}
             GROUP BY org, namespace, memory_id
         ) AS c ON c.org = m.org AND c.namespace = m.namespace AND c.memory_id = m.memory_id
 """
@@ -552,6 +564,7 @@ async def _fold_batch(ch: _CHClient, cfg: UsageFoldConfig, result: UsageFoldResu
             "orgs": sorted({r["org"] for r in rows}),
             "nss": sorted({r["namespace"] for r in rows}),
             "ids": [r["memory_id"] for r in rows],
+            "served": SERVED_EVENT,
         },
     )
     by_id = {str(r["mid"]): r for r in idents}

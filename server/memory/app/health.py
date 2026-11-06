@@ -3,9 +3,10 @@
 Reports coverage by type, top recalled entries, silent (never served to an agent) entries
 and the staleness of live rows, so a namespace where most rows are never read shows it. One
 query over loom.memory FINAL joined to the summed loom.memory_usage_totals and the `served`
-usage events, scoped to (org, namespace). A user's key counts as read when any of its live
-rows carries a recall credit or a `served` event: an agent read puts its event on the newest
-copy of the key only.
+usage events of the last `silent_after_days` days, scoped to (org, namespace). A user's key
+counts as read when any of its live rows carries a recall credit, or a `served` event in that
+window: an agent read puts its event on the newest copy of the key only. The window bounds the
+events read, since a context pack writes one per key it returns on every turn.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ _LIVE = """
         SELECT memory_id, sum(event_count) AS served_count
         FROM loom.memory_usage_events
         WHERE org = {org:String} AND namespace = {ns:String} AND event_type = 'served'
+          AND ts > now() - toIntervalDay({days:UInt32})
         GROUP BY memory_id
     ) AS s ON s.memory_id = m.memory_id
 """
@@ -201,7 +203,9 @@ def staleness(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def handle_memory_health(input: MemoryHealthInput) -> MemoryHealthOutput:
-    rows = await get_client().query_all(_LIVE, {"org": input.org, "ns": input.namespace})
+    rows = await get_client().query_all(
+        _LIVE, {"org": input.org, "ns": input.namespace, "days": input.silent_after_days}
+    )
     return MemoryHealthOutput(
         **summarise(
             [dict(r) for r in rows],

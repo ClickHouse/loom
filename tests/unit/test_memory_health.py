@@ -126,3 +126,27 @@ def test_a_key_served_to_an_agent_is_not_silent_on_any_of_its_copies() -> None:
     assert out["by_type"][0] == {"memory_type": "semantic", "live": 5, "recalled": 3}
     # the ranking list stays the credited rows
     assert [t["memory_key"] for t in out["top_recalled"]] == ["credited"]
+
+
+def test_the_served_read_is_bounded_to_the_silent_window(monkeypatch) -> None:
+    """A context pack writes a `served` event per key it returns, every turn; the health
+    read takes only the last `silent_after_days` days of them."""
+    import asyncio
+
+    from server.memory.api.models_admin import MemoryHealthInput
+    from server.memory.app import health
+
+    seen: dict = {}
+
+    class _CH:
+        async def query_all(self, sql, params=None):
+            seen["sql"], seen["params"] = sql, params
+            return []
+
+    monkeypatch.setattr(health, "get_client", lambda: _CH())
+    asyncio.run(
+        health.handle_memory_health(MemoryHealthInput(org="o", namespace="n", silent_after_days=14))
+    )
+    served = seen["sql"][seen["sql"].index("event_type = 'served'") :]
+    assert "ts > now() - toIntervalDay({days:UInt32})" in served
+    assert seen["params"] == {"org": "o", "ns": "n", "days": 14}
