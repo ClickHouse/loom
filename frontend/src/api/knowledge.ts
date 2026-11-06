@@ -207,11 +207,12 @@ export interface KnowledgeHit {
   content: string;
   section: string;
   score: number;
-  revision: number;
-  format: string;
-  block_type: string;
-  locator: Locator | null;
-  keys_matched: string[];
+  // A server older than revisions and locators sends none of these four.
+  revision?: number;
+  format?: string;
+  block_type?: string;
+  locator?: Locator | null;
+  keys_matched?: string[];
 }
 
 /** The namespace's passages that answer `query`, best first (`knowledge.search`). */

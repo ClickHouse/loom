@@ -190,6 +190,7 @@ export function Documents() {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const focusSearchOnRead = useRef(false);
   const [sortBy, setSortBy] = useState<SortBy>("recency");
+  const [passagesShown, setPassagesShown] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<KnowledgeEntry | null>(null);
   const [previewDoc, setPreviewDoc] = useState<KnowledgeDocument | null>(null);
@@ -373,27 +374,10 @@ export function Documents() {
     if (collection && !shown) return;
     const uri = pendingDocSourceUri;
     clearPendingDoc();
-    const target = rows.find((r) => r.source_uri === uri);
-    if (target) {
-      void handlers.current.onOpen(target);
-      return;
-    }
-    // Not among the rows loaded (a link past the first page): read that one document. A
-    // link to one the namespace does not hold opens nothing, and the URL stops naming it;
-    // a failed read says so and keeps the link.
-    linkRead.current?.abort();
-    const ac = new AbortController();
-    linkRead.current = ac;
-    void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
-      .then((found) => {
-        if (ac.signal.aborted) return;
-        if (found) void handlers.current.onOpen(found);
-        else setViewParam("doc", null);
-      })
-      .catch((e) => {
-        if (!ac.signal.aborted) toastError("Open failed", e);
-      });
-  }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc, identity.org, identity.namespace]);
+    // A link to a document the namespace does not hold opens nothing, and the URL stops
+    // naming it; a failed read says so and keeps the link.
+    handlers.current.openByUri(uri, () => setViewParam("doc", null));
+  }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc]);
   // After a row's delete, the read that drops the row hands focus to the search field.
   useEffect(() => {
     if (!focusSearchOnRead.current) return;
@@ -434,27 +418,6 @@ export function Documents() {
     }
   };
 
-  // A passage's document: from the rows loaded, else read on its own (a hit past the
-  // first page); one the namespace no longer holds says so.
-  const openPassage = (uri: string) => {
-    const target = rows?.find((r) => r.source_uri === uri);
-    if (target) {
-      void handlers.current.onOpen(target);
-      return;
-    }
-    linkRead.current?.abort(); // as a link's open: a newer open wins
-    const ac = new AbortController();
-    linkRead.current = ac;
-    void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
-      .then((found) => {
-        if (ac.signal.aborted) return;
-        if (found) void handlers.current.onOpen(found);
-        else toast(`${uri} is no longer in this library`, "info");
-      })
-      .catch((e) => {
-        if (!ac.signal.aborted) toastError("Open failed", e);
-      });
-  };
   // Bumped by each open and by leaving the place: what an older open reads arrives too late.
   const openSeq = useRef(0);
   const onOpen = async (r: KnowledgeEntry) => {
@@ -494,10 +457,33 @@ export function Documents() {
       if (opened === openSeq.current) setPreviewLoading(false);
     }
   };
+  // A document by its address: from the rows loaded, else read on its own (a link or a
+  // passage past the first page), under one abort so a newer open wins; `onMissing` when
+  // the namespace does not hold it.
+  const openByUri = (uri: string, onMissing: () => void) => {
+    const target = rows?.find((r) => r.source_uri === uri);
+    if (target) {
+      void onOpen(target);
+      return;
+    }
+    linkRead.current?.abort();
+    const ac = new AbortController();
+    linkRead.current = ac;
+    void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
+      .then((found) => {
+        if (ac.signal.aborted) return;
+        // The latest render's open: the place may have moved on while this read ran.
+        if (found) void handlers.current.onOpen(found);
+        else onMissing();
+      })
+      .catch((e) => {
+        if (!ac.signal.aborted) toastError("Open failed", e);
+      });
+  };
   // The deep-link effect and the rows call the latest render's handlers without re-firing
   // on them or rendering every row again.
-  const handlers = useRef({ onOpen, onDownload, onDelete });
-  handlers.current = { onOpen, onDownload, onDelete };
+  const handlers = useRef({ onOpen, onDownload, onDelete, openByUri });
+  handlers.current = { onOpen, onDownload, onDelete, openByUri };
 
   const closePreview = () => {
     linkRead.current?.abort();
@@ -606,7 +592,8 @@ export function Documents() {
   const { selected } = selection;
   const clearSelection = selection.clear;
   // One tab stop over the rows: arrows and j/k move, Enter previews, Space selects.
-  const listNav = useRowNav({ enabled: !dialogOpen && rowKeys.length > 0 });
+  // While passages show, the arrows and j/k move through them instead.
+  const listNav = useRowNav({ enabled: !dialogOpen && rowKeys.length > 0 && !passagesShown });
   const listRef = useCallback(
     (el: HTMLDivElement | null) => {
       listNav(el);
@@ -864,9 +851,16 @@ export function Documents() {
       {/* A phone's toolbar has room for the search only; the sort sits under it. */}
       <div className="-mt-1 mb-3 flex justify-end sm:hidden">{sortSelect("w-40")}</div>
 
-      {/* Inside the documents: a passage, cited by revision and place, opens its document. */}
-      {rows && rows.length > 0 && (
-        <LibraryPassages identity={{ org: identity.org, namespace: identity.namespace }} onOpen={openPassage} />
+      {/* Inside the documents: a passage, cited by revision and place, opens its document.
+          Kept through a list filter (it searches the whole namespace); a new place resets it. */}
+      {rows !== null && !emptyLibrary && (
+        <LibraryPassages
+          key={`${identity.org}/${identity.namespace}`}
+          identity={{ org: identity.org, namespace: identity.namespace }}
+          navEnabled={!dialogOpen}
+          onHitsShown={setPassagesShown}
+          onOpen={(uri) => handlers.current.openByUri(uri, () => toast(`${uri} is no longer in this library`, "info"))}
+        />
       )}
 
       {/* Mounted while open, not on every render. */}

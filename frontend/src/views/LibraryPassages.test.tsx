@@ -30,13 +30,13 @@ const HIT: KnowledgeHit = {
   keys_matched: [],
 };
 
-async function openAndFind(query: string, onOpen = vi.fn()) {
-  render(<LibraryPassages identity={identity} onOpen={onOpen} />);
+async function openAndFind(query: string, onOpen = vi.fn(), onHitsShown = vi.fn()) {
+  render(<LibraryPassages identity={identity} navEnabled onHitsShown={onHitsShown} onOpen={onOpen} />);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: /Find a passage/ }));
   await user.type(screen.getByLabelText("Passage to find"), query);
   await user.click(screen.getByRole("button", { name: "Find" }));
-  return { user, onOpen };
+  return { user, onOpen, onHitsShown };
 }
 
 describe("LibraryPassages", () => {
@@ -46,7 +46,7 @@ describe("LibraryPassages", () => {
   });
 
   it("is folded until opened", async () => {
-    render(<LibraryPassages identity={identity} onOpen={vi.fn()} />);
+    render(<LibraryPassages identity={identity} navEnabled onHitsShown={vi.fn()} onOpen={vi.fn()} />);
     const toggle = screen.getByRole("button", { name: /Find a passage/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByLabelText("Passage to find")).toBeNull();
@@ -66,9 +66,12 @@ describe("LibraryPassages", () => {
         keys_matched: ["retention.days"],
       },
     ]);
-    const { user, onOpen } = await openAndFind("how long are events kept");
+    const { user, onOpen, onHitsShown } = await openAndFind("how long are events kept");
     const list = await screen.findByRole("list", { name: "Passages found" });
     expect(vi.mocked(searchKnowledge).mock.calls[0].slice(0, 2)).toEqual([identity, "how long are events kept"]);
+    expect(screen.getByText("2 passages")).toBeInTheDocument();
+    // The list below hands its row keys over while hits show.
+    expect(onHitsShown).toHaveBeenLastCalledWith(true);
     const [first, second] = within(list).getAllByRole("listitem");
     expect(first).toHaveTextContent("retention.pdf");
     expect(first).toHaveTextContent("Retention > Events");
@@ -78,6 +81,23 @@ describe("LibraryPassages", () => {
     expect(await axeViolations(document.body)).toEqual([]);
     await user.click(within(first).getByRole("button"));
     expect(onOpen).toHaveBeenCalledWith("repo://handbook/retention.pdf");
+  });
+
+  it("says a full page is the best passages, not all of them", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValue(Array.from({ length: 10 }, (_, i) => ({ ...HIT, chunk_idx: i })));
+    await openAndFind("events");
+    expect(await screen.findByText("The best 10 passages")).toBeInTheDocument();
+    expect(vi.mocked(searchKnowledge).mock.calls[0][2]).toMatchObject({ topK: 10 });
+  });
+
+  it("shows a hit from a server older than revisions and locators, uncited", async () => {
+    const { revision, format, block_type, locator, keys_matched, ...old } = HIT;
+    vi.mocked(searchKnowledge).mockResolvedValue([old]);
+    await openAndFind("events");
+    const [row] = within(await screen.findByRole("list", { name: "Passages found" })).getAllByRole("listitem");
+    expect(row).toHaveTextContent("retention.pdf");
+    expect(row).toHaveTextContent("Raw events are kept for 30 days");
+    expect(row).not.toHaveTextContent("revision");
   });
 
   it("says when no passage answers, and when the search failed", async () => {

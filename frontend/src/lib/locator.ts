@@ -41,8 +41,8 @@ export function formatLocator(format: string, locator: Locator | null | undefine
 }
 
 /** The passage's citation: the revision it was read from and where it sits in it. */
-export function citation(hit: { format: string; revision: number; locator: Locator | null }): string {
-  const where = formatLocator(hit.format, hit.locator);
+export function citation(hit: { format?: string; revision?: number; locator?: Locator | null }): string {
+  const where = formatLocator(hit.format ?? "", hit.locator);
   const rev = hit.revision ? `revision ${hit.revision}` : "";
   return [rev, where].filter(Boolean).join(", ");
 }

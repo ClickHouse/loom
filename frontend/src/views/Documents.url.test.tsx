@@ -13,8 +13,10 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 const toastError = vi.hoisted(() => vi.fn());
+const toast = vi.hoisted(() => vi.fn());
 vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
+  toast,
   toastError,
 }));
 
@@ -241,5 +243,44 @@ describe("Library keeps the open document in its URL", () => {
     await settle();
     expect(new URLSearchParams(location.search).get("doc")).toBe("docs/handbook.md");
     expect(api.getKnowledge).toHaveBeenCalled();
+  });
+
+  async function findPassageIn(uri: string) {
+    api.searchKnowledge.mockResolvedValue([
+      { source_uri: uri, chunk_idx: 0, content: "A passage.", section: "", score: 1 },
+    ]);
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /Find a passage/ }));
+    fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "passage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Find" }));
+    await settle();
+    fireEvent.click(within(screen.getByRole("list", { name: "Passages found" })).getByRole("button"));
+    await settle();
+  }
+
+  it("a passage in a document past the first page reads that document and opens it", async () => {
+    history.replaceState(null, "", "/library");
+    const late = { ...ROWS[0], source_uri: "docs/late.md", title: "Late doc" };
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: { uriPrefix?: string[] }) =>
+      opts.uriPrefix ? { rows: [late], next_cursor: null } : { rows: ROWS, next_cursor: "c-2" },
+    );
+    await findPassageIn("docs/late.md");
+    expect(api.listKnowledge).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ uriPrefix: ["docs/late.md"] }),
+    );
+    expect(screen.getByRole("dialog", { name: "Late doc" })).toBeInTheDocument();
+  });
+
+  it("a passage whose document is gone says so and opens nothing", async () => {
+    history.replaceState(null, "", "/library");
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: { uriPrefix?: string[] }) =>
+      opts.uriPrefix ? { rows: [], next_cursor: null } : { rows: ROWS, next_cursor: null },
+    );
+    await findPassageIn("docs/gone.md");
+    expect(toast).toHaveBeenCalledWith("docs/gone.md is no longer in this library", "info");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(new URLSearchParams(location.search).get("doc")).toBeNull();
   });
 });
