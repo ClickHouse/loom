@@ -350,6 +350,22 @@ async def test_the_bytes_are_read_as_the_checks_after_them_are(
         await originals.move_to_bucket(held)
     assert reads == [True]
 
+
+@pytest.mark.asyncio
+async def test_missing_bytes_are_corrupt_only_under_the_row_the_walk_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    held = _held(0)
+
+    async def ch_now_s(*, ch: Any = None) -> int:
+        return 0
+
+    async def missing(*a: Any, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(blobs, "ch_now_s", ch_now_s)
+    monkeypatch.setattr(blobs, "read", missing)
+
     async def uploaded_again(*a: Any, **kw: Any) -> blobs.Latest:
         return blobs.Latest("", held.version_ms + 5)  # written since the walk
 
