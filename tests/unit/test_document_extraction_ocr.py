@@ -8,6 +8,8 @@ import re
 import zlib
 from dataclasses import dataclass, field
 from io import BytesIO
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from pypdf import PdfReader
@@ -538,35 +540,86 @@ def _layout(layout: str, master: str) -> dict[str, str]:
     }
 
 
-_IN_PLACE = '<p:ph type="pic" idx="1"/>'
+_UNSIZED = (
+    '<p:sp><p:nvSpPr><p:cNvPr id="2" name="h"/><p:cNvSpPr/><p:nvPr>{}</p:nvPr></p:nvSpPr>'
+    "<p:spPr/></p:sp>"
+)
 
 
 @pytest.mark.parametrize(
-    ("parts", "read"),
+    ("ph", "parts", "read"),
     [
         # sized by its layout's placeholder of the same index, small or large
-        (_layout(_holder('<p:ph type="pic" idx="1"/>', 9_000_000), ""), True),
-        (_layout(_holder('<p:ph type="pic" idx="1"/>', 1_000_000), ""), False),
+        (
+            '<p:ph type="pic" idx="1"/>',
+            _layout(_holder('<p:ph type="pic" idx="1"/>', 9_000_000), ""),
+            True,
+        ),
+        (
+            '<p:ph type="pic" idx="1"/>',
+            _layout(_holder('<p:ph type="pic" idx="1"/>', 1_000_000), ""),
+            False,
+        ),
+        # the index wins over a placeholder of its type that comes first; untyped is content
+        (
+            '<p:ph sz="quarter" idx="2"/>',
+            _layout(
+                _holder('<p:ph type="body" idx="1"/>', 1_000_000)
+                + _holder('<p:ph type="pic" idx="3"/>', 1_000_000)
+                + _holder('<p:ph sz="quarter" idx="2"/>', 9_000_000),
+                "",
+            ),
+            True,
+        ),
         # the layout's placeholder has no size: the master's of its type has
         (
+            '<p:ph type="pic" idx="1"/>',
             _layout(
-                '<p:sp><p:nvSpPr><p:cNvPr id="2" name="h"/><p:cNvSpPr/><p:nvPr><p:ph type="pic" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp>',
+                _UNSIZED.format('<p:ph type="pic" idx="1"/>'),
                 _holder('<p:ph type="pic"/>', 9_000_000),
             ),
             True,
         ),
+        # a content placeholder is the master's body
+        (
+            '<p:ph idx="1"/>',
+            _layout(_UNSIZED.format('<p:ph idx="1"/>'), _holder('<p:ph type="body"/>', 9_000_000)),
+            True,
+        ),
         # no layout: a size stated nowhere is taken as the slide's
-        (None, True),
+        ('<p:ph type="pic" idx="1"/>', None, True),
     ],
 )
 def test_a_slides_picture_in_a_placeholder_is_sized_by_its_layout(
-    engine: FakeEngine, parts: dict[str, str] | None, read: bool
+    engine: FakeEngine, ph: str, parts: dict[str, str] | None, read: bool
 ) -> None:
     from tests.unit.test_document_extraction_office import _sp
 
-    a = extract(_one_slide(_sp("Architecture", "title") + _pic(ph=_IN_PLACE), parts), "p.pptx")
+    a = extract(_one_slide(_sp("Architecture", "title") + _pic(ph=ph), parts), "p.pptx")
     assert a.coverage.complete and len(engine.seen) == int(read)
     assert [b.attrs for b in a.blocks][1:] == ([{"ocr": True}] if read else [])
+
+
+def test_a_layout_is_read_once_however_many_pictures_sit_in_it(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from loom_extractor.ooxml import Package
+    from tests.unit.test_document_extraction_office import _sp
+
+    reads: list[str] = []
+    xml = Package.xml
+    monkeypatch.setattr(
+        Package, "xml", lambda self, name, limit=None: reads.append(name) or xml(self, name, limit)
+    )
+    # sized by neither the layout's placeholder nor its type: each picture asks the master
+    parts = _layout(
+        _UNSIZED.format('<p:ph type="pic" idx="1"/>'), _holder('<p:ph type="pic"/>', 1_000_000)
+    )
+    pics = "".join(_pic(ph=f'<p:ph type="pic" idx="{n}"/>') for n in (1, 2, 3))
+    a = extract(_one_slide(_sp("Architecture", "title") + pics, parts), "p.pptx")
+    assert a.coverage.complete and engine.seen == []
+    assert reads.count("ppt/slideLayouts/slideLayout1.xml") == 1
+    assert reads.count("ppt/slideMasters/slideMaster1.xml") == 1
 
 
 def test_a_grouped_picture_is_sized_on_its_slide_and_a_deck_with_no_size_has_the_default(
@@ -624,6 +677,21 @@ def test_an_image_the_engine_cannot_decode_leaves_the_files_bound(
     assert images.read("png", lambda: b"png", 1.0)[0][0].text == "text"
     with pytest.raises(ValueError, match="past the"):
         images.read("png2", lambda: b"png", 1.0)
+
+
+@pytest.mark.parametrize(("known", "error"), [(False, ocr.NotDecoded), (True, ValueError)])
+def test_an_image_whose_header_was_read_and_fails_to_decode_is_charged(
+    known: bool, error: type[ValueError]
+) -> None:
+    def header(data: bytes, n: int, fmt: object, w: Any, h: Any, *rest: object) -> int:
+        w._obj.value = h._obj.value = 100 if known else 0
+        return 0 if known else 1
+
+    eng = object.__new__(ocr.Engine)
+    eng._l = SimpleNamespace(pixReadHeaderMem=header, pixReadMem=lambda data, n: 0)
+    with pytest.raises(ValueError, match="could not be decoded") as raised:
+        eng.read(b"\x89PNG broken", 1.0)
+    assert type(raised.value) is error
 
 
 def test_an_image_page_whose_layout_fails_says_so(

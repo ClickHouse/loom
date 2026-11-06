@@ -61,14 +61,18 @@ def _placeholder(sp: Element) -> str:
     return "" if ph is None else ph.get("type", "body")
 
 
-def _extent(el: Element, xfrm: str = "p:spPr") -> tuple[int, int] | None:
-    """A shape's width and height in EMU, from its own transform; None when it has none."""
-    ext = el.find(f"{q(xfrm)}/{q('a:xfrm')}/{q('a:ext')}")
+def _size(ext: Element | None) -> tuple[int, int] | None:
+    """An extent's `cx` and `cy` in EMU; None when it is missing or not positive."""
     try:
-        size = (int(ext.get("cx", "0")), int(ext.get("cy", "0"))) if ext is not None else None
+        cx, cy = (int(ext.get("cx", "0")), int(ext.get("cy", "0"))) if ext is not None else (0, 0)
     except ValueError:
         return None
-    return size if size and size[0] > 0 and size[1] > 0 else None
+    return (cx, cy) if cx > 0 and cy > 0 else None
+
+
+def _extent(el: Element, xfrm: str = "p:spPr", ext: str = "a:ext") -> tuple[int, int] | None:
+    """A shape's width and height in EMU, from its own transform; None when it has none."""
+    return _size(el.find(f"{q(xfrm)}/{q('a:xfrm')}/{q(ext)}"))
 
 
 class _Slide:
@@ -92,20 +96,9 @@ class _Slide:
         group's children are sized in its own child space."""
         for el in tree:
             if el.tag == q("p:grpSp"):
-                ext, child = (
-                    _extent(el, "p:grpSpPr"),
-                    el.find(f"{q('p:grpSpPr')}/{q('a:xfrm')}/{q('a:chExt')}"),
-                )
-                try:
-                    cx, cy = (
-                        (int(child.get("cx", "0")), int(child.get("cy", "0")))
-                        if child is not None
-                        else (0, 0)
-                    )
-                except ValueError:
-                    cx = cy = 0
-                if ext and cx > 0 and cy > 0:
-                    self._walk(el, sx * ext[0] / cx, sy * ext[1] / cy)
+                ext, child = _extent(el, "p:grpSpPr"), _extent(el, "p:grpSpPr", "a:chExt")
+                if ext and child:
+                    self._walk(el, sx * ext[0] / child[0], sy * ext[1] / child[1])
                 else:
                     self._walk(el, sx, sy)
             elif el.tag == f"{_MC}AlternateContent":
@@ -172,40 +165,58 @@ def _slide_parts(pkg: Package) -> list[str | None]:
 
 
 def _slide_size(pkg: Package) -> tuple[int, int]:
-    size = pkg.xml(_PRESENTATION).find(q("p:sldSz"))
-    try:
-        cx, cy = (
-            (int(size.get("cx", "0")), int(size.get("cy", "0"))) if size is not None else (0, 0)
-        )
-    except ValueError:
-        cx = cy = 0
-    return (cx, cy) if cx > 0 and cy > 0 else _DEFAULT_SLIDE
+    return _size(pkg.xml(_PRESENTATION).find(q("p:sldSz"))) or _DEFAULT_SLIDE
 
 
-def _placeholder_extent(pkg: Package, part: str, ph: Element) -> tuple[int, int] | None:
-    """The size of the placeholder `ph` names, from the slide's layout and then its
-    master: by index in the layout, by type in either."""
-    idx, kind = ph.get("idx"), ph.get("type", "body")
-    for depth, want in ((0, "slideLayout"), (1, "slideMaster")):
-        target = next((t for k, t in pkg.rels(part).values() if k == want), None)
-        if target is None:
-            return None
+# Each layout's and master's placeholders, (idx, type, size or None), by part name:
+# read once a deck, however many pictures sit in them.
+_Holders = dict[str, list[tuple[str | None, str, tuple[int, int] | None]]]
+
+
+def _holders(pkg: Package, part: str, want: str, cache: _Holders) -> str | None:
+    """The part of kind `want` that `part` names, its placeholders read into `cache`."""
+    target = next((t for k, t in pkg.rels(part).values() if k == want), None)
+    if target is not None and target not in cache:
         tree = pkg.xml(target).find(f"{q('p:cSld')}/{q('p:spTree')}")
-        for el in tree.iter() if tree is not None else []:
-            other = el.find(f"*/{q('p:nvPr')}/{q('p:ph')}")
-            if other is None:
-                continue
-            if (depth == 0 and idx is not None and other.get("idx") == idx) or other.get(
-                "type", "body"
-            ) == kind:
-                if (size := _extent(el)) is not None:
-                    return size
-        part = target
-    return None
+        found = [
+            (ph.get("idx"), ph.get("type", "obj"), _extent(el))
+            for el in (tree.iter() if tree is not None else [])
+            if (ph := el.find(f"*/{q('p:nvPr')}/{q('p:ph')}")) is not None
+        ]
+        cache[target] = found
+    return target
+
+
+def _placeholder_extent(
+    pkg: Package, part: str, ph: Element, cache: _Holders
+) -> tuple[int, int] | None:
+    """The size of the placeholder `ph` names: in the slide's layout by its index,
+    then by its type; then in the master by its type, where a content placeholder
+    (`obj`, the type when none is named) is the body."""
+    idx, kind = ph.get("idx"), ph.get("type", "obj")
+    layout = _holders(pkg, part, "slideLayout", cache)
+    if layout is None:
+        return None
+    held = [(i, t, e) for i, t, e in cache[layout] if e is not None]
+    found = next((e for i, t, e in held if idx is not None and i == idx), None) or next(
+        (e for i, t, e in held if t == kind), None
+    )
+    if found:
+        return found
+    master = _holders(pkg, layout, "slideMaster", cache)
+    if master is None:
+        return None
+    kind = "body" if kind == "obj" else kind
+    return next((e for i, t, e in cache[master] if e is not None and t == kind), None)
 
 
 def _picture_texts(
-    pkg: Package, part: str, slide: _Slide, size: tuple[int, int], images: ocr.Images
+    pkg: Package,
+    part: str,
+    slide: _Slide,
+    size: tuple[int, int],
+    images: ocr.Images,
+    holders: _Holders,
 ) -> tuple[list[str], int, str]:
     """The text OCR reads in each of the slide's pictures that covers a fifth of
     it, how many it read, and why the first it could not read was not (empty
@@ -215,7 +226,7 @@ def _picture_texts(
     for rid, extent, ph in slide.pictures:
         if extent is None and ph is not None:
             # a placeholder whose size is nowhere stated is taken as the slide's
-            extent = _placeholder_extent(pkg, part, ph) or size
+            extent = _placeholder_extent(pkg, part, ph, holders) or size
         if extent is not None:
             sized.append((rid, extent))
     big = [(rid, cx) for rid, (cx, cy) in sized if cx * cy >= ocr.PICTURE_SHARE * width * height]
@@ -256,6 +267,7 @@ def extract_pptx(data: bytes) -> Artifact:
     parts = _slide_parts(pkg)
     size = _slide_size(pkg)
     images = ocr.Images()
+    holders: _Holders = {}
     ocr_slides: list[int] = []
     acc = Blocks()
     failed: list[Failure] = []
@@ -283,7 +295,7 @@ def extract_pptx(data: bytes) -> Artifact:
         hidden = {"hidden": True} if root.get("show") in ("0", "false") else {}
         # the slide's relationships, layout or master: its pictures are not read
         try:
-            pictured, seen, unread = _picture_texts(pkg, part, slide, size, images)
+            pictured, seen, unread = _picture_texts(pkg, part, slide, size, images, holders)
         except (PartError, RecursionError) as e:
             pictured, seen, unread = [], 0, f"its pictures could not be read: {e}"
         if unread:

@@ -72,8 +72,8 @@ def _unruled(text: str) -> str:
 
 
 class NotDecoded(ValueError):
-    """An image refused before it is decoded: Leptonica cannot read its format,
-    or its header is past the pixel bound."""
+    """An image refused before it is decoded: its header is past the pixel bound,
+    or it is in a format Leptonica does not know."""
 
 
 @dataclass(frozen=True)
@@ -189,11 +189,14 @@ class Engine:
         held: list[int] = []  # every image made here, destroyed at the end
         # its size from its header, before it is decoded: a file's own size may
         # say otherwise than the PDF's /Width and /Height
-        if _header_pixels(lp, data) > MAX_PIXELS:
+        pixels = _header_pixels(lp, data)
+        if pixels > MAX_PIXELS:
             raise NotDecoded(f"its image is past {MAX_PIXELS:,} pixels")
         pix = lp.pixReadMem(data, len(data))
         if not pix:
-            raise NotDecoded("its image could not be decoded")
+            # a format Leptonica does not know cost nothing; a header it read may
+            # have been decoded at length before the data failed
+            raise (NotDecoded if pixels == 0 else ValueError)("its image could not be decoded")
         held.append(pix)
         try:
             w, h = lp.pixGetWidth(pix), lp.pixGetHeight(pix)
