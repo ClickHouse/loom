@@ -61,7 +61,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     """Integration tests talk to ClickHouse, through the server or their own
     client, and the server's default target is localhost:8123. Without an
     explicit LOOM_CH_HOST they skip, so an unconfigured run never writes into
-    whatever ClickHouse happens to listen there (a developer's own stack)."""
+    whatever ClickHouse happens to listen there (a developer's own stack).
+    Under LOOM_TEST_SHARD it first drops the other parts' items (`_shards`)."""
+    _shards.deselect(config, items)
     if _clickhouse_target():
         return
     skip = pytest.mark.skip(

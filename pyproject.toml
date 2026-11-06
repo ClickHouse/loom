@@ -244,7 +244,8 @@ module = ["loom.integrations.*"]
 disallow_subclassing_any = false
 
 [tool.coverage.run]
-# Coverage is measured over the unit suite in CI (the `unit` job). Integration
+# Coverage is measured over the unit suite in CI: each `unit` part writes its data,
+# the `unit-coverage` job combines them and applies the floors. Integration
 # tests run the server out-of-process so they don't contribute to in-process
 # coverage; treat this as a unit-coverage floor, not a total.
 source = ["server", "sdk/python/loom"]

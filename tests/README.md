@@ -25,7 +25,7 @@ Marks must be registered (`strict_markers`). An unknown mark fails collection.
 
 ## Rules every test keeps
 
-- **Order-independent and parallel-safe.** The unit job runs in parts on separate runners (`LOOM_TEST_SHARD`, `tests/_shards.py`), each under pytest-randomly with a printed seed and one pytest-xdist worker per core. A test writes only under `tmp_path` and listens only on port 0, since another test runs beside it. To reproduce a failure:
+- **Order-independent and parallel-safe.** The unit job runs in parts on separate runners (`LOOM_TEST_SHARD`, `tests/_shards.py`), each under pytest-randomly with a printed seed and one pytest-xdist worker per core. A test writes only under `tmp_path` and listens only on port 0, since another test runs beside it. To reproduce a failure in part k of n, prefix each command with `LOOM_TEST_SHARD=k/n`, so it shuffles the same files the part did:
   - the seed's order: `pytest tests/unit -p randomly --randomly-seed=<seed>`, without `-n`. The seed fixes the order, but xdist hands tests to workers as they free up, so only a run without `-n` repeats it exactly;
   - a neighbour that breaks it: `pytest -p randomly --randomly-seed=<seed> --randomly-dont-reorganize <earlier ids> <failing id>`, which runs the ids in the order given with the same per-test random seeds as CI. The CI log does not say which tests shared the failing test's worker; the earlier ids are the ones before the failing test in `pytest tests/unit -p randomly --randomly-seed=<seed> --collect-only -q`. Start with those from its own file, and halve them until one is left;
   - two tests colliding while they run at once: the same with `-n 2` and the two ids.

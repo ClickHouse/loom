@@ -2,7 +2,8 @@
 
 `LOOM_TEST_SHARD=k/n` runs the k-th of n parts of the test files under the paths
 pytest was given; `tests/conftest.py` calls `ignored` from `pytest_ignore_collect`,
-so a part imports and collects only its own files. A part holds whole files, so a
+so a part imports and collects only its own files, and `deselect` drops what a file
+or node id named on the command line still brought in. A part holds whole files, so a
 module-scoped fixture is built once, in one part.
 
 Files are dealt heaviest first to the lightest part. A file's weight is the seconds
@@ -100,11 +101,13 @@ class Split:
             path.name.startswith("test_") or path.name.endswith("_test.py")
         ):
             return False
-        name = _name(path.resolve())
+        return not self.keeps(_name(path.resolve()))
+
+    def keeps(self, name: str) -> bool:
         if name not in self.walked:
             # A test file the walk did not find runs in part 1, so it still runs once.
-            return not self.first
-        return name not in self.kept
+            return self.first
+        return name in self.kept
 
 
 _split: Split | None = None
@@ -121,9 +124,24 @@ def ignored(path: Path, config: pytest.Config) -> bool | None:
             k, n = parse(spec)
         except ValueError as e:
             raise pytest.UsageError(str(e)) from e
-        args = [Path(a.split("::", 1)[0]).resolve() for a in config.args] or [ROOT / "tests"]
-        _split = Split(k, n, args)
+        _split = Split(k, n, [Path(a.split("::", 1)[0]).resolve() for a in config.args])
     return True if _split.ignores(path) else None
+
+
+def deselect(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Drop the items of files outside the requested part that collection still
+    reached: pytest asks `pytest_ignore_collect` only about paths it walks to, not
+    about a file or node id named on the command line."""
+    if _split is None:
+        return
+    split = _split
+    kept: list[pytest.Item] = []
+    dropped: list[pytest.Item] = []
+    for item in items:
+        (kept if split.keeps(_name(Path(str(item.path)).resolve())) else dropped).append(item)
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = kept
 
 
 def _name(path: Path) -> str:

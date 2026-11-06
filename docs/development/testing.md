@@ -82,12 +82,13 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
   real embedder or LLM and skips on the fakes, `recovery` drives a failure and the path
   back from it.
 - **Parts.** `LOOM_TEST_SHARD=k/n` collects only the test files of the k-th of n parts. A
-  part holds whole files, dealt by the seconds `tests/shard_weights.json` records for each
-  (`tests/_shards.py`), so a module fixture is built in one part only. CI splits the suite
-  into four parts, each on its own stack, beside the isolation gates part; a failure in
-  part k reproduces with `LOOM_TEST_SHARD=k/4 make test-integration`. The unit job's
-  `unit-coverage` uploads a `shard-weights` artifact with that run's times; commit it as
-  `tests/shard_weights.json` when the parts drift apart.
+  part holds whole files, so a module fixture is built in one part only. Files are dealt
+  by the seconds `tests/shard_weights.json` records for each, and a file it does not list
+  (every integration file) by its count of test functions (`tests/_shards.py`). CI splits
+  the suite into four parts, each on its own stack, beside the isolation gates part; a
+  failure in part k reproduces with `LOOM_TEST_SHARD=k/4 make test-integration`. The
+  `unit-coverage` job uploads a `shard-weights` artifact with its run's unit times; commit
+  it as `tests/shard_weights.json` when the unit parts drift apart.
 - **Failure diagnostics.** A failing test's report carries its last 25 Loom requests
   (method, URL, status, `X-Request-Id`, latency) with JWTs, bearer tokens and secrets
   redacted, so the matching server log line can be found by request id.

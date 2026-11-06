@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -135,3 +138,44 @@ def test_the_weights_are_seconds_per_file_from_junit_reports(tmp_path: Path) -> 
         "</testsuite></testsuites>"
     )
     assert _shards.record([report]) == {"tests/unit/test_test_shards.py": 3.75}
+
+
+def _collect(*args: str, shard: str | None) -> list[str]:
+    env = {k: v for k, v in os.environ.items() if k != "LOOM_TEST_SHARD"}
+    if shard:
+        env["LOOM_TEST_SHARD"] = shard
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--co",
+            "-q",
+            "-p",
+            "no:randomly",
+            "-p",
+            "no:cacheprovider",
+            *args,
+        ],
+        cwd=_shards.ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stdout[-2000:] + done.stderr[-2000:]
+    return [line for line in done.stdout.splitlines() if "::" in line]
+
+
+def test_files_and_node_ids_named_on_the_command_line_run_in_one_part_each() -> None:
+    """pytest asks `pytest_ignore_collect` only about paths it walks to, so the
+    conftest also deselects what an argument brought in from another part."""
+    args = (
+        "tests/unit/test_request_ids.py",
+        "tests/unit/test_lemmatize.py",
+        "tests/unit/test_migrate_settings.py::test_a_statement_gets_the_flags_its_features_or_table_need",
+    )
+    whole = _collect(*args, shard=None)
+    parts = [_collect(*args, shard=f"{k}/2") for k in (1, 2)]
+    assert sorted(parts[0] + parts[1]) == sorted(whole)
+    assert parts[0] and parts[1]
