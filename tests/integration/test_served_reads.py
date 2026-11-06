@@ -92,3 +92,50 @@ async def test_a_context_pack_read_is_served_on_every_copy_of_the_key(
             {"org": ORG, "namespace": ns, "agent": "w", "memory_key": "backup_window"},
         )
         assert plain.get("served_count") is None
+
+
+async def test_a_read_of_one_users_copy_counts_on_every_copy_in_the_namespace(
+    control_plane_url: str,
+) -> None:
+    """An agent read puts its event on the newest copy of the key in the namespace,
+    whichever user wrote it: a namespace-wide reader sees it on the other user's copy."""
+    from loom import Agent
+
+    ns = f"served-u-{uuid.uuid4().hex[:6]}"
+    async with Agent(org=ORG, namespace=ns, agent="w", base_url=control_plane_url) as a:
+        for user in ("u1", "u2"):
+            await a.transport.post(
+                "/v1/memory.set",
+                {
+                    "org": ORG,
+                    "namespace": ns,
+                    "agent": "w",
+                    "user_id": user,
+                    "memory_key": "editor",
+                    "value": "the team edits configuration in a terminal editor",
+                    "memory_type": "semantic",
+                },
+            )
+
+        async def packed() -> bool:
+            pack = await a.transport.post(
+                "/v1/context.pack",
+                {
+                    "org": ORG,
+                    "namespace": ns,
+                    "agent": "w",
+                    "user_id": "u1",
+                    "query": "which editor does the team use",
+                },
+            )
+            return "terminal editor" in str(pack)
+
+        await eventually(packed, description="the pack serves the fact")
+
+        async def served(user: str) -> dict[str, Any]:
+            got = await _get(a, "editor", user_id=user)
+            return got if got["served_count"] >= 1 else {}
+
+        for user in ("u1", "u2"):
+            got = await eventually(lambda u=user: served(u), description=f"{user} sees the read")
+            assert got["recall_count"] == 0

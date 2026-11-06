@@ -271,14 +271,6 @@ class _Target:
     changes_memory: bool = True
 
 
-def _last_counted(ident: dict[str, Any]) -> datetime:
-    """When the memory's last event other than `served` landed: the decay anchor of the
-    reinforcement boost. The totals' `bumped` moves on a `served` event too, which would
-    keep a memory that context packs return on every turn at full boost, so the identity
-    read takes the time from the events themselves."""
-    return _utc(ident.get("last_counted_at"))
-
-
 def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> list[_Target]:
     out: list[_Target] = []
     used_w = _used_weight()
@@ -350,7 +342,9 @@ def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> li
                 # search-side reinforcement signal; last_reinforced_at tracks
                 # the most recent reinforcing activity of either kind, which
                 # the rank's efficacy-decay term reads.
-                last_activity=max(last_recalled, _last_counted(ident)),
+                # The decay anchor: the last event other than `served`, read beside the
+                # identity row. `bumped` moves on a `served` event too.
+                last_activity=max(last_recalled, _utc(ident.get("last_counted_at"))),
                 changes_memory=changes_memory,
             )
         )

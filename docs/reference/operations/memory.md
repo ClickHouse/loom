@@ -887,7 +887,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `char_limit` | `int \| None` | Server-enforced char cap on `value` (NULL = no cap). |
 | `recall_count` | `int` | Recall credits: reads by a credited reader (memory.search with auto_touch, from a client that posts outcomes), folded from loom.memory_usage_* into the ranking signal. |
 | `last_recalled_at` | `datetime \| None` | When a credited read last returned the row; None = no credit yet. |
-| `served_count` | `int \| None` | Agent reads that returned the key, credited or not (recall credits plus `served` events, across the user's rows of the key; never below recall_count). |
+| `served_count` | `int \| None` | Agent reads that returned the key, credited or not (recall credits plus `served` events, across the key's live rows in the namespace, or this row alone for a reader narrowed to one user or session; never below recall_count). |
 | `last_served_at` | `datetime \| None` | When an agent read last returned the key; None = none recorded, or not asked for. |
 | `verified_by` | `str` | Attestation (memory.verify). |
 | `verified_at` | `datetime \| None` | When the attestation in `verified_by` was made; None = never attested, or revoked. |
@@ -964,14 +964,14 @@ Knowledge-base health for (org, namespace): how much of what is stored is ever r
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `live` | `int` | Active, untombstoned rows in the namespace, across every agent and user. |
-| `recalled_ever` | `int` | Live rows whose key (per user) carries a recall credit, or was returned by an agent read (a search, context pack or memory.ask) in the last `silent_after_days` days. |
+| `recalled_ever` | `int` | Live rows whose key carries a recall credit on any live row, or was returned by an agent read (a search, context pack or memory.ask) in the last `silent_after_days` days. |
 | `used_ever` | `int` | Live rows with at least one reported use. |
 | `harmed_ever` | `int` | live rows with at least one harm event |
 | `silent` | `int` | live, no recall credit, and no agent read in the last silent_after_days |
 | `silent_older` | `int` | silent AND older than silent_after_days |
 | `silent_share` | `float` | `silent` / `live`, 0..1; 0 when the namespace holds no live row. |
 | `silent_after_days` | `int` | Echo of the request's `silent_after_days`. |
-| `by_type` | `list[MemoryHealthTypeRow]` | Per memory type: live rows and how many were ever returned by an agent read, largest first. |
+| `by_type` | `list[MemoryHealthTypeRow]` | Per memory type: live rows and how many are recalled (as `recalled_ever` counts them), largest first. |
 | `top_recalled` | `list[MemoryHealthTopRow]` | The live rows with the most recall credits (then use count), at most `top_k`. |
 | `staleness` | `MemoryHealthStaleness` | Age buckets, validity-end, expiry and pin counts, and days since reinforced. |
 | `footprint` | `MemoryHealthFootprint` | Summed value length of the live rows and its chars/4 token estimate. |

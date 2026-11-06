@@ -189,7 +189,7 @@ class MemoryHealthFootprint(BaseModel):
 class MemoryHealthOutput(BaseModel):
     # Active, untombstoned rows in the namespace, across every agent and user.
     live: int
-    # Live rows whose key (per user) carries a recall credit, or was returned by an agent
+    # Live rows whose key carries a recall credit on any live row, or was returned by an agent
     # read (a search, context pack or memory.ask) in the last `silent_after_days` days.
     recalled_ever: int
     # Live rows with at least one reported use.
@@ -201,7 +201,8 @@ class MemoryHealthOutput(BaseModel):
     silent_share: float
     # Echo of the request's `silent_after_days`.
     silent_after_days: int
-    # Per memory type: live rows and how many were ever returned by an agent read, largest first.
+    # Per memory type: live rows and how many are recalled (as `recalled_ever` counts them),
+    # largest first.
     by_type: list[MemoryHealthTypeRow] = Field(default_factory=list)
     # The live rows with the most recall credits (then use count), at most `top_k`.
     top_recalled: list[MemoryHealthTopRow] = Field(default_factory=list)

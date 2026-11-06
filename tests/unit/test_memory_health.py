@@ -111,19 +111,17 @@ def test_footprint_sums_value_chars_and_estimates_tokens() -> None:
 
 def test_a_key_served_to_an_agent_is_not_silent_on_any_of_its_copies() -> None:
     """A context pack or ask writes `served`, not a recall credit, and an agent read puts its
-    event on the newest copy of the key: every live copy of that user's key counts as read."""
+    event on the newest copy of the key: every live copy of that key in the namespace counts as read."""
     rows = [
         {**_r("k", age=40), "served_count": 3},  # the newest copy, served by a context pack
         _r("k", age=40),  # another session's copy of the same key, no event of its own
         _r("credited", rc=1, age=40),
         _r("never", age=40),
-        # another user's row of the same key: its own reads, none here
-        {**_r("k", age=40), "user_id": "u2"},
     ]
     out = summarise(rows, silent_after_days=30, top_k=5)
     assert out["recalled_ever"] == 3
-    assert (out["silent"], out["silent_older"]) == (2, 2)
-    assert out["by_type"][0] == {"memory_type": "semantic", "live": 5, "recalled": 3}
+    assert (out["silent"], out["silent_older"]) == (1, 1)
+    assert out["by_type"][0] == {"memory_type": "semantic", "live": 4, "recalled": 3}
     # the ranking list stays the credited rows
     assert [t["memory_key"] for t in out["top_recalled"]] == ["credited"]
 

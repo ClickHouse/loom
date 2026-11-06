@@ -16,9 +16,9 @@ def test_counts_credits_and_served_events_of_every_agent() -> None:
 
 def test_no_event_and_no_credit_reads_none() -> None:
     assert served_totals([], 0, None) == {"served_count": 0, "last_served_at": None}
-    # a row with no event of the kind carries the epoch
-    rows = [{"agent": "", "n": 0, "last_at": UNIX_EPOCH.replace(tzinfo=None)}]
-    assert served_totals(rows, 0, None) == {"served_count": 0, "last_served_at": None}
+    # an imported "never" stored as the epoch
+    out = served_totals([], 0, UNIX_EPOCH)
+    assert out == {"served_count": 0, "last_served_at": None}
 
 
 def test_an_imported_credit_with_no_events_is_the_floor() -> None:

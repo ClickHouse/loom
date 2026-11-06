@@ -469,13 +469,16 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     recall_by_agent: list[_RecallByAgent] = []
     served: dict[str, Any] = {}
     if input.include_recall_breakdown:
-        # Keyed on the user's live rows of the key: an agent read puts its event on the
-        # newest copy of the key, which need not be the row this read resolved.
+        # Keyed on the key's live rows in the namespace: an agent read puts its event on the
+        # newest copy of the key, which need not be the row this read resolved. A reader
+        # narrowed to one user or session sees its own row's figures only.
         try:
+            from server.identity.app.request_scope import request_narrowed
             from server.memory.api.models_crud import _RecallByAgent
             from server.memory.store.usage import served_by_agent
 
-            agent_rows = await served_by_agent(row.org, row.namespace, row.user_id, row.memory_key)
+            own = (row.user_id, row.session_id) if request_narrowed() else None
+            agent_rows = await served_by_agent(row.org, row.namespace, row.memory_key, row=own)
             served = served_totals(agent_rows, row.recall_count, row.last_recalled_at)
             recall_by_agent = [
                 _RecallByAgent(agent=str(r["agent"]), count=int(r["n_30d"]), last_at=r["last_at"])

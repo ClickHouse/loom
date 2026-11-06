@@ -1365,7 +1365,7 @@ function ProvenanceSection({
 }
 
 const RECALLED_TIP =
-  "Times an agent's search, context pack or ask returned this memory, across its copies in every session. " +
+  "Times an agent's search, context pack or ask returned this memory, across its copies in the namespace. " +
   "The dashboard's own reads are not counted, and a read takes a few seconds to show.";
 const CREDIT_TIP =
   "Recalls from readers that report outcomes. Search ranking reads these; " +

@@ -3,10 +3,11 @@
 Reports coverage by type, top recalled entries, silent (never served to an agent) entries
 and the staleness of live rows, so a namespace where most rows are never read shows it. One
 query over loom.memory FINAL joined to the summed loom.memory_usage_totals and the `served`
-usage events of the last `silent_after_days` days, scoped to (org, namespace). A user's key
-counts as read when any of its live rows carries a recall credit, or a `served` event in that
-window: an agent read puts its event on the newest copy of the key only. The window bounds the
-events read, since a context pack writes one per key it returns on every turn.
+usage events of the last `silent_after_days` days, scoped to (org, namespace). A key counts
+as read when any of its live rows carries a recall credit, or a `served` event in that
+window: an agent read puts its event on the newest copy of the key in the namespace only.
+The window bounds the events read, since a context pack writes one per key it returns on
+every turn.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from server.core.datetimes import naive_utc_now
 from server.memory.api.models_admin import MemoryHealthInput, MemoryHealthOutput
 
 _LIVE = """
-    SELECT m.memory_id AS memory_id, m.user_id AS user_id, m.memory_key AS memory_key,
+    SELECT m.memory_id AS memory_id, m.memory_key AS memory_key,
            m.memory_type AS memory_type, m.created_at AS created_at,
            m.expires_at AS expires_at, m.valid_to AS valid_to,
            m.invalid_at AS invalid_at, m.pinned AS pinned,
@@ -30,7 +31,7 @@ _LIVE = """
            u.last_recalled_at AS last_recalled_at,
            coalesce(s.served_count, 0) AS served_count
     FROM (
-        SELECT memory_id, user_id, memory_key, memory_type, created_at,
+        SELECT memory_id, memory_key, memory_type, created_at,
                expires_at, valid_to, invalid_at, pinned, last_reinforced_at,
                length(value) AS value_chars
         FROM loom.memory FINAL
@@ -75,16 +76,14 @@ def summarise(rows: list[dict[str, Any]], *, silent_after_days: int, top_k: int)
     cutoff = naive_utc_now() - timedelta(days=silent_after_days)
     live = len(rows)
 
-    def _key(r: dict[str, Any]) -> tuple[str, str]:
-        return (str(r.get("user_id") or "-"), str(r.get("memory_key") or ""))
-
-    reads_by_key: dict[tuple[str, str], int] = {}
+    reads_by_key: dict[str, int] = {}
     for r in rows:
+        key = str(r.get("memory_key") or "")
         reads = int(r.get("recall_count") or 0) + int(r.get("served_count") or 0)
-        reads_by_key[_key(r)] = reads_by_key.get(_key(r), 0) + reads
+        reads_by_key[key] = reads_by_key.get(key, 0) + reads
 
     def _read(r: dict[str, Any]) -> bool:
-        return reads_by_key.get(_key(r), 0) > 0
+        return reads_by_key.get(str(r.get("memory_key") or ""), 0) > 0
 
     recalled = [r for r in rows if int(r.get("recall_count") or 0) > 0]
     used = sum(1 for r in rows if int(r.get("used_count") or 0) > 0)

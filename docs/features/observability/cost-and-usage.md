@@ -175,12 +175,13 @@ other ops that run a search (`decision.precedents`, `memory.apply`, the workers'
 Nothing ranks on `served`: the reinforcement boost decays from the last event of any other
 kind, and the fold leaves `loom.memory` alone when a bump changes none of its counters.
 
-Both kinds land on the newest live row of the key, so a figure about whether an agent was
-shown a key reads every live row of it for that user. `memory.get` with
-`include_recall_breakdown` answers `served_count` and `last_served_at` (credits and `served`
-events, never below `recall_count`), which the inspector's **Last recalled** shows.
-`memory.health` counts a user's key as recalled, not silent, on a recall credit or a
-`served` event within `silent_after_days`.
+Both kinds land on the newest live row of the key in the namespace, whichever user or
+session wrote it, so a figure about whether an agent was shown a key reads every live row of
+it. `memory.get` with `include_recall_breakdown` answers `served_count` and
+`last_served_at` (credits and `served` events, never below `recall_count`), which the
+inspector's **Last recalled** shows; a reader narrowed to one user or session gets its own
+row's figures only. `memory.health` counts a key as recalled, not silent, on a recall credit
+or a `served` event within `silent_after_days`.
 
 ## Settings
 

@@ -280,9 +280,9 @@ def _run_auto_touch(
     operation: str = "",
     request_agent: str = "",
     worker: str = "",
-    request_id: str = "",
+    tail: Any = None,
 ) -> list[dict[str, Any]]:
-    from server.core.logging_config import request_id_var
+    from server.core import request_tail
     from server.memory.app.search import telemetry as h
     from server.memory.store import usage as mru
     from server.observability.genai import set_identity, set_worker_identity
@@ -318,7 +318,7 @@ def _run_auto_touch(
         set_identity(org="o" if operation else "", agent=request_agent, operation=operation)
         if worker:
             set_worker_identity(worker, org="o", namespace="n")
-        request_id_var.set(request_id or None)
+        request_tail._tail.set(tail)
         try:
             await h._schedule_auto_touch(ctx)
             await _drain()
@@ -656,20 +656,20 @@ def test_reads_that_record_no_served_event(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_one_request_writes_one_served_event_per_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """memory.ask runs several passes whose pools overlap; one ask is one read."""
-    first = _ctx(agent="*", auto_touch=False)
-    written = _run_auto_touch(
-        monkeypatch, first, consumer=("", ""), operation="memory.ask", request_id="rid-1"
-    )
-    assert _types(written) == ["served"]
-    again = _ctx(agent="*", auto_touch=False)
-    written = _run_auto_touch(
-        monkeypatch, again, consumer=("", ""), operation="memory.ask", request_id="rid-1"
-    )
-    assert written == []
-    # another request reads it again
-    other = _ctx(agent="*", auto_touch=False)
-    written = _run_auto_touch(
-        monkeypatch, other, consumer=("", ""), operation="memory.ask", request_id="rid-2"
-    )
-    assert _types(written) == ["served"]
+    """memory.ask runs several passes whose pools overlap; one ask is one read. The request
+    is the server's own (its tail), not an id the caller sends."""
+    from server.core.request_tail import _Tail
+
+    one, two = _Tail(), _Tail()
+
+    def ask(tail: Any, org: str = "o") -> list[str]:
+        ctx = _ctx(agent="*", auto_touch=False, org=org)
+        written = _run_auto_touch(
+            monkeypatch, ctx, consumer=("", ""), operation="memory.ask", tail=tail
+        )
+        return _types(written)
+
+    assert ask(one) == ["served"]
+    assert ask(one) == []  # a second pass of the same ask
+    assert ask(one, org="other") == ["served"]  # another org's key of the same name
+    assert ask(two) == ["served"]  # another request reads it again

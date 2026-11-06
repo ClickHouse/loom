@@ -268,10 +268,11 @@ async def record_usage_for_keys(
     return credited
 
 
-# Agent reads of one key, per agent: every live row of the key for the user, since
-# record_usage_for_keys puts each event on the newest copy and a session's own copy may
-# carry none. Another user's copy is left out: its reads are not this user's to see. A read
-# keyed on (org, namespace, memory_id) for the few ids of the key.
+# Agent reads of one key, per agent: every live row of the key in the namespace, since
+# record_usage_for_keys puts each event on the newest copy of the key in the namespace,
+# whichever user or session it belongs to. A reader narrowed to one user or session passes
+# its row's (user_id, session_id) and counts that row's events only. A read keyed on
+# (org, namespace, memory_id) for the few ids of the key.
 _SERVED_BY_AGENT_SQL = """
     SELECT agent,
            sum(event_count) AS n,
@@ -283,8 +284,9 @@ _SERVED_BY_AGENT_SQL = """
       AND memory_id IN (
           SELECT memory_id FROM loom.memory FINAL
           WHERE org = {org:String} AND namespace = {ns:String}
-            AND user_id = {uid:String} AND memory_key = {key:String}
-            AND tombstoned_at IS NULL
+            AND memory_key = {key:String} AND tombstoned_at IS NULL
+            AND ({uid:Nullable(String)} IS NULL
+                 OR (user_id = {uid:Nullable(String)} AND session_id = {sid:Nullable(String)}))
       )
       AND event_type IN {types:Array(String)}
     GROUP BY agent
@@ -292,18 +294,25 @@ _SERVED_BY_AGENT_SQL = """
 
 
 async def served_by_agent(
-    org: str, namespace: str, user_id: str, memory_key: str, *, ch: _CHClient | None = None
+    org: str,
+    namespace: str,
+    memory_key: str,
+    *,
+    row: tuple[str, str] | None = None,
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """`recall` credits and `served` events of a key, one row per agent: `n` all time,
-    `n_30d`, `last_at`."""
+    `n_30d`, `last_at`. `row` is a narrowed reader's (user_id, session_id): only that row
+    is counted. None counts every live row of the key in the namespace."""
     ch = ch or _default_client()
     return await ch.query_all(
         _SERVED_BY_AGENT_SQL,
         params={
             "org": org,
             "ns": namespace,
-            "uid": user_id,
             "key": memory_key,
+            "uid": row[0] if row else None,
+            "sid": row[1] if row else None,
             "types": list(SERVED_EVENT_TYPES),
         },
     )

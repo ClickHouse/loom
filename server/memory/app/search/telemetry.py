@@ -7,7 +7,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections import OrderedDict
 from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Any
 
@@ -327,12 +326,6 @@ SERVED_OPERATIONS = frozenset(
 # and still serve what the pass finds.
 _CALLER_TOUCH_OPERATIONS = frozenset({"memory.search", "search.query"})
 
-# The keys each recent request has already written a `served` event for: memory.ask runs
-# several passes whose pools overlap, and one ask is one read. Process-local (a request
-# runs in one process) and bounded to the most recent requests.
-_SERVED_IN_REQUEST: OrderedDict[str, set[tuple[str, str]]] = OrderedDict()
-_SERVED_IN_REQUEST_MAX = 1024
-
 
 def _served_agent(input: MemorySearchInput) -> str | None:
     """The agent a `served` event names, or None when this pass records none: not for an op
@@ -359,23 +352,15 @@ def _served_agent(input: MemorySearchInput) -> str | None:
 
 
 def _not_yet_served(input: MemorySearchInput, hits: list[Any]) -> list[Any]:
-    """The hits this request has not written a `served` event for yet."""
-    from server.core.logging_config import request_id_var
+    """The hits this request has not written a `served` event for yet: memory.ask runs
+    several passes whose pools overlap, and one ask is one read."""
+    from server.core.request_tail import first_in_request
 
-    rid = request_id_var.get()
-    if not rid:
-        return hits
-    seen = _SERVED_IN_REQUEST.setdefault(rid, set())
-    _SERVED_IN_REQUEST.move_to_end(rid)
-    while len(_SERVED_IN_REQUEST) > _SERVED_IN_REQUEST_MAX:
-        _SERVED_IN_REQUEST.popitem(last=False)
-    fresh = []
-    for h in hits:
-        key = (h.namespace or input.namespace, h.memory_key)
-        if key not in seen:
-            seen.add(key)
-            fresh.append(h)
-    return fresh
+    return [
+        h
+        for h in hits
+        if first_in_request(("served", input.org, h.namespace or input.namespace, h.memory_key))
+    ]
 
 
 async def _record_usage(input: MemorySearchInput, hits: list[Any]) -> str | None:
