@@ -1217,6 +1217,29 @@ async def test_principals_need_the_admin_side(
     assert e.value.status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_an_inbox_owned_elsewhere_names_its_owner_only_to_its_readers(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Registering a name another namespace owns is a conflict; the owner is named
+    only to a caller who may read it, as every other inbox path hides it."""
+    from server.auth import authz
+
+    await _register(fake)
+    readable: set[str] = set()
+
+    async def _scope(org, ns, role, *, hides_answer=True):
+        return ns in readable
+
+    monkeypatch.setattr(authz, "row_in_scope", _scope)
+    for owner_readable, named in ((False, "another namespace"), (True, "namespace 'private'")):
+        readable.clear()
+        readable.update({"private"} if owner_readable else set())
+        with pytest.raises(HTTPException) as e:
+            await _register(fake, owner_ns="elsewhere")
+        assert e.value.status_code == 409 and named in str(e.value.detail)
+
+
 # ------------------------------------------------------------ sweeper
 
 

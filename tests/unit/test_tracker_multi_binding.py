@@ -296,7 +296,14 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
         lambda org, ns: SimpleNamespace(repo="Acme/widgets"),
     )
     NAMESPACES["tracker-kj"] = _Ns(repos=("Acme/kj",))
-    wired.update({QA, DESK, "tracker-kj"})  # the maintainer reads each tracker it links
+    from server.operations.base import Role
+
+    admin_of = {QA, DESK, "tracker-kj"}  # the maintainer administers each tracker it links
+
+    async def _scope(org, ns, role=None, *, hides_answer=True):
+        return ns in admin_of if role is Role.ADMIN else ns in admin_of | {CODE, DESK}
+
+    monkeypatch.setattr(authz, "row_in_scope", _scope)
     try:
         out = await adm.handle_code_repo_set_source(
             CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[DESK, QA])
@@ -321,9 +328,9 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
                     org=ORG, namespace=CODE, tracker_namespaces=[QA, "tracker-gone"]
                 )
             )
-        # A tracker the maintainer cannot read is refused as a missing one: linking it would
-        # open it to every reader of the repository.
-        wired.discard(DESK)
+        # A tracker the maintainer reads but does not administer is refused as a missing one:
+        # linking it would open it to every reader of the repository.
+        admin_of.discard(DESK)
         with pytest.raises(ValidationError, match="register its source first"):
             await adm.handle_code_repo_set_source(
                 CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[DESK])

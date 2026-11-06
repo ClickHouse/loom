@@ -65,10 +65,14 @@ async def handle_inbox_register(input: InboxRegisterInput) -> InboxRegisterOutpu
 
     existing = await repo.fetch_inbox_row(input.org, input.inbox)
     if existing is not None and existing["owner_namespace"] != input.namespace:
-        raise _conflict(
-            "INBOX_OWNED_ELSEWHERE",
-            f"inbox {input.inbox!r} is owned by namespace {existing['owner_namespace']!r}",
+        owner = existing["owner_namespace"]
+        # The owner is named only to a caller who may read it.
+        where = (
+            f"namespace {owner!r}"
+            if await _in_scope(input.org, owner, write=False)
+            else ("another namespace")
         )
+        raise _conflict("INBOX_OWNED_ELSEWHERE", f"inbox {input.inbox!r} is owned by {where}")
     if (
         existing is not None
         and input.if_match_version is not None

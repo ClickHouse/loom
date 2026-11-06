@@ -5,7 +5,7 @@ The transport gate checks the request's `org` and `namespace` only. A field
 naming another one (`namespaces`, `to_namespace`, `inbox`, ...) reaches the
 handler unchecked, so each is declared here with the function that checks it;
 a new such field fails this test until it is declared, and the function must
-exist. A one-entry list counts too: `code.search` ran a one-entry `namespaces`
+exist (by name: that the handler calls it is the reviewer's to read). A one-entry list counts too: `code.search` ran a one-entry `namespaces`
 as the search's namespace without authorizing it.
 
 Out of this pattern: names that resolve to a namespace indirectly (`code.repos`'
@@ -69,10 +69,11 @@ AUTHORIZED: dict[tuple[str, str], str] = {
     ("task.list", "inbox"): _READABLE_INBOX,
     ("task.counts", "inbox"): _READABLE_INBOX,
     ("task.updates", "inbox"): _READABLE_INBOX,
-    ("inbox.policy_set", "inbox"): _READABLE_INBOX,
+    ("inbox.policy_set", "inbox"): "server.tasks.app.common._require_admin_side",
     ("inbox.policy_list", "inbox"): _READABLE_INBOX,
     ("inbox.principals", "inbox"): "server.tasks.app.common._require_admin_side",
     # registers the inbox in the gated namespace; a name owned elsewhere is a conflict
+    # that names the owner only to its readers
     ("inbox.register", "inbox"): "server.tasks.app.inboxes.handle_inbox_register",
     ("code.coverage.watch", "inbox"): "server.code.app.coverage_watch._authorize",
     ("code.coverage.unwatch", "inbox"): "server.code.app.coverage_watch._authorize",
