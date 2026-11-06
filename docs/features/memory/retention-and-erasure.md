@@ -168,8 +168,8 @@ flowchart TD
   deletes the rows in as few mutations as its originals fit in (each binds as many as one
   ClickHouse parameter carries). Moving originals from ClickHouse to the bucket
   (`loom knowledge migrate-originals`) is fenced by this ledger: it does not move an
-  original an unfinished erasure covers, and it takes back, or names for another run of the
-  erasure, a move an erasure overtook
+  original an unfinished erasure covers, and a move an erasure overtakes ends as that
+  erasure decides
   ([where originals are stored](../knowledge.md#where-originals-are-stored)).
 - **Org-wide caches.** `loom.idempotency` (replayed responses) and `loom.embedding_cache`
   (query vectors, never their text) carry the org but no namespace or end user, so an

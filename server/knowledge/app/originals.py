@@ -27,8 +27,9 @@ class Migrated:
     pending: int = 0  # a dry run's originals still held in ClickHouse
     bytes: int = 0  # of the originals moved, or with a dry run of those held
     errors: list[str] = field(default_factory=list)
-    # Switched as an erasure of an uploader started: that erasure is to run again.
-    rerun: list[str] = field(default_factory=list)
+    # Switched as an erasure of one of its users started that had not finished: what it
+    # decides for the original holds for the switched row.
+    left_to_erasure: list[str] = field(default_factory=list)
 
 
 async def migrate_originals(
@@ -45,8 +46,9 @@ async def migrate_originals(
         after = ""
         while True:
             page = await blobs.held_in_clickhouse(org_, ns, after, _PAGE)
+            users = {} if dry_run else await blobs.uploaders(org_, ns, [h.sha for h in page.held])
             for held in page.held:
-                await _one(held, dry_run, out)
+                await _one(held, users.get(held.sha, set()), dry_run, out)
             if not page.after:
                 break
             after = page.after
@@ -67,13 +69,13 @@ async def _scopes(org: str, namespace: str) -> list[tuple[str, str]]:
         after = page[-1]
 
 
-async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> None:
+async def _one(held: blobs.Held, users: set[str], dry_run: bool, out: Migrated) -> None:
     if dry_run:
         out.pending += 1
         out.bytes += held.size
         return
     try:
-        if await blobs.move_to_bucket(held):
+        if await blobs.move_to_bucket(held, users):
             out.moved += 1
             out.bytes += held.size
         else:
@@ -81,7 +83,7 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> None:
     except blobs.SwitchedUnderErasure as e:
         out.moved += 1
         out.bytes += held.size
-        out.rerun.append(str(e))
+        out.left_to_erasure.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
     except (blobs.CorruptOriginal, blobs.ErasureOpen, objects.ObjectStoreError) as e:
         log.warning("originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e)
         out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")

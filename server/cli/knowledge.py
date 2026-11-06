@@ -48,14 +48,13 @@ def register_knowledge_cli(sub: Any) -> None:
         "ClickHouse copy stays until loom.document_blobs merges its parts (OPTIMIZE TABLE "
         "loom.document_blobs FINAL drops it now). Needs LOOM_DOCUMENT_OBJECT_STORE=s3, set "
         "on every replica first so no new original lands in ClickHouse behind the walk. "
-        "An original an unfinished erasure covers (its namespace or an uploader) is not "
-        "moved; a move an erasure overtakes is taken back, or named to run that erasure "
-        "again. Idempotent: run it "
-        "again to go on after a stop. Exits 1 when an original was not moved (bytes that "
-        "do not hash to their sha256 or fill their size, an erasure not yet finished, a "
-        "bucket that refused); it stays where it was. Exits 1 too when an original was "
-        "switched as an erasure of one of its uploaders started; that erasure is named to "
-        "run again.",
+        "An original an unfinished erasure covers (its namespace or one of its users) is "
+        "not moved, and a move an erasure overtakes keeps what that erasure decides. "
+        "Idempotent: run it again to go on after a stop. Exits 1 when an original was not "
+        "moved (bytes that do not hash to their sha256 or fill their size, an erasure not "
+        "yet finished or one that kept it, a bucket that refused or a write past its "
+        "budget); it stays where it was. Exits 1 too when an original was switched as an "
+        "erasure of one of its users started that has not finished; that erasure is named.",
     )
     p_move.add_argument("--org", default="", help="Only this org's originals")
     p_move.add_argument("--namespace", default="", help="Only this namespace of --org")
@@ -128,9 +127,9 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
             )
         for line in result.errors:
             print(f"error: {line}", file=sys.stderr)
-        for line in result.rerun:
-            print(f"erasure to run again: {line}", file=sys.stderr)
-        return 1 if result.errors or result.rerun else 0
+        for line in result.left_to_erasure:
+            print(f"switched, left to an unfinished erasure: {line}", file=sys.stderr)
+        return 1 if result.errors or result.left_to_erasure else 0
 
     return run_connected(_run)
 
