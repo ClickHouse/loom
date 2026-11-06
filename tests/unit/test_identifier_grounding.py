@@ -72,7 +72,7 @@ from server.memory.domain.retrieval_calibration import (
         pytest.param("PR 113594", [], "entity_absent:113594", id="no hits"),
     ],
 )
-def test_identifier_grounding_missing_names_the_first_ungrounded_identifier(
+def test_identifier_grounding_missing_names_the_first_identifier_when_none_is_grounded(
     query: str, hits: list[str], reason: str | None
 ) -> None:
     assert identifier_grounding_missing(query, hits) == reason
