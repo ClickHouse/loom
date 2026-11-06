@@ -147,3 +147,20 @@ async def test_an_erased_original_whose_take_back_failed_is_not_counted_moved(
     result = await originals.migrate_originals(org="acme", namespace="docs")
     assert (result.moved, result.bytes, result.skipped) == (0, 0, 0)
     assert len(result.unconfirmed) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_namespace_whose_keys_would_be_too_long_is_refused_before_any_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fence(org: str, ns: str) -> str:
+        return ""
+
+    async def held_in_clickhouse(*a: object) -> blobs.HeldPage:
+        raise AssertionError("no original of it is read")
+
+    monkeypatch.setattr(blobs, "fence", fence)
+    monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
+    result = await originals.migrate_originals(org="acme", namespace="n" * 600)
+    (line,) = result.refused
+    assert line.startswith(f"acme/{'n' * 600}: ") and "too long" in line

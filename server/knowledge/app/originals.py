@@ -56,6 +56,11 @@ async def migrate_originals(
         # One read of the ledger for the namespace; again after any original not switched
         # cleanly (gone or replaced, held back, or switched but unconfirmed).
         refusal = None if dry_run else await blobs.fence(org_, ns)
+        if not dry_run and not refusal:
+            try:
+                objects.new_location(org_, ns, "0" * 64)
+            except ValidationError as e:
+                refusal = str(e)  # no original of the namespace can be moved
         after = ""
         while not refusal:
             page = await blobs.held_in_clickhouse(org_, ns, after, _PAGE)
@@ -123,7 +128,7 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
         blobs.CorruptOriginal,
         blobs.ErasureOpen,
         objects.ObjectStoreError,
-        ValidationError,  # its object key would be too long for the bucket
+        ValidationError,  # its object key would be too long (objects.MAX_KEY)
     ) as e:
         log.warning("originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e)
         out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")

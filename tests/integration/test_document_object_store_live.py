@@ -402,7 +402,7 @@ async def test_an_erasure_during_the_copy_ends_the_move_before_its_row(
     async def put_then_erasure(*a: Any, **kw: Any) -> None:
         await put(*a, **kw)
         await _erasure(ch, org, "namespace", ns, "in_progress")
-        await blobs.delete(org, ns, [held.sha], ch=ch)  # the erasure's step
+        await steps_memory.delete_document_blobs_by_namespace(org, ns, ch=ch)
 
     monkeypatch.setattr(object_store, "put", put_then_erasure)
     assert await blobs.move_to_bucket(held, ch=ch) is False

@@ -419,6 +419,8 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     # This move's own start: an erasure that finished before it cannot race its copy, and
     # one still running then, or finished within the margin, is caught after the copy.
     since = await _ch_now_s(ch)
+    # Before any read: a key too long for the bucket walk's cursor refuses the move.
+    loc = objects.new_location(held.org, held.namespace, held.sha)
     data = await read(held.org, held.namespace, held.sha, stored=Stored(held.size, ""), ch=ch)
     if data is None:
         with sequential_reads():
@@ -428,7 +430,6 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
         return False
     if hashlib.sha256(data).hexdigest() != held.sha:
         raise CorruptOriginal("bytes in ClickHouse do not hash to its sha256")
-    loc = objects.new_location(held.org, held.namespace, held.sha)
     async with objects.transfer() as lease:
         started = time.monotonic()  # as an upload's: from the write, not the slot's wait
         await objects.put(loc, data, held.sha, lease)
