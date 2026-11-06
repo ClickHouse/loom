@@ -281,7 +281,6 @@ def test_the_child_dies_with_its_parent(tmp_path) -> None:
             except ProcessLookupError:
                 return
             time.sleep(0.05)
-        os.kill(pid, signal.SIGKILL)
         pytest.fail("the child outlived its parent")
     finally:
         with contextlib.suppress(ProcessLookupError):
