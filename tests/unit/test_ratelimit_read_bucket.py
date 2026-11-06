@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 from server.core.ratelimit import (
+    _KNOWLEDGE_READS,
     DEFAULT_LIMITS,
     DEFAULT_ORG_LIMITS,
     Limit,
@@ -184,6 +185,7 @@ def test_knowledge_reads_draw_from_their_own_bucket() -> None:
             continue
         want = "knowledge.read" if op.read_only else "knowledge.add"
         assert op_class_for(op.name) == want, op.name
+    assert _KNOWLEDGE_READS <= {o.name for o in ALL_OPERATIONS}, "a named read is not registered"
     assert DEFAULT_LIMITS["knowledge.read"] == DEFAULT_LIMITS["default"]
 
 

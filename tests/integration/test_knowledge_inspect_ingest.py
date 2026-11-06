@@ -5,9 +5,10 @@ run in this process as a knowledge_ingest worker pass runs one (the server under
 no workers), so each job reaches its state the way production reaches it:
 
 - backlog: a job queued and not yet run (and a job cancelled while pending, which is not);
-- extractor unavailable: a Parquet file no configured extractor takes (failed `format_unavailable`;
-  another such file that a text write then replaced is in no finding), and a SQL file whose
-  extractor is stopped (an unreachable URL: the job is back to pending, retrying);
+- extractor unavailable: a Parquet file whose job runs with no extractor configured (failed
+  `format_unavailable`; another such file that a text write then replaced is in no finding),
+  and a SQL file whose extractor is stopped (an unreachable URL: the job is back to pending,
+  retrying);
 - missing access: an original no longer stored (`original_gone`);
 - with the reference extractor at LOOM_DOCUMENT_EXTRACTOR_URL, also missing access (the
   extractor refuses the server's token), bad content (a TOML file it cannot parse) and a
