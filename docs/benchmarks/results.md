@@ -813,11 +813,10 @@ text layer, 26 for the others. Silent loss is a file reported complete that drop
 block, a page's text or a tenth of its words; it is a count, not a mean. The layout and OCR
 reader's two are OCR misreads on files reported complete: a YAML code block on a scanned
 page, and one label of a blurred whiteboard photo on a slide. Its text recall over the text
-layer is +0.123 [+0.016, +0.263] and its text precision +0.105 [+0.001, +0.237] (paired, 95%
+layer is +0.122 [+0.015, +0.264] and its text precision +0.105 [+0.001, +0.237] (paired, 95%
 bootstrap over files); every metric's interval is in the artifact.
 
-By category, the layout and OCR reader matches or beats the baseline on every measure
-above, and on text precision, except:
+By category, the layout and OCR reader matches or beats the baseline on every measure above, except:
 
 - **Scanned pages (3 files):** heading F1 0.505 against 0.909 and table cell F1 0.928
   against 0.978. OCR's point sizes separate a title from body text but not one heading
@@ -826,35 +825,32 @@ above, and on text precision, except:
 - **PDF exports (5 files):** table cell F1 0.991 against 1.000.
 - **Tables over pages (2 files):** locators 0.977 against 1.000.
 - **Slides and PPTX (6 files):** text precision 0.960 and 0.951 against 1.000, as text OCR
-  reads in a slide's pictures holds words the gold does not; and a PPTX takes 0.32 s a file
+  reads in a slide's pictures holds words the gold does not; and a PPTX takes 0.39 s a file
   against 0.12 s, the cost of reading each large picture with OCR, which brings PPTX text
   recall to 1.000 (baseline 0.696).
 
 Overall the layout and OCR reader is 17 times faster than the baseline and uses 4% of its
 peak memory. The extractor image is 511 MB with OCR and 467 MB without (OCR adds 44 MB
-unpacked); the baseline's image is 3.46 GB (`docker image ls` on each build).
+unpacked); the baseline's image is 3.46 GB (`bench/results/docparse_images.json`, `docker image ls` on each build).
 
 **Downstream.** Each system's artifacts are ingested into a running Loom through a stub
 extractor (the fake n-gram embedder, no LLM), and up to three paragraphs and two table rows
 of every file in both splits (212 queries) go to `knowledge.search` within their own
 document and system's namespace. Found: a top-5 hit holds 70% of the answer's words; cited:
-that hit's locator holds the answer's page. Ingests that failed score zero: the text layer's
-four scans and whiteboard photo (no text without OCR) and the baseline's whiteboard photo.
+that hit's locator holds the answer's page. Ingests that failed score zero: the text layer's four scans (no text without OCR). The whiteboard photo, whose ingest failed for the text layer and the baseline, holds no query. The text layer and layout and OCR are served their extractor's own artifacts, the baseline the artifacts `artifacts` builds from its normalized parses.
 
-| Measure                   | Text layer | Layout and OCR | Baseline |
-| ------------------------- | ---------: | -------------: | -------: |
-| Cited at 1 (212)          |      0.792 |          0.825 |    0.858 |
-| Cited at 5 (212)          |      0.887 |          0.943 |    0.948 |
-| Found at 5 (212)          |      0.920 |          0.976 |    1.000 |
-| Cited at 5 (104 held-out) |      0.856 |          0.923 |    0.952 |
+| Measure                           | Text layer | Layout and OCR | Baseline |
+| --------------------------------- | ---------: | -------------: | -------: |
+| Cited at 1 (212)                  |      0.792 |          0.825 |    0.858 |
+| Cited at 5 (212)                  |      0.887 |          0.943 |    0.948 |
+| Found at 5 (212)                  |      0.920 |          0.976 |    1.000 |
+| Cited at 5 (104 held-out queries) |      0.856 |          0.923 |    0.952 |
 
 Against the text layer, layout and OCR is +0.057 [-0.029, +0.160] cited at 5 and +0.057
 [-0.018, +0.149] found at 5 over all 212 queries; neither interval excludes zero. Scanned
 pages go from 0 to 1.00 cited at 5. It loses significantly on rotated pages (cited at 1,
 -0.30 [-0.40, -0.20]), borderless tables (cited at 1, -0.15 [-0.20, -0.05]) and tables over
-pages (cited and found at 5, -0.20 [-0.35, -0.05]), and against the baseline on tables over
-pages (cited at 1 0.60 against 0.95, found at 5 0.80 against 1.00). It is the only system
-that finds 5 queries in no top-5 hit at all, all table rows of long tables. Where it loses
+pages (cited and found at 5, -0.20 [-0.35, -0.05]), and on tables over pages it trails the baseline (cited at 1 0.60 against 0.95, found at 5 0.80 against 1.00). It is the only system that misses queries whose file it ingested: 5 found in no top-5 hit, four rows of long tables and one row of a two-column page's table. Where it loses
 at 5, a row is either found and not cited, because the chunk that holds a table's first rows
 also holds the paragraph before the table and so starts on the page before (the judge cites
 a row only within its table's pages), or not found, as `knowledge.search` folds the row
@@ -874,13 +870,12 @@ and counted where extraction checks quotes against the parsed text:
 One run of one model; the first count moves from run to run, so only the two rates are
 comparable across systems.
 
-- **Models:** none for the parse scores; the downstream run used the fake n-gram embedder and
-  no LLM; decision extraction used `gpt-6-luna` (recorded in its artifact).
+- **Models:** none for the parse scores; the downstream run used the fake n-gram embedder and no LLM (`bench/results/docparse_models_downstream.json`); decision extraction used `gpt-6-luna` (`bench/results/docparse_models_decisions.json`).
 - **Artifacts:** `bench/results/docparse_parses/` (each system's normalized parse of every
   file: `previous` is the text layer, `new` layout and OCR), `bench/results/docparse_heldout.json`
   (every metric per category with paired intervals, and every file's scores),
   `bench/results/docparse_downstream.json` (ingest states, the query set and each query's
-  judgement with the paired report) and `bench/results/docparse_decisions.json`. The
+  judgement with the paired report, by category and by split) and `bench/results/docparse_decisions.json`. The
   baseline's time for two held-out files regenerated after its run (typeset_1, scan_2) is
   from their earlier versions, as its re-run shared the machine with other work; their
   quality scores are from the re-run.
@@ -888,8 +883,8 @@ comparable across systems.
   `PYTHONPATH=$PWD .venv/bin/python -m bench.docparse score previous=bench/results/docparse_parses/previous.jsonl new=bench/results/docparse_parses/new.jsonl baseline=bench/results/docparse_parses/baseline.jsonl --split heldout --json out.json`;
   a system's parses with `run --out new.jsonl --artifacts art/new --extractor <tree>/extractor`
   (layout and OCR: this checkout, run inside the extractor image for OCR; text layer: the
-  extractor before its PDF layout reader); downstream,
-  `PYTHONPATH=$PWD .venv/bin/python -m bench.docparse downstream previous=art/previous new=art/new baseline=art/baseline --base-url <loom> --out downstream.json`,
+  extractor before its PDF layout reader); the baseline's artifacts, `PYTHONPATH=$PWD .venv/bin/python -m bench.docparse artifacts bench/results/docparse_parses/baseline.jsonl --out art/baseline`; downstream,
+  `PYTHONPATH=$PWD .venv/bin/python -m bench.docparse downstream previous=art/previous new=art/new baseline=art/baseline --base-url <loom> --token <the stub's token> --out downstream.json`,
   and with `--decisions 12` and the server's settings for a real LLM for the decision counts,
   against a Loom whose document extractor is the stub (`python -m bench.docparse --help`).
 

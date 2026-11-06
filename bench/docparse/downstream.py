@@ -290,6 +290,7 @@ def queries(gold: list[dict]) -> list[dict]:
                 {
                     "file": g["file"],
                     "category": g["category"],
+                    "split": g["split"],
                     "kind": "paragraph",
                     "query": " ".join(w[2:10]),
                     "answer": w,
@@ -303,6 +304,7 @@ def queries(gold: list[dict]) -> list[dict]:
                 {
                     "file": g["file"],
                     "category": g["category"],
+                    "split": g["split"],
                     "kind": "table row",
                     # a row by its name and one of its values: names alone (`quill-0`,
                     # `quill-30`) share their words
@@ -373,12 +375,15 @@ def search(
 
 
 def report(systems: list[str], qs: list[dict], results: dict[str, list[dict]], k: int) -> dict:
-    """Recall at 1 and k, found and cited, per category and overall, each
-    system after the first paired with it (files resampled)."""
+    """Recall at 1 and k, found and cited, per category, per split
+    (`split:heldout`) and overall, each system after the first paired with it
+    (files resampled)."""
     groups = {
         c: [i for i, q in enumerate(qs) if q["category"] == c]
         for c in sorted({q["category"] for q in qs})
     }
+    for split in sorted({q["split"] for q in qs}):
+        groups[f"split:{split}"] = [i for i, q in enumerate(qs) if q["split"] == split]
     groups["ALL"] = list(range(len(qs)))
     out: dict = {}
     for grp, idx in groups.items():

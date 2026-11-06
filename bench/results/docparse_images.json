@@ -1,0 +1,6 @@
+{
+ "measured_with": "docker image ls (unpacked size) on each image as built",
+ "extractor, OCR on (docker build -f extractor/Dockerfile .)": "511MB",
+ "extractor, OCR off (--build-arg OCR=off)": "467MB",
+ "baseline, a layout-model parser's CPU image": "3.46GB"
+}
