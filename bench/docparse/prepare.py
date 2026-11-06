@@ -31,20 +31,18 @@ class Dirs:
 CONTAINER = "docparse-tools-run"
 
 
-def docker(*cmd: str, source: str = "") -> None:
-    """`cmd` run in the tools container; CalledProcessError, its output kept, when
-    it fails, carrying `source`, the file it reads when that is not its last
-    argument inside the corpus (`failed` names it)."""
+def docker(*cmd: str, source: str = "") -> str:
+    """Run `cmd` in the tools container and return its stdout; on failure the
+    CalledProcessError keeps its output and carries `source`, the input file
+    `failed` names when it is not the last /c/ argument."""
     try:
-        subprocess.run(["docker", "exec", CONTAINER, *cmd], check=True, capture_output=True)
+        run = subprocess.run(
+            ["docker", "exec", CONTAINER, *cmd], check=True, capture_output=True, text=True
+        )
     except subprocess.CalledProcessError as e:
         e.source = source  # type: ignore[attr-defined]
         raise
-
-
-def _text(stderr: str | bytes | None) -> str:
-    """A call's stderr as text, whether it was read as text or bytes."""
-    return stderr if isinstance(stderr, str) else (stderr or b"").decode(errors="replace")
+    return run.stdout
 
 
 def prepare(out: Path, src: Path) -> Dirs:
@@ -84,7 +82,7 @@ def prepare(out: Path, src: Path) -> Dirs:
         marker.unlink()
         for p in reversed(made):  # leave the directory as it was found
             p.rmdir()
-        reason = _text(getattr(e, "stderr", None)).strip() or (
+        reason = (getattr(e, "stderr", None) or "").strip() or (
             "no docker program" if isinstance(e, FileNotFoundError) else f"its /c is not {d.out}"
         )
         raise SystemExit(
@@ -103,8 +101,6 @@ def failed(e: subprocess.CalledProcessError) -> SystemExit:
     """What a failed call into the container says: the program, the file it was
     given, and the end of what it wrote to stderr (bytes or text)."""
     cmd = [str(c) for c in e.cmd]  # docker exec <container> <program> ...
-    # the file it reads: the one its caller named, else its last argument inside
-    # the corpus (pdftotext's last is `-`, its output; chromium's and soffice's
-    # last is their input)
+    # its input: the one the caller named, else the last /c/ argument (pdftotext's last is `-`)
     file = getattr(e, "source", "") or next(c for c in reversed(cmd) if "/c/" in c)
-    return SystemExit(f"{cmd[3]} failed on {file}: {_text(e.stderr).strip()[-2000:]}")
+    return SystemExit(f"{cmd[3]} failed on {file}: {(e.stderr or '').strip()[-2000:]}")

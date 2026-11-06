@@ -42,7 +42,7 @@ from reportlab.platypus import (
 )
 
 from bench.docparse import specs as S
-from bench.docparse.prepare import CONTAINER, PEPS, Dirs, docker, failed, prepare
+from bench.docparse.prepare import PEPS, Dirs, docker, failed, prepare
 from bench.docparse.score import words
 
 HAND = "/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf"
@@ -117,12 +117,7 @@ def gold_deck(spec: dict, *, notes: bool, image_text: bool = True) -> dict:
 
 
 def pages_text(d: Dirs, pdf: Path) -> list[list[str]]:
-    out = subprocess.run(
-        ["docker", "exec", CONTAINER, "pdftotext", "-raw", d.in_container(pdf), "-"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
+    out = docker("pdftotext", "-raw", d.in_container(pdf), "-")
     return [words(p) for p in out.split("\f")[:-1] or [out]]
 
 

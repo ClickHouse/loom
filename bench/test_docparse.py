@@ -287,17 +287,25 @@ def test_a_container_that_sees_another_directory_says_so(
         P.prepare(tmp_path / "corpus", pep_src)
 
 
-def test_a_failed_container_call_names_its_program_file_and_error() -> None:
-    cmd = ["docker", "exec", "c", "pdftotext", "-raw", "/c/a.pdf", "-"]
-    for stderr in ("Syntax Error: broken xref", b"Syntax Error: broken xref", None):
-        message = str(P.failed(subprocess.CalledProcessError(1, cmd, stderr=stderr)))
-        assert message.startswith("pdftotext failed on /c/a.pdf")
-        assert ("broken xref" in message) == (stderr is not None)
-    error = subprocess.CalledProcessError(
-        1, ["docker", "exec", "c", "pdftoppm", "/c/a.pdf", "/c/_work/scan"]
+def test_a_failed_container_call_names_its_program_file_and_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(cmd: list[str], **kw: object) -> None:
+        raise subprocess.CalledProcessError(1, cmd, stderr="Syntax Error: broken xref")
+
+    monkeypatch.setattr(subprocess, "run", broken)
+    for args, source, named in (
+        (("pdftotext", "-raw", "/c/a.pdf", "-"), "", "pdftotext failed on /c/a.pdf"),
+        (("pdftoppm", "/c/a.pdf", "/c/_work/scan"), "/c/a.pdf", "pdftoppm failed on /c/a.pdf"),
+    ):
+        with pytest.raises(subprocess.CalledProcessError) as e:
+            P.docker(*args, source=source)
+        message = str(P.failed(e.value))
+        assert message.startswith(named) and "broken xref" in message
+    quiet = subprocess.CalledProcessError(
+        1, ["docker", "exec", "c", "soffice", "/c/a.docx"], stderr=None
     )
-    error.source = "/c/a.pdf"  # type: ignore[attr-defined]  # as docker() sets it
-    assert str(P.failed(error)).startswith("pdftoppm failed on /c/a.pdf")
+    assert str(P.failed(quiet)) == "soffice failed on /c/a.docx: "
 
 
 def test_a_build_without_docker_says_so(
