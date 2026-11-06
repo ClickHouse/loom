@@ -259,8 +259,9 @@ def _read_layout(
         if drew is not None and drew.whole
         else _has_image(page, reader, inline_only=True)
     )
-    # A drawing read whole has seen every image the page draws, and one cut short fails
-    # the page below: the resources are searched only when there is no drawing.
+    # A drawing read whole has seen every image the page draws, and one cut short is
+    # reported below when the page may hold an image: the resources are searched here
+    # only when there is no drawing.
     unseen = drew is None and _has_image(page, reader)
     # a page of only sub-point pictures has nothing to fail, unless it draws an image inline
     if not texted and not targets and (draws_inline or unseen):
