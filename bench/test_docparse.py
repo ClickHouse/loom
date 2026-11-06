@@ -209,6 +209,22 @@ def test_a_failed_parse_scores_zero_on_every_metric_its_gold_defines(tmp_path: P
     assert report["ALL"]["locator_acc"] == {"good": 1.0, "bad": 0.0}
 
 
+def test_a_child_that_dies_leaving_undecodable_bytes_is_an_error_and_the_run_goes_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def died(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(
+            cmd, -11, stdout=b"\xff\xfe", stderr=b"Segmentation fault \xff"
+        )
+
+    monkeypatch.setattr(subprocess, "run", died)
+    out = tmp_path / "p.jsonl"
+    R.run(CORPUS, out, tmp_path, only={"web_doc_0.pdf", "deck_0.pptx"})
+    lines = [json.loads(line) for line in out.read_text().splitlines()]
+    assert [line["file"] for line in lines] == ["web_doc_0.pdf", "deck_0.pptx"]
+    assert all(line["error"].startswith("no output: Segmentation fault") for line in lines)
+
+
 def test_a_parse_past_its_time_is_an_error_and_the_run_goes_on(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -317,7 +333,7 @@ def test_a_failed_container_call_names_its_program_file_and_error(
     quiet = subprocess.CalledProcessError(
         1, ["docker", "exec", "c", "soffice", "/c/a.docx"], stderr=""
     )
-    assert str(P.failed(quiet)) == "soffice failed on /c/a.docx: "
+    assert str(P.failed(quiet)) == "soffice failed on /c/a.docx"
 
 
 def test_a_build_without_docker_says_so(

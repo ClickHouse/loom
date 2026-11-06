@@ -107,4 +107,5 @@ def failed(e: subprocess.CalledProcessError) -> SystemExit:
     cmd = [str(c) for c in e.cmd]  # docker exec <container> <program> ...
     # its input: the one the caller named, else the last /c/ argument (pdftotext's last is `-`)
     file = getattr(e, "source", "") or next(c for c in reversed(cmd) if "/c/" in c)
-    return SystemExit(f"{cmd[3]} failed on {file}: {e.stderr.strip()[-2000:]}")
+    tail = e.stderr.strip()[-2000:]
+    return SystemExit(f"{cmd[3]} failed on {file}" + (f": {tail}" if tail else ""))
