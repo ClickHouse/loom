@@ -45,7 +45,6 @@ def test_lemmatize_strips_the_suffixes_of_each_token(text: str, lemma: str) -> N
         pytest.param("the", "the", id="short word unchanged"),
         # Single-char tokens are filtered by the token regex (need >=2 chars).
         pytest.param("a", "", id="single char dropped"),
-        pytest.param("", "", id="empty"),
     ],
 )
 def test_lemmatize_leaves_or_drops_a_token_it_has_no_rule_for(text: str, lemma: str) -> None:
@@ -63,5 +62,6 @@ def test_lemma_tokens_filters_too_short() -> None:
     assert "a" not in lemma_tokens("a deploy")
 
 
-def test_lemma_tokens_of_empty_input_is_empty() -> None:
+def test_empty_input_lemmatizes_to_nothing() -> None:
+    assert lemmatize("") == ""
     assert lemma_tokens("") == []
