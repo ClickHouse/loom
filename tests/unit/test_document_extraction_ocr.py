@@ -13,7 +13,7 @@ from pypdf import PdfReader
 
 from loom_extractor import extract, ocr, pdffile
 from loom_extractor import pdflayout as layout
-from tests.fixtures.office_files import laid_out_pdf, text_at
+from tests.fixtures.office_files import laid_out_pdf, rule, text_at
 
 GRAY = (
     b"/Width 4 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 8 >>\nstream\n"
@@ -580,3 +580,12 @@ def test_a_text_page_whose_pictures_are_not_all_collected_is_partial(
         "OCR did not read all of its pictures:"
         " it draws more than its drawing is read for, so a picture may be unread"
     )
+
+
+def test_a_page_past_its_drawing_bound_with_no_image_is_complete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(layout, "_MAX_OPERATIONS", 5)
+    lines = b"".join(rule(72, 700 - 4 * n, 500, 700 - 4 * n) for n in range(20))
+    a = extract(laid_out_pdf([text_at(72, 740, "A dense chart drawn in lines.") + lines]), "v.pdf")
+    assert a.coverage.complete

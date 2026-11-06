@@ -30,7 +30,9 @@ _DEADLINE_S = 20  # one image's recognition; past it the image is not read
 PICTURE_SHARE = 0.2
 NOT_RUN = "a picture covers a fifth of it or more: its text needs OCR, which is not run"
 _MIN_DPI = 200.0
-_MAX_DPI = 600.0  # past it an image is scaled down: no finer detail helps, and it costs
+# The clean-up's rule and band sizes are those of 600 pixels an inch at most: a
+# finely shown image (a screenshot in a small box) is read at its own size.
+_MAX_DPI = 600.0
 _TARGET_DPI = 300.0
 _MAX_SCALE = 3.0
 _RIL_TEXTLINE = 2
@@ -156,8 +158,11 @@ class Engine:
         lp.pixSubtract.argtypes = [p, p, p]
         lp.pixDilateBrick.restype = p
         lp.pixDilateBrick.argtypes = [p, p, i, i]
-        lp.pixOpenBrick.restype = p
-        lp.pixOpenBrick.argtypes = [p, p, i, i]
+        # composite bricks: a long one costs a few passes, not one per pixel of it
+        lp.pixOpenCompBrick.restype = p
+        lp.pixOpenCompBrick.argtypes = [p, p, i, i]
+        lp.pixDilateCompBrick.restype = p
+        lp.pixDilateCompBrick.argtypes = [p, p, i, i]
         lp.pixConnCompBB.restype = p
         lp.pixConnCompBB.argtypes = [p, i]
         lp.boxaGetCount.argtypes = [p]
@@ -190,13 +195,11 @@ class Engine:
                 scale = min(_MAX_SCALE, _TARGET_DPI / (w / shown_inches))
                 if w * h * scale * scale > MAX_PIXELS:
                     scale = (MAX_PIXELS / (w * h)) ** 0.5
-            elif shown_inches > 0 and w / shown_inches > _MAX_DPI:
-                scale = _TARGET_DPI / (w / shown_inches)
-            if abs(scale - 1) > 0.05 and (scaled := lp.pixScale(pix, scale, scale)):
+            if scale > 1.05 and (scaled := lp.pixScale(pix, scale, scale)):
                 held.append(scaled)
                 pix = scaled
                 w, h = lp.pixGetWidth(pix), lp.pixGetHeight(pix)
-            dpi = min(_MAX_DPI, w / shown_inches) if shown_inches > 0 else _TARGET_DPI
+            dpi = w / shown_inches if shown_inches > 0 else _TARGET_DPI
             gray = lp.pixConvertTo8(pix, 0)
             if not gray:
                 raise ValueError("its image could not be turned to gray")
@@ -208,7 +211,7 @@ class Engine:
             if dark.value > 0.5 * w * h:  # light text on dark: read as dark on light
                 lp.pixInvert(gray, gray)
                 mono = self._mono(gray, held)
-            rules = self._unrule(gray, mono, dpi, w, h, held)
+            rules = self._unrule(gray, mono, min(dpi, _MAX_DPI), w, h, held)
             self._t.TessBaseAPISetImage2(self._api, gray)
             self._t.TessBaseAPISetSourceResolution(
                 self._api, max(1, round(dpi))
@@ -250,15 +253,17 @@ class Engine:
         # A dark region thicker than `thin` both ways (a heading's band, a dark
         # panel), widened by as much: no stroke in or beside it is a rule, as the
         # gaps between its light letters would read as strokes.
-        bands = lp.pixOpenBrick(None, mono, thin, thin)
-        near = lp.pixDilateBrick(None, bands, 2 * thin + 1, 2 * thin + 1) if bands else None
+        bands = lp.pixOpenCompBrick(None, mono, thin, thin)
+        if bands:
+            held.append(bands)
+        near = lp.pixDilateCompBrick(None, bands, 2 * thin + 1, 2 * thin + 1) if bands else None
         if not near:  # read whole, a band's light letters would be painted out with it
             raise ValueError("its image's dark regions could not be found")
-        held += [bands, near]
+        held.append(near)
         rules: list[Box] = []
         across, down = min(w, max(8, round(0.5 * dpi))), min(h, max(8, round(0.35 * dpi)))
         for hsize, vsize in ((across, 1), (1, down)):
-            lines = lp.pixOpenBrick(None, mono, hsize, vsize)
+            lines = lp.pixOpenCompBrick(None, mono, hsize, vsize)
             if not lines:
                 continue
             held.append(lines)

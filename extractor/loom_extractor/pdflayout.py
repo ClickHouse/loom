@@ -549,8 +549,7 @@ def drawing(
     contents = page.get_contents()
     if contents is not None:
         walk(contents, page.get("/Resources"), [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 0)
-    # Past either bound a grid may be half read: no rules rather than a wrong table.
-    # past the image cap or the operators' bound, what the page shows is not all collected
+    # Past either bound a grid may be half read (no rules), and its pictures not all collected.
     whole = budget[0] > 0 and not cut[0]
     return (found if len(found) <= _MAX_RULES and budget[0] > 0 else []), pictures, whole
 

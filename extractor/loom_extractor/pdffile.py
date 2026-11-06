@@ -238,8 +238,6 @@ def _read_layout(
         for p in pictures
         if not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p))
     ]
-    if not whole:
-        problems.append("it draws more than its drawing is read for, so a picture may be unread")
     if len(targets) > layout.MAX_PICTURES:
         problems.append(f"it shows more than {layout.MAX_PICTURES} pictures OCR would read")
         targets = targets[: layout.MAX_PICTURES]
@@ -275,6 +273,9 @@ def _read_layout(
             found += spans
             rules += layout.picture_rules(page, turn, picture, boxes, w, h)
         read.ocr = True
+    # after OCR's own reasons: one of them (OCR off) is what an operator can act on
+    if not whole and _has_image(page, reader):
+        problems.append("it draws more than its drawing is read for, so a picture may be unread")
     if problems:
         if texted:
             read.partial = (
