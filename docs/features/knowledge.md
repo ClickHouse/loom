@@ -77,8 +77,8 @@ A repository's admins register the document sources Loom pulls the repository's
 documents from. A source lives on the repository's trunk code namespace, the one its
 documents live in, so whoever reads the repository sees where its documents come from,
 and only the namespace's admins change that. Four kinds are served: `gdrive`, a shared
-folder of docs, slides, decks, Word documents and PDFs, read with a service account the folders are
-shared to read-only, whose credential is the account's JSON key; `linear`, the
+folder of docs, slides, decks, Word documents and PDFs, read with a service account the
+folders are shared to read-only, whose credential is the account's JSON key; `linear`, the
 documents of a project tracker's projects, read with a read-only API key of an account
 that sees the projects; `notion`, a page store's pages and databases, read with an
 integration that has read content access and that the pages and databases are shared
@@ -113,8 +113,8 @@ changing the provider also clears the ids typed for the other one.
 | [`knowledge.source.sync_now`](../reference/operations/knowledge.md#knowledgesourcesync_now) | admin  | Record a request for a sync pass over this source (`full`: list every document).                           |
 
 A source's `config` holds ids and filters, never a host or a URL: `gdrive` takes
-`folder_ids` (1 to 20) and `include` (any of `docs`, `slides`, `pdf`, `pptx`, `docx`; all by
-default); `linear` takes `project_ids` (1 to 20 project UUIDs); `notion` takes
+`folder_ids` (1 to 20) and `include` (any of `docs`, `slides`, `pdf`, `pptx`, `docx`;
+all by default); `linear` takes `project_ids` (1 to 20 project UUIDs); `notion` takes
 `page_ids` and `database_ids`, 1 to 20 ids in all, each 32 hex digits with or without
 dashes (stored dashed, lower case); `recording` takes `provider` (`meet` or `zoom`) and
 `ids` (1 to 20 meeting space ids for `meet`, numeric meeting ids for `zoom`). The
@@ -178,6 +178,12 @@ documents wait to be retired refuses its name with `SOURCE_DELETE_PENDING` until
 are gone; one whose documents were kept refuses it with `SOURCE_DOCUMENTS_KEPT` until
 they are deleted (`knowledge.delete`). A removed source with no documents frees its
 name at once.
+
+No op changes a stored source's `config`. A `gdrive` source keeps the `include` it was
+added with, so one added before `docx` was a kind never lists `.docx` files. To take
+them in: `remove` it with `delete_documents`, wait for the sync worker to retire its
+documents (`add` answers `SOURCE_DELETE_PENDING` until then), and add it again. Every
+document of the source is then written, embedded and mined for decisions again.
 
 | Code                    | When                                                                                                                                                                                                                         |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -645,8 +651,8 @@ bounds the listed documents and every finding's samples.
 - **`documents`**: live and deleted (`knowledge.delete`) documents by format (the row's
   `format`, which `knowledge.ingest` sets, else the `ingested_format` a source sync
   records in its metadata (`transcript`, `markdown`, `slides`, or the extractor's `pdf`,
-  `pptx` or `docx`), else the stored content type, else the extension of the original filename
-  or the `source_uri` path) and by `source_uri` scheme, and the newest ingest. A
+  `pptx` or `docx`), else the stored content type, else the extension of the original
+  filename or the `source_uri` path) and by `source_uri` scheme, and the newest ingest. A
   document row holds only its current version, and its `revision` numbers it (1, 2,
   ...): `earlier_revisions` sums the revisions before each current one, and `unnumbered`
   counts rows no write numbered (`revision` 0). An earlier revision's text is known only
