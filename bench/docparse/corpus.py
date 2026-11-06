@@ -46,23 +46,14 @@ from bench.docparse import specs as S
 OUT = Path(".")
 SRC = Path(".")
 WORK = Path(".")
-IMAGE = "docparse-tools:local"
 CONTAINER = (
     "docparse-tools-run"  # docker run -d --name docparse-tools-run -v OUT:/c ... sleep infinity
 )
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-FONT_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 HAND = "/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf"
 
 
 def docker(*cmd: str) -> None:
     subprocess.run(["docker", "exec", CONTAINER, *cmd], check=True, capture_output=True)
-
-
-def _uid() -> str:
-    import os
-
-    return f"{os.getuid()}:{os.getgid()}"
 
 
 def chromium_pdf(html_path: Path, pdf_path: Path) -> None:
@@ -108,7 +99,9 @@ def gold_doc(spec: dict) -> dict:
         elif e[0] == "code":
             blocks.append({"kind": "code", "text": e[1]})
         elif e[0] == "table":
-            tables.append({"rows": e[1]})
+            tables.append(
+                {"rows": e[1], "_at": len(blocks)}
+            )  # its place among the blocks, for `locate`
     return {"blocks": blocks, "tables": tables}
 
 
@@ -125,7 +118,7 @@ def gold_deck(spec: dict, *, notes: bool, image_text: bool = True) -> dict:
             for lab in s.get("image", []):
                 blocks.append({"kind": "image_text", "text": lab, "page": n})
         if "table" in s:
-            tables.append({"rows": s["table"], "page_start": n, "page_end": n})
+            tables.append({"rows": s["table"], "page_start": n, "page_end": n, "_at": len(blocks)})
         if notes and s.get("notes"):
             blocks.append({"kind": "note", "text": s["notes"], "page": n})
     return {"blocks": blocks, "tables": tables}
@@ -148,49 +141,82 @@ def pages_text(pdf: Path) -> list[list[str]]:
     return [norm_words(p) for p in out.split("\f")[:-1] or [out]]
 
 
-def _run(probe: list[str], pw: list[str]) -> bool:
-    n = len(probe)
-    return any(pw[j : j + n] == probe for j in range(len(pw) - n + 1))
+class _Stream:
+    """The rendered file's words as one run, each with its 1-based page, searched
+    in the document's order: each item from where the item before it was found."""
 
+    def __init__(self, pages: list[list[str]]) -> None:
+        self.words = [w for pw in pages for w in pw]
+        self.page = [i for i, pw in enumerate(pages, start=1) for _ in pw]
+        self.at = 0  # where the next search starts
 
-def _find(words: list[str], pages: list[list[str]], from_end: bool = False) -> int:
-    """The 1-based page holding this run of words (its first or last 6), 0 if none."""
-    probe = words[-6:] if from_end else words[:6]
-    if len(words) > 6 and not from_end and not any(_run(probe, pw) for pw in pages):
-        probe = words[:3]
-    if not probe:
-        return 0
-    n = len(probe)
-    for i, pw in enumerate(pages, start=1):
-        for j in range(len(pw) - n + 1):
-            if pw[j : j + n] == probe:
+    def find(self, probe: list[str], start: int) -> int:
+        """The index of the first run of `probe` at or after `start`, -1 if none."""
+        n = len(probe)
+        if not n:
+            return -1
+        first = probe[0]
+        i = start
+        while True:
+            try:
+                i = self.words.index(first, i)
+            except ValueError:
+                return -1
+            if self.words[i : i + n] == probe:
                 return i
-    return 0
+            i += 1
+
+    def place(self, words: list[str]) -> tuple[int, int]:
+        """The pages the item of `words` starts and ends on, found from the
+        stream's position (its whole run, else its first six words and then its
+        last six), and the position moved past it; (0, 0) when not found."""
+        whole = self.find(words, self.at)
+        if whole >= 0:
+            start, end = whole, whole + len(words) - 1
+        else:
+            start = self.find(words[:6], self.at)
+            if start < 0 and len(words) > 3:
+                start = self.find(words[:3], self.at)
+            if start < 0:
+                return 0, 0
+            tail = self.find(words[-6:], start)
+            end = tail + min(6, len(words)) - 1 if tail >= 0 else start
+        self.at = start + 1
+        return self.page[start], self.page[min(end, len(self.page) - 1)]
 
 
 def locate(gold: dict, pdf: Path) -> list[str]:
-    """Fill each block's and table's page from the rendered PDF; returns what was not found."""
+    """Fill each block's and table's pages from the rendered PDF, in the
+    document's order through one stream of its words (the synthetic text
+    repeats its phrases, so a first match anywhere can be on an earlier page).
+    Returns what was not found."""
     pages = pages_text(pdf)
+    stream = _Stream(pages)
     missing: list[str] = []
-    for b in gold["blocks"]:
-        if "page" in b:
-            continue
-        w = norm_words(b["text"])
-        p0, p1 = _find(w, pages), _find(w, pages, from_end=True)
-        if not p0:
-            missing.append(b["text"][:60])
-        b["page"] = p0 or p1
-        if p1 and p1 != p0:
-            b["page_end"] = p1
-    for t in gold["tables"]:
-        if "page_start" in t:
-            continue
-        first = norm_words(" ".join(t["rows"][0]))
-        last = norm_words(" ".join(t["rows"][-1]))
-        t["page_start"] = _find(first, pages) or _find(norm_words(t["rows"][0][0]), pages)
-        t["page_end"] = _find(last, pages, from_end=True) or t["page_start"]
-        if not t["page_start"]:
-            missing.append("table " + t["rows"][0][0])
+    # a table at `_at` comes before the block of that index
+    order: list[tuple[int, int, dict]] = [(i, 1, b) for i, b in enumerate(gold["blocks"])]
+    order += [(t["_at"], 0, t) for t in gold["tables"]]
+    for _, kind, item in sorted(order, key=lambda x: (x[0], x[1])):
+        if kind == 1 and "page" not in item:
+            p0, p1 = stream.place(norm_words(item["text"]))
+            if not p0:
+                missing.append(item["text"][:60])
+            item["page"] = p0
+            if p1 > p0:
+                item["page_end"] = p1
+        elif kind == 0 and "page_start" not in item:
+            p0, _ = stream.place(norm_words(" ".join(item["rows"][0])))
+            last = norm_words(" ".join(item["rows"][-1]))
+            # the last row whole (a row's tail is a phrase that recurs), else its opening
+            tail = stream.find(last, stream.at)
+            if tail < 0:
+                tail = stream.find(last[:6], stream.at)
+            item["page_start"] = p0
+            item["page_end"] = stream.page[tail] if tail >= 0 and p0 else p0
+            if tail >= 0:
+                stream.at = tail + 1
+            if not p0:
+                missing.append("table " + item["rows"][0][0])
     gold["pages"] = len(pages)
     return missing
 
@@ -586,10 +612,15 @@ def build(out: Path, src: Path) -> None:
     global OUT, SRC, WORK
     OUT, SRC, WORK = out.resolve(), src.resolve(), out.resolve() / "_work"
     OUT.mkdir(parents=True, exist_ok=True)
+    if any(OUT.iterdir()) and not (OUT / "gold.jsonl").is_file():
+        raise SystemExit(
+            f"{OUT} holds files and no gold.jsonl: build writes only into a corpus directory"
+        )
     for p in OUT.iterdir():
         shutil.rmtree(p) if p.is_dir() else p.unlink()
     WORK.mkdir()
     gold_all: list[dict] = []
+    scanned: dict[str, str] = {}  # a scan: the file it is a scan of
 
     def add(
         name: str,
@@ -606,11 +637,13 @@ def build(out: Path, src: Path) -> None:
             miss = [] if ocr else locate(gold, path)
             if miss:
                 print("UNLOCATED", name, miss[:5], file=sys.stderr)
+        for t in gold["tables"]:
+            t.pop("_at", None)
         gold_all.append(
             {"file": name, "category": category, "format": fmt, "source": src, "ocr": ocr, **gold}
         )
 
-    # Browser-exported design docs (the shape of a Docs export: Skia text, no outline)
+    # Browser-exported design docs (Skia text, no outline)
     seeds = iter(range(100, 1000))
     for k in range(6):
         sp = S.design_doc(
@@ -725,14 +758,15 @@ def build(out: Path, src: Path) -> None:
         add(f"web_deck_{k}.pdf", "pdf_slides", "pdf", gold_deck(sp, notes=False), src="synthetic")
     # Scans and a whiteboard photo: text only an OCR reads
     for k, src in enumerate(
-        ["office_export_1.pdf", "web_doc_2.pdf", "typeset_0.pdf", "web_deck_1.pdf"]
+        ["office_export_1.pdf", "web_doc_2.pdf", "typeset_1.pdf", "web_deck_1.pdf"]
     ):
         scan(OUT / src, OUT / f"scan_{k}.pdf", seed=k)
         g = json.loads(json.dumps(next(x for x in gold_all if x["file"] == src)))
         for key in ("file", "category", "format", "source", "ocr"):
             g.pop(key)
         add(f"scan_{k}.pdf", "pdf_scanned", "pdf", g, src=f"synthetic, a scan of {src}", ocr=True)
-    labels = ["ingest api", "kafka topic", "merge workers"]
+        scanned[f"scan_{k}.pdf"] = src
+    labels = ["ingest api", "event queue", "merge workers"]
     whiteboard(labels, WORK / "wb.png", 99)
     Image.open(WORK / "wb.png").convert("RGB").save(OUT / "whiteboard.pdf", "PDF", resolution=150)
     add(
@@ -748,12 +782,19 @@ def build(out: Path, src: Path) -> None:
         ocr=True,
     )
 
-    # dev / held-out: alternate within each category, in file order
+    # dev / held-out: alternate within each category, in file order; a scan
+    # takes its source's split, so held-out text is never tuned on
     seen: dict[str, int] = {}
     for g in gold_all:
         n = seen.get(g["category"], 0)
         seen[g["category"]] = n + 1
         g["split"] = "dev" if n % 2 == 0 else "heldout"
+    split = {g["file"]: g["split"] for g in gold_all}
+    for g in gold_all:
+        if g["file"] in scanned:
+            g["split"] = split[scanned[g["file"]]]
+        elif g["file"] == "whiteboard.pdf":
+            g["split"] = "heldout"
     shutil.rmtree(WORK)
     with open(OUT / "gold.jsonl", "w") as f:
         for g in gold_all:

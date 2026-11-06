@@ -6,7 +6,10 @@ file, and write the normalized parses `score` reads, one JSON line per file:
 
 A table's row blocks count once, as its cells, where its first row block sits;
 a DOCX or PPTX table block (`attrs.table`, cells joined by ` | `) is read as its
-grid. Another parser is compared by writing the same shape.
+grid. Another parser is compared by writing the same shape; the scorer counts a
+table's words from `tables` and leaves a block of type `table` out, so a table
+written both ways counts once. A file whose parse fails or passes TIMEOUT_S is
+`{"error": ...}`, scored 0.
 """
 
 from __future__ import annotations
@@ -18,6 +21,8 @@ import sys
 import time
 from pathlib import Path
 
+TIMEOUT_S = 900  # one file's parse
+
 CHILD = r"""
 import json, resource, sys, time
 from loom_extractor.source import extract
@@ -26,7 +31,7 @@ data = open(path, "rb").read()
 t0 = time.perf_counter()
 try:
     a = extract(data, path.rsplit("/", 1)[-1])
-except Exception as e:
+except Exception as e:  # noqa: BLE001 — a file the extractor fails on is that file's score, not the run's
     print(json.dumps({"error": f"{type(e).__name__}: {e}"})); sys.exit(0)
 dt = time.perf_counter() - t0
 art = a.to_dict()
@@ -92,9 +97,16 @@ def run(
 
 def _one(python: str, path: Path, env: dict[str, str]) -> dict:
     t0 = time.perf_counter()
-    p = subprocess.run(
-        [python, "-c", CHILD, str(path)], capture_output=True, env=env, timeout=900, check=False
-    )
+    try:
+        p = subprocess.run(
+            [python, "-c", CHILD, str(path)],
+            capture_output=True,
+            env=env,
+            timeout=TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"error": f"timeout after {TIMEOUT_S} s", "wall_seconds": time.perf_counter() - t0}
     try:
         res = json.loads(p.stdout.decode().strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):

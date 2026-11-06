@@ -28,13 +28,16 @@ The split (`dev`, `heldout`, `all`) is in the gold: a parser change is tuned on
 
 `build` regenerates the corpus from its specs (`specs.py`, `corpus.py`): the
 files are rendered in a tools container (Chromium, LibreOffice and poppler;
-`Dockerfile.tools`) and need `reportlab`, `python-docx`, `python-pptx` and
-`pillow`:
+`Dockerfile.tools`) mounted on the corpus directory, which is the only
+directory `build` writes into (it refuses one that holds files and no
+`gold.jsonl`). The host needs `reportlab`, `python-docx`, `python-pptx`,
+`pillow` and `pypdf`, and the FreeFont fonts (Debian's `fonts-freefont-ttf`)
+for the whiteboard photo:
 
     docker build -t docparse-tools:local -f bench/docparse/Dockerfile.tools bench/docparse
     docker run -d --name docparse-tools-run --user "$(id -u):$(id -g)" -e HOME=/tmp \\
         -v "$PWD/bench/docparse/corpus:/c" docparse-tools:local sleep infinity
-    uv run --with reportlab --with python-docx --with python-pptx --with pillow \\
+    uv run --with reportlab --with python-docx --with python-pptx --with pillow --with pypdf \\
         python -m bench.docparse build --src <dir with the PEP pages>
     docker rm -f docparse-tools-run
 

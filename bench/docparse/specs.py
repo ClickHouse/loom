@@ -301,7 +301,7 @@ def deck(
         {
             "title": f"{name.capitalize()} {r.choice(['architecture review', 'quarterly update', 'launch plan', 'incident review'])}",
             "bullets": [
-                f"{r.choice(['Platform', 'Storage', 'Identity', 'Search'])} team, {r.choice(['Q1', 'Q2', 'Q3', 'Q4'])} {r.randint(2024, 2026)}"
+                f"{r.choice(['Platform', 'Storage', 'Identity', 'Search'])} team, {r.choice(['first', 'second', 'third', 'fourth'])} quarter"
             ],
         }
     ]
@@ -487,7 +487,3 @@ def items_text(items: list) -> list[tuple[int, str]]:
 
 def esc(s: str) -> str:
     return html.escape(s, quote=False)
-
-
-def slug(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")

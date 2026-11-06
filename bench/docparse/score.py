@@ -1,8 +1,10 @@
 """Score normalized parses against the corpus's gold labels.
 
 Per file: text recall and precision (word multisets), reading-order accuracy,
-heading F1 and level accuracy, table cell F1 and table detection F1, locator
-accuracy, notes membership (decks), silent loss, parse time and peak memory.
+heading F1 and level accuracy, table cell F1 and table detection F1 (headings
+or tables where the file has none score 0), locator accuracy, notes membership
+(decks), lost blocks and silent loss, errors, parse time and peak memory. A
+parse that failed scores 0 on every metric its file's gold defines.
 Per category and overall: the mean of each, and for every system after the
 first, the paired difference from the first with a 95% bootstrap interval
 (`bench.bootstrap.paired_bootstrap`, files resampled).
@@ -50,15 +52,15 @@ def gold_words(g: dict) -> Counter:
 
 
 def out_words(p: dict) -> Counter:
+    """The parse's words: its blocks' but a table block's, and each table's
+    cells, so a table counts once however the parse writes it."""
     c: Counter = Counter()
-    for b in p.get("blocks", []):
-        c.update(words(b["text"]))
-    # A table block's text is its cells; tables that come only as tables (no block) count here.
-    if not any(b["type"] == "table" for b in p.get("blocks", [])):
-        for t in p.get("tables", []):
-            for r in t["rows"]:
-                for cell in r:
-                    c.update(words(cell))
+    for w in _stream(p):
+        c[w] += 1
+    for t in p.get("tables", []):
+        for r in t["rows"]:
+            for cell in r:
+                c.update(words(cell))
     return c
 
 
@@ -77,9 +79,11 @@ def text_scores(g: dict, p: dict) -> dict:
 
 
 def _stream(p: dict) -> list[str]:
+    """The words of the parse's blocks in order, a table block's left to its table."""
     out: list[str] = []
     for b in p.get("blocks", []):
-        out.extend(words(b["text"]))
+        if b["type"] != "table":
+            out.extend(words(b["text"]))
     return out
 
 
@@ -130,7 +134,8 @@ def heading_scores(g: dict, p: dict) -> dict:
     ]
     out = [o for o in out if o[1]]
     if not gold:
-        return {}
+        # headings where the file has none are all wrong
+        return {"heading_f1": 0.0, "heading_precision": 0.0} if out else {}
     used = [False] * len(out)
     pairs = []
     for gl, gt in gold:
@@ -147,17 +152,16 @@ def heading_scores(g: dict, p: dict) -> dict:
                 pairs.append((gl, ol))
                 break
     pr, rc, f = prf(len(pairs), len(out), len(gold))
-    # Levels compared by rank: each side's distinct levels in order, 1, 2, 3, ...
-    grank = {lv: i for i, lv in enumerate(sorted({lv for lv, _ in gold}))}
+    # Levels compared by rank over the matched headings: each side's distinct
+    # levels in order, 1, 2, 3, ...
+    grank = {lv: i for i, lv in enumerate(sorted({gl for gl, _ in pairs}))}
     orank = {lv: i for i, lv in enumerate(sorted({ol for _, ol in pairs}))}
-    lvl = (
-        sum(1 for gl, ol in pairs if grank[gl] == orank.get(ol, -1)) / len(pairs) if pairs else 0.0
-    )
+    lvl = sum(1 for gl, ol in pairs if grank[gl] == orank[ol]) / len(pairs) if pairs else None
     return {
         "heading_f1": f,
         "heading_recall": rc,
         "heading_precision": pr,
-        "heading_level_acc": lvl if pairs else None,
+        "heading_level_acc": lvl,
     }
 
 
@@ -169,9 +173,8 @@ def table_scores(g: dict, p: dict) -> dict:
     gts = [_cells(t["rows"]) for t in g["tables"]]
     ots = [_cells(t["rows"]) for t in p.get("tables", [])]
     if not gts:
-        if not ots:
-            return {}
-        return {"table_cell_precision": 0.0, "table_det_precision": 0.0}
+        # tables where the file has none are all wrong
+        return {"table_det_f1": 0.0, "table_det_precision": 0.0} if ots else {}
     n_gold = sum(sum(1 for c in r if c) for t in gts for r in t)
     matched = 0
     out_counted = 0
@@ -201,12 +204,10 @@ def table_scores(g: dict, p: dict) -> dict:
                 matched += best
                 gold_hit[best_t] += best
                 out_hit[oi] = True
-    matched = min(matched, n_gold)
     pr, rc, f = prf(matched, out_counted, n_gold)
     det_gold = sum(
         1 for ti, gt in enumerate(gts) if gold_hit[ti] >= 0.5 * sum(1 for r in gt for c in r if c)
     )
-    _, _, det_f = prf(min(sum(out_hit), len(ots)), len(ots), len(gts))
     det_rc = det_gold / len(gts)
     det_pr = sum(out_hit) / len(ots) if ots else 0.0
     det_f = 2 * det_pr * det_rc / (det_pr + det_rc) if det_pr + det_rc else 0.0
@@ -219,26 +220,36 @@ def table_scores(g: dict, p: dict) -> dict:
 
 
 def locator_scores(g: dict, p: dict) -> dict:
+    """The share of gold blocks and tables the parse cites on their page. A gold
+    block is found in the parse block that holds its opening words, the next one
+    on from the block the gold block before it was found in (text recurs), and is
+    cited right when that block's pages hold its page and span no more pages
+    than it does: one block over every page cites nothing. A table is cited
+    right when a parse table with its header starts on its first page."""
     if g["format"] == "docx":
         return {}
-    blocks = p.get("blocks", [])
-    texts = [(b, key(b["text"])) for b in blocks]
+    blocks = [b for b in p.get("blocks", []) if b["type"] != "table"]
+    texts = [key(b["text"]) for b in blocks]
     ok = n = 0
     note_ok = note_n = 0
+    last = 0
     for gb in g["blocks"]:
-        if not gb.get("page"):
-            continue
         probe = " ".join(words(gb["text"])[:6])
-        if not probe:
+        if not gb.get("page") or not probe:
             continue
         n += 1
-        hits = [b for b, t in texts if probe in t]
-        if any(b["page_start"] <= gb["page"] <= max(b["page_end"], b["page_start"]) for b in hits):
+        note_n += gb["kind"] == "note"
+        hits = [i for i, t in enumerate(texts) if probe in t]
+        at = next((i for i in hits if i >= last), hits[0] if hits else None)
+        if at is None:
+            continue
+        last = at
+        b = blocks[at]
+        lo, hi = b["page_start"], max(b["page_end"], b["page_start"])
+        page, end = gb["page"], gb.get("page_end", gb["page"])
+        if lo <= page <= hi and hi - lo <= end - page:
             ok += 1
-        if gb["kind"] == "note":
-            note_n += 1
-            if any(b["notes"] and b["page_start"] == gb["page"] for b in hits):
-                note_ok += 1
+            note_ok += gb["kind"] == "note" and b["notes"]
     for gt in g["tables"]:
         n += 1
         head = [key(c) for c in gt["rows"][0]]
@@ -289,14 +300,16 @@ def lost_blocks(g: dict, p: dict) -> int:
 
 
 def score_file(g: dict, p: dict) -> dict:
+    """One file's scores. A parse that failed is scored as an empty one that
+    says it is incomplete: 0 on every metric the gold defines, its time kept."""
     if "error" in p:
-        s = {"text_recall": 0.0, "text_precision": 0.0, "error": 1}
-        if any(b["kind"] == "heading" for b in g["blocks"]):
-            s.update(heading_f1=0.0)
-        if g["tables"]:
-            s.update(table_cell_f1=0.0, table_det_f1=0.0)
+        s = score_file(
+            g,
+            {"complete": False, "blocks": [], "tables": [], "seconds": p.get("wall_seconds", 0.0)},
+        )
+        s["error"] = 1
         return s
-    s: dict = {**text_scores(g, p)}
+    s: dict = {**text_scores(g, p), "error": 0}
     o = order_score(g, p)
     if o is not None:
         s["order_acc"] = o
@@ -326,9 +339,12 @@ METRICS = [
     "notes_acc",
     "lost_blocks",
     "silent_loss",
+    "error",
     "seconds",
     "peak_mb",
 ]
+# Counted over files, not averaged.
+SUMMED = {"silent_loss", "error"}
 
 
 def score(
@@ -337,10 +353,7 @@ def score(
     """Print each group's table (each category, all files, all PDFs) and
     return the report; the first system is the one the others are paired with."""
     systems_read = [
-        (
-            name,
-            {json.loads(line)["file"]: json.loads(line) for line in path.read_text().splitlines()},
-        )
+        (name, {r["file"]: r for r in map(json.loads, path.read_text().splitlines())})
         for name, path in systems
     ]
     gold = [json.loads(line) for line in (corpus / "gold.jsonl").read_text().splitlines()]
@@ -374,7 +387,7 @@ def score(
                 continue
             agg = (
                 (lambda v: sum(v))
-                if m == "silent_loss"
+                if m in SUMMED
                 else (lambda v: sum(v) / len(v) if v else float("nan"))
             )
             row = {n: agg(vals[n]) for n in names}
@@ -386,7 +399,7 @@ def score(
                     for f in files
                     if scores[n][f].get(m) is not None and scores[names[0]][f].get(m) is not None
                 ]
-                if paired and m != "silent_loss":
+                if paired and m not in SUMMED:
                     b = paired_bootstrap(paired)
                     line += f"   {n}: {b.mean:+.3f} [{b.lb:+.3f}, {b.ub:+.3f}]"
                     report[grp].setdefault("diff", {}).setdefault(n, {})[m] = [b.mean, b.lb, b.ub]

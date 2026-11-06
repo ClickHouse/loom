@@ -6,6 +6,8 @@ import copy
 import json
 from pathlib import Path
 
+import pytest
+
 from bench.docparse import score as S
 
 CORPUS = Path(__file__).resolve().parent / "docparse" / "corpus"
@@ -136,3 +138,75 @@ def test_order_follows_a_repeated_text_to_its_next_occurrence() -> None:
     }
     p = {"blocks": [{"type": "paragraph", "text": b["text"]} for b in copy.deepcopy(g["blocks"])]}
     assert S.order_score(g, p) == 1.0
+
+
+def test_every_gold_page_span_is_ordered_and_every_pdf_item_has_its_page() -> None:
+    for g in _gold():
+        for b in g["blocks"]:
+            assert b.get("page_end", b.get("page", 0)) >= b.get("page", 0), (
+                g["file"],
+                b["text"][:40],
+            )
+            if (g["format"] == "pdf" and not g["ocr"]) or g["format"] == "pptx":
+                assert b.get("page"), (g["file"], b["text"][:40])
+        for t in g["tables"]:
+            assert "_at" not in t
+            if g["format"] != "docx":
+                assert 1 <= t["page_start"] <= t["page_end"] <= g.get("pages", t["page_end"]), g[
+                    "file"
+                ]
+
+
+def test_a_block_over_every_page_cites_nothing_and_invented_tables_score_zero() -> None:
+    g = next(g for g in _gold() if g["file"] == "web_longtable_0.pdf")
+    p = _perfect(g)
+    assert S.locator_scores(g, p)["locator_acc"] == 1.0
+    wide = {**p, "blocks": [{**b, "page_start": 1, "page_end": g["pages"]} for b in p["blocks"]]}
+    assert S.locator_scores(g, wide)["locator_acc"] < 0.1
+    prose = next(g for g in _gold() if not g["tables"] and g["format"] == "pdf" and not g["ocr"])
+    invented = {
+        **_perfect(prose),
+        "tables": [{"rows": [["a", "b"], ["1", "2"]], "page_start": 1, "page_end": 1}],
+    }
+    assert S.score_file(prose, invented)["table_det_f1"] == 0.0
+
+
+def test_a_failed_parse_scores_zero_on_every_metric_its_gold_defines(tmp_path: Path) -> None:
+    g = next(g for g in _gold() if g["tables"] and g["format"] == "pdf" and not g["ocr"])
+    s = S.score_file(g, {"error": "boom", "wall_seconds": 2.0})
+    assert s["error"] == 1 and s["silent_loss"] == 0 and s["seconds"] == 2.0
+    for m in (
+        "text_recall",
+        "order_acc",
+        "heading_f1",
+        "table_cell_f1",
+        "table_det_f1",
+        "locator_acc",
+    ):
+        assert s[m] == 0.0, m
+    assert s["lost_blocks"] > 0
+    good = tmp_path / "good.jsonl"
+    bad = tmp_path / "bad.jsonl"
+    good.write_text(json.dumps({"file": g["file"], **_perfect(g)}) + "\n")
+    bad.write_text(json.dumps({"file": g["file"], "error": "boom"}) + "\n")
+    report = S.score(CORPUS, [("good", good), ("bad", bad)])
+    assert report["ALL"]["error"] == {"good": 0, "bad": 1}
+    assert report["ALL"]["locator_acc"]["bad"] == 0.0
+
+
+def test_a_parse_past_its_time_is_an_error_and_the_run_goes_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import subprocess
+
+    from bench.docparse import run as R
+
+    def slow(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(cmd="x", timeout=R.TIMEOUT_S)
+
+    monkeypatch.setattr(subprocess, "run", slow)
+    out = tmp_path / "p.jsonl"
+    R.run(CORPUS, out, tmp_path, only={"web_doc_0.pdf", "deck_0.pptx"})
+    lines = [json.loads(line) for line in out.read_text().splitlines()]
+    assert [line["file"] for line in lines] == ["web_doc_0.pdf", "deck_0.pptx"]
+    assert all(line["error"].startswith("timeout") for line in lines)
