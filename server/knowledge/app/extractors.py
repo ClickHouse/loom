@@ -206,8 +206,8 @@ def _origin(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}"
 
 
-# How long a listing of the formats waits for the services' capabilities.
-FORMATS_READ_S = 5.0  # not a setting: a listing's read, which must not hold its caller
+# How long a listing of the formats, or a report, waits for the services' capabilities.
+CAPABILITIES_READ_S = 5.0  # not a setting: a read that must not hold its caller
 # Each service whose last read for a listing failed, until it is read again: a down
 # service costs one wait a minute, not one per listing.
 _unreadable: dict[str, float] = {}
@@ -236,7 +236,7 @@ async def _declared_within(url: str, timeout_s: float) -> frozenset[str]:
     return formats
 
 
-async def available_formats(*, timeout_s: float = FORMATS_READ_S) -> dict[str, str]:
+async def available_formats(*, timeout_s: float = CAPABILITIES_READ_S) -> dict[str, str]:
     """Each format some service it can go to declares, with the first such
     service's URL (`_endpoints`: its own route, else the default service and the
     routes of the media types that name it; a media type's route serves uploads

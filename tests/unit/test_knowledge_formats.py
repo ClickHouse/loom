@@ -108,12 +108,13 @@ async def test_with_no_extractor_configured_nothing_is_available(
 
 
 async def test_a_slow_service_costs_the_listing_its_bound_and_declares_nothing(
-    hosts: _Hosts, settings_override: Any
+    hosts: _Hosts, settings_override: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
     hosts.apps["slow"] = _declaring(["sql"], delay_s=30)
     settings_override(document_extractors_json=json.dumps({"sql": "http://slow"}))
     served = await extractors.available_formats(timeout_s=0.2)  # returns, though the read hangs
     assert "sql" not in served and served["markdown"] == "http://ref"
+    assert "document extractor http://slow: timed out" in caplog.text
 
 
 async def test_a_down_service_costs_one_wait_a_minute_not_one_per_listing(

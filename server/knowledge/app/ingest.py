@@ -15,6 +15,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from server.core.document_formats import DEFAULT_FORMAT, KNOWN_FORMATS, legacy_extensions, names_of
 from server.core.errors import NotFoundError, PreconditionFailedError
 from server.knowledge.api.models_knowledge import (
     KnowledgeFormat,
@@ -27,7 +28,9 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeIngestStatusInput,
     KnowledgeIngestStatusOutput,
 )
+from server.knowledge.app.extractors import available_formats
 from server.knowledge.store import ingestions
+from server.settings import settings
 
 
 def _uuid(value: str) -> str | None:
@@ -167,15 +170,6 @@ async def handle_knowledge_ingest_cancel(
 async def handle_knowledge_formats(input: KnowledgeFormatsInput) -> KnowledgeFormatsOutput:
     """Each known format with the names that select it and whether a configured
     extractor declares it (each service read at most once a minute)."""
-    from server.core.document_formats import (
-        DEFAULT_FORMAT,
-        KNOWN_FORMATS,
-        legacy_extensions,
-        names_of,
-    )
-    from server.knowledge.app.extractors import available_formats
-    from server.settings import settings
-
     served = await available_formats()
     formats = []
     for fmt in sorted(KNOWN_FORMATS):

@@ -5576,14 +5576,14 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.dedup_list": 400,
     "knowledge.dedup_resolve": 400,
     "knowledge.delete": 100,
-    "knowledge.get": 30,
-    "knowledge.ingest": 60,
-    "knowledge.ingest_cancel": 60,
-    "knowledge.ingest_status": 40,
     # The configured extractors' capabilities, each cached a minute; a cold read waits at
     # most the listing's 5 s bound, and a service it could not read is not waited for
     # again for a minute.
     "knowledge.formats": 5500,
+    "knowledge.get": 30,
+    "knowledge.ingest": 60,
+    "knowledge.ingest_cancel": 60,
+    "knowledge.ingest_status": 40,
     # Thirteen reads: eight of the documents, chunks and retired ingestions (one a join), one
     # of the extractions' coverage, three of the knowledge.ingest jobs (each a GROUP BY
     # source over the namespace's job rows, which reads its cancels, joined to its document
