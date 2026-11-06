@@ -293,17 +293,17 @@ class); the org tier is three times the namespace tier. An optional per-actor ti
 fraction of the namespace bucket (`LOOM_RATELIMIT_ACTOR_FRACTION`, 1.0 = off). A call must
 pass every bucket, and a refusal decrements none.
 
-| Op class           | Covers                                                                                                        | Capacity | Refill / s |
-| ------------------ | ------------------------------------------------------------------------------------------------------------- | -------- | ---------- |
-| `memory`           | `memory.*`, `conversation.*` (except the exact-key reads and `memory.import`)                                 | 100      | 17         |
-| `memory.read`      | Exact-key reads: `memory.get`, `bulk_get`, `history`, `working_memory.get`, …                                 | 300      | 50         |
-| `memory.import`    | `memory.import`                                                                                               | 10       | 2          |
-| `knowledge.search` | `knowledge.search`                                                                                            | 20       | 3          |
-| `knowledge.query`  | `knowledge.query`                                                                                             | 20       | 3          |
-| `knowledge.read`   | Other read-only `knowledge.*` ops (viewer, not audited): `knowledge.get`, `knowledge.list`, …                 | 50       | 10         |
-| `knowledge.add`    | Every other `knowledge.*` op, `knowledge.inspect`, `knowledge.synthesize` and `knowledge.dedup_list` included | 10       | 2          |
-| `code`             | `code.*` (except `code.outcome`, which draws from `memory`)                                                   | 60       | 10         |
-| `default`          | Everything else                                                                                               | 50       | 10         |
+| Op class           | Covers                                                                                                                | Capacity | Refill / s |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------- | -------- | ---------- |
+| `memory`           | `memory.*`, `conversation.*` (except the exact-key reads and `memory.import`)                                         | 100      | 17         |
+| `memory.read`      | Exact-key reads: `memory.get`, `bulk_get`, `history`, `working_memory.get`, …                                         | 300      | 50         |
+| `memory.import`    | `memory.import`                                                                                                       | 10       | 2          |
+| `knowledge.search` | `knowledge.search`                                                                                                    | 20       | 3          |
+| `knowledge.query`  | `knowledge.query`                                                                                                     | 20       | 3          |
+| `knowledge.read`   | Other read-only `knowledge.*` ops but `knowledge.inspect` (viewer, not audited): `knowledge.get`, `knowledge.list`, … | 50       | 10         |
+| `knowledge.add`    | Every other `knowledge.*` op, `knowledge.inspect`, `knowledge.synthesize` and `knowledge.dedup_list` included         | 10       | 2          |
+| `code`             | `code.*` (except `code.outcome`, which draws from `memory`)                                                           | 60       | 10         |
+| `default`          | Everything else                                                                                                       | 50       | 10         |
 
 These are the namespace-tier defaults (`DEFAULT_LIMITS`, `op_class_for`):
 
