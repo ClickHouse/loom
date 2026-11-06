@@ -20,7 +20,14 @@ from server.code.domain.index import citations, query_trim
 from server.identity.app import scim_groups
 from server.memory.app import observe_replay, value_updates
 from server.memory.app.ask import identifiers, prompts
-from server.memory.domain import activity_facts, conflicts, files, forget_requests, query_planner
+from server.memory.domain import (
+    activity_facts,
+    conflicts,
+    files,
+    forget_requests,
+    query_planner,
+    retrieval_calibration,
+)
 from server.storage import frontend_assets
 from server.tracker.api.models import (
     MAX_FRAME_CHARS,
@@ -56,6 +63,15 @@ def _findall(module: Any, name: str) -> Callable[[str], object]:
     return lambda s: getattr(module, name).findall(s)
 
 
+def _then(read: Callable[[str], object], tail: str) -> Callable[[str], object]:
+    """`read` on the run followed by `tail`: the text that makes the match fail late."""
+    return lambda s: read(s + tail)
+
+
+def _pytest_ids(s: str) -> object:
+    return list(retrieval_calibration._TEST_IDENTIFIER_PATTERNS[0].finditer(s))
+
+
 # (pattern, call as its caller makes it, text before the repeat, repeated unit)
 CASES: list[tuple[str, Callable[[str], object], str, str]] = [
     ("facets._FILE_PATH_RE", _finditer(facets, "_FILE_PATH_RE"), "", "@"),
@@ -88,6 +104,33 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
     ),
     ("query_planner._MIXED_RE", _finditer(query_planner, "_MIXED_RE"), "", "a-"),
     ("sql_names._STATED_CLASS_RE", _search(sql_names, "_STATED_CLASS_RE"), "", "a"),
+    (
+        "sql_names._STATED_CLASS_RE blanks",
+        _then(_search(sql_names, "_STATED_CLASS_RE"), "b::"),
+        "a",
+        " ",
+    ),
+    # One word of humps: the old patterns were exponential in its length.
+    (
+        "identifiers._INJECT_HANDLE_RE",
+        _then(_finditer(identifiers, "_INJECT_HANDLE_RE"), "_"),
+        "Aa",
+        "A",
+    ),
+    (
+        "identifiers._TECH_PASCAL_RE",
+        _then(_finditer(identifiers, "_TECH_PASCAL_RE"), "_"),
+        "Aa",
+        "A",
+    ),
+    ("identifiers._INJECT_FILELINE_RE", _finditer(identifiers, "_INJECT_FILELINE_RE"), "", "a/"),
+    ("retrieval_calibration pytest ids", _pytest_ids, "", "a-"),
+    (
+        "activity_facts._FAILED_ATTEMPT_RE",
+        _search(activity_facts, "_FAILED_ATTEMPT_RE"),
+        "the user ",
+        "call ",
+    ),
 ]
 
 
@@ -132,11 +175,15 @@ def test_a_forget_sentence_past_the_cap_is_not_read() -> None:
     assert forget_requests.forget_sentences([{"role": "user", "content": over}]) == {}
 
 
-@pytest.mark.parametrize("field", ["frames", "symbols"])
-def test_a_frame_line_is_bounded(field: str) -> None:
-    model = TrackerSimilarInput if field == "frames" else TrackerDuplicateCheckInput
+@pytest.mark.parametrize(
+    ("model", "field"),
+    [
+        (TrackerSimilarInput, "frames"),
+        (TrackerDuplicateCheckInput, "frames"),
+        (TrackerDuplicateCheckInput, "symbols"),
+    ],
+)
+def test_a_frame_line_is_bounded(model: type[Any], field: str) -> None:
     model(namespace="t", **{field: ["a" * MAX_FRAME_CHARS]})
     with pytest.raises(ValidationError):
         model(namespace="t", **{field: ["a" * (MAX_FRAME_CHARS + 1)]})
-    if field == "frames":
-        TrackerDuplicateCheckInput(namespace="t", frames=["a" * MAX_FRAME_CHARS])

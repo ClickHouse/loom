@@ -2080,8 +2080,8 @@ TOOL_DESCRIPTIONS["tracker.duplicate_check"] = (
     "served as a duplicate (`judge` block); it never demotes and never overrides a "
     "recorded related_to. "
     "Give `paths`: PRs that touched them, open ones included, and the issues "
-    "they fix become candidates too (`fix #N (open) touches …`) — how a "
-    "symptom-level draft reaches its root-cause report. `answer`: reported? fixed by "
+    "they fix become candidates too (`fix #N (open) touches …`). "
+    "`answer`: reported? fixed by "
     "which PR, in which release (rows' `links`, `fixed_in`); `related_prs` on none."
 )
 

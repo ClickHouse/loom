@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 # 2+-hump handle/type, or a zero-padded test id. Each is exact-substring matched
 # in find_by_identifier and additive, so a stray match only mildly dilutes.
 _INJECT_SNAKE_RE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b")
-_INJECT_HANDLE_RE = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-zA-Z0-9]+)+\b")
+# The humps after the first are one run: a word splits into humps in many
+# ways, and trying each one is exponential in the word's length.
+_INJECT_HANDLE_RE = re.compile(r"\b[A-Z][a-z]++[A-Z][a-zA-Z0-9]++\b")
 # A named account or handle written without its "@" —
 # "the GitHub account octodev", "reporter janedoe" — is the identifier
 # of every row about that account; nothing above caught a bare lowercase name.
@@ -45,8 +47,9 @@ _INJECT_ZEROID_RE = re.compile(r"\b0\d{3,}\b")
 _INJECT_STID_RE = re.compile(r"\b\d{3,4}-[0-9a-f]{4}\b")
 # file:line (e.g. MergeTreeData.cpp:3539) — a per-site anchor a query names and
 # the root-cause memory repeats verbatim; also unmatched by the shapes above.
+# Group 1, read from a path's first word only, so a long path costs one pass.
 _INJECT_FILELINE_RE = re.compile(
-    r"\b[\w/]+\.(?:cpp|hpp|cc|cxx|h|py|sql|go|rs|cmake|sh|yml|yaml):\d+\b"
+    r"(?<![\w/])/*+\b([\w/]+\.(?:cpp|hpp|cc|cxx|h|py|sql|go|rs|cmake|sh|yml|yaml):\d+)\b"
 )
 # An ordinal in the question ("the 27th parameter", "the fourth
 # option") names a LINE of a list the store holds verbatim — "\n27. Sound
@@ -175,7 +178,8 @@ async def _mention_window_chunks(search_input: Any, question: str, ranked: list[
     return out
 
 
-_TECH_PASCAL_RE = re.compile(r"\b[A-Z][a-z0-9]+(?:[A-Z][a-zA-Z0-9]+)+(?:::\w+)?\b")
+# The humps are one run, as in _INJECT_HANDLE_RE.
+_TECH_PASCAL_RE = re.compile(r"\b[A-Z][a-z0-9]++[A-Z][a-zA-Z0-9]++(?:::\w+)?\b")
 _TECH_CAMEL_RE = re.compile(r"\b[a-z]{2,}[A-Z][A-Za-z0-9]+\b")
 _TECH_FILE_RE = re.compile(
     r"\b[\w/.-]{1,255}\.(?:cpp|hpp|cc|cxx|h|py|sql|go|rs|cmake|sh|yml|yaml|reference|xml)(?::\d+)?\b"
@@ -243,7 +247,7 @@ def _injectable_identifiers(query_text: str) -> list[str]:
         _INJECT_FILELINE_RE,
     ):
         for m in pat.finditer(query_text or ""):
-            t = m.group(0)
+            t = m.group(1) if pat.groups else m.group(0)
             # A product word is not an identifier: OR-ed into the exact fetch
             # it would crowd the numbered rows out.
             if len(t) >= 5 and t.lower() not in seen and t.lower() not in _TECH_STOP:

@@ -203,8 +203,10 @@ _ASSISTANT_REPORT_RE = re.compile(
     r"(?:reported|stated|noted|said|confirmed)\b",
     re.IGNORECASE,
 )
+# Read once per clause, from its first attempt word: a later one finds
+# nothing the first did not.
 _FAILED_ATTEMPT_RE = re.compile(
-    r"\b(?:attempt|call|request|sequence|registration)\b[^.;]*?"
+    r"(?<![^.;])(?>[^.;]*?\b(?:attempt|call|request|sequence|registration)\b)[^.;]*?"
     r"\b(?:refused|could\s+not|couldn't|failed|was\s+rejected)\b",
     re.IGNORECASE,
 )

@@ -237,8 +237,9 @@ class RegistrationHit:
     stated_class: str = ""
 
 
-# Read from each word's first letter only, so a long word costs one pass.
-_STATED_CLASS_RE = re.compile(r"(?<!\w)[^\WA-Za-z_]*+([A-Za-z_]\w*+)\s*(?:<[^;]*>)?\s*::\s*$")
+# Read from each word's first letter, and each run of blanks once, so a long
+# line costs one pass.
+_STATED_CLASS_RE = re.compile(r"(?<!\w)[^\WA-Za-z_]*+([A-Za-z_]\w*+)\s*+(?:<[^;]*>)?\s*::\s*$")
 
 
 def _stated_class(content: str, m: re.Match[str]) -> str:
