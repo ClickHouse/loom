@@ -27,8 +27,10 @@ memory_type wins.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Mapping
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -65,7 +67,7 @@ async def classify(
     valid_types is non-empty).
     """
     if not endpoint or classify_refusal(endpoint):
-        # Off the gateway: no call; the caller's type stays.
+        # Refused (see classify_refusal): no call; the caller's type stays.
         return ""
     body = {
         "value": value,
@@ -86,13 +88,12 @@ async def classify(
                 timeout=_timeout(),
                 follow_redirects=False,
             )
+            resp.raise_for_status()
+            payload = resp.json()
         else:
-            vetted = await _post_vetted(endpoint, body)
-            if vetted is None:
+            payload = await _post_vetted(endpoint, body)
+            if payload is None:
                 return ""
-            resp = vetted
-        resp.raise_for_status()
-        payload = resp.json()
     except customer.HOLDS:
         raise  # the gateway refused or held the call's identity: never "kept the caller's type"
     except Exception as e:  # noqa: BLE001 — a failed classifier keeps the caller's type
@@ -120,31 +121,46 @@ async def classify(
     return candidate
 
 
-async def _post_vetted(endpoint: str, body: Mapping[str, object]) -> httpx.Response | None:
-    """POST to a classifier off the gateway: to the public address its host resolves
-    to (vetted here and connected to, so a rebinding name cannot move it), with no
-    redirect and no identity headers; None, noted, when the host is refused. The name
-    lookup is under the call's own deadline, as the connection is."""
+# The largest classifier answer read: {"memory_type": ...} is a few dozen bytes.
+_MAX_ANSWER_BYTES = 64 * 1024  # not a setting: bounds what an admin's endpoint can send
+
+
+async def _post_vetted(endpoint: str, body: Mapping[str, object]) -> Any:
+    """POST to a classifier off the gateway and return its decoded answer: to the public
+    address its host resolves to (vetted here and connected to, so a rebinding name
+    cannot move it), with no redirect and no identity headers. The lookup, the call
+    and the answer, at most `_MAX_ANSWER_BYTES`, are under one deadline. None, noted,
+    when the host is refused."""
     private = settings.memory_classify_private_host_set()
     schemes = ("https", "http") if private else ("https",)
-    async with asyncio.timeout(float(settings.memory_classify_timeout_s)):
+    async with asyncio.timeout(settings.memory_classify_timeout_s):
         refusal, url, host, server_name = await webhooks.pinned_target(
             endpoint, schemes=schemes, private_hosts=private
         )
-    if refusal or (
-        url.startswith("http:") and (urlsplit(endpoint).hostname or "").lower() not in private
-    ):
-        log.warning("classify: the endpoint's host is refused: %s", refusal or "plain http")
-        _degradations.note("classify", "caller_type_kept", "endpoint host refused")
-        return None
-    async with httpx.AsyncClient(follow_redirects=False, verify=webhooks.tls()) as client:
-        return await client.post(
-            url,
-            json=body,
-            headers={"Host": host} if host else {},
-            timeout=_timeout(),
-            extensions={"sni_hostname": server_name} if server_name else {},
-        )
+        if refusal or (
+            url.startswith("http:") and (urlsplit(endpoint).hostname or "").lower() not in private
+        ):
+            log.warning("classify: the endpoint's host is refused: %s", refusal or "plain http")
+            _degradations.note("classify", "caller_type_kept", "endpoint host refused")
+            return None
+        async with (
+            httpx.AsyncClient(follow_redirects=False, verify=webhooks.tls()) as client,
+            client.stream(
+                "POST",
+                url,
+                json=body,
+                headers={"Host": host} if host else {},
+                timeout=_timeout(),
+                extensions={"sni_hostname": server_name} if server_name else {},
+            ) as resp,
+        ):
+            resp.raise_for_status()
+            answer = bytearray()
+            async for chunk in resp.aiter_bytes():
+                answer += chunk
+                if len(answer) > _MAX_ANSWER_BYTES:
+                    raise ValueError("the classifier's answer is over 64 KiB")
+    return json.loads(answer)
 
 
 async def get_namespace_classify_config(

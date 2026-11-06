@@ -43,7 +43,7 @@ def classify_refusal(url: str) -> str:
 
 
 def check_classify_endpoint(value: str | None) -> str | None:
-    """The endpoint, or ValueError (a 422) when the gateway refuses it."""
+    """The endpoint, or ValueError (a 422) when it is refused."""
     refusal = classify_refusal(value) if value else ""
     if refusal:
         why = (

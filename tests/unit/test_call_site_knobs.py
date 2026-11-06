@@ -239,7 +239,7 @@ async def test_a_classify_endpoint_call_waits_its_setting(
     async def _vetted(url: str, **kw: Any) -> tuple[str, str, str, str]:
         return "", "https://203.0.113.7/v1", "classify.example", "classify.example"
 
-    class _Pinned(_RecordingClient):
+    class _Pinned:
         def __init__(self, **kw: Any) -> None:
             pass
 
@@ -248,6 +248,10 @@ async def test_a_classify_endpoint_call_waits_its_setting(
 
         async def __aexit__(self, *a: Any) -> None:
             return None
+
+        def stream(self, method: str, url: str, **kw: Any) -> Any:
+            _RecordingClient.seen.append(kw["timeout"])
+            raise _Stop
 
     # Off the gateway the call goes to the address its host was vetted to, on its own client.
     monkeypatch.setattr("server.core.webhooks.pinned_target", _vetted)
