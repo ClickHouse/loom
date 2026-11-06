@@ -621,7 +621,9 @@ async def handle_code_repo_set_source(input: Any) -> Any:
     await binding.refresh_overrides(force=True)
     previous = binding.tracker_namespaces_for(input.namespace)
     wanted = binding.parse_binding(input.tracker_namespaces)
-    targets = [await _tracker_or_refuse(input.org, qa) for qa in wanted]
+    # Linking decides who reads a tracker, so a new link needs its admin; keeping,
+    # reordering or dropping one already linked does not.
+    targets = [await _tracker_or_refuse(input.org, qa, new=qa not in previous) for qa in wanted]
     # A record reads only the repositories it names (`splitByChar('#', source_id)[1] IN
     # repos`), so a link to one that does not name this repository answers nothing — said, not
     # refused (a fork may mean to read its upstream's record)
@@ -655,11 +657,11 @@ async def handle_code_repo_set_source(input: Any) -> Any:
     )
 
 
-async def _tracker_or_refuse(org: str, qa: str) -> Any:
-    """The tracker namespace `qa` names, or NOT_A_TRACKER_NAMESPACE, also when the
-    caller is not its admin: a linked standard tracker is read by whoever reads the
-    repository, so linking one decides who reads it, which is its admin's call. A
-    tracker the caller does not administer answers as a missing one."""
+async def _tracker_or_refuse(org: str, qa: str, *, new: bool) -> Any:
+    """The tracker namespace `qa` names, or NOT_A_TRACKER_NAMESPACE. A `new` link also
+    needs the caller to administer it: a linked standard tracker is read by every reader
+    of the repository. A reader of it is told so; anyone else gets the missing-tracker
+    answer, which confirms nothing."""
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
     from server.tracker.domain.namespaces import tracker_namespace
@@ -672,10 +674,12 @@ async def _tracker_or_refuse(org: str, qa: str) -> Any:
 
         await registry_sources.refresh_db_sources(force=True)
     target = tracker_namespace(org, qa)
-    if target is None or not await row_in_scope(org, qa, Role.ADMIN):
-        raise ValidationError(
-            f"{qa} is not a tracker namespace of {org} — register its source first "
-            "(tracker.source.add)",
-            code="NOT_A_TRACKER_NAMESPACE",
-        )
-    return target
+    if target is not None and (not new or await row_in_scope(org, qa, Role.ADMIN)):
+        return target
+    if target is not None and await row_in_scope(org, qa, Role.VIEWER, hides_answer=False):
+        raise AuthInsufficientError(f"linking {qa} needs an admin of it")
+    raise ValidationError(
+        f"{qa} is not a tracker namespace of {org} — register its source first "
+        "(tracker.source.add)",
+        code="NOT_A_TRACKER_NAMESPACE",
+    )

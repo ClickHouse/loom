@@ -300,8 +300,10 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
 
     admin_of = {QA, DESK, "tracker-kj"}  # the maintainer administers each tracker it links
 
+    readers = {CODE, DESK, "tracker-new"}
+
     async def _scope(org, ns, role=None, *, hides_answer=True):
-        return ns in admin_of if role is Role.ADMIN else ns in admin_of | {CODE, DESK}
+        return ns in admin_of if role is Role.ADMIN else ns in admin_of | readers
 
     monkeypatch.setattr(authz, "row_in_scope", _scope)
     try:
@@ -328,15 +330,38 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
                     org=ORG, namespace=CODE, tracker_namespaces=[QA, "tracker-gone"]
                 )
             )
-        # A tracker the maintainer reads but does not administer is refused as a missing one:
-        # linking it would open it to every reader of the repository.
+        # A new link to a tracker the maintainer reads but does not administer is refused:
+        # linking it would open it to every reader of the repository. One it cannot read
+        # answers as a missing one.
+        from server.core.errors import AuthInsufficientError
+
+        await adm.handle_code_repo_set_source(
+            CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[QA, DESK])
+        )
         admin_of.discard(DESK)
+        NAMESPACES["tracker-new"] = NAMESPACES["tracker-hidden"] = _Ns()
+        with pytest.raises(AuthInsufficientError, match="needs an admin"):
+            await adm.handle_code_repo_set_source(
+                CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=["tracker-new"])
+            )
         with pytest.raises(ValidationError, match="register its source first"):
             await adm.handle_code_repo_set_source(
-                CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[DESK])
+                CodeRepoSetSourceInput(
+                    org=ORG, namespace=CODE, tracker_namespaces=["tracker-hidden"]
+                )
             )
+        # keeping, reordering and dropping a link already in force needs no admin of it
+        out = await adm.handle_code_repo_set_source(
+            CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[DESK, QA])
+        )
+        assert out.tracker_namespaces == [DESK, QA]
+        out = await adm.handle_code_repo_set_source(
+            CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[DESK])
+        )
+        assert out.tracker_namespaces == [DESK]
     finally:
-        NAMESPACES.pop("tracker-kj", None)
+        for name in ("tracker-kj", "tracker-new", "tracker-hidden"):
+            NAMESPACES.pop(name, None)
 
 
 @pytest.mark.asyncio

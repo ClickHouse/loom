@@ -5,12 +5,14 @@ The transport gate checks the request's `org` and `namespace` only. A field
 naming another one (`namespaces`, `to_namespace`, `inbox`, ...) reaches the
 handler unchecked, so each is declared here with the function that checks it;
 a new such field fails this test until it is declared, and the function must
-exist (by name: that the handler calls it is the reviewer's to read). A one-entry list counts too: `code.search` ran a one-entry `namespaces`
-as the search's namespace without authorizing it.
+exist (by name: that the handler calls it is the reviewer's to read). A
+one-entry list counts too.
 
-Out of this pattern: names that resolve to a namespace indirectly (`code.repos`'
-`repo` / `repos`, filtered by readability) and `namespace_scope` (the `all_mine`
-fan-out, which `server/auth/fanout.py` filters through the gate).
+Out of this pattern: names that resolve to a namespace indirectly (`code.repos'
+`repo` / `repos`, filtered by readability), `namespace_scope` (the `all_mine`
+fan-out, which `server/auth/fanout.py` filters through the gate), a
+collection's `parent` (`collection.create` / `move`, checked for WRITER by
+`server/identity/app/collections.py`), and fields of nested models.
 """
 
 from __future__ import annotations
