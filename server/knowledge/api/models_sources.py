@@ -82,7 +82,8 @@ class KnowledgeSourceSync(BaseModel):
 class KnowledgeSourceEntry(BaseModel):
     # The source's name, unique in the namespace.
     name: str
-    # The source's kind (`gdrive`: a shared folder of docs, slides, decks and PDFs;
+    # The source's kind (`gdrive`: a shared folder of docs, slides, decks, Word
+    # documents and PDFs;
     # `linear`: a project tracker's project documents; `notion`: a page store's pages
     # and databases; `recording`: the transcripts of a meeting store's recordings).
     kind: str

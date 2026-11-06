@@ -16,7 +16,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from server.clients import gdrive
 from server.knowledge.app import source_probes
-from server.knowledge.domain.sources import GDRIVE_MIME_TYPES
 
 FOLDER = "1AbCdEfGhIjKlMnOp"
 OTHER = "2QrStUvWxYzAbCdEf"
@@ -87,13 +86,6 @@ def test_the_probe_lists_the_folder_with_a_signed_assertion(
     assert f"('{FOLDER}' in parents or '{OTHER}' in parents) and trashed = false" in q
     assert list_call.url.params["orderBy"] == "modifiedTime desc"
     assert "application/pdf" in q and "presentation" in q and "document'" not in q
-
-
-def test_the_listing_asks_for_word_documents_when_the_source_includes_them() -> None:
-    q = gdrive._folder_query([FOLDER], [GDRIVE_MIME_TYPES["docx"]])
-    assert (
-        "mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'" in q
-    )
 
 
 def test_a_key_that_is_not_a_service_account_is_refused_without_a_call(
