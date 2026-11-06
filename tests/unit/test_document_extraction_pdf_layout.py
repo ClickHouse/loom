@@ -1,0 +1,209 @@
+"""The reference extractor's PDF layout reading: tables from ruled grids and
+aligned columns, headings from type, columns, page furniture and turned pages."""
+
+from __future__ import annotations
+
+from collections import Counter
+
+import pytest
+
+from loom_extractor import extract, pdffile
+from loom_extractor import pdflayout as layout
+from server.knowledge.domain.extract import parse_artifact
+from tests.fixtures.office_files import laid_out_pdf, rule, text_at
+
+
+def _blocks(a) -> list[tuple[str, int, str]]:
+    return [(b.type, b.depth, b.text) for b in a.blocks]
+
+
+def _grid(x: list[float], top: float, rows: list[list[str]], h: float = 20) -> bytes:
+    """A ruled table: its rules and each cell's text, rows from `top` down."""
+    out = b""
+    bottom = top - h * len(rows)
+    for k in range(len(rows) + 1):
+        out += rule(x[0], top - h * k, x[-1], top - h * k)
+    for xv in x:
+        out += rule(xv, top, xv, bottom)
+    for r, row in enumerate(rows):
+        for c, cell in enumerate(row):
+            out += text_at(x[c] + 4, top - h * r - 14, cell, font=2 if r == 0 else 1, size=10)
+    return out
+
+
+TABLE = [["Table", "Days", "Owner"], ["events", "30", "platform"], ["rollups", "365", "analytics"]]
+
+
+def test_a_ruled_table_is_a_typed_table_whose_rows_are_cited_by_page() -> None:
+    page = text_at(72, 720, "Retention", font=2, size=16) + text_at(
+        72, 690, "Every table keeps its rows."
+    )
+    page += _grid([72, 200, 300, 420], 660, TABLE)
+    a = extract(laid_out_pdf([page]), "r.pdf")
+    (t,) = a.tables
+    assert [(c.name, c.type) for c in t.columns] == [
+        ("Table", "string"),
+        ("Days", "number"),
+        ("Owner", "string"),
+    ]
+    assert t.rows == (("events", 30, "platform"), ("rollups", 365, "analytics"))
+    assert t.locator.to_dict() == {"page_start": 1, "page_end": 1, "row_start": 1, "row_end": 3}
+    rows = [b for b in a.blocks if b.attrs.get("table_id") == t.id]
+    assert [b.text for b in rows] == [
+        "Table: events; Days: 30; Owner: platform\nTable: rollups; Days: 365; Owner: analytics"
+    ]
+    assert rows[0].locator.to_dict() == {
+        "page_start": 1,
+        "page_end": 1,
+        "row_start": 2,
+        "row_end": 3,
+    }
+    assert rows[0].section_path == ("Retention",)
+    assert a.coverage.complete
+    assert parse_artifact(a.to_json(), fmt="pdf", max_bytes=1 << 20).tables[0].rows == t.rows
+
+
+def test_aligned_columns_without_rules_are_a_table_and_a_wrapped_cell_one_cell() -> None:
+    page = text_at(72, 720, "The limits below hold for every tenant.")
+    y = 690
+    for name, default, desc in [
+        ("Setting", "Default", "Description"),
+        ("max_rows", "5000", "Rows one read"),
+    ]:
+        page += text_at(72, y, name) + text_at(200, y, default) + text_at(300, y, desc)
+        y -= 16
+    page += text_at(300, y, "returns at most")  # the description wraps to a second line
+    y -= 16
+    page += text_at(72, y, "ttl_days") + text_at(200, y, "30") + text_at(300, y, "Days a row lives")
+    a = extract(laid_out_pdf([page]), "b.pdf")
+    (t,) = a.tables
+    assert [c.name for c in t.columns] == ["Setting", "Default", "Description"]
+    assert t.rows == (
+        ("max_rows", 5000, "Rows one read returns at most"),
+        ("ttl_days", 30, "Days a row lives"),
+    )
+    assert _blocks(a)[0] == ("paragraph", 0, "The limits below hold for every tenant.")
+
+
+def test_a_table_that_goes_on_over_the_next_page_is_one_table_its_header_read_once() -> None:
+    x = [72, 200, 300, 420]
+    first = _grid(x, 700, [TABLE[0], *[[f"t{i}", str(i), "ops"] for i in range(30)]])
+    second = _grid(x, 740, [TABLE[0], *[[f"t{i}", str(i), "ops"] for i in range(30, 40)]])
+    second += text_at(72, 400, "After the table.")
+    a = extract(laid_out_pdf([first, second]), "s.pdf")
+    (t,) = a.tables
+    assert len(t.rows) == 40 and t.rows[30] == ("t30", 30, "ops")
+    assert t.locator.to_dict() == {"page_start": 1, "page_end": 2, "row_start": 1, "row_end": 41}
+    blocks = [b for b in a.blocks if b.attrs.get("table_id")]
+    assert blocks[-1].locator.page_end == 2 and blocks[0].locator.page_start == 1
+
+
+def test_headings_come_from_size_and_weight_and_numbering_ranks_one_style() -> None:
+    page = (
+        text_at(72, 740, "Storage design", font=2, size=20)
+        + text_at(72, 710, "Every replica holds a full copy of the data.")
+        + text_at(72, 680, "1. Write path", font=2, size=11)
+        + text_at(72, 660, "Writes go to the leader first and then fan out.")
+        + text_at(72, 630, "1.1 Batching", font=2, size=11)
+        + text_at(72, 610, "Batches close after one second or one megabyte.")
+        + text_at(72, 580, "Note: this line is bold but ends a sentence.", font=2, size=11)
+    )
+    a = extract(laid_out_pdf([page]), "h.pdf")
+    heads = [(b.depth, b.text) for b in a.blocks if b.type == "heading"]
+    assert heads == [(1, "Storage design"), (2, "1. Write path"), (3, "1.1 Batching")]
+    assert a.blocks[-1].section_path == ("Storage design", "1. Write path", "1.1 Batching")
+
+
+def test_two_columns_read_left_then_right_between_full_width_lines() -> None:
+    page = text_at(72, 750, "A title across the page", font=2, size=18)
+    left = [f"Left column line {i} of the storage policy text." for i in range(12)]
+    right = [f"Right column line {i} of the exceptions text here." for i in range(12)]
+    for i, (lt, rt) in enumerate(zip(left, right, strict=True)):
+        page += text_at(50, 700 - 14 * i, lt, size=10) + text_at(320, 700 - 14 * i, rt, size=10)
+    a = extract(laid_out_pdf([page]), "c.pdf")
+    text = "\n".join(b.text for b in a.blocks)
+    assert text.index("Left column line 11") < text.index("Right column line 0")
+    assert a.blocks[0].text == "A title across the page"
+
+
+def test_page_furniture_is_left_out_and_named() -> None:
+    pages = [
+        text_at(72, 770, "Design review draft", size=8)
+        + text_at(72, 700, f"Body text of page {n} that says something new.")
+        + text_at(500, 30, f"Page {n}", size=8)
+        for n in (1, 2, 3)
+    ]
+    a = extract(laid_out_pdf(pages), "f.pdf")
+    assert [b.text for b in a.blocks] == [
+        f"Body text of page {n} that says something new." for n in (1, 2, 3)
+    ]
+    assert a.attrs["furniture"] == [
+        {"text": "Design review draft", "pages": 3},
+        {"text": "Page 1", "pages": 1},
+        {"text": "Page 2", "pages": 1},
+        {"text": "Page 3", "pages": 1},
+    ]
+    assert any("furniture" in w for w in a.warnings)
+    assert a.coverage.complete
+
+
+def test_a_page_shown_turned_is_read_in_its_texts_direction() -> None:
+    page = text_at(72, 720, "Escalation", font=2, size=16) + _grid([72, 200, 300, 420], 680, TABLE)
+    a = extract(laid_out_pdf([page], rotate=(0,)), "t.pdf")
+    assert ("heading", 1, "Escalation") in _blocks(a)
+    assert a.tables[0].rows == (("events", 30, "platform"), ("rollups", 365, "analytics"))
+
+
+def test_a_list_marker_set_apart_from_its_text_is_no_column() -> None:
+    page = text_at(72, 720, "The rollout has three steps.")
+    for i, step in enumerate(
+        ["Drain the old pool first", "Shift a tenth of traffic", "Shift the rest"]
+    ):
+        page += text_at(80, 700 - 16 * i, "\x95") + text_at(100, 700 - 16 * i, step)
+    a = extract(laid_out_pdf([page]), "l.pdf")
+    assert a.tables == ()
+    assert [b.type for b in a.blocks] == ["paragraph", "list", "list", "list"]
+
+
+def test_a_page_whose_layout_holds_less_than_its_text_layer_is_read_as_that(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pdffile, "_layout_chars", lambda read: Counter())
+    a = extract(laid_out_pdf([text_at(72, 720, "Only line")]), "g.pdf")
+    assert [b.text for b in a.blocks] == ["Only line"]
+    assert a.warnings == ("page 1: read as its text layer; its layout held less of its text",)
+
+
+def test_a_page_of_more_rules_than_the_bound_is_read_without_ruled_tables() -> None:
+    page = b"".join(
+        rule(72, 100 + k * 0.1, 500, 100 + k * 0.1) for k in range(layout._MAX_RULES + 10)
+    )
+    page += _grid([72, 200, 300, 420], 700, TABLE)
+    a = extract(laid_out_pdf([page]), "m.pdf")
+    assert "events" in "\n".join(b.text for b in a.blocks)
+    assert a.coverage.complete
+
+
+def test_a_fonts_unicode_map_gives_its_codes_widths() -> None:
+    cmap = (
+        b"begincmap 2 beginbfchar <0003> <0020> <0004> <0041> endbfchar"
+        b" 1 beginbfrange <0010> <0012> <0061> endbfrange"
+        b" 1 beginbfrange <0020> <0021> [<0062> <00660069>] endbfrange endcmap"
+    )
+
+    class Stream:
+        def get_object(self) -> Stream:
+            return self
+
+        def get_data(self) -> bytes:
+            return cmap
+
+    assert layout._to_unicode({"/ToUnicode": Stream()}) == {
+        3: " ",
+        4: "A",
+        0x10: "a",
+        0x11: "b",
+        0x12: "c",
+        0x20: "b",
+        0x21: "fi",
+    }

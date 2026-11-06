@@ -286,7 +286,7 @@ def test_pdf_pages_are_cited_by_page_and_the_outline_gives_their_sections() -> N
         {"page_start": 2, "page_end": 2},
     ]
     assert a.attrs == {"pages": 3}
-    assert a.parser_version.startswith("1+pypdf")
+    assert a.parser_version.startswith("2+pypdf")
     # The image-only page needs OCR: the extraction says so and is not complete.
     assert (a.coverage.unit, a.coverage.total, a.coverage.extracted) == ("pages", 3, 2)
     assert a.coverage.failed[0].unit == "page 3" and "OCR" in a.coverage.failed[0].reason

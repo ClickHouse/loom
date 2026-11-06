@@ -40,7 +40,7 @@ _DATETIME = re.compile(
 )
 
 
-def _cell(text: str) -> Cell:
+def typed_cell(text: str) -> Cell:
     text = text.strip()
     if not text:
         return EMPTY
@@ -128,7 +128,7 @@ def extract_csv(text: str, filename: str = "") -> Artifact:
                 continue
             # A value past the columns a table holds is left out, and counted.
             wide += sum(1 for v in record[MAX_COLUMNS:] if v.strip())
-            typed = (_cell(v) for v in record[:MAX_COLUMNS])
+            typed = (typed_cell(v) for v in record[:MAX_COLUMNS])
             cells = {i: c for i, c in enumerate(typed) if c.kind != "empty"}
             if not cells:
                 continue
