@@ -222,7 +222,17 @@ def test_a_child_that_dies_leaving_undecodable_bytes_is_an_error_and_the_run_goe
     R.run(CORPUS, out, tmp_path, only={"web_doc_0.pdf", "deck_0.pptx"})
     lines = [json.loads(line) for line in out.read_text().splitlines()]
     assert [line["file"] for line in lines] == ["web_doc_0.pdf", "deck_0.pptx"]
-    assert all(line["error"].startswith("no output: Segmentation fault") for line in lines)
+    assert all(
+        line["error"].startswith("no output (exit -11): Segmentation fault") for line in lines
+    )
+    # a last line that is JSON but no object (a library's stray `100`) is no parse either
+
+    def stray(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"100\n", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", stray)
+    R.run(CORPUS, out, tmp_path, only={"web_doc_0.pdf"})
+    assert json.loads(out.read_text())["error"].startswith("no output (exit 0)")
 
 
 def test_a_parse_past_its_time_is_an_error_and_the_run_goes_on(

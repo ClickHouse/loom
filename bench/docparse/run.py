@@ -107,10 +107,17 @@ def _one(python: str, path: Path, env: dict[str, str]) -> dict:
         )
     except subprocess.TimeoutExpired:
         return {"error": f"timeout after {TIMEOUT_S} s", "wall_seconds": time.perf_counter() - t0}
-    try:
-        # a child that died in native code may leave any bytes behind
-        res = json.loads(p.stdout.decode(errors="replace").strip().splitlines()[-1])
-    except (json.JSONDecodeError, IndexError):
-        res = {"error": "no output: " + p.stderr.decode(errors="replace")[-400:]}
+    # the child prints one object and exits 0, a parse that failed included; a
+    # child that died in native code may leave any bytes behind
+    res = None
+    if p.returncode == 0:
+        try:
+            res = json.loads(p.stdout.decode(errors="replace").strip().splitlines()[-1])
+        except (json.JSONDecodeError, IndexError):
+            res = None
+    if not isinstance(res, dict):
+        res = {
+            "error": f"no output (exit {p.returncode}): " + p.stderr.decode(errors="replace")[-400:]
+        }
     res["wall_seconds"] = time.perf_counter() - t0
     return res
