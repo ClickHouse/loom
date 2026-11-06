@@ -1015,20 +1015,21 @@ waits up to `LOOM_CH_POOL_WAIT_MS` and then answers `503 OVERLOADED`.
 
 `loom knowledge migrate-originals` moves the originals still held in ClickHouse to the
 bucket (`--org`, and `--namespace` with it, narrow it; `--dry-run` counts them and their
-bytes). It refuses to run unless `LOOM_DOCUMENT_OBJECT_STORE=s3`; set that on every
-replica first, so no new original lands in ClickHouse behind it, and only once every
-replica runs a build that reads bucket rows. It walks one namespace at a time in key
-order, and moves only the originals the namespace needs now: those a live document names,
-or an unexpired upload or an open ingestion holds. The rest are counted as left to the
-`document_blob_gc` sweep, which deletes each once it is older than
-`LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`; one that is needed again by then moves on a later
-run. For each original it checks the row's bytes against their size and sha256, writes
-them to a new object with the store's SHA-256 check, reads the object back and hashes it,
-and then writes the catalog row naming the object. That row switches every document with
-those bytes at once. The ClickHouse copy stays until `loom.document_blobs` merges the two
-rows; `OPTIMIZE TABLE loom.document_blobs FINAL` drops it at once. From then on a
-ClickHouse backup holds no bytes of the moved originals: back the bucket up on its own
-([backup and recovery](../operations/backup-and-recovery.md)).
+bytes). It refuses to move anything unless `LOOM_DOCUMENT_OBJECT_STORE=s3` (a dry run,
+which only reads ClickHouse, sizes the move before that); set that on every replica first,
+so no new original lands in ClickHouse behind it, and only once every replica runs a build
+that reads bucket rows. It walks one namespace at a time in key order, and moves only the
+originals the namespace needs now: those a live document names, or an unexpired upload or
+an open ingestion holds. The rest are counted as left to the `document_blob_gc` sweep,
+which deletes each once it is older than `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`; one that is
+needed again by then moves on a later run. For each original it checks the row's bytes
+against their size and sha256, writes them to a new object with the store's SHA-256 check,
+reads the object back and hashes it, and then writes the catalog row naming the object.
+That row switches every document with those bytes at once. The ClickHouse copy stays until
+`loom.document_blobs` merges the two rows; `OPTIMIZE TABLE loom.document_blobs FINAL`
+drops it at once. From then on a ClickHouse backup holds no bytes of the moved originals:
+back the bucket up on its own ([backup and
+recovery](../operations/backup-and-recovery.md)).
 
 A move is fenced by the erasure ledger. An erasure covers an original when it is its
 namespace's or any user's of the org: a user's erasure finds that user's originals through
