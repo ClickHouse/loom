@@ -463,9 +463,8 @@ jobs:
       - name: Install Chromium for Playwright
         working-directory: frontend
         run: npx playwright install --with-deps chromium
-      # The e2e specs against the production build with every /v1/* call
-      # answered from fixtures: the Graph smoke and layout shift, axe, focus
-      # rings, keyboard paths, list pages, and the boot and route budgets.
+      # The e2e specs in frontend/e2e/ against the production build, every /v1/*
+      # call answered from fixtures.
       - name: playwright (e2e specs)
         working-directory: frontend
         run: npm run e2e -- --shard=${{ matrix.part }}/${{ strategy.job-total }}
