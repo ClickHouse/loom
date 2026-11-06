@@ -65,13 +65,13 @@ export const FILE_RULES_HEADING =
 
 /** The hook's stdout payload: additional context only — never a permission decision.
  *  Team rules come from a namespace every member writes, and memory.for_file does
- *  not escape them: `<` and `>` are escaped here, so no variant of a closing tag
- *  survives, and the text goes inside the recalled-data block under a heading the
+ *  not escape them. Every left angle bracket, ASCII or its fullwidth (U+FF1C) and
+ *  small-form (U+FE64) look-alikes, becomes `&lt;`: no tag of any spelling can open
+ *  or close without one, and `>` stays as written so text like `memory_key=<id>`
+ *  still reads. The text goes inside the recalled-data block under a heading the
  *  plugin writes. */
 export function contextPayload(rendered) {
-  const safe = String(rendered || "")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  const safe = String(rendered || "").replace(/[<\uFF1C\uFE64]/g, "&lt;");
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",

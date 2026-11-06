@@ -249,8 +249,8 @@ plugin's five entries each declare `timeout: 10` so the last one is not cancelle
 The primer, the per-prompt recall and the file rules injected before an edit
 (`loom-file-context`) carry other people's writes when the namespace is shared: team file
 rules live in the repository's code namespace, where every member writes. Loom escapes
-recalled text so a stored value cannot close its section (the file-rules hook escapes `<`
-and `>` itself), labels each item with its writer (`by=` in recall, the author on a team
+recalled text so a stored value cannot close its section (the file-rules hook escapes every
+`<` itself), labels each item with its writer (`by=` in recall, the author on a team
 file rule), wraps the injected text in a `<loom-recalled-data>` block that says it is data
 and not instructions, and injects only procedures the caller wrote (a teammate's still
 answers an explicit `procedure.match`). Loom cannot control what an agent

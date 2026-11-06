@@ -91,7 +91,10 @@ const REPORT_ON = envSwitch("LOOM_SHUNT_REPORT", true);
 const FLUSH_TIMEOUT_MS = 300;
 // The log keeps its fixed, documented name; the batch is internal state.
 const LOG_PATH = path.join(os.tmpdir(), "loom-shunt.log");
-const PENDING_PATH = tmpStatePath("shunt-pending", "", { ext: ".log" });
+// One batch per user, so users sharing a TMPDIR keep their own.
+const PENDING_PATH = tmpStatePath("shunt-pending", typeof process.getuid === "function" ? process.getuid() : "", {
+  ext: ".log",
+});
 
 function countLines(abs) {
   try {
@@ -134,8 +137,10 @@ function deny(reason) {
   );
 }
 
-/** Per-session read-cap denial counts, {rel: n}. Unreadable → {} (fail-open:
- *  a lost file costs at most READ_CAP_DENIALS_PER_FILE more denials). */
+/** Per-session denial counts, {key: n}; {} when the file is missing or refused.
+ *  Each hook run is its own process, so nothing outlives a failed write: while
+ *  the file cannot be kept (tmp not writable, or a file planted there), every
+ *  over-cap read is denied and the budget never runs out for that session. */
 function readCapCounts(sessionId) {
   return readSessionState("shunt-cap", sessionId);
 }
