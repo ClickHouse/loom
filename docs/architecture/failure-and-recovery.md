@@ -295,7 +295,7 @@ pass every bucket, and a refusal decrements none.
 
 | Op class           | Covers                                                                                        | Capacity | Refill / s |
 | ------------------ | --------------------------------------------------------------------------------------------- | -------- | ---------- |
-| `memory`           | Memory and conversation writes and searches, `code.outcome`                                   | 100      | 17         |
+| `memory`           | `memory.*`, `conversation.*` (except the exact-key reads and `memory.import`), `code.outcome` | 100      | 17         |
 | `memory.read`      | Exact-key reads: `memory.get`, `bulk_get`, `history`, `working_memory.get`, …                 | 300      | 50         |
 | `memory.import`    | `memory.import`                                                                               | 10       | 2          |
 | `knowledge.search` | `knowledge.search`                                                                            | 20       | 3          |

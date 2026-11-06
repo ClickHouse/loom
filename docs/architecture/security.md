@@ -650,7 +650,7 @@ refuses, none is decremented.
 
 | Op class (`op_class_for`) | Covers                                                                                        |
 | ------------------------- | --------------------------------------------------------------------------------------------- |
-| `memory`                  | Memory and conversation writes and searches                                                   |
+| `memory`                  | `memory.*`, `conversation.*` (except the exact-key reads and `memory.import`)                 |
 | `memory.read`             | Exact-key reads such as `memory.get`                                                          |
 | `memory.import`           | `memory.import`                                                                               |
 | `knowledge.search`        | `knowledge.search`                                                                            |
