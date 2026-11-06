@@ -64,7 +64,7 @@ from server.core.schema.migrate import _stmt_experimental_settings
         ),
     ],
 )
-def test_a_statement_gets_the_flags_of_the_features_it_uses(
+def test_a_statement_gets_the_flags_its_features_or_table_need(
     statement: str, flags: dict[str, int] | None
 ) -> None:
     assert _stmt_experimental_settings(statement) == flags

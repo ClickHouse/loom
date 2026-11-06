@@ -78,22 +78,6 @@ from server.memory.app.extract.keys import entity_stable_key, rewrite_fact_key
             "test04653_status",
             id="bare test file convention",
         ),
-        # No PR, issue, test or handle anywhere: the concept key is returned as is.
-        pytest.param(
-            "user_task_status",
-            ["deployment"],
-            "the plan is set",
-            "user_task_status",
-            id="no entity leaves the key",
-        ),
-        # High precision: a bare number with no keyword or # is not an identifier.
-        pytest.param(
-            "user_task_status",
-            [],
-            "we shipped 3 features",
-            "user_task_status",
-            id="lone small number is not a PR",
-        ),
         # `user` and `task` are both generic leading tokens; both are stripped.
         pytest.param(
             "user_task_deploy_blocker",
@@ -108,20 +92,44 @@ from server.memory.app.extract.keys import entity_stable_key, rewrite_fact_key
         pytest.param(
             "user_status", [], "@tvega opened PR 555", "pr555_status", id="PR beats handle"
         ),
-        # `foo@bar` is an email, not a handle: no rewrite.
-        pytest.param(
-            "user_task_status",
-            [],
-            "email me at foo@bar.com",
-            "user_task_status",
-            id="email local part is not a handle",
-        ),
     ],
 )
 def test_entity_stable_key_prefixes_the_salient_entity(
     key: str, entities: list[str], value: str, want: str
 ) -> None:
     assert entity_stable_key(key, entities, value) == want
+
+
+@pytest.mark.parametrize(
+    ("key", "entities", "value"),
+    [
+        # No PR, issue, test or handle anywhere: the concept key is returned as is.
+        pytest.param(
+            "user_task_status",
+            ["deployment"],
+            "the plan is set",
+            id="no entity leaves the key",
+        ),
+        # High precision: a bare number with no keyword or # is not an identifier.
+        pytest.param(
+            "user_task_status",
+            [],
+            "we shipped 3 features",
+            id="lone small number is not a PR",
+        ),
+        # `foo@bar` is an email, not a handle: no rewrite.
+        pytest.param(
+            "user_task_status",
+            [],
+            "email me at foo@bar.com",
+            id="email local part is not a handle",
+        ),
+    ],
+)
+def test_entity_stable_key_leaves_a_key_without_a_salient_entity(
+    key: str, entities: list[str], value: str
+) -> None:
+    assert entity_stable_key(key, entities, value) == key
 
 
 def test_cap_respected() -> None:

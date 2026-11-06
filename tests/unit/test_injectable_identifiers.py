@@ -21,8 +21,11 @@ from server.memory.app.ask.identifiers import _injectable_identifiers as inj
         pytest.param(
             "the new test file 05059 for serialize_query_plan", "05059", id="zero-padded test id"
         ),
-        # "@ handle" (space-broken ref) must still resolve to the normalized "@handle".
-        pytest.param("what are @ rdev1 review expectations", "@rdev1", id="space-broken handle"),
+        # Seven digits: past the salient-number path's five or six, so only the
+        # zero-padded-id shape catches it.
+        pytest.param(
+            "the new test file 0123456 for the planner", "0123456", id="seven-digit zero-padded id"
+        ),
         # STID (NNNN-hhhh) is a high-precision failure key the other shapes miss, so a
         # query naming only a STID must still extract it.
         pytest.param(
@@ -48,6 +51,11 @@ def test_still_catches_numbers_and_handles():
     # Handles keep a normalized leading "@"; the substring consumers lstrip("@")
     # so matching still lands on every mention form ("@tvega", "@ tvega", "tvega").
     assert "117841" in got and "117588" in got and "@tvega" in got
+
+
+def test_catches_space_broken_handle():
+    # "@ handle" (space-broken ref) must still resolve to the normalized "@handle".
+    assert "@rdev1" in inj("what are @ rdev1 review expectations")
 
 
 def test_ignores_plain_english():
