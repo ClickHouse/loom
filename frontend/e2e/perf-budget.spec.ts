@@ -6,7 +6,7 @@
 import { expect, test } from "@playwright/test";
 import { codeReposFixture, installApi, stringArray, warmUp } from "./fixtures";
 
-test.beforeAll(async ({ browser }, testInfo) => warmUp(browser, testInfo));
+test.beforeAll(({ browser }, testInfo) => warmUp(browser, testInfo));
 
 const LCP_BUDGET_MS = 1500;
 

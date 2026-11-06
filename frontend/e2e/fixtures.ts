@@ -1718,10 +1718,8 @@ function runListFixture(all: Record<string, unknown>[], body: Record<string, unk
   return { runs: projectRows(page, body, "run_id"), total: kept.length };
 }
 
-/** One unmeasured boot of /memories before a file's budgets run. The first page a fresh
- *  runner's browser loads also pays for reading Chromium, the fonts and the preview server's
- *  files from a cold disk; that cost is the runner's, not the app's, and it lands on whichever
- *  budget runs first in a CI part. */
+/** One unmeasured boot of /memories before a file's budgets run: the first boot in a fresh
+ *  browser runs slower than every later one, and this boot takes that cost so no budget does. */
 export async function warmUp(browser: Browser, testInfo: TestInfo): Promise<void> {
   const page = await browser.newPage({ baseURL: testInfo.project.use.baseURL });
   try {
