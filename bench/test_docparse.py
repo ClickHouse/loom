@@ -851,7 +851,7 @@ def test_a_mean_no_file_has_is_null_in_the_json_and_a_dash_in_the_table(
     )
     out = tmp_path / "s.json"
     S.score(CORPUS, [("a", a), ("b", b)], split="heldout", out_json=out)
-    report = json.loads(out.read_text())["report"]  # strict JSON: a NaN would not parse
+    report = json.loads(out.read_text())["report"]  # the write refuses a NaN (allow_nan=False)
     assert report["ALL"]["heading_level_acc"]["a"] is None
     line = next(
         ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("heading_level_acc")
