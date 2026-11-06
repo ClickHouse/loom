@@ -73,7 +73,7 @@ patch to an older line leaves both where they are: `releases/latest` serves the 
 ## Rehearsing a release
 
 A dry run builds, verifies and smoke-tests everything a release would, on any branch, and publishes
-nothing: no image push, GitHub Release, signature or registry upload.
+nothing: no image push, GitHub Release or registry upload.
 
 ```bash
 gh workflow run release.yml --ref <branch> -f dry_run=true
@@ -98,6 +98,10 @@ in seconds, before any build, and names the fix for each one it finds missing:
 | A `pypi` environment and a PyPI trusted publisher for `release.yml`              | the `pypi` job                                           |
 | An `npm` environment, and npm trusted publishing or an `NPM_TOKEN` secret        | the `npm` job                                            |
 | An `mcp-registry` environment with the same protection rules as `pypi` and `npm` | the `mcp-registry` job, which skips a private repository |
+
+Only a push creates a ghcr.io package, and it creates it private. For an image no release has pushed
+yet, `preflight` warns instead of failing, and that run's `docker-smoke` jobs fail to pull it: set
+the package's visibility to public in its settings, then re-run the failed jobs.
 
 ## What the release workflow does
 

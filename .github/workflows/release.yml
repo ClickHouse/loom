@@ -111,6 +111,7 @@ jobs:
       # the highest final version takes them: a patch to an older line keeps both.
       - name: Is this the highest final version
         id: latest
+        shell: bash # with pipefail: a failed listing must not read as "no releases"
         env:
           VERSION: ${{ steps.parse.outputs.version }}
           GH_TOKEN: ${{ github.token }}
@@ -446,6 +447,8 @@ jobs:
     name: Docker (${{ matrix.artifact }}, ${{ matrix.arch }})
     needs: [version, verify]
     strategy:
+      # A dry run reports every image's failure; a release stops at the first.
+      fail-fast: ${{ !inputs.dry_run }}
       matrix:
         artifact: [server, extractor]
         arch: [amd64, arm64]
@@ -495,6 +498,8 @@ jobs:
           images: ${{ matrix.image }}
           # The extractor's own title and description; the defaults are the repository's.
           labels: ${{ matrix.labels }}
+          # `:latest` only from the version job's answer, never metadata-action's own.
+          flavor: latest=false
           # A dry run on a branch has no tag to derive them from.
           tags: |
             type=semver,pattern={{version}},value=v${{ needs.version.outputs.version }}

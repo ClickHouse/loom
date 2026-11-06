@@ -51,11 +51,16 @@ for image in $IMAGES; do
     say "$image: this workflow cannot push (HTTP $status). In $settings, under Manage Actions access, add $GITHUB_REPOSITORY with the Write role"
   fi
   # Pull: an install pulls without signing in, so the package must be public.
-  if curl -sSf -o /dev/null "$GHCR/token?service=ghcr.io&scope=repository:$path:pull" 2>/dev/null; then
-    echo "$image: anyone can pull"
-  else
-    say "$image: anyone cannot pull it, and an install signs in to nobody. In $settings, under Danger Zone, set the visibility to Public"
-  fi
+  # ghcr.io refuses an anonymous token with 401 for a private package and 403
+  # for one never pushed; only a push creates it, and private.
+  status=$(curl -sS -o /dev/null -w '%{http_code}' "$GHCR/token?service=ghcr.io&scope=repository:$path:pull" || true)
+  case $status in
+    200) echo "$image: anyone can pull" ;;
+    403)
+      echo "::warning::$image does not exist yet: this run's push creates it private, and docker-smoke fails to pull it. Set it public in $settings, then re-run the failed jobs"
+      ;;
+    *) say "$image: anyone cannot pull it (HTTP $status), and an install signs in to nobody. In $settings, under Danger Zone, set the visibility to Public" ;;
+  esac
 done
 
 if [ "$missing" -gt 0 ] && [ "$mode" = strict ]; then

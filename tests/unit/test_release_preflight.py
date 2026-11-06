@@ -16,8 +16,9 @@ sys.path.insert(0, str(ROOT / "scripts" / "release"))
 from make_latest import is_latest  # noqa: E402
 
 # A stub curl answering as ghcr.io does: an anonymous pull token only for a
-# public package, a push token for anyone signed in, and an upload session
-# (202 with a Location) only for a writer. Each call is logged.
+# public package (401 for a private one, 403 for one never pushed), a push
+# token for anyone signed in unless NO_TOKEN, and an upload session (202 with a
+# Location) only for a writer. Each call is logged.
 FAKE_CURL = r"""#!/usr/bin/env bash
 echo "$*" >> "$CALLS"
 url=${@: -1}
@@ -30,11 +31,12 @@ case "$*" in
     else
       printf 'HTTP/2 403\r\n\r\n'
     fi ;;
-  *" -u "*) echo '{"token":"t"}' ;;
+  *" -u "*) [ -n "${NO_TOKEN:-}" ] && echo '{}' || echo '{"token":"t"}' ;;
   *)
     pkg=${url#*scope=repository:}; pkg=${pkg%%:*}
-    [[ " $PUBLIC " == *" $pkg "* ]] || exit 22
-    echo '{"token":"anon"}' ;;
+    if [[ " $PUBLIC " == *" $pkg "* ]]; then echo 200
+    elif [[ " ${MISSING:-} " == *" $pkg "* ]]; then echo 403
+    else echo 401; fi ;;
 esac
 """
 
@@ -42,7 +44,7 @@ IMAGES = "ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor"
 
 
 def _preflight(
-    tmp_path: Path, mode: str, *, private: str, writable: str, public: str
+    tmp_path: Path, mode: str, *, private: str, writable: str, public: str, **extra: str
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -60,6 +62,7 @@ def _preflight(
         "WRITABLE": writable,
         "PUBLIC": public,
         "GHCR": "https://registry.test",
+        **extra,
     }
     return subprocess.run(
         ["bash", str(ROOT / "scripts/release/preflight.sh"), mode],
@@ -93,7 +96,7 @@ def test_each_missing_prerequisite_names_its_fix_and_fails_a_release(tmp_path: P
     assert "ghcr.io/clickhouse/loom: this workflow cannot push (HTTP 403)" in errors[1]
     assert "Manage Actions access, add ClickHouse/loom with the Write role" in errors[1]
     assert "packages/container/package/loom," in errors[1]
-    assert "ghcr.io/clickhouse/loom: anyone cannot pull" in errors[2]
+    assert "ghcr.io/clickhouse/loom: anyone cannot pull it (HTTP 401)" in errors[2]
     assert "set the visibility to Public" in errors[2]
     assert "loom-extractor: anyone cannot pull" in errors[3]
     assert "4 release prerequisite(s) missing" in errors[4]
@@ -109,9 +112,31 @@ def test_a_dry_run_reports_the_same_prerequisites_as_warnings(tmp_path: Path) ->
 
 
 def test_a_registry_that_gives_no_token_counts_as_no_push(tmp_path: Path) -> None:
-    (tmp_path / "bin").mkdir()
-    result = _preflight(tmp_path, "strict", private="false", writable="", public="")
-    assert "cannot push (HTTP 403)" in result.stdout
+    both = "clickhouse/loom clickhouse/loom-extractor"
+    result = _preflight(
+        tmp_path, "strict", private="false", writable=both, public=both, NO_TOKEN="1"
+    )
+    assert result.returncode == 1
+    assert result.stdout.count("cannot push (HTTP 000)") == 2
+    assert "-X POST" not in (tmp_path / "calls").read_text()
+
+
+def test_a_package_never_pushed_warns_without_failing_the_release(tmp_path: Path) -> None:
+    """Only a push creates a package, so its visibility cannot be set before the
+    first release: the run goes on and the warning names the step after it."""
+    both = "clickhouse/loom clickhouse/loom-extractor"
+    result = _preflight(
+        tmp_path,
+        "strict",
+        private="false",
+        writable=both,
+        public="clickhouse/loom",
+        MISSING="clickhouse/loom-extractor",
+    )
+    assert result.returncode == 0, result.stdout
+    (warning,) = [line for line in result.stdout.splitlines() if line.startswith("::warning::")]
+    assert "loom-extractor does not exist yet" in warning
+    assert "re-run the failed jobs" in warning
 
 
 def test_the_workflow_runs_the_preflight_before_any_build() -> None:
@@ -165,3 +190,23 @@ def test_a_dry_run_publishes_nothing() -> None:
     assert login["if"] == "${{ !inputs.dry_run }}"
     (build,) = [s for s in jobs["docker"]["steps"] if s.get("id") == "build"]
     assert build["with"]["outputs"].startswith("${{ inputs.dry_run && format('type=docker,")
+
+
+def test_a_dry_run_smokes_its_own_images_and_a_release_the_published_ones() -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
+    smoke = jobs["docker-smoke"]
+    assert smoke["needs"] == ["version", "clickhouse", "docker", "docker-tag"]
+    assert smoke["if"] == (
+        "${{ !cancelled() && needs.docker.result == 'success' && "
+        "(needs.docker-tag.result == 'success' || "
+        "(inputs.dry_run && needs.docker-tag.result == 'skipped')) }}"
+    )
+    loads = [s for s in smoke["steps"] if s.get("if") == "${{ inputs.dry_run }}"]
+    assert loads[0]["with"]["pattern"] == "scanned-*-${{ matrix.arch }}"
+    assert "docker load" in loads[1]["run"]
+    # The docker job exports under the very names the smoke runs.
+    (build,) = [s for s in jobs["docker"]["steps"] if s.get("id") == "build"]
+    assert "type=docker,name={0}:{1}" in build["with"]["outputs"]
+    assert "matrix.image, needs.version.outputs.version" in build["with"]["outputs"]
+    (run,) = [s for s in smoke["steps"] if "docker_quickstart_smoke.py" in s.get("run", "")]
+    assert '"ghcr.io/clickhouse/loom:$VERSION"' in run["run"]
