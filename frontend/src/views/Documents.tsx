@@ -542,7 +542,6 @@ export function Documents() {
     setAddOpen(false);
     setReplaceEntry(null);
     setEditEntry(null);
-    setPassagesOpen(false);
   }, [place]);
 
   // The first screen mounts with the page, the rest of the rows in a transition after the
@@ -622,7 +621,7 @@ export function Documents() {
   // through a later filtered or failed read (it searches the whole namespace). A new place
   // folds it.
   const canFindPassages = rows !== null && !emptyLibrary && listedScope === place;
-  // Taken away (the library emptied), the panel comes back folded once a document does.
+  // Taken away (a new place, or the library emptied), the panel comes back folded.
   useEffect(() => {
     if (!canFindPassages) setPassagesOpen(false);
   }, [canFindPassages]);
