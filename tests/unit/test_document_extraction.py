@@ -48,9 +48,7 @@ def _lines(name: str, loc: Locator) -> str:
 
 
 def _zip(*names: str) -> bytes:
-    """Entries dated 1980-01-01 by ZipInfo, so the bytes match in every process; an entry
-    written by name alone carries the current time. The rows built from these carry
-    names as ids: escaped zip bytes are unreadable in a failure."""
+    """Entries dated 1980-01-01 by ZipInfo, not the current time, so the bytes match in every process."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for n in names:
