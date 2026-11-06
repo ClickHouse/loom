@@ -789,20 +789,20 @@ ingests: 54 PDF, DOCX and PPTX files (browser-printed and office-exported design
 typeset specs, two-column and rotated pages, borderless tables and tables over pages, slide
 decks and their exports, scanned pages, a whiteboard photo, and six public-domain PEPs),
 split into dev and held-out within each category. Gold labels come from the specs the files
-were rendered from. Three systems, each through the same normalizer, each named by the stamp its parses carry: the reference extractor reading a PDF's text layer only (text layer, `loom-pdf` parser version 1); the reference extractor with its layout reader and OCR on (layout and OCR, parser version 3 with Tesseract 5.5); and a layout-model baseline (a document parser that runs neural layout and table models on CPU, whose version and settings the parses do not record). Every parser change was tuned on dev; the parse scores below are held-out (27 files).
+were rendered from. Three systems, each through the same normalizer, each named by the stamp its parses carry: the reference extractor at PDF parser version 1, DOCX 2 and PPTX 2 (text layer: a PDF's text layer only, a DOCX's headings at their outline levels, no OCR); the reference extractor at version 3 of each, with OCR on (layout and OCR: a PDF read as laid out, a DOCX's headings under its title, Tesseract 5.5 reading scanned pages and large pictures); and a layout-model baseline (a document parser that runs neural layout and table models on CPU, whose version and settings the parses do not record). Every parser change was tuned on dev; the parse scores below are held-out (27 files).
 
-| Measure (held-out, 27 files) | Text layer | Layout and OCR | Baseline |
-| ---------------------------- | ---------: | -------------: | -------: |
-| Text recall                  |      0.876 |          0.999 |    0.915 |
-| Text precision               |      0.880 |          0.984 |    0.961 |
-| Heading F1                   |      0.342 |          0.962 |    0.957 |
-| Heading level accuracy       |      0.700 |          1.000 |    0.357 |
-| Table cell F1                |      0.273 |          0.991 |    0.998 |
-| Page and slide locators      |      0.814 |          0.991 |    0.875 |
-| Speaker notes kept as notes  |      1.000 |          1.000 |    0.000 |
-| Silent losses (files)        |          5 |              2 |       10 |
-| Seconds a file (mean)        |      0.053 |          0.520 |    9.016 |
-| Peak memory a file (MB)      |         37 |             65 |    1,592 |
+| Measure (held-out, 27 files)    | Text layer | Layout and OCR | Baseline |
+| ------------------------------- | ---------: | -------------: | -------: |
+| Text recall                     |      0.876 |          0.999 |    0.915 |
+| Text precision                  |      0.880 |          0.984 |    0.961 |
+| Heading F1                      |      0.342 |          0.962 |    0.957 |
+| Heading level accuracy          |      0.700 |          1.000 |    0.357 |
+| Table cell F1                   |      0.273 |          0.991 |    0.998 |
+| Page and slide locators         |      0.814 |          0.991 |    0.875 |
+| Speaker notes as notes (3 PPTX) |      1.000 |          1.000 |    0.000 |
+| Silent losses (files)           |          5 |              2 |       10 |
+| Seconds a file (mean)           |      0.053 |          0.520 |    9.016 |
+| Peak memory a file (MB)         |         37 |             65 |    1,592 |
 
 Heading level accuracy is taken over the files where a system matched a heading: 9 for the
 text layer, 26 for the others. Silent loss is a file reported complete that dropped a
@@ -825,7 +825,7 @@ By category, the layout and OCR reader matches or beats the baseline on every me
   against 0.12 s, the cost of reading each large picture with OCR, which brings PPTX text
   recall to 1.000 (baseline 0.696).
 
-Overall the layout and OCR reader is 17 times faster than the baseline and uses 4% of its peak memory. Each system's time is its parse of a file, timed inside the process that parses it, its start-up aside; the baseline's models also take 4.8 s to load in each such process. The extractor image is 511 MB with OCR and 467 MB without (OCR adds 44 MB
+Overall the layout and OCR reader is 17 times faster than the baseline and uses 4% of its peak memory. Each system's time is its parse of a file, timed inside the process that parses it, its start-up aside; the baseline's models also load in each such process (median 3.2 s, `load_seconds` in its parses, over 54 files). The extractor image is 511 MB with OCR and 467 MB without (OCR adds 44 MB
 unpacked); the baseline's image is 3.46 GB (`bench/results/docparse_images.json`, `docker image ls` on each build).
 
 **Downstream.** Each system's artifacts are ingested into a running Loom through a stub
@@ -847,8 +847,7 @@ pages go from 0 to 1.00 cited at 5. It loses significantly on rotated pages (cit
 -0.30 [-0.40, -0.20]), borderless tables (cited at 1, -0.15 [-0.20, -0.05]) and tables over
 pages (cited and found at 5, -0.20 [-0.35, -0.05]), and on tables over pages it trails the baseline (cited at 1 0.60 against 0.95, found at 5 0.80 against 1.00). It is the only system that misses queries whose file it ingested: 5 found in no top-5 hit, four rows of long tables and one row of a two-column page's table. Where it loses
 at 5, a row is either found and not cited, because the chunk that holds a table's first rows
-also holds the paragraph before the table and so starts on the page before (the judge cites
-a row only within its table's pages), or not found, as `knowledge.search` folds the row
+also holds the paragraph before the table and so starts on the page before (the scorer cites a row only within its table's pages), or not found, as `knowledge.search` folds the row
 blocks of one section and a row deep in a long table falls out of the top five. At 1 it also
 loses some paragraph queries of PDF exports to rank.
 
@@ -875,7 +874,7 @@ comparable across systems.
   quality scores are from the re-run.
 - **Reproduce:** the parse scores from the committed parses,
   `PYTHONPATH=$PWD .venv/bin/python -m bench.docparse score text_layer=bench/results/docparse_parses/text_layer.jsonl layout_ocr=bench/results/docparse_parses/layout_ocr.jsonl baseline=bench/results/docparse_parses/baseline.jsonl --split heldout --json out.json`;
-  the reference extractor's parses with `run --out layout_ocr.jsonl --artifacts art/layout_ocr`, inside the extractor image for OCR (a tree whose `loom-pdf` is version 1 gives the text layer's); the baseline's column is re-scored from its committed parses, not regenerated here; the baseline's artifacts, `PYTHONPATH=$PWD .venv/bin/python -m bench.docparse artifacts bench/results/docparse_parses/baseline.jsonl --out art/baseline`; downstream,
+  the reference extractor's parses with `run --out layout_ocr.jsonl --artifacts art/layout_ocr`, inside the extractor image for OCR (a tree whose PDF, DOCX and PPTX parsers are at versions 1, 2 and 2 gives the text layer's); the baseline's column is re-scored from its committed parses, not regenerated here; the baseline's artifacts, `PYTHONPATH=$PWD .venv/bin/python -m bench.docparse artifacts bench/results/docparse_parses/baseline.jsonl --out art/baseline`; downstream,
   `PYTHONPATH=$PWD .venv/bin/python -m bench.docparse downstream text_layer=art/text_layer layout_ocr=art/layout_ocr baseline=art/baseline --base-url <loom> --token <the stub's token> --out downstream.json`,
   and with `--decisions 12` and the server's settings for a real LLM for the decision counts,
   against a Loom whose document extractor is the stub (`python -m bench.docparse --help`).

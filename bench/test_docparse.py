@@ -565,6 +565,7 @@ def test_the_queries_are_paragraphs_and_table_rows_with_their_pages() -> None:
     from bench.docparse.downstream import queries
 
     qs = queries(_gold())
+    split = {g["file"]: g["split"] for g in _gold()}
     assert {q["kind"] for q in qs} == {"paragraph", "table row"}
     for q in qs:
         assert (
@@ -573,7 +574,7 @@ def test_the_queries_are_paragraphs_and_table_rows_with_their_pages() -> None:
             and q["file"].endswith((".pdf", ".docx", ".pptx"))
         )
         assert q.get("within", False) == (q["kind"] == "table row")
-        assert q["split"] == next(g["split"] for g in _gold() if g["file"] == q["file"])
+        assert q["split"] == split[q["file"]]
         if q["file"].endswith(".pdf"):
             assert q["page"] >= 1 and q["page_end"] >= q["page"], q
     assert (
