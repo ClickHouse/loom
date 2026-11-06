@@ -11,8 +11,8 @@ the reason. `tests/unit/test_op_surfaces.py` fails on an op with neither, and
 on an entry for an op the dashboard calls.
 
 `DASHBOARD_PENDING` holds the ops a person needs whose control is not built
-yet. It only shrinks: an op leaves it when its control lands, and a new op
-never joins it.
+yet. It only shrinks (`test_op_surfaces.py` pins it): an op leaves it when its
+control lands, and a new op ships with its control instead.
 """
 
 from __future__ import annotations
@@ -22,12 +22,13 @@ AGENT_STEP = (
     "and the dashboard shows what the step left behind"
 )
 CODE_QUESTION = (
-    "a question a coding agent asks about indexed code while it works; the Code page "
-    "manages repositories and their index"
+    "a question a coding agent asks about the change it is making; the Code page answers a "
+    "person's browsing questions (code.search, code.symbol, code.callers, code.map) and "
+    "manages repositories"
 )
 TRACKER_QUESTION = (
     "a question an agent asks of the tracker record while it works; the Trackers page "
-    "manages the sources the record is built from"
+    "answers a person's questions (tracker.answer, tracker.item) and manages the sources"
 )
 CLIENT_CALL = (
     "called by a client program (a plugin hook, a bot, a CI job, an import or sync script), "
@@ -114,6 +115,7 @@ NOT_IN_DASHBOARD: dict[str, str] = {
             "memory.set_from_messages",
             "memory.stack",
             "memory.timeline",
+            "namespace.validate",
             "memory_schema.propose",
             "mentor.guide",
             "namespace.search_categories",
@@ -134,6 +136,7 @@ NOT_IN_DASHBOARD: dict[str, str] = {
             "task.heartbeat",
             "task.progress",
             "task.pull",
+            "task.updates",
             "working_memory.append",
             "working_memory.delete",
             "working_memory.get",
@@ -156,14 +159,12 @@ NOT_IN_DASHBOARD: dict[str, str] = {
             "memory.bulk_set",
             "memory.delete_version",
             "memory.export_evidence",
-            "memory.import",
             "memory.import_evidence",
             "memory.keys",
             "memory.outcome",
             "observe.crystallize",
             "observe.record",
             "ops.capabilities",
-            "task.updates",
         )
     },
     # ---- a chat client's own feature
@@ -181,12 +182,16 @@ NOT_IN_DASHBOARD: dict[str, str] = {
         )
     },
     # ---- the dashboard does this through another op
-    "memory.agents_list": "the Agents page lists a namespace's agents with agents.connected",
+    "memory.import": (
+        "run by the program that exports from another memory system; the dashboard imports "
+        "files with memory.import_curated"
+    ),
     "memory.apply": (
         "the Memories page's bulk actions call the per-row ops (memory.pin, memory.delete)"
     ),
     "memory.cross_promote": (
-        "the memory drawer's copy is memory.copy_to, the same copy for any reader"
+        "an operator's copy by memory id from a script; the memory drawer copies with "
+        "memory.copy_to"
     ),
     "memory.search_trace": "the Recall lab explains each ranking with memory.search explain=true",
     "memory.update": "the memory drawer saves an edit with memory.set",
@@ -194,7 +199,10 @@ NOT_IN_DASHBOARD: dict[str, str] = {
     "namespace.list": (
         "the namespace picker lists namespace.list_mine and finds others with namespace.browse"
     ),
-    "namespace.summary": "the Assistant page's overview reads namespace.inventory",
+    "namespace.summary": (
+        "an agent's one-call orientation on a namespace; the Assistant page's overview reads "
+        "namespace.inventory"
+    ),
     "search.query": (
         "the dashboard's search calls each plane's own search (memory.search, knowledge.search, "
         "conversation.search)"
@@ -254,7 +262,6 @@ DASHBOARD_PENDING: frozenset[str] = frozenset(
         "namespace.restore",
         "namespace.rollback",
         "namespace.snapshot",
-        "namespace.validate",
         "ops.projection_failures.list",
         "ops.projection_failures.resolve",
         "ops.projection_failures.retry",
@@ -279,6 +286,7 @@ DASHBOARD_PENDING: frozenset[str] = frozenset(
         "knowledge.ingest_cancel",
         "knowledge.source.inspect",
         # pages of their own
+        "memory.agents_list",
         "conversation.delete",
         "conversation.update",
         "cost.agent_summary",
