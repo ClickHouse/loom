@@ -145,7 +145,7 @@ async def test_tune_cuts_the_documents_again_and_writes_nothing(
     # The failed source is said, and no route is invented: the server's extractor
     # declares parquet now (the reference extractor does), or none does.
     assert "settings.document_extractors_json" not in targets
-    served = {f["format"]: f["available"] for f in formats["formats"]}["parquet"]
+    served = next(f["available"] for f in formats["formats"] if f["format"] == "parquet")
     said = (
         "the service they go to declares it now"
         if served
