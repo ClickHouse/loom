@@ -137,7 +137,7 @@
  ],
  "loom knowledge migrate-originals": [
   "usage: loom knowledge migrate-originals [-h] [--org ORG] [--namespace NAMESPACE] [--dry-run]",
-  "options: -h, --help show this help message and exit --org ORG Only this org's originals --namespace NAMESPACE Only this namespace of --org --dry-run Count the originals held in ClickHouse; move none"
+  "options: -h, --help show this help message and exit --org ORG Only this org's originals --namespace NAMESPACE Only this namespace of --org --dry-run Count the originals held in ClickHouse; move none. Exits 1 when a namespace would be refused"
  ],
  "loom export-okf": [
   "usage: loom export-okf [-h] [--server-url SERVER_URL] [--token TOKEN] [--org ORG] --namespace NAMESPACE --out OUT [--title TITLE] [--include-tombstoned] [--limit LIMIT] [--dry-run] [--no-evidence] [--no-links] [--include-high]",

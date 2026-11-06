@@ -57,6 +57,22 @@ def test_a_dry_run_sizes_the_move_before_the_store_is_switched(
     assert "3 original(s), 300 bytes, held in ClickHouse" in capsys.readouterr().out
 
 
+def test_a_dry_run_that_lists_a_refused_namespace_exits_1(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.knowledge.app import originals
+
+    async def counted(**kw: Any) -> originals.Migrated:
+        return originals.Migrated(
+            refused=["acme/docs: erasure e1 (namespace, in_progress) covers it"]
+        )
+
+    monkeypatch.setattr(knowledge, "run_connected", _connected)
+    monkeypatch.setattr(originals, "migrate_originals", counted)
+    assert knowledge._cmd_migrate_originals(_args(dry_run=True)) == 1
+    assert "refused: acme/docs: erasure e1" in capsys.readouterr().err
+
+
 def test_an_unconfirmed_switch_is_printed_when_an_error_stops_the_run(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

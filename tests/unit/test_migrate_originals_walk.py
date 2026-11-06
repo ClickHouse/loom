@@ -15,7 +15,7 @@ from server.knowledge.store import blobs
 
 
 def _held(n: int) -> blobs.Held:
-    return blobs.Held("acme", "docs", f"{n:064x}", 10)
+    return blobs.Held("acme", "docs", f"{n:064x}", 10, 0)
 
 
 @pytest.mark.asyncio
@@ -176,7 +176,7 @@ async def test_a_refused_cleanup_delete_leaves_the_object_to_the_bucket_walk(
     from server.core import object_store as objects
 
     data = b"replaced meanwhile"
-    held = blobs.Held("acme", "docs", hashlib.sha256(data).hexdigest(), len(data))
+    held = blobs.Held("acme", "docs", hashlib.sha256(data).hexdigest(), len(data), 0)
 
     async def ch_now_s(*, ch: Any = None) -> int:
         return 0

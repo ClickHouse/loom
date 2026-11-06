@@ -376,14 +376,15 @@ async def test_a_row_replaced_since_the_walk_is_kept(
     page = await blobs.held_in_clickhouse(org, ns, "", 10, ch=ch)
     assert page.after == sha
     (held,) = page.held
-    assert held == blobs.Held(org, ns, sha, 5)
+    assert (held.org, held.namespace, held.sha, held.size) == (org, ns, sha, 5)
+    assert held.version_ms > 0
     # Uploaded again on the bucket store after the walk read the row.
     await blobs.put(org, ns, b"raced", ch=ch)
     uploaded = await blobs.locate(org, ns, sha, ch=ch)
     assert await originals.move_to_bucket(held, ch=ch) is False
     assert await blobs.locate(org, ns, sha, ch=ch) == uploaded
     # An original no row holds any more has nothing to move.
-    gone = blobs.Held(org, ns, "0" * 64, 1)
+    gone = blobs.Held(org, ns, "0" * 64, 1, 0)
     assert await originals.move_to_bucket(gone, ch=ch) is False
 
 
@@ -455,7 +456,9 @@ async def _held_another(
     sha = await blobs.put(org, ns, data, ch=ch)
     await _document(ch, org, ns, sha, uri=f"docs/{sha[:12]}-b.md")
     monkeypatch.setattr(settings, "document_object_store", "s3")
-    return blobs.Held(org, ns, sha, len(data))
+    page = await blobs.held_in_clickhouse(org, ns, "", 10, ch=ch)
+    (held,) = (h for h in page.held if h.sha == sha)
+    return held
 
 
 @pytest.mark.asyncio
@@ -661,6 +664,37 @@ async def test_a_namespace_erasure_as_the_row_lands_takes_the_move_back(
         assert await originals.move_to_bucket(held, ch=ch) is False
         assert await blobs.locate(org, ns, held.sha, ch=ch) is None
         assert not _keys(s3, object_store.namespace_prefix(org, ns))
+
+
+@pytest.mark.asyncio
+async def test_a_take_back_after_a_merge_keeps_a_re_upload_that_raced_the_switch(
+    s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The namespace's erasure deletes the original, the same bytes are uploaded again, and
+    # then the switched row lands. The switch is versioned after the row the walk read, so
+    # the re-upload wins the merge that runs before the take-back, and the take-back
+    # deletes nothing of it.
+    async def erased_then_uploaded(org: str, ns: str) -> None:
+        await steps_memory.delete_document_blobs_by_namespace(org, ns, ch=ch)
+        await blobs.put(org, ns, b"erased as it lands", uploader="bob", ch=ch)
+
+    org, ns, held, landed = await _raced(
+        ch, s3, monkeypatch, "objstore-race-merged", [("namespace", "docs")], erased_then_uploaded
+    )
+    unwrite = blobs.unwrite
+
+    async def merged_then_unwrite(*a: Any, **kw: Any) -> None:
+        await ch.execute(f"OPTIMIZE TABLE {blobs.TABLE} FINAL")
+        await unwrite(*a, **kw)
+
+    monkeypatch.setattr(blobs, "unwrite", merged_then_unwrite)
+    assert await originals.move_to_bucket(held, ch=ch) is False
+    stored = await blobs.locate(org, ns, held.sha, ch=ch)
+    assert stored is not None and stored.location and stored.location != landed[0]
+    assert await blobs.read(org, ns, held.sha, stored=stored, ch=ch) == b"erased as it lands"
+    assert _keys(s3, object_store.namespace_prefix(org, ns)) == [
+        objects_key(stored.location, s3[1])
+    ]
 
 
 @pytest.mark.asyncio

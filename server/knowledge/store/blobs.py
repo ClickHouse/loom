@@ -33,7 +33,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.core import object_store as objects
@@ -51,6 +51,7 @@ UPLOADS = "loom.blob_uploads"
 _NS = "org = {org:String} AND namespace = {ns:String}"
 _KEY = f"{_NS} AND sha256 = {{sha:String}}"
 _IN_KEYS = "(org, namespace, sha256) IN {keys:Array(Tuple(String, String, String))}"
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 # Rows written before a cutoff read from the ClickHouse clock and bound: a replicated
 # table refuses now64() in a mutation.
@@ -195,6 +196,9 @@ class Held:
     namespace: str
     sha: str
     size: int
+    # The latest row's created_at in epoch milliseconds: the switching row is one later,
+    # so a write after the walk's read outranks it.
+    version_ms: int
 
 
 @dataclass(frozen=True)
@@ -229,12 +233,13 @@ async def held_in_clickhouse(
         return HeldPage([], "")
     upper = str(last["last"])
     rows = await ch.query_all(
-        f"SELECT toString(sha256) AS sha, argMax(size, created_at) AS size FROM {TABLE} "
+        f"SELECT toString(sha256) AS sha, argMax(size, created_at) AS size, "
+        f"toUnixTimestamp64Milli(max(created_at)) AS version_ms FROM {TABLE} "
         f"WHERE {_NS} AND sha256 > {{after:String}} AND sha256 <= {{upper:String}} "
         "GROUP BY sha256 HAVING argMax(location, created_at) = '' ORDER BY sha256",
         params={**scope, "upper": upper},
     )
-    held = [Held(org, namespace, str(r["sha"]), int(r["size"])) for r in rows]
+    held = [Held(org, namespace, str(r["sha"]), int(r["size"]), int(r["version_ms"])) for r in rows]
     return HeldPage(held, upper)
 
 
@@ -262,8 +267,11 @@ async def needed(
 
 
 async def switch_to(held: Held, loc: objects.Location, *, ch: _CHClient | None = None) -> None:
-    """Write the catalog row that switches the original to the object at `loc`: a later
-    version of its key, with no bytes."""
+    """Write the catalog row that switches the original to the object at `loc`: the next
+    version of its key after the row the walk read, with no bytes. Stamped one millisecond
+    after that row rather than now, so a re-upload that lands after the walk's read
+    outranks the switch in every merge, and taking the switch back (`unwrite`) can only
+    remove the move's own version."""
     ch = ch or _default_client()
     await ch.insert(
         TABLE,
@@ -275,6 +283,7 @@ async def switch_to(held: Held, loc: objects.Location, *, ch: _CHClient | None =
                 "size": held.size,
                 "data": b"",
                 "location": loc.uri(),
+                "created_at": _EPOCH + timedelta(milliseconds=held.version_ms + 1),
             }
         ],
         settings={"async_insert": 0},

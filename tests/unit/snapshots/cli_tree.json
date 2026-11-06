@@ -3882,7 +3882,7 @@
            "nargs": 0,
            "type": null,
            "required": false,
-           "help": "Count the originals held in ClickHouse; move none",
+           "help": "Count the originals held in ClickHouse; move none. Exits 1 when a namespace would be refused",
            "metavar": null
           }
          ]

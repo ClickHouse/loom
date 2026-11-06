@@ -55,7 +55,10 @@ def register_knowledge_cli(sub: Any) -> None:
     p_move.add_argument("--org", default="", help="Only this org's originals")
     p_move.add_argument("--namespace", default="", help="Only this namespace of --org")
     p_move.add_argument(
-        "--dry-run", action="store_true", help="Count the originals held in ClickHouse; move none"
+        "--dry-run",
+        action="store_true",
+        help="Count the originals held in ClickHouse; move none. Exits 1 when a namespace would "
+        "be refused",
     )
     p_move.set_defaults(func=_cmd_migrate_originals)
 
@@ -115,7 +118,7 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
             )
             for line in counted.refused:
                 print(f"refused: {line}", file=sys.stderr)
-            return 0
+            return 1 if counted.refused else 0
         object_store.require_client()
         result = Migrated()
         try:

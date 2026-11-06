@@ -121,7 +121,6 @@ def original_prefix(org: str, namespace: str, sha: str) -> str:
     return f"{namespace_prefix(org, namespace)}{sha}/"
 
 
-# A write id is a uuid4's hex: 32 characters.
 _WRITE_ID_LEN = 32  # not a setting: the length of a uuid4 hex
 
 
