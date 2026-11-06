@@ -1,7 +1,8 @@
 import { Button } from "@clickhouse/click-ui/Button";
-import type { InspectSubject, InventoryPlane, InventoryPopulation, NamespaceInventory } from "../../api";
+import type { InspectSubject, InventoryPlane, InventoryPopulationName, NamespaceInventory } from "../../api";
 import { NameBadge } from "../../components/AgentBadge";
 import { Unavailable } from "../../components/ui";
+import { Tip } from "../../components/ui/Tooltip";
 import { ListTime } from "../../components/ui/ListTime";
 import { displayAgent, fmtInt } from "../../lib/format";
 
@@ -46,21 +47,22 @@ export function InventorySections({ inventory }: { inventory: NamespaceInventory
   );
 }
 
-// The population the overview lists for each subject; sessions are not listed.
-export const POPULATION_OF: Record<InspectSubject, InventoryPopulation["population"] | null> = {
-  user: "subjects",
-  agent: "agents",
-  session: null,
+// The subject each listed population can be inspected as; sessions are not listed.
+export const SUBJECT_OF: Partial<Record<InventoryPopulationName, InspectSubject>> = {
+  subjects: "user",
+  agents: "agent",
 };
 
-const POPULATION_LABEL: Record<InventoryPopulation["population"], { title: string; what: string }> = {
+const POPULATION_LABEL: Record<InventoryPopulationName, { title: string; what: string }> = {
   subjects: { title: "Users", what: "users that memories are filed under" },
   agents: { title: "Agents", what: "agents that wrote memories" },
   authors: { title: "Authors", what: "people and services that wrote memories" },
   members: { title: "Members", what: "people with access to this namespace" },
 };
 
-const ORDER: InventoryPopulation["population"][] = ["subjects", "agents", "authors", "members"];
+const ORDER: InventoryPopulationName[] = ["subjects", "agents", "authors", "members"];
+// A population this page does not know yet goes last.
+const rank = (p: InventoryPopulationName) => (ORDER.includes(p) ? ORDER.indexOf(p) : ORDER.length);
 
 /** Who appears in the namespace. Users and agents are buttons that inspect that subject;
  *  authors and members are listed only, as no inspection is filed under them. Members are
@@ -74,14 +76,12 @@ export function InventoryPopulations({
   onPick: (subject: InspectSubject, id: string) => void;
   pickBlocked: string | null;
 }) {
-  const populations = [...inventory.populations].sort(
-    (a, b) => ORDER.indexOf(a.population) - ORDER.indexOf(b.population),
-  );
+  const populations = [...inventory.populations].sort((a, b) => rank(a.population) - rank(b.population));
   return (
     <ul className="space-y-3" data-testid="assistant-populations">
       {populations.map((p) => {
         const label = POPULATION_LABEL[p.population] ?? { title: p.population, what: "" };
-        const subject = (Object.keys(POPULATION_OF) as InspectSubject[]).find((s) => POPULATION_OF[s] === p.population);
+        const subject = SUBJECT_OF[p.population];
         return (
           <li key={p.population} data-population={p.population}>
             <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
@@ -90,41 +90,43 @@ export function InventoryPopulations({
               <span className="text-xs text-text-muted">{label.what}</span>
             </div>
             {p.total !== null && p.top.length > 0 && p.total > p.top.length && (
-              <p className="text-xs text-text-muted">
-                The {fmtInt(p.top.length)} with the most memories are shown
-                {subject ? "; type any other in the field below." : "."}
-              </p>
+              <p className="text-xs text-text-muted">The {fmtInt(p.top.length)} with the most memories are shown.</p>
             )}
             {!p.complete && <p className="text-xs text-text-muted">Not complete: {p.reason || "no reason given"}</p>}
             {p.top.length > 0 && (
               <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label={`${label.title}, most memories first`}>
-                {p.top.map((who) => (
-                  <li key={who.name} className="inline-flex items-center gap-1 text-xs text-text-muted tabular">
-                    {subject ? (
-                      <Unavailable reason={pickBlocked}>
-                        <Button
-                          type="secondary"
-                          htmlType="button"
-                          onClick={() => onPick(subject, who.name)}
-                          data-testid={`pick-${subject}`}
-                          title={who.name}
-                        >
-                          <span className="truncate max-w-[24ch]">
-                            {subject === "agent" ? displayAgent(who.name) : who.name}
-                          </span>{" "}
-                          <span className="ml-1.5 text-text-muted tabular">
-                            {fmtInt(who.rows)} <span className="sr-only">memories</span>
-                          </span>
-                        </Button>
-                      </Unavailable>
-                    ) : (
-                      <>
-                        <NameBadge name={who.name} />
-                        {fmtInt(who.rows)}
-                      </>
-                    )}
-                  </li>
-                ))}
+                {p.top.map((who) => {
+                  const pick = subject && (
+                    <Button
+                      type="secondary"
+                      htmlType="button"
+                      onClick={() => onPick(subject, who.name)}
+                      data-testid={`pick-${subject}`}
+                    >
+                      <span className="truncate max-w-[24ch]">
+                        {subject === "agent" ? displayAgent(who.name) : who.name}
+                      </span>{" "}
+                      <span className="ml-1.5 text-text-muted tabular">
+                        {fmtInt(who.rows)} <span className="sr-only">memories</span>
+                      </span>
+                    </Button>
+                  );
+                  return (
+                    <li key={who.name} className="inline-flex items-center gap-1 text-xs text-text-muted tabular">
+                      {/* A blocked pick's tip says why; an open one's shows the whole id. */}
+                      {!pick ? (
+                        <>
+                          <NameBadge name={who.name} />
+                          {fmtInt(who.rows)}
+                        </>
+                      ) : pickBlocked ? (
+                        <Unavailable reason={pickBlocked}>{pick}</Unavailable>
+                      ) : (
+                        <Tip content={who.name}>{pick}</Tip>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </li>

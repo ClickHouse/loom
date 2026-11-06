@@ -18,8 +18,8 @@ const OWN_HEADING = {
 const TOP_TAGS = 20;
 const SUBJECT_NAME = { user: "User", agent: "Agent", session: "Session" } as const;
 
-/** "Analyze one user's memories" (or an agent's, or a session's): the subject's own rows
- *  as the server defines them, apart from every other live row, and what creates them. */
+/** What one user, agent or session remembers: the subject's own rows as the server defines
+ *  them, apart from every other live row, and what creates them. */
 export function Inspection({ result }: { result: MemoryInspection }) {
   // A section the server could not read is named in `skipped` as `<section>: <error>`;
   // its fields then hold defaults, not answers.

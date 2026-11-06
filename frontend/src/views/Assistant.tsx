@@ -27,7 +27,7 @@ import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { useStore } from "../lib/state";
 import { DocumentInspection } from "./assistant/DocumentInspection";
 import { Inspection } from "./assistant/Inspection";
-import { InventoryPopulations, InventoryScopeNote, InventorySections, POPULATION_OF } from "./assistant/Inventory";
+import { InventoryPopulations, InventoryScopeNote, InventorySections, SUBJECT_OF } from "./assistant/Inventory";
 import { ReviewChanges } from "./assistant/ReviewChanges";
 import { tokenReadScope } from "./assistant/tokenScope";
 import { useScopedRead } from "./assistant/useScopedRead";
@@ -39,17 +39,23 @@ import { useScopedRead } from "./assistant/useScopedRead";
  * read is deterministic (no model) and read-only; a draft is never applied here.
  */
 
-// What the id field is called for each subject, and what its button says while it is empty,
-// with suggestions above it and without.
-const SUBJECT_COPY: Record<InspectSubject, { label: string; field: string; pick: string; type: string }> = {
-  user: { label: "User", field: "User id", pick: "Pick a user above or type an id.", type: "Type a user id." },
-  agent: { label: "Agent", field: "Agent", pick: "Pick an agent above or type its name.", type: "Type an agent name." },
-  session: { label: "Session", field: "Session id", pick: "Type a session id.", type: "Type a session id." },
+const SUBJECTS: Array<{ value: InspectSubject; label: string }> = [
+  { value: "user", label: "User" },
+  { value: "agent", label: "Agent" },
+  { value: "session", label: "Session" },
+];
+
+// The id field's label for each subject, and the Inspect button's reason while the field
+// is empty, with names suggested above it and without.
+const SUBJECT_COPY: Record<InspectSubject, { field: string; emptyWithSuggestions: string; empty: string }> = {
+  user: { field: "User id", emptyWithSuggestions: "Pick a user above or type an id.", empty: "Type a user id." },
+  agent: {
+    field: "Agent",
+    emptyWithSuggestions: "Pick an agent above or type its name.",
+    empty: "Type an agent name.",
+  },
+  session: { field: "Session id", emptyWithSuggestions: "Type a session id.", empty: "Type a session id." },
 };
-const SUBJECTS = (Object.keys(SUBJECT_COPY) as InspectSubject[]).map((value) => ({
-  value,
-  label: SUBJECT_COPY[value].label,
-}));
 
 export function Assistant() {
   const identity = useStore((s) => s.identity);
@@ -82,22 +88,24 @@ export function Assistant() {
     tokenScope?.readScope === "own_session" || (tokenScope?.readScope === "own_user" && !tokenScope.readUserId);
   const gate = (op: "namespace.inventory" | "knowledge.inspect" | "memory.inspect" | "namespace.tune") => {
     const scoped = op === "namespace.inventory" || op === "knowledge.inspect";
-    return !canCall(op, role, whoami)
-      ? "Your role on this namespace is not known."
-      : incomplete && scoped
-        ? "Your token's read scope needs a user or session id this page does not send."
-        : narrowed && !scoped
-          ? "Your token is bound to one user or session; inspecting memories and drafting need a token for the whole namespace."
-          : null;
+    return roleLoading
+      ? "Your role on this namespace is still loading."
+      : !canCall(op, role, whoami)
+        ? "Your role on this namespace is not known."
+        : incomplete && scoped
+          ? "Your token's read scope needs a user or session id this page does not send."
+          : narrowed && !scoped
+            ? "Your token is bound to one user or session; inspecting memories and drafting need a token for the whole namespace."
+            : null;
   };
   const overviewGate = gate("namespace.inventory");
   const memoryGate = gate("memory.inspect");
   const documentsGate = gate("knowledge.inspect");
   const tuneGate = gate("namespace.tune");
   const copy = SUBJECT_COPY[subject];
-  const population = POPULATION_OF[subject];
-  const suggestions = inventory.data?.populations.find((p) => p.population === population)?.top ?? [];
-  const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : suggestions.length ? copy.pick : copy.type);
+  const suggestions = inventory.data?.populations.find((p) => SUBJECT_OF[p.population] === subject)?.top ?? [];
+  const inspectBlocked =
+    memoryGate ?? (subjectId.trim() ? null : suggestions.length ? copy.emptyWithSuggestions : copy.empty);
 
   const org = identity?.org ?? "";
   const namespace = identity?.namespace ?? "";
@@ -151,7 +159,7 @@ export function Assistant() {
             </GatedButton>
           }
         />
-        {overviewGate && roleLoading ? (
+        {roleLoading ? (
           <Loading layout="inline" label="Loading the overview" />
         ) : overviewGate ? (
           <p className="text-sm text-text-muted">{overviewGate}</p>
@@ -193,7 +201,7 @@ export function Assistant() {
         >
           <ButtonGroup
             aria-label="Whose memories"
-            options={SUBJECTS.map(({ value, label }) => ({ value, label }))}
+            options={SUBJECTS}
             selected={subject}
             onClick={(v) => setSubject(v as InspectSubject)}
           />
@@ -305,8 +313,7 @@ export function Assistant() {
         <SectionHeading id="assistant-improve" level={2} label="Improve this namespace" />
         <p className="text-sm text-text-muted mb-3 max-w-[72ch]">
           Draft changes to the categories, guide and extraction instructions that shape new memories, and to how
-          documents are split. Drafts are suggestions: each says what to change and why, and someone who can write here
-          applies it.
+          documents are split. Drafts are suggestions: each says what to change, why, and who applies it.
         </p>
         <GatedButton
           reason={tuneGate}

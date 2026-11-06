@@ -893,6 +893,10 @@ describe("Assistant: overview", () => {
     expect(await screen.findByText("Loading the overview")).toBeInTheDocument();
     const overview = screen.getByRole("region", { name: "Overview" });
     expect(within(overview).queryByText("Your role on this namespace is not known.", { selector: "p" })).toBeNull();
+    for (const name of ["Refresh", "Inspect memories", "Inspect documents", "Draft improvements"])
+      expect(screen.getByRole("button", { name })).toHaveAccessibleDescription(
+        "Your role on this namespace is still loading.",
+      );
     expect(namespaceInventory).not.toHaveBeenCalled();
     await act(async () => answer([row("team", "viewer")]));
     await screen.findByTestId("assistant-inventory");
@@ -971,7 +975,7 @@ describe("Assistant: overview", () => {
     const options = () => Array.from(document.querySelectorAll("#assistant-subject-suggestions option"));
     expect(options().map((o) => o.getAttribute("value"))).toEqual(["ada"]);
     await userEvent.click(screen.getByRole("button", { name: "Agent" }));
-    expect(options().map((o) => o.getAttribute("value"))).toEqual(["claude-code"]);
+    expect(options().map((o) => [o.getAttribute("value"), o.textContent])).toEqual([["claude-code", "claude-code"]]);
     await userEvent.click(screen.getByRole("button", { name: "Session" }));
     expect(screen.getByLabelText("Session id")).not.toHaveAttribute("list");
   });
@@ -986,7 +990,7 @@ describe("Assistant: overview", () => {
     const subjects = within(list)
       .getAllByRole("listitem")
       .find((li) => li.getAttribute("data-population") === "subjects");
-    expect(subjects).toHaveTextContent("The 1 with the most memories are shown; type any other in the field below.");
+    expect(subjects).toHaveTextContent("The 1 with the most memories are shown.");
   });
 
   it("says the counts are bound to the user the token is pinned to", async () => {

@@ -78,10 +78,13 @@ function writeName(a: TuneApply): string {
   return a.op;
 }
 
+/** A required role as a reader says it: `platform_admin` is "platform admin". */
+const roleName = (role: string) => role.replaceAll("_", " ");
+
 /** Who makes the change and how, since this page applies no draft. */
 function howToApply(p: TuneProposal): string {
   const a = p.apply;
-  const role = a.required_role.replaceAll("_", " ");
+  const role = roleName(a.required_role);
   const who = `${/^[aeiou]/i.test(role) ? "An" : "A"} ${role}`;
   if (a.via === "environment")
     return `${who} sets the variable below in the deployment; it takes effect once each server and worker restarts.`;
@@ -101,7 +104,7 @@ function ApplyBlock({ apply: a, testId }: { apply: TuneApply; testId: string }) 
   return (
     <div className="space-y-1" data-via={a.via ?? "op"}>
       <p className="text-xs text-text-muted">
-        <span className="font-mono">{writeName(a)}</span> · {a.required_role} · {a.guard}
+        <span className="font-mono">{writeName(a)}</span> · {roleName(a.required_role)} · {a.guard}
       </p>
       <p className="text-xs text-text-muted">{argsCaption(a)}</p>
       <CodeBlock testId={testId}>{JSON.stringify(a.args, null, 2)}</CodeBlock>
