@@ -149,12 +149,13 @@ test-mixed-version:
 	$(PYTHON) scripts/gates/mixed_version.py $(if $(BASE),--base $(BASE),) $(if $(REQUIRE),--require,)
 
 # Unit suite + coverage, as the CI `unit` parts and `unit-coverage` measure it
-# together. Fails under the floor.
+# together: branch coverage, the 40% floor, then the per-module floors.
 test-unit-cov:
 	$(PYTHON) -m pytest tests/unit -q -n auto \
-		--cov=server --cov=sdk/python/loom \
-		--cov-report=term-missing --cov-report=xml \
+		--cov=server --cov=sdk/python/loom --cov-branch \
+		--cov-report=term-missing --cov-report=xml --cov-report=json:coverage.json \
 		--cov-fail-under=40
+	$(PYTHON) -m tests.inventory.coverage_floors coverage.json
 
 ingest:
 	@if [ -z "$(FILE)" ]; then echo "usage: make ingest FILE=path/to/doc.md [TAGS=foo,bar]"; exit 2; fi

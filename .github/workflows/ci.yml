@@ -169,7 +169,9 @@ jobs:
           pytest tests/unit -q -n auto -p randomly --randomly-seed="$SEED" --durations=15 \
             --cov=server --cov=sdk/python/loom --cov-branch --cov-report= \
             --junitxml=junit-unit-${{ matrix.part }}.xml
+      # Also after a failure: the failing part's test times are what a reader needs.
       - name: Upload this part's coverage data and test times
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-unit-${{ matrix.part }}
@@ -177,7 +179,7 @@ jobs:
             .coverage.unit-${{ matrix.part }}
             junit-unit-${{ matrix.part }}.xml
           include-hidden-files: true
-          if-no-files-found: error
+          if-no-files-found: warn
 
   unit-coverage:
     name: pytest unit coverage, floors and bench

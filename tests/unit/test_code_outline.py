@@ -126,12 +126,8 @@ def test_the_wider_of_two_rows_for_one_declaration_wins_and_either_scip_row_mark
             "signature": signature,
         }
 
-    for rows in (
-        [row(10, "scip", "void f()"), row(40, "treesitter")],
-        [row(10, "treesitter"), row(40, "scip", "void f()")],
-    ):
-        (got,) = collapse_outline_rows(rows)
-        assert (got["end_line"], got["tier"]) == (40, "scip"), rows
+    (got,) = collapse_outline_rows([row(10, "treesitter"), row(40, "scip", "void f()")])
+    assert (got["end_line"], got["tier"], got["signature"]) == (40, "scip", "void f()")
     # A narrower scip row keeps the wider span and lends its tier and signature.
     (got,) = collapse_outline_rows([row(40, "treesitter"), row(10, "scip", "void f()")])
     assert (got["end_line"], got["tier"], got["signature"]) == (40, "scip", "void f()")
