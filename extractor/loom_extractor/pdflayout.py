@@ -543,14 +543,20 @@ def drawing(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> Draw
                     Picture(None, list(ctm), (min(xs), min(ys), max(xs), max(ys)))
                 )
                 if len(largest_inline) > _MAX_INLINE:  # the smallest goes: only size matters
-                    largest_inline.remove(min(largest_inline, key=lambda p: p.area))
+                    del largest_inline[
+                        min(range(len(largest_inline)), key=lambda i: largest_inline[i].area)
+                    ]
             elif op == b"Do" and operands and depth < _MAX_FORM_DEPTH and resources is not None:
                 xobjects = resources.get_object().get("/XObject")
                 if not xobjects:
                     continue
                 ref = xobjects.get_object().get(operands[0])
                 form = ref.get_object() if ref is not None else None
-                if form is not None and form.get("/Subtype") == "/Image":
+                # a name that resolves to no object: it may have been an image
+                if form is None or not hasattr(form, "get"):
+                    cut[0] = True
+                    continue
+                if form.get("/Subtype") == "/Image":
                     corners = [to(*tp(u, v)) for u, v in ((0, 0), (1, 0), (1, 1), (0, 1))]
                     xs, ys = [c[0] for c in corners], [c[1] for c in corners]
                     # an image drawn again (a tiled logo) is collected once

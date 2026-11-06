@@ -116,6 +116,8 @@ def _has_image(
         return False
     for ref in xobjects.get_object().values():
         x = ref.get_object()
+        if not hasattr(x, "get"):  # an entry that names no object: it may have been an image
+            return True
         if x.get("/Subtype") == "/Image" and not inline_only:
             return True
         # An indirect object by its number; a direct one (no number) is its own.
@@ -298,12 +300,12 @@ def _read_layout(
         p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p) for p in shown_inline
     ):
         problems.append("a picture drawn inline covers a fifth of it, which OCR does not read")
-    elif not texted and targets and draws_inline:
+    elif not texted and targets and draws_inline and drew is not None and drew.whole:
         problems.append("it draws a picture inline beside those OCR read, which OCR does not read")
     if drew is None and texted and _has_image(page, reader):
         problems.append("its drawing could not be read, so a picture on it may be unread")
     if drew is not None and not drew.whole and (pictures or _has_image(page, reader)):
-        problems.append("it draws more than its drawing is read for, so a picture may be unread")
+        problems.append("not every picture it draws could be collected, so one may be unread")
     if problems:
         if texted:
             read.partial = (
@@ -671,9 +673,20 @@ def extract_pdf(data: bytes) -> Artifact:
             raise
         except Exception as e:  # noqa: BLE001 — a page whose layout cannot be read is read as its text layer
             read.lines, read.pictured, read.ocr = [], [], False
-            if not read.text.strip() and _has_image(page, reader):
+            try:
+                imaged = _has_image(page, reader)
+            except MemoryError:
+                raise
+            except Exception:  # noqa: BLE001 — what the page draws is unknown: it may be an image
+                imaged = True
+            if not read.text.strip() and imaged:
                 read.failure = (
                     f"no text layer, and its layout could not be read: {type(e).__name__}"
+                )
+            elif imaged:  # its text is read; a picture it draws may not be
+                read.partial = (
+                    "its layout could not be read, so a picture on it may be unread:"
+                    f" {type(e).__name__}"
                 )
     shift = _lay_out(reads, page_rules, outline_given=bool(outline), warnings=warnings)
     acc = Blocks()

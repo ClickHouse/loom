@@ -4,6 +4,7 @@ engine is a fake: the tests need no Tesseract."""
 
 from __future__ import annotations
 
+import re
 import zlib
 from dataclasses import dataclass, field
 from io import BytesIO
@@ -579,7 +580,7 @@ def test_a_text_page_whose_pictures_are_not_all_collected_is_partial(
     assert not a.coverage.complete and engine.seen == []
     assert a.coverage.failed[0].reason == (
         "OCR did not read all of its pictures:"
-        " it draws more than its drawing is read for, so a picture may be unread"
+        " not every picture it draws could be collected, so one may be unread"
     )
 
 
@@ -780,3 +781,24 @@ def test_a_text_page_whose_drawing_fails_beside_an_image_is_partial(
         "OCR did not read all of its pictures:"
         " its drawing could not be read, so a picture on it may be unread"
     ]
+
+
+def _dangling(pdf: bytes) -> bytes:
+    """`pdf` with its /Im1 naming an object the file does not hold."""
+    return re.sub(rb"/Im1 \d+ 0 R", b"/Im1 99 0 R", pdf, count=1)
+
+
+def test_a_scan_whose_image_is_dangling_fails_its_page_not_the_file(engine: FakeEngine) -> None:
+    pages = [b"q 400 0 0 400 100 200 cm /Im1 Do Q", text_at(72, 740, "A second page of text.")]
+    a = extract(_dangling(laid_out_pdf(pages, image=GRAY)), "d.pdf")
+    assert [f.unit for f in a.coverage.failed] == ["page 1"]
+    assert [b.text for b in a.blocks] == ["A second page of text."]
+
+
+def test_a_text_page_whose_image_is_dangling_is_partial(engine: FakeEngine) -> None:
+    text = text_at(72, 740, "A page of text and a screenshot.")
+    a = extract(
+        _dangling(laid_out_pdf([text + b"q 400 0 0 300 100 300 cm /Im1 Do Q"], image=GRAY)), "t.pdf"
+    )
+    assert [b.text for b in a.blocks] == ["A page of text and a screenshot."]
+    assert not a.coverage.complete and len(a.coverage.failed) == 1
