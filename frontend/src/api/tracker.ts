@@ -142,7 +142,7 @@ export async function trackerItem(
 /** The tracker sources of the org and where the caller stands on each of their namespaces
  *  — the `code.repos` of the tracker plane. `tracker.source.list` is org-level, viewer
  *  role, experimental; this literal is its dashboard reach in the manifest
- *  (`server/operations/reach_manifest.py`, `plugin_hook`). A deployment that does not
+ *  (`server/operations/reach_manifest.py`, `dashboard`). A deployment that does not
  *  serve it answers 404, which the section renders as a stated result. */
 export async function listTrackerSources(
   org: string,

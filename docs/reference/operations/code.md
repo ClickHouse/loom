@@ -895,7 +895,7 @@ Health of the code index: indexed head commit, compiler-tier commit, row counts,
 | `ops` | `list[str]` | Every served `code.*` operation, sorted; empty in the brief answer. |
 | `request_fields` | `dict[str, list[str]]` | Per served op, the request fields its input model accepts; empty in the brief answer. |
 | `op_maturity` | `dict[str, str]` | Per served op, its maturity (stable \| experimental) and the reach kinds a caller has to it. |
-| `op_reach` | `dict[str, list[str]]` | Per served op, its reach kinds (mcp_core \| mcp_atomic \| mcp_all \| sdk_method \| sdk_example \| plugin_hook \| http_only); empty in the brief answer. |
+| `op_reach` | `dict[str, list[str]]` | Per served op, its reach kinds (mcp_core \| mcp_atomic \| mcp_all \| sdk_method \| sdk_example \| plugin_hook \| dashboard \| http_only); empty in the brief answer. |
 | `op_toolsets` | `dict[str, list[str]]` | Per served op, every MCP toolset whose listing carries it (core \| coding \| atomic \| all; empty when hidden). |
 | `symbol_stats_rows` | `int` | The weekly symbol fan-in table for this namespace — live rows with callers and the newest pass stamp (ISO 8601, UTC). 0 / "" = the pass has not written it: every `fan_in` field, the fan-in sort and the rank prior answer empty. |
 | `symbol_stats_at` | `str` | The newest fan-in pass stamp (ISO-8601 UTC); '' when the pass has not written the table. |

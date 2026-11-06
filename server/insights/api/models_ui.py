@@ -6,7 +6,7 @@ times the browser measured, the node and call counts, the bundle's build.
 The ledger row the transport writes for every operation is the record;
 deploy-delta reads those rows per route, before and after a swap. Dashboard
 only: hidden from the MCP listing, experimental maturity, reached only from
-the dashboard source (`plugin_hook`).
+the dashboard source (`dashboard`).
 """
 
 from __future__ import annotations

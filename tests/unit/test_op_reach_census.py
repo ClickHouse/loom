@@ -128,7 +128,7 @@ def test_a_test_beside_its_source_is_not_reach(tmp_path):
     (src / "Page.tsx").write_text('post("/v1/memory.pin");\n')
     (src / "Page.test.tsx").write_text('const OP = "memory.unpin";\n')
     derived = derive_static_reach(tmp_path)
-    assert derived.get("memory.pin") == ("plugin_hook",)
+    assert derived.get("memory.pin") == ("dashboard",)
     assert "memory.unpin" not in derived
 
 
@@ -139,8 +139,8 @@ def test_manifest_finds_the_known_reach_paths():
     assert "sdk_example" in op_reach("memory.set")
     # plugin hook: loom-working-memory.mjs posts working_memory.append
     assert "plugin_hook" in op_reach("working_memory.append")
-    # dashboard: frontend/src/views/admin/Health.tsx reads ops.health
-    assert "plugin_hook" in op_reach("ops.health")
+    # dashboard: frontend/src/api/admin.ts posts ops.health
+    assert "dashboard" in op_reach("ops.health") and "plugin_hook" not in op_reach("ops.health")
 
 
 # ------------------------------------------------------------------ the exposed verbs

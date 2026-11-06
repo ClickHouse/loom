@@ -16,8 +16,10 @@ ops go uncalled. This module derives, per op, the set of reach kinds:
                  SDK method.
 ``plugin_hook``  a first-party client that is neither the SDK nor an MCP
                  listing names it: the Claude Code plugin hooks, the gateway
-                 and shim integrations (``integrations/``), the dashboard
-                 (``frontend/src``).
+                 and shim integrations (``integrations/``).
+``dashboard``    the dashboard posts it: a quoted ``"/v1/<op>"`` call site in
+                 ``frontend/src`` (tests and test helpers aside). An op without
+                 it is named in ``server.operations.dashboard`` with the reason.
 ``http_only``    none of the above — a raw ``/v1/*`` POST is the only path.
 
 The MCP kinds derive live from ``server.operations.toolsets``. The file-scan
@@ -42,13 +44,14 @@ REACH_KINDS: frozenset[str] = frozenset(
         "sdk_method",
         "sdk_example",
         "plugin_hook",
+        "dashboard",
         "http_only",
     }
 )
 
 # Kinds the file scan produces (everything but the live MCP kinds and the
 # fallback), in the order the manifest and the census table print them.
-STATIC_KINDS: tuple[str, ...] = ("sdk_method", "sdk_example", "plugin_hook")
+STATIC_KINDS: tuple[str, ...] = ("sdk_method", "sdk_example", "plugin_hook", "dashboard")
 
 
 def mcp_reach(name: str) -> set[str]:

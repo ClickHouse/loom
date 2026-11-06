@@ -184,7 +184,7 @@ class CodeIndexStatusOutput(BaseModel):
     # kinds a caller has to it.
     op_maturity: dict[str, str] = Field(default_factory=dict)
     # Per served op, its reach kinds (mcp_core | mcp_atomic | mcp_all | sdk_method | sdk_example |
-    # plugin_hook | http_only); empty in the brief answer.
+    # plugin_hook | dashboard | http_only); empty in the brief answer.
     op_reach: dict[str, list[str]] = Field(default_factory=dict)
     # Per served op, every MCP toolset whose listing carries it (core | coding | atomic
     # | all; empty when hidden).

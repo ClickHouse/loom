@@ -11,8 +11,10 @@ maturity and, with ``--call-counts``, its call count from ``loom.agent_events``.
 ``--call-counts`` is the only mode that opens a connection: the ClickHouse
 the server CLI uses (``LOOM_ENV_FILE=/path/.env`` to name another dotenv).
 
-The gate (also ``tests/unit/test_op_reach_census.py``): every op has a reach
-path other than a raw HTTP POST or is declared experimental; the committed
+The gate (also ``tests/unit/test_op_reach_census.py`` and
+``tests/unit/test_op_surfaces.py``): every op has a reach path other than a raw
+HTTP POST or is declared experimental; every op is on the dashboard or named in
+``server.operations.dashboard`` with the reason it is not; the committed
 manifest is byte-identical to what ``--write-manifest`` writes. ``--owners``
 names, for every experimental op, the commit that added its declaration: the
 owner a deletion PR should cite.
@@ -53,11 +55,16 @@ GROUP BY operation
 
 _SDK_DIR = "sdk/python/loom"
 _EXAMPLE_DIRS = ("examples", "dev", "scripts")
-_PLUGIN_DIRS = ("integrations", "frontend/src")
+_PLUGIN_DIRS = ("integrations",)
+_DASHBOARD_DIR = "frontend/src"
+_DASHBOARD_SUFFIXES = (".ts", ".tsx")
 _PLUGIN_SUFFIXES = (".mjs", ".js", ".ts", ".tsx", ".sh", ".py", ".yaml", ".yml", ".json")
 
 _V1 = re.compile(r"/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b")
 _QUOTED = re.compile(r"""["']([a-z_]+(?:\.[a-z_]+){1,2})["']""")
+# A dashboard call site: the path as a string literal (`post("/v1/memory.pin", …)`).
+# A bare op name there is an audit label or a comment, not a call.
+_DASHBOARD_CALL = re.compile(r"""["'`]/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b""")
 _SDK_CALL = re.compile(r"\.([a-z_]+)\.([a-z_]+)\(")
 
 
@@ -74,7 +81,7 @@ def _files(root: Path, rel: str, suffixes: tuple[str, ...]) -> list[Path]:
         if p.is_file()
         and p.suffix in suffixes
         and ".test." not in p.name
-        and not {"tests", "__pycache__"} & set(p.relative_to(base).parts)
+        and not {"tests", "test", "__pycache__"} & set(p.relative_to(base).parts)
     )
 
 
@@ -157,7 +164,7 @@ def derive_static_reach(root: Path | None = None) -> dict[str, tuple[str, ...]]:
                     hit(op, "sdk_example")
 
     # plugin_hook: op names or /v1/<op> in the integrations (hooks, gateways,
-    # shims) and the dashboard source.
+    # shims).
     for rel in _PLUGIN_DIRS:
         for path in _files(root, rel, _PLUGIN_SUFFIXES):
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -165,6 +172,11 @@ def derive_static_reach(root: Path | None = None) -> dict[str, tuple[str, ...]]:
                 hit(m.group(1), "plugin_hook")
             for m in _QUOTED.finditer(text):
                 hit(m.group(1), "plugin_hook")
+
+    # dashboard: a quoted /v1/<op> call site in the dashboard source.
+    for path in _files(root, _DASHBOARD_DIR, _DASHBOARD_SUFFIXES):
+        for m in _DASHBOARD_CALL.finditer(path.read_text(encoding="utf-8")):
+            hit(m.group(1), "dashboard")
 
     return {op: tuple(k for k in STATIC_KINDS if k in kinds) for op, kinds in sorted(found.items())}
 
@@ -214,8 +226,37 @@ def violations(ops: list[Operation]) -> list[str]:
             out.append(f"{op.name}: maturity {op.maturity!r} not in {MATURITIES}")
         if not has_reach(op.name) and op.maturity == "stable":
             out.append(f"{op.name}: no reach path (only a raw /v1 POST) and not experimental")
+    out += dashboard_violations(ops)
     if not MANIFEST.is_current(manifest_text()):
         out.append(f"{MANIFEST.display} is stale — run {MANIFEST.command}")
+    return out
+
+
+def dashboard_violations(ops: list[Operation]) -> list[str]:
+    """Every op is on the dashboard or says why not, and nothing says why not
+    for an op the dashboard calls (`server.operations.dashboard`)."""
+    from server.operations.dashboard import DASHBOARD_PENDING, NOT_IN_DASHBOARD
+
+    out: list[str] = []
+    names = {op.name for op in ops}
+    for op in ops:
+        on = "dashboard" in op.reach
+        listed = [
+            n
+            for n, s in (
+                ("NOT_IN_DASHBOARD", NOT_IN_DASHBOARD),
+                ("DASHBOARD_PENDING", DASHBOARD_PENDING),
+            )
+            if op.name in s
+        ]
+        if not on and not listed:
+            out.append(f"{op.name}: not on the dashboard and not in NOT_IN_DASHBOARD with a reason")
+        if on and listed:
+            out.append(f"{op.name}: the dashboard calls it, so drop it from {listed[0]}")
+        if len(listed) > 1:
+            out.append(f"{op.name}: in both NOT_IN_DASHBOARD and DASHBOARD_PENDING")
+    for name in sorted((set(NOT_IN_DASHBOARD) | DASHBOARD_PENDING) - names):
+        out.append(f"{name}: in server/operations/dashboard.py but no such op")
     return out
 
 
