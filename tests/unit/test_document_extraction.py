@@ -53,7 +53,7 @@ def _zip(*names: str) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for n in names:
-            z.writestr(zipfile.ZipInfo(n, date_time=(1980, 1, 1, 0, 0, 0)), "<x/>")
+            z.writestr(zipfile.ZipInfo(n), "<x/>")  # ZipInfo dates every entry 1980-01-01
     return buf.getvalue()
 
 
