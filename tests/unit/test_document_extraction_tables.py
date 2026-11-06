@@ -298,17 +298,20 @@ def test_an_xlsx_merge_whose_last_cell_holds_a_value_still_groups() -> None:
     assert [n for n, _ in _columns(a)][:2] == ["2025 / H1", "2025 / H2"]
 
 
-def test_an_xlsx_merge_left_unspread_groups_no_header(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("merge", ["A1:B1", "A1:ZZZ1"], ids=["narrow", "past the last column"])
+def test_an_xlsx_merge_left_unspread_groups_no_header(
+    merge: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     rows = {
         1: [cell("A1", "2025", t="inlineStr")],
         2: [cell("A2", "H1", t="inlineStr"), cell("B2", "H2", t="inlineStr")],
         3: [cell("A3", 1), cell("B3", 2)],
     }
-    monkeypatch.setattr(
-        xlsxfile, "_spread", lambda *a: ({(1, 0, 1, 1)}, 0)
-    )  # the budget skipped it
-    a = extract(workbook([("S", sheet(rows, merges=("A1:B1",)))]), "s.xlsx")
+    # A cell budget too small for the merge, which is skipped.
+    monkeypatch.setattr(tabular, "MAX_CELLS", 5)  # the five cells the rows hold
+    a = extract(workbook([("S", sheet(rows, merges=(merge,)))]), "s.xlsx")
     assert a.tables[0].header_rows == 1
+    assert "S merges" in [f.unit for f in a.coverage.failed]
 
 
 def test_the_columns_a_header_rows_merges_cover_are_found_in_one_pass() -> None:

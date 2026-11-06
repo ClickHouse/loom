@@ -713,7 +713,8 @@ def _spread(
     the cells left), and those cut at the MAX_ROWS under the header counted."""
     skipped: set[tuple[int, int, int, int]] = set()
     clipped = 0
-    for top, left, bottom, right in boxes:
+    for box in boxes:
+        top, left, bottom, right = box
         bottom, right = min(bottom, last), min(right, MAX_COLUMNS - 1)
         value = grid.get(top, {}).get(left)
         if value is None or bottom < top or right < left:
@@ -721,7 +722,7 @@ def _spread(
         # One too large for the cells left is skipped, leaving them to the rest.
         area = (bottom - top + 1) * (right - left + 1)
         if area > budget.cells:
-            skipped.add((top, left, bottom, right))
+            skipped.add(box)  # as read, so a reader of the merges finds it
             continue
         budget.cells -= area
         for r in range(top, bottom + 1):
