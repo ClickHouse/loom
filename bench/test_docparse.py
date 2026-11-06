@@ -655,10 +655,10 @@ def test_decision_counts_come_from_where_extraction_grounds_its_quotes(
     monkeypatch.setattr(dx, "ground", ground)
     monkeypatch.setattr(app, "extract_document", extract_document)
     monkeypatch.setattr(_ch, "run_connected", lambda run: asyncio.run(run(None)))
-    gold = {"docparse://a.pdf": S.words("first the queue drains first, then the rest")}
-    uris = ["docparse://a.pdf", "docparse://b.pdf"]
+    gold = {"a.pdf": S.words("first the queue drains first, then the rest")}
+    files = ["a.pdf", "b.pdf"]
     states = {"new": {"a.pdf": "ready", "b.pdf": "failed"}}  # b.pdf: an earlier run's text
-    out = downstream.decisions("o", {"new": "docparse-new"}, uris, gold, states)
+    out = downstream.decisions("o", {"new": "docparse-new"}, files, gold, states)
     c = out["new"]
     assert (c["docs"], c["unread"]) == (1, 1)
     # two candidates of two claims each, one kept; its two quotes, the rejected option's too

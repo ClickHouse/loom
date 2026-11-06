@@ -453,10 +453,8 @@ def run(
     if decide:
         by_file = {g["file"]: g for g in gold}
         chosen = DECISION_FILES[:decide]
-        gold_text = {f"docparse://{f}": words(_gold_text(by_file[f])) for f in chosen}
-        out["decisions"] = decisions(
-            org, namespaces, [f"docparse://{f}" for f in chosen], gold_text, states
-        )
+        gold_text = {f: words(_gold_text(by_file[f])) for f in chosen}
+        out["decisions"] = decisions(org, namespaces, chosen, gold_text, states)
     return out
 
 
@@ -473,7 +471,7 @@ def _gold_text(g: dict) -> str:
 def decisions(
     org: str,
     namespaces: dict[str, str],
-    uris: list[str],
+    files: list[str],
     gold_text: dict[str, list[str]],
     states: dict[str, dict[str, str]],
 ) -> dict:
@@ -516,12 +514,12 @@ def decisions(
                 "errors": 0,
                 "unread": 0,
             }
-            for uri in uris:
-                if states[system].get(uri.removeprefix("docparse://")) not in FINISHED:
+            for f in files:
+                if states[system].get(f) not in FINISHED:
                     counts[system]["unread"] += 1
                     continue
-                current[:] = [system, uri]
-                mined = await app.extract_document(org, namespace, uri, dry_run=True)
+                current[:] = [system, f]
+                mined = await app.extract_document(org, namespace, f"docparse://{f}", dry_run=True)
                 counts[system]["docs"] += 1
                 counts[system]["errors"] += bool(mined.error)
         return 0
