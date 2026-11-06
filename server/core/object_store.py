@@ -121,13 +121,21 @@ def original_prefix(org: str, namespace: str, sha: str) -> str:
     return f"{namespace_prefix(org, namespace)}{sha}/"
 
 
-def new_location(org: str, namespace: str, sha: str) -> Location:
-    key = f"{original_prefix(org, namespace, sha)}{uuid.uuid4().hex}"
-    if len(key) > MAX_KEY:
+def check_key_fits(org: str, namespace: str) -> None:
+    """Refuse an org and namespace whose originals' keys would pass MAX_KEY: a key's
+    sha and write id have fixed lengths, so the names alone decide."""
+    length = len(original_prefix(org, namespace, "0" * 64)) + len(uuid.uuid4().hex)
+    if length > MAX_KEY:
         raise ValidationError(
-            f"the org and namespace names are too long for an object key ({len(key)} > {MAX_KEY})"
+            f"the org and namespace names are too long for an object key ({length} > {MAX_KEY})"
         )
-    return Location(settings.document_s3_bucket, key)
+
+
+def new_location(org: str, namespace: str, sha: str) -> Location:
+    check_key_fits(org, namespace)
+    return Location(
+        settings.document_s3_bucket, f"{original_prefix(org, namespace, sha)}{uuid.uuid4().hex}"
+    )
 
 
 _CLIENT_LOCK = threading.Lock()

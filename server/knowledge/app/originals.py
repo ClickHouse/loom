@@ -350,7 +350,7 @@ async def migrate_originals(
         refusal = await fence(org_, ns)
         if not refusal:
             try:
-                objects.new_location(org_, ns, "0" * 64)
+                objects.check_key_fits(org_, ns)
             except ValidationError as e:
                 refusal = str(e)  # no original of the namespace can be moved
         after = ""
