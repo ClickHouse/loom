@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 
 from server.core import object_store as objects
-from server.core.ch import set_query_tag
+from server.core.ch import sequential_reads, set_query_tag
 from server.core.errors import ValidationError
 from server.core.repo_base import _CHClient
 from server.erasure.app import ledger_reads
@@ -185,9 +185,12 @@ async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bo
     # Before the original is read: a key too long for the bucket walk's cursor refuses the
     # move. The walk refuses such a namespace whole; this guards a direct call.
     loc = objects.new_location(held.org, held.namespace, held.sha)
-    data = await blobs.read(
-        held.org, held.namespace, held.sha, stored=blobs.Stored(held.size, ""), ch=ch
-    )
+    # Read as the checks after it are: a replica behind the walk's must not make a sound
+    # original read as one whose bytes are missing.
+    with sequential_reads():
+        data = await blobs.read(
+            held.org, held.namespace, held.sha, stored=blobs.Stored(held.size, ""), ch=ch
+        )
     if data is None:
         now = await blobs.latest(held, ch=ch)
         if now is not None and not now.location:

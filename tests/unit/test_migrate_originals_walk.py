@@ -321,3 +321,37 @@ async def test_a_kept_switch_a_later_write_outranked_does_not_stand(
     monkeypatch.setattr(objects, "delete", nothing_deleted)
     # The erasure kept the original, but a later write outranks the switch: not moved.
     assert await originals._settle(_held(0), 0, loc, None) is False
+
+
+@pytest.mark.asyncio
+async def test_the_bytes_are_read_as_the_checks_after_them_are(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.ch import sequential_reads_active
+
+    held = _held(0)
+    reads: list[bool] = []
+
+    async def ch_now_s(*, ch: Any = None) -> int:
+        return 0
+
+    async def missing(*a: Any, **kw: Any) -> None:
+        reads.append(sequential_reads_active())
+        return None
+
+    async def held_still(*a: Any, **kw: Any) -> blobs.Latest:
+        return blobs.Latest("", held.version_ms)
+
+    monkeypatch.setattr(blobs, "ch_now_s", ch_now_s)
+    monkeypatch.setattr(blobs, "read", missing)
+    monkeypatch.setattr(blobs, "latest", held_still)
+    # Missing bytes under a row still held are corrupt only on a read no replica lags.
+    with pytest.raises(originals.CorruptOriginal, match="do not fill its size"):
+        await originals.move_to_bucket(held)
+    assert reads == [True]
+
+    async def gone(*a: Any, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(blobs, "latest", gone)
+    assert await originals.move_to_bucket(held) is False  # gone since the walk: nothing to move
