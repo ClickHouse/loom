@@ -216,6 +216,11 @@ async def test_a_refused_cleanup_delete_leaves_the_object_to_the_bucket_walk(
 async def test_a_dry_run_refuses_a_namespace_whose_keys_would_be_too_long(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    async def fence(org: str, ns: str) -> str:
+        return ""
+
+    monkeypatch.setattr(originals, "fence", fence)
+
     async def held_in_clickhouse(*a: object) -> blobs.HeldPage:
         raise AssertionError("no original of it is counted")
 
@@ -224,3 +229,21 @@ async def test_a_dry_run_refuses_a_namespace_whose_keys_would_be_too_long(
     assert result.pending == 0
     (line,) = result.refused
     assert "too long" in line
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_reports_a_namespace_an_erasure_holds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fence(org: str, ns: str) -> str:
+        return "erasure e1 (namespace, in_progress) covers it; run again once it has finished"
+
+    async def held_in_clickhouse(*a: object) -> blobs.HeldPage:
+        raise AssertionError("a refused namespace is not counted")
+
+    monkeypatch.setattr(originals, "fence", fence)
+    monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
+    result = await originals.migrate_originals(org="acme", namespace="docs", dry_run=True)
+    assert result.pending == 0
+    (line,) = result.refused
+    assert "erasure e1" in line

@@ -173,7 +173,8 @@ async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bo
     original still held in ClickHouse. `SwitchUnconfirmed`: the row switched (or may
     have) but could not be confirmed against an erasure. `ObjectStoreError`: the bucket
     refused, the new object was gone before its read-back, or the copy outlasted
-    DOCUMENT_UPLOAD_BUDGET_S.
+    DOCUMENT_UPLOAD_BUDGET_S. `ValidationError`: its object key would be too long (the
+    walk refuses such a namespace before calling this).
 
     `ch` is the client for the knowledge plane's own reads and writes; the erasure ledger
     is read through the erasure plane, on its client."""
@@ -344,8 +345,9 @@ async def migrate_originals(
     for org_, ns in await _scopes(org, namespace):
         # One read of the ledger for the namespace; again after any original not switched
         # cleanly (gone or replaced, held back, or switched but unconfirmed).
-        refusal = None if dry_run else await fence(org_, ns)
-        # A dry run makes this check too: it reads no bucket, and sizes only what moves.
+        # A dry run reads the fence and checks the keys too (both read ClickHouse alone), so
+        # it sizes only what a run would move.
+        refusal = await fence(org_, ns)
         if not refusal:
             try:
                 objects.new_location(org_, ns, "0" * 64)
