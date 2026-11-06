@@ -170,7 +170,7 @@ def test_a_list_items_number_is_no_extra_word() -> None:
     assert S.locator_scores({**g, "format": "pdf"}, p)["locator_acc"] == 1.0
 
 
-def test_a_short_number_ending_a_sentence_is_left_out_on_both_sides() -> None:
+def test_a_short_number_ending_a_sentence_or_a_block_is_left_out_on_both_sides() -> None:
     merged = "The queue grew to 12. Then 3.11 shipped"
     assert S.text_words(merged) == ["the", "queue", "grew", "to", "then", "3", "11", "shipped"]
     # gold and parse that split the text into blocks differently score alike
