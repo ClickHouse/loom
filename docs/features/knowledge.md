@@ -1015,10 +1015,10 @@ waits up to `LOOM_CH_POOL_WAIT_MS` and then answers `503 OVERLOADED`.
 
 `loom knowledge migrate-originals` moves the originals still held in ClickHouse to the
 bucket (`--org`, and `--namespace` with it, narrow it; `--dry-run` counts them and their
-bytes, and exits 1 when it lists a namespace a run would refuse). It refuses to move anything unless `LOOM_DOCUMENT_OBJECT_STORE=s3` (a dry run,
-which only reads ClickHouse, sizes the move before that); set that on every replica first,
-so no new original lands in ClickHouse behind it, and only once every replica runs a build
-that reads bucket rows. It walks one namespace at a time in key order, and moves only the
+bytes, and exits 1 when it lists a namespace a run would refuse). It refuses to move
+anything unless `LOOM_DOCUMENT_OBJECT_STORE=s3` (a dry run, which only reads ClickHouse,
+sizes the move before that); set that on every replica first, so no new original lands in
+ClickHouse behind it, and only once every replica runs a build that reads bucket rows. It walks one namespace at a time in key order, and moves only the
 originals the namespace needs now: those a live document names, or an unexpired upload or
 an open ingestion holds. The rest are counted as left to the `document_blob_gc` sweep,
 which deletes each once it is older than `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`; one that is
@@ -1027,7 +1027,8 @@ against their size and sha256, writes them to a new object with the store's SHA-
 reads the object back and hashes it, and then writes the catalog row naming the object.
 That row switches every document with those bytes at once. Its version is one millisecond
 after the row it replaces, not the time it lands, so a write of the same bytes after the
-walk read the original outranks it however the rows merge. The ClickHouse copy stays until
+walk read the original outranks it however the rows merge, and a moved original keeps
+its age for the sweep. The ClickHouse copy stays until
 `loom.document_blobs` merges the two rows; `OPTIMIZE TABLE loom.document_blobs FINAL`
 drops it at once. From then on a ClickHouse backup holds no bytes of the moved originals:
 back the bucket up on its own ([backup and
@@ -1063,7 +1064,7 @@ the write as an upload's is and well inside `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`
 which the bucket walk may take an object no row names; a copy that takes longer deletes
 its object and is reported. An original nothing needs any more by the time its row lands
 (its last document went meanwhile) keeps its switched row, which the sweep deletes once it
-is old enough, as any original nothing names.
+is old enough (counted from its last upload, not the move), as any original nothing names.
 
 An original whose bytes do not hash to their sha256 or fill their size, one an erasure
 held back, one whose object key would be too long, or one the bucket refused or was too

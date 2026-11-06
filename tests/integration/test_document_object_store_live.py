@@ -591,6 +591,15 @@ async def test_a_failed_check_after_the_switch_is_reported_as_switched(
     assert stored is not None and stored.location == switched[0]
 
 
+class _Landed(list[str]):
+    """The locations of the switched rows `_raced` let through; `first` is set as the
+    first lands, with its erasures registered."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.first = asyncio.Event()
+
+
 async def _raced(
     ch: Any,
     s3: Any,
@@ -598,7 +607,7 @@ async def _raced(
     label: str,
     scopes: list[tuple[str, str]],
     step: Any = None,
-) -> tuple[str, str, Any, list[str]]:
+) -> tuple[str, str, Any, _Landed]:
     """An original of alice's whose move meets erasures of `scopes` as its row lands: they
     register after the move's last ledger read and before the switching insert, and
     `step` (the erasure's own blob step, when given) runs there too, so the switched row
@@ -611,7 +620,7 @@ async def _raced(
     (held,) = (await blobs.held_in_clickhouse(org, ns, "", 10, ch=ch)).held
     monkeypatch.setattr(originals, "_ERASURE_POLL_S", 0.05)
     insert = ch.insert
-    landed: list[str] = []
+    landed = _Landed()
 
     async def erasures_then_insert(table: str, rows: Any, **kw: Any) -> Any:
         if table == blobs.TABLE and rows[0]["location"] and not landed:
@@ -620,17 +629,21 @@ async def _raced(
                 await _erasure(ch, org, scope_type, scope_value, "in_progress")
             if step is not None:
                 await step(org, ns)
+            landed.first.set()
         return await insert(table, rows, **kw)
 
     monkeypatch.setattr(ch, "insert", erasures_then_insert)
     return org, ns, held, landed
 
 
-async def _finish_erasures(ch: Any, org: str, after_s: float, then: Any = None) -> None:
-    """Mark the org's erasures completed after `after_s`, running `then` first: their
-    steps."""
-    await asyncio.sleep(after_s)
+async def _finish_erasures(
+    ch: Any, org: str, landed: _Landed, after_s: float, then: Any = None
+) -> None:
+    """Mark the org's erasures completed `after_s` after the switched row landed (when
+    `_raced` registers them), running `then` first: their steps."""
     try:
+        await landed.first.wait()
+        await asyncio.sleep(after_s)
         if then is not None:
             await then()
     finally:
@@ -715,7 +728,7 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
     org, ns, held, landed = await _raced(
         ch, s3, monkeypatch, "objstore-race-took", [("user_id", "alice")], alices_step
     )
-    finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3))
+    finishing = asyncio.create_task(_finish_erasures(ch, org, landed, 0.3))
     assert await originals.move_to_bucket(held, ch=ch) is False
     await finishing
     assert await blobs.locate(org, ns, held.sha, ch=ch) is None
@@ -744,7 +757,7 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
         settings={"async_insert": 0},
     )
 
-    finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3))
+    finishing = asyncio.create_task(_finish_erasures(ch, org, landed, 0.3))
     assert await originals.move_to_bucket(held, ch=ch) is True
     await finishing
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
@@ -763,7 +776,7 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
             params={"org": org, "ns": ns},
         )
 
-    finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3, row_only))
+    finishing = asyncio.create_task(_finish_erasures(ch, org, landed, 0.3, row_only))
     assert await originals.move_to_bucket(held, ch=ch) is False
     await finishing
     assert not _keys(s3, object_store.namespace_prefix(org, ns))
@@ -785,6 +798,7 @@ async def test_a_move_whose_original_stopped_being_needed_is_left_to_the_sweep(
 ) -> None:
     org, ns = unique_org("objstore-unneeded"), "docs"
     held = await _held(ch, org, ns, b"its document goes", monkeypatch)
+    await asyncio.sleep(1.2)  # the original is older than the sweep's age bound below
     insert = ch.insert
 
     async def insert_then_document_goes(table: str, rows: Any, **kw: Any) -> Any:
@@ -801,8 +815,9 @@ async def test_a_move_whose_original_stopped_being_needed_is_left_to_the_sweep(
     assert await originals.move_to_bucket(held, ch=ch) is True
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
     assert stored is not None and stored.location.startswith("s3://")
-    # The sweep takes it once it is old enough, as any original nothing names.
-    assert await blobs.unreferenced(org, ns, 0, 10, ch=ch) == [held.sha]
+    # The sweep takes it once it is old enough, as any original nothing names: the switch
+    # keeps the original's age, so at once here.
+    assert await blobs.unreferenced(org, ns, 1, 10, ch=ch) == [held.sha]
 
 
 @pytest.mark.asyncio

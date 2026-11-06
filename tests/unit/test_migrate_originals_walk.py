@@ -194,15 +194,15 @@ async def test_a_refused_cleanup_delete_leaves_the_object_to_the_bucket_walk(
     async def read_back(loc: Any) -> bytes:
         return data
 
-    async def locate(*a: Any, **kw: Any) -> blobs.Stored:
-        return blobs.Stored(len(data), "s3://bucket/a-re-upload")  # replaced since the walk
+    async def still_held(*a: Any, **kw: Any) -> bool:
+        return False  # replaced since the walk
 
     async def refused(*a: Any) -> None:
         raise objects.ObjectStoreError("object store delete failed (503)", operation="delete")
 
     monkeypatch.setattr(blobs, "ch_now_s", ch_now_s)
     monkeypatch.setattr(blobs, "read", read)
-    monkeypatch.setattr(blobs, "locate", locate)
+    monkeypatch.setattr(blobs, "still_held", still_held)
     monkeypatch.setattr(objects, "transfer", transfer)
     monkeypatch.setattr(objects, "put", put)
     monkeypatch.setattr(objects, "read", read_back)

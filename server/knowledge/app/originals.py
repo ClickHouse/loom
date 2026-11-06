@@ -206,11 +206,11 @@ async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bo
     if back is not None and hashlib.sha256(back).hexdigest() != held.sha:
         await _drop(loc)
         raise CorruptOriginal("bytes read back from the bucket do not hash to its sha256")
-    # The latest row read again just before the switch: an erasure or a re-upload
-    # since the walk keeps what it left.
+    # The latest row read again just before the switch: an erasure or any write since the
+    # walk keeps what it left (a later version outranks the switch).
     with sequential_reads():
-        now = await blobs.locate(held.org, held.namespace, held.sha, ch=ch)
-    if now is None or now.location:
+        held_still = await blobs.still_held(held, ch=ch)
+    if not held_still:
         await _drop(loc)  # no row names it, nor will
         return False
     overtaken = await _erasures_since(held.org, held.namespace, since)

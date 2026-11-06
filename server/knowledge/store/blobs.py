@@ -9,11 +9,12 @@ they are an object in the bucket that the row's `location` names
 (`server/core/object_store.py`), and `data` is empty. A row is read from
 wherever it says, whatever the setting is now.
 
-`created_at` is the row's version, so a re-upload restamps it. Outside erasure
-only the sweep (`server/knowledge/workers/blob_gc.py`) deletes an original, and
-only one unwritten for `document_blob_min_age_seconds`: a write stores its
-original before the document row that names it, so a check that finds no
-document naming a fresh original may be racing that write.
+`created_at` is the row's version, so a re-upload restamps it; the move's switching
+row does not (it is one millisecond after the row it replaces), so a moved original
+keeps its age. Outside erasure only the sweep (`server/knowledge/workers/blob_gc.py`)
+deletes an original, and only one unwritten for `document_blob_min_age_seconds`: a
+write stores its original before the document row that names it, so a check that
+finds no document naming a fresh original may be racing that write.
 
 Every S3 write is a new object, written before the row that names it; an object
 no row names (a replaced row's, a write whose row never landed) is the sweep's
@@ -144,6 +145,20 @@ async def locate(
         params={"org": org, "ns": namespace, "sha": sha},
     )
     return Stored(int(row["size"]), str(row["location"])) if row else None
+
+
+async def still_held(held: Held, *, ch: _CHClient | None = None) -> bool:
+    """Whether the original's latest row is still the ClickHouse-held version the walk
+    read: a later write of any kind outranks a switch versioned after that one."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        f"SELECT location, toUnixTimestamp64Milli(created_at) AS version_ms FROM {TABLE} "
+        f"WHERE {_KEY} ORDER BY created_at DESC LIMIT 1",
+        params={"org": held.org, "ns": held.namespace, "sha": held.sha},
+    )
+    if not row:
+        return False
+    return not row["location"] and int(row["version_ms"]) == held.version_ms
 
 
 async def read(
