@@ -52,13 +52,16 @@ def _clickhouse_target() -> str | None:
     return None
 
 
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool | None:
+    """LOOM_TEST_SHARD=k/n: collect only the test files of the k-th part (`_shards`)."""
+    return _shards.ignored(collection_path, config)
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Integration tests talk to ClickHouse, through the server or their own
     client, and the server's default target is localhost:8123. Without an
     explicit LOOM_CH_HOST they skip, so an unconfigured run never writes into
-    whatever ClickHouse happens to listen there (a developer's own stack).
-    LOOM_TEST_SHARD=k/n first keeps one part of what was collected (`_shards`)."""
-    _shards.keep(config, items)
+    whatever ClickHouse happens to listen there (a developer's own stack)."""
     if _clickhouse_target():
         return
     skip = pytest.mark.skip(
