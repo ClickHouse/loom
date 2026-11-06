@@ -20,9 +20,9 @@ import server.auth.authz as authz
 import server.memory.app.blacklist as h
 from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
-from server.core.errors import AuthInsufficientError
+from server.core.errors import AuthInsufficientError, ValidationError
 from server.memory.api.models_blacklist import BlacklistAddInput, BlacklistRemoveInput
-from server.memory.app.blacklist_guard import REGEX_MAX_LENGTH, compile_regex, validate_regex
+from server.memory.app.blacklist_guard import REGEX_MAX_LENGTH, compile_regex
 from server.operations.base import Role
 
 ORG = "acme"
@@ -102,6 +102,11 @@ def repo(monkeypatch) -> _Repo:
 
     monkeypatch.setattr(h, "_bump_version", _bump)
     monkeypatch.setattr(h, "invalidate_cache", lambda: None)
+
+    async def _none_stored(scope, org, namespace):
+        return 0
+
+    monkeypatch.setattr(h, "count_regexes", _none_stored)
 
     async def _no_grant(org, namespace, subject):
         return None
@@ -438,6 +443,15 @@ def test_ordinary_regexes_are_accepted(pattern: str) -> None:
     assert validate_regex(pattern) is None
 
 
+def validate_regex(pattern: str) -> str | None:
+    """Why `compile_regex` refuses the pattern, or None."""
+    try:
+        compile_regex(pattern)
+    except ValidationError as e:
+        return str(e)
+    return None
+
+
 def _search_seconds(compiled: Any, text: str) -> float:
     """The fastest of three searches, so one stall on a busy runner does not count."""
     times = []
@@ -550,3 +564,51 @@ def test_cache_refresh_drops_a_stored_regex_re2_cannot_run(monkeypatch) -> None:
     hit = asyncio.run(bl.find_match(org="o", namespace="n", value='"my ssn is 123"'))
     assert hit is not None and hit.pattern_id == "ok"
     assert asyncio.run(bl.find_match(org="o", namespace="n", value='"assn"')) is None
+
+
+def test_a_scope_holds_a_bounded_number_of_regexes(repo: _Repo, monkeypatch) -> None:
+    """Every regex a write's scopes hold runs on that write: a scope's count is capped."""
+    from server.memory.app.blacklist_guard import REGEXES_PER_SCOPE
+
+    async def _full(scope, org, namespace):
+        return REGEXES_PER_SCOPE
+
+    monkeypatch.setattr(h, "count_regexes", _full)
+    set_current_auth(_auth("WRITER"))
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(h.handle_blacklist_add(_add("namespace", pattern_type="regex", pattern="x+")))
+    assert ei.value.detail["code"] == "BLACKLIST_PATTERN_INVALID"
+    assert repo.inserted == []
+    # a substring pattern is not a regex and is not counted
+    asyncio.run(h.handle_blacklist_add(_add("namespace", pattern="plain")))
+
+
+def _pattern(pattern_id: str, scope: str, pattern: str, pattern_type: str) -> Any:
+    import server.memory.app.blacklist_guard as bl
+
+    compiled = compile_regex(pattern) if pattern_type == "regex" else None
+    org, ns = h._scope_args(scope, ORG, NS)
+    return bl.BlacklistPattern(pattern_id, org, ns, pattern, pattern_type, scope, "", compiled)
+
+
+def test_the_matcher_thread_keeps_scope_precedence_and_reads_a_lone_surrogate(
+    monkeypatch,
+) -> None:
+    """With a regex applicable the patterns run on the matcher threads, in the
+    cache's order: the namespace pattern wins over a global one that also matches.
+    A value with an unpaired surrogate is read, not refused with an error."""
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(
+        bl,
+        "_cache",
+        [
+            _pattern("ns", "namespace", r"\bssn\b", "regex"),
+            _pattern("global", "global", "ssn", "substring"),
+        ],
+    )
+    hit = asyncio.run(bl.find_match(org=ORG, namespace=NS, value="my ssn \ud800"))
+    assert hit is not None and hit.pattern_id == "ns"
+    hit = asyncio.run(bl.find_match(org=ORG, namespace="other", value="assn"))
+    assert hit is not None and hit.pattern_id == "global"

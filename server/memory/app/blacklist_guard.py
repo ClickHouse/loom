@@ -14,6 +14,7 @@ import asyncio
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,15 +29,15 @@ from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-# A regex pattern runs on every write the scope covers (for a global pattern,
-# every tenant's), so it runs on RE2: time linear in the value whatever the
-# pattern, and the engine the sweep's ClickHouse `match()` uses (with `.`
-# matching a newline, as there). RE2's cost per character still grows with the
-# compiled program (a counted class like `[ab]{400}` keeps its DFA from caching
-# and it falls back to simulating every state), so the program is capped, and
-# the match runs off the event loop: RE2 releases the GIL while it searches.
+# A regex runs on every write its scope covers, on RE2: linear in the value. Its cost
+# per character still grows with the program (a counted class such as `[ab]{400}`
+# defeats RE2's DFA cache), so the program and the count per scope are capped.
 REGEX_MAX_LENGTH = 256
-REGEX_MAX_PROGRAM = 300
+REGEX_MAX_PROGRAM = 300  # not a setting: the bound that keeps a pattern cheap per character
+REGEXES_PER_SCOPE = 50  # not a setting: with the program cap, bounds what one write runs
+# Regex matching runs on its own few threads (RE2 releases the GIL), so a long value
+# under many patterns waits for these, never the event loop or the shared pool.
+_MATCHERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="loom-blacklist")
 
 
 def compile_regex(pattern: str) -> Any:
@@ -49,18 +50,20 @@ def compile_regex(pattern: str) -> Any:
     if compiled.programsize > REGEX_MAX_PROGRAM:
         raise ValidationError(
             f"regex compiles to {compiled.programsize} RE2 instructions (at most "
-            f"{REGEX_MAX_PROGRAM}); a counted repeat such as {{400}} is the usual cause"
+            f"{REGEX_MAX_PROGRAM}): a counted repeat such as {{400}} or a long non-ASCII "
+            "literal (use pattern_type=substring for that)"
         )
     return compiled
 
 
-def validate_regex(pattern: str) -> str | None:
-    """Reason the pattern is refused (`compile_regex`), or None when it may be stored."""
-    try:
-        compile_regex(pattern)
-    except ValidationError as e:
-        return str(e)
-    return None
+async def count_regexes(scope: str, org: str, namespace: str) -> int:
+    """The active regex patterns stored at exactly this scope, from the cache."""
+    await _ensure_loaded()
+    return sum(
+        1
+        for p in _cache
+        if p.pattern_type == "regex" and (p.scope, p.org, p.namespace) == (scope, org, namespace)
+    )
 
 
 @dataclass(frozen=True)
@@ -202,11 +205,13 @@ async def find_match(
     applicable = [p for p in _cache if _applies_to(p, org, namespace)]
     if not any(p.pattern_type == "regex" for p in applicable):
         return _first_match(applicable, value)
-    # RE2 releases the GIL: a long value under many patterns holds a thread, not the loop.
-    return await asyncio.to_thread(_first_match, applicable, value)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_MATCHERS, _first_match, applicable, value)
 
 
 def _first_match(patterns: list[BlacklistPattern], value: str) -> BlacklistPattern | None:
+    # RE2 reads UTF-8: a lone surrogate (an unpaired JSON escape) is read as `?`.
+    value = value.encode("utf-8", "replace").decode("utf-8")
     return next((p for p in patterns if _matches(p, value)), None)
 
 

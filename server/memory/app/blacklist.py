@@ -17,7 +17,13 @@ from server.memory.api.models_blacklist import (
     BlacklistSweepOutput,
     _BlacklistRow,
 )
-from server.memory.app.blacklist_guard import _bump_version, invalidate_cache, validate_regex
+from server.memory.app.blacklist_guard import (
+    REGEXES_PER_SCOPE,
+    _bump_version,
+    compile_regex,
+    count_regexes,
+    invalidate_cache,
+)
 from server.memory.store import blacklist as blacklist_repo
 
 if TYPE_CHECKING:
@@ -90,12 +96,21 @@ def _stamped_author(body_value: str) -> str:
     return writer_actor(fallback=body_value)
 
 
-def _reject_bad_regex(pattern: str) -> None:
-    reason = validate_regex(pattern)
-    if reason is None:
-        return
+async def _reject_bad_regex(pattern: str, scope: str, org: str, namespace: str) -> None:
+    """422 for a regex `compile_regex` refuses, or one past the scope's regex budget:
+    every regex a write's scopes hold runs on that write."""
     from fastapi import HTTPException
 
+    from server.core.errors import ValidationError
+
+    try:
+        compile_regex(pattern)
+    except ValidationError as e:
+        reason = str(e)
+    else:
+        if await count_regexes(scope, org, namespace) < REGEXES_PER_SCOPE:
+            return
+        reason = f"this {scope} already holds {REGEXES_PER_SCOPE} regex patterns"
     raise HTTPException(
         status_code=422,
         detail={"code": "BLACKLIST_PATTERN_INVALID", "message": reason},
@@ -108,7 +123,9 @@ async def handle_blacklist_add(input: BlacklistAddInput) -> BlacklistAddOutput:
     # whose reach matches.
     _require_scope_authority(input.scope, "add", row_org=input.org)
     if input.pattern_type == "regex":
-        _reject_bad_regex(input.pattern)
+        await _reject_bad_regex(
+            input.pattern, input.scope, *_scope_args(input.scope, input.org, input.namespace)
+        )
 
     pattern_id = str(uuid.uuid4())
     now = naive_utc_now_seconds()
