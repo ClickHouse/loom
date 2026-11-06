@@ -261,9 +261,10 @@ never drops text. A page with no text that draws an image (an image object, one 
 content) is read with OCR (below) where the extractor has it, and is otherwise a failed unit: its text needs OCR, so a
 PDF with such a page is not complete and is published only with `allow_partial`; a scan whose pages carry some text (a
 stamped number) is read as that text and its pictures by the rule below. A page with text that draws a picture covering
-a fifth of the page or more (a screenshot, a whiteboard photo) has its picture read with OCR, or, without OCR, is not
-complete: the page is read, and a failed unit says the picture's text needs OCR. A page pypdf cannot read is a failed unit, not the file; a failed page's outline headings still open
-their sections. A character a font's map gives no Unicode character (a lone surrogate) is read as U+FFFD, with a
+a fifth of the page or more (a screenshot, a whiteboard photo) has its picture read with OCR, each of its lines a paragraph block of its own after the page's text
+(`attrs.ocr`), never a table or a heading, or, without OCR, is not complete: the page is read, and a failed unit says
+the picture's text needs OCR. A page pypdf cannot read is a failed unit, not the file; a failed page's outline headings
+still open their sections. A character a font's map gives no Unicode character (a lone surrogate) is read as U+FFFD, with a
 warning naming its page. A PDF that opens only with a password is `unsupported_format`.
 
 **OCR.** The extractor image installs Tesseract's and Leptonica's libraries and Tesseract's English model

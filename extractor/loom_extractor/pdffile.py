@@ -202,6 +202,9 @@ class _Page:
     failure: str = ""  # the page is not read
     partial: str = ""  # the page is read, but not all of it: what was not
     ocr: bool = False  # some of its text was read from its images
+    # OCR's lines in a picture on a page with text (a diagram's labels): read
+    # as text, apart from the page's tables and headings
+    pictured: list[layout.Line] = field(default_factory=list)
 
 
 def _read_layout(
@@ -211,10 +214,10 @@ def _read_layout(
     eng: ocr.Engine | None,
     left: list[int],
 ) -> list[layout._Rule]:
-    """The page's lines, its text runs' and those OCR reads in its pictures
-    (all of them on a page with no text, those that cover a fifth of it on one
-    with text), and its rules; what OCR could not read is the page's partial
-    or failure."""
+    """The page's lines and rules, with what OCR reads in its pictures: on a
+    page with no text, all of them, laid out as the page; on one with text,
+    those that cover a fifth of it, as lines of their own (`pictured`). What
+    OCR could not read is the page's partial or failure."""
     found, read.other, read.width, read.page_height, turn = layout.spans(page, read.dropped)
     try:
         rules, pictures = layout.drawing(page, reader, turn)
@@ -252,8 +255,12 @@ def _read_layout(
             except ValueError as e:
                 problems.append(str(e))
                 continue
-            found += layout.picture_spans(page, turn, picture, words, w, h)
-            rules += layout.picture_rules(page, turn, picture, boxes, w, h)
+            spans = layout.picture_spans(page, turn, picture, words, w, h)
+            if texted:
+                read.pictured += layout.lines_of(spans)
+            else:  # a scanned page: laid out as a page is, its grid its rules
+                found += spans
+                rules += layout.picture_rules(page, turn, picture, boxes, w, h)
             read.ocr = True
         if problems and not texted and not read.ocr:
             read.failure = f"no text layer, and OCR read none of its images: {problems[0]}"
@@ -613,6 +620,9 @@ def extract_pdf(data: bytes) -> Artifact:
             _page(acc, read.text, read.number, read.headings, shift)
         else:
             _emit(acc, read, budget, tables, failed)
+        loc = Locator(page_start=read.number, page_end=read.number)
+        for ln in read.pictured:
+            acc.add("paragraph", ln.text, loc, ocr=True)
     attrs: dict[str, Any] = {"pages": len(pages)}
     ocr_pages = [r.number for r in reads if r.ocr]
     if ocr_pages:

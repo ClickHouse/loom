@@ -27,6 +27,8 @@ class FakeEngine:
 
     lines: list[list[str]]
     version: str = "5.0.0"
+    step: int = 130  # from a word's left edge to the next one's, in pixels
+    points: float = 11.0
     seen: list[tuple[bytes, float]] = field(default_factory=list)
     boxes: list[ocr.Box] = field(default_factory=list)
 
@@ -38,8 +40,10 @@ class FakeEngine:
         for n, line in enumerate(self.lines):
             base = 100 + 60 * n
             for k, w in enumerate(line):
-                x = 50 + 130 * k  # a word's width and a space apart
-                words.append(ocr.Word(w, x, base - 30, x + 120, base, base, 40.0, k == 0, 11.0))
+                x = 50 + self.step * k
+                words.append(
+                    ocr.Word(w, x, base - 30, x + 120, base, base, 40.0, k == 0, self.points)
+                )
         return words, self.boxes, 1000, 1000
 
 
@@ -82,6 +86,22 @@ def test_a_large_picture_on_a_text_page_is_read_and_a_small_one_is_not(engine: F
     small = extract(laid_out_pdf([text + b"q 40 0 0 30 100 300 cm /Im1 Do Q"], image=GRAY), "s.pdf")
     assert [b.text for b in small.blocks] == ["A page of text with a whiteboard photo."]
     assert small.coverage.complete and len(engine.seen) == 1
+
+
+def test_a_diagrams_labels_on_a_text_page_are_text_not_a_table_or_a_heading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # labels set out in columns, and larger than the page's text
+    labels = [["ingest", "queue", "merge"], ["api", "events", "workers"], ["a", "b", "c"]]
+    eng = FakeEngine(labels, step=330, points=24.0)
+    monkeypatch.setattr(ocr, "engine", lambda: eng)
+    text = text_at(72, 740, "The pipeline, as drawn on the whiteboard.")
+    a = extract(laid_out_pdf([text + b"q 400 0 0 300 100 300 cm /Im1 Do Q"], image=GRAY), "d.pdf")
+    assert not a.tables and not [b for b in a.blocks if b.type == "heading"]
+    pictured = [b for b in a.blocks if b.attrs.get("ocr")]
+    assert [b.text for b in pictured] == [" ".join(line) for line in labels]
+    assert all(b.type == "paragraph" and b.locator.page_start == 1 for b in pictured)
+    assert a.coverage.complete
 
 
 def test_without_ocr_a_large_picture_leaves_its_page_partial_and_an_image_page_failed(
