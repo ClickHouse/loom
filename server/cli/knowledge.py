@@ -54,8 +54,9 @@ def register_knowledge_cli(sub: Any) -> None:
         "Idempotent: run it again to go on after a stop. Exits 1 when an original was not "
         "moved (bytes that do not hash to their sha256 or fill their size, an erasure not "
         "yet finished or one that kept it, a bucket that refused or a write past its "
-        "budget); it stays where it was. Exits 1 too when an original was switched as an "
-        "erasure of one of its users started that has not finished; that erasure is named.",
+        "budget); it stays where it was. Exits 1 too when a switched original could not be "
+        "confirmed (an erasure of its users that started as it switched has not finished, or "
+        "the check after the switch failed); each is listed as switched, unconfirmed.",
     )
     p_move.add_argument("--org", default="", help="Only this org's originals")
     p_move.add_argument("--namespace", default="", help="Only this namespace of --org")

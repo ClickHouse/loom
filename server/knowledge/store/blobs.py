@@ -316,6 +316,20 @@ def _covers(scope_type: str, scope_value: str, namespace: str) -> bool:
     return True
 
 
+def _fence_advice(erasures: list[_Erasure], what: str) -> str:
+    """What holds a move back, named by the erasure that holds it longest (a failed one,
+    else an unfinished one, else one that finished just now), and what to do."""
+    failed = [e for e in erasures if e.status == "failed"]
+    if failed:
+        return (
+            f"{failed[0]} {what}; complete it with loom erasure-re-verify --resume, then run again"
+        )
+    open_ = [e for e in erasures if not e.done]
+    if open_:
+        return f"{open_[0]} {what}; run again once it has finished"
+    return f"{erasures[0]} {what} and finished just now; run again in a minute"
+
+
 async def _erasures_since(held: Held, since_s: int, ch: _CHClient) -> list[_Erasure]:
     """The erasures that cover the original and had not finished at `since_s`."""
     with sequential_reads():
@@ -387,15 +401,7 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     since = await _cutoff_ms(0, ch) // 1000
     fenced = await _erasures_since(held, since, ch)
     if fenced:
-        failed = next((e for e in fenced if e.status == "failed"), None)
-        if failed:
-            raise ErasureOpen(
-                f"{failed} covers it; complete it with loom erasure-re-verify --resume, "
-                "then run again"
-            )
-        if fenced[0].done:
-            raise ErasureOpen(f"{fenced[0]} covers it and finished just now; run again in a minute")
-        raise ErasureOpen(f"{fenced[0]} covers it; run again once it has finished")
+        raise ErasureOpen(_fence_advice(fenced, "covers it"))
     data = await read(held.org, held.namespace, held.sha, stored=Stored(held.size, ""), ch=ch)
     if data is None:
         with sequential_reads():
@@ -432,8 +438,7 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
         users = [e for e in overtaken if e.scope_type == "user_id"]
         if users:
             raise ErasureOpen(
-                f"{users[0]} started while it was copied; it stays in ClickHouse; run again "
-                "once that erasure has finished"
+                _fence_advice(users, "started while it was copied, and it stays in ClickHouse")
             )
         if overtaken:
             return False  # a namespace's erasure, which deletes it
