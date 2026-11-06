@@ -1,7 +1,8 @@
 """The corpus build's first step, before anything is rendered or removed: the
 PEP pages it reads are there, the directory is a corpus (or one a build
-started in), and the tools container sees it at /c; then the directory is
-emptied. Apart from `corpus.py` so it runs without the rendering libraries."""
+stopped in) or a new one in a directory that is there, and the tools container
+sees it at /c; then the directory is emptied. And what a failed container call
+says. Apart from `corpus.py` so it runs without the rendering libraries."""
 
 from __future__ import annotations
 
@@ -37,9 +38,9 @@ def docker(*cmd: str) -> None:
 
 def prepare(out: Path, src: Path) -> Dirs:
     """`out` emptied for a build, once it is safe to: SystemExit, removing
-    nothing, when a PEP page is missing from `src`, `out` holds files but
-    neither `gold.jsonl` nor a stopped build's `_work`, or the tools container
-    does not see `out` at /c."""
+    nothing, when a PEP page is missing from `src`, `out` is a file or its
+    parent is no directory, `out` holds files but neither `gold.jsonl` nor a
+    stopped build's `_work`, or the tools container does not see `out` at /c."""
     d = Dirs(out.resolve(), out.resolve() / "_work")
     src = src.resolve()
     missing = [n for n, _ in PEPS if not (src / f"pep{n}.html").is_file()]
@@ -47,6 +48,8 @@ def prepare(out: Path, src: Path) -> Dirs:
         raise SystemExit(
             f"{src} lacks pep{missing[0]}.html: save each from https://peps.python.org/pep-0NNN/"
         )
+    if d.out.exists() and not d.out.is_dir():
+        raise SystemExit(f"{d.out} is a file, not a corpus directory")
     if not d.out.parent.is_dir():
         raise SystemExit(
             f"{d.out.parent} is not a directory: build makes only the corpus directory itself"
@@ -84,3 +87,14 @@ def prepare(out: Path, src: Path) -> Dirs:
         shutil.rmtree(p) if p.is_dir() else p.unlink()
     d.work.mkdir()
     return d
+
+
+def failed(e: subprocess.CalledProcessError) -> SystemExit:
+    """What a failed call into the container says: the program, the file it was
+    given, and the end of what it wrote to stderr (bytes or text)."""
+    stderr = e.stderr if isinstance(e.stderr, str) else (e.stderr or b"").decode(errors="replace")
+    cmd = [str(c) for c in e.cmd]
+    program = cmd[3] if len(cmd) > 3 else " ".join(cmd)
+    # the file is the last argument inside the corpus (pdftotext's last is `-`, its output)
+    file = next((c for c in reversed(cmd) if "/c/" in c), cmd[-1])
+    return SystemExit(f"{program} failed on {file}: {stderr.strip()[-2000:]}")

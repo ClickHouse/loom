@@ -279,6 +279,25 @@ def test_a_build_the_container_cannot_see_leaves_its_directory_as_found(
         assert (sorted(p.name for p in out.iterdir()) if out.exists() else []) == before
 
 
+def test_a_container_that_sees_another_directory_says_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pep_src: Path
+) -> None:
+    _no_container(monkeypatch, subprocess.CalledProcessError(1, ["docker"], stderr=b""))
+    with pytest.raises(SystemExit, match="its /c is not"):
+        P.prepare(tmp_path / "corpus", pep_src)
+    (tmp_path / "file").write_text("x")
+    with pytest.raises(SystemExit, match="is a file"):
+        P.prepare(tmp_path / "file", pep_src)
+
+
+def test_a_failed_container_call_names_its_program_file_and_error() -> None:
+    cmd = ["docker", "exec", "c", "pdftotext", "-raw", "/c/a.pdf", "-"]
+    for stderr in ("Syntax Error: broken xref", b"Syntax Error: broken xref", None):
+        message = str(P.failed(subprocess.CalledProcessError(1, cmd, stderr=stderr)))
+        assert message.startswith("pdftotext failed on /c/a.pdf")
+        assert ("broken xref" in message) == (stderr is not None)
+
+
 def test_a_build_without_docker_says_so(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pep_src: Path
 ) -> None:

@@ -42,7 +42,7 @@ from reportlab.platypus import (
 )
 
 from bench.docparse import specs as S
-from bench.docparse.prepare import CONTAINER, PEPS, Dirs, docker, prepare
+from bench.docparse.prepare import CONTAINER, PEPS, Dirs, docker, failed, prepare
 from bench.docparse.score import words
 
 HAND = "/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf"
@@ -593,10 +593,7 @@ def build(out: Path, src: Path) -> None:
     try:
         _build(out, src)
     except subprocess.CalledProcessError as e:  # a render in the container failed: say why
-        tool = " ".join(str(c) for c in e.cmd[3:5])
-        raise SystemExit(
-            f"{tool} failed: {(e.stderr or b'').decode(errors='replace').strip()[-2000:]}"
-        ) from None
+        raise failed(e) from None
 
 
 def _build(out: Path, src: Path) -> None:
