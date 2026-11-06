@@ -32,7 +32,7 @@ Marks must be registered (`strict_markers`). An unknown mark fails collection.
 - **Collection is deterministic.** Every xdist worker collects the suite and must get the same test ids, so a parametrize id never comes from `uuid4()`, the clock or a random draw.
 - **State goes back as it was found.** `tests/unit/conftest.py` holds autouse guards. Each one resets its state and fails the test that leaked it:
   - settings fields: use the `settings_override` fixture or `monkeypatch.setattr(settings, ...)`;
-  - the auth principal, the query tag and the cost accumulator (reset, not failed);
+  - the auth principal; the query tag and the cost accumulator (reset, not failed);
   - environment variables, the working directory, `logging.disable` and non-daemon threads left running: use `monkeypatch`, and join what you start. The root logger (handlers, level and the CLI's logging latch) is reset after every test without failing it. `sys.path` is not checked, because bench modules insert their directory on first import;
   - pending tasks on the session loop;
   - the LLM and embedder singletons. A test double left in either cache fails the test, and the embedding cache is emptied after every test.

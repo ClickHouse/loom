@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -88,7 +89,8 @@ def test_the_walk_finds_the_test_modules_pytest_collects(tmp_path: Path) -> None
 
 @pytest.mark.parametrize("n", [1, 2, 3, 4])
 def test_the_parts_collect_every_test_file_exactly_once(tmp_path: Path, n: int) -> None:
-    files = [p for p in _tree(tmp_path) if p in _shards.test_files([tmp_path])]
+    files = [p.resolve() for p in _tree(tmp_path) if p.resolve() in _shards.test_files([tmp_path])]
+    assert len(files) == 4
     kept: list[Path] = []
     for k in range(1, n + 1):
         split = _shards.Split(k, n, [tmp_path])
@@ -97,11 +99,11 @@ def test_the_parts_collect_every_test_file_exactly_once(tmp_path: Path, n: int) 
 
 
 def test_a_test_file_the_walk_missed_runs_in_part_one(tmp_path: Path) -> None:
-    _tree(tmp_path)
-    stray = tmp_path.parent / f"{tmp_path.name}_elsewhere" / "test_stray.py"
+    _tree(tmp_path / "tree")
+    stray = tmp_path / "elsewhere" / "test_stray.py"
     stray.parent.mkdir()
     stray.write_text("def test_one(): ...\n")
-    assert [_shards.Split(k, 3, [tmp_path]).ignores(stray) for k in (1, 2, 3)] == [
+    assert [_shards.Split(k, 3, [tmp_path / "tree"]).ignores(stray) for k in (1, 2, 3)] == [
         False,
         True,
         True,
@@ -188,3 +190,10 @@ def test_a_directory_argument_skips_the_other_parts_files_before_collecting_them
     whole = _collect("tests/analyzer", shard=None)
     parts = [_collect("tests/analyzer", shard=f"{k}/2", deselect_free=True) for k in (1, 2)]
     assert sorted(parts[0] + parts[1]) == sorted(whole)
+
+
+def test_the_committed_weights_are_seconds_per_test_file() -> None:
+    weights = json.loads(_shards.WEIGHTS.read_text())
+    assert weights, "regenerate with python -m tests._shards <junit xml>..."
+    assert all(name.startswith("tests/") and name.endswith(".py") for name in weights)
+    assert all(isinstance(s, int | float) and s >= 0 for s in weights.values())
