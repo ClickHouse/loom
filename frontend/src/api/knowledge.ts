@@ -215,18 +215,16 @@ export interface KnowledgeHit {
   keys_matched?: string[];
 }
 
-/** The passages one search lists by default: the best this many. */
-export const PASSAGES_TOP_K = 10;
-
-/** The namespace's passages that answer `query`, best first (`knowledge.search`). */
+/** The namespace's best `topK` passages that answer `query`, best first (`knowledge.search`). */
 export async function searchKnowledge(
   id: Pick<Identity, "org" | "namespace">,
   query: string,
-  opts: RequestOpts & { topK?: number } = {},
+  topK: number,
+  opts: RequestOpts = {},
 ): Promise<KnowledgeHit[]> {
   const r = await post<{ results: KnowledgeHit[] }>(
     "/v1/knowledge.search",
-    { org: id.org, namespace: id.namespace, query, top_k: opts.topK ?? PASSAGES_TOP_K, namespace_scope: "this" },
+    { org: id.org, namespace: id.namespace, query, top_k: topK, namespace_scope: "this" },
     opts.signal,
   );
   return r.results ?? [];

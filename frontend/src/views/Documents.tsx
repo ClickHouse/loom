@@ -237,6 +237,8 @@ export function Documents() {
   const [loadErrorFor, setLoadErrorFor] = useState("");
   // The place ("org/namespace") the rows on screen were read for.
   const [rowsScope, setRowsScope] = useState("");
+  // The place a list read last answered for: a later failed read there keeps the passages.
+  const [listedScope, setListedScope] = useState("");
   // Every reload (Retry, a delete, an add, an edit) goes through the effect below, so an
   // answer for a namespace the page has left is aborted and dropped.
   const [reloads, setReloads] = useState(0);
@@ -274,6 +276,7 @@ export function Documents() {
           setLoadError(null);
           setRows(r.rows || []);
           setRowsScope(scope);
+          setListedScope(scope);
           // A collection that answers again earns a fresh re-read if it is refused later.
           reReadFor.current = "";
           setRowsFor(serverTags);
@@ -864,8 +867,9 @@ export function Documents() {
       <div className="-mt-1 mb-3 flex justify-end sm:hidden">{sortSelect("w-40")}</div>
 
       {/* Inside the documents: a passage, cited by revision and place, opens its document.
-          Kept through a list filter (it searches the whole namespace); a new place resets it. */}
-      {rows !== null && !emptyLibrary && !failed && (
+          Kept through a list filter and a later failed read (it searches the whole namespace);
+          not shown before the place's list has loaded once, and a new place resets it. */}
+      {rows !== null && !emptyLibrary && listedScope === `${identity.org}/${identity.namespace}` && (
         <div ref={passagesBox}>
           <LibraryPassages
             key={`${identity.org}/${identity.namespace}`}

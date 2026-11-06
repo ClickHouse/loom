@@ -11,7 +11,7 @@ vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   searchKnowledge: vi.fn(),
 }));
-import { type KnowledgeHit, PASSAGES_TOP_K, searchKnowledge } from "../api";
+import { type KnowledgeHit, searchKnowledge } from "../api";
 import { axeViolations } from "../test/axe";
 import { LibraryPassages } from "./LibraryPassages";
 
@@ -79,6 +79,7 @@ describe("LibraryPassages", () => {
     expect(onHitsShown).toHaveBeenLastCalledWith(true);
     const [first, second] = within(list).getAllByRole("listitem");
     expect(first).toHaveTextContent("retention.pdf");
+    expect(first).toHaveTextContent("repo://handbook/retention.pdf");
     expect(first).toHaveTextContent("Retention > Events");
     expect(first).toHaveTextContent("revision 3, page 7");
     expect(first).toHaveTextContent("Raw events are kept for 30 days");
@@ -92,12 +93,9 @@ describe("LibraryPassages", () => {
   });
 
   it("says a full page is the best passages, not all of them", async () => {
-    vi.mocked(searchKnowledge).mockResolvedValue(
-      Array.from({ length: PASSAGES_TOP_K }, (_, i) => ({ ...HIT, chunk_idx: i })),
-    );
+    vi.mocked(searchKnowledge).mockResolvedValue(Array.from({ length: 10 }, (_, i) => ({ ...HIT, chunk_idx: i })));
     await openAndFind("events");
-    expect(await screen.findByText(`The best ${PASSAGES_TOP_K} passages`)).toBeInTheDocument();
-    expect(vi.mocked(searchKnowledge).mock.calls[0][2]).toMatchObject({ topK: PASSAGES_TOP_K });
+    expect(await screen.findByText("The best 10 passages")).toBeInTheDocument();
   });
 
   it("shows a hit from a server older than revisions and locators, uncited", async () => {

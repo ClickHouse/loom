@@ -24,5 +24,8 @@ describe("citation", () => {
   it("names the revision a passage was read from and its place", () => {
     expect(citation({ format: "pdf", revision: 3, locator: { page_start: 7 } })).toBe("revision 3, page 7");
     expect(citation({ format: "", revision: 0, locator: null })).toBe("");
+    expect(citation({ format: "markdown", revision: 0, locator: { line_start: 4 } })).toBe("line 4");
+    expect(citation({ format: "text", revision: 2, locator: null })).toBe("revision 2");
+    expect(citation({})).toBe("");
   });
 });

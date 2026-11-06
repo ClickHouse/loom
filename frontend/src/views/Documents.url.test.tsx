@@ -293,6 +293,22 @@ describe("Library keeps the open document in its URL", () => {
     act(() => useStore.setState({ identity: { org: "acme", namespace: "ops", agent: "loom-ui" } }));
     await settle();
     expect(screen.getByRole("button", { name: /Find a passage/ })).toHaveAttribute("aria-expanded", "false");
+    // A later read of the list that fails keeps the passages and what they found.
+    api.searchKnowledge.mockResolvedValue([
+      { source_uri: "docs/handbook.md", chunk_idx: 0, content: "One.", section: "", score: 1 },
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: /Find a passage/ }));
+    fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "passage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Find" }));
+    await settle();
+    api.listKnowledge.mockRejectedValueOnce(new Error("boom"));
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:billing" } });
+    expect(await screen.findByText(/Couldn.t load documents/)).toBeInTheDocument();
+    expect(api.listKnowledge).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tags: ["billing"] }),
+    );
+    expect(screen.getByRole("list", { name: "Passages found" })).toBeInTheDocument();
     api.listKnowledge.mockRejectedValue(new Error("boom"));
     act(() => useStore.setState({ identity: { org: "acme", namespace: "broken", agent: "loom-ui" } }));
     await settle();
