@@ -258,12 +258,25 @@ async def _drop(loc: objects.Location) -> None:
         log.warning("originals: %s left to the bucket walk: %s", loc.uri(), e)
 
 
+async def _stands(held: blobs.Held, loc: objects.Location, ch: _CHClient | None) -> bool:
+    """Whether the switched row is still the original's latest; False leaves its object
+    to the bucket walk, which takes it once no row names it."""
+    try:
+        return await blobs.latest_names(held, loc, ch=ch)
+    except Exception as e:  # the row is switched: an unread latest row is reported, not lost
+        raise SwitchUnconfirmed(
+            f"switched to {loc.uri()}, but reading whether a later write outranked it failed "
+            f"({e}); check whether the latest loom.document_blobs row of this original names "
+            f"{loc.uri()}"
+        ) from e
+
+
 async def _settle(
     held: blobs.Held, since: int, loc: objects.Location, ch: _CHClient | None
 ) -> bool:
     """After the switched row landed, an erasure registered as it landed decides:
 
-    - none: the switch stands;
+    - none: the switch stands, unless a write since the re-read outranks it;
     - a namespace's: the move is taken back at once;
     - a user's: once it has finished, the move is taken back if the erasure took the
       moved object, its object deleted if the erasure took the row alone, and it stands
@@ -277,7 +290,7 @@ async def _settle(
             # No erasure raced the switch: it stands, unless a write since the re-read
             # outranks it. Its object is then named only by a superseded row, and the
             # bucket walk takes it once the rows merge.
-            return await blobs.latest_names(held, loc, ch=ch)
+            return await _stands(held, loc, ch)
         # Taken back at once only for an erasure that certainly deletes the namespace's
         # originals; any other is waited for and decided by the moved object.
         taken = any(e.deletes_namespace(held.namespace) for e in raced)

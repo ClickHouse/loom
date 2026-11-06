@@ -416,6 +416,9 @@ async def test_a_row_replaced_since_the_walk_is_kept(
     assert await originals.move_to_bucket(held, ch=ch) is False
     monkeypatch.setattr(ch, "insert", insert)
     assert await blobs.locate(org, ns, sha, ch=ch) == blobs.Stored(5, "")
+    # Its object stays for the bucket walk: named by the superseded row until a merge drops
+    # that row (a background merge may already have).
+    assert len(_keys(s3, object_store.namespace_prefix(org, ns))) == 1
     # An original no row holds any more has nothing to move.
     gone = blobs.Held(org, ns, "0" * 64, 1, 0)
     assert await originals.move_to_bucket(gone, ch=ch) is False

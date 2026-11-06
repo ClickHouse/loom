@@ -1071,10 +1071,9 @@ held back, one whose object key would be too long, or one the bucket refused or 
 slow for is reported and stays where it was. The command exits 1 for those, and for a
 switched original it could not confirm. An original uploaded again or deleted while the
 command ran keeps what that write left, and the move deletes the object it wrote (or, when
-the write landed after its switched row, leaves it to the bucket walk once the rows
-merge). An
-object a crash leaves is the sweep's, as an upload's is. The command is idempotent: run it
-again after a stop or a failure.
+the write landed after the move's last read of the row, leaves it to the bucket walk once
+the rows merge). An object a crash leaves is the sweep's, as an upload's is. The command
+is idempotent: run it again after a stop or a failure.
 
 The server's credentials need `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and
 `s3:ListBucket` on the bucket and prefix. Without `s3:ListBucket`, S3 answers a read of a

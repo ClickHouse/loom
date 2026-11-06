@@ -247,3 +247,31 @@ async def test_a_dry_run_reports_a_namespace_an_erasure_holds(
     assert result.pending == 0
     (line,) = result.refused
     assert "erasure e1" in line
+
+
+@pytest.mark.asyncio
+async def test_a_switch_a_later_write_outranked_does_not_stand(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import object_store as objects
+
+    loc = objects.Location("bucket", "k")
+
+    async def no_erasures(*a: Any) -> list[Any]:
+        return []
+
+    async def outranked(*a: Any, **kw: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(originals, "_erasures_since", no_erasures)
+    monkeypatch.setattr(blobs, "latest_names", outranked)
+    assert await originals._settle(_held(0), 0, loc, None) is False
+
+    async def unread(*a: Any, **kw: Any) -> bool:
+        raise RuntimeError("ClickHouse went away")
+
+    # An unread latest row is reported with what to check, not as an erasure's.
+    monkeypatch.setattr(blobs, "latest_names", unread)
+    with pytest.raises(originals.SwitchUnconfirmed, match="later write outranked it") as e:
+        await originals._settle(_held(0), 0, loc, None)
+    assert "erasure" not in str(e.value)
