@@ -101,7 +101,7 @@ def test_anchor_overrides_are_the_multiplier_times_the_server_defaults() -> None
     from server.core.ratelimit import DEFAULT_LIMITS
 
     out = onboard_tenant.anchor_overrides(3.0)
-    assert set(out) == {"memory", "knowledge.search", "knowledge.add"}
+    assert set(out) == {"memory", "knowledge.search", "knowledge.read", "knowledge.add"}
     for cls, (cap, rate) in out.items():
         assert cap == DEFAULT_LIMITS[cls].capacity * 3
         assert rate == DEFAULT_LIMITS[cls].rate * 3

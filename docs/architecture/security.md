@@ -648,16 +648,17 @@ PDF and SVG included.
 class), plus an optional per-actor tier (`LOOM_RATELIMIT_ACTOR_FRACTION`). If any bucket
 refuses, none is decremented.
 
-| Op class (`op_class_for`) | Covers                                           |
-| ------------------------- | ------------------------------------------------ |
-| `memory`                  | Memory and conversation ops, writes and searches |
-| `memory.read`             | Exact-key reads such as `memory.get`             |
-| `knowledge.search`        | `knowledge.search`                               |
-| `knowledge.query`         | `knowledge.query`                                |
-| `knowledge.read`          | Other `knowledge.*` reads a viewer may call      |
-| `knowledge.add`           | Every other `knowledge.*` op                     |
-| `code`                    | `code.*` (`code.outcome` rides `memory`)         |
-| `default`                 | Everything else                                  |
+| Op class (`op_class_for`) | Covers                                          |
+| ------------------------- | ----------------------------------------------- |
+| `memory`                  | Memory and conversation ops but `memory.import` |
+| `memory.read`             | Exact-key reads such as `memory.get`            |
+| `memory.import`           | `memory.import`                                 |
+| `knowledge.search`        | `knowledge.search`                              |
+| `knowledge.query`         | `knowledge.query`                               |
+| `knowledge.read`          | Other read-only `knowledge.*` ops (not audited) |
+| `knowledge.add`           | Every other `knowledge.*` op                    |
+| `code`                    | `code.*` (`code.outcome` rides `memory`)        |
+| `default`                 | Everything else                                 |
 
 The org bucket comes from the verified token, never the body. A refusal is 429
 `RATE_LIMITED` with `Retry-After` and `X-RateLimit-*` headers. The limiter fails open: a

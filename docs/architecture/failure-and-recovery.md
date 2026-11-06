@@ -295,11 +295,12 @@ pass every bucket, and a refusal decrements none.
 
 | Op class           | Covers                                                                        | Capacity | Refill / s |
 | ------------------ | ----------------------------------------------------------------------------- | -------- | ---------- |
-| `memory`           | `memory.*` and `conversation.*` writes and searches (and `code.outcome`)      | 100      | 17         |
+| `memory`           | `memory.*`, `conversation.*` writes and searches, `code.outcome`; not import  | 100      | 17         |
+| `memory.import`    | `memory.import`                                                               | 10       | 2          |
 | `memory.read`      | Exact-key reads: `memory.get`, `bulk_get`, `history`, `working_memory.get`, … | 300      | 50         |
 | `knowledge.search` | `knowledge.search`                                                            | 20       | 3          |
 | `knowledge.query`  | `knowledge.query`                                                             | 20       | 3          |
-| `knowledge.read`   | Other `knowledge.*` reads a viewer may call: `knowledge.get`, `list`, …       | 50       | 10         |
+| `knowledge.read`   | Other read-only `knowledge.*` ops (viewer, not audited): `get`, `list`, …     | 50       | 10         |
 | `knowledge.add`    | Other `knowledge.*` ops, `knowledge.synthesize` and `dedup_list` included     | 10       | 2          |
 | `code`             | `code.*`                                                                      | 60       | 10         |
 | `default`          | Everything else                                                               | 50       | 10         |
