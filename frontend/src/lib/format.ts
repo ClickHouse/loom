@@ -137,9 +137,18 @@ export function sentenceCase(s: string): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
+/** The first `max` characters of `s`, the ellipsis included, cut by code point so an
+ *  emoji at the cut is not split in half. */
 export function truncate(s: string, max: number): string {
   if (!s || s.length <= max) return s;
-  return s.slice(0, max - 1).trimEnd() + "…";
+  const points = Array.from(s);
+  if (points.length <= max) return s;
+  return (
+    points
+      .slice(0, max - 1)
+      .join("")
+      .trimEnd() + "…"
+  );
 }
 
 /** A bounded preview of a value for a card: the first `max` characters of the string, or

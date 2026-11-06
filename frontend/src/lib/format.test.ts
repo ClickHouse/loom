@@ -184,6 +184,11 @@ describe("truncate", () => {
     expect(truncate("", 3)).toBe("");
   });
 
+  it("cuts between characters, not inside an emoji", () => {
+    expect(truncate("ab😀cd", 4)).toBe("ab😀…");
+    expect(truncate("😀😀😀", 3)).toBe("😀😀😀");
+  });
+
   it("cuts to max characters including the ellipsis", () => {
     expect(truncate("abcdefgh", 5)).toBe("abcd…");
     expect(truncate("abcdefgh", 5)).toHaveLength(5);

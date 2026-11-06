@@ -10,7 +10,7 @@ import { type Identity, type KnowledgeHit, searchKnowledge } from "../api";
 import { Alert } from "../components/ui/Alert";
 import { BusyButton } from "../components/ui/BusyButton";
 import { ListRow } from "../components/ui/ListRow";
-import { humanizeError } from "../lib/format";
+import { humanizeError, truncate } from "../lib/format";
 import { citation } from "../lib/locator";
 import { useRowNav } from "../lib/useRowNav";
 
@@ -21,10 +21,7 @@ const TOP_K = 10;
 const EXCERPT_CHARS = 280;
 
 function excerpt(text: string): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  // By code point, so an emoji at the cut is not split in half.
-  const points = Array.from(flat);
-  return points.length > EXCERPT_CHARS ? `${points.slice(0, EXCERPT_CHARS - 1).join("")}…` : flat;
+  return truncate(text.replace(/\s+/g, " ").trim(), EXCERPT_CHARS);
 }
 
 /** The last path segment of a source URI, its document's short name. */
@@ -105,7 +102,6 @@ export function LibraryPassages({
           read from and its place.
         </p>
         <form
-          aria-label="Find a passage"
           className="flex gap-2"
           onSubmit={(e) => {
             e.preventDefault();
@@ -131,16 +127,20 @@ export function LibraryPassages({
           {count}
         </p>
         {shown && hits && (
-          <ol ref={nav} className="space-y-2" aria-label="Passages found">
-            {hits.map((h) => {
+          <ol ref={nav} className="space-y-2" aria-label="Passages found" aria-busy={busy || undefined}>
+            {hits.map((h, i) => {
               const cited = citation(h);
               const name = shortName(h.source_uri);
+              const excerptId = `${PASSAGES_PANEL_ID}-excerpt-${i}`;
               return (
                 <li key={`${h.source_uri}#${h.chunk_idx}`}>
                   <ListRow>
                     <button
                       type="button"
                       data-row-open=""
+                      // Named by its document and citation; the excerpt is its description.
+                      aria-label={`Open ${h.source_uri}${cited ? `, ${cited}` : ""}`}
+                      aria-describedby={excerptId}
                       onClick={() => onOpen(h.source_uri)}
                       className="list-row-open block w-full"
                     >
@@ -156,7 +156,9 @@ export function LibraryPassages({
                           <Badge key={k} size="sm" state="neutral" text={k} />
                         ))}
                       </span>
-                      <span className="mt-1 line-clamp-2 text-sm text-text-muted">{excerpt(h.content)}</span>
+                      <span id={excerptId} className="mt-1 line-clamp-2 text-sm text-text-muted">
+                        {excerpt(h.content)}
+                      </span>
                     </button>
                   </ListRow>
                 </li>

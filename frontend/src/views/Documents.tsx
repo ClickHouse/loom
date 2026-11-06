@@ -610,13 +610,16 @@ export function Documents() {
   const passagesBox = useRef<HTMLDivElement | null>(null);
   // Finding a passage: once the place's list has loaded and holds a document, and through a
   // later failed read (it searches the whole namespace). A new place folds it.
-  const canFindPassages = rows !== null && !emptyLibrary && listedScope === `${identity.org}/${identity.namespace}`;
+  // The rows on screen must be this place's too: back at a place after another's failed
+  // read, the failed rows still show for a render.
+  const canFindPassages = rows !== null && !emptyLibrary && listedScope === place && rowsScope === place;
   useEffect(() => setPassagesOpen(false), [identity.org, identity.namespace]);
   const passagesToggle = (className: string) => (
     <Button
       type="empty"
       htmlType="button"
       iconLeft="search"
+      iconRight={passagesOpen ? "chevron-down" : "chevron-right"}
       className={className}
       aria-expanded={passagesOpen}
       aria-controls={passagesOpen ? PASSAGES_PANEL_ID : undefined}
@@ -889,9 +892,7 @@ export function Documents() {
         {sortSelect("w-40")}
       </div>
 
-      {/* Inside the documents: a passage, cited by revision and place, opens its document.
-          Kept through a list filter and a later failed read (it searches the whole namespace);
-          not shown before the place's list has loaded once, and a new place resets it. */}
+      {/* Inside the documents: a passage, cited by revision and place, opens its document. */}
       {canFindPassages && passagesOpen && (
         <div ref={passagesBox}>
           <LibraryPassages
