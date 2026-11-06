@@ -38,6 +38,7 @@ import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
+import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
 import { EmptyState } from "../components/EmptyState";
@@ -189,6 +190,10 @@ export function Documents() {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const focusSearchOnRead = useRef(false);
   const [sortBy, setSortBy] = useState<SortBy>("recency");
+  const [passageHitsShown, setPassageHitsShown] = useState(false);
+  const [passagesOpen, setPassagesOpen] = useState(false);
+  // The arrows and j/k move through the list focus was last in: the passages or the documents.
+  const [keysIn, setKeysIn] = useState<"documents" | "passages">("documents");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<KnowledgeEntry | null>(null);
   const [previewDoc, setPreviewDoc] = useState<KnowledgeDocument | null>(null);
@@ -233,6 +238,9 @@ export function Documents() {
   const [loadErrorFor, setLoadErrorFor] = useState("");
   // The place ("org/namespace") the rows on screen were read for.
   const [rowsScope, setRowsScope] = useState("");
+  // The place whose list returned a document on this visit: a later filtered or failed
+  // read there keeps the passages (an unfiltered empty one is an empty library).
+  const [listedScope, setListedScope] = useState("");
   // Every reload (Retry, a delete, an add, an edit) goes through the effect below, so an
   // answer for a namespace the page has left is aborted and dropped.
   const [reloads, setReloads] = useState(0);
@@ -251,8 +259,9 @@ export function Documents() {
     if (shownScope.current !== scope) {
       shownScope.current = scope;
       setRows(null);
-      // The last place's failure is not this one's.
+      // The last place's failure is not this one's, nor its earlier load on another visit.
       setLoadError(null);
+      setListedScope("");
     }
     setNextCursor(null);
     const tags = JSON.parse(serverTags) as string[];
@@ -270,6 +279,10 @@ export function Documents() {
           setLoadError(null);
           setRows(r.rows || []);
           setRowsScope(scope);
+          // A read that returned a document: the library holds one, whatever filter
+          // narrows a later read. An unfiltered read that returned none: it holds none.
+          if (r.rows?.length) setListedScope(scope);
+          else if (!tags.length) setListedScope("");
           // A collection that answers again earns a fresh re-read if it is refused later.
           reReadFor.current = "";
           setRowsFor(serverTags);
@@ -358,9 +371,9 @@ export function Documents() {
     fallback: () => searchRef.current,
   });
 
-  // The read behind a `?doc=` link past the loaded rows. It ends with the page, with its
-  // namespace, and when the reader opens or closes a document themselves: its answer then
-  // opens nothing.
+  // The read behind a `?doc=` link's or a passage's open past the loaded rows. It ends
+  // with the page, with its namespace, and when the reader opens or closes a document
+  // themselves: its answer then opens nothing.
   const linkRead = useRef<AbortController | null>(null);
   useEffect(() => () => linkRead.current?.abort(), [identity.org, identity.namespace]);
 
@@ -372,26 +385,9 @@ export function Documents() {
     if (collection && !shown) return;
     const uri = pendingDocSourceUri;
     clearPendingDoc();
-    const target = rows.find((r) => r.source_uri === uri);
-    if (target) {
-      void handlers.current.onOpen(target);
-      return;
-    }
-    // Not among the rows loaded (a link past the first page): read that one document. A
-    // link to one the namespace does not hold opens nothing, and the URL stops naming it;
-    // a failed read says so and keeps the link.
-    linkRead.current?.abort();
-    const ac = new AbortController();
-    linkRead.current = ac;
-    void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
-      .then((found) => {
-        if (ac.signal.aborted) return;
-        if (found) void handlers.current.onOpen(found);
-        else setViewParam("doc", null);
-      })
-      .catch((e) => {
-        if (!ac.signal.aborted) toastError("Open failed", e);
-      });
+    // A link to a document the namespace does not hold opens nothing, and the URL stops
+    // naming it; a failed read says so and keeps the link.
+    handlers.current.openByUri(uri, () => setViewParam("doc", null));
   }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc, identity.org, identity.namespace]);
   // After a row's delete, the read that drops the row hands focus to the search field.
   useEffect(() => {
@@ -472,10 +468,38 @@ export function Documents() {
       if (opened === openSeq.current) setPreviewLoading(false);
     }
   };
-  // The deep-link effect and the rows call the latest render's handlers without re-firing
-  // on them or rendering every row again.
-  const handlers = useRef({ onOpen, onDownload, onDelete });
-  handlers.current = { onOpen, onDownload, onDelete };
+  // A document by its address: from the rows loaded, else read on its own (a link or a
+  // passage past the first page), under one abort so a newer open wins; `onMissing` when
+  // the namespace does not hold it.
+  const openByUri = (uri: string, onMissing: () => void) => {
+    const target = rows?.find((r) => r.source_uri === uri);
+    if (target) {
+      void onOpen(target);
+      return;
+    }
+    linkRead.current?.abort();
+    const ac = new AbortController();
+    linkRead.current = ac;
+    void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
+      .then((found) => {
+        if (ac.signal.aborted) return;
+        // The latest render's open: its preview state, not the one this read started from.
+        if (found) void handlers.current.onOpen(found);
+        else onMissing();
+      })
+      .catch((e) => {
+        if (!ac.signal.aborted) toastError("Open failed", e);
+      });
+  };
+  // The deep-link effect, the rows and the passage panel call the latest render's handlers
+  // without re-firing on them or rendering every row again.
+  const handlers = useRef({ onOpen, onDownload, onDelete, openByUri });
+  handlers.current = { onOpen, onDownload, onDelete, openByUri };
+  // Stable, so the passage list is not built again on each render of the page.
+  const openPassage = useCallback(
+    (uri: string) => handlers.current.openByUri(uri, () => toast(`${uri} is no longer in this library`, "info")),
+    [],
+  );
 
   const closePreview = () => {
     linkRead.current?.abort();
@@ -584,7 +608,8 @@ export function Documents() {
   const { selected } = selection;
   const clearSelection = selection.clear;
   // One tab stop over the rows: arrows and j/k move, Enter previews, Space selects.
-  const listNav = useRowNav({ enabled: !dialogOpen && rowKeys.length > 0 });
+  const passagesHaveKeys = passageHitsShown && keysIn === "passages";
+  const listNav = useRowNav({ enabled: !dialogOpen && rowKeys.length > 0 && !passagesHaveKeys });
   const listRef = useCallback(
     (el: HTMLDivElement | null) => {
       listNav(el);
@@ -592,6 +617,37 @@ export function Documents() {
     },
     [listNav],
   );
+  const passagesBox = useRef<HTMLDivElement | null>(null);
+  // Finding a passage: once the place's list has returned a document on this visit, and
+  // through a later filtered or failed read (it searches the whole namespace). A new place
+  // folds it.
+  const canFindPassages = rows !== null && !emptyLibrary && listedScope === place;
+  // Taken away (a new place, or the library emptied), the panel comes back folded.
+  useEffect(() => {
+    if (!canFindPassages) setPassagesOpen(false);
+  }, [canFindPassages]);
+  const passagesToggle = (className: string) => (
+    <Button
+      type="empty"
+      htmlType="button"
+      iconLeft={passagesOpen ? "chevron-down" : "chevron-right"}
+      className={className}
+      aria-expanded={passagesOpen}
+      aria-controls={passagesOpen ? PASSAGES_PANEL_ID : undefined}
+      onClick={() => setPassagesOpen((v) => !v)}
+    >
+      Find a passage
+    </Button>
+  );
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      const at = e.target instanceof Node ? e.target : null;
+      if (passagesBox.current?.contains(at)) setKeysIn("passages");
+      else if (listBox.current?.contains(at)) setKeysIn("documents");
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
 
   const onBulkDelete = async () => {
     if (selected.size === 0 || bulkBusy) return;
@@ -837,10 +893,27 @@ export function Documents() {
             Clear filters
           </Button>
         )}
+        {canFindPassages && passagesToggle("hidden shrink-0 sm:inline-flex")}
         {sortSelect("hidden w-40 shrink-0 sm:block")}
       </ListToolbar>
-      {/* A phone's toolbar has room for the search only; the sort sits under it. */}
-      <div className="-mt-1 mb-3 flex justify-end sm:hidden">{sortSelect("w-40")}</div>
+      {/* A phone's toolbar has room for the search only; the passage toggle and the sort sit
+          under it. */}
+      <div className="-mt-1 mb-3 flex items-center justify-end gap-2 sm:hidden">
+        {canFindPassages && passagesToggle("mr-auto")}
+        {sortSelect("w-40")}
+      </div>
+
+      {/* Inside the documents: a passage, cited by revision and place, opens its document. */}
+      {canFindPassages && passagesOpen && (
+        <div ref={passagesBox}>
+          <LibraryPassages
+            identity={identity}
+            navEnabled={!dialogOpen && keysIn === "passages"}
+            onHitsShown={setPassageHitsShown}
+            onOpen={openPassage}
+          />
+        </div>
+      )}
 
       {/* Mounted while open, not on every render. */}
       {addOpen && (

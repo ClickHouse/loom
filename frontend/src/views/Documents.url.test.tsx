@@ -1,6 +1,8 @@
 // The open document is the Library's URL: a preview writes `?doc=` into the entry (no new
-// entry), closing drops it, and a `?doc=` link opens the preview on arrival.
-import { act, cleanup, fireEvent, render, screen } from "../test/rtl";
+// entry), closing drops it, and a `?doc=` link opens the preview on arrival. Finding a
+// passage shares the page and its mocks: its toggle, a hit opening its document (through
+// the same open path as a link), the row keys and when the toggle shows.
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { Documents } from "./Documents";
@@ -9,11 +11,14 @@ const api = vi.hoisted(() => ({
   listKnowledge: vi.fn(),
   getKnowledge: vi.fn(),
   fetchKnowledgePreview: vi.fn(),
+  searchKnowledge: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 const toastError = vi.hoisted(() => vi.fn());
+const toast = vi.hoisted(() => vi.fn());
 vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
+  toast,
   toastError,
 }));
 
@@ -35,21 +40,25 @@ async function settle() {
     });
 }
 
+function atTeam() {
+  api.listKnowledge.mockResolvedValue({ rows: ROWS, next_cursor: null });
+  api.getKnowledge.mockResolvedValue({ found: true, content: "text", source_uri: "docs/handbook.md" });
+  api.fetchKnowledgePreview.mockResolvedValue(null);
+  useStore.setState({
+    identity: { org: "acme", namespace: "team", agent: "loom-ui" },
+    view: "knowledge",
+    pendingDocSourceUri: null,
+  });
+}
+
+function leave() {
+  cleanup();
+  vi.clearAllMocks();
+}
+
 describe("Library keeps the open document in its URL", () => {
-  beforeEach(() => {
-    api.listKnowledge.mockResolvedValue({ rows: ROWS, next_cursor: null });
-    api.getKnowledge.mockResolvedValue({ found: true, content: "text", source_uri: "docs/handbook.md" });
-    api.fetchKnowledgePreview.mockResolvedValue(null);
-    useStore.setState({
-      identity: { org: "acme", namespace: "team", agent: "loom-ui" },
-      view: "knowledge",
-      pendingDocSourceUri: null,
-    });
-  });
-  afterEach(() => {
-    cleanup();
-    vi.clearAllMocks();
-  });
+  beforeEach(atTeam);
+  afterEach(leave);
 
   it("a preview writes ?doc=, closing drops it, and neither adds an entry", async () => {
     history.replaceState(null, "", "/library");
@@ -206,5 +215,212 @@ describe("Library keeps the open document in its URL", () => {
     await settle();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(location.search).toBe("?namespace=team");
+  });
+});
+
+describe("Find a passage in the Library", () => {
+  beforeEach(atTeam);
+  afterEach(leave);
+
+  it("a passage found inside the documents opens its document, cited by revision and place", async () => {
+    history.replaceState(null, "", "/library");
+    api.searchKnowledge.mockResolvedValue([
+      {
+        source_uri: "docs/handbook.md",
+        chunk_idx: 2,
+        content: "Escalate to the on-call lead.",
+        section: "On call",
+        score: 1,
+        revision: 2,
+        format: "markdown",
+        block_type: "paragraph",
+        locator: { line_start: 12, line_end: 18 },
+        keys_matched: [],
+      },
+    ]);
+    render(<Documents />);
+    await settle();
+    // Folded until its toggle opens it, which then names the panel it controls.
+    const toggle = screen.getAllByRole("button", { name: "Find a passage" })[0];
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Passage to find")).toBeNull();
+    fireEvent.click(toggle);
+    expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toContainElement(
+      screen.getByLabelText("Passage to find"),
+    );
+    fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "who to escalate to" } });
+    fireEvent.click(screen.getByRole("button", { name: "Find" }));
+    await settle();
+    // The place the list reads; the search uses its org and namespace.
+    expect(api.searchKnowledge.mock.calls[0].slice(0, 2)).toEqual([
+      expect.objectContaining({ org: "acme", namespace: "team" }),
+      "who to escalate to",
+    ]);
+    const list = screen.getByRole("list", { name: "Passages found" });
+    expect(list).toHaveTextContent("revision 2, lines 12–18");
+    fireEvent.click(within(list).getByRole("button"));
+    await settle();
+    expect(new URLSearchParams(location.search).get("doc")).toBe("docs/handbook.md");
+    expect(api.getKnowledge).toHaveBeenCalled();
+  });
+
+  async function findPassageIn(uri: string) {
+    api.searchKnowledge.mockResolvedValue([
+      { source_uri: uri, chunk_idx: 0, content: "A passage.", section: "", score: 1 },
+    ]);
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
+    fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "passage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Find" }));
+    await settle();
+    fireEvent.click(within(screen.getByRole("list", { name: "Passages found" })).getByRole("button"));
+    await settle();
+  }
+
+  it("the arrows move through the list focus is in, the passages or the documents", async () => {
+    history.replaceState(null, "", "/library");
+    const second = { ...ROWS[0], source_uri: "docs/runbook.md", title: "Runbook" };
+    api.listKnowledge.mockResolvedValue({ rows: [...ROWS, second], next_cursor: null });
+    api.searchKnowledge.mockResolvedValue([
+      { source_uri: "docs/handbook.md", chunk_idx: 0, content: "One.", section: "", score: 1 },
+      { source_uri: "docs/runbook.md", chunk_idx: 0, content: "Two.", section: "", score: 1 },
+    ]);
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
+    fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "passage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Find" }));
+    await settle();
+    const [hitOne, hitTwo] = within(screen.getByRole("list", { name: "Passages found" })).getAllByRole("button");
+    act(() => hitOne.focus());
+    fireEvent.keyDown(hitOne, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(hitTwo);
+    const docOne = screen.getByRole("button", { name: "Preview Handbook" });
+    act(() => docOne.focus());
+    fireEvent.keyDown(docOne, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Preview Runbook" }));
+    // j and k answer from anywhere, so only the list focus was last in may take them.
+    act(() => hitOne.focus());
+    fireEvent.keyDown(hitOne, { key: "j" });
+    expect(document.activeElement).toBe(hitTwo);
+    act(() => docOne.focus());
+    fireEvent.keyDown(docOne, { key: "j" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Preview Runbook" }));
+  });
+
+  it("another namespace folds the passages, and a list that failed to load shows none", async () => {
+    history.replaceState(null, "", "/library");
+    api.searchKnowledge.mockResolvedValue([]);
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
+    expect(screen.getByLabelText("Passage to find")).toBeInTheDocument();
+    act(() => useStore.setState({ identity: { org: "acme", namespace: "ops", agent: "loom-ui" } }));
+    await settle();
+    expect(screen.getAllByRole("button", { name: "Find a passage" })[0]).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Passage to find")).toBeNull();
+    // A later read of the list that fails keeps the passages and what they found.
+    api.searchKnowledge.mockResolvedValue([
+      { source_uri: "docs/handbook.md", chunk_idx: 0, content: "One.", section: "", score: 1 },
+    ]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
+    fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "passage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Find" }));
+    await settle();
+    api.listKnowledge.mockRejectedValueOnce(new Error("boom"));
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:billing" } });
+    expect(await screen.findByText(/Couldn.t load documents/)).toBeInTheDocument();
+    expect(api.listKnowledge).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tags: ["billing"] }),
+    );
+    expect(screen.getByRole("list", { name: "Passages found" })).toBeInTheDocument();
+    api.listKnowledge.mockRejectedValue(new Error("boom"));
+    act(() => useStore.setState({ identity: { org: "acme", namespace: "broken", agent: "loom-ui" } }));
+    await settle();
+    expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
+  });
+
+  it("a library that became empty takes the panel away", async () => {
+    history.replaceState(null, "", "/library");
+    api.searchKnowledge.mockResolvedValue([]);
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
+    expect(screen.getByLabelText("Passage to find")).toBeInTheDocument();
+    // A filtered read that finds nothing keeps it; an unfiltered one that finds nothing
+    // (the last document gone) is an empty library.
+    api.listKnowledge.mockResolvedValue({ rows: [], next_cursor: null });
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:billing" } });
+    await waitFor(() =>
+      expect(api.listKnowledge).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ tags: ["billing"] }),
+      ),
+    );
+    await settle();
+    expect(screen.getByLabelText("Passage to find")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "" } });
+    await waitFor(() => expect(screen.queryByLabelText("Passage to find")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
+    // A tag typed into the now empty library, its read finding nothing: still no toggle.
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:y" } });
+    await waitFor(() =>
+      expect(api.listKnowledge).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ tags: ["y"] })),
+    );
+    await settle();
+    expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
+    // A document again: the toggle comes back folded, not open.
+    api.listKnowledge.mockResolvedValue({ rows: ROWS, next_cursor: null });
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:x" } });
+    await waitFor(() =>
+      expect(api.listKnowledge).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ tags: ["x"] })),
+    );
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Find a passage" }).length).toBeGreaterThan(0));
+    expect(screen.getAllByRole("button", { name: "Find a passage" })[0]).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Passage to find")).toBeNull();
+  });
+
+  it("an empty library offers no passage search, even with a tag filter typed", async () => {
+    history.replaceState(null, "", "/library");
+    api.listKnowledge.mockResolvedValue({ rows: [], next_cursor: null });
+    render(<Documents />);
+    await settle();
+    expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:billing" } });
+    await waitFor(() =>
+      expect(api.listKnowledge).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ tags: ["billing"] }),
+      ),
+    );
+    await settle();
+    expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
+  });
+
+  it("a passage in a document past the first page reads that document and opens it", async () => {
+    history.replaceState(null, "", "/library");
+    const late = { ...ROWS[0], source_uri: "docs/late.md", title: "Late doc" };
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: { uriPrefix?: string[] }) =>
+      opts.uriPrefix ? { rows: [late], next_cursor: null } : { rows: ROWS, next_cursor: "c-2" },
+    );
+    await findPassageIn("docs/late.md");
+    expect(api.listKnowledge).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ uriPrefix: ["docs/late.md"] }),
+    );
+    expect(screen.getByRole("dialog", { name: "Late doc" })).toBeInTheDocument();
+  });
+
+  it("a passage whose document is gone says so and opens nothing", async () => {
+    history.replaceState(null, "", "/library");
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: { uriPrefix?: string[] }) =>
+      opts.uriPrefix ? { rows: [], next_cursor: null } : { rows: ROWS, next_cursor: null },
+    );
+    await findPassageIn("docs/gone.md");
+    expect(toast).toHaveBeenCalledWith("docs/gone.md is no longer in this library", "info");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(new URLSearchParams(location.search).get("doc")).toBeNull();
   });
 });

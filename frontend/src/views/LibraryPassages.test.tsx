@@ -1,0 +1,219 @@
+/**
+ * The passage panel (its toggle is the Library's, tested with the page): a query runs
+ * `knowledge.search` in the namespace shown, each hit is cited by revision and place and
+ * opens its document, Show more asks for more until a read adds none, and no match and a
+ * failure each say so.
+ */
+import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  searchKnowledge: vi.fn(),
+}));
+import { type KnowledgeHit, searchKnowledge } from "../api";
+import { axeViolations } from "../test/axe";
+import { LibraryPassages } from "./LibraryPassages";
+
+const identity = { org: "o", namespace: "docs" };
+
+const HIT: KnowledgeHit = {
+  source_uri: "repo://handbook/retention.pdf",
+  chunk_idx: 4,
+  content: "Raw events are kept for 30 days and then dropped by the TTL.",
+  section: "Retention > Events",
+  score: 0.8,
+  revision: 3,
+  format: "pdf",
+  block_type: "paragraph",
+  locator: { page_start: 7, page_end: 7 },
+  keys_matched: [],
+};
+
+async function openAndFind(query: string, onOpen = vi.fn(), onHitsShown = vi.fn()) {
+  // Inside the page's main landmark, as the Library renders it.
+  render(
+    <main>
+      <LibraryPassages identity={identity} navEnabled onHitsShown={onHitsShown} onOpen={onOpen} />
+    </main>,
+  );
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("Passage to find"), query);
+  await user.click(screen.getByRole("button", { name: "Find" }));
+  return { user, onOpen, onHitsShown };
+}
+
+describe("LibraryPassages", () => {
+  afterEach(() => {
+    cleanup();
+    vi.resetAllMocks();
+  });
+
+  it("says what it searches, tied to its field", () => {
+    render(<LibraryPassages identity={identity} navEnabled onHitsShown={vi.fn()} onOpen={vi.fn()} />);
+    expect(screen.getByLabelText("Passage to find")).toHaveAccessibleDescription(/whatever the tag filter/);
+    // Opened from a toolbar that stays put as the list scrolls: the field takes the focus.
+    expect(document.activeElement).toBe(screen.getByLabelText("Passage to find"));
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("cites each hit by revision and place, and opens its document", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValue([
+      HIT,
+      {
+        ...HIT,
+        source_uri: "repo://conf/limits.toml",
+        chunk_idx: 0,
+        format: "toml",
+        revision: 1,
+        section: "",
+        locator: { line_start: 3, line_end: 4, key_path: "retention.days" },
+        keys_matched: ["retention.days"],
+      },
+    ]);
+    const { user, onOpen, onHitsShown } = await openAndFind("how long are events kept");
+    const list = await screen.findByRole("list", { name: "Passages found" });
+    expect(vi.mocked(searchKnowledge).mock.calls[0].slice(0, 2)).toEqual([identity, "how long are events kept"]);
+    // The op keeps one hit per section, so even a short answer may have more behind it.
+    expect(screen.getByRole("status")).toHaveTextContent("The best 2 passages");
+    // The list below hands its row keys over while hits show.
+    expect(onHitsShown).toHaveBeenLastCalledWith(true);
+    const [first, second] = within(list).getAllByRole("listitem");
+    expect(first).toHaveTextContent("retention.pdf");
+    expect(first).toHaveTextContent("repo://handbook/retention.pdf");
+    expect(first).toHaveTextContent("Retention > Events");
+    expect(first).toHaveTextContent("revision 3, page 7");
+    expect(first).toHaveTextContent("Raw events are kept for 30 days");
+    expect(second).toHaveTextContent("revision 1, key retention.days");
+    expect(await axeViolations(document.body)).toEqual([]);
+    expect(within(second).getByRole("button")).toHaveAccessibleName(
+      // The matched key is the one the citation names: said once.
+      "Open repo://conf/limits.toml, revision 1, key retention.days",
+    );
+    expect(within(first).getByRole("button")).toHaveAccessibleName(
+      "Open repo://handbook/retention.pdf, Retention > Events, revision 3, page 7",
+    );
+    expect(within(first).getByRole("button")).toHaveAccessibleDescription(/Raw events are kept for 30 days/);
+    await user.click(within(first).getByRole("button"));
+    expect(onOpen).toHaveBeenCalledWith("repo://handbook/retention.pdf");
+    // Gone (folded, or another place), the hits no longer show and the list below takes its
+    // keys back.
+    cleanup();
+    expect(onHitsShown).toHaveBeenLastCalledWith(false);
+  });
+
+  it("says a full page is the best passages, not all of them", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValue(Array.from({ length: 10 }, (_, i) => ({ ...HIT, chunk_idx: i })));
+    await openAndFind("events");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 10 passages"));
+  });
+
+  it("says the best passage, not the best 1 passage, for a single hit", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValue([HIT]);
+    await openAndFind("events");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^The best passage$/));
+  });
+
+  it("shows more, ten at a time, for the query searched, until a read adds none", async () => {
+    const page = (n: number) => Array.from({ length: n }, (_, i) => ({ ...HIT, chunk_idx: i }));
+    // Six for ten: sections folded, more may be left.
+    vi.mocked(searchKnowledge)
+      .mockResolvedValueOnce(page(6))
+      .mockResolvedValueOnce(page(14))
+      .mockResolvedValueOnce(page(14));
+    const { user } = await openAndFind("events");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 6 passages"));
+    // Text typed since does not change what "Show more" asks.
+    await user.type(screen.getByLabelText("Passage to find"), " and more");
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 14 passages"));
+    expect(vi.mocked(searchKnowledge).mock.calls[1].slice(1, 3)).toEqual(["events", 20]);
+    // Asking for thirty adds nothing: that is all of them. The button that held the focus
+    // is gone, and the focus is on the last hit, the read having added none.
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^14 passages$/));
+    expect(vi.mocked(searchKnowledge).mock.calls[2].slice(1, 3)).toEqual(["events", 30]);
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+    const rows = within(screen.getByRole("list", { name: "Passages found" })).getAllByRole("button");
+    await waitFor(() => expect(document.activeElement).toBe(rows[13]));
+  });
+
+  it("stops at the hundred the op lists, still saying they are the best, not all", async () => {
+    const page = (n: number) => Array.from({ length: n }, (_, i) => ({ ...HIT, chunk_idx: i }));
+    vi.mocked(searchKnowledge).mockResolvedValueOnce(page(10));
+    for (let k = 20; k <= 100; k += 10) vi.mocked(searchKnowledge).mockResolvedValueOnce(page(k));
+    const { user } = await openAndFind("events");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 10 passages"));
+    for (let k = 20; k <= 100; k += 10) {
+      await user.click(screen.getByRole("button", { name: "Show more" }));
+      await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(`The best ${k} passages`));
+    }
+    expect(vi.mocked(searchKnowledge).mock.calls.at(-1)?.[2]).toBe(100);
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+    const rows = within(screen.getByRole("list", { name: "Passages found" })).getAllByRole("button");
+    await waitFor(() => expect(document.activeElement).toBe(rows[90]));
+  });
+
+  it("keeps the hits on screen when Show more fails", async () => {
+    const page = Array.from({ length: 10 }, (_, i) => ({ ...HIT, chunk_idx: i }));
+    vi.mocked(searchKnowledge).mockResolvedValueOnce(page).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const { user } = await openAndFind("events");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 10 passages"));
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/Lost connection to Loom/));
+    expect(within(screen.getByRole("list", { name: "Passages found" })).getAllByRole("listitem")).toHaveLength(10);
+    expect(screen.getByRole("button", { name: "Show more" })).toBeInTheDocument();
+  });
+
+  it("shows a hit from a server older than revisions and locators, uncited", async () => {
+    const { revision, format, block_type, locator, keys_matched, ...old } = HIT;
+    vi.mocked(searchKnowledge).mockResolvedValue([old]);
+    await openAndFind("events");
+    const [row] = within(await screen.findByRole("list", { name: "Passages found" })).getAllByRole("listitem");
+    expect(row).toHaveTextContent("retention.pdf");
+    expect(row).toHaveTextContent("Raw events are kept for 30 days");
+    expect(row).not.toHaveTextContent("revision");
+  });
+
+  it("says when no passage answers, and when the search failed", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValueOnce([]);
+    const { user } = await openAndFind("nothing like this");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("No passage answers that."));
+    vi.mocked(searchKnowledge).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await user.click(screen.getByRole("button", { name: "Find" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/Lost connection to Loom/));
+  });
+
+  it("marks the hits on screen busy while a new search runs", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValueOnce([HIT]);
+    const { user } = await openAndFind("events");
+    const list = await screen.findByRole("list", { name: "Passages found" });
+    expect(list).not.toHaveAttribute("aria-busy");
+    vi.mocked(searchKnowledge).mockReturnValueOnce(new Promise(() => {}));
+    await user.click(screen.getByRole("button", { name: "Find" }));
+    expect(screen.getByRole("list", { name: "Passages found" })).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("drops a search still running when the panel goes", async () => {
+    let signal: AbortSignal | undefined;
+    vi.mocked(searchKnowledge).mockImplementation((_id, _q, _k, opts) => {
+      signal = opts?.signal;
+      return new Promise(() => {});
+    });
+    await openAndFind("events");
+    expect(signal?.aborted).toBe(false);
+    cleanup();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("cuts a long excerpt before a character that does not fit, not inside it", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValue([{ ...HIT, content: `${"a".repeat(278)}😀 and more after it` }]);
+    await openAndFind("events");
+    const [row] = within(await screen.findByRole("list", { name: "Passages found" })).getAllByRole("listitem");
+    // 280 units with the ellipsis: the emoji would take the 279th and 280th, so the cut
+    // falls before it rather than inside it.
+    expect(row.textContent).toContain(`${"a".repeat(278)}…`);
+    expect(row.textContent).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+});
