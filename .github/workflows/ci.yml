@@ -416,7 +416,7 @@ jobs:
         run: node --test integrations/claude-code-plugin/tests/loom-node.test.mjs
   # The dashboard's vitest and Playwright suites share nothing but `npm ci`, so
   # each runs as its own job, split into parts on separate runners.
-  frontend-tests:
+  frontend-vitest:
     name: frontend vitest part ${{ matrix.part }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -441,7 +441,7 @@ jobs:
         working-directory: frontend
         run: npm run test -- --shard=${{ matrix.part }}/${{ strategy.job-total }}
 
-  # A part holds whole spec files per project.
+  # With fullyParallel: false, --shard splits by spec file per project, not by test.
   frontend-e2e:
     name: frontend playwright part ${{ matrix.part }}
     runs-on: ubuntu-latest
