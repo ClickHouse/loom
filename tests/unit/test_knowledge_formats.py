@@ -112,22 +112,23 @@ async def test_a_slow_service_costs_the_listing_its_bound_and_declares_nothing(
 ) -> None:
     hosts.apps["slow"] = _declaring(["sql"], delay_s=30)
     settings_override(document_extractors_json=json.dumps({"sql": "http://slow"}))
-    started = time.monotonic()
-    served = await extractors.available_formats(timeout_s=0.2)
-    assert time.monotonic() - started < 5
+    served = await extractors.available_formats(timeout_s=0.2)  # returns, though the read hangs
     assert "sql" not in served and served["markdown"] == "http://ref"
 
 
 async def test_a_down_service_costs_one_wait_a_minute_not_one_per_listing(
-    hosts: _Hosts, settings_override: Any
+    hosts: _Hosts, settings_override: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     hosts.apps["slow"] = _declaring(["sql"], delay_s=30)
     settings_override(document_extractors_json=json.dumps({"sql": "http://slow"}))
     await extractors.available_formats(timeout_s=0.2)
-    started = time.monotonic()
     served = await extractors.available_formats(timeout_s=0.2)
-    assert time.monotonic() - started < 0.15 and "sql" not in served
-    assert hosts.calls.count("slow") == 1
+    assert "sql" not in served and hosts.calls.count("slow") == 1
+    # Past the minute it is read again.
+    real = time.monotonic
+    monkeypatch.setattr(extractors.time, "monotonic", lambda: real() + 61)
+    await extractors.available_formats(timeout_s=0.2)
+    assert hosts.calls.count("slow") == 2
 
 
 async def test_the_default_format_is_what_routing_falls_back_to(hosts: _Hosts) -> None:

@@ -213,18 +213,27 @@ FORMATS_READ_S = 5.0  # not a setting: a listing's read, which must not hold its
 _unreadable: dict[str, float] = {}
 
 
-async def _declared_within(url: str, timeout_s: float) -> frozenset[str]:
-    """What the service at `url` declares, or nothing when it is not read within
-    `timeout_s` (or was not, under a minute ago)."""
-    if _unreadable.get(url, 0.0) > time.monotonic():
-        return frozenset()
+async def _formats_within(url: str, timeout_s: float) -> frozenset[str] | None:
+    """What the service at `url` declares, or None when it is not read within
+    `timeout_s` (logged)."""
     try:
         async with asyncio.timeout(timeout_s):
             return (await capabilities(url)).formats
     except (ExtractorUnavailable, TimeoutError) as e:
-        logger.warning("document extractor %s: %s", _origin(url), e or "timed out")
+        logger.warning("document extractor %s: %s", _origin(url), str(e) or "timed out")
+        return None
+
+
+async def _declared_within(url: str, timeout_s: float) -> frozenset[str]:
+    """`_formats_within` for a listing: nothing for a service not read, which is not
+    read again for a minute."""
+    if _unreadable.get(url, 0.0) > time.monotonic():
+        return frozenset()
+    formats = await _formats_within(url, timeout_s)
+    if formats is None:
         _unreadable[url] = time.monotonic() + _CAPABILITIES_TTL_S
         return frozenset()
+    return formats
 
 
 async def available_formats(*, timeout_s: float = FORMATS_READ_S) -> dict[str, str]:
@@ -269,13 +278,7 @@ async def configured_services(*, timeout_s: float) -> list[Service]:
         named.setdefault(url.rstrip("/"), f"LOOM_DOCUMENT_EXTRACTORS_JSON[{json.dumps(key)}]")
 
     async def read(url: str, setting: str) -> Service:
-        try:
-            async with asyncio.timeout(timeout_s):
-                formats: frozenset[str] | None = (await capabilities(url)).formats
-        except (ExtractorUnavailable, TimeoutError) as e:
-            logger.warning("document extractor %s: %s", _origin(url), e or "timed out")
-            formats = None
-        return Service(setting, url, formats)
+        return Service(setting, url, await _formats_within(url, timeout_s))
 
     return list(await asyncio.gather(*(read(u, s) for u, s in named.items())))
 

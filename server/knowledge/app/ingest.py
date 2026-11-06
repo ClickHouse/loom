@@ -1,5 +1,6 @@
 """knowledge.ingest / ingest_status / ingest_cancel: a job that has the extractor
-service extract an upload and publishes it as a document revision (`ingest_run`).
+service extract an upload and publishes it as a document revision (`ingest_run`);
+knowledge.formats: the formats those services read.
 
 An ingest names an upload of the same namespace that the caller made and that
 has not expired; the job carries the caller's authorship, so the worker writes
