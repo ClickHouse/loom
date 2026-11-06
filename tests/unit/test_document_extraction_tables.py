@@ -282,13 +282,31 @@ def test_a_merged_xlsx_header_cell_is_read_once_however_many_columns_it_spans(
     assert reads.count("Revenue") == 1 and len(reads) == 51
 
 
+def test_an_xlsx_merge_whose_last_cell_holds_a_value_still_groups() -> None:
+    rows = {
+        1: [cell("A1", "2025", t="inlineStr"), cell("C1", "x", t="inlineStr")],
+        2: [
+            cell("A2", "H1", t="inlineStr"),
+            cell("B2", "H2", t="inlineStr"),
+            cell("C2", "H3", t="inlineStr"),
+        ],
+        3: [cell("A3", 1), cell("B3", 2), cell("C3", 3)],
+    }
+    # A hidden cell's value kept under a merge: the range is spread all the same.
+    a = extract(workbook([("S", sheet(rows, merges=("A1:C1",)))]), "s.xlsx")
+    assert a.tables[0].header_rows == 2
+    assert [n for n, _ in _columns(a)][:2] == ["2025 / H1", "2025 / H2"]
+
+
 def test_an_xlsx_merge_left_unspread_groups_no_header(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = {
         1: [cell("A1", "2025", t="inlineStr")],
         2: [cell("A2", "H1", t="inlineStr"), cell("B2", "H2", t="inlineStr")],
         3: [cell("A3", 1), cell("B3", 2)],
     }
-    monkeypatch.setattr(xlsxfile, "_spread", lambda *a: (1, 0))  # the budget skipped it
+    monkeypatch.setattr(
+        xlsxfile, "_spread", lambda *a: ({(1, 0, 1, 1)}, 0)
+    )  # the budget skipped it
     a = extract(workbook([("S", sheet(rows, merges=("A1:B1",)))]), "s.xlsx")
     assert a.tables[0].header_rows == 1
 

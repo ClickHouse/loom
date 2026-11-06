@@ -421,7 +421,8 @@ class _Reader:
         # A merge reaches no row past the last one held (nor, in `_spread`, past MAX_ROWS).
         rest = sheet.past
         last = rest.more_from - 1 if rest.more_from else max(sheet.grid, default=0)
-        skipped, clipped = _spread(sheet.grid, sorted(sheet.merges), budget, last)
+        unspread, clipped = _spread(sheet.grid, sorted(sheet.merges), budget, last)
+        skipped = len(unspread)
         skipped += sheet.merges_dropped
         if skipped or clipped or merges_cut:  # one unit for the sheet's merges, its reasons joined
             reasons = (
@@ -460,7 +461,7 @@ class _Reader:
         spans = [
             (c, r)
             for t, c, b, r in sheet.merges
-            if t == b == top and r > c and (above.get(c) is None or above.get(r) is above.get(c))
+            if t == b == top and r > c and (t, c, b, r) not in unspread
         ]
         # The second row's own cells: those not merged down from the first.
         own = {col: cell for col, cell in under.items() if cell is not above.get(col)}
@@ -706,11 +707,12 @@ def _spread(
     boxes: list[tuple[int, int, int, int]],
     budget: Budget,
     last: int,
-) -> tuple[int, int]:
+) -> tuple[set[tuple[int, int, int, int]], int]:
     """Each merged range's first cell's value in each of its cells up to row
     `last`, the cells it adds collected from `budget`; the ranges skipped (past
-    the cells left) and those cut at the MAX_ROWS under the header, counted."""
-    skipped = clipped = 0
+    the cells left), and those cut at the MAX_ROWS under the header counted."""
+    skipped: set[tuple[int, int, int, int]] = set()
+    clipped = 0
     for top, left, bottom, right in boxes:
         bottom, right = min(bottom, last), min(right, MAX_COLUMNS - 1)
         value = grid.get(top, {}).get(left)
@@ -719,7 +721,7 @@ def _spread(
         # One too large for the cells left is skipped, leaving them to the rest.
         area = (bottom - top + 1) * (right - left + 1)
         if area > budget.cells:
-            skipped += 1
+            skipped.add((top, left, bottom, right))
             continue
         budget.cells -= area
         for r in range(top, bottom + 1):
