@@ -37,7 +37,11 @@ def docker(*cmd: str, source: str = "") -> str:
     `failed` names when it is not the last /c/ argument."""
     try:
         run = subprocess.run(
-            ["docker", "exec", CONTAINER, *cmd], check=True, capture_output=True, text=True
+            ["docker", "exec", CONTAINER, *cmd],
+            check=True,
+            capture_output=True,
+            text=True,
+            errors="replace",
         )
     except subprocess.CalledProcessError as e:
         e.source = source  # type: ignore[attr-defined]
@@ -99,8 +103,8 @@ def prepare(out: Path, src: Path) -> Dirs:
 
 def failed(e: subprocess.CalledProcessError) -> SystemExit:
     """What a failed call into the container says: the program, the file it was
-    given, and the end of what it wrote to stderr (bytes or text)."""
+    given, and the end of what it wrote to stderr."""
     cmd = [str(c) for c in e.cmd]  # docker exec <container> <program> ...
     # its input: the one the caller named, else the last /c/ argument (pdftotext's last is `-`)
     file = getattr(e, "source", "") or next(c for c in reversed(cmd) if "/c/" in c)
-    return SystemExit(f"{cmd[3]} failed on {file}: {(e.stderr or '').strip()[-2000:]}")
+    return SystemExit(f"{cmd[3]} failed on {file}: {e.stderr.strip()[-2000:]}")

@@ -262,7 +262,7 @@ def test_a_build_the_container_cannot_see_leaves_its_directory_as_found(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pep_src: Path
 ) -> None:
     _no_container(
-        monkeypatch, subprocess.CalledProcessError(1, ["docker"], stderr=b"no such container")
+        monkeypatch, subprocess.CalledProcessError(1, ["docker"], stderr="no such container")
     )
     corpus = tmp_path / "corpus"
     corpus.mkdir()
@@ -282,9 +282,21 @@ def test_a_build_the_container_cannot_see_leaves_its_directory_as_found(
 def test_a_container_that_sees_another_directory_says_so(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pep_src: Path
 ) -> None:
-    _no_container(monkeypatch, subprocess.CalledProcessError(1, ["docker"], stderr=b""))
+    _no_container(monkeypatch, subprocess.CalledProcessError(1, ["docker"], stderr=""))
     with pytest.raises(SystemExit, match="its /c is not"):
         P.prepare(tmp_path / "corpus", pep_src)
+
+
+def test_a_container_call_returns_its_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+
+    def ran(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="page one\fpage two\f", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", ran)
+    assert P.docker("pdftotext", "-raw", "/c/a.pdf", "-") == "page one\fpage two\f"
+    assert seen == [["docker", "exec", P.CONTAINER, "pdftotext", "-raw", "/c/a.pdf", "-"]]
 
 
 def test_a_failed_container_call_names_its_program_file_and_error(
@@ -303,7 +315,7 @@ def test_a_failed_container_call_names_its_program_file_and_error(
         message = str(P.failed(e.value))
         assert message.startswith(named) and "broken xref" in message
     quiet = subprocess.CalledProcessError(
-        1, ["docker", "exec", "c", "soffice", "/c/a.docx"], stderr=None
+        1, ["docker", "exec", "c", "soffice", "/c/a.docx"], stderr=""
     )
     assert str(P.failed(quiet)) == "soffice failed on /c/a.docx: "
 
