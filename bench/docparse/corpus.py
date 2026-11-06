@@ -149,7 +149,8 @@ class _Stream:
     def place(self, item_words: list[str]) -> tuple[int, int]:
         """The pages the item of `item_words` starts and ends on, found from the
         stream's position (its whole run, else its first six words, or its first
-        three, and then its last six), and the position moved past it; (0, 0) when not found."""
+        three when it has more, and then its last six), and the position moved
+        past it; (0, 0) when not found."""
         whole = self.find(item_words, self.at)
         if whole >= 0:
             start, end = whole, whole + len(item_words) - 1
@@ -482,9 +483,10 @@ def rl_story(spec: dict, *, borderless: bool = False, heading_bold_only: bool = 
         elif e[0] == "p":
             out.append(Paragraph(S.esc(e[1]), body))
         elif e[0] in ("ul", "ol"):
-            k = 0  # the top-level items' number; a sub-item takes a bullet
+            k = 0
             for depth, t in S.items_text(e[1]):
-                k += depth == 1
+                if depth == 1:
+                    k += 1
                 mark = "•" if e[0] == "ul" or depth > 1 else f"{k}."
                 out.append(
                     Paragraph(
