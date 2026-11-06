@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import patch
 
 from server.code.app import search as cs
+from server.code.app.index import corpus_stats
 from server.settings import settings
 
 _UNIT = dict(
@@ -83,12 +84,7 @@ class _Embedder:
 
 
 def _search(repo: _Repo, embedder: _Embedder | None) -> Any:
-    # TTL 0 reads the corpus stats on every search: a cached read would leave the
-    # lexical chain one sleep long, ending on the very tick the vector read starts.
-    with (
-        patch.object(settings, "code_fusion_signals", False),
-        patch.object(settings, "code_corpus_stats_ttl_s", 0),
-    ):
+    with patch.object(settings, "code_fusion_signals", False):
         return asyncio.run(
             cs.search(
                 repo,
@@ -102,6 +98,12 @@ def _search(repo: _Repo, embedder: _Embedder | None) -> Any:
 
 
 def test_lexical_and_vector_legs_run_side_by_side() -> None:
+    # The first search in a process imports the tracing modules on the event loop,
+    # which can hold the vector chain back a whole sleep. An untimed search pays that
+    # first; emptying the corpus-stats cache it filled keeps the timed lexical chain
+    # at stats then lexical.
+    _search(_Repo(), _Embedder())
+    corpus_stats.reset_for_tests()
     repo, emb = _Repo(delay=_SLEEP), _Embedder(delay=_SLEEP)
     t0 = time.perf_counter()
     res = _search(repo, emb)
