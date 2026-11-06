@@ -309,14 +309,7 @@ class _Erasure:
         """Whether this erasure deletes every original of `namespace` for certain: its
         namespace's, or a list that names it. A scope it cannot read is not taken for
         one (it fences a move, but a take-back on it would be a guess)."""
-        if self.scope_type == "namespace":
-            return self.scope_value == namespace
-        if self.scope_type == "namespace_list":
-            try:
-                return namespace in parse_namespace_list(self.scope_value)
-            except ValueError:
-                return False
-        return False
+        return _names_namespace(self.scope_type, self.scope_value, namespace) is True
 
     @property
     def done(self) -> bool:
@@ -326,19 +319,27 @@ class _Erasure:
         return f"erasure {self.id} ({self.scope_type}, {self.status})"
 
 
-def _covers(scope_type: str, scope_value: str, namespace: str) -> bool:
-    """Whether an erasure of this scope may erase an original of `namespace`: its
-    namespace's, a list naming it, and any user's. A user's erasure finds the user's
-    originals through their upload records and their documents, which a write can add
-    to at any moment, so the move does not guess whose an original is."""
+def _names_namespace(scope_type: str, scope_value: str, namespace: str) -> bool | None:
+    """Whether a namespace scope names `namespace`: None for a scope that is not a
+    namespace's, or a list it cannot read."""
     if scope_type == "namespace":
         return scope_value == namespace
     if scope_type == "namespace_list":
         try:
             return namespace in parse_namespace_list(scope_value)
         except ValueError:
-            return True  # unreadable: answered as covering
-    return True
+            return None
+    return None
+
+
+def _covers(scope_type: str, scope_value: str, namespace: str) -> bool:
+    """Whether an erasure of this scope may erase an original of `namespace`: its
+    namespace's, a list naming it, and any user's. A user's erasure finds the user's
+    originals through their upload records and their documents, which a write can add
+    to at any moment, so the move does not guess whose an original is. A list it cannot
+    read, or a scope it does not know, counts as covering."""
+    named = _names_namespace(scope_type, scope_value, namespace)
+    return True if named is None else named
 
 
 def _fence_advice(erasures: list[_Erasure], what: str) -> str:
@@ -534,6 +535,11 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
             f"switched to {loc.uri()}, but the check for an erasure that raced it failed ({e}); "
             "check that no erasure of its namespace or a user ran then"
         ) from e
+    if not (namespace_raced or taken) and raced and not await _row_names(held, loc, ch):
+        # The erasure took the row but not the object (a replica without the bucket set
+        # deletes rows only): the object holds bytes nothing names. It goes now.
+        await objects.delete(loc.bucket, [loc.key])
+        return False
     if not (namespace_raced or taken):
         # An original nothing needs any more by now (its last document went as it moved)
         # is left to the sweep, which deletes it once older than its min age: a delete
@@ -548,6 +554,16 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
             moved=False,
         ) from e
     return False
+
+
+async def _row_names(held: Held, loc: objects.Location, ch: _CHClient) -> bool:
+    """Whether a row of the original still names the move's object."""
+    with sequential_reads():
+        row = await ch.query_one(
+            f"SELECT count() AS n FROM {TABLE} WHERE {_KEY} AND location = {{loc:String}}",
+            params={"org": held.org, "ns": held.namespace, "sha": held.sha, "loc": loc.uri()},
+        )
+    return bool(row and int(row["n"]))
 
 
 async def _unwrite(held: Held, loc: objects.Location, ch: _CHClient) -> None:

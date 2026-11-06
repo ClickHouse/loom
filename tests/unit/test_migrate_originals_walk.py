@@ -96,7 +96,7 @@ async def test_an_erasure_holding_one_back_refuses_the_rest_of_the_namespace_onc
     assert result.moved == 0
     assert result.errors[0].startswith(f"acme/docs/{page[0].sha}: ")
     assert result.errors[1] == (
-        "acme/docs: erasure e1 (namespace, in_progress) covers it; its originals are left in "
+        "acme/docs: erasure e1 (namespace, in_progress) covers it; the rest of its originals are left in "
         "ClickHouse"
     )
     assert len(result.errors) == 2 and reads == ["fence", "fence"]
@@ -116,8 +116,8 @@ async def test_a_namespace_the_fence_refuses_is_reported_once_and_not_walked(
     monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
     result = await originals.migrate_originals(org="acme", namespace="docs")
     assert result.errors == [
-        "acme/docs: erasure e9 (user_id, failed) covers it; complete it first; its originals are "
-        "left in ClickHouse"
+        "acme/docs: erasure e9 (user_id, failed) covers it; complete it first; the rest of its originals "
+        "are left in ClickHouse"
     ]
 
 

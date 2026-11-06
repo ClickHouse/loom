@@ -50,7 +50,8 @@ async def migrate_originals(
     set_query_tag("cli:knowledge-migrate-originals")
     out = Migrated()
     for org_, ns in await _scopes(org, namespace):
-        # One read of the ledger for the namespace; again after an erasure held one back.
+        # One read of the ledger for the namespace; again after any original not switched
+        # cleanly (gone or replaced, held back, or switched but unconfirmed).
         refusal = None if dry_run else await blobs.fence(org_, ns)
         after = ""
         while not refusal:
@@ -69,7 +70,9 @@ async def migrate_originals(
             after = page.after
         if refusal:
             # The rest of the namespace is refused alike: once, not once per original.
-            out.errors.append(f"{org_}/{ns}: {refusal}; its originals are left in ClickHouse")
+            out.errors.append(
+                f"{org_}/{ns}: {refusal}; the rest of its originals are left in ClickHouse"
+            )
     return out
 
 

@@ -546,8 +546,14 @@ async def _finish_erasures(ch: Any, org: str, after_s: float, then: Any = None) 
     """Mark the org's erasures completed after `after_s`, running `then` first: their
     steps."""
     await asyncio.sleep(after_s)
-    if then is not None:
-        await then()
+    try:
+        if then is not None:
+            await then()
+    finally:
+        await _complete_erasures(ch, org)
+
+
+async def _complete_erasures(ch: Any, org: str) -> None:
     await ch.execute(
         "INSERT INTO loom.erasure_requests (id, org, scope_type, scope_value, requester,"
         " status, version, completed_at) SELECT id, org, scope_type, scope_value, requester,"
@@ -580,6 +586,8 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
     s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client, bucket = s3
+    # Each erasure here finishes within a second; a hung one fails the test, not the run.
+    monkeypatch.setattr(blobs, "_ERASURE_WAIT_S", 30)
     # The erasure took the original: its step deleted every object under the original's
     # prefix (the move's included) and its rows. The move deletes the row it wrote.
     org, ns, held, landed = await _raced(
@@ -608,6 +616,23 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
     await finishing
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
     assert stored is not None and stored.location == landed[0]
+
+    # It took the row but not the object (its replica had no bucket set): the object, named
+    # by nothing, goes too.
+    org, ns, held, landed = await _raced(
+        ch, s3, monkeypatch, "objstore-race-rowonly", [("user_id", "alice")]
+    )
+
+    async def row_only() -> None:
+        await ch.execute(
+            "DELETE FROM loom.document_blobs WHERE org = {org:String} AND namespace = {ns:String}",
+            params={"org": org, "ns": ns},
+        )
+
+    finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3, row_only))
+    assert await blobs.move_to_bucket(held, ch=ch) is False
+    await finishing
+    assert not _keys(s3, object_store.namespace_prefix(org, ns))
 
     # One that does not finish in time leaves the switched row to it, named.
     org, ns, held, landed = await _raced(
