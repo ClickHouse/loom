@@ -866,6 +866,10 @@ describe("Assistant: overview", () => {
     expect(namespaceInventory).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, expect.anything());
     for (const name of ["Inspect memories", "Inspect documents", "Open the graph", "Draft improvements"])
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "About Who appears here" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Inspect documents" })).toHaveAccessibleDescription(
+      "Every document here: formats, what search serves, and ingest health.",
+    );
     expect(screen.queryByRole("heading", { name: /Review changes/ })).toBeNull();
     expect(inspectMemories).not.toHaveBeenCalled();
     expect(inspectKnowledge).not.toHaveBeenCalled();
@@ -1010,6 +1014,7 @@ describe("Assistant: overview", () => {
     await userEvent.click(draft);
     const pick = screen.getByRole("button", { name: "ada 12 memories" });
     expect(pick).toHaveAccessibleDescription(/bound to one user or session/);
+    expect(screen.queryByRole("button", { name: "About Who appears here" })).toBeNull();
     await userEvent.click(pick);
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     expect(tuneNamespace).not.toHaveBeenCalled();

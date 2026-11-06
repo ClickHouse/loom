@@ -1,8 +1,9 @@
 /**
  * The Graph is a drill-down, not a destination. It left the sidebar; the way in is an
  * entity on something you are already reading (a memory's entities, a related memory's
- * shared entities). These helpers build that link so every entry point lands the Explorer
- * on the same `/graph?seed=<entity>` walk (`seed` is the Explorer's own query key).
+ * shared entities), or the Assistant's Open the graph, which may name none and lands on the
+ * Explorer's own starting points. These helpers build that link so every entry point lands
+ * the Explorer on the same `/graph?seed=<entity>` walk (`seed` is the Explorer's own query key).
  */
 import { navigationHref, useStore } from "./state";
 

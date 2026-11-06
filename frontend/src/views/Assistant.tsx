@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -46,15 +46,11 @@ const SUBJECTS: Array<{ value: InspectSubject; label: string }> = [
 ];
 
 // The id field's label for each subject, and the Inspect button's reason while the field
-// is empty, with names suggested above it and without.
-const SUBJECT_COPY: Record<InspectSubject, { field: string; emptyWithSuggestions: string; empty: string }> = {
-  user: { field: "User id", emptyWithSuggestions: "Pick a user above or type an id.", empty: "Type a user id." },
-  agent: {
-    field: "Agent",
-    emptyWithSuggestions: "Pick an agent above or type its name.",
-    empty: "Type an agent name.",
-  },
-  session: { field: "Session id", emptyWithSuggestions: "Type a session id.", empty: "Type a session id." },
+// is empty: `pick` when the overview suggests names, else `empty`. No session is suggested.
+const SUBJECT_COPY: Record<InspectSubject, { field: string; empty: string; pick?: string }> = {
+  user: { field: "User id", empty: "Type a user id.", pick: "Pick a user above or type an id." },
+  agent: { field: "Agent", empty: "Type an agent name.", pick: "Pick an agent above or type its name." },
+  session: { field: "Session id", empty: "Type a session id." },
 };
 
 export function Assistant() {
@@ -88,15 +84,12 @@ export function Assistant() {
     tokenScope?.readScope === "own_session" || (tokenScope?.readScope === "own_user" && !tokenScope.readUserId);
   const gate = (op: "namespace.inventory" | "knowledge.inspect" | "memory.inspect" | "namespace.tune") => {
     const scoped = op === "namespace.inventory" || op === "knowledge.inspect";
-    return roleLoading
-      ? "Your role on this namespace is still loading."
-      : !canCall(op, role, whoami)
-        ? "Your role on this namespace is not known."
-        : incomplete && scoped
-          ? "Your token's read scope needs a user or session id this page does not send."
-          : narrowed && !scoped
-            ? "Your token is bound to one user or session; inspecting memories and drafting need a token for the whole namespace."
-            : null;
+    if (roleLoading) return "Your role on this namespace is still loading.";
+    if (!canCall(op, role, whoami)) return "Your role on this namespace is not known.";
+    if (incomplete && scoped) return "Your token's read scope needs a user or session id this page does not send.";
+    if (narrowed && !scoped)
+      return "Your token is bound to one user or session; inspecting memories and drafting need a token for the whole namespace.";
+    return null;
   };
   const overviewGate = gate("namespace.inventory");
   const memoryGate = gate("memory.inspect");
@@ -104,17 +97,20 @@ export function Assistant() {
   const tuneGate = gate("namespace.tune");
   const copy = SUBJECT_COPY[subject];
   const suggestions = inventory.data?.populations.find((p) => SUBJECT_OF[p.population] === subject)?.top ?? [];
-  const inspectBlocked =
-    memoryGate ?? (subjectId.trim() ? null : suggestions.length ? copy.emptyWithSuggestions : copy.empty);
+  const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : (suggestions.length && copy.pick) || copy.empty);
 
   const org = identity?.org ?? "";
   const namespace = identity?.namespace ?? "";
-  const readOverview = inventory.run;
+  const runInventory = inventory.run;
+  const readOverview = useCallback(
+    () => runInventory((signal) => namespaceInventory({ org, namespace }, { signal })),
+    [runInventory, org, namespace],
+  );
   // The overview is the page's first answer, read once per namespace and token scope as
   // soon as the role allows it; Refresh reads it again.
   useEffect(() => {
-    if (org && overviewGate === null) readOverview((signal) => namespaceInventory({ org, namespace }, { signal }));
-  }, [org, namespace, overviewGate, readOverview]);
+    if (org && overviewGate === null) readOverview();
+  }, [org, overviewGate, readOverview]);
 
   if (!identity) return null;
   const where = { org, namespace };
@@ -149,12 +145,7 @@ export function Assistant() {
           level={2}
           label="Overview"
           actions={
-            <GatedButton
-              reason={overviewGate}
-              type="secondary"
-              busy={inventory.busy}
-              onClick={() => readOverview((signal) => namespaceInventory(where, { signal }))}
-            >
+            <GatedButton reason={overviewGate} type="secondary" busy={inventory.busy} onClick={readOverview}>
               Refresh
             </GatedButton>
           }
@@ -178,7 +169,7 @@ export function Assistant() {
                     id="assistant-people"
                     level={3}
                     label="Who appears here"
-                    hint="Pick a user or agent to see what it remembers."
+                    hint={memoryGate ? undefined : "Pick a user or agent to see what it remembers."}
                   />
                   <InventoryPopulations inventory={inventory.data} onPick={pick} pickBlocked={memoryGate} />
                 </section>
@@ -237,10 +228,11 @@ export function Assistant() {
             type="secondary"
             busy={documents.busy}
             onClick={() => documents.run((signal) => inspectKnowledge(where, { signal }))}
+            describedBy="assistant-documents-what"
           >
             Inspect documents
           </GatedButton>
-          <p className="text-sm text-text-muted">
+          <p id="assistant-documents-what" className="text-sm text-text-muted">
             Every document here: formats, what search serves, and ingest health.
           </p>
         </div>
@@ -351,6 +343,7 @@ function GatedButton({
   type,
   htmlType = "button",
   onClick,
+  describedBy,
   children,
 }: {
   reason: string | null;
@@ -358,6 +351,8 @@ function GatedButton({
   type: "primary" | "secondary";
   htmlType?: "button" | "submit";
   onClick?: () => void;
+  /** The id of the text that says what the button does; a blocked button says why instead. */
+  describedBy?: string;
   children: ReactNode;
 }) {
   if (reason)
@@ -369,7 +364,7 @@ function GatedButton({
       </Unavailable>
     );
   return (
-    <BusyButton type={type} htmlType={htmlType} busy={busy} onClick={onClick}>
+    <BusyButton type={type} htmlType={htmlType} busy={busy} onClick={onClick} aria-describedby={describedBy}>
       {children}
     </BusyButton>
   );

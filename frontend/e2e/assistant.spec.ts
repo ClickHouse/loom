@@ -591,6 +591,7 @@ async function openWithEveryPanel(page: Page) {
   // The longest user id, picked from the overview: no typing.
   await page.getByTestId("pick-user").first().click();
   await expect(page.getByTestId("assistant-inspection")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Memories", exact: true })).toBeFocused();
   await page.getByRole("button", { name: "Draft improvements" }).click();
   await expect(page.getByTestId("assistant-review")).toBeVisible();
   await page.waitForTimeout(300); // entry animations

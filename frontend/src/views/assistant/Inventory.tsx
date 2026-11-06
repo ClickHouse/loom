@@ -96,6 +96,10 @@ export function InventoryPopulations({
             {p.top.length > 0 && (
               <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label={`${label.title}, most memories first`}>
                 {p.top.map((who) => {
+                  const shown = subject === "agent" ? displayAgent(who.name) : who.name;
+                  // The button cuts a name past 24 characters; the tip shows the whole id then,
+                  // or when the name shown is not the id itself.
+                  const needsTip = shown.length > 24 || shown !== who.name;
                   const pick = subject && (
                     <Button
                       type="secondary"
@@ -103,17 +107,15 @@ export function InventoryPopulations({
                       onClick={() => onPick(subject, who.name)}
                       data-testid={`pick-${subject}`}
                     >
-                      <span className="truncate max-w-[24ch]">
-                        {subject === "agent" ? displayAgent(who.name) : who.name}
-                      </span>{" "}
-                      <span className="ml-1.5 text-text-muted tabular">
+                      <span className="truncate max-w-[24ch]">{shown}</span>{" "}
+                      <span className="text-text-muted tabular">
                         {fmtInt(who.rows)} <span className="sr-only">memories</span>
                       </span>
                     </Button>
                   );
                   return (
                     <li key={who.name} className="inline-flex items-center gap-1 text-xs text-text-muted tabular">
-                      {/* A blocked pick's tip says why; an open one's shows the whole id. */}
+                      {/* A blocked pick's tip says why; an open one's shows a cut id whole. */}
                       {!pick ? (
                         <>
                           <NameBadge name={who.name} />
@@ -122,7 +124,9 @@ export function InventoryPopulations({
                       ) : pickBlocked ? (
                         <Unavailable reason={pickBlocked}>{pick}</Unavailable>
                       ) : (
-                        <Tip content={who.name}>{pick}</Tip>
+                        <Tip content={who.name} disabled={!needsTip}>
+                          {pick}
+                        </Tip>
                       )}
                     </li>
                   );

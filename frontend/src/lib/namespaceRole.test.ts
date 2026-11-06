@@ -126,6 +126,27 @@ describe("useNamespaceRoleRead", () => {
     expect(result.current).toEqual({ role: null, loading: false });
   });
 
+  it("drops the rows of the org it left, and loads again for the new one", async () => {
+    listMine.mockResolvedValueOnce([row("team", "writer")]);
+    signIn();
+    const { result } = renderHook(() => useNamespaceRoleRead("team"));
+    await act(async () => {});
+    expect(result.current).toEqual({ role: "writer", loading: false });
+    let answer: (rows: MyNamespaceEntry[]) => void = () => {};
+    listMine.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    act(() => useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" } }));
+    expect(result.current).toEqual({ role: null, loading: true });
+    await act(async () => answer([row("team", "viewer")]));
+    expect(result.current).toEqual({ role: "viewer", loading: false });
+    expect(listMine).toHaveBeenLastCalledWith("acme");
+  });
+
+  it("is not loading before an org is chosen", () => {
+    useStore.setState({ whoami: user(["USER"]), identity: null, myNamespaces: null });
+    const { result } = renderHook(() => useNamespaceRoleRead("team"));
+    expect(result.current).toEqual({ role: null, loading: false });
+  });
+
   it("reads nothing when the store already holds the rows", () => {
     signIn();
     useStore.setState({ myNamespaces: [row("team", "writer")] });

@@ -103,7 +103,7 @@ export function useNamespaceRoleRead(namespace: string | undefined): { role: Nam
   const answered = fetched !== null && fetched.org === org;
   return {
     role: roleOnNamespace(whoami, stored ?? (answered ? fetched.rows : null), namespace ?? ""),
-    loading: needsFetch && !answered,
+    loading: needsFetch && !!org && !answered,
   };
 }
 
