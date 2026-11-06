@@ -341,7 +341,7 @@ times the namespace size), keyed by operation class. Over the limit, the respons
 | `memory.import`    | `memory.import`                                                                             | 10 / 2 per second               |
 | `knowledge.search` | `knowledge.search`                                                                          | 20 / 3 per second               |
 | `knowledge.query`  | `knowledge.query`                                                                           | 20 / 3 per second               |
-| `knowledge.read`   | the other read-only `knowledge.*` ops (viewer, not audited): `knowledge.get`, `list`, …     | 50 / 10 per second              |
+| `knowledge.read`   | read-only `knowledge.*` ops (viewer, not audited): `knowledge.get`, `knowledge.list`, …     | 50 / 10 per second              |
 | `knowledge.add`    | every other `knowledge.*` operation (`knowledge.synthesize` and `knowledge.dedup_list` too) | 10 / 2 per second               |
 | `code`             | `code.*` (except `code.outcome`, which draws from `memory`)                                 | 60 / 10 per second              |
 | `default`          | everything else                                                                             | 50 / 10 per second              |
