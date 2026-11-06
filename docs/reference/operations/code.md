@@ -1267,7 +1267,7 @@ A maintainer sets the trackers this repository reads (records of issues, PRs, te
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `tracker_namespaces` | `list[str]` | required | Tracker namespaces of this org, primary first (duplicates dropped); a name that is not a tracker namespace is refused with NOT_A_TRACKER_NAMESPACE. [] unlinks every tracker. |
+| `tracker_namespaces` | `list[str]` | required | Tracker namespaces of this org, primary first (duplicates dropped). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

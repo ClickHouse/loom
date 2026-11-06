@@ -90,6 +90,8 @@ async def refresh_overrides(*, force: bool = False, strict: bool = False) -> dic
         from server.core.ch import get_client
 
         if getattr(get_client(), "_client", "absent") is None:
+            if strict:
+                raise RuntimeError("ClickHouse client is not connected")
             return dict(_OVERRIDES)
         _OVERRIDES = await code_index().state_values_for_key(OVERRIDE_KEY)
         _OVERRIDES_AT = now

@@ -679,7 +679,9 @@ async def _tracker_or_refuse(org: str, qa: str, *, new: bool) -> Any:
     if target is not None and (not new or await row_in_scope(org, qa, Role.ADMIN)):
         return target
     if target is not None and await row_in_scope(org, qa, Role.VIEWER, hides_answer=False):
-        raise AuthInsufficientError(f"linking {qa} needs an admin of it")
+        raise AuthInsufficientError(
+            f"linking {qa} needs an admin of it: this repository's own links do not hold it"
+        )
     raise ValidationError(
         f"{qa} is not a tracker namespace of {org} — register its source first "
         "(tracker.source.add)",
