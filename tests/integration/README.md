@@ -79,8 +79,9 @@ also applied at collection to every test that uses `require_real_embedder`,
 - `provider`: needs a real embedder or LLM; skips on the fakes
 - `recovery`: drives a failure and the path back from it
 
-CI runs the whole directory. For a quick local pass, use
-`-m "not slow and not destructive and not provider and not recovery"`.
+CI runs the whole directory in parts (`LOOM_TEST_SHARD`,
+[testing](../../docs/development/testing.md#integration-tests)). For a quick local pass,
+use `-m "not slow and not destructive and not provider and not recovery"`.
 
 ## Diagnostics
 

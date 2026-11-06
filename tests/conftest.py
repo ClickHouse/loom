@@ -16,6 +16,8 @@ import httpx
 import pytest
 import pytest_asyncio
 
+from tests import _shards
+
 # The SDK and server import from the source tree, not an installed copy.
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "sdk" / "python"))
@@ -54,7 +56,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     """Integration tests talk to ClickHouse, through the server or their own
     client, and the server's default target is localhost:8123. Without an
     explicit LOOM_CH_HOST they skip, so an unconfigured run never writes into
-    whatever ClickHouse happens to listen there (a developer's own stack)."""
+    whatever ClickHouse happens to listen there (a developer's own stack).
+    LOOM_TEST_SHARD=k/n first keeps one part of what was collected (`_shards`)."""
+    _shards.keep(config, items)
     if _clickhouse_target():
         return
     skip = pytest.mark.skip(

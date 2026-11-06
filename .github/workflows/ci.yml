@@ -476,12 +476,22 @@ jobs:
             frontend/test-results
           if-no-files-found: ignore
 
+  # Each part is its own runner and ClickHouse. The numbered parts each run their
+  # share of tests/integration (LOOM_TEST_SHARD, whole files: tests/_shards.py)
+  # against an auth-off server; the isolation gates part runs the provider staging
+  # tests, the tenant-isolation gates against an auth-on server, and the
+  # analyzer corpus.
   integration:
-    name: pytest integration (ClickHouse service)
+    name: pytest integration ${{ matrix.part == 'isolation' && 'isolation gates' || format('part {0} of 4', matrix.part) }}
     needs: clickhouse
     runs-on: ubuntu-latest
-    # The suite, then the auth-on server's tests, with room for a slow runner.
-    timeout-minutes: 90
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # The part count, 4, is also in this job's name, its LOOM_TEST_SHARD, the docs
+        # bullet on parts (docs/development/testing.md) and the loom-investigate-ci row.
+        part: ["1", "2", "3", "4", isolation]
     env:
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
       LOOM_CH_HOST: localhost
@@ -540,10 +550,12 @@ jobs:
       - name: Start ClickHouse (loom config + lemmagen dictionary)
         run: bash dev/ci_start_clickhouse.sh
       - name: Apply migrations
+        id: migrate
         run: python -m server.core.schema.migrate
       # Provider staging tests create private, UUID-owned copies and run before
       # the web process starts, against this job's disposable migrated database.
       - name: Provider rebuild storage and recovery
+        if: matrix.part == 'isolation'
         env:
           LOOM_PROVIDER_STAGING_LIVE_TEST: "1"
         run: >-
@@ -559,14 +571,18 @@ jobs:
           tests/integration/test_provider_source_policy_live_ch.py
           tests/integration/test_provider_staging_live_ch.py
           tests/integration/test_provider_views_live_ch.py
-      # The service in front of Loom that signs a token per end user: both
-      # servers trust its fresh key (LOOM_JWT_END_USER_ISSUERS_JSON) and the
+      # The service in front of Loom that signs a token per end user: the part's
+      # server trusts its fresh key (LOOM_JWT_END_USER_ISSUERS_JSON) and the
       # tests sign with it (LOOM_TEST_END_USER_KEY).
       - name: Test end-user issuer
+        id: issuer
+        if: steps.migrate.outcome == 'success' && !cancelled()
         run: python -m tests.end_user_issuer "$RUNNER_TEMP" >> "$GITHUB_ENV"
-      # The reference extractor, before the servers boot so they read its URL and token:
+      # The reference extractor, before the part's server boots so it reads its URL and token:
       # the ingestion tests' jobs call it and knowledge.inspect reports it as configured.
       - name: Start the reference extractor
+        id: extractor
+        if: steps.migrate.outcome == 'success' && !cancelled()
         run: |
           token="$(openssl rand -hex 24)"
           echo "::add-mask::$token"
@@ -582,6 +598,7 @@ jobs:
       # The image's launcher with several web processes, so state that must
       # bind every process (rate limits, budgets, schema caches) is tested.
       - name: Boot control plane
+        if: matrix.part != 'isolation'
         run: |
           LOOM_WEB_WORKERS=3 nohup sh scripts/serve.sh > server.log 2>&1 &
           for _ in $(seq 1 60); do
@@ -594,6 +611,7 @@ jobs:
       # A local S3-compatible store for the document object-store tests
       # (tests/integration/test_document_object_store_live.py).
       - name: Start a local S3-compatible store
+        if: matrix.part != 'isolation'
         run: |
           docker run -d --name loom-ci-s3 -p 127.0.0.1:5000:5000 \
             motoserver/moto@sha256:32d7805d8bd4c81db789c4fff2c36f96a8837cbd8e7a3853116b6516b9490dde
@@ -603,14 +621,22 @@ jobs:
           done
           curl -sf http://127.0.0.1:5000/ >/dev/null
           echo "LOOM_TEST_S3_ENDPOINT=http://127.0.0.1:5000" >> "$GITHUB_ENV"
-      # The whole directory on every pull request; no test is slow enough to
-      # justify a separate merge-only tier.
-      - name: pytest
-        run: pytest tests/integration -q
-      # The tenant-isolation gates again, against a second server that
-      # enforces auth: with auth off every token is ignored, so these
-      # tests alone would never see a refusal.
+      # The whole directory on every pull request, split over the parts; no test
+      # is slow enough to justify a separate merge-only tier.
+      - name: pytest (this part of tests/integration)
+        if: matrix.part != 'isolation'
+        env:
+          LOOM_TEST_SHARD: ${{ matrix.part }}/4
+        run: pytest tests/integration -q --durations=20
+      # The tenant-isolation gates against a server that enforces auth. The numbered
+      # parts run them with auth off, where every token is ignored and no refusal is seen.
+      # The three checks of the isolation gates part are independent: a failure in
+      # one does not skip the next (`!cancelled()`).
       - name: Boot control plane with auth on
+        id: auth_on
+        if: >-
+          matrix.part == 'isolation' && !cancelled() && steps.issuer.outcome == 'success'
+          && steps.extractor.outcome == 'success'
         env:
           LOOM_AUTH_REQUIRED: "true"
           LOOM_INSTANCE_LABEL: "ci:integration-auth"
@@ -626,6 +652,7 @@ jobs:
           tail -100 server-auth.log
           exit 1
       - name: pytest isolation gates (auth on)
+        if: matrix.part == 'isolation' && !cancelled() && steps.auth_on.outcome == 'success'
         env:
           LOOM_AUTH_REQUIRED: "true"
           LOOM_BASE_URL: http://localhost:7778
@@ -647,12 +674,13 @@ jobs:
       # with the builders. ~10 s; a rejection here is a statement that would
       # fail on a deployed server.
       - name: analyzer statement corpus
+        if: matrix.part == 'isolation' && steps.migrate.outcome == 'success' && !cancelled()
         run: pytest tests/analyzer -q
       - name: Upload server log on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: server-log
+          name: server-log-${{ matrix.part }}
           path: |
             server.log
             server-auth.log
