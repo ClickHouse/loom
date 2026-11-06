@@ -166,7 +166,8 @@ def _collect(*args: str, shard: str | None, deselect_free: bool = False) -> list
     )
     # 5: the part holds no test of these paths.
     assert done.returncode in (0, 5), done.stdout[-2000:] + done.stderr[-2000:]
-    assert "deselected" not in done.stdout or not deselect_free, done.stdout[-500:]
+    if deselect_free:
+        assert "deselected" not in done.stdout, done.stdout[-500:]
     return [line for line in done.stdout.splitlines() if "::" in line]
 
 
@@ -187,8 +188,9 @@ def test_files_and_node_ids_named_on_the_command_line_run_in_one_part_each() -> 
 def test_a_directory_argument_skips_the_other_parts_files_before_collecting_them() -> None:
     """Under a directory, `pytest_ignore_collect` keeps another part's files from being
     imported at all: nothing is collected only to be deselected."""
-    whole = _collect("tests/integration", shard=None)
-    parts = [_collect("tests/integration", shard=f"{k}/2", deselect_free=True) for k in (1, 2)]
+    tree = "tests/integration/same_key"
+    whole = _collect(tree, shard=None)
+    parts = [_collect(tree, shard=f"{k}/2", deselect_free=True) for k in (1, 2)]
     assert whole and parts[0] and parts[1]
     assert sorted(parts[0] + parts[1]) == sorted(whole)
 

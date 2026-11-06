@@ -83,7 +83,12 @@ class _Embedder:
 
 
 def _search(repo: _Repo, embedder: _Embedder | None) -> Any:
-    with patch.object(settings, "code_fusion_signals", False):
+    # TTL 0 reads the corpus stats on every search: a cached read would leave the
+    # lexical chain one sleep long, ending on the very tick the vector read starts.
+    with (
+        patch.object(settings, "code_fusion_signals", False),
+        patch.object(settings, "code_corpus_stats_ttl_s", 0),
+    ):
         return asyncio.run(
             cs.search(
                 repo,
