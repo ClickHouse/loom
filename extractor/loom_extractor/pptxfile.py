@@ -155,12 +155,7 @@ def _picture_texts(
     """The text OCR reads in each of the slide's pictures that covers a fifth of
     it, how many it read, and why the first it could not read was not (empty
     when it read all). An image several slides show is read once."""
-    # a fifth of the slide, and at least a point wide (one narrower holds no text)
-    big = [
-        p
-        for p in slide.pictures
-        if area and p[1] * p[2] >= ocr.PICTURE_SHARE * area and p[1] >= _EMU_PER_INCH / 72
-    ]
+    big = [p for p in slide.pictures if area and p[1] * p[2] >= ocr.PICTURE_SHARE * area]
     if not big:
         return [], 0, ""
     rels = pkg.rels(part)

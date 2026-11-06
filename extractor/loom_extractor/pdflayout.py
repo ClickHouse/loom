@@ -1118,8 +1118,8 @@ def size_class(size: float) -> float:
     """`size` to the step sizes are compared at: half a point, or a tenth of one
     under 6 points (OCR's text in a finely shown image, whose whole-point
     readings turn to fractions)."""
-    step = 0.1 if size < 6 else 0.5
-    return round(size / step) * step
+    # divided by a whole number, so 5.97 and 6.0 are the one 6.0
+    return round(size * 10) / 10 if size < 6 else round(size * 2) / 2
 
 
 def _code_text(lines: list[Line]) -> str:

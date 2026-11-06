@@ -244,16 +244,19 @@ def _read_layout(
     if len(targets) > layout.MAX_PICTURES:
         problems.append(f"it shows more than {layout.MAX_PICTURES} pictures OCR would read")
         targets = targets[: layout.MAX_PICTURES]
-    # a picture drawn but left out (under a point wide) holds no text: nothing to fail
-    if not texted and not pictures and _has_image(page, reader):
-        contents = page.get_contents()
+    # A picture drawn but left out (under a point wide) holds no text, so a page of
+    # only those has nothing to fail; an image drawn inline, which `drawing` does
+    # not collect, still does.
+    contents = page.get_contents() if not texted and not targets else None
+    inline = contents is not None and _draws_inline_image(contents, reader)
+    if not texted and not targets and (inline or not pictures) and _has_image(page, reader):
         read.failure = (
             _NEEDS_OCR
             if ocr.engine() is None
             else "no text layer, and its drawing could not be read"
             if not drawn
             else "no text layer: its image is drawn inline, which OCR does not read"
-            if contents is not None and _draws_inline_image(contents, reader)
+            if inline
             else "no text layer, and no image it draws is one OCR finds"
         )
     for picture in targets:

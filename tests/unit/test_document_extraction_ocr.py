@@ -623,8 +623,18 @@ def test_a_spacer_under_a_point_wide_leaves_a_scanned_page_complete(engine: Fake
 def test_sizes_under_six_points_compare_at_a_tenth() -> None:
     assert layout.size_class(2.4) != layout.size_class(2.6)
     assert layout.size_class(12.2) == layout.size_class(12.0)
+    assert layout.size_class(5.97) == layout.size_class(6.0) == 6.0
 
 
 def test_a_page_of_only_a_spacer_is_complete(engine: FakeEngine) -> None:
     a = extract(laid_out_pdf([b"q 0.75 0 0 0.75 10 10 cm /Im1 Do Q"], image=GRAY), "s.pdf")
     assert a.coverage.complete and engine.seen == []
+
+
+def test_an_inline_scan_beside_a_spacer_still_fails_its_page(engine: FakeEngine) -> None:
+    inline = b"q 400 0 0 400 100 200 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q\n"
+    spacer = b"q 0.75 0 0 0.75 10 10 cm /Im1 Do Q"
+    a = extract(laid_out_pdf([inline + spacer], image=GRAY), "i.pdf")
+    assert a.coverage.failed[0].reason == (
+        "no text layer: its image is drawn inline, which OCR does not read"
+    )
