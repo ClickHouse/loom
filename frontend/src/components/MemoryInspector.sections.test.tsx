@@ -48,6 +48,7 @@ vi.mock("../api", async (importOriginal) => {
     listMemories: vi.fn(async () => ({ entries: [], total: 0 })),
     conflictKeys: vi.fn(async (): Promise<string[]> => []),
     listMine: vi.fn(async () => []),
+    setMemory: vi.fn(async () => ({ version: 2 })),
   };
 });
 import {
@@ -184,6 +185,33 @@ describe("MemoryInspector reads what is open", () => {
     open();
     await screen.findByText("hello");
     expect(screen.getAllByText("9×")).toHaveLength(2); // Last recalled and Recall credit
+  });
+
+  it("a saved edit re-reads the served figures, so Last recalled keeps its count", async () => {
+    useStore.setState({ myNamespaces: [row("ns", "writer")], whoami: { ...viewer, roles: ["WRITER"] } });
+    const served = {
+      found: true,
+      value: "hello",
+      memory_type: "semantic",
+      confidence: 1,
+      pinned: false,
+      tags: [],
+      created_at: new Date().toISOString(),
+      version: 1,
+      recall_count: 0,
+      served_count: 2,
+      last_served_at: new Date().toISOString(),
+    } as MemoryDetail;
+    vi.mocked(getMemory).mockResolvedValueOnce(served).mockResolvedValueOnce(served);
+    open();
+    await screen.findByText(/^2× · /);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Save new version/ }));
+    await waitFor(() => expect(getMemory).toHaveBeenCalledTimes(2));
+    for (const call of vi.mocked(getMemory).mock.calls) {
+      expect(call[2]).toMatchObject({ include_recall_breakdown: true });
+    }
+    expect(await screen.findByText(/^2× · /)).toBeInTheDocument();
   });
 
   it("opening History reads it once and shows the versions; a second open reads nothing", async () => {

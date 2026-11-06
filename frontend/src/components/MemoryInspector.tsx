@@ -535,7 +535,7 @@ export function MemoryInspector({
         charLimit: detail.char_limit ?? undefined,
       });
       toast(ttlSeconds === null ? "Expiry cleared — never expires" : "Expiry updated", "ok");
-      const fresh = await getMemory(identity, memoryKey);
+      const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
       setDetail(fresh);
       onChanged();
     } catch (e) {
@@ -563,7 +563,7 @@ export function MemoryInspector({
       });
       toast("Saved", "ok");
       setEditing(false);
-      const fresh = await getMemory(identity, memoryKey);
+      const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
       setDetail(fresh);
       onChanged();
     } catch (e) {

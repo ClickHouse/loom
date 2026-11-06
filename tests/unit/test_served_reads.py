@@ -55,7 +55,14 @@ def _wrapped(keys_of: Any, out: Any) -> Any:
 
 def _search_input(**kw: Any) -> SimpleNamespace:
     return SimpleNamespace(
-        **{"org": "o", "namespace": "n", "agent": "codex", "auto_touch": True, **kw}
+        **{
+            "org": "o",
+            "namespace": "n",
+            "agent": "codex",
+            "auto_touch": True,
+            "reinforce": True,
+            **kw,
+        }
     )
 
 
@@ -107,7 +114,7 @@ def test_search_query_records_the_memory_hits_it_kept() -> None:
 
 
 def test_ask_and_procedure_match_record_what_they_return() -> None:
-    inp = SimpleNamespace(namespace="n")
+    inp = SimpleNamespace(namespace="n", reinforce=True)
     assert served_reads.ask_keys(inp, SimpleNamespace(results=[_hit("a")])) == [("n", "a")]
     match = SimpleNamespace(memory_key="p", namespace="")
     assert served_reads.procedure_keys(inp, SimpleNamespace(matches=[match])) == [("n", "p")]
@@ -170,3 +177,83 @@ def test_a_narrowed_reader_counts_its_own_row_only(monkeypatch: pytest.MonkeyPat
     assert handlers.served_scope(row) == ("u1", "s1")
     monkeypatch.setattr(request_scope, "request_narrowed", lambda: False)
     assert handlers.served_scope(row) is None
+
+
+def test_an_evaluation_ask_records_nothing() -> None:
+    inp = SimpleNamespace(namespace="n", reinforce=False)
+    assert served_reads.ask_keys(inp, SimpleNamespace(results=[_hit("a")])) == []
+
+
+# ---------------------------------------------------------------- the real wire models
+
+
+def _real_hit(key: str, ns: str = "") -> Any:
+    from server.memory.api.models_search import _MemorySearchHit
+
+    return _MemorySearchHit(
+        memory_key=key,
+        memory_type="semantic",
+        content_excerpt="x",
+        distance=0.1,
+        similarity=0.9,
+        namespace=ns,
+    )
+
+
+def test_each_extractor_reads_its_ops_real_models() -> None:
+    """A renamed field would make `records_served` log and record nothing, with every
+    stand-in test green; these run the extractors on the models the ops answer with."""
+    from server.memory.api.models_ask import MemoryAskInput, MemoryAskOutput
+    from server.memory.api.models_context import ContextBlock, ContextPackInput, ContextPackOutput
+    from server.memory.api.models_loom_search import SearchInput, SearchOutput
+    from server.memory.api.models_procedure import ProcedureMatchInput, ProcedureMatchOutput
+    from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput
+
+    search_in = MemorySearchInput(org="o", namespace="n", query="q")
+    search_out = MemorySearchOutput(
+        results=[_real_hit("a"), _real_hit("b", "m")], embedding_model="e"
+    )
+    assert served_reads.search_keys(search_in, search_out) == [("n", "a"), ("m", "b")]
+
+    ask_in = MemoryAskInput(org="o", namespace="n", query="q")
+    ask_out = MemoryAskOutput(answer="", results=[_real_hit("a")])
+    assert served_reads.ask_keys(ask_in, ask_out) == [("n", "a")]
+
+    match_in = ProcedureMatchInput(org="o", namespace="n", situation="s")
+    match_out = ProcedureMatchOutput.model_validate(
+        {
+            "matches": [
+                {
+                    "name": "p",
+                    "situation": "s",
+                    "steps": [],
+                    "similarity": 0.9,
+                    "memory_key": "proc",
+                    "namespace": "n",
+                }
+            ]
+        }
+    )
+    assert served_reads.procedure_keys(match_in, match_out) == [("n", "proc")]
+
+    pack_in = ContextPackInput(org="o", namespace="n", agent="w", query="q")
+    block = ContextBlock(
+        label="Memories",
+        section="memories",
+        rendered="x",
+        tokens_estimate=1,
+        citations=["memory:n/a"],
+        priority=0,
+    )
+    pack_out = ContextPackOutput(
+        rendered="x",
+        sections={"memories": "x"},
+        blocks=[block],
+        section_count=1,
+        token_budget=100,
+    )
+    assert served_reads.pack_keys(pack_in, pack_out) == [("n", "a")]
+
+    query_in = SearchInput(org="o", namespace="n", query="q")
+    query_out = SearchOutput.model_validate({"memory": search_out.model_dump(mode="json")})
+    assert served_reads.search_query_keys(query_in, query_out) == [("n", "a"), ("m", "b")]

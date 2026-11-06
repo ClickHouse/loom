@@ -10,9 +10,10 @@ The event is written by the op, over what its answer carries, so a hit the op tr
 (a transcript row a context pack drops, an item past a section budget) is never counted.
 The op's handler is wrapped where the op is declared; a handler another op calls directly
 records nothing of its own. Not written: a credited `memory.search` (its credit stands for
-it), a `memory.search` sent with `auto_touch: false`, a read by the dashboard or the
-assistant (a person inspecting), and a measurement read (a bench label, or the `*` / `-`
-agent with no named consumer behind it, as `recall_credit.is_measurement_read` says).
+it), a `memory.search` sent with `auto_touch: false` or a `memory.ask` with
+`reinforce: false` (an evaluation read), a read by the dashboard or the assistant (a person
+inspecting), and a measurement read (a bench label, or the `*` / `-` agent with no named
+consumer behind it, as `recall_credit.is_measurement_read` says).
 """
 
 from __future__ import annotations
@@ -88,7 +89,7 @@ def records_served[I, O](
 
 
 def _hit_keys(hits: Iterable[Any], namespace: str) -> Keys:
-    return [(str(getattr(h, "namespace", "") or namespace), str(h.memory_key)) for h in hits]
+    return [(str(h.namespace or namespace), str(h.memory_key)) for h in hits]
 
 
 def search_keys(input: Any, out: Any) -> Keys:
@@ -99,7 +100,10 @@ def search_keys(input: Any, out: Any) -> Keys:
 
 
 def ask_keys(input: Any, out: Any) -> Keys:
-    """memory.ask: the retrieved memories its answer returns (`results`)."""
+    """memory.ask: the retrieved memories its answer returns (`results`), unless the ask
+    is an evaluation read (`reinforce: false`)."""
+    if not input.reinforce:
+        return []
     return _hit_keys(out.results, input.namespace)
 
 

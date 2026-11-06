@@ -1,13 +1,13 @@
 """memory.health — is the knowledge base earning its keep?
 
-Reports coverage by type, top recalled entries, silent (never served to an agent) entries
-and the staleness of live rows, so a namespace where most rows are never read shows it. One
-query over loom.memory FINAL joined to the summed loom.memory_usage_totals and the `served`
-usage events of the last `silent_after_days` days, scoped to (org, namespace). A key counts
-as read when any of its live rows carries a recall credit, or a `served` event in that
-window: an agent read puts its event on the newest copy of the key in the namespace only.
-The window bounds the events read, since a context pack writes one per key it returns on
-every turn.
+Reports coverage by type, top recalled entries, silent entries (no recall credit, and not
+served to an agent in the last `silent_after_days`) and the staleness of live rows, so a
+namespace where most rows are never read shows it. One query over loom.memory FINAL joined
+to the summed loom.memory_usage_totals and the `served` usage events of the last
+`silent_after_days` days, scoped to (org, namespace). A key counts as read when any of its
+live rows carries a recall credit, or a `served` event in that window: an agent read puts
+its event on the newest copy of the key in the namespace only. The window bounds the events
+read, since a context pack writes one per key it returns on every turn.
 """
 
 from __future__ import annotations

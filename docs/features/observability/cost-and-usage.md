@@ -170,7 +170,8 @@ the loop (`server/memory/app/recall_credit.py`). Every other agent read that ret
 writes one `served` event per key its answer returned (`server/memory/app/served_reads.py`):
 an uncredited `memory.search`, `search.query`, `context.pack` (the rows its blocks cite),
 `memory.ask` and `procedure.match`. A hit the op trims before answering is not counted.
-Neither is a `memory.search` sent with `auto_touch: false`, a read by the dashboard or the
+Neither is a `memory.search` sent with `auto_touch: false` or a `memory.ask` with
+`reinforce: false`, a read by the dashboard or the
 assistant, a measurement read (a bench label, or the `*` / `-` agent with no named
 consumer), or an op that runs a search for its own use (`decision.precedents`,
 `memory.apply`, the workers' passes).
