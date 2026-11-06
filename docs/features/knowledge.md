@@ -896,8 +896,9 @@ process that stopped, runs again from its start and counts the attempt. A job th
 or is cancelled, publishes nothing, so the earlier revision keeps serving.
 `knowledge.ingest_cancel` stops a pending job at once and a running one before it
 publishes; a job past its publish check finishes. The reference extractor reads Markdown,
-HTML, plain text, SQL, TOML, CSV, PDF (as laid out, its tables typed like a sheet's: a
-scanned page needs OCR, so the job needs `allow_partial`), DOCX, PPTX, XLSX (a table of
+HTML, plain text, SQL, TOML, CSV, PDF (as laid out, its tables typed like a sheet's, and a
+scanned page read with OCR; an extractor without OCR leaves it partial, so the job needs
+`allow_partial`), DOCX, PPTX (a whiteboard photo read with OCR), XLSX (a table of
 each sheet, and its rows as passages) and Parquet (a table, a decimal's digits kept; its
 dataset holds them as [Datasets](#datasets) says); any unit of a tabular file the
 extractor could not read, or a capability it lost, such as a table cut at its budget, a

@@ -89,7 +89,8 @@ class Package:
     def __init__(self, data: bytes) -> None:
         self._zip = zipfile.ZipFile(io.BytesIO(data))
         self._names = set(self._zip.namelist())
-        self._read = 0  # bytes inflated so far, from every part
+        self._read = 0  # bytes inflated so far, from every part but media
+        self._media = 0  # bytes inflated so far, from media parts (`media`)
         self._elements = 0  # elements streamed so far, from every part
 
     def has(self, name: str) -> bool:
@@ -103,29 +104,37 @@ class Package:
             raise PartError(f"{name} is compressed with method {info.compress_type}")
         return info
 
-    def _info(self, name: str, limit: int | None = None) -> zipfile.ZipInfo:
-        """A part read whole: at most `limit` bytes (MAX_PART_BYTES), and within
-        what the package may inflate to."""
+    def _bytes(self, name: str, limit: int | None = None, *, media: bool = False) -> bytes:
+        """Part `name`'s bytes, read whole: at most `limit` bytes (MAX_PART_BYTES),
+        and within what the package may inflate to. Media inflate within a bound
+        of their own, so pictures read never cost the text parts their room."""
         limit = MAX_PART_BYTES if limit is None else limit
         info = self._entry(name)
         if info.file_size > limit:
             raise PartError(f"{name} is over {limit} bytes")
-        if self._read + info.file_size > MAX_PACKAGE_BYTES:
-            raise PartError(f"{name} would inflate the package past {MAX_PACKAGE_BYTES} bytes")
-        self._read += info.file_size
-        return info
-
-    def xml(self, name: str, limit: int | None = None) -> ET.Element:
-        """Part `name` as a tree, when it is at most `limit` bytes (MAX_PART_BYTES)."""
-        info = self._info(name, limit)
+        used = self._media if media else self._read
+        if used + info.file_size > MAX_PACKAGE_BYTES:
+            what = "the package's media" if media else "the package"
+            raise PartError(f"{name} would inflate {what} past {MAX_PACKAGE_BYTES} bytes")
+        if media:
+            self._media += info.file_size
+        else:
+            self._read += info.file_size
         try:
             with self._zip.open(info) as f:
                 # One read of the declared size: inflating stops there, and the
                 # checksum is checked once the declared bytes are read.
-                raw = f.read(info.file_size)
+                return f.read(info.file_size)
         except _DAMAGED as e:
             raise PartError(f"{name} is damaged: {type(e).__name__}") from e
-        return _parse(name, raw)
+
+    def xml(self, name: str, limit: int | None = None) -> ET.Element:
+        """Part `name` as a tree, when it is at most `limit` bytes (MAX_PART_BYTES)."""
+        return _parse(name, self._bytes(name, limit))
+
+    def media(self, name: str, limit: int) -> bytes:
+        """Media part `name`'s bytes (a picture), when it is at most `limit` bytes."""
+        return self._bytes(name, limit, media=True)
 
     def stream(self, name: str, handler: Handler) -> None:
         """Part `name` read through `handler`'s callbacks as it inflates, a

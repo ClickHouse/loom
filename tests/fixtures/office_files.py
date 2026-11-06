@@ -117,10 +117,30 @@ def _assemble(objs: list[bytes], pages_id: int) -> bytes:
     return bytes(out)
 
 
-def laid_out_pdf(pages: list[bytes], *, rotate: tuple[int, ...] = (), width: float = 612) -> bytes:
+# A 4 by 2 black image, an image XObject's entries and stream.
+GRAY_IMAGE = (
+    b"/Width 4 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 8 >>\nstream\n"
+    + bytes(8)
+)
+
+
+def laid_out_pdf(
+    pages: list[bytes],
+    *,
+    rotate: tuple[int, ...] = (),
+    width: float = 612,
+    image: bytes | list[bytes] = b"",
+    forms: tuple[bytes, ...] = (),
+    chain: tuple[bytes, ...] = (),
+) -> bytes:
     """A PDF of `pages`, each its content stream as written: fonts F1
     (Helvetica), F2 (Helvetica-Bold) and F3 (Courier), `width` points wide and
-    792 high, and `/Rotate 90` on the pages `rotate` lists."""
+    792 high, and `/Rotate 90` on the pages `rotate` lists. `image` is an image
+    XObject's dictionary entries and stream (`/Width 1 ... >>\nstream\n...`),
+    drawn as /Im1, or a list of them, drawn as /Im1, /Im2 and on. `forms` are
+    form XObjects' content streams, drawn as /Fm1, /Fm2 and on. `chain` is form
+    content streams each holding the next in its own resources (/Ch1 holds /Ch2,
+    the last holds /Im1), as a real file nests them; the page holds /Ch1."""
     objs: list[bytes] = []
 
     def add(body: bytes) -> int:
@@ -137,6 +157,32 @@ def laid_out_pdf(pages: list[bytes], *, rotate: tuple[int, ...] = (), width: flo
         )
         for i, name in enumerate((b"Helvetica", b"Helvetica-Bold", b"Courier"), start=1)
     )
+    entries = [
+        b"/Im%d %d 0 R" % (n, add(b"<< /Type /XObject /Subtype /Image " + one + b"\nendstream"))
+        for n, one in enumerate([image] if isinstance(image, bytes) else image, start=1)
+        if one
+    ] + [
+        b"/Fm%d %d 0 R"
+        % (
+            n,
+            add(
+                b"<< /Type /XObject /Subtype /Form /BBox [0 0 1 1] /Length %d >>\nstream\n%s\nendstream"
+                % (len(one), one)
+            ),
+        )
+        for n, one in enumerate(forms, start=1)
+    ]
+    if chain:
+        inner = b"/Im1 %d 0 R" % add(b"<< /Type /XObject /Subtype /Image " + GRAY_IMAGE + b"\nendstream")
+        for n in range(len(chain), 0, -1):
+            one = chain[n - 1]
+            ref = add(
+                b"<< /Type /XObject /Subtype /Form /BBox [0 0 1 1] /Resources << /XObject << %s >> >>"
+                b" /Length %d >>\nstream\n%s\nendstream" % (inner, len(one), one)
+            )
+            inner = b"/Ch%d %d 0 R" % (n, ref)
+        entries.append(inner)
+    xobjects = b" /XObject << %s >>" % b" ".join(entries) if entries else b""
     pages_id = len(objs) + 1 + 2 * len(pages)
     page_ids = []
     for k, stream in enumerate(pages):
@@ -145,8 +191,8 @@ def laid_out_pdf(pages: list[bytes], *, rotate: tuple[int, ...] = (), width: flo
         page_ids.append(
             add(
                 b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d 792]%s"
-                b" /Contents %d 0 R /Resources << /Font << %s >> >> >>"
-                % (pages_id, int(width), turn, contents, fonts)
+                b" /Contents %d 0 R /Resources << /Font << %s >>%s >> >>"
+                % (pages_id, int(width), turn, contents, fonts, xobjects)
             )
         )
     kids = b" ".join(b"%d 0 R" % p for p in page_ids)

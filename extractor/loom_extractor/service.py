@@ -29,6 +29,7 @@ import json
 import logging
 import math
 import os
+import re
 import signal
 import sys
 from collections.abc import Callable, Mapping
@@ -60,6 +61,10 @@ _PACKAGE_ROOT = str(Path(child.__file__).resolve().parent.parent)
 _CHILD_MODULE = "loom_extractor.child"
 
 
+# Tesseract's model names (`eng`, `chi_sim`), joined by `+`.
+_LANGUAGES = re.compile(r"[a-z][a-z_]{1,15}(\+[a-z][a-z_]{1,15}){0,7}")
+
+
 @dataclass(frozen=True)
 class Config:
     token: str
@@ -71,6 +76,11 @@ class Config:
     concurrency: int = 1
     max_bytes: int = 64 * 1024 * 1024
     max_artifact_bytes: int = 64 * 1024 * 1024
+    # OCR of a scanned page and of a picture that covers a fifth of a page or a
+    # slide, when the image installs it (ocr.py).
+    ocr: bool = True
+    ocr_languages: str = "eng"
+    ocr_max_images: int = 30
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Config:
@@ -90,7 +100,18 @@ class Config:
             max_artifact_bytes=int(
                 env.get("LOOM_EXTRACTOR_MAX_ARTIFACT_BYTES", d.max_artifact_bytes)
             ),
+            ocr=env.get("LOOM_EXTRACTOR_OCR", "on") != "off",
+            ocr_languages=env.get("LOOM_EXTRACTOR_OCR_LANGUAGES", d.ocr_languages),
+            ocr_max_images=int(env.get("LOOM_EXTRACTOR_OCR_MAX_IMAGES", d.ocr_max_images)),
         )
+        if env.get("LOOM_EXTRACTOR_OCR", "on") not in ("on", "off"):
+            raise SystemExit("LOOM_EXTRACTOR_OCR must be on or off")
+        if not _LANGUAGES.fullmatch(config.ocr_languages):
+            raise SystemExit(
+                "LOOM_EXTRACTOR_OCR_LANGUAGES must be model names joined by +, such as eng+deu"
+            )
+        if config.ocr_max_images < 0:
+            raise SystemExit("LOOM_EXTRACTOR_OCR_MAX_IMAGES must be 0 or more")
         for name in ("timeout_s", "memory_mb", "concurrency", "max_bytes", "max_artifact_bytes"):
             value = getattr(config, name)
             if not math.isfinite(value) or value <= 0:  # 0 slots would leave every call waiting
@@ -132,6 +153,7 @@ async def _read_capped(
 _NATIVE_ENV = {
     "OPENBLAS_NUM_THREADS": "1",
     "OMP_NUM_THREADS": "1",
+    "OMP_THREAD_LIMIT": "1",  # Tesseract's OpenMP, which would start threads a child may not
     "ARROW_DEFAULT_MEMORY_POOL": "system",
 }
 
@@ -152,6 +174,11 @@ async def run_child(config: Config, data: bytes, request: dict[str, object]) -> 
     limits = {
         "memory_bytes": config.memory_mb * 1024 * 1024,
         "cpu_s": max(1, int(config.timeout_s)),
+        "ocr": {
+            "enabled": config.ocr,
+            "languages": config.ocr_languages,
+            "max_images": config.ocr_max_images,
+        },
     }
     proc = await asyncio.create_subprocess_exec(
         sys.executable,

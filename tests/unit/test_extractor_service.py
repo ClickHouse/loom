@@ -289,7 +289,12 @@ async def test_a_child_sees_no_environment_and_cannot_write_files(
     r = await _extract()
     names, wrote = json.loads(r.json()["error"]["message"])
     assert TOKEN not in r.text and "LOOM_EXTRACTOR_TOKEN" not in names
-    native = {"OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "ARROW_DEFAULT_MEMORY_POOL"}
+    native = {
+        "OPENBLAS_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "OMP_THREAD_LIMIT",
+        "ARROW_DEFAULT_MEMORY_POOL",
+    }
     assert set(names) <= {"PYTHONPATH", "PATH", "LC_ALL", "LC_CTYPE", *native} and wrote == "no"
 
 
@@ -372,6 +377,7 @@ async def test_a_child_is_non_dumpable_in_root_with_no_request_on_its_command_li
     assert "secret-name" not in json.dumps(argv) and json.loads(argv[1]).keys() == {
         "memory_bytes",
         "cpu_s",
+        "ocr",
     }
 
 
