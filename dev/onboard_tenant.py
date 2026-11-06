@@ -42,7 +42,7 @@ from server.core.ratelimit import DEFAULT_LIMITS  # noqa: E402
 
 # The op classes an anchor tenant gets raised caps on; the base values are
 # the server's own defaults, so the multiplier means what it says.
-ANCHOR_CLASSES = ("memory", "knowledge.search", "knowledge.add")
+ANCHOR_CLASSES = ("memory", "knowledge.search", "knowledge.read", "knowledge.add")
 
 
 def anchor_overrides(multiplier: float) -> dict[str, tuple[float, float]]:

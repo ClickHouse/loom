@@ -1,14 +1,16 @@
 """namespace.tune's document drafts against a live Loom + ClickHouse.
 
-Six text documents whose sections are longer than the chunk size, and a Parquet file that no
-configured extractor takes (ingested through the wire and its job run in this process
-as a knowledge_ingest worker pass runs one, so it fails `format_unavailable` as
-production fails it).
+Six text documents whose sections are longer than the chunk size, and a Parquet file
+ingested through the wire whose job runs in this process with no extractor configured, as a
+knowledge_ingest worker pass runs one, so it fails `format_unavailable` as production fails
+it on a deployment with no extractor for Parquet.
 Tune cuts the documents again in process and reports the cut: every section is cut, and
 no larger size is drafted because the test embedder states no input limit, which
-`skipped` says. The Parquet file is named in `skipped` with no route invented, decision extraction
-is said to take no instructions, the same sample comes back on a second call, and nothing
-is written: the document rows and chunks are as they were.
+`skipped` says. The Parquet file is named in `skipped` with no route drafted: as a source to
+upload again when the server's extractor declares Parquet, else as one no configured
+extractor declares. Decision extraction is said to take no instructions, the same sample
+comes back on a second call, and nothing is written: the document rows and chunks are as
+they were.
 """
 
 from __future__ import annotations
@@ -40,12 +42,13 @@ async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:
 
 
 async def _failed_parquet(c: httpx.AsyncClient, org: str, ns: str) -> str:
-    """A Parquet file uploaded, ingested and its job run here: its source_uri. The job is run
-    by itself, as a pass that took it runs it, since a pass takes one job of a queue
-    other tests' jobs share."""
+    """A Parquet file uploaded, ingested and its job run here with no extractor configured:
+    its source_uri. The job is run by itself, as a pass that took it runs it, since a pass
+    takes one job of a queue other tests' jobs share."""
     from server.core.ch import get_client
     from server.knowledge.app import ingest_run
     from server.knowledge.store import ingestions
+    from server.settings import settings
 
     data = b"plain words, not a parquet file"
     up = await c.post(
@@ -73,7 +76,10 @@ async def _failed_parquet(c: httpx.AsyncClient, org: str, ns: str) -> str:
     try:
         row = await ingestions.get_ingestion(org, ns, job["ingestion_id"])
         assert row is not None, job["ingestion_id"]
-        ran = await ingest_run.take_and_run(row)
+        with pytest.MonkeyPatch.context() as m:
+            m.setattr(settings, "document_extractor_url", "")
+            m.setattr(settings, "document_extractors_json", "{}")
+            ran = await ingest_run.take_and_run(row)
         assert ran is not None, f"job {job['ingestion_id']} did not run"
     finally:
         await ch.disconnect()
@@ -116,6 +122,7 @@ async def test_tune_cuts_the_documents_again_and_writes_nothing(
             ).result_rows
             return [*docs, *chunks]
 
+        formats = await _op(c, "knowledge.formats", org=org, namespace=ns)
         before = snapshot()
         out = await _op(c, "namespace.tune", org=org, namespace=ns)
         again = await _op(c, "namespace.tune", org=org, namespace=ns)
@@ -135,11 +142,17 @@ async def test_tune_cuts_the_documents_again_and_writes_nothing(
     assert "settings.knowledge_chunking" not in targets
     skipped = out["skipped"]
     assert any(s.startswith("chunking:") and "input limit is not known" in s for s in skipped)
-    # No configured extractor declares parquet: said, and no route is invented.
+    # The failed source is said, and no route is invented: the server's extractor
+    # declares parquet now (the reference extractor does), or none does.
     assert "settings.document_extractors_json" not in targets
+    served = next(f["available"] for f in formats["formats"] if f["format"] == "parquet")
+    said = (
+        "the service they go to declares it now"
+        if served
+        else "no configured extractor declares parquet"
+    )
     assert any(
-        s.startswith("extractor.parquet: 1 source failed format_unavailable")
-        and "no configured extractor declares parquet" in s
+        s.startswith("extractor.parquet: 1 source failed format_unavailable") and said in s
         for s in skipped
     ), skipped
     assert any(s.startswith("decision_extraction:") for s in skipped)

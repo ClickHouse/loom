@@ -1,4 +1,4 @@
-"""Exact-key memory reads draw from their own rate bucket.
+"""Read ops draw from their own rate buckets, apart from the writes they sit beside.
 
 An agent that uses loom as a key-value store issues `memory.get` in bursts
 (hundreds a minute) beside a handful of writes. If every `memory.*` op shared
@@ -7,6 +7,10 @@ the read ops resolve to `memory.read`, the
 write / list / search ops stay in `memory`, the registry stays totally
 covered, and a read burst leaves the write bucket full — pinned with the
 injected clock of `test_ratelimit_clock.py` so no wall time is involved.
+Knowledge reads get the same split: `knowledge.search` and `knowledge.query` have
+their own buckets, the other read-only knowledge ops but `knowledge.inspect` (a
+whole-namespace report) draw on `knowledge.read`, and a burst of them leaves
+`knowledge.add` full.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from __future__ import annotations
 import pytest
 
 from server.core.ratelimit import (
+    _KNOWLEDGE_READS,
     DEFAULT_LIMITS,
     DEFAULT_ORG_LIMITS,
     Limit,
@@ -170,3 +175,31 @@ def test_knowledge_query_draws_from_its_own_read_bucket() -> None:
     so a few queries would refuse the namespace's next write."""
     assert op_class_for("knowledge.query") == "knowledge.query"
     assert DEFAULT_LIMITS["knowledge.query"] == DEFAULT_LIMITS["knowledge.search"]
+
+
+def test_knowledge_reads_draw_from_their_own_bucket() -> None:
+    """Every read-only knowledge op but search and query (their own buckets) and inspect (a
+    whole-namespace report, kept in the tight bucket) draws on knowledge.read, and every
+    other knowledge op stays in knowledge.add: a new read the set does not name fails here,
+    not in production as a read that spends the write bucket."""
+    for op in ALL_OPERATIONS:
+        if not op.name.startswith("knowledge.") or op.name in (
+            "knowledge.search",
+            "knowledge.query",
+        ):
+            continue
+        read = op.read_only and op.name != "knowledge.inspect"
+        want = "knowledge.read" if read else "knowledge.add"
+        assert op_class_for(op.name) == want, op.name
+    assert _KNOWLEDGE_READS <= {o.name for o in ALL_OPERATIONS}, "a named read is not registered"
+    assert DEFAULT_LIMITS["knowledge.read"] == DEFAULT_LIMITS["default"]
+
+
+def test_a_knowledge_read_burst_leaves_the_add_bucket_full() -> None:
+    """Twenty list and status reads in one instant are all admitted, and knowledge.add
+    still has its whole burst of 10 afterwards."""
+    clk = FakeClock()
+    lim = Limiter(clock=clk)
+    reads = ("knowledge.list", "knowledge.ingest_status", "knowledge.source.list")
+    assert all(lim.check("ns", reads[i % 3]).allowed for i in range(20))
+    assert sum(1 for _ in range(12) if lim.check("ns", "knowledge.add").allowed) == 10

@@ -73,6 +73,25 @@ _EXACT_KEY_READS: frozenset[str] = frozenset(
     }
 )
 
+# Knowledge reads other than search and query: a document, a listing, a job's status. A
+# dashboard page or an agent polling an ingest issues several in a row, which the
+# write-shaped knowledge.add bucket (burst 10) would refuse, and a read burst would then
+# refuse the namespace's next write. knowledge.inspect stays in knowledge.add: it reports
+# on the whole namespace, so the tight bucket bounds it.
+_KNOWLEDGE_READS: frozenset[str] = frozenset(
+    {
+        "knowledge.dataset_get",
+        "knowledge.formats",
+        "knowledge.get",
+        "knowledge.ingest_status",
+        "knowledge.list",
+        "knowledge.outline",
+        "knowledge.reads",
+        "knowledge.source.inspect",
+        "knowledge.source.list",
+    }
+)
+
 
 def op_class_for(op_name: str) -> str:
     """Resolve an operation to its rate-limit bucket class (total coverage)."""
@@ -81,6 +100,8 @@ def op_class_for(op_name: str) -> str:
         return override
     if op_name in _EXACT_KEY_READS:
         return "memory.read"
+    if op_name in _KNOWLEDGE_READS:
+        return "knowledge.read"
     prefix = op_name.split(".", 1)[0]
     if prefix in ("memory", "conversation"):
         return "memory"
@@ -109,6 +130,7 @@ DEFAULT_LIMITS: dict[str, Limit] = {
     "knowledge.search": Limit(capacity=20, rate=3),  # ~200/min
     "knowledge.query": Limit(capacity=20, rate=3),  # ~200/min
     "knowledge.add": Limit(capacity=10, rate=2),  # ~100/min (embedding is downstream-limited)
+    "knowledge.read": Limit(capacity=50, rate=10),  # ~600/min, as default: no embedding call
     "memory.import": Limit(capacity=10, rate=2),  # each call up to 200 embedded items
     # Read-shaped code-intelligence ops; agents burst on session start.
     "code": Limit(capacity=60, rate=10),  # ~600/min

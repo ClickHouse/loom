@@ -82,6 +82,7 @@ async def test_onboard_writes_env_and_starter_and_passes_smoke(
     assert set(summary["ratelimits"]) == {
         "memory",
         "knowledge.search",
+        "knowledge.read",
         "knowledge.add",
     }
 
