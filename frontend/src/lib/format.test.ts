@@ -190,6 +190,7 @@ describe("truncate", () => {
     expect(truncate("ab🇺🇸cd", 4)).toBe("ab🇺🇸…");
     expect(truncate("ab👍🏽cd", 4)).toBe("ab👍🏽…");
     expect(truncate("ab👩‍💻cd", 4)).toBe("ab👩‍💻…");
+    expect(truncate("abe\u0301cd", 4)).toBe("abe\u0301…");
   });
 
   it("cuts to max characters including the ellipsis", () => {

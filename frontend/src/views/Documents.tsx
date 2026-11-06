@@ -190,7 +190,7 @@ export function Documents() {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const focusSearchOnRead = useRef(false);
   const [sortBy, setSortBy] = useState<SortBy>("recency");
-  const [passagesShown, setPassagesShown] = useState(false);
+  const [passageHitsShown, setPassageHitsShown] = useState(false);
   const [passagesOpen, setPassagesOpen] = useState(false);
   // The arrows and j/k move through the list focus was last in: the passages or the documents.
   const [keysIn, setKeysIn] = useState<"documents" | "passages">("documents");
@@ -238,7 +238,8 @@ export function Documents() {
   const [loadErrorFor, setLoadErrorFor] = useState("");
   // The place ("org/namespace") the rows on screen were read for.
   const [rowsScope, setRowsScope] = useState("");
-  // The place a list read last answered for: a later failed read there keeps the passages.
+  // The place whose list returned a document on this visit: a later filtered, empty or
+  // failed read there keeps the passages.
   const [listedScope, setListedScope] = useState("");
   // Every reload (Retry, a delete, an add, an edit) goes through the effect below, so an
   // answer for a namespace the page has left is aborted and dropped.
@@ -278,7 +279,9 @@ export function Documents() {
           setLoadError(null);
           setRows(r.rows || []);
           setRowsScope(scope);
-          setListedScope(scope);
+          // A read that returned a document: the library holds one, whatever filter
+          // narrows a later read.
+          if (r.rows?.length) setListedScope(scope);
           // A collection that answers again earns a fresh re-read if it is refused later.
           reReadFor.current = "";
           setRowsFor(serverTags);
@@ -600,7 +603,7 @@ export function Documents() {
   const { selected } = selection;
   const clearSelection = selection.clear;
   // One tab stop over the rows: arrows and j/k move, Enter previews, Space selects.
-  const passagesHaveKeys = passagesShown && keysIn === "passages";
+  const passagesHaveKeys = passageHitsShown && keysIn === "passages";
   const listNav = useRowNav({ enabled: !dialogOpen && rowKeys.length > 0 && !passagesHaveKeys });
   const listRef = useCallback(
     (el: HTMLDivElement | null) => {
@@ -610,8 +613,9 @@ export function Documents() {
     [listNav],
   );
   const passagesBox = useRef<HTMLDivElement | null>(null);
-  // Finding a passage: once the place's list has loaded on this visit and holds a document,
-  // and through a later failed read (it searches the whole namespace). A new place folds it.
+  // Finding a passage: once the place's list has returned a document on this visit, and
+  // through a later filtered or failed read (it searches the whole namespace). A new place
+  // folds it.
   const canFindPassages = rows !== null && !emptyLibrary && listedScope === place;
   const passagesToggle = (className: string) => (
     <Button
@@ -897,7 +901,7 @@ export function Documents() {
           <LibraryPassages
             identity={{ org: identity.org, namespace: identity.namespace }}
             navEnabled={!dialogOpen && keysIn === "passages"}
-            onHitsShown={setPassagesShown}
+            onHitsShown={setPassageHitsShown}
             onOpen={(uri) =>
               handlers.current.openByUri(uri, () => toast(`${uri} is no longer in this library`, "info"))
             }

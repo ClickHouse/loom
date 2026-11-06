@@ -341,6 +341,23 @@ describe("Find a passage in the Library", () => {
     expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
   });
 
+  it("an empty library offers no passage search, even with a tag filter typed", async () => {
+    history.replaceState(null, "", "/library");
+    api.listKnowledge.mockResolvedValue({ rows: [], next_cursor: null });
+    render(<Documents />);
+    await settle();
+    expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:billing" } });
+    await settle();
+    await settle();
+    await settle();
+    expect(api.listKnowledge).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tags: ["billing"] }),
+    );
+    expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
+  });
+
   it("a passage in a document past the first page reads that document and opens it", async () => {
     history.replaceState(null, "", "/library");
     const late = { ...ROWS[0], source_uri: "docs/late.md", title: "Late doc" };
