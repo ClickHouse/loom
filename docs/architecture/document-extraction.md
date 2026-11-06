@@ -90,11 +90,11 @@ denies those. The service refuses to start on an architecture its socket filter 
 | Part       | Holds                                                                                                                                                                                                                |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `blocks`   | the source's structure in order: `heading`, `paragraph`, `list`, `code`, `sql_statement`, `toml_table`, `toml_key`, ...; each with its text, locator, section path and parent                                        |
-| `tables`   | the tabular sources' tables: each a name, typed columns, its rows of values, a header row count and a locator (CSV and XLSX)                                                                                         |
+| `tables`   | the tables a source holds: each a name, typed columns, its rows of values, a header row count and a locator (CSV, XLSX, PDF)                                                                                         |
 | `coverage` | the unit the format is made of (`lines`, `statements`, `keys`, `chars`, `pages`, `paragraphs`, `slides`, `rows`), how many there are, how many extracted, each failed unit with its reason, and each capability lost |
 | `warnings` | facts a reader should see, such as an ambiguous SQL dialect                                                                                                                                                          |
 | `options`  | the overrides the parse ran with (`sql_dialect` for SQL only, `encoding` by its codec name)                                                                                                                          |
-| `attrs`    | format facts (`dialect`, `dialect_source`, `dialect_candidates`; an HTML page's or a PDF's `title`; a PDF's `pages`, a deck's `slides`, a workbook's `sheets`)                                                       |
+| `attrs`    | format facts (`dialect`, `dialect_source`, `dialect_candidates`; an HTML page's or a PDF's `title`; a PDF's `pages` and `furniture`, a deck's `slides`, a workbook's `sheets`)                                       |
 
 A block's `id` is `b<ordinal>`, stable within its artifact. `keys` are the exact names a reader can look the block up
 by: the objects a SQL statement creates, writes and reads, and its columns (for a statement sqlglot cannot parse, every
@@ -105,7 +105,8 @@ form.
 A locator sets only the fields that apply: `line_start`/`line_end` (1-based) on every text format,
 `char_start`/`char_end` (offsets into the decoded text) on Markdown, plain text, SQL and the text blocks of an invalid
 TOML file, `key_path` for TOML, `page_start`/`page_end` (1-based) for a PDF's pages and a PPTX deck's slides, and
-`sheet` and `row_start`/`row_end` (the header counted) for a workbook's sheets and a CSV file's rows. A DOCX has no
+`sheet` and `row_start`/`row_end` (the header counted) for a workbook's sheets and a CSV file's rows, and a PDF
+table's rows with their pages. A DOCX has no
 pages of its own (pagination is the renderer's), so its blocks carry no locator and a citation names their section path.
 A Markdown heading's span covers its source line or lines, markup included, while its text is the cleaned title, so a
 window of a long heading cites the heading's whole span. A chunk cut from several blocks spans their lines, characters,
@@ -134,7 +135,7 @@ in undeclared UTF-8 text (behind a byte-order mark or not) is binary; neither is
 | HTML       | the standard library's parser                                         | headings, paragraphs, list items, table cells, quotes, definitions, `pre`    |
 | SQL        | `sqlglot`, never executed                                             | one block per statement                                                      |
 | TOML       | `tomllib` and a line scanner                                          | one block per table header and per key                                       |
-| PDF        | `pypdf`, its text layer                                               | paragraphs by page; headings from the outline                                |
+| PDF        | `pypdf`: its text runs' positions and the lines it draws              | per page: headings, paragraphs, lists, code, tables; furniture left out      |
 | DOCX       | the standard library's zip and XML readers                            | headings, paragraphs, lists, tables, footnotes and endnotes                  |
 | PPTX       | the standard library's zip and XML readers                            | per slide: its title as a heading, each text shape, tables, speaker notes    |
 | CSV        | the standard library's `csv`                                          | one table; its rows as blocks of up to 20 rows                               |
@@ -209,16 +210,59 @@ integer outside signed 64 bits among them, is kept as paragraph blocks with `cov
 reason, which names the line or the key path where it can. A key's `attrs.value` is the JSON value, except that a date
 or time is its ISO text and an infinite or NaN float its text (`inf`, `nan`), whatever its `value_type`.
 
-**PDF.** pypdf reads each page's text layer in its reading order; a page's text is split at blank lines, and a page with
-none is one paragraph. The outline (the bookmarks) gives the headings: each entry, in outline order, is a heading block
-on the page it points to, at the first line after the previous heading's that holds its title, or right after that
-heading when no line does. A table is read as its text, row by row as the page lays it out. A page with no text that
-draws an image (an image object, one in a form, or one inline in its content) is a failed unit: its text needs OCR,
-which the reference extractor does not run, so a PDF with such a page is not complete and is published only with
-`allow_partial`; a scan whose pages carry some text (a stamped number) is read as that text. A page pypdf cannot read is
-a failed unit, not the file; a failed page's outline headings still open their sections. A character a font's map gives
-no Unicode character (a lone surrogate) is read as U+FFFD, with a warning naming its page. A PDF that opens only with a
-password is `unsupported_format`.
+**PDF.** A page is read as it is laid out, from the position pypdf reports for each run of text it shows and the lines
+it draws (`extractor/loom_extractor/pdflayout.py`). A run's width comes from its font's widths (`/Widths`, or a CID
+font's `/W` through its ToUnicode map, or the standard fonts' metrics), without the text state's character spacing,
+word spacing or horizontal scaling; a piece of one text operator (cut where its font changes, such as a ligature from
+another font) goes on from the end of the piece before it. Runs on one baseline are a line, cut into segments at a gap
+wider than the font size; two runs the geometry sets together are parted when the word they would make is not in the
+page's text layer and both of its parts are; a run drawn twice in place (a faked bold, a shadow) is read once. A page
+is turned so that the direction most of its text runs in reads left to right, so a page shown sideways (`/Rotate`, or
+content drawn turned) is read like any other; text in another direction is kept as its own lines, a paragraph each,
+after the page's own (`attrs.orientation`). Then, in order:
+
+- a gutter in the middle of the page that at most a twentieth of the lines cross, with text that fills its column on
+  either side, splits the page into two columns, read left then right between the full-width lines;
+- a grid of horizontal and vertical lines that meet (stroked lines or thin filled boxes, form XObjects included) is a
+  ruled table, its cells the text inside each box, empty rows and columns dropped; one box around text is no table;
+- a run of lines cut into segments that sit in two or more bands of the page is a borderless table: a line with text in
+  the first band opens a row, one without adds to the cells of the row above (a wrapped cell); a list marker set apart
+  from its item's text (`•`, `1.`, a symbol font's bullet) is no column;
+- page furniture, a line no table holds as a row, in the top or bottom tenth of a page, that holds a letter and whose
+  text, digits aside, recurs there on at least two pages and two fifths of them, or a page number alone, is left out of
+  the blocks (a candidate at either end of a borderless table, unless it is a page number alone, is one of its rows only
+  when it fills every column, as the table's own header repeated at the top of each page does, or, within half again the
+  table's row spacing of it, opens a row or, at the top, fills every column but the first, a header over a column of row
+  names; so a running header above, a page number below, and a repeated header with a cell across two columns are not);
+  the artifact names each kind (one entry for a footer whose page number changes) with its first text and the number of
+  pages it is on (`attrs.furniture`, the first 200 kinds) and warns that it did;
+- the rest are paragraphs (lines of one style, split where the gap passes the document's most common line spacing for
+  that size by more than 30%), list items (a marker first) and code (a monospaced font, its indentation kept), and
+  headings: a paragraph of up to three lines and twenty words (a numbered one that reads as a list item, one line), set
+  at least 12% larger than the body text (the size most characters are in) or bold at 95% of that size or more, and not
+  ending as a sentence does unless numbered. Larger sizes rank higher; within one style, numbering (`2.1`) gives the
+  level.
+
+When the PDF has an outline (bookmarks), its entries are the headings instead: each, in outline order, takes the first
+line after the previous heading's that holds its title (or a paragraph whose text is its title), its paragraph split
+around it, or stands right after that heading when no line does; a heading set larger than every outlined one (a title
+the outline leaves out) stays above them, and the outline's levels sit under it on every page. A table whose rows go on
+at the top of the next page in the same columns is one table, over as many pages as it goes on, the next page's repeat
+of its header row dropped.
+
+A table is what a tabular source's is (**Tables** below): a typed table in `tables`, its first row the header, its
+locator its pages and rows (the header is row 1), and its rows as blocks of `column: value` lines cited by the pages and
+rows they hold, so a hit cites its rows and a dataset holds its values. A cell is typed as a CSV field is only when its
+value reads back as the page shows it, so `1.50` and a version `1.10` stay text. A page is read as its text layer (its
+text split at blank lines, the outline's headings at the lines that hold their titles) when its laid-out reading holds
+less than 99.8% of the letters and digits its text layer does (counted apart from spacing and case), when it holds more
+than 5,000 lines, or when its layout cannot be read, with a warning naming it and why, so a layout the reader gets wrong
+never drops text. A page with no text that draws an image (an image object, one in a form, or one inline in its
+content) is a failed unit: its text needs OCR, which the reference extractor does not run, so a PDF with such a page is
+not complete and is published only with `allow_partial`; a scan whose pages carry some text (a stamped number) is read
+as that text. A page pypdf cannot read is a failed unit, not the file; a failed page's outline headings still open
+their sections. A character a font's map gives no Unicode character (a lone surrogate) is read as U+FFFD, with a
+warning naming its page. A PDF that opens only with a password is `unsupported_format`.
 
 **DOCX and PPTX.** Both are zips of XML parts, read with the standard library: no third-party XML or image library runs
 on a hostile file. A part must be stored or deflated (the methods OOXML writes) and declare at most 256 MiB
@@ -401,7 +445,7 @@ longest ago first), and a run cut off at that deadline or by a stopped process c
 
 ## Datasets
 
-A table of the artifact (a sheet, a CSV or Parquet file) also becomes a typed dataset
+A table of the artifact (a sheet, a CSV or Parquet file, a PDF's table) also becomes a typed dataset
 (`server/knowledge/app/datasets.py`), so its values can be read as values rather than as passages. Two tables hold every
 dataset, whatever the files' shapes, so no upload creates a table:
 
@@ -415,21 +459,21 @@ dataset, whatever the files' shapes, so no upload creates a table:
   so (`past_capacity`). The key is `(org, namespace, dataset_id, snapshot_id, row_id)`.
 
 A column takes the extractor's type; a `mixed` one is held as text. A row with a cell error, or a value its column's
-type cannot hold, is rejected whole and counted, the first 20 with their reason, so a dataset's values are all typed:
-a number of 10^29 or more (after rounding to nine places) in an `n` slot, one a double cannot hold in an `f` slot, an
-instant outside 1900-2299 (what `DateTime64` holds; a time zone is turned to UTC). A dataset is `complete` only when
-the extraction kept every value of its table: none of its rows, merges, values or cells is a failed unit, no shared
-string was lost, and the artifact lost none of the capabilities a value depends on (formula values, shared strings,
-number formats).
-The schema asks for an answer (`needs_clarification`) for a mixed column, a generated name (an empty header cell), a
-repeated name (an extractor other than the reference one may send one; the dataset names it `<name> (2)`, as the
-reference extractor does, since a column is addressed by its name), a header whose every name reads as a number or a
+type cannot hold, is rejected whole and counted, the first 20 with their reason, so a dataset's values are all typed: a
+number of 10^29 or more (after rounding to nine places) in an `n` slot, one a double cannot hold in an `f` slot, an
+instant outside 1900-2299 (what `DateTime64` holds; a time zone is turned to UTC). A dataset is `complete` only when the
+extraction kept every value of its table: none of its rows, merges, values or cells is a failed unit, no shared string
+was lost, and the artifact lost none of the capabilities a value depends on (formula values, shared strings, number
+formats). The schema asks for an answer (`needs_clarification`) for a mixed column, a generated name (an empty header
+cell), a repeated name (an extractor other than the reference one may send one; the dataset names it `<name> (2)`, as
+the reference extractor does, since a column is addressed by its name), a header whose every name reads as a number or a
 date (the first row may be data; not asked of a table whose names are no row of its source, `header_rows` 0, as a
 Parquet file's schema), and the columns no slot holds (one answer for each type, naming the first of them). The answers
 about single columns stop at 100; past them, a column's `inferred` type says the rest. Inference runs off the event
 loop, since a table may be 16,384 columns wide. A dataset's id is the same in every revision of its source: a sheet by
-its name, a CSV or Parquet file's table by its id, and a sheet an extractor split into more than one table by its name
-and the table's id.
+its name, a CSV or Parquet file's table and a PDF's tables by their ids (a PDF's in the order its pages hold them, so a
+table added before another gives the later one a new dataset), and a sheet an extractor split into more than one table
+by its name and the table's id.
 
 The ingest job writes each dataset after the chunks and before the source's claim: an empty catalog row, so a run that
 stops midway finds the rows it wrote, its rows in batches of 5,000 under a new snapshot (typed off the event loop, the

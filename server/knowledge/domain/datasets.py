@@ -70,8 +70,8 @@ _DURATION = re.compile(r"(-?)(\d+):([0-5]\d):([0-5]\d(?:\.\d+)?)")
 
 def dataset_ids(source_uri: str, tables: Sequence[Table]) -> list[str]:
     """Each table's id, the same in every revision of its source: a sheet by its
-    name, a CSV or Parquet file's one table by its id, and a sheet that holds more than one
-    table by its name and the table's id."""
+    name, a CSV or Parquet file's one table and a PDF's tables by their ids, and a
+    sheet that holds more than one table by its name and the table's id."""
     sheets = Counter(t.locator.sheet for t in tables if t.locator.sheet)
     keys = [
         (t.locator.sheet if sheets[t.locator.sheet] == 1 else f"{t.locator.sheet}\0{t.id}")

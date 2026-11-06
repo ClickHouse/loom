@@ -83,8 +83,7 @@ def pdf(
         page_ids.append(
             add(
                 b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792]"
-                b" /Contents %d 0 R /Resources %s >>"
-                % (pages_id, contents, res)
+                b" /Contents %d 0 R /Resources %s >>" % (pages_id, contents, res)
             )
         )
     kids = b" ".join(b"%d 0 R" % p for p in page_ids)
@@ -116,3 +115,50 @@ def _assemble(objs: list[bytes], pages_id: int) -> bytes:
         xref,
     )
     return bytes(out)
+
+
+def laid_out_pdf(pages: list[bytes], *, rotate: tuple[int, ...] = (), width: float = 612) -> bytes:
+    """A PDF of `pages`, each its content stream as written: fonts F1
+    (Helvetica), F2 (Helvetica-Bold) and F3 (Courier), `width` points wide and
+    792 high, and `/Rotate 90` on the pages `rotate` lists."""
+    objs: list[bytes] = []
+
+    def add(body: bytes) -> int:
+        objs.append(body)
+        return len(objs)
+
+    fonts = b" ".join(
+        b"/F%d %d 0 R"
+        % (
+            i,
+            add(
+                b"<< /Type /Font /Subtype /Type1 /BaseFont /%s /Encoding /WinAnsiEncoding >>" % name
+            ),
+        )
+        for i, name in enumerate((b"Helvetica", b"Helvetica-Bold", b"Courier"), start=1)
+    )
+    pages_id = len(objs) + 1 + 2 * len(pages)
+    page_ids = []
+    for k, stream in enumerate(pages):
+        contents = add(b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream))
+        turn = b" /Rotate 90" if k in rotate else b""
+        page_ids.append(
+            add(
+                b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d 792]%s"
+                b" /Contents %d 0 R /Resources << /Font << %s >> >> >>"
+                % (pages_id, int(width), turn, contents, fonts)
+            )
+        )
+    kids = b" ".join(b"%d 0 R" % p for p in page_ids)
+    assert add(b"<< /Type /Pages /Kids [%s] /Count %d >>" % (kids, len(pages))) == pages_id
+    return _assemble(objs, pages_id)
+
+
+def text_at(x: float, y: float, text: str, font: int = 1, size: float = 11) -> bytes:
+    """One run of text at (x, y) from the page's bottom left."""
+    return b"BT /F%d %g Tf %g %g Td (%s) Tj ET\n" % (font, size, x, y, text.encode("latin-1"))
+
+
+def rule(x0: float, y0: float, x1: float, y1: float) -> bytes:
+    """A stroked line."""
+    return b"%g %g m %g %g l S\n" % (x0, y0, x1, y1)
