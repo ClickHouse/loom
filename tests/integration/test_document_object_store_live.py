@@ -454,9 +454,11 @@ async def test_a_failed_erasure_fences_the_move_until_it_is_completed(
     org, ns = unique_org("objstore-failed"), "docs"
     held = await _held(ch, org, ns, b"behind a failed erasure", monkeypatch)
     await _erasure(ch, org, "namespace", ns, "failed")
-    # Running again does not help: the advice names the command that completes it.
-    with pytest.raises(blobs.ErasureOpen, match="recovery worker"):
-        await blobs.move_to_bucket(held, ch=ch)
+    # The advice names the worker that retries it and the command that completes it.
+    result = await migrate_originals(org=org, namespace=ns)
+    (error,) = result.errors
+    assert "recovery worker" in error and "loom erasure-re-verify --resume" in error
+    assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(held.size, "")
     assert _keys(s3) == []
 
 
@@ -482,10 +484,10 @@ async def test_an_erasure_that_just_finished_fences_the_move(
         ],
         settings={"async_insert": 0},
     )
-    with pytest.raises(
-        blobs.ErasureOpen, match="which finished just now, covers it; run again in a minute"
-    ):
-        await blobs.move_to_bucket(held, ch=ch)
+    result = await migrate_originals(org=org, namespace=ns)
+    (error,) = result.errors
+    assert "which finished just now, covers it; run again in a minute" in error
+    assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(held.size, "")
     assert _keys(s3) == []
 
 

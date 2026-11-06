@@ -373,7 +373,7 @@ async def fence(org: str, namespace: str, *, ch: _CHClient | None = None) -> str
     return _fence_advice(fenced, "covers it") if fenced else ""
 
 
-async def move_to_bucket(held: Held, *, fenced: bool = False, ch: _CHClient | None = None) -> bool:
+async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     """Copy one original from its ClickHouse row to a new object in the bucket and
     switch its catalog row to that object; every document naming the sha reads from
     the bucket from then on. False when there is nothing to move: the row went (an
@@ -395,8 +395,8 @@ async def move_to_bucket(held: Held, *, fenced: bool = False, ch: _CHClient | No
     ledger, read with sequential consistency. An erasure covers the original when it
     is its namespace's or any user's of the org (`_covers`).
 
-    - The move does not start while the ledger holds a covering erasure that is
-      unfinished or finished within `_CLOCK_MARGIN_S` (`ErasureOpen`).
+    - The walk does not start a namespace while the ledger holds a covering erasure that
+      is unfinished or finished within `_CLOCK_MARGIN_S` (`fence`).
     - One registered while the object was written and read back ends the move before
       its row: it deletes its own object, and an original that erasure kept (a user's
       erasure keeps one another writer still needs) stays held and is reported
@@ -412,10 +412,6 @@ async def move_to_bucket(held: Held, *, fenced: bool = False, ch: _CHClient | No
     - An erasure registered after the row landed reads that row.
     """
     ch = ch or _default_client()
-    if not fenced:
-        refusal = await fence(held.org, held.namespace, ch=ch)
-        if refusal:
-            raise ErasureOpen(refusal)
     # This move's own start: an erasure that finished before it cannot race its copy, and
     # one still running then, or finished within the margin, is caught after the copy.
     since = await _cutoff_ms(0, ch) // 1000

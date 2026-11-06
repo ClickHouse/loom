@@ -94,7 +94,7 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
         out.bytes += held.size
         return True
     try:
-        if await blobs.move_to_bucket(held, fenced=True):
+        if await blobs.move_to_bucket(held):
             out.moved += 1
             out.bytes += held.size
         else:
