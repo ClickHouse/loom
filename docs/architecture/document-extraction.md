@@ -348,7 +348,7 @@ characters (a longer row is a block alone, under a chunk's default 1,500 charact
 holds), each row a line of `column: value` pairs, cited by sheet and rows, so the lexical and vector legs search them
 like any passage; a header with no row of text under it (no rows, or a Parquet file whose every value was left out) is a
 block of its own when it names a column, and a block starts and ends at a row with text. A column's name is at most 500
-characters of its header cell (one cut shorter is a failed unit, `<table> header`). A float's row text is what a sheet
+characters of its header cells (one cut shorter is a failed unit, `<table> header`). A float's row text is what a sheet
 shows, to 15 significant digits (`0.1+0.2` reads `0.3`), and the table keeps its exact value. In CSV and XLSX a number
 that is no JSON number (an integer past signed 64 bits, an infinity, a NaN) is read as a float or as text, and a value
 no other rule reads (a style index of 5,000 digits, a date rounded past year 9999) reads as a number or as text, never
@@ -378,12 +378,13 @@ position (its earlier value lost). A merged range's first value fills each of it
 names each; a header over two rows, a range merged across columns of the first grouping the text cells of the second
 under it (`2025` over `H1` and `H2`), names each column from both (`2025 / H1`; one with nothing above takes the second
 row's name), and `header_rows` is 2. Any other cell in that second row, text or not, that is not merged down from the
-first makes it data. A title merged over the whole first row meets the rule too, and heads every name (`Sales 2025 /
-Region`). A merged range fills no row past the last one held, and a merge that would add rows past those a table holds
-stops there and is a failed unit. A row or cell that names no position takes the one after the one before it. A hidden
-sheet is read and marked `attrs.hidden`, and a damaged sheet, or one whose root is no worksheet (another namespace),
-fails alone; shared strings or styles that cannot be read to their end keep what was read, and the artifact loses
-`shared_strings` or `number_formats`.
+first makes it data. A range the cell budget left unspread groups nothing; numbers or dates under a range (`2024 | 2025`
+written as numbers) read as data too. A title merged over the whole first row meets the rule too, and heads every name
+(`Sales 2025 / Region`). A merged range fills no row past the last one held, and a merge that would add rows past those
+a table holds stops there and is a failed unit. A row or cell that names no position takes the one after the one before
+it. A hidden sheet is read and marked `attrs.hidden`, and a damaged sheet, or one whose root is no worksheet (another
+namespace), fails alone; shared strings or styles that cannot be read to their end keep what was read, and the artifact
+loses `shared_strings` or `number_formats`.
 
 **Parquet.** pyarrow reads the file from the bytes in memory, with no file system, no threads and its system memory
 pool: its columns from the schema (the first 16,384, kept by position since a name may repeat; the rest are a failed

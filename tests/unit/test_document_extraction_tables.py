@@ -262,6 +262,35 @@ def test_xlsx_header_text_past_what_a_joined_name_reads_is_counted_as_cut(
     assert [f.unit for f in a.coverage.failed] == ["S header"]
 
 
+def test_a_merged_xlsx_header_cell_is_read_once_however_many_columns_it_spans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[str] = []
+    read_name = tabular.read_name
+
+    def counted(cell: tabular.Cell) -> tuple[str, bool]:
+        reads.append(cell.text[:8])
+        return read_name(cell)
+
+    monkeypatch.setattr(xlsxfile, "read_name", counted)
+    under = {2: [cell(f"{_col(i)}2", "h", t="inlineStr") for i in range(50)]}
+    rows = {1: [cell("A1", "Revenue", t="inlineStr")], **under}
+    extract(workbook([("S", sheet(rows, merges=(f"A1:{_col(49)}1",)))]), "s.xlsx")
+    # One read of the merged cell, and one of each cell under it.
+    assert reads.count("Revenue") == 1 and len(reads) == 51
+
+
+def test_an_xlsx_merge_left_unspread_groups_no_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = {
+        1: [cell("A1", "2025", t="inlineStr")],
+        2: [cell("A2", "H1", t="inlineStr"), cell("B2", "H2", t="inlineStr")],
+        3: [cell("A3", 1), cell("B3", 2)],
+    }
+    monkeypatch.setattr(xlsxfile, "_spread", lambda *a: (1, 0))  # the budget skipped it
+    a = extract(workbook([("S", sheet(rows, merges=("A1:B1",)))]), "s.xlsx")
+    assert a.tables[0].header_rows == 1
+
+
 def test_the_columns_a_header_rows_merges_cover_are_found_in_one_pass() -> None:
     assert xlsxfile._covered([(1, 3), (2, 2), (6, 9)], 0, 7) == [
         False,

@@ -3,7 +3,7 @@ blocks its rows are searched by: one block per run of rows (ROWS_PER_BLOCK,
 BLOCK_CHARS), each row a line of `column: value` pairs, cited by its sheet and
 rows, each block starting and ending at a row with text (a Parquet row whose
 values were all left out has none). A header with no row of text under it is
-one block of the header row, when it names a column, at row 0 when the names
+one block of the header's rows, when it names a column, at row 0 when the names
 are no row of the file, as a Parquet file's schema. A column's type is what
 every value it holds is, over the values that are not empty or errors.
 

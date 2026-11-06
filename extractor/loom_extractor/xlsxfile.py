@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 
@@ -454,8 +455,13 @@ class _Reader:
         # groups the names the row under it gives (`2025` over `H1` and `H2`), when
         # that row holds text under the range and, elsewhere, nothing or only cells
         # merged down from the first row; a row of anything else is data.
-        spans = [(c, r) for t, c, b, r in sheet.merges if t == b == top and r > c]
         above, under = sheet.grid[top], sheet.grid.get(top + 1, {})
+        # A range the cell budget left unspread names only its first column: no group.
+        spans = [
+            (c, r)
+            for t, c, b, r in sheet.merges
+            if t == b == top and r > c and (above.get(c) is None or above.get(r) is above.get(c))
+        ]
         # The second row's own cells: those not merged down from the first.
         own = {col: cell for col, cell in under.items() if cell is not above.get(col)}
         covered = _covered(spans, left, right)
@@ -464,8 +470,16 @@ class _Reader:
         )
         cut: set[int] = set()
         if grouped:
+            names: dict[int, tuple[str, bool]] = {}
+
+            def named(cell: Cell) -> tuple[str, bool]:
+                # A merged cell spans many columns and may hold a megabyte: read once.
+                if id(cell) not in names:
+                    names[id(cell)] = read_name(cell)
+                return names[id(cell)]
+
             joined = [
-                _named_over(above.get(col, EMPTY), under.get(col, EMPTY))
+                _named_over(above.get(col, EMPTY), under.get(col, EMPTY), named)
                 for col in range(left, right + 1)
             ]
             header = [name for name, _ in joined]
@@ -667,7 +681,9 @@ def _covered(spans: list[tuple[int, int]], left: int, right: int) -> list[bool]:
     return out
 
 
-def _named_over(above: Cell, below: Cell) -> tuple[Cell, bool]:
+def _named_over(
+    above: Cell, below: Cell, named: Callable[[Cell], tuple[str, bool]] = read_name
+) -> tuple[Cell, bool]:
     """A column's name from a header over two rows, and whether it was cut: the
     first row's cell and the second's under it, each as a name reads it, joined
     after ` / `. One merged down both rows (the same cell), or with nothing under
@@ -676,8 +692,8 @@ def _named_over(above: Cell, below: Cell) -> tuple[Cell, bool]:
         return above, False
     if above.kind == "empty":
         return below, False
-    a, a_cut = read_name(above)
-    b, b_cut = read_name(below)
+    a, a_cut = named(above)
+    b, b_cut = named(below)
     if not a:
         return below, a_cut
     if not b:
