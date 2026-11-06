@@ -413,10 +413,12 @@ describe("RepoDocsList", () => {
     ingestClock.sleep = async () => {};
     try {
       const { dialog } = await addFile("on_call.md");
+      const lists = vi.mocked(listKnowledge).mock.calls.length;
       fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toMatch(/on call goes on extracting/);
       expect(ingestKnowledge).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(listKnowledge).mock.calls.length).toBe(lists); // nothing published: no reload
     } finally {
       ingestClock.sleep = prior;
     }

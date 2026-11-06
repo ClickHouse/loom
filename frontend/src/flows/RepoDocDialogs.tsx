@@ -74,6 +74,7 @@ export function RepoDocAddDialog({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const formats = useKnowledgeFormats({ org, namespace }, open);
   const verdict = file ? fileVerdict(file, formats) : null;
+  const readable = readableFormats(formats);
   // Closing (the card unmounts the dialog) stops the upload and the following.
   const following = useRef<AbortController | null>(null);
   useEffect(() => () => following.current?.abort(), []);
@@ -205,9 +206,7 @@ export function RepoDocAddDialog({
             {file && verdict ? (
               <PickedFile file={file} verdict={verdict} />
             ) : (
-              <p className="text-text-muted">
-                Drop a file here{readableFormats(formats) ? ` (${readableFormats(formats)})` : ""}
-              </p>
+              <p className="text-text-muted">Drop a file here{readable ? ` (${readable})` : ""}</p>
             )}
             <div className="mt-3 flex justify-center">
               <Button

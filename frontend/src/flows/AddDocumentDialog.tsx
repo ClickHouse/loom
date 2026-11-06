@@ -30,6 +30,13 @@ interface Props {
   };
 }
 
+/** What a job the dialog stops following does: it goes on, and a reload shows it (a
+ *  replaced document shows its new revision). */
+function goesOn(sourceUri: string, replacing: boolean): string {
+  const shows = replacing ? "its new revision shows" : "it is in the Library";
+  return `${sourceUri} goes on extracting; ${shows} once it publishes and the list is reloaded`;
+}
+
 /**
  * Adding a document from the dashboard, two ways:
  *   - A file: its bytes go to `knowledge.upload` as they are, and `knowledge.ingest`
@@ -42,11 +49,6 @@ interface Props {
  * tags from an existing document — used by the Library row's
  * Replace button to publish a new revision.
  */
-/** What a job the dialog stops following does: it goes on, and a reload shows it. */
-function goesOn(sourceUri: string): string {
-  return `${sourceUri} goes on extracting; it is in the Library once it publishes and the list is reloaded`;
-}
-
 export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, replaceMode }: Props) {
   const [mode, setMode] = useState<"file" | "paste">("file");
   const [file, setFile] = useState<File | null>(null);
@@ -158,7 +160,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
       if (ctrl.signal.aborted) return; // closed while following: the job goes on
       if (e instanceof FollowLost) {
         // Queued, but no longer heard of: say it goes on rather than offer to send it again.
-        toast(goesOn(sourceUri.trim()), "info");
+        toast(goesOn(sourceUri.trim(), !!replaceMode), "info");
         reset();
         onOpenChange(false);
         return;
@@ -199,7 +201,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
   // text save hold the dialog; once the job is followed it goes on without the dialog.
   const close = (v: boolean) => {
     if ((busy === "queue" || busy === "save") && !v) return;
-    if (!v && busy === "follow") toast(goesOn(sourceUri.trim()), "info");
+    if (!v && busy === "follow") toast(goesOn(sourceUri.trim(), !!replaceMode), "info");
     if (!v) reset();
     onOpenChange(v);
   };
