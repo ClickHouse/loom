@@ -564,8 +564,9 @@ def test_a_normalized_parse_becomes_an_artifact_the_server_accepts() -> None:
 def test_the_queries_are_paragraphs_and_table_rows_with_their_pages() -> None:
     from bench.docparse.downstream import queries
 
-    qs = queries(_gold())
-    split = {g["file"]: g["split"] for g in _gold()}
+    gold = _gold()
+    qs = queries(gold)
+    split = {g["file"]: g["split"] for g in gold}
     assert {q["kind"] for q in qs} == {"paragraph", "table row"}
     for q in qs:
         assert (
