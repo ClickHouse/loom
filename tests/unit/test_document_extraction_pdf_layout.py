@@ -582,4 +582,7 @@ def test_a_repeated_header_over_a_column_of_row_names_is_the_tables_header_at_it
         assert len(t.rows) == n and t.rows[0][0] == "Region 0"
         assert "furniture" not in a.attrs
     else:
+        # the first row stands for the header, and the pages still join into one table
+        assert t.columns[0].name == "Region 0" and len(t.rows) == n - 1
+        assert t.rows[-1][0] == f"Region {n - 1}"
         assert [f["text"] for f in a.attrs["furniture"]] == ["Q1 Q2 Q3"]
