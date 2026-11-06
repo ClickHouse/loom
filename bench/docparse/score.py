@@ -41,8 +41,8 @@ ENUMERATOR = re.compile(r"^\s*(?:\d{1,3}|[a-z])[.)]\s+", re.I)
 
 def text_words(text: str) -> list[str]:
     """`text`'s words, each line's enumerator left out: on the gold's side and
-    the parse's alike, so a list or a numbered heading counts the same however
-    it is written."""
+    the parse's alike, so a list, or a heading numbered "2.", counts the same
+    however it is written (a "1.1" stays)."""
     return [w for line in text.split("\n") for w in words(ENUMERATOR.sub("", line, count=1))]
 
 
@@ -306,7 +306,7 @@ def lost_blocks(g: dict, p: dict) -> int:
     pairs = set(zip(tokens, tokens[1:], strict=False))
     n = 0
     for b in g["blocks"]:
-        w = words(unnumbered(b["text"]))
+        w = text_words(unnumbered(b["text"]))  # as the stream holds it
         if len(w) < 2 or f" {' '.join(w[:5])} " in stream:
             continue
         # held out of order (a code block's lines shuffled) is not lost: most of its word pairs are there

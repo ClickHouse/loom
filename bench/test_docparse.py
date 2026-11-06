@@ -138,8 +138,11 @@ def test_a_list_items_number_is_no_extra_word() -> None:
         "blocks": [{**block, "text": "1. Alpha beta"}, {**block, "text": "2. Gamma"}],
         "tables": [],
     }
-    para = {"blocks": [{**block, "type": "paragraph", "text": "1. Alpha beta\n2. Gamma"}]}
-    for p in (one, each, {**para, "tables": []}):
+    para = {
+        "blocks": [{**block, "type": "paragraph", "text": "1. Alpha beta\n2. Gamma"}],
+        "tables": [],
+    }
+    for p in (one, each, para):
         assert S.text_scores(g, p) == {"text_recall": 1.0, "text_precision": 1.0}
     # an item that starts with a number of its own keeps it, however the parse writes it
     g = {"blocks": [{"kind": "item", "text": "3.11 adds the flag", "page": 1}], "tables": []}
@@ -151,7 +154,12 @@ def test_a_list_items_number_is_no_extra_word() -> None:
     ]:
         p = {"blocks": [{**block, "type": kind, "text": text}], "tables": []}
         assert S.text_scores(g, p) == {"text_recall": 1.0, "text_precision": 1.0}, text
-    # a numbered heading, written as a heading without its number or as a paragraph with it
+    # a block with numbered lines after its first, held whole, is not lost
+    text = "Steps to take now:\n1. Drain the queue\n2. Restart it"
+    g = {"blocks": [{"kind": "paragraph", "text": text, "page": 1}], "tables": []}
+    p = {"blocks": [{**block, "type": "paragraph", "text": text}], "tables": []}
+    assert S.lost_blocks(g, p) == 0 and S.text_scores(g, p)["text_recall"] == 1.0
+    # a numbered heading, written without its number or with it, as a heading or a paragraph
     g = {"blocks": [{"kind": "heading", "level": 1, "text": "2. Goals", "page": 1}], "tables": []}
     for kind, text in [("heading", "Goals"), ("paragraph", "2. Goals"), ("heading", "2. Goals")]:
         p = {"blocks": [{**block, "type": kind, "text": text}], "tables": []}
