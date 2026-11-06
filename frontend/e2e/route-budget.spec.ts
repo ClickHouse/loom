@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { installApi } from "./fixtures";
+import { installApi, warmUp } from "./fixtures";
+
+test.beforeAll(async ({ browser }, testInfo) => warmUp(browser, testInfo));
 
 // Every route has a budget. One parametrized test over the twenty-two dashboard routes with
 // the default fixtures at 4x CPU: the page paints (a heading in <main>), its largest

@@ -4,7 +4,9 @@
 // — script, boot order, first paint — not the server. The CPU is slowed 4x
 // to stand in for a laptop; the network is the preview server on localhost.
 import { expect, test } from "@playwright/test";
-import { codeReposFixture, installApi, stringArray } from "./fixtures";
+import { codeReposFixture, installApi, stringArray, warmUp } from "./fixtures";
+
+test.beforeAll(async ({ browser }, testInfo) => warmUp(browser, testInfo));
 
 const LCP_BUDGET_MS = 1500;
 
