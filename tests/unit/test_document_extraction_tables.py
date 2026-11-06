@@ -117,6 +117,16 @@ def _book() -> bytes:
     return workbook([("Sales", sales), ("Notes", hidden)], shared=shared, hidden=("Notes",))
 
 
+def _col(i: int) -> str:
+    """The spreadsheet letters of column `i`, from 0."""
+    out = ""
+    i += 1
+    while i:
+        i, rest = divmod(i - 1, 26)
+        out = chr(65 + rest) + out
+    return out
+
+
 def test_an_xlsx_header_over_two_rows_names_each_column_from_both() -> None:
     rows = {
         1: [
@@ -174,6 +184,50 @@ def test_an_xlsx_header_over_two_rows_with_no_rows_under_it_cites_both() -> None
     assert table.locator.to_dict() == {"sheet": "S", "row_start": 1, "row_end": 2}
     (block,) = [b for b in a.blocks if b.attrs.get("table_id") == "t0"]
     assert (block.locator.row_start, block.locator.row_end) == (1, 2)
+
+
+def test_an_xlsx_header_over_two_rows_beside_a_column_with_nothing_under_its_name() -> None:
+    rows = {
+        1: [cell("A1", "Region", t="inlineStr"), cell("B1", "2025", t="inlineStr")],
+        2: [cell("B2", "H1", t="inlineStr"), cell("C2", "H2", t="inlineStr")],
+        3: [cell("A3", "EMEA", t="inlineStr"), cell("B3", 1), cell("C3", 2)],
+    }
+    # Region is not merged down; nothing under it leaves it its own name.
+    a = extract(workbook([("S", sheet(rows, merges=("B1:C1",)))]), "s.xlsx")
+    assert [n for n, _ in _columns(a)] == ["Region", "2025 / H1", "2025 / H2"]
+    assert a.tables[0].rows == (("EMEA", 1, 2),)
+
+
+def test_an_xlsx_header_merged_with_no_value_takes_the_names_under_it() -> None:
+    rows = {
+        1: [cell("A1", "Region", t="inlineStr")],
+        2: [cell("B2", "H1", t="inlineStr"), cell("C2", "H2", t="inlineStr")],
+        3: [cell("A3", "EMEA", t="inlineStr"), cell("B3", 1), cell("C3", 2)],
+    }
+    # A merge for its formatting alone, no value in its first cell.
+    a = extract(workbook([("S", sheet(rows, merges=("B1:C1",)))]), "s.xlsx")
+    assert [n for n, _ in _columns(a)] == ["Region", "H1", "H2"]
+
+
+def test_a_long_xlsx_header_over_two_rows_is_cut_and_held_once() -> None:
+    long = "x" * 1_000_000
+    under = {2: [cell(f"{_col(i)}2", "h", t="inlineStr") for i in range(200)]}
+    rows = {1: [cell("A1", 0, t="s")], **under, 3: [cell("A3", 1)]}
+    a = extract(
+        workbook([("S", sheet(rows, merges=(f"A1:{_col(199)}1",)))], shared=(long,)), "s.xlsx"
+    )
+    (table,) = a.tables
+    # Each name is cut to a column's 500 characters (a repeat numbered within them),
+    # and counted as cut.
+    assert table.header_rows == 2 and all(len(c.name) <= 500 for c in table.columns)
+    assert table.columns[0].name == "x" * 500
+    # A joined name holds no more of a cell than a name reads, whatever the cell's size.
+    from loom_extractor.tabular import Cell
+    from loom_extractor.xlsxfile import _named_over
+
+    joined = _named_over(Cell(long, "string"), Cell("h", "string"))
+    assert len(joined.text) < 2_000 and joined.text.endswith(" / h")
+    assert [f.unit for f in a.coverage.failed] == ["S header"]
 
 
 def test_an_xlsx_title_merged_over_its_header_row_heads_each_name() -> None:

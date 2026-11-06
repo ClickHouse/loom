@@ -27,6 +27,7 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 
 from loom_extractor.artifact import (
+    MAX_COLUMN_CHARS,
     MAX_COLUMNS,
     MAX_SECTION_CHARS,
     Artifact,
@@ -449,8 +450,8 @@ class _Reader:
         header = [sheet.grid[top].get(col, EMPTY) for col in range(left, right + 1)]
         # A header over two rows: a range merged across columns of the first row
         # groups the names the row under it gives (`2025` over `H1` and `H2`), when
-        # that row holds text under the range and, elsewhere, only cells merged down
-        # from the first row; a row of anything else is data.
+        # that row holds text under the range and, elsewhere, nothing or only cells
+        # merged down from the first row; a row of anything else is data.
         spans = [(c, r) for t, c, b, r in sheet.merges if t == b == top and r > c]
         above, under = sheet.grid[top], sheet.grid.get(top + 1, {})
         # The second row's own cells: those not merged down from the first.
@@ -644,15 +645,22 @@ class _SheetStream:
         return over or bool(self.past.more) or len(self.grid) > MAX_ROWS or self.budget.cut
 
 
+# What of a header cell a joined name keeps: more than a column's name holds, so a
+# name cut from it is still counted as cut, and never a cell's megabyte for each of
+# the many columns one cell spans.
+_JOINED_CHARS = 2 * MAX_COLUMN_CHARS + 1  # not a setting: a bound on hostile input
+
+
 def _named_over(above: Cell, below: Cell) -> Cell:
     """A column's name from a header over two rows: the first row's cell, the
     second's under it joined after ` / `; one merged down both rows (the same
-    cell) or with nothing under it is its own name."""
+    cell) or with nothing under it is its own name, and one with nothing above
+    the second's."""
     if below is above or below.kind == "empty":
         return above
     if above.kind == "empty":
         return below
-    return Cell(f"{above.text} / {below.text}", "string")
+    return Cell(f"{above.text[:_JOINED_CHARS]} / {below.text[:_JOINED_CHARS]}", "string")
 
 
 def _spread(
