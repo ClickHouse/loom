@@ -887,7 +887,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `char_limit` | `int \| None` | Server-enforced char cap on `value` (NULL = no cap). |
 | `recall_count` | `int` | Recall credits: reads by a credited reader (memory.search with auto_touch, from a client that posts outcomes), folded from loom.memory_usage_* into the ranking signal. |
 | `last_recalled_at` | `datetime \| None` | When a credited read last returned the row; None = no credit yet. |
-| `served_count` | `int \| None` | Agent reads that returned the key, credited or not (recall credits plus `served` events, across the key's live rows in the namespace, or this row alone for a reader narrowed to one user or session; never below recall_count). |
+| `served_count` | `int \| None` | Agent reads that returned the key, credited or not (recall credits plus `served` events, across the key's live rows inside the reader's scope: a token narrowed to one user never counts another's copy; never below recall_count). |
 | `last_served_at` | `datetime \| None` | When an agent read last returned the key; None = none recorded, or not asked for. |
 | `verified_by` | `str` | Attestation (memory.verify). |
 | `verified_at` | `datetime \| None` | When the attestation in `verified_by` was made; None = never attested, or revoked. |

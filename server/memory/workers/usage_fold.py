@@ -462,12 +462,12 @@ async def _derive_cold_start_watermark(ch: _CHClient, hwm: datetime) -> datetime
     return first - timedelta(seconds=1)
 
 
-# The identity read of a batch: memory_id → fold identity + write-time base,
-# with memory.ask's `used_cited` credit summed from the events
-# table beside it. The totals view (memory_usage_totals_mv) maps only `used`
-# into used_count, so the self-credit is read here,
-# keyed on the same ids in one statement. `AS mid`, never
-# `AS memory_id`.
+# The identity read of a batch, keyed on the batch's ids in one statement: memory_id →
+# fold identity, the write-time reinforcement base, and the stored evidence_count /
+# recall_count / last_recalled_at (`changes_memory` compares the targets with them). From
+# the events beside it: memory.ask's `used_cited` credit, which the totals view does not
+# map, and `last_counted_at`, the last event other than `served` (the decay anchor).
+# `AS mid`, never `AS memory_id`.
 IDENTITY_STATEMENT = """
         SELECT toString(m.memory_id) AS mid, m.org AS org, m.namespace AS namespace,
                m.agent AS agent, m.user_id AS user_id, m.memory_key AS memory_key,

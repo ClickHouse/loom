@@ -224,8 +224,8 @@ class MemoryGetOutput(ProjectedRow):
     # When a credited read last returned the row; None = no credit yet.
     last_recalled_at: datetime | None = None
     # Agent reads that returned the key, credited or not (recall credits plus `served`
-    # events, across the key's live rows in the namespace, or this row alone for a reader
-    # narrowed to one user or session; never below recall_count). Only with
+    # events, across the key's live rows inside the reader's scope: a token narrowed to one
+    # user never counts another's copy; never below recall_count). Only with
     # include_recall_breakdown=True; None otherwise.
     served_count: int | None = None
     # When an agent read last returned the key; None = none recorded, or not asked for.

@@ -168,8 +168,8 @@ citations by `LOOM_MEMORY_USED_CITED_REINFORCEMENT_WEIGHT`, and harm subtracts w
 `recall_count` counts **recall credits** only: a `memory.search` from a reader that closes
 the loop (`server/memory/app/recall_credit.py`). Every other agent read that returns memory
 writes one `served` event per key its answer returned (`server/memory/app/served_reads.py`):
-an uncredited `memory.search`, `search.query`, `context.pack` (the rows its blocks cite),
-`memory.ask` and `procedure.match`. A hit the op trims before answering is not counted.
+an uncredited `memory.search`, `search.query`, `context.pack` (the rows its blocks cite,
+the memory stack's included), `memory.stack`, `memory.ask` and `procedure.match`. A hit the op trims before answering is not counted.
 Neither is a `memory.search` sent with `auto_touch: false` or a `memory.ask` with
 `reinforce: false`, a read by the dashboard or the
 assistant, a measurement read (a bench label, or the `*` / `-` agent with no named
@@ -179,12 +179,13 @@ consumer), or an op that runs a search for its own use (`decision.precedents`,
 Nothing ranks on `served`: the reinforcement boost decays from the last event of any other
 kind, and the fold leaves `loom.memory` alone when a bump changes none of its counters.
 
-Both kinds land on the newest live row of the key in the namespace, whichever user or
-session wrote it, so a figure about whether an agent was shown a key reads every live row of
-it. `memory.get` with `include_recall_breakdown` answers `served_count` and
-`last_served_at` (credits and `served` events, never below `recall_count`), which the
-inspector's **Last recalled** shows; a reader narrowed to one user or session gets its own
-row's figures only. `memory.health` counts a key as recalled, not silent, on a recall credit
+Both kinds land on the newest live row of the key inside the reading request's scope:
+for a namespace-wide reader, whichever user or session wrote it; for a token narrowed to one
+user or session, a row of its own. So a figure about whether an agent was shown a key reads
+every live row of it inside the same scope. `memory.get` with `include_recall_breakdown`
+answers `served_count` and `last_served_at` (credits and `served` events, never below
+`recall_count`), which the inspector's **Last recalled** shows; a narrowed reader never
+counts another user's copy. `memory.health` counts a key as recalled, not silent, on a recall credit
 or a `served` event within `silent_after_days`.
 
 ## Settings

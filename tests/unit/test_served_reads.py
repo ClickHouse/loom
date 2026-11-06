@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.app import served_reads
 from server.observability import consumer as consumer_mod
 from server.observability.consumer import SOURCE_SELF_REPORTED
@@ -78,6 +79,7 @@ def test_an_uncredited_search_records_what_it_returned(written: list[dict[str, A
             "event_type": "served",
             "agent": "codex",
             "consumer": "codex",
+            "scope": WHOLE_NAMESPACE,
         }
     ]
 
@@ -98,9 +100,25 @@ def test_a_pack_records_the_rows_its_blocks_cite() -> None:
         SimpleNamespace(citations=["memory:n/a", "memory:n/b#res-1", "guide:3"]),
         SimpleNamespace(citations=["decision:n/d1", "procedure:m/p1", "profile:role"]),
         SimpleNamespace(citations=["working_memory:scratch"]),
+        # the memory stack's stored layers, in the request's namespace; profile is not a row
+        SimpleNamespace(
+            citations=["stack:pinned/pin1", "stack:procedure/p2", "stack:profile/fact"]
+        ),
     ]
     keys = served_reads.pack_keys(SimpleNamespace(namespace="n"), SimpleNamespace(blocks=blocks))
-    assert keys == [("n", "a"), ("n", "b"), ("n", "d1"), ("m", "p1")]
+    assert keys == [("n", "a"), ("n", "b"), ("n", "d1"), ("m", "p1"), ("n", "pin1"), ("n", "p2")]
+
+
+def test_memory_stack_records_its_stored_rows() -> None:
+    entries = [
+        SimpleNamespace(section="pinned", memory_key="pin1"),
+        SimpleNamespace(section="recent_recall", memory_key="r1"),
+        SimpleNamespace(section="profile", memory_key="role"),
+        SimpleNamespace(section="knowledge", memory_key=""),
+    ]
+    out = SimpleNamespace(entries=entries)
+    keys = served_reads.stack_keys(SimpleNamespace(namespace="n"), out)
+    assert keys == [("n", "pin1"), ("n", "r1")]
 
 
 def test_search_query_records_the_memory_hits_it_kept() -> None:
@@ -154,29 +172,22 @@ def test_a_failing_key_read_never_fails_the_answer(written: list[dict[str, Any]]
     assert written == []
 
 
-def test_the_five_agent_read_ops_record_served() -> None:
+def test_the_agent_read_ops_record_served() -> None:
     """The ops that return memory to an agent; decision.precedents, memory.apply and the
     workers' searches call the handlers directly or not at all, and record none."""
     from server.operations.registry import OPERATIONS_BY_NAME
 
-    for name in ("memory.search", "context.pack", "memory.ask", "procedure.match", "search.query"):
+    for name in (
+        "memory.search",
+        "context.pack",
+        "memory.ask",
+        "procedure.match",
+        "search.query",
+        "memory.stack",
+    ):
         assert getattr(OPERATIONS_BY_NAME[name].handler, "__wrapped__", None) is not None, name
     for name in ("decision.precedents", "memory.apply", "memory.get"):
         assert getattr(OPERATIONS_BY_NAME[name].handler, "__wrapped__", None) is None, name
-
-
-def test_a_narrowed_reader_counts_its_own_row_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    """memory.get's served figures read every live row of the key, where the events land;
-    a token bounded to one user or session reads its own row's and learns nothing of
-    another user's copy."""
-    from server.identity.app import request_scope
-    from server.memory.app import handlers
-
-    row = SimpleNamespace(user_id="u1", session_id="s1")
-    monkeypatch.setattr(request_scope, "request_narrowed", lambda: True)
-    assert handlers.served_scope(row) == ("u1", "s1")
-    monkeypatch.setattr(request_scope, "request_narrowed", lambda: False)
-    assert handlers.served_scope(row) is None
 
 
 def test_an_evaluation_ask_records_nothing() -> None:
@@ -257,3 +268,18 @@ def test_each_extractor_reads_its_ops_real_models() -> None:
     query_in = SearchInput(org="o", namespace="n", query="q")
     query_out = SearchOutput.model_validate({"memory": search_out.model_dump(mode="json")})
     assert served_reads.search_query_keys(query_in, query_out) == [("n", "a"), ("m", "b")]
+
+
+def test_a_narrowed_reader_records_under_its_own_scope(
+    monkeypatch: pytest.MonkeyPatch, written: list[dict[str, Any]]
+) -> None:
+    """The funnel then picks the newest copy inside the reader's scope, the row it could
+    have been served, never another user's."""
+    from server.identity.app import request_scope
+    from server.identity.domain.read_scope import ReadFilters
+
+    own = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    monkeypatch.setattr(request_scope, "request_scope", lambda: own)
+    out = SimpleNamespace(results=[_hit("a")])
+    _run(_wrapped(served_reads.ask_keys, out), _search_input())
+    assert [w["scope"] for w in written] == [own]

@@ -52,12 +52,21 @@ def schedule_served(org: str, agent: str, keys: Iterable[tuple[str, str]]) -> No
         ns_keys.setdefault(ns, []).append(key)
     if not ns_keys or not _counted_agent(agent):
         return
+    from server.identity.app.request_scope import request_scope
+
     consumer = str(current_consumer() or "")
+    # A narrowed reader's event lands on a row inside its scope, where its reads are read.
+    scope = request_scope()
 
     async def _write() -> None:
         try:
             await usage.record_usage_for_keys(
-                org, ns_keys, event_type=usage.SERVED_EVENT, agent=agent, consumer=consumer
+                org,
+                ns_keys,
+                event_type=usage.SERVED_EVENT,
+                agent=agent,
+                consumer=consumer,
+                scope=scope,
             )
         except Exception as e:  # noqa: BLE001 — a served event must not fail the read
             log.warning("served-event log failed (non-fatal): %s", e)
@@ -115,6 +124,9 @@ def procedure_keys(input: Any, out: Any) -> Keys:
 # The citations of a pack block that name a stored row: `<kind>:<namespace>/<key>`, a
 # memory's with an optional `#<resource>`.
 _ROW_CITATIONS = ("memory:", "decision:", "procedure:")
+# The memory stack's layers that are stored rows, cited `stack:<layer>/<key>`; the stack
+# reads the request's namespace only.
+_STACK_ROW_LAYERS = ("pinned", "recent_recall", "procedure")
 
 
 def pack_keys(input: Any, out: Any) -> Keys:
@@ -124,11 +136,26 @@ def pack_keys(input: Any, out: Any) -> Keys:
     for block in out.blocks:
         for cite in block.citations:
             kind = next((k for k in _ROW_CITATIONS if cite.startswith(k)), "")
-            ns, _, key = cite[len(kind) :].partition("/") if kind else ("", "", "")
+            if kind:
+                ns, _, key = cite[len(kind) :].partition("/")
+            elif cite.startswith("stack:"):
+                layer, _, key = cite.removeprefix("stack:").partition("/")
+                ns = input.namespace if layer in _STACK_ROW_LAYERS else ""
+            else:
+                continue
             key = key.partition("#")[0]
             if ns and key:
                 keys.append((ns, key))
     return keys
+
+
+def stack_keys(input: Any, out: Any) -> Keys:
+    """memory.stack: the stored rows of its entries (not the profile or knowledge ones)."""
+    return [
+        (input.namespace, e.memory_key)
+        for e in out.entries
+        if e.section in _STACK_ROW_LAYERS and e.memory_key
+    ]
 
 
 def search_query_keys(input: Any, out: Any) -> Keys:
