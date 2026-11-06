@@ -564,7 +564,9 @@ def test_a_normalized_parse_becomes_an_artifact_the_server_accepts() -> None:
 def test_the_queries_are_paragraphs_and_table_rows_with_their_pages() -> None:
     from bench.docparse.downstream import queries
 
-    qs = queries(_gold())
+    gold = _gold()
+    qs = queries(gold)
+    split = {g["file"]: g["split"] for g in gold}
     assert {q["kind"] for q in qs} == {"paragraph", "table row"}
     for q in qs:
         assert (
@@ -573,6 +575,7 @@ def test_the_queries_are_paragraphs_and_table_rows_with_their_pages() -> None:
             and q["file"].endswith((".pdf", ".docx", ".pptx"))
         )
         assert q.get("within", False) == (q["kind"] == "table row")
+        assert q["split"] == split[q["file"]]
         if q["file"].endswith(".pdf"):
             assert q["page"] >= 1 and q["page_end"] >= q["page"], q
     assert (
@@ -587,7 +590,10 @@ def test_the_queries_are_paragraphs_and_table_rows_with_their_pages() -> None:
 def test_the_report_pairs_each_system_with_the_first() -> None:
     from bench.docparse.downstream import report
 
-    qs = [{"file": f"f{i}.pdf", "category": "c"} for i in range(6)]
+    qs = [
+        {"file": f"f{i}.pdf", "category": "c", "split": "dev" if i < 2 else "heldout"}
+        for i in range(6)
+    ]
     results = {
         "a": [{"found": 1, "cited": 0}] * 6,
         "b": [{"found": 1, "cited": 1}] * 6,
@@ -596,6 +602,7 @@ def test_the_report_pairs_each_system_with_the_first() -> None:
     assert out["ALL"]["cited@1"]["a"] == 0.0 and out["ALL"]["cited@1"]["b"] == 1.0
     mean, lb, ub = out["ALL"]["cited@1"]["b-a"]
     assert mean == 1.0 and lb == ub == 1.0 and out["c"]["n"] == 6
+    assert out["split:heldout"]["n"] == 4 and out["split:dev"]["n"] == 2
 
 
 def test_a_hit_is_found_by_its_words_and_cited_by_its_pages() -> None:
@@ -826,3 +833,27 @@ def test_ingest_stops_after_a_poll_and_cancels_only_its_open_jobs(
         downstream.ingest(loom, "o", "n", tmp_path, ["a.pdf", "b.pdf"], refused=refusal)
     cancels = [p for url, p in loom.sent if url == "/v1/knowledge.ingest_cancel"]
     assert cancels == [{"org": "o", "namespace": "n", "ingestion_id": "job-b.pdf"}]
+
+
+def test_a_mean_no_file_has_is_null_in_the_json_and_a_dash_in_the_table(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # a parses nothing; b one file whole: only b has a heading level to average
+    g = next(
+        g
+        for g in _gold()
+        if g["split"] == "heldout" and any(b["kind"] == "heading" for b in g["blocks"])
+    )
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    a.write_text("")
+    b.write_text(
+        json.dumps({**_perfect(g), "file": g["file"], "seconds": 1.0, "peak_mb": 1.0}) + "\n"
+    )
+    out = tmp_path / "s.json"
+    S.score(CORPUS, [("a", a), ("b", b)], split="heldout", out_json=out)
+    report = json.loads(out.read_text())["report"]  # the write refuses a NaN (allow_nan=False)
+    assert report["ALL"]["heading_level_acc"]["a"] is None
+    line = next(
+        ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("heading_level_acc")
+    )
+    assert line.split()[1] == "-"

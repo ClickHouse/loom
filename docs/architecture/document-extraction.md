@@ -120,6 +120,9 @@ whose parsers ship with it (`csv` and its sniffer; `datetime.fromisoformat` for 
 
 ## Formats in the reference extractor
 
+How well the PDF, DOCX and PPTX readers keep a document's text, headings, tables and pages, against a layout-model
+baseline, is measured in the [document-parsing results](../benchmarks/results.md#document-parsing).
+
 `detect_format` reads the bytes before the file name. A PDF, a DOCX, PPTX or XLSX container (by the parts inside the
 zip) and a Parquet file are recognised by content; a name that claims a format the bytes are not is refused
 (`format_mismatch`), and a legacy binary Office file is refused (`unsupported_format`), as is a `.doc`, `.xls` or `.ppt`

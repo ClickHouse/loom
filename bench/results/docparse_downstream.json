@@ -1,0 +1,10462 @@
+{
+ "states": {
+  "text_layer": {
+   "web_doc_0.pdf": "ready",
+   "web_doc_1.pdf": "ready",
+   "web_doc_2.pdf": "ready",
+   "web_doc_3.pdf": "ready",
+   "web_doc_4.pdf": "ready",
+   "web_doc_5.pdf": "ready",
+   "web_borderless_0.pdf": "ready",
+   "web_borderless_1.pdf": "ready",
+   "web_borderless_2.pdf": "ready",
+   "web_longtable_0.pdf": "ready",
+   "web_longtable_1.pdf": "ready",
+   "web_longtable_2.pdf": "ready",
+   "web_twocol_0.pdf": "ready",
+   "web_twocol_1.pdf": "ready",
+   "pep518.pdf": "ready",
+   "pep621.pdf": "ready",
+   "pep668.pdf": "ready",
+   "pep723.pdf": "ready",
+   "pep735.pdf": "ready",
+   "pep691.pdf": "ready",
+   "office_0.docx": "ready",
+   "office_export_0.pdf": "ready",
+   "office_1.docx": "ready",
+   "office_export_1.pdf": "ready",
+   "office_2.docx": "ready",
+   "office_export_2.pdf": "ready",
+   "office_3.docx": "ready",
+   "office_export_3.pdf": "ready",
+   "office_4.docx": "ready",
+   "office_5.docx": "ready",
+   "typeset_0.pdf": "ready",
+   "typeset_1.pdf": "ready",
+   "typeset_2.pdf": "ready",
+   "typeset_3.pdf": "ready",
+   "typeset_longtable.pdf": "ready",
+   "rotated_0.pdf": "ready",
+   "rotated_1.pdf": "ready",
+   "deck_0.pptx": "ready",
+   "deck_export_0.pdf": "ready",
+   "deck_1.pptx": "ready",
+   "deck_export_1.pdf": "ready",
+   "deck_2.pptx": "ready",
+   "deck_export_2.pdf": "ready",
+   "deck_3.pptx": "ready",
+   "deck_4.pptx": "ready",
+   "deck_5.pptx": "ready",
+   "web_deck_0.pdf": "ready",
+   "web_deck_1.pdf": "ready",
+   "web_deck_2.pdf": "ready",
+   "scan_0.pdf": "failed",
+   "scan_1.pdf": "failed",
+   "scan_2.pdf": "failed",
+   "scan_3.pdf": "failed",
+   "whiteboard.pdf": "failed"
+  },
+  "layout_ocr": {
+   "web_doc_0.pdf": "ready",
+   "web_doc_1.pdf": "ready",
+   "web_doc_2.pdf": "ready",
+   "web_doc_3.pdf": "ready",
+   "web_doc_4.pdf": "ready",
+   "web_doc_5.pdf": "ready",
+   "web_borderless_0.pdf": "ready",
+   "web_borderless_1.pdf": "ready",
+   "web_borderless_2.pdf": "ready",
+   "web_longtable_0.pdf": "ready",
+   "web_longtable_1.pdf": "ready",
+   "web_longtable_2.pdf": "ready",
+   "web_twocol_0.pdf": "ready",
+   "web_twocol_1.pdf": "ready",
+   "pep518.pdf": "ready",
+   "pep621.pdf": "ready",
+   "pep668.pdf": "ready",
+   "pep723.pdf": "ready",
+   "pep735.pdf": "ready",
+   "pep691.pdf": "ready",
+   "office_0.docx": "ready",
+   "office_export_0.pdf": "ready",
+   "office_1.docx": "ready",
+   "office_export_1.pdf": "ready",
+   "office_2.docx": "ready",
+   "office_export_2.pdf": "ready",
+   "office_3.docx": "ready",
+   "office_export_3.pdf": "ready",
+   "office_4.docx": "ready",
+   "office_5.docx": "ready",
+   "typeset_0.pdf": "ready",
+   "typeset_1.pdf": "ready",
+   "typeset_2.pdf": "ready",
+   "typeset_3.pdf": "ready",
+   "typeset_longtable.pdf": "ready",
+   "rotated_0.pdf": "ready",
+   "rotated_1.pdf": "ready",
+   "deck_0.pptx": "ready",
+   "deck_export_0.pdf": "ready",
+   "deck_1.pptx": "ready",
+   "deck_export_1.pdf": "ready",
+   "deck_2.pptx": "ready",
+   "deck_export_2.pdf": "ready",
+   "deck_3.pptx": "ready",
+   "deck_4.pptx": "ready",
+   "deck_5.pptx": "ready",
+   "web_deck_0.pdf": "ready",
+   "web_deck_1.pdf": "ready",
+   "web_deck_2.pdf": "ready",
+   "scan_0.pdf": "ready",
+   "scan_1.pdf": "ready",
+   "scan_2.pdf": "ready",
+   "scan_3.pdf": "ready",
+   "whiteboard.pdf": "ready"
+  },
+  "baseline": {
+   "web_doc_0.pdf": "ready",
+   "web_doc_1.pdf": "ready",
+   "web_doc_2.pdf": "ready",
+   "web_doc_3.pdf": "ready",
+   "web_doc_4.pdf": "ready",
+   "web_doc_5.pdf": "ready",
+   "web_borderless_0.pdf": "ready",
+   "web_borderless_1.pdf": "ready",
+   "web_borderless_2.pdf": "ready",
+   "web_longtable_0.pdf": "ready",
+   "web_longtable_1.pdf": "ready",
+   "web_longtable_2.pdf": "ready",
+   "web_twocol_0.pdf": "ready",
+   "web_twocol_1.pdf": "ready",
+   "pep518.pdf": "ready",
+   "pep621.pdf": "ready",
+   "pep668.pdf": "ready",
+   "pep723.pdf": "ready",
+   "pep735.pdf": "ready",
+   "pep691.pdf": "ready",
+   "office_0.docx": "ready",
+   "office_export_0.pdf": "ready",
+   "office_1.docx": "ready",
+   "office_export_1.pdf": "ready",
+   "office_2.docx": "ready",
+   "office_export_2.pdf": "ready",
+   "office_3.docx": "ready",
+   "office_export_3.pdf": "ready",
+   "office_4.docx": "ready",
+   "office_5.docx": "ready",
+   "typeset_0.pdf": "ready",
+   "typeset_1.pdf": "ready",
+   "typeset_2.pdf": "ready",
+   "typeset_3.pdf": "ready",
+   "typeset_longtable.pdf": "ready",
+   "rotated_0.pdf": "ready",
+   "rotated_1.pdf": "ready",
+   "deck_0.pptx": "ready",
+   "deck_export_0.pdf": "ready",
+   "deck_1.pptx": "ready",
+   "deck_export_1.pdf": "ready",
+   "deck_2.pptx": "ready",
+   "deck_export_2.pdf": "ready",
+   "deck_3.pptx": "ready",
+   "deck_4.pptx": "ready",
+   "deck_5.pptx": "ready",
+   "web_deck_0.pdf": "ready",
+   "web_deck_1.pdf": "ready",
+   "web_deck_2.pdf": "ready",
+   "scan_0.pdf": "ready",
+   "scan_1.pdf": "ready",
+   "scan_2.pdf": "ready",
+   "scan_3.pdf": "ready",
+   "whiteboard.pdf": "failed"
+  }
+ },
+ "queries": [
+  {
+   "file": "web_doc_0.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "basalt cluster the search indexer replicates incoming events",
+   "answer": [
+    "in",
+    "the",
+    "basalt",
+    "cluster",
+    "the",
+    "search",
+    "indexer",
+    "replicates",
+    "incoming",
+    "events",
+    "every",
+    "6539",
+    "megabytes",
+    "in",
+    "the",
+    "juniper",
+    "cluster",
+    "the",
+    "search",
+    "indexer",
+    "validates",
+    "pending",
+    "writes",
+    "every",
+    "24",
+    "requests",
+    "per",
+    "second",
+    "option",
+    "quill",
+    "keeps",
+    "delta",
+    "snapshots",
+    "for",
+    "2",
+    "percent",
+    "and",
+    "retries",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_0.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "keeps malformed payloads for 45 hours and archives",
+   "answer": [
+    "option",
+    "ember",
+    "keeps",
+    "malformed",
+    "payloads",
+    "for",
+    "45",
+    "hours",
+    "and",
+    "archives",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_0.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "evaluator persists pending writes in the order the",
+   "answer": [
+    "the",
+    "alert",
+    "evaluator",
+    "persists",
+    "pending",
+    "writes",
+    "in",
+    "the",
+    "order",
+    "the",
+    "producer",
+    "wrote",
+    "them",
+    "we",
+    "measured",
+    "68",
+    "hours",
+    "for",
+    "index",
+    "granules",
+    "on",
+    "the",
+    "quill",
+    "staging",
+    "tier"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_0.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "saffron-store-0 rota-7",
+   "answer": [
+    "saffron",
+    "store",
+    "0",
+    "search",
+    "rota",
+    "7",
+    "3"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_0.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "lattice-api-2 rota-9",
+   "answer": [
+    "lattice",
+    "api",
+    "2",
+    "platform",
+    "rota",
+    "9",
+    "3"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_1.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "61 percent for pending writes on the tundra",
+   "answer": [
+    "we",
+    "measured",
+    "61",
+    "percent",
+    "for",
+    "pending",
+    "writes",
+    "on",
+    "the",
+    "tundra",
+    "staging",
+    "tier",
+    "we",
+    "measured",
+    "7828",
+    "minutes",
+    "for",
+    "stale",
+    "partitions",
+    "on",
+    "the",
+    "atlas",
+    "staging",
+    "tier",
+    "we",
+    "measured",
+    "52",
+    "megabytes",
+    "for",
+    "malformed",
+    "payloads",
+    "on",
+    "the",
+    "kestrel",
+    "staging",
+    "tier"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_1.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "garnet cluster the feature flag service rejects tenant",
+   "answer": [
+    "in",
+    "the",
+    "garnet",
+    "cluster",
+    "the",
+    "feature",
+    "flag",
+    "service",
+    "rejects",
+    "tenant",
+    "quotas",
+    "every",
+    "5095",
+    "minutes",
+    "we",
+    "measured",
+    "44",
+    "requests",
+    "per",
+    "second",
+    "for",
+    "index",
+    "granules",
+    "on",
+    "the",
+    "harbor",
+    "staging",
+    "tier"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_1.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "keeps replication logs for 80 hours and deduplicates",
+   "answer": [
+    "option",
+    "quill",
+    "keeps",
+    "replication",
+    "logs",
+    "for",
+    "80",
+    "hours",
+    "and",
+    "deduplicates",
+    "the",
+    "rest",
+    "the",
+    "ingest",
+    "worker",
+    "compacts",
+    "tenant",
+    "quotas",
+    "so",
+    "a",
+    "failed",
+    "region",
+    "drains",
+    "within",
+    "minutes"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_1.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "vector-api-0 rota-8",
+   "answer": [
+    "vector",
+    "api",
+    "0",
+    "storage",
+    "rota",
+    "8",
+    "3"
+   ],
+   "page": 1,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_1.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "Option quill 0 $1k / month",
+   "answer": [
+    "option",
+    "quill",
+    "0",
+    "347",
+    "ms",
+    "1k",
+    "month",
+    "low"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_2.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "agent never archives outbound webhooks so that a",
+   "answer": [
+    "the",
+    "backup",
+    "agent",
+    "never",
+    "archives",
+    "outbound",
+    "webhooks",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work",
+    "the",
+    "backup",
+    "agent",
+    "never",
+    "validates",
+    "expired",
+    "sessions",
+    "in",
+    "the",
+    "order",
+    "the",
+    "producer",
+    "wrote",
+    "them",
+    "in",
+    "the",
+    "kestrel",
+    "cluster",
+    "the",
+    "backup",
+    "agent",
+    "persists",
+    "access",
+    "tokens",
+    "every",
+    "87",
+    "percent"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_2.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "relay never retries tenant quotas under the tenant",
+   "answer": [
+    "the",
+    "webhook",
+    "relay",
+    "never",
+    "retries",
+    "tenant",
+    "quotas",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota",
+    "option",
+    "quill",
+    "keeps",
+    "stale",
+    "partitions",
+    "for",
+    "3880",
+    "requests",
+    "per",
+    "second",
+    "and",
+    "signs",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_2.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "keeps malformed payloads for 3218 minutes and retries",
+   "answer": [
+    "option",
+    "ember",
+    "keeps",
+    "malformed",
+    "payloads",
+    "for",
+    "3218",
+    "minutes",
+    "and",
+    "retries",
+    "the",
+    "rest"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_2.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "atlas-api-0 rota-8",
+   "answer": [
+    "atlas",
+    "api",
+    "0",
+    "identity",
+    "rota",
+    "8",
+    "2"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_2.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "saffron-proxy-3 rota-1",
+   "answer": [
+    "saffron",
+    "proxy",
+    "3",
+    "search",
+    "rota",
+    "1",
+    "3"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_3.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "keeps expired sessions for 2097 megabytes and partitions",
+   "answer": [
+    "option",
+    "vector",
+    "keeps",
+    "expired",
+    "sessions",
+    "for",
+    "2097",
+    "megabytes",
+    "and",
+    "partitions",
+    "the",
+    "rest",
+    "the",
+    "token",
+    "service",
+    "never",
+    "partitions",
+    "malformed",
+    "payloads",
+    "with",
+    "a",
+    "jittered",
+    "exponential",
+    "backoff"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_3.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "67 megabytes for expired sessions on the nimbus",
+   "answer": [
+    "we",
+    "measured",
+    "67",
+    "megabytes",
+    "for",
+    "expired",
+    "sessions",
+    "on",
+    "the",
+    "nimbus",
+    "staging",
+    "tier"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_3.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "agent never partitions expired sessions when the queue",
+   "answer": [
+    "the",
+    "backup",
+    "agent",
+    "never",
+    "partitions",
+    "expired",
+    "sessions",
+    "when",
+    "the",
+    "queue",
+    "depth",
+    "passes",
+    "its",
+    "threshold",
+    "the",
+    "scheduler",
+    "never",
+    "streams",
+    "hourly",
+    "rollups",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work",
+    "option",
+    "lattice",
+    "keeps",
+    "cold",
+    "segments",
+    "for",
+    "6722",
+    "minutes",
+    "and",
+    "retries",
+    "the",
+    "rest",
+    "in",
+    "the",
+    "basalt",
+    "cluster",
+    "the",
+    "migration",
+    "runner",
+    "batches",
+    "outbound",
+    "webhooks",
+    "every",
+    "61",
+    "hours",
+    "in",
+    "the",
+    "quill",
+    "cluster",
+    "the",
+    "webhook",
+    "relay",
+    "validates",
+    "index",
+    "granules",
+    "every",
+    "5683",
+    "minutes"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_3.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "Option juniper 0 $49k / month",
+   "answer": [
+    "option",
+    "juniper",
+    "0",
+    "344",
+    "ms",
+    "49k",
+    "month",
+    "medium"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_3.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "juniper-proxy-0 rota-7",
+   "answer": [
+    "juniper",
+    "proxy",
+    "0",
+    "platform",
+    "rota",
+    "7",
+    "1"
+   ],
+   "page": 2,
+   "page_end": 3,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_4.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "keeps index granules for 52 hours and deduplicates",
+   "answer": [
+    "option",
+    "meridian",
+    "keeps",
+    "index",
+    "granules",
+    "for",
+    "52",
+    "hours",
+    "and",
+    "deduplicates",
+    "the",
+    "rest",
+    "option",
+    "quill",
+    "keeps",
+    "stale",
+    "partitions",
+    "for",
+    "6508",
+    "percent",
+    "and",
+    "retries",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_4.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "flag service partitions stale partitions under the tenant",
+   "answer": [
+    "the",
+    "feature",
+    "flag",
+    "service",
+    "partitions",
+    "stale",
+    "partitions",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota",
+    "in",
+    "the",
+    "tundra",
+    "cluster",
+    "the",
+    "export",
+    "pipeline",
+    "batches",
+    "expired",
+    "sessions",
+    "every",
+    "6576",
+    "hours",
+    "the",
+    "compaction",
+    "job",
+    "partitions",
+    "audit",
+    "records",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_4.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "6356 percent for delta snapshots on the ember",
+   "answer": [
+    "we",
+    "measured",
+    "6356",
+    "percent",
+    "for",
+    "delta",
+    "snapshots",
+    "on",
+    "the",
+    "ember",
+    "staging",
+    "tier"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_4.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "lattice-0 2173",
+   "answer": [
+    "lattice",
+    "0",
+    "51",
+    "2173",
+    "0",
+    "90"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_4.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "atlas-4 2352",
+   "answer": [
+    "atlas",
+    "4",
+    "30",
+    "2352",
+    "0",
+    "09"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_doc_5.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "sweeper never signs audit records once every replica",
+   "answer": [
+    "the",
+    "retention",
+    "sweeper",
+    "never",
+    "signs",
+    "audit",
+    "records",
+    "once",
+    "every",
+    "replica",
+    "reports",
+    "healthy",
+    "the",
+    "migration",
+    "runner",
+    "never",
+    "signs",
+    "access",
+    "tokens",
+    "so",
+    "a",
+    "failed",
+    "region",
+    "drains",
+    "within",
+    "minutes"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_5.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "sweeper never streams delta snapshots before the nightly",
+   "answer": [
+    "the",
+    "retention",
+    "sweeper",
+    "never",
+    "streams",
+    "delta",
+    "snapshots",
+    "before",
+    "the",
+    "nightly",
+    "window",
+    "closes",
+    "we",
+    "measured",
+    "58",
+    "hours",
+    "for",
+    "outbound",
+    "webhooks",
+    "on",
+    "the",
+    "vector",
+    "staging",
+    "tier",
+    "the",
+    "alert",
+    "evaluator",
+    "throttles",
+    "tenant",
+    "quotas",
+    "so",
+    "a",
+    "failed",
+    "region",
+    "drains",
+    "within",
+    "minutes",
+    "option",
+    "saffron",
+    "keeps",
+    "stale",
+    "partitions",
+    "for",
+    "3081",
+    "megabytes",
+    "and",
+    "buffers",
+    "the",
+    "rest",
+    "option",
+    "basalt",
+    "keeps",
+    "hourly",
+    "rollups",
+    "for",
+    "1383",
+    "requests",
+    "per",
+    "second",
+    "and",
+    "rejects",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_5.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "atlas cluster the cache layer partitions replication logs",
+   "answer": [
+    "in",
+    "the",
+    "atlas",
+    "cluster",
+    "the",
+    "cache",
+    "layer",
+    "partitions",
+    "replication",
+    "logs",
+    "every",
+    "2410",
+    "minutes"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_5.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "tundra-0 1723",
+   "answer": [
+    "tundra",
+    "0",
+    "4",
+    "1723",
+    "0",
+    "31"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_doc_5.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "ember-api-0 rota-4",
+   "answer": [
+    "ember",
+    "api",
+    "0",
+    "billing",
+    "rota",
+    "4",
+    "0"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_borderless_0.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "paragraph",
+   "query": "garnet cluster the audit writer streams malformed payloads",
+   "answer": [
+    "in",
+    "the",
+    "garnet",
+    "cluster",
+    "the",
+    "audit",
+    "writer",
+    "streams",
+    "malformed",
+    "payloads",
+    "every",
+    "9",
+    "minutes",
+    "we",
+    "measured",
+    "6076",
+    "requests",
+    "per",
+    "second",
+    "for",
+    "incoming",
+    "events",
+    "on",
+    "the",
+    "kestrel",
+    "staging",
+    "tier",
+    "we",
+    "measured",
+    "5187",
+    "megabytes",
+    "for",
+    "malformed",
+    "payloads",
+    "on",
+    "the",
+    "nimbus",
+    "staging",
+    "tier"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_borderless_0.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "paragraph",
+   "query": "2927 hours for dead letters on the tundra",
+   "answer": [
+    "we",
+    "measured",
+    "2927",
+    "hours",
+    "for",
+    "dead",
+    "letters",
+    "on",
+    "the",
+    "tundra",
+    "staging",
+    "tier",
+    "we",
+    "measured",
+    "69",
+    "megabytes",
+    "for",
+    "dead",
+    "letters",
+    "on",
+    "the",
+    "orion",
+    "staging",
+    "tier",
+    "option",
+    "basalt",
+    "keeps",
+    "pending",
+    "writes",
+    "for",
+    "28",
+    "percent",
+    "and",
+    "rotates",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_borderless_0.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "paragraph",
+   "query": "deduplicates hourly rollups in the order the producer",
+   "answer": [
+    "each",
+    "replica",
+    "deduplicates",
+    "hourly",
+    "rollups",
+    "in",
+    "the",
+    "order",
+    "the",
+    "producer",
+    "wrote",
+    "them"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "web_borderless_0.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "table row",
+   "query": "Option kestrel 0 $68k / month",
+   "answer": [
+    "option",
+    "kestrel",
+    "0",
+    "281",
+    "ms",
+    "68k",
+    "month",
+    "high"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_borderless_0.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "table row",
+   "query": "kestrel-api-0 rota-4",
+   "answer": [
+    "kestrel",
+    "api",
+    "0",
+    "search",
+    "rota",
+    "4",
+    "3"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_borderless_1.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "paragraph",
+   "query": "keeps outbound webhooks for 63 megabytes and rejects",
+   "answer": [
+    "option",
+    "basalt",
+    "keeps",
+    "outbound",
+    "webhooks",
+    "for",
+    "63",
+    "megabytes",
+    "and",
+    "rejects",
+    "the",
+    "rest",
+    "in",
+    "the",
+    "kestrel",
+    "cluster",
+    "the",
+    "query",
+    "router",
+    "compacts",
+    "pending",
+    "writes",
+    "every",
+    "4100",
+    "seconds",
+    "in",
+    "the",
+    "saffron",
+    "cluster",
+    "the",
+    "audit",
+    "writer",
+    "rejects",
+    "malformed",
+    "payloads",
+    "every",
+    "5161",
+    "requests",
+    "per",
+    "second"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "web_borderless_1.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "paragraph",
+   "query": "keeps audit records for 7198 minutes and replicates",
+   "answer": [
+    "option",
+    "atlas",
+    "keeps",
+    "audit",
+    "records",
+    "for",
+    "7198",
+    "minutes",
+    "and",
+    "replicates",
+    "the",
+    "rest",
+    "option",
+    "juniper",
+    "keeps",
+    "expired",
+    "sessions",
+    "for",
+    "51",
+    "requests",
+    "per",
+    "second",
+    "and",
+    "deduplicates",
+    "the",
+    "rest",
+    "option",
+    "garnet",
+    "keeps",
+    "audit",
+    "records",
+    "for",
+    "4645",
+    "megabytes",
+    "and",
+    "throttles",
+    "the",
+    "rest"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "web_borderless_1.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "paragraph",
+   "query": "never throttles pending writes in the order the",
+   "answer": [
+    "the",
+    "scheduler",
+    "never",
+    "throttles",
+    "pending",
+    "writes",
+    "in",
+    "the",
+    "order",
+    "the",
+    "producer",
+    "wrote",
+    "them",
+    "we",
+    "measured",
+    "7949",
+    "requests",
+    "per",
+    "second",
+    "for",
+    "audit",
+    "records",
+    "on",
+    "the",
+    "meridian",
+    "staging",
+    "tier"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "web_borderless_1.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "table row",
+   "query": "Option harbor 0 $85k / month",
+   "answer": [
+    "option",
+    "harbor",
+    "0",
+    "88",
+    "ms",
+    "85k",
+    "month",
+    "low"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_borderless_1.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "table row",
+   "query": "juniper-0 2442",
+   "answer": [
+    "juniper",
+    "0",
+    "48",
+    "2442",
+    "0",
+    "71"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_borderless_2.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "paragraph",
+   "query": "37 seconds for malformed payloads on the saffron",
+   "answer": [
+    "we",
+    "measured",
+    "37",
+    "seconds",
+    "for",
+    "malformed",
+    "payloads",
+    "on",
+    "the",
+    "saffron",
+    "staging",
+    "tier",
+    "the",
+    "schema",
+    "registry",
+    "signs",
+    "tenant",
+    "quotas",
+    "before",
+    "the",
+    "nightly",
+    "window",
+    "closes",
+    "the",
+    "export",
+    "pipeline",
+    "streams",
+    "tenant",
+    "quotas",
+    "with",
+    "a",
+    "jittered",
+    "exponential",
+    "backoff"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_borderless_2.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "paragraph",
+   "query": "job never validates malformed payloads in the order",
+   "answer": [
+    "the",
+    "compaction",
+    "job",
+    "never",
+    "validates",
+    "malformed",
+    "payloads",
+    "in",
+    "the",
+    "order",
+    "the",
+    "producer",
+    "wrote",
+    "them"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_borderless_2.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "paragraph",
+   "query": "leader batches audit records without holding the global",
+   "answer": [
+    "every",
+    "shard",
+    "leader",
+    "batches",
+    "audit",
+    "records",
+    "without",
+    "holding",
+    "the",
+    "global",
+    "lock",
+    "the",
+    "cache",
+    "layer",
+    "validates",
+    "expired",
+    "sessions",
+    "unless",
+    "an",
+    "operator",
+    "pauses",
+    "the",
+    "rollout"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "web_borderless_2.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "table row",
+   "query": "atlas-api-0 rota-5",
+   "answer": [
+    "atlas",
+    "api",
+    "0",
+    "billing",
+    "rota",
+    "5",
+    "3"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_borderless_2.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "table row",
+   "query": "quill_max_rows_0 Compacts pending writes under the tenant's own quota",
+   "answer": [
+    "quill",
+    "max",
+    "rows",
+    "0",
+    "413",
+    "compacts",
+    "pending",
+    "writes",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_longtable_0.pdf",
+   "category": "pdf_table_span",
+   "kind": "paragraph",
+   "query": "59 minutes for tenant quotas on the garnet",
+   "answer": [
+    "we",
+    "measured",
+    "59",
+    "minutes",
+    "for",
+    "tenant",
+    "quotas",
+    "on",
+    "the",
+    "garnet",
+    "staging",
+    "tier",
+    "the",
+    "retention",
+    "sweeper",
+    "never",
+    "persists",
+    "index",
+    "granules",
+    "so",
+    "a",
+    "failed",
+    "region",
+    "drains",
+    "within",
+    "minutes",
+    "the",
+    "compaction",
+    "job",
+    "streams",
+    "incoming",
+    "events",
+    "unless",
+    "an",
+    "operator",
+    "pauses",
+    "the",
+    "rollout"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_longtable_0.pdf",
+   "category": "pdf_table_span",
+   "kind": "paragraph",
+   "query": "job signs outbound webhooks under the tenant s",
+   "answer": [
+    "the",
+    "compaction",
+    "job",
+    "signs",
+    "outbound",
+    "webhooks",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota",
+    "option",
+    "harbor",
+    "keeps",
+    "outbound",
+    "webhooks",
+    "for",
+    "5741",
+    "hours",
+    "and",
+    "validates",
+    "the",
+    "rest",
+    "the",
+    "feature",
+    "flag",
+    "service",
+    "persists",
+    "hourly",
+    "rollups",
+    "without",
+    "holding",
+    "the",
+    "global",
+    "lock"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_longtable_0.pdf",
+   "category": "pdf_table_span",
+   "kind": "paragraph",
+   "query": "5488 requests per second for stale partitions on",
+   "answer": [
+    "we",
+    "measured",
+    "5488",
+    "requests",
+    "per",
+    "second",
+    "for",
+    "stale",
+    "partitions",
+    "on",
+    "the",
+    "meridian",
+    "staging",
+    "tier"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "web_longtable_0.pdf",
+   "category": "pdf_table_span",
+   "kind": "table row",
+   "query": "quill_ttl_days_0 Rotates stale partitions when the queue depth passes its threshold",
+   "answer": [
+    "quill",
+    "ttl",
+    "days",
+    "0",
+    "354",
+    "rotates",
+    "stale",
+    "partitions",
+    "when",
+    "the",
+    "queue",
+    "depth",
+    "passes",
+    "its",
+    "threshold"
+   ],
+   "page": 2,
+   "page_end": 5,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_longtable_0.pdf",
+   "category": "pdf_table_span",
+   "kind": "table row",
+   "query": "nimbus_replicas_24 Archives access tokens with a jittered exponential backoff",
+   "answer": [
+    "nimbus",
+    "replicas",
+    "24",
+    "4951",
+    "archives",
+    "access",
+    "tokens",
+    "with",
+    "a",
+    "jittered",
+    "exponential",
+    "backoff"
+   ],
+   "page": 2,
+   "page_end": 5,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_longtable_1.pdf",
+   "category": "pdf_table_span",
+   "kind": "paragraph",
+   "query": "never rejects tenant quotas so a failed region",
+   "answer": [
+    "each",
+    "replica",
+    "never",
+    "rejects",
+    "tenant",
+    "quotas",
+    "so",
+    "a",
+    "failed",
+    "region",
+    "drains",
+    "within",
+    "minutes",
+    "in",
+    "the",
+    "juniper",
+    "cluster",
+    "the",
+    "rate",
+    "limiter",
+    "buffers",
+    "outbound",
+    "webhooks",
+    "every",
+    "3890",
+    "requests",
+    "per",
+    "second"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "web_longtable_1.pdf",
+   "category": "pdf_table_span",
+   "kind": "paragraph",
+   "query": "keeps dead letters for 5791 hours and persists",
+   "answer": [
+    "option",
+    "quill",
+    "keeps",
+    "dead",
+    "letters",
+    "for",
+    "5791",
+    "hours",
+    "and",
+    "persists",
+    "the",
+    "rest",
+    "option",
+    "vector",
+    "keeps",
+    "outbound",
+    "webhooks",
+    "for",
+    "35",
+    "megabytes",
+    "and",
+    "rejects",
+    "the",
+    "rest",
+    "the",
+    "query",
+    "router",
+    "never",
+    "deduplicates",
+    "incoming",
+    "events",
+    "without",
+    "holding",
+    "the",
+    "global",
+    "lock"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "web_longtable_1.pdf",
+   "category": "pdf_table_span",
+   "kind": "paragraph",
+   "query": "limiter compacts hourly rollups so that a restart",
+   "answer": [
+    "the",
+    "rate",
+    "limiter",
+    "compacts",
+    "hourly",
+    "rollups",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work",
+    "we",
+    "measured",
+    "7713",
+    "megabytes",
+    "for",
+    "stale",
+    "partitions",
+    "on",
+    "the",
+    "kestrel",
+    "staging",
+    "tier",
+    "in",
+    "the",
+    "harbor",
+    "cluster",
+    "the",
+    "compaction",
+    "job",
+    "rotates",
+    "stale",
+    "partitions",
+    "every",
+    "42",
+    "megabytes"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "split": "heldout"
+  },
+  {
+   "file": "web_longtable_1.pdf",
+   "category": "pdf_table_span",
+   "kind": "table row",
+   "query": "Option basalt 0 $7k / month",
+   "answer": [
+    "option",
+    "basalt",
+    "0",
+    "136",
+    "ms",
+    "7k",
+    "month",
+    "medium"
+   ],
+   "page": 1,
+   "page_end": 4,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_longtable_1.pdf",
+   "category": "pdf_table_span",
+   "kind": "table row",
+   "query": "Option quill 34 $49k / month",
+   "answer": [
+    "option",
+    "quill",
+    "34",
+    "10",
+    "ms",
+    "49k",
+    "month",
+    "low"
+   ],
+   "page": 1,
+   "page_end": 4,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_longtable_2.pdf",
+   "category": "pdf_table_span",
+   "kind": "paragraph",
+   "query": "quill cluster the export pipeline rejects hourly rollups",
+   "answer": [
+    "in",
+    "the",
+    "quill",
+    "cluster",
+    "the",
+    "export",
+    "pipeline",
+    "rejects",
+    "hourly",
+    "rollups",
+    "every",
+    "6614",
+    "percent",
+    "we",
+    "measured",
+    "46",
+    "requests",
+    "per",
+    "second",
+    "for",
+    "stale",
+    "partitions",
+    "on",
+    "the",
+    "tundra",
+    "staging",
+    "tier",
+    "option",
+    "orion",
+    "keeps",
+    "access",
+    "tokens",
+    "for",
+    "32",
+    "hours",
+    "and",
+    "rotates",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_longtable_2.pdf",
+   "category": "pdf_table_span",
+   "kind": "paragraph",
+   "query": "registry archives replication logs after the leader confirms",
+   "answer": [
+    "the",
+    "schema",
+    "registry",
+    "archives",
+    "replication",
+    "logs",
+    "after",
+    "the",
+    "leader",
+    "confirms",
+    "the",
+    "lease",
+    "option",
+    "tundra",
+    "keeps",
+    "stale",
+    "partitions",
+    "for",
+    "5670",
+    "percent",
+    "and",
+    "partitions",
+    "the",
+    "rest",
+    "option",
+    "ember",
+    "keeps",
+    "hourly",
+    "rollups",
+    "for",
+    "704",
+    "requests",
+    "per",
+    "second",
+    "and",
+    "compacts",
+    "the",
+    "rest",
+    "option",
+    "orion",
+    "keeps",
+    "malformed",
+    "payloads",
+    "for",
+    "4015",
+    "megabytes",
+    "and",
+    "persists",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_longtable_2.pdf",
+   "category": "pdf_table_span",
+   "kind": "paragraph",
+   "query": "harbor cluster the schema registry replicates index granules",
+   "answer": [
+    "in",
+    "the",
+    "harbor",
+    "cluster",
+    "the",
+    "schema",
+    "registry",
+    "replicates",
+    "index",
+    "granules",
+    "every",
+    "7581",
+    "minutes",
+    "we",
+    "measured",
+    "1345",
+    "percent",
+    "for",
+    "access",
+    "tokens",
+    "on",
+    "the",
+    "cobalt",
+    "staging",
+    "tier",
+    "in",
+    "the",
+    "ember",
+    "cluster",
+    "the",
+    "backup",
+    "agent",
+    "batches",
+    "expired",
+    "sessions",
+    "every",
+    "75",
+    "seconds"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "web_longtable_2.pdf",
+   "category": "pdf_table_span",
+   "kind": "table row",
+   "query": "quill-0 1326",
+   "answer": [
+    "quill",
+    "0",
+    "7",
+    "1326",
+    "0",
+    "45"
+   ],
+   "page": 2,
+   "page_end": 5,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_longtable_2.pdf",
+   "category": "pdf_table_span",
+   "kind": "table row",
+   "query": "lattice-44 1536",
+   "answer": [
+    "lattice",
+    "44",
+    "57",
+    "1536",
+    "0",
+    "75"
+   ],
+   "page": 2,
+   "page_end": 5,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_twocol_0.pdf",
+   "category": "pdf_two_column",
+   "kind": "paragraph",
+   "query": "keeps malformed payloads for 61 requests per second",
+   "answer": [
+    "option",
+    "tundra",
+    "keeps",
+    "malformed",
+    "payloads",
+    "for",
+    "61",
+    "requests",
+    "per",
+    "second",
+    "and",
+    "streams",
+    "the",
+    "rest",
+    "the",
+    "billing",
+    "aggregator",
+    "partitions",
+    "audit",
+    "records",
+    "after",
+    "the",
+    "leader",
+    "confirms",
+    "the",
+    "lease",
+    "option",
+    "harbor",
+    "keeps",
+    "expired",
+    "sessions",
+    "for",
+    "76",
+    "minutes",
+    "and",
+    "validates",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_twocol_0.pdf",
+   "category": "pdf_two_column",
+   "kind": "paragraph",
+   "query": "writer never throttles malformed payloads under the tenant",
+   "answer": [
+    "the",
+    "audit",
+    "writer",
+    "never",
+    "throttles",
+    "malformed",
+    "payloads",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota",
+    "the",
+    "alert",
+    "evaluator",
+    "never",
+    "compacts",
+    "cold",
+    "segments",
+    "with",
+    "a",
+    "jittered",
+    "exponential",
+    "backoff",
+    "the",
+    "cache",
+    "layer",
+    "never",
+    "rejects",
+    "cold",
+    "segments",
+    "so",
+    "a",
+    "failed",
+    "region",
+    "drains",
+    "within",
+    "minutes"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "web_twocol_0.pdf",
+   "category": "pdf_two_column",
+   "kind": "paragraph",
+   "query": "limiter never archives access tokens in the order",
+   "answer": [
+    "the",
+    "rate",
+    "limiter",
+    "never",
+    "archives",
+    "access",
+    "tokens",
+    "in",
+    "the",
+    "order",
+    "the",
+    "producer",
+    "wrote",
+    "them",
+    "we",
+    "measured",
+    "8859",
+    "minutes",
+    "for",
+    "malformed",
+    "payloads",
+    "on",
+    "the",
+    "orion",
+    "staging",
+    "tier",
+    "option",
+    "lattice",
+    "keeps",
+    "pending",
+    "writes",
+    "for",
+    "3381",
+    "percent",
+    "and",
+    "rotates",
+    "the",
+    "rest"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "web_twocol_1.pdf",
+   "category": "pdf_two_column",
+   "kind": "paragraph",
+   "query": "63 megabytes for pending writes on the orion",
+   "answer": [
+    "we",
+    "measured",
+    "63",
+    "megabytes",
+    "for",
+    "pending",
+    "writes",
+    "on",
+    "the",
+    "orion",
+    "staging",
+    "tier",
+    "the",
+    "feature",
+    "flag",
+    "service",
+    "replicates",
+    "hourly",
+    "rollups",
+    "in",
+    "the",
+    "order",
+    "the",
+    "producer",
+    "wrote",
+    "them"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "web_twocol_1.pdf",
+   "category": "pdf_two_column",
+   "kind": "paragraph",
+   "query": "atlas cluster the backup agent batches tenant quotas",
+   "answer": [
+    "in",
+    "the",
+    "atlas",
+    "cluster",
+    "the",
+    "backup",
+    "agent",
+    "batches",
+    "tenant",
+    "quotas",
+    "every",
+    "58",
+    "seconds"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "web_twocol_1.pdf",
+   "category": "pdf_two_column",
+   "kind": "paragraph",
+   "query": "5991 seconds for index granules on the garnet",
+   "answer": [
+    "we",
+    "measured",
+    "5991",
+    "seconds",
+    "for",
+    "index",
+    "granules",
+    "on",
+    "the",
+    "garnet",
+    "staging",
+    "tier"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "pep518.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "specifies how python software packages should specify what",
+   "answer": [
+    "this",
+    "pep",
+    "specifies",
+    "how",
+    "python",
+    "software",
+    "packages",
+    "should",
+    "specify",
+    "what",
+    "build",
+    "dependencies",
+    "they",
+    "have",
+    "in",
+    "order",
+    "to",
+    "execute",
+    "their",
+    "chosen",
+    "build",
+    "system",
+    "as",
+    "part",
+    "of",
+    "this",
+    "specification",
+    "a",
+    "new",
+    "configuration",
+    "file",
+    "is",
+    "introduced",
+    "for",
+    "software",
+    "packages",
+    "to",
+    "use",
+    "to",
+    "specify",
+    "their",
+    "build",
+    "dependencies",
+    "with",
+    "the",
+    "expectation",
+    "that",
+    "the",
+    "same",
+    "configuration",
+    "file",
+    "will",
+    "be",
+    "used",
+    "for",
+    "future",
+    "configuration",
+    "details"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "pep518.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "more context and motivation for this pep think",
+   "answer": [
+    "to",
+    "provide",
+    "more",
+    "context",
+    "and",
+    "motivation",
+    "for",
+    "this",
+    "pep",
+    "think",
+    "of",
+    "the",
+    "rough",
+    "steps",
+    "required",
+    "to",
+    "produce",
+    "a",
+    "built",
+    "artifact",
+    "for",
+    "a",
+    "project"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "pep518.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "not require the existence of the build system",
+   "answer": [
+    "tools",
+    "should",
+    "not",
+    "require",
+    "the",
+    "existence",
+    "of",
+    "the",
+    "build",
+    "system",
+    "table",
+    "a",
+    "pyproject",
+    "toml",
+    "file",
+    "may",
+    "be",
+    "used",
+    "to",
+    "store",
+    "configuration",
+    "details",
+    "other",
+    "than",
+    "build",
+    "related",
+    "data",
+    "and",
+    "thus",
+    "lack",
+    "a",
+    "build",
+    "system",
+    "table",
+    "legitimately",
+    "if",
+    "the",
+    "file",
+    "exists",
+    "but",
+    "is",
+    "lacking",
+    "the",
+    "build",
+    "system",
+    "table",
+    "then",
+    "the",
+    "default",
+    "values",
+    "as",
+    "specified",
+    "above",
+    "should",
+    "be",
+    "used",
+    "if",
+    "the",
+    "table",
+    "is",
+    "specified",
+    "but",
+    "is",
+    "missing",
+    "required",
+    "fields",
+    "then",
+    "the",
+    "tool",
+    "should",
+    "consider",
+    "it",
+    "an",
+    "error"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "split": "dev"
+  },
+  {
+   "file": "pep621.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "is a historical document the up to date",
+   "answer": [
+    "this",
+    "pep",
+    "is",
+    "a",
+    "historical",
+    "document",
+    "the",
+    "up",
+    "to",
+    "date",
+    "canonical",
+    "spec",
+    "pyproject",
+    "toml",
+    "specification",
+    "is",
+    "maintained",
+    "on",
+    "the",
+    "pypa",
+    "specs",
+    "page"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "pep621.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "does not attempt to standardize all possible metadata",
+   "answer": [
+    "this",
+    "pep",
+    "does",
+    "not",
+    "attempt",
+    "to",
+    "standardize",
+    "all",
+    "possible",
+    "metadata",
+    "required",
+    "by",
+    "a",
+    "build",
+    "back",
+    "end",
+    "only",
+    "the",
+    "metadata",
+    "covered",
+    "by",
+    "the",
+    "core",
+    "metadata",
+    "specification",
+    "which",
+    "are",
+    "very",
+    "common",
+    "across",
+    "projects",
+    "and",
+    "would",
+    "stand",
+    "to",
+    "benefit",
+    "from",
+    "being",
+    "static",
+    "and",
+    "consistently",
+    "specified",
+    "this",
+    "means",
+    "build",
+    "back",
+    "ends",
+    "are",
+    "still",
+    "free",
+    "and",
+    "able",
+    "to",
+    "innovate",
+    "around",
+    "patterns",
+    "like",
+    "how",
+    "to",
+    "specify",
+    "the",
+    "files",
+    "to",
+    "include",
+    "in",
+    "a",
+    "wheel",
+    "there",
+    "is",
+    "also",
+    "an",
+    "included",
+    "escape",
+    "hatch",
+    "for",
+    "users",
+    "and",
+    "build",
+    "back",
+    "ends",
+    "to",
+    "use",
+    "when",
+    "they",
+    "choose",
+    "to",
+    "partially",
+    "opt",
+    "out",
+    "of",
+    "this",
+    "pep",
+    "compared",
+    "to",
+    "opting",
+    "out",
+    "of",
+    "this",
+    "pep",
+    "entirely",
+    "which",
+    "is",
+    "also",
+    "possible"
+   ],
+   "page": 1,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "pep621.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "specify fields defined by this pep in a",
+   "answer": [
+    "tools",
+    "must",
+    "specify",
+    "fields",
+    "defined",
+    "by",
+    "this",
+    "pep",
+    "in",
+    "a",
+    "table",
+    "named",
+    "project",
+    "no",
+    "tools",
+    "may",
+    "add",
+    "fields",
+    "to",
+    "this",
+    "table",
+    "which",
+    "are",
+    "not",
+    "defined",
+    "by",
+    "this",
+    "pep",
+    "or",
+    "subsequent",
+    "peps",
+    "for",
+    "tools",
+    "wishing",
+    "to",
+    "store",
+    "their",
+    "own",
+    "settings",
+    "in",
+    "pyproject",
+    "toml",
+    "they",
+    "may",
+    "use",
+    "the",
+    "tool",
+    "table",
+    "as",
+    "defined",
+    "in",
+    "pep",
+    "518",
+    "the",
+    "lack",
+    "of",
+    "a",
+    "project",
+    "table",
+    "implicitly",
+    "means",
+    "the",
+    "build",
+    "back",
+    "end",
+    "will",
+    "dynamically",
+    "provide",
+    "all",
+    "fields"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "pep668.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "is a historical document the up to date",
+   "answer": [
+    "this",
+    "pep",
+    "is",
+    "a",
+    "historical",
+    "document",
+    "the",
+    "up",
+    "to",
+    "date",
+    "canonical",
+    "spec",
+    "externally",
+    "managed",
+    "environments",
+    "is",
+    "maintained",
+    "on",
+    "the",
+    "pypa",
+    "specs",
+    "page"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "pep668.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "pose a critical problem for the integrity of",
+   "answer": [
+    "this",
+    "may",
+    "pose",
+    "a",
+    "critical",
+    "problem",
+    "for",
+    "the",
+    "integrity",
+    "of",
+    "distros",
+    "which",
+    "often",
+    "have",
+    "package",
+    "management",
+    "tools",
+    "that",
+    "are",
+    "themselves",
+    "written",
+    "in",
+    "python",
+    "for",
+    "example",
+    "it",
+    "s",
+    "possible",
+    "to",
+    "unintentionally",
+    "break",
+    "fedora",
+    "s",
+    "dnf",
+    "command",
+    "with",
+    "a",
+    "pip",
+    "install",
+    "command",
+    "making",
+    "it",
+    "hard",
+    "to",
+    "recover"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "pep668.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "in detail in the next section the first",
+   "answer": [
+    "as",
+    "described",
+    "in",
+    "detail",
+    "in",
+    "the",
+    "next",
+    "section",
+    "the",
+    "first",
+    "behavior",
+    "change",
+    "involves",
+    "creating",
+    "a",
+    "marker",
+    "file",
+    "named",
+    "externally",
+    "managed",
+    "whose",
+    "presence",
+    "indicates",
+    "that",
+    "non",
+    "virtual",
+    "environment",
+    "package",
+    "installations",
+    "are",
+    "managed",
+    "by",
+    "some",
+    "means",
+    "external",
+    "to",
+    "python",
+    "such",
+    "as",
+    "a",
+    "distro",
+    "s",
+    "package",
+    "manager",
+    "this",
+    "file",
+    "is",
+    "specified",
+    "to",
+    "live",
+    "in",
+    "the",
+    "stdlib",
+    "directory",
+    "in",
+    "the",
+    "default",
+    "sysconfig",
+    "scheme",
+    "which",
+    "marks",
+    "the",
+    "interpreter",
+    "installation",
+    "as",
+    "a",
+    "whole",
+    "not",
+    "a",
+    "particular",
+    "location",
+    "on",
+    "sys",
+    "path",
+    "the",
+    "reason",
+    "for",
+    "this",
+    "is",
+    "that",
+    "as",
+    "identified",
+    "above",
+    "there",
+    "are",
+    "two",
+    "related",
+    "problems",
+    "that",
+    "risk",
+    "breaking",
+    "an",
+    "externally",
+    "managed",
+    "python",
+    "you",
+    "can",
+    "install",
+    "an",
+    "incompatible",
+    "new",
+    "version",
+    "of",
+    "a",
+    "package",
+    "system",
+    "wide",
+    "e",
+    "g",
+    "with",
+    "sudo",
+    "pip",
+    "install",
+    "and",
+    "you",
+    "can",
+    "install",
+    "one",
+    "in",
+    "your",
+    "user",
+    "account",
+    "alone",
+    "but",
+    "in",
+    "a",
+    "location",
+    "that",
+    "is",
+    "on",
+    "the",
+    "standard",
+    "python",
+    "command",
+    "s",
+    "sys",
+    "path",
+    "e",
+    "g",
+    "with",
+    "pip",
+    "install",
+    "user",
+    "if",
+    "the",
+    "marker",
+    "file",
+    "were",
+    "in",
+    "the",
+    "system",
+    "wide",
+    "site",
+    "packages",
+    "directory",
+    "it",
+    "would",
+    "not",
+    "clearly",
+    "apply",
+    "to",
+    "the",
+    "second",
+    "case",
+    "the",
+    "alternatives",
+    "section",
+    "has",
+    "further",
+    "discussion",
+    "of",
+    "possible",
+    "locations"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "split": "dev"
+  },
+  {
+   "file": "pep668.pdf",
+   "category": "pdf_public",
+   "kind": "table row",
+   "query": "1 Currently yes; stays yes",
+   "answer": [
+    "1",
+    "unpatched",
+    "cpython",
+    "currently",
+    "yes",
+    "stays",
+    "yes",
+    "currently",
+    "yes",
+    "stays",
+    "yes"
+   ],
+   "page": 4,
+   "page_end": 5,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "pep668.pdf",
+   "category": "pdf_public",
+   "kind": "table row",
+   "query": "6 Currently yes; stays yes",
+   "answer": [
+    "6",
+    "conda",
+    "environment",
+    "currently",
+    "yes",
+    "stays",
+    "yes",
+    "currently",
+    "yes",
+    "stays",
+    "yes"
+   ],
+   "page": 4,
+   "page_end": 5,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "pep723.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "is a historical document the up to date",
+   "answer": [
+    "this",
+    "pep",
+    "is",
+    "a",
+    "historical",
+    "document",
+    "the",
+    "up",
+    "to",
+    "date",
+    "canonical",
+    "spec",
+    "inline",
+    "script",
+    "metadata",
+    "is",
+    "maintained",
+    "on",
+    "the",
+    "pypa",
+    "specs",
+    "page"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "pep723.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "are some of the use cases that this",
+   "answer": [
+    "the",
+    "following",
+    "are",
+    "some",
+    "of",
+    "the",
+    "use",
+    "cases",
+    "that",
+    "this",
+    "pep",
+    "wishes",
+    "to",
+    "support"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "pep723.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "embedded metadata may respect the standard python encoding",
+   "answer": [
+    "tools",
+    "reading",
+    "embedded",
+    "metadata",
+    "may",
+    "respect",
+    "the",
+    "standard",
+    "python",
+    "encoding",
+    "declaration",
+    "if",
+    "they",
+    "choose",
+    "not",
+    "to",
+    "do",
+    "so",
+    "they",
+    "must",
+    "process",
+    "the",
+    "file",
+    "as",
+    "utf",
+    "8"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "split": "heldout"
+  },
+  {
+   "file": "pep735.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "is a historical document the up to date",
+   "answer": [
+    "this",
+    "pep",
+    "is",
+    "a",
+    "historical",
+    "document",
+    "the",
+    "up",
+    "to",
+    "date",
+    "canonical",
+    "spec",
+    "dependency",
+    "groups",
+    "is",
+    "maintained",
+    "on",
+    "the",
+    "pypa",
+    "specs",
+    "page"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "pep735.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "use cases are defined in detail in the",
+   "answer": [
+    "several",
+    "motivating",
+    "use",
+    "cases",
+    "are",
+    "defined",
+    "in",
+    "detail",
+    "in",
+    "the",
+    "use",
+    "cases",
+    "appendix"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "pep735.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "are package metadata they are not guaranteed to",
+   "answer": [
+    "because",
+    "extras",
+    "are",
+    "package",
+    "metadata",
+    "they",
+    "are",
+    "not",
+    "guaranteed",
+    "to",
+    "be",
+    "statically",
+    "defined",
+    "and",
+    "may",
+    "require",
+    "a",
+    "build",
+    "system",
+    "to",
+    "resolve",
+    "furthermore",
+    "definition",
+    "of",
+    "a",
+    "project",
+    "optional",
+    "dependencies",
+    "indicates",
+    "to",
+    "many",
+    "tools",
+    "that",
+    "a",
+    "project",
+    "is",
+    "a",
+    "package",
+    "and",
+    "may",
+    "drive",
+    "tool",
+    "behaviors",
+    "such",
+    "as",
+    "validation",
+    "of",
+    "the",
+    "project",
+    "table"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "pep691.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "is a historical document the up to date",
+   "answer": [
+    "this",
+    "pep",
+    "is",
+    "a",
+    "historical",
+    "document",
+    "the",
+    "up",
+    "to",
+    "date",
+    "canonical",
+    "spec",
+    "simple",
+    "repository",
+    "api",
+    "is",
+    "maintained",
+    "on",
+    "the",
+    "pypa",
+    "specs",
+    "page"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "pep691.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "adhere to pep 629 format major minor which",
+   "answer": [
+    "versioning",
+    "will",
+    "adhere",
+    "to",
+    "pep",
+    "629",
+    "format",
+    "major",
+    "minor",
+    "which",
+    "has",
+    "defined",
+    "the",
+    "existing",
+    "html",
+    "responses",
+    "to",
+    "be",
+    "1",
+    "0",
+    "since",
+    "this",
+    "pep",
+    "does",
+    "not",
+    "introduce",
+    "new",
+    "features",
+    "into",
+    "the",
+    "api",
+    "rather",
+    "it",
+    "describes",
+    "a",
+    "different",
+    "serialization",
+    "format",
+    "for",
+    "the",
+    "existing",
+    "features",
+    "this",
+    "pep",
+    "does",
+    "not",
+    "change",
+    "the",
+    "existing",
+    "1",
+    "0",
+    "version",
+    "and",
+    "instead",
+    "just",
+    "describes",
+    "how",
+    "to",
+    "serialize",
+    "that",
+    "into",
+    "json"
+   ],
+   "page": 2,
+   "page_end": 3,
+   "split": "heldout"
+  },
+  {
+   "file": "pep691.pdf",
+   "category": "pdf_public",
+   "kind": "paragraph",
+   "query": "structure from pep 503 still applies as this",
+   "answer": [
+    "the",
+    "url",
+    "structure",
+    "from",
+    "pep",
+    "503",
+    "still",
+    "applies",
+    "as",
+    "this",
+    "pep",
+    "only",
+    "adds",
+    "an",
+    "additional",
+    "serialization",
+    "format",
+    "for",
+    "the",
+    "already",
+    "existing",
+    "api"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "split": "heldout"
+  },
+  {
+   "file": "office_0.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "keeps audit records for 45 minutes and batches",
+   "answer": [
+    "option",
+    "saffron",
+    "keeps",
+    "audit",
+    "records",
+    "for",
+    "45",
+    "minutes",
+    "and",
+    "batches",
+    "the",
+    "rest",
+    "the",
+    "feature",
+    "flag",
+    "service",
+    "compacts",
+    "malformed",
+    "payloads",
+    "in",
+    "the",
+    "order",
+    "the",
+    "producer",
+    "wrote",
+    "them"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "dev"
+  },
+  {
+   "file": "office_0.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "8243 requests per second for delta snapshots on",
+   "answer": [
+    "we",
+    "measured",
+    "8243",
+    "requests",
+    "per",
+    "second",
+    "for",
+    "delta",
+    "snapshots",
+    "on",
+    "the",
+    "kestrel",
+    "staging",
+    "tier",
+    "the",
+    "backup",
+    "agent",
+    "never",
+    "signs",
+    "delta",
+    "snapshots",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "dev"
+  },
+  {
+   "file": "office_0.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "kestrel cluster the scheduler rotates audit records every",
+   "answer": [
+    "in",
+    "the",
+    "kestrel",
+    "cluster",
+    "the",
+    "scheduler",
+    "rotates",
+    "audit",
+    "records",
+    "every",
+    "1927",
+    "minutes"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "dev"
+  },
+  {
+   "file": "office_0.docx",
+   "category": "docx",
+   "kind": "table row",
+   "query": "garnet-worker-0 rota-1",
+   "answer": [
+    "garnet",
+    "worker",
+    "0",
+    "platform",
+    "rota",
+    "1",
+    "3"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "office_0.docx",
+   "category": "docx",
+   "kind": "table row",
+   "query": "garnet-store-2 rota-9",
+   "answer": [
+    "garnet",
+    "store",
+    "2",
+    "identity",
+    "rota",
+    "9",
+    "1"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "office_export_0.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "keeps audit records for 45 minutes and batches",
+   "answer": [
+    "option",
+    "saffron",
+    "keeps",
+    "audit",
+    "records",
+    "for",
+    "45",
+    "minutes",
+    "and",
+    "batches",
+    "the",
+    "rest",
+    "the",
+    "feature",
+    "flag",
+    "service",
+    "compacts",
+    "malformed",
+    "payloads",
+    "in",
+    "the",
+    "order",
+    "the",
+    "producer",
+    "wrote",
+    "them"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "office_export_0.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "8243 requests per second for delta snapshots on",
+   "answer": [
+    "we",
+    "measured",
+    "8243",
+    "requests",
+    "per",
+    "second",
+    "for",
+    "delta",
+    "snapshots",
+    "on",
+    "the",
+    "kestrel",
+    "staging",
+    "tier",
+    "the",
+    "backup",
+    "agent",
+    "never",
+    "signs",
+    "delta",
+    "snapshots",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "office_export_0.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "kestrel cluster the scheduler rotates audit records every",
+   "answer": [
+    "in",
+    "the",
+    "kestrel",
+    "cluster",
+    "the",
+    "scheduler",
+    "rotates",
+    "audit",
+    "records",
+    "every",
+    "1927",
+    "minutes"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "office_export_0.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "garnet-worker-0 rota-1",
+   "answer": [
+    "garnet",
+    "worker",
+    "0",
+    "platform",
+    "rota",
+    "1",
+    "3"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "office_export_0.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "garnet-store-2 rota-9",
+   "answer": [
+    "garnet",
+    "store",
+    "2",
+    "identity",
+    "rota",
+    "9",
+    "1"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "office_1.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "keeps tenant quotas for 1938 percent and streams",
+   "answer": [
+    "option",
+    "saffron",
+    "keeps",
+    "tenant",
+    "quotas",
+    "for",
+    "1938",
+    "percent",
+    "and",
+    "streams",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "33",
+    "minutes",
+    "for",
+    "malformed",
+    "payloads",
+    "on",
+    "the",
+    "cobalt",
+    "staging",
+    "tier"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "heldout"
+  },
+  {
+   "file": "office_1.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "keeps dead letters for 8202 seconds and archives",
+   "answer": [
+    "option",
+    "vector",
+    "keeps",
+    "dead",
+    "letters",
+    "for",
+    "8202",
+    "seconds",
+    "and",
+    "archives",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "7043",
+    "seconds",
+    "for",
+    "access",
+    "tokens",
+    "on",
+    "the",
+    "tundra",
+    "staging",
+    "tier",
+    "the",
+    "audit",
+    "writer",
+    "streams",
+    "pending",
+    "writes",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "heldout"
+  },
+  {
+   "file": "office_1.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "meridian cluster the feature flag service validates incoming",
+   "answer": [
+    "in",
+    "the",
+    "meridian",
+    "cluster",
+    "the",
+    "feature",
+    "flag",
+    "service",
+    "validates",
+    "incoming",
+    "events",
+    "every",
+    "15",
+    "percent",
+    "in",
+    "the",
+    "quill",
+    "cluster",
+    "the",
+    "cache",
+    "layer",
+    "signs",
+    "delta",
+    "snapshots",
+    "every",
+    "6205",
+    "percent",
+    "option",
+    "garnet",
+    "keeps",
+    "cold",
+    "segments",
+    "for",
+    "5471",
+    "hours",
+    "and",
+    "partitions",
+    "the",
+    "rest"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "heldout"
+  },
+  {
+   "file": "office_1.docx",
+   "category": "docx",
+   "kind": "table row",
+   "query": "tundra_batch_size_0 Rotates delta snapshots so that a restart loses no acknowledged work",
+   "answer": [
+    "tundra",
+    "batch",
+    "size",
+    "0",
+    "4500",
+    "rotates",
+    "delta",
+    "snapshots",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "office_1.docx",
+   "category": "docx",
+   "kind": "table row",
+   "query": "saffron_ttl_days_0 Archives malformed payloads without holding the global lock",
+   "answer": [
+    "saffron",
+    "ttl",
+    "days",
+    "0",
+    "427",
+    "archives",
+    "malformed",
+    "payloads",
+    "without",
+    "holding",
+    "the",
+    "global",
+    "lock"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "office_export_1.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "keeps tenant quotas for 1938 percent and streams",
+   "answer": [
+    "option",
+    "saffron",
+    "keeps",
+    "tenant",
+    "quotas",
+    "for",
+    "1938",
+    "percent",
+    "and",
+    "streams",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "33",
+    "minutes",
+    "for",
+    "malformed",
+    "payloads",
+    "on",
+    "the",
+    "cobalt",
+    "staging",
+    "tier"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "office_export_1.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "keeps dead letters for 8202 seconds and archives",
+   "answer": [
+    "option",
+    "vector",
+    "keeps",
+    "dead",
+    "letters",
+    "for",
+    "8202",
+    "seconds",
+    "and",
+    "archives",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "7043",
+    "seconds",
+    "for",
+    "access",
+    "tokens",
+    "on",
+    "the",
+    "tundra",
+    "staging",
+    "tier",
+    "the",
+    "audit",
+    "writer",
+    "streams",
+    "pending",
+    "writes",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "office_export_1.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "meridian cluster the feature flag service validates incoming",
+   "answer": [
+    "in",
+    "the",
+    "meridian",
+    "cluster",
+    "the",
+    "feature",
+    "flag",
+    "service",
+    "validates",
+    "incoming",
+    "events",
+    "every",
+    "15",
+    "percent",
+    "in",
+    "the",
+    "quill",
+    "cluster",
+    "the",
+    "cache",
+    "layer",
+    "signs",
+    "delta",
+    "snapshots",
+    "every",
+    "6205",
+    "percent",
+    "option",
+    "garnet",
+    "keeps",
+    "cold",
+    "segments",
+    "for",
+    "5471",
+    "hours",
+    "and",
+    "partitions",
+    "the",
+    "rest"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "split": "heldout"
+  },
+  {
+   "file": "office_export_1.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "tundra_batch_size_0 Rotates delta snapshots so that a restart loses no acknowledged work",
+   "answer": [
+    "tundra",
+    "batch",
+    "size",
+    "0",
+    "4500",
+    "rotates",
+    "delta",
+    "snapshots",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work"
+   ],
+   "page": 1,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "office_export_1.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "saffron_ttl_days_0 Archives malformed payloads without holding the global lock",
+   "answer": [
+    "saffron",
+    "ttl",
+    "days",
+    "0",
+    "427",
+    "archives",
+    "malformed",
+    "payloads",
+    "without",
+    "holding",
+    "the",
+    "global",
+    "lock"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "office_2.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "keeps tenant quotas for 7976 minutes and retries",
+   "answer": [
+    "option",
+    "harbor",
+    "keeps",
+    "tenant",
+    "quotas",
+    "for",
+    "7976",
+    "minutes",
+    "and",
+    "retries",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "1823",
+    "megabytes",
+    "for",
+    "tenant",
+    "quotas",
+    "on",
+    "the",
+    "quill",
+    "staging",
+    "tier"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "dev"
+  },
+  {
+   "file": "office_2.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "leader archives malformed payloads when the queue depth",
+   "answer": [
+    "every",
+    "shard",
+    "leader",
+    "archives",
+    "malformed",
+    "payloads",
+    "when",
+    "the",
+    "queue",
+    "depth",
+    "passes",
+    "its",
+    "threshold",
+    "option",
+    "lattice",
+    "keeps",
+    "hourly",
+    "rollups",
+    "for",
+    "3200",
+    "minutes",
+    "and",
+    "validates",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "83",
+    "hours",
+    "for",
+    "incoming",
+    "events",
+    "on",
+    "the",
+    "meridian",
+    "staging",
+    "tier",
+    "the",
+    "cache",
+    "layer",
+    "never",
+    "replicates",
+    "expired",
+    "sessions",
+    "after",
+    "the",
+    "leader",
+    "confirms",
+    "the",
+    "lease"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "dev"
+  },
+  {
+   "file": "office_2.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "indexer never compacts stale partitions unless an operator",
+   "answer": [
+    "the",
+    "search",
+    "indexer",
+    "never",
+    "compacts",
+    "stale",
+    "partitions",
+    "unless",
+    "an",
+    "operator",
+    "pauses",
+    "the",
+    "rollout"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "dev"
+  },
+  {
+   "file": "office_2.docx",
+   "category": "docx",
+   "kind": "table row",
+   "query": "Option meridian 0 $85k / month",
+   "answer": [
+    "option",
+    "meridian",
+    "0",
+    "249",
+    "ms",
+    "85k",
+    "month",
+    "high"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "office_2.docx",
+   "category": "docx",
+   "kind": "table row",
+   "query": "Option juniper 3 $85k / month",
+   "answer": [
+    "option",
+    "juniper",
+    "3",
+    "376",
+    "ms",
+    "85k",
+    "month",
+    "low"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "office_export_2.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "keeps tenant quotas for 7976 minutes and retries",
+   "answer": [
+    "option",
+    "harbor",
+    "keeps",
+    "tenant",
+    "quotas",
+    "for",
+    "7976",
+    "minutes",
+    "and",
+    "retries",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "1823",
+    "megabytes",
+    "for",
+    "tenant",
+    "quotas",
+    "on",
+    "the",
+    "quill",
+    "staging",
+    "tier"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "office_export_2.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "leader archives malformed payloads when the queue depth",
+   "answer": [
+    "every",
+    "shard",
+    "leader",
+    "archives",
+    "malformed",
+    "payloads",
+    "when",
+    "the",
+    "queue",
+    "depth",
+    "passes",
+    "its",
+    "threshold",
+    "option",
+    "lattice",
+    "keeps",
+    "hourly",
+    "rollups",
+    "for",
+    "3200",
+    "minutes",
+    "and",
+    "validates",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "83",
+    "hours",
+    "for",
+    "incoming",
+    "events",
+    "on",
+    "the",
+    "meridian",
+    "staging",
+    "tier",
+    "the",
+    "cache",
+    "layer",
+    "never",
+    "replicates",
+    "expired",
+    "sessions",
+    "after",
+    "the",
+    "leader",
+    "confirms",
+    "the",
+    "lease"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "office_export_2.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "indexer never compacts stale partitions unless an operator",
+   "answer": [
+    "the",
+    "search",
+    "indexer",
+    "never",
+    "compacts",
+    "stale",
+    "partitions",
+    "unless",
+    "an",
+    "operator",
+    "pauses",
+    "the",
+    "rollout"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "office_export_2.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "Option meridian 0 $85k / month",
+   "answer": [
+    "option",
+    "meridian",
+    "0",
+    "249",
+    "ms",
+    "85k",
+    "month",
+    "high"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "office_export_2.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "Option juniper 3 $85k / month",
+   "answer": [
+    "option",
+    "juniper",
+    "3",
+    "376",
+    "ms",
+    "85k",
+    "month",
+    "low"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "office_3.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "job never rejects cold segments unless an operator",
+   "answer": [
+    "the",
+    "compaction",
+    "job",
+    "never",
+    "rejects",
+    "cold",
+    "segments",
+    "unless",
+    "an",
+    "operator",
+    "pauses",
+    "the",
+    "rollout",
+    "the",
+    "billing",
+    "aggregator",
+    "rotates",
+    "expired",
+    "sessions",
+    "once",
+    "every",
+    "replica",
+    "reports",
+    "healthy"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "heldout"
+  },
+  {
+   "file": "office_3.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "basalt cluster the backup agent validates expired sessions",
+   "answer": [
+    "in",
+    "the",
+    "basalt",
+    "cluster",
+    "the",
+    "backup",
+    "agent",
+    "validates",
+    "expired",
+    "sessions",
+    "every",
+    "2",
+    "hours"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "heldout"
+  },
+  {
+   "file": "office_3.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "job never archives delta snapshots under the tenant",
+   "answer": [
+    "the",
+    "compaction",
+    "job",
+    "never",
+    "archives",
+    "delta",
+    "snapshots",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "heldout"
+  },
+  {
+   "file": "office_3.docx",
+   "category": "docx",
+   "kind": "table row",
+   "query": "lattice-store-0 rota-2",
+   "answer": [
+    "lattice",
+    "store",
+    "0",
+    "storage",
+    "rota",
+    "2",
+    "0"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "office_3.docx",
+   "category": "docx",
+   "kind": "table row",
+   "query": "lattice-0 1771",
+   "answer": [
+    "lattice",
+    "0",
+    "56",
+    "1771",
+    "0",
+    "95"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "office_export_3.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "job never rejects cold segments unless an operator",
+   "answer": [
+    "the",
+    "compaction",
+    "job",
+    "never",
+    "rejects",
+    "cold",
+    "segments",
+    "unless",
+    "an",
+    "operator",
+    "pauses",
+    "the",
+    "rollout",
+    "the",
+    "billing",
+    "aggregator",
+    "rotates",
+    "expired",
+    "sessions",
+    "once",
+    "every",
+    "replica",
+    "reports",
+    "healthy"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "office_export_3.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "basalt cluster the backup agent validates expired sessions",
+   "answer": [
+    "in",
+    "the",
+    "basalt",
+    "cluster",
+    "the",
+    "backup",
+    "agent",
+    "validates",
+    "expired",
+    "sessions",
+    "every",
+    "2",
+    "hours"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "office_export_3.pdf",
+   "category": "pdf_export",
+   "kind": "paragraph",
+   "query": "job never archives delta snapshots under the tenant",
+   "answer": [
+    "the",
+    "compaction",
+    "job",
+    "never",
+    "archives",
+    "delta",
+    "snapshots",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "office_export_3.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "lattice-store-0 rota-2",
+   "answer": [
+    "lattice",
+    "store",
+    "0",
+    "storage",
+    "rota",
+    "2",
+    "0"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "office_export_3.pdf",
+   "category": "pdf_export",
+   "kind": "table row",
+   "query": "lattice-0 1771",
+   "answer": [
+    "lattice",
+    "0",
+    "56",
+    "1771",
+    "0",
+    "95"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "office_4.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "keeps hourly rollups for 48 requests per second",
+   "answer": [
+    "option",
+    "vector",
+    "keeps",
+    "hourly",
+    "rollups",
+    "for",
+    "48",
+    "requests",
+    "per",
+    "second",
+    "and",
+    "streams",
+    "the",
+    "rest",
+    "each",
+    "replica",
+    "partitions",
+    "index",
+    "granules",
+    "before",
+    "the",
+    "nightly",
+    "window",
+    "closes"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "dev"
+  },
+  {
+   "file": "office_4.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "never buffers replication logs under the tenant s",
+   "answer": [
+    "the",
+    "scheduler",
+    "never",
+    "buffers",
+    "replication",
+    "logs",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota",
+    "the",
+    "webhook",
+    "relay",
+    "never",
+    "persists",
+    "incoming",
+    "events",
+    "before",
+    "the",
+    "nightly",
+    "window",
+    "closes"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "dev"
+  },
+  {
+   "file": "office_4.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "tundra cluster the cache layer batches expired sessions",
+   "answer": [
+    "in",
+    "the",
+    "tundra",
+    "cluster",
+    "the",
+    "cache",
+    "layer",
+    "batches",
+    "expired",
+    "sessions",
+    "every",
+    "4151",
+    "megabytes",
+    "we",
+    "measured",
+    "5041",
+    "percent",
+    "for",
+    "tenant",
+    "quotas",
+    "on",
+    "the",
+    "saffron",
+    "staging",
+    "tier"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "dev"
+  },
+  {
+   "file": "office_4.docx",
+   "category": "docx",
+   "kind": "table row",
+   "query": "orion-0 2044",
+   "answer": [
+    "orion",
+    "0",
+    "20",
+    "2044",
+    "0",
+    "78"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "office_4.docx",
+   "category": "docx",
+   "kind": "table row",
+   "query": "quill-4 2313",
+   "answer": [
+    "quill",
+    "4",
+    "73",
+    "2313",
+    "0",
+    "18"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "office_5.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "sweeper replicates delta snapshots after the leader confirms",
+   "answer": [
+    "the",
+    "retention",
+    "sweeper",
+    "replicates",
+    "delta",
+    "snapshots",
+    "after",
+    "the",
+    "leader",
+    "confirms",
+    "the",
+    "lease",
+    "the",
+    "scheduler",
+    "never",
+    "retries",
+    "malformed",
+    "payloads",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota",
+    "in",
+    "the",
+    "quill",
+    "cluster",
+    "the",
+    "cache",
+    "layer",
+    "buffers",
+    "tenant",
+    "quotas",
+    "every",
+    "70",
+    "seconds"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "heldout"
+  },
+  {
+   "file": "office_5.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "leader never buffers stale partitions while the previous",
+   "answer": [
+    "every",
+    "shard",
+    "leader",
+    "never",
+    "buffers",
+    "stale",
+    "partitions",
+    "while",
+    "the",
+    "previous",
+    "build",
+    "still",
+    "serves",
+    "reads",
+    "option",
+    "juniper",
+    "keeps",
+    "malformed",
+    "payloads",
+    "for",
+    "80",
+    "requests",
+    "per",
+    "second",
+    "and",
+    "partitions",
+    "the",
+    "rest",
+    "the",
+    "token",
+    "service",
+    "signs",
+    "incoming",
+    "events",
+    "when",
+    "the",
+    "queue",
+    "depth",
+    "passes",
+    "its",
+    "threshold"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "heldout"
+  },
+  {
+   "file": "office_5.docx",
+   "category": "docx",
+   "kind": "paragraph",
+   "query": "service never partitions pending writes without holding the",
+   "answer": [
+    "the",
+    "token",
+    "service",
+    "never",
+    "partitions",
+    "pending",
+    "writes",
+    "without",
+    "holding",
+    "the",
+    "global",
+    "lock",
+    "option",
+    "basalt",
+    "keeps",
+    "stale",
+    "partitions",
+    "for",
+    "39",
+    "minutes",
+    "and",
+    "archives",
+    "the",
+    "rest",
+    "in",
+    "the",
+    "atlas",
+    "cluster",
+    "the",
+    "compaction",
+    "job",
+    "batches",
+    "hourly",
+    "rollups",
+    "every",
+    "23",
+    "hours"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "split": "heldout"
+  },
+  {
+   "file": "office_5.docx",
+   "category": "docx",
+   "kind": "table row",
+   "query": "quill-0 261",
+   "answer": [
+    "quill",
+    "0",
+    "58",
+    "261",
+    "0",
+    "29"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "office_5.docx",
+   "category": "docx",
+   "kind": "table row",
+   "query": "kestrel-0 2323",
+   "answer": [
+    "kestrel",
+    "0",
+    "77",
+    "2323",
+    "0",
+    "17"
+   ],
+   "page": 0,
+   "page_end": 0,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_0.pdf",
+   "category": "pdf_native",
+   "kind": "paragraph",
+   "query": "harbor cluster the scheduler streams hourly rollups every",
+   "answer": [
+    "in",
+    "the",
+    "harbor",
+    "cluster",
+    "the",
+    "scheduler",
+    "streams",
+    "hourly",
+    "rollups",
+    "every",
+    "13",
+    "minutes",
+    "the",
+    "webhook",
+    "relay",
+    "never",
+    "persists",
+    "delta",
+    "snapshots",
+    "with",
+    "a",
+    "jittered",
+    "exponential",
+    "backoff",
+    "we",
+    "measured",
+    "71",
+    "seconds",
+    "for",
+    "audit",
+    "records",
+    "on",
+    "the",
+    "orion",
+    "staging",
+    "tier"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "typeset_0.pdf",
+   "category": "pdf_native",
+   "kind": "paragraph",
+   "query": "evaluator never validates tenant quotas so a failed",
+   "answer": [
+    "the",
+    "alert",
+    "evaluator",
+    "never",
+    "validates",
+    "tenant",
+    "quotas",
+    "so",
+    "a",
+    "failed",
+    "region",
+    "drains",
+    "within",
+    "minutes",
+    "we",
+    "measured",
+    "5",
+    "minutes",
+    "for",
+    "tenant",
+    "quotas",
+    "on",
+    "the",
+    "lattice",
+    "staging",
+    "tier"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "typeset_0.pdf",
+   "category": "pdf_native",
+   "kind": "paragraph",
+   "query": "runner never buffers outbound webhooks so that a",
+   "answer": [
+    "the",
+    "migration",
+    "runner",
+    "never",
+    "buffers",
+    "outbound",
+    "webhooks",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "typeset_0.pdf",
+   "category": "pdf_native",
+   "kind": "table row",
+   "query": "Option atlas 0 $32k / month",
+   "answer": [
+    "option",
+    "atlas",
+    "0",
+    "288",
+    "ms",
+    "32k",
+    "month",
+    "low"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "typeset_0.pdf",
+   "category": "pdf_native",
+   "kind": "table row",
+   "query": "Option ember 3 $58k / month",
+   "answer": [
+    "option",
+    "ember",
+    "3",
+    "361",
+    "ms",
+    "58k",
+    "month",
+    "low"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "typeset_1.pdf",
+   "category": "pdf_native",
+   "kind": "paragraph",
+   "query": "flag service never persists delta snapshots so that",
+   "answer": [
+    "the",
+    "feature",
+    "flag",
+    "service",
+    "never",
+    "persists",
+    "delta",
+    "snapshots",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work",
+    "the",
+    "retention",
+    "sweeper",
+    "persists",
+    "delta",
+    "snapshots",
+    "when",
+    "the",
+    "queue",
+    "depth",
+    "passes",
+    "its",
+    "threshold",
+    "option",
+    "nimbus",
+    "keeps",
+    "dead",
+    "letters",
+    "for",
+    "54",
+    "requests",
+    "per",
+    "second",
+    "and",
+    "retries",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_1.pdf",
+   "category": "pdf_native",
+   "kind": "paragraph",
+   "query": "aggregator buffers incoming events with a jittered exponential",
+   "answer": [
+    "the",
+    "billing",
+    "aggregator",
+    "buffers",
+    "incoming",
+    "events",
+    "with",
+    "a",
+    "jittered",
+    "exponential",
+    "backoff",
+    "in",
+    "the",
+    "ember",
+    "cluster",
+    "the",
+    "compaction",
+    "job",
+    "rotates",
+    "incoming",
+    "events",
+    "every",
+    "47",
+    "requests",
+    "per",
+    "second"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_1.pdf",
+   "category": "pdf_native",
+   "kind": "paragraph",
+   "query": "keeps dead letters for 71 megabytes and replicates",
+   "answer": [
+    "option",
+    "orion",
+    "keeps",
+    "dead",
+    "letters",
+    "for",
+    "71",
+    "megabytes",
+    "and",
+    "replicates",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "2357",
+    "minutes",
+    "for",
+    "audit",
+    "records",
+    "on",
+    "the",
+    "orion",
+    "staging",
+    "tier",
+    "the",
+    "webhook",
+    "relay",
+    "validates",
+    "access",
+    "tokens",
+    "unless",
+    "an",
+    "operator",
+    "pauses",
+    "the",
+    "rollout",
+    "option",
+    "kestrel",
+    "keeps",
+    "expired",
+    "sessions",
+    "for",
+    "3080",
+    "minutes",
+    "and",
+    "replicates",
+    "the",
+    "rest"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_1.pdf",
+   "category": "pdf_native",
+   "kind": "table row",
+   "query": "lattice-worker-0 rota-2",
+   "answer": [
+    "lattice",
+    "worker",
+    "0",
+    "billing",
+    "rota",
+    "2",
+    "0"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_1.pdf",
+   "category": "pdf_native",
+   "kind": "table row",
+   "query": "orion-api-3 rota-5",
+   "answer": [
+    "orion",
+    "api",
+    "3",
+    "search",
+    "rota",
+    "5",
+    "1"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_2.pdf",
+   "category": "pdf_two_column",
+   "kind": "paragraph",
+   "query": "router never buffers cold segments after the leader",
+   "answer": [
+    "the",
+    "query",
+    "router",
+    "never",
+    "buffers",
+    "cold",
+    "segments",
+    "after",
+    "the",
+    "leader",
+    "confirms",
+    "the",
+    "lease",
+    "in",
+    "the",
+    "nimbus",
+    "cluster",
+    "the",
+    "alert",
+    "evaluator",
+    "archives",
+    "pending",
+    "writes",
+    "every",
+    "11",
+    "percent",
+    "in",
+    "the",
+    "nimbus",
+    "cluster",
+    "the",
+    "token",
+    "service",
+    "signs",
+    "tenant",
+    "quotas",
+    "every",
+    "6127",
+    "seconds"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "typeset_2.pdf",
+   "category": "pdf_two_column",
+   "kind": "paragraph",
+   "query": "writer compacts hourly rollups without holding the global",
+   "answer": [
+    "the",
+    "audit",
+    "writer",
+    "compacts",
+    "hourly",
+    "rollups",
+    "without",
+    "holding",
+    "the",
+    "global",
+    "lock",
+    "the",
+    "billing",
+    "aggregator",
+    "archives",
+    "pending",
+    "writes",
+    "before",
+    "the",
+    "nightly",
+    "window",
+    "closes"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "typeset_2.pdf",
+   "category": "pdf_two_column",
+   "kind": "paragraph",
+   "query": "relay never compacts index granules in the order",
+   "answer": [
+    "the",
+    "webhook",
+    "relay",
+    "never",
+    "compacts",
+    "index",
+    "granules",
+    "in",
+    "the",
+    "order",
+    "the",
+    "producer",
+    "wrote",
+    "them"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "typeset_2.pdf",
+   "category": "pdf_two_column",
+   "kind": "table row",
+   "query": "quill_timeout_s_0 Buffers dead letters under the tenant's own quota",
+   "answer": [
+    "quill",
+    "timeout",
+    "s",
+    "0",
+    "1329",
+    "buffers",
+    "dead",
+    "letters",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "typeset_2.pdf",
+   "category": "pdf_two_column",
+   "kind": "table row",
+   "query": "lattice_max_rows_3 Streams incoming events when the queue depth passes its threshold",
+   "answer": [
+    "lattice",
+    "max",
+    "rows",
+    "3",
+    "2157",
+    "streams",
+    "incoming",
+    "events",
+    "when",
+    "the",
+    "queue",
+    "depth",
+    "passes",
+    "its",
+    "threshold"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "typeset_3.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "paragraph",
+   "query": "limiter never throttles access tokens under the tenant",
+   "answer": [
+    "the",
+    "rate",
+    "limiter",
+    "never",
+    "throttles",
+    "access",
+    "tokens",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota",
+    "we",
+    "measured",
+    "13",
+    "seconds",
+    "for",
+    "expired",
+    "sessions",
+    "on",
+    "the",
+    "vector",
+    "staging",
+    "tier"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_3.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "paragraph",
+   "query": "leader never throttles incoming events so that a",
+   "answer": [
+    "every",
+    "shard",
+    "leader",
+    "never",
+    "throttles",
+    "incoming",
+    "events",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work",
+    "option",
+    "lattice",
+    "keeps",
+    "delta",
+    "snapshots",
+    "for",
+    "86",
+    "megabytes",
+    "and",
+    "replicates",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "5353",
+    "minutes",
+    "for",
+    "dead",
+    "letters",
+    "on",
+    "the",
+    "kestrel",
+    "staging",
+    "tier"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_3.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "paragraph",
+   "query": "6125 hours for access tokens on the meridian",
+   "answer": [
+    "we",
+    "measured",
+    "6125",
+    "hours",
+    "for",
+    "access",
+    "tokens",
+    "on",
+    "the",
+    "meridian",
+    "staging",
+    "tier",
+    "we",
+    "measured",
+    "12",
+    "percent",
+    "for",
+    "malformed",
+    "payloads",
+    "on",
+    "the",
+    "vector",
+    "staging",
+    "tier",
+    "in",
+    "the",
+    "quill",
+    "cluster",
+    "the",
+    "ingest",
+    "worker",
+    "buffers",
+    "outbound",
+    "webhooks",
+    "every",
+    "7978",
+    "hours",
+    "the",
+    "migration",
+    "runner",
+    "retries",
+    "outbound",
+    "webhooks",
+    "after",
+    "the",
+    "leader",
+    "confirms",
+    "the",
+    "lease"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_3.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "table row",
+   "query": "ember-proxy-0 rota-1",
+   "answer": [
+    "ember",
+    "proxy",
+    "0",
+    "platform",
+    "rota",
+    "1",
+    "3"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_3.pdf",
+   "category": "pdf_borderless_table",
+   "kind": "table row",
+   "query": "quill-proxy-0 rota-2",
+   "answer": [
+    "quill",
+    "proxy",
+    "0",
+    "identity",
+    "rota",
+    "2",
+    "0"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_longtable.pdf",
+   "category": "pdf_table_span",
+   "kind": "paragraph",
+   "query": "juniper cluster the audit writer signs audit records",
+   "answer": [
+    "in",
+    "the",
+    "juniper",
+    "cluster",
+    "the",
+    "audit",
+    "writer",
+    "signs",
+    "audit",
+    "records",
+    "every",
+    "1071",
+    "requests",
+    "per",
+    "second",
+    "option",
+    "meridian",
+    "keeps",
+    "outbound",
+    "webhooks",
+    "for",
+    "6705",
+    "minutes",
+    "and",
+    "streams",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_longtable.pdf",
+   "category": "pdf_table_span",
+   "kind": "paragraph",
+   "query": "atlas cluster every shard leader validates access tokens",
+   "answer": [
+    "in",
+    "the",
+    "atlas",
+    "cluster",
+    "every",
+    "shard",
+    "leader",
+    "validates",
+    "access",
+    "tokens",
+    "every",
+    "79",
+    "hours"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_longtable.pdf",
+   "category": "pdf_table_span",
+   "kind": "paragraph",
+   "query": "274 percent for stale partitions on the saffron",
+   "answer": [
+    "we",
+    "measured",
+    "274",
+    "percent",
+    "for",
+    "stale",
+    "partitions",
+    "on",
+    "the",
+    "saffron",
+    "staging",
+    "tier",
+    "option",
+    "ember",
+    "keeps",
+    "hourly",
+    "rollups",
+    "for",
+    "47",
+    "minutes",
+    "and",
+    "rotates",
+    "the",
+    "rest",
+    "option",
+    "garnet",
+    "keeps",
+    "tenant",
+    "quotas",
+    "for",
+    "1675",
+    "hours",
+    "and",
+    "partitions",
+    "the",
+    "rest",
+    "the",
+    "scheduler",
+    "never",
+    "signs",
+    "index",
+    "granules",
+    "with",
+    "a",
+    "jittered",
+    "exponential",
+    "backoff"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_longtable.pdf",
+   "category": "pdf_table_span",
+   "kind": "table row",
+   "query": "Option tundra 0 $57k / month",
+   "answer": [
+    "option",
+    "tundra",
+    "0",
+    "180",
+    "ms",
+    "57k",
+    "month",
+    "high"
+   ],
+   "page": 1,
+   "page_end": 3,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "typeset_longtable.pdf",
+   "category": "pdf_table_span",
+   "kind": "table row",
+   "query": "Option orion 35 $50k / month",
+   "answer": [
+    "option",
+    "orion",
+    "35",
+    "181",
+    "ms",
+    "50k",
+    "month",
+    "high"
+   ],
+   "page": 1,
+   "page_end": 3,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "rotated_0.pdf",
+   "category": "pdf_rotated",
+   "kind": "paragraph",
+   "query": "aggregator never rotates stale partitions after the leader",
+   "answer": [
+    "the",
+    "billing",
+    "aggregator",
+    "never",
+    "rotates",
+    "stale",
+    "partitions",
+    "after",
+    "the",
+    "leader",
+    "confirms",
+    "the",
+    "lease",
+    "option",
+    "harbor",
+    "keeps",
+    "incoming",
+    "events",
+    "for",
+    "25",
+    "seconds",
+    "and",
+    "persists",
+    "the",
+    "rest",
+    "in",
+    "the",
+    "lattice",
+    "cluster",
+    "the",
+    "migration",
+    "runner",
+    "partitions",
+    "hourly",
+    "rollups",
+    "every",
+    "6269",
+    "hours"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "rotated_0.pdf",
+   "category": "pdf_rotated",
+   "kind": "paragraph",
+   "query": "tundra cluster the alert evaluator retries outbound webhooks",
+   "answer": [
+    "in",
+    "the",
+    "tundra",
+    "cluster",
+    "the",
+    "alert",
+    "evaluator",
+    "retries",
+    "outbound",
+    "webhooks",
+    "every",
+    "25",
+    "requests",
+    "per",
+    "second",
+    "option",
+    "meridian",
+    "keeps",
+    "access",
+    "tokens",
+    "for",
+    "30",
+    "hours",
+    "and",
+    "signs",
+    "the",
+    "rest",
+    "option",
+    "atlas",
+    "keeps",
+    "outbound",
+    "webhooks",
+    "for",
+    "5985",
+    "hours",
+    "and",
+    "replicates",
+    "the",
+    "rest",
+    "in",
+    "the",
+    "meridian",
+    "cluster",
+    "the",
+    "migration",
+    "runner",
+    "signs",
+    "hourly",
+    "rollups",
+    "every",
+    "1583",
+    "hours"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "rotated_0.pdf",
+   "category": "pdf_rotated",
+   "kind": "paragraph",
+   "query": "quill cluster the alert evaluator validates incoming events",
+   "answer": [
+    "in",
+    "the",
+    "quill",
+    "cluster",
+    "the",
+    "alert",
+    "evaluator",
+    "validates",
+    "incoming",
+    "events",
+    "every",
+    "3604",
+    "hours"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "rotated_0.pdf",
+   "category": "pdf_rotated",
+   "kind": "table row",
+   "query": "kestrel-worker-0 rota-7",
+   "answer": [
+    "kestrel",
+    "worker",
+    "0",
+    "storage",
+    "rota",
+    "7",
+    "0"
+   ],
+   "page": 1,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "rotated_0.pdf",
+   "category": "pdf_rotated",
+   "kind": "table row",
+   "query": "quill-store-3 rota-1",
+   "answer": [
+    "quill",
+    "store",
+    "3",
+    "platform",
+    "rota",
+    "1",
+    "1"
+   ],
+   "page": 1,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "rotated_1.pdf",
+   "category": "pdf_rotated",
+   "kind": "paragraph",
+   "query": "writer never validates expired sessions without holding the",
+   "answer": [
+    "the",
+    "audit",
+    "writer",
+    "never",
+    "validates",
+    "expired",
+    "sessions",
+    "without",
+    "holding",
+    "the",
+    "global",
+    "lock",
+    "the",
+    "alert",
+    "evaluator",
+    "compacts",
+    "replication",
+    "logs",
+    "before",
+    "the",
+    "nightly",
+    "window",
+    "closes",
+    "we",
+    "measured",
+    "33",
+    "hours",
+    "for",
+    "expired",
+    "sessions",
+    "on",
+    "the",
+    "orion",
+    "staging",
+    "tier"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "rotated_1.pdf",
+   "category": "pdf_rotated",
+   "kind": "paragraph",
+   "query": "7675 percent for cold segments on the cobalt",
+   "answer": [
+    "we",
+    "measured",
+    "7675",
+    "percent",
+    "for",
+    "cold",
+    "segments",
+    "on",
+    "the",
+    "cobalt",
+    "staging",
+    "tier"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "rotated_1.pdf",
+   "category": "pdf_rotated",
+   "kind": "paragraph",
+   "query": "atlas cluster the schema registry retries malformed payloads",
+   "answer": [
+    "in",
+    "the",
+    "atlas",
+    "cluster",
+    "the",
+    "schema",
+    "registry",
+    "retries",
+    "malformed",
+    "payloads",
+    "every",
+    "68",
+    "requests",
+    "per",
+    "second",
+    "the",
+    "compaction",
+    "job",
+    "deduplicates",
+    "incoming",
+    "events",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota",
+    "every",
+    "shard",
+    "leader",
+    "streams",
+    "tenant",
+    "quotas",
+    "with",
+    "a",
+    "jittered",
+    "exponential",
+    "backoff"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "rotated_1.pdf",
+   "category": "pdf_rotated",
+   "kind": "table row",
+   "query": "atlas-0 629",
+   "answer": [
+    "atlas",
+    "0",
+    "14",
+    "629",
+    "0",
+    "41"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "rotated_1.pdf",
+   "category": "pdf_rotated",
+   "kind": "table row",
+   "query": "tundra-4 983",
+   "answer": [
+    "tundra",
+    "4",
+    "80",
+    "983",
+    "0",
+    "92"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "deck_0.pptx",
+   "category": "pptx",
+   "kind": "table row",
+   "query": "Option juniper 0 $8k / month",
+   "answer": [
+    "option",
+    "juniper",
+    "0",
+    "273",
+    "ms",
+    "8k",
+    "month",
+    "medium"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "deck_0.pptx",
+   "category": "pptx",
+   "kind": "table row",
+   "query": "Option cobalt 1 $37k / month",
+   "answer": [
+    "option",
+    "cobalt",
+    "1",
+    "224",
+    "ms",
+    "37k",
+    "month",
+    "high"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "deck_export_0.pdf",
+   "category": "pdf_slides",
+   "kind": "table row",
+   "query": "Option juniper 0 $8k / month",
+   "answer": [
+    "option",
+    "juniper",
+    "0",
+    "273",
+    "ms",
+    "8k",
+    "month",
+    "medium"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "deck_export_0.pdf",
+   "category": "pdf_slides",
+   "kind": "table row",
+   "query": "Option cobalt 1 $37k / month",
+   "answer": [
+    "option",
+    "cobalt",
+    "1",
+    "224",
+    "ms",
+    "37k",
+    "month",
+    "high"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "deck_1.pptx",
+   "category": "pptx",
+   "kind": "table row",
+   "query": "Option atlas 0 $71k / month",
+   "answer": [
+    "option",
+    "atlas",
+    "0",
+    "397",
+    "ms",
+    "71k",
+    "month",
+    "medium"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "deck_1.pptx",
+   "category": "pptx",
+   "kind": "table row",
+   "query": "Option orion 2 $15k / month",
+   "answer": [
+    "option",
+    "orion",
+    "2",
+    "257",
+    "ms",
+    "15k",
+    "month",
+    "high"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "deck_export_1.pdf",
+   "category": "pdf_slides",
+   "kind": "table row",
+   "query": "Option atlas 0 $71k / month",
+   "answer": [
+    "option",
+    "atlas",
+    "0",
+    "397",
+    "ms",
+    "71k",
+    "month",
+    "medium"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "deck_export_1.pdf",
+   "category": "pdf_slides",
+   "kind": "table row",
+   "query": "Option orion 2 $15k / month",
+   "answer": [
+    "option",
+    "orion",
+    "2",
+    "257",
+    "ms",
+    "15k",
+    "month",
+    "high"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "deck_2.pptx",
+   "category": "pptx",
+   "kind": "table row",
+   "query": "harbor-0 2316",
+   "answer": [
+    "harbor",
+    "0",
+    "30",
+    "2316",
+    "0",
+    "64"
+   ],
+   "page": 5,
+   "page_end": 5,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "deck_2.pptx",
+   "category": "pptx",
+   "kind": "table row",
+   "query": "kestrel-1 1809",
+   "answer": [
+    "kestrel",
+    "1",
+    "87",
+    "1809",
+    "0",
+    "20"
+   ],
+   "page": 5,
+   "page_end": 5,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "deck_export_2.pdf",
+   "category": "pdf_slides",
+   "kind": "table row",
+   "query": "harbor-0 2316",
+   "answer": [
+    "harbor",
+    "0",
+    "30",
+    "2316",
+    "0",
+    "64"
+   ],
+   "page": 5,
+   "page_end": 5,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "deck_export_2.pdf",
+   "category": "pdf_slides",
+   "kind": "table row",
+   "query": "kestrel-1 1809",
+   "answer": [
+    "kestrel",
+    "1",
+    "87",
+    "1809",
+    "0",
+    "20"
+   ],
+   "page": 5,
+   "page_end": 5,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "deck_3.pptx",
+   "category": "pptx",
+   "kind": "table row",
+   "query": "Option orion 0 $4k / month",
+   "answer": [
+    "option",
+    "orion",
+    "0",
+    "217",
+    "ms",
+    "4k",
+    "month",
+    "medium"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "deck_3.pptx",
+   "category": "pptx",
+   "kind": "table row",
+   "query": "Option meridian 1 $84k / month",
+   "answer": [
+    "option",
+    "meridian",
+    "1",
+    "19",
+    "ms",
+    "84k",
+    "month",
+    "medium"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "deck_4.pptx",
+   "category": "pptx",
+   "kind": "table row",
+   "query": "garnet-0 665",
+   "answer": [
+    "garnet",
+    "0",
+    "10",
+    "665",
+    "0",
+    "52"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "deck_4.pptx",
+   "category": "pptx",
+   "kind": "table row",
+   "query": "harbor-2 626",
+   "answer": [
+    "harbor",
+    "2",
+    "48",
+    "626",
+    "0",
+    "33"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "deck_5.pptx",
+   "category": "pptx",
+   "kind": "table row",
+   "query": "vector-0 1662",
+   "answer": [
+    "vector",
+    "0",
+    "46",
+    "1662",
+    "0",
+    "09"
+   ],
+   "page": 5,
+   "page_end": 5,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "deck_5.pptx",
+   "category": "pptx",
+   "kind": "table row",
+   "query": "kestrel-1 439",
+   "answer": [
+    "kestrel",
+    "1",
+    "48",
+    "439",
+    "0",
+    "34"
+   ],
+   "page": 5,
+   "page_end": 5,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_deck_0.pdf",
+   "category": "pdf_slides",
+   "kind": "table row",
+   "query": "Option vector 0 $73k / month",
+   "answer": [
+    "option",
+    "vector",
+    "0",
+    "339",
+    "ms",
+    "73k",
+    "month",
+    "low"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_deck_0.pdf",
+   "category": "pdf_slides",
+   "kind": "table row",
+   "query": "Option saffron 1 $74k / month",
+   "answer": [
+    "option",
+    "saffron",
+    "1",
+    "40",
+    "ms",
+    "74k",
+    "month",
+    "low"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_deck_1.pdf",
+   "category": "pdf_slides",
+   "kind": "table row",
+   "query": "harbor-0 1663",
+   "answer": [
+    "harbor",
+    "0",
+    "83",
+    "1663",
+    "0",
+    "89"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_deck_1.pdf",
+   "category": "pdf_slides",
+   "kind": "table row",
+   "query": "juniper-2 2237",
+   "answer": [
+    "juniper",
+    "2",
+    "20",
+    "2237",
+    "0",
+    "50"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "web_deck_2.pdf",
+   "category": "pdf_slides",
+   "kind": "table row",
+   "query": "Option harbor 0 $46k / month",
+   "answer": [
+    "option",
+    "harbor",
+    "0",
+    "373",
+    "ms",
+    "46k",
+    "month",
+    "high"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "web_deck_2.pdf",
+   "category": "pdf_slides",
+   "kind": "table row",
+   "query": "Option vector 1 $30k / month",
+   "answer": [
+    "option",
+    "vector",
+    "1",
+    "44",
+    "ms",
+    "30k",
+    "month",
+    "low"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "scan_0.pdf",
+   "category": "pdf_scanned",
+   "kind": "paragraph",
+   "query": "keeps tenant quotas for 1938 percent and streams",
+   "answer": [
+    "option",
+    "saffron",
+    "keeps",
+    "tenant",
+    "quotas",
+    "for",
+    "1938",
+    "percent",
+    "and",
+    "streams",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "33",
+    "minutes",
+    "for",
+    "malformed",
+    "payloads",
+    "on",
+    "the",
+    "cobalt",
+    "staging",
+    "tier"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "scan_0.pdf",
+   "category": "pdf_scanned",
+   "kind": "paragraph",
+   "query": "keeps dead letters for 8202 seconds and archives",
+   "answer": [
+    "option",
+    "vector",
+    "keeps",
+    "dead",
+    "letters",
+    "for",
+    "8202",
+    "seconds",
+    "and",
+    "archives",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "7043",
+    "seconds",
+    "for",
+    "access",
+    "tokens",
+    "on",
+    "the",
+    "tundra",
+    "staging",
+    "tier",
+    "the",
+    "audit",
+    "writer",
+    "streams",
+    "pending",
+    "writes",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "scan_0.pdf",
+   "category": "pdf_scanned",
+   "kind": "paragraph",
+   "query": "meridian cluster the feature flag service validates incoming",
+   "answer": [
+    "in",
+    "the",
+    "meridian",
+    "cluster",
+    "the",
+    "feature",
+    "flag",
+    "service",
+    "validates",
+    "incoming",
+    "events",
+    "every",
+    "15",
+    "percent",
+    "in",
+    "the",
+    "quill",
+    "cluster",
+    "the",
+    "cache",
+    "layer",
+    "signs",
+    "delta",
+    "snapshots",
+    "every",
+    "6205",
+    "percent",
+    "option",
+    "garnet",
+    "keeps",
+    "cold",
+    "segments",
+    "for",
+    "5471",
+    "hours",
+    "and",
+    "partitions",
+    "the",
+    "rest"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "split": "heldout"
+  },
+  {
+   "file": "scan_0.pdf",
+   "category": "pdf_scanned",
+   "kind": "table row",
+   "query": "tundra_batch_size_0 Rotates delta snapshots so that a restart loses no acknowledged work",
+   "answer": [
+    "tundra",
+    "batch",
+    "size",
+    "0",
+    "4500",
+    "rotates",
+    "delta",
+    "snapshots",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work"
+   ],
+   "page": 1,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "scan_0.pdf",
+   "category": "pdf_scanned",
+   "kind": "table row",
+   "query": "saffron_ttl_days_0 Archives malformed payloads without holding the global lock",
+   "answer": [
+    "saffron",
+    "ttl",
+    "days",
+    "0",
+    "427",
+    "archives",
+    "malformed",
+    "payloads",
+    "without",
+    "holding",
+    "the",
+    "global",
+    "lock"
+   ],
+   "page": 3,
+   "page_end": 3,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "scan_1.pdf",
+   "category": "pdf_scanned",
+   "kind": "paragraph",
+   "query": "agent never archives outbound webhooks so that a",
+   "answer": [
+    "the",
+    "backup",
+    "agent",
+    "never",
+    "archives",
+    "outbound",
+    "webhooks",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work",
+    "the",
+    "backup",
+    "agent",
+    "never",
+    "validates",
+    "expired",
+    "sessions",
+    "in",
+    "the",
+    "order",
+    "the",
+    "producer",
+    "wrote",
+    "them",
+    "in",
+    "the",
+    "kestrel",
+    "cluster",
+    "the",
+    "backup",
+    "agent",
+    "persists",
+    "access",
+    "tokens",
+    "every",
+    "87",
+    "percent"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "scan_1.pdf",
+   "category": "pdf_scanned",
+   "kind": "paragraph",
+   "query": "relay never retries tenant quotas under the tenant",
+   "answer": [
+    "the",
+    "webhook",
+    "relay",
+    "never",
+    "retries",
+    "tenant",
+    "quotas",
+    "under",
+    "the",
+    "tenant",
+    "s",
+    "own",
+    "quota",
+    "option",
+    "quill",
+    "keeps",
+    "stale",
+    "partitions",
+    "for",
+    "3880",
+    "requests",
+    "per",
+    "second",
+    "and",
+    "signs",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "dev"
+  },
+  {
+   "file": "scan_1.pdf",
+   "category": "pdf_scanned",
+   "kind": "paragraph",
+   "query": "keeps malformed payloads for 3218 minutes and retries",
+   "answer": [
+    "option",
+    "ember",
+    "keeps",
+    "malformed",
+    "payloads",
+    "for",
+    "3218",
+    "minutes",
+    "and",
+    "retries",
+    "the",
+    "rest"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "dev"
+  },
+  {
+   "file": "scan_1.pdf",
+   "category": "pdf_scanned",
+   "kind": "table row",
+   "query": "atlas-api-0 rota-8",
+   "answer": [
+    "atlas",
+    "api",
+    "0",
+    "identity",
+    "rota",
+    "8",
+    "2"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "scan_1.pdf",
+   "category": "pdf_scanned",
+   "kind": "table row",
+   "query": "saffron-proxy-3 rota-1",
+   "answer": [
+    "saffron",
+    "proxy",
+    "3",
+    "search",
+    "rota",
+    "1",
+    "3"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "scan_2.pdf",
+   "category": "pdf_scanned",
+   "kind": "paragraph",
+   "query": "flag service never persists delta snapshots so that",
+   "answer": [
+    "the",
+    "feature",
+    "flag",
+    "service",
+    "never",
+    "persists",
+    "delta",
+    "snapshots",
+    "so",
+    "that",
+    "a",
+    "restart",
+    "loses",
+    "no",
+    "acknowledged",
+    "work",
+    "the",
+    "retention",
+    "sweeper",
+    "persists",
+    "delta",
+    "snapshots",
+    "when",
+    "the",
+    "queue",
+    "depth",
+    "passes",
+    "its",
+    "threshold",
+    "option",
+    "nimbus",
+    "keeps",
+    "dead",
+    "letters",
+    "for",
+    "54",
+    "requests",
+    "per",
+    "second",
+    "and",
+    "retries",
+    "the",
+    "rest"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "scan_2.pdf",
+   "category": "pdf_scanned",
+   "kind": "paragraph",
+   "query": "aggregator buffers incoming events with a jittered exponential",
+   "answer": [
+    "the",
+    "billing",
+    "aggregator",
+    "buffers",
+    "incoming",
+    "events",
+    "with",
+    "a",
+    "jittered",
+    "exponential",
+    "backoff",
+    "in",
+    "the",
+    "ember",
+    "cluster",
+    "the",
+    "compaction",
+    "job",
+    "rotates",
+    "incoming",
+    "events",
+    "every",
+    "47",
+    "requests",
+    "per",
+    "second"
+   ],
+   "page": 1,
+   "page_end": 1,
+   "split": "heldout"
+  },
+  {
+   "file": "scan_2.pdf",
+   "category": "pdf_scanned",
+   "kind": "paragraph",
+   "query": "keeps dead letters for 71 megabytes and replicates",
+   "answer": [
+    "option",
+    "orion",
+    "keeps",
+    "dead",
+    "letters",
+    "for",
+    "71",
+    "megabytes",
+    "and",
+    "replicates",
+    "the",
+    "rest",
+    "we",
+    "measured",
+    "2357",
+    "minutes",
+    "for",
+    "audit",
+    "records",
+    "on",
+    "the",
+    "orion",
+    "staging",
+    "tier",
+    "the",
+    "webhook",
+    "relay",
+    "validates",
+    "access",
+    "tokens",
+    "unless",
+    "an",
+    "operator",
+    "pauses",
+    "the",
+    "rollout",
+    "option",
+    "kestrel",
+    "keeps",
+    "expired",
+    "sessions",
+    "for",
+    "3080",
+    "minutes",
+    "and",
+    "replicates",
+    "the",
+    "rest"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "split": "heldout"
+  },
+  {
+   "file": "scan_2.pdf",
+   "category": "pdf_scanned",
+   "kind": "table row",
+   "query": "lattice-worker-0 rota-2",
+   "answer": [
+    "lattice",
+    "worker",
+    "0",
+    "billing",
+    "rota",
+    "2",
+    "0"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "scan_2.pdf",
+   "category": "pdf_scanned",
+   "kind": "table row",
+   "query": "orion-api-3 rota-5",
+   "answer": [
+    "orion",
+    "api",
+    "3",
+    "search",
+    "rota",
+    "5",
+    "1"
+   ],
+   "page": 2,
+   "page_end": 2,
+   "within": true,
+   "split": "heldout"
+  },
+  {
+   "file": "scan_3.pdf",
+   "category": "pdf_scanned",
+   "kind": "table row",
+   "query": "harbor-0 1663",
+   "answer": [
+    "harbor",
+    "0",
+    "83",
+    "1663",
+    "0",
+    "89"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "dev"
+  },
+  {
+   "file": "scan_3.pdf",
+   "category": "pdf_scanned",
+   "kind": "table row",
+   "query": "juniper-2 2237",
+   "answer": [
+    "juniper",
+    "2",
+    "20",
+    "2237",
+    "0",
+    "50"
+   ],
+   "page": 4,
+   "page_end": 4,
+   "within": true,
+   "split": "dev"
+  }
+ ],
+ "results": {
+  "text_layer": [
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 3,
+    "cited": 3
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 4
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   }
+  ],
+  "layout_ocr": [
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 3,
+    "cited": 3
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 4,
+    "cited": 4
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 3
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 4,
+    "cited": 4
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 0,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 2,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 3,
+    "cited": 3
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 3
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   }
+  ],
+  "baseline": [
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 4
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 4,
+    "cited": 4
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 2,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 0
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 2,
+    "cited": 2
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   },
+   {
+    "found": 1,
+    "cited": 1
+   }
+  ]
+ },
+ "report": {
+  "docx": {
+   "n": 30,
+   "cited@1": {
+    "text_layer": 0.9333333333333333,
+    "layout_ocr": 0.9333333333333333,
+    "baseline": 0.9333333333333333,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "cited@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "found@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "pdf_borderless_table": {
+   "n": 20,
+   "cited@1": {
+    "text_layer": 0.85,
+    "layout_ocr": 0.7,
+    "baseline": 0.7,
+    "layout_ocr-text_layer": [
+     -0.15,
+     -0.2,
+     -0.05
+    ],
+    "baseline-text_layer": [
+     -0.15,
+     -0.2,
+     -0.05
+    ]
+   },
+   "cited@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 0.9,
+    "baseline": 0.9,
+    "layout_ocr-text_layer": [
+     -0.1,
+     -0.2,
+     0.0
+    ],
+    "baseline-text_layer": [
+     -0.1,
+     -0.2,
+     0.0
+    ]
+   },
+   "found@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "pdf_export": {
+   "n": 50,
+   "cited@1": {
+    "text_layer": 0.88,
+    "layout_ocr": 0.8,
+    "baseline": 0.76,
+    "layout_ocr-text_layer": [
+     -0.08,
+     -0.2,
+     0.04
+    ],
+    "baseline-text_layer": [
+     -0.12,
+     -0.24,
+     0.0
+    ]
+   },
+   "cited@5": {
+    "text_layer": 0.98,
+    "layout_ocr": 0.94,
+    "baseline": 0.9,
+    "layout_ocr-text_layer": [
+     -0.04,
+     -0.1,
+     0.0
+    ],
+    "baseline-text_layer": [
+     -0.08,
+     -0.16,
+     0.0
+    ]
+   },
+   "found@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "pdf_native": {
+   "n": 10,
+   "cited@1": {
+    "text_layer": 0.9,
+    "layout_ocr": 0.9,
+    "baseline": 0.9,
+    "layout_ocr-text_layer": [
+     0.0,
+     -0.2,
+     0.2
+    ],
+    "baseline-text_layer": [
+     0.0,
+     -0.2,
+     0.2
+    ]
+   },
+   "cited@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "found@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "pdf_public": {
+   "n": 20,
+   "cited@1": {
+    "text_layer": 0.9,
+    "layout_ocr": 1.0,
+    "baseline": 0.95,
+    "layout_ocr-text_layer": [
+     0.1,
+     0.0,
+     0.2
+    ],
+    "baseline-text_layer": [
+     0.05,
+     -0.1111111111111111,
+     0.19230769230769232
+    ]
+   },
+   "cited@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "found@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "pdf_rotated": {
+   "n": 10,
+   "cited@1": {
+    "text_layer": 1.0,
+    "layout_ocr": 0.7,
+    "baseline": 0.8,
+    "layout_ocr-text_layer": [
+     -0.3,
+     -0.4,
+     -0.2
+    ],
+    "baseline-text_layer": [
+     -0.2,
+     -0.4,
+     0.0
+    ]
+   },
+   "cited@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 0.8,
+    "baseline": 0.8,
+    "layout_ocr-text_layer": [
+     -0.2,
+     -0.4,
+     0.0
+    ],
+    "baseline-text_layer": [
+     -0.2,
+     -0.4,
+     0.0
+    ]
+   },
+   "found@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "pdf_scanned": {
+   "n": 17,
+   "cited@1": {
+    "text_layer": 0.0,
+    "layout_ocr": 0.8823529411764706,
+    "baseline": 0.9411764705882353,
+    "layout_ocr-text_layer": [
+     0.8823529411764706,
+     0.8,
+     1.0
+    ],
+    "baseline-text_layer": [
+     0.9411764705882353,
+     0.85,
+     1.0
+    ]
+   },
+   "cited@5": {
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "baseline-text_layer": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "found@5": {
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "baseline-text_layer": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   }
+  },
+  "pdf_slides": {
+   "n": 12,
+   "cited@1": {
+    "text_layer": 0.5,
+    "layout_ocr": 0.9166666666666666,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.4166666666666667,
+     -0.08333333333333333,
+     0.8333333333333334
+    ],
+    "baseline-text_layer": [
+     0.5,
+     0.16666666666666666,
+     0.8333333333333334
+    ]
+   },
+   "cited@5": {
+    "text_layer": 0.5,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.5,
+     0.16666666666666666,
+     0.8333333333333334
+    ],
+    "baseline-text_layer": [
+     0.5,
+     0.16666666666666666,
+     0.8333333333333334
+    ]
+   },
+   "found@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "pdf_table_span": {
+   "n": 20,
+   "cited@1": {
+    "text_layer": 0.75,
+    "layout_ocr": 0.6,
+    "baseline": 0.95,
+    "layout_ocr-text_layer": [
+     -0.15,
+     -0.3,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.2,
+     0.05,
+     0.35
+    ]
+   },
+   "cited@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 0.8,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     -0.2,
+     -0.35,
+     -0.05
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "found@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 0.8,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     -0.2,
+     -0.35,
+     -0.05
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "pdf_two_column": {
+   "n": 11,
+   "cited@1": {
+    "text_layer": 0.9090909090909091,
+    "layout_ocr": 0.7272727272727273,
+    "baseline": 0.6363636363636364,
+    "layout_ocr-text_layer": [
+     -0.18181818181818182,
+     -0.3333333333333333,
+     0.0
+    ],
+    "baseline-text_layer": [
+     -0.2727272727272727,
+     -0.4,
+     0.0
+    ]
+   },
+   "cited@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 0.9090909090909091,
+    "baseline": 0.8181818181818182,
+    "layout_ocr-text_layer": [
+     -0.09090909090909091,
+     -0.2,
+     0.0
+    ],
+    "baseline-text_layer": [
+     -0.18181818181818182,
+     -0.4,
+     0.0
+    ]
+   },
+   "found@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 0.9090909090909091,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     -0.09090909090909091,
+     -0.2,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "pptx": {
+   "n": 12,
+   "cited@1": {
+    "text_layer": 0.9166666666666666,
+    "layout_ocr": 0.9166666666666666,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.08333333333333333,
+     0.0,
+     0.25
+    ]
+   },
+   "cited@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "found@5": {
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "baseline-text_layer": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "split:dev": {
+   "n": 108,
+   "cited@1": {
+    "text_layer": 0.8611111111111112,
+    "layout_ocr": 0.8703703703703703,
+    "baseline": 0.8981481481481481,
+    "layout_ocr-text_layer": [
+     0.009259259259259259,
+     -0.09433962264150944,
+     0.13636363636363635
+    ],
+    "baseline-text_layer": [
+     0.037037037037037035,
+     -0.0784313725490196,
+     0.18
+    ]
+   },
+   "cited@5": {
+    "text_layer": 0.9166666666666666,
+    "layout_ocr": 0.9629629629629629,
+    "baseline": 0.9444444444444444,
+    "layout_ocr-text_layer": [
+     0.046296296296296294,
+     -0.043859649122807015,
+     0.17475728155339806
+    ],
+    "baseline-text_layer": [
+     0.027777777777777776,
+     -0.07692307692307693,
+     0.16346153846153846
+    ]
+   },
+   "found@5": {
+    "text_layer": 0.9351851851851852,
+    "layout_ocr": 0.9814814814814815,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.046296296296296294,
+     -0.030927835051546393,
+     0.1651376146788991
+    ],
+    "baseline-text_layer": [
+     0.06481481481481481,
+     0.0,
+     0.17757009345794392
+    ]
+   }
+  },
+  "split:heldout": {
+   "n": 104,
+   "cited@1": {
+    "text_layer": 0.7211538461538461,
+    "layout_ocr": 0.7788461538461539,
+    "baseline": 0.8173076923076923,
+    "layout_ocr-text_layer": [
+     0.057692307692307696,
+     -0.0761904761904762,
+     0.22018348623853212
+    ],
+    "baseline-text_layer": [
+     0.09615384615384616,
+     -0.043859649122807015,
+     0.26
+    ]
+   },
+   "cited@5": {
+    "text_layer": 0.8557692307692307,
+    "layout_ocr": 0.9230769230769231,
+    "baseline": 0.9519230769230769,
+    "layout_ocr-text_layer": [
+     0.0673076923076923,
+     -0.06930693069306931,
+     0.23809523809523808
+    ],
+    "baseline-text_layer": [
+     0.09615384615384616,
+     -0.030303030303030304,
+     0.25925925925925924
+    ]
+   },
+   "found@5": {
+    "text_layer": 0.9038461538461539,
+    "layout_ocr": 0.9711538461538461,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.0673076923076923,
+     -0.05,
+     0.21929824561403508
+    ],
+    "baseline-text_layer": [
+     0.09615384615384616,
+     0.0,
+     0.23809523809523808
+    ]
+   }
+  },
+  "ALL": {
+   "n": 212,
+   "cited@1": {
+    "text_layer": 0.7924528301886793,
+    "layout_ocr": 0.8254716981132075,
+    "baseline": 0.8584905660377359,
+    "layout_ocr-text_layer": [
+     0.0330188679245283,
+     -0.05333333333333334,
+     0.1320754716981132
+    ],
+    "baseline-text_layer": [
+     0.0660377358490566,
+     -0.027777777777777776,
+     0.17117117117117117
+    ]
+   },
+   "cited@5": {
+    "text_layer": 0.8867924528301887,
+    "layout_ocr": 0.9433962264150944,
+    "baseline": 0.9481132075471698,
+    "layout_ocr-text_layer": [
+     0.05660377358490566,
+     -0.028985507246376812,
+     0.16
+    ],
+    "baseline-text_layer": [
+     0.06132075471698113,
+     -0.024271844660194174,
+     0.16346153846153846
+    ]
+   },
+   "found@5": {
+    "text_layer": 0.9198113207547169,
+    "layout_ocr": 0.9764150943396226,
+    "baseline": 1.0,
+    "layout_ocr-text_layer": [
+     0.05660377358490566,
+     -0.01834862385321101,
+     0.14883720930232558
+    ],
+    "baseline-text_layer": [
+     0.08018867924528301,
+     0.009708737864077669,
+     0.16666666666666666
+    ]
+   }
+  }
+ },
+ "decisions": {
+  "text_layer": {
+   "docs": 12,
+   "claims": 66,
+   "kept": 65,
+   "quotes": 124,
+   "in_gold": 124,
+   "errors": 0,
+   "unread": 0,
+   "quote_match": 0.9848484848484849,
+   "in_gold_rate": 1.0
+  },
+  "layout_ocr": {
+   "docs": 12,
+   "claims": 84,
+   "kept": 84,
+   "quotes": 147,
+   "in_gold": 147,
+   "errors": 0,
+   "unread": 0,
+   "quote_match": 1.0,
+   "in_gold_rate": 1.0
+  },
+  "baseline": {
+   "docs": 12,
+   "claims": 62,
+   "kept": 61,
+   "quotes": 104,
+   "in_gold": 101,
+   "errors": 0,
+   "unread": 0,
+   "quote_match": 0.9838709677419355,
+   "in_gold_rate": 0.9711538461538461
+  }
+ }
+}
