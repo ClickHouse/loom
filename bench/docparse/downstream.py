@@ -453,7 +453,7 @@ def run(
         chosen = DECISION_FILES[:decide]
         gold_text = {f"docparse://{f}": words(_gold_text(by_file[f])) for f in chosen}
         out["decisions"] = decisions(
-            org, namespaces, [f"docparse://{f}" for f in chosen], gold_text
+            org, namespaces, [f"docparse://{f}" for f in chosen], gold_text, states
         )
     return out
 
@@ -469,14 +469,21 @@ def _gold_text(g: dict) -> str:
 
 
 def decisions(
-    org: str, namespaces: dict[str, str], uris: list[str], gold_text: dict[str, list[str]]
+    org: str,
+    namespaces: dict[str, str],
+    uris: list[str],
+    gold_text: dict[str, list[str]],
+    states: dict[str, dict[str, str]],
 ) -> dict:
     """Mine each document of each system's namespace in a dry run and count, at
     the point extraction checks a claim's quotes against the parsed text
     (`decision_extract.ground`): the claims proposed, the claims whose quotes
     are in the parsed text, and the quotes found there that are also in the
     gold text (in order, as words). Runs in this process, so it needs the
-    server's settings (`LOOM_CH_*` and a real `LOOM_LLM_PROVIDER`)."""
+    server's settings (`LOOM_CH_*` and a real `LOOM_LLM_PROVIDER`). A
+    document whose ingest this run did not finish (`states`, by system and
+    file) is not mined, and is counted `unread`: an earlier run's revision may
+    still serve it."""
     from server.cli._ch import run_connected
     from server.memory.app import decision_extract as app
     from server.memory.domain import decision_extract as dx
@@ -505,8 +512,12 @@ def decisions(
                 "quotes": 0,
                 "in_gold": 0,
                 "errors": 0,
+                "unread": 0,
             }
             for uri in uris:
+                if states[system].get(uri.removeprefix("docparse://")) not in ("ready", "partial"):
+                    counts[system]["unread"] += 1
+                    continue
                 current[:] = [system, uri]
                 mined = await app.extract_document(org, namespace, uri, dry_run=True)
                 counts[system]["docs"] += 1

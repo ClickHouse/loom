@@ -656,8 +656,11 @@ def test_decision_counts_come_from_where_extraction_grounds_its_quotes(
     monkeypatch.setattr(app, "extract_document", extract_document)
     monkeypatch.setattr(_ch, "run_connected", lambda run: asyncio.run(run(None)))
     gold = {"docparse://a.pdf": S.words("first the queue drains first, then the rest")}
-    out = downstream.decisions("o", {"new": "docparse-new"}, ["docparse://a.pdf"], gold)
+    uris = ["docparse://a.pdf", "docparse://b.pdf"]
+    states = {"new": {"a.pdf": "ready", "b.pdf": "failed"}}  # b.pdf: an earlier run's text
+    out = downstream.decisions("o", {"new": "docparse-new"}, uris, gold, states)
     c = out["new"]
+    assert (c["docs"], c["unread"]) == (1, 1)
     # two candidates of two claims each, one kept; its two quotes, the rejected option's too
     assert (c["claims"], c["kept"], c["quotes"], c["in_gold"]) == (4, 2, 2, 1)
     assert c["quote_match"] == 0.5 and c["in_gold_rate"] == 0.5
@@ -811,7 +814,7 @@ def test_ingest_stops_after_a_poll_and_cancels_only_its_open_jobs(
             sleeps.append(seconds)
             assert len(sleeps) == 1, "the refusal did not stop the poll"
 
-        monkeypatch.setattr(downstream.time, "sleep", sleep)
+        monkeypatch.setattr("time.sleep", sleep)
     for f in ("a.pdf", "b.pdf"):
         (tmp_path / f).write_bytes(b"%PDF")
     loom = _FakeLoom(states={"a.pdf": "ready", "b.pdf": "processing"})
