@@ -441,12 +441,11 @@ jobs:
         working-directory: frontend
         run: npm run test -- --shard=${{ matrix.part }}/${{ strategy.job-total }}
 
-  # A part holds whole spec files per project. One worker per runner keeps the
-  # CPU budgets in perf-budget and route-budget measured on an otherwise idle machine.
+  # A part holds whole spec files per project.
   frontend-e2e:
     name: frontend playwright part ${{ matrix.part }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
