@@ -418,6 +418,7 @@ async def test_memory_ask_names_a_tracker_it_could_not_read(wired, monkeypatch) 
     assert key == f"key:{DESK}"
 
 
+@pytest.mark.asyncio
 async def test_set_source_reads_its_own_stored_links_fail_closed(monkeypatch) -> None:
     """The repository's own stored links, read for its org, decide which trackers need
     their admin: an unread row refuses the write; a link stored under the same

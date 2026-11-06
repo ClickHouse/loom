@@ -625,9 +625,7 @@ async def handle_code_repo_set_source(input: Any) -> Any:
         await CodeRepo().get_state(input.org, input.namespace, binding.OVERRIDE_KEY)
     )
     wanted = binding.parse_binding(input.tracker_namespaces)
-    # Linking decides who reads a tracker, so a link this call stores needs the tracker's
-    # admin unless a maintainer link already holds it: one only the operator map holds
-    # would outlive the map's later change.
+    # A link this call stores needs the tracker's admin; one only the operator map holds is new.
     targets = [await _tracker_or_refuse(input.org, qa, new=qa not in stored) for qa in wanted]
     # A record reads only the repositories it names (`splitByChar('#', source_id)[1] IN
     # repos`), so a link to one that does not name this repository answers nothing — said, not
