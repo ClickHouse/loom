@@ -33,21 +33,29 @@ def key(s: str) -> str:
 
 
 NUMBERING = re.compile(r"^\s*(?:\d{1,2}(?:\.\d{1,2})*\.?|[a-z][.)])\s+", re.I)
-# a list item's enumerator ("1.", "2)", "a."), which the gold's items leave out;
-# not a number of the item's own text ("3.11 adds ...")
+# a line's enumerator ("1.", "2)", "a."), which a list item's gold leaves out
+# and a parse may keep on an item or a heading; not a number of the text's own
+# ("3.11 adds ...")
 ENUMERATOR = re.compile(r"^\s*(?:\d{1,3}|[a-z])[.)]\s+", re.I)
+
+
+def text_words(text: str) -> list[str]:
+    """`text`'s words, each line's enumerator left out: on the gold's side and
+    the parse's alike, so a list or a numbered heading counts the same however
+    it is written."""
+    return [w for line in text.split("\n") for w in words(ENUMERATOR.sub("", line, count=1))]
 
 
 def unnumbered(s: str) -> str:
     """`s` without a leading section or item number, which some parsers keep
-    apart from the text (a list enumerator) and some drop."""
+    and some drop."""
     return NUMBERING.sub("", s, count=1)
 
 
 def gold_words(g: dict) -> Counter:
     c: Counter = Counter()
     for b in g["blocks"]:
-        c.update(words(b["text"]))
+        c.update(text_words(b["text"]))
     for t in g["tables"]:
         for r in t["rows"]:
             for cell in r:
@@ -83,15 +91,12 @@ def text_scores(g: dict, p: dict) -> dict:
 
 
 def _stream(p: dict) -> list[str]:
-    """The words of the parse's blocks in order, a table block's left to its
-    table and a list item's enumerator left out, as the gold holds its items."""
+    """The words of the parse's blocks in order (`text_words`), a table
+    block's left to its table."""
     out: list[str] = []
     for b in p.get("blocks", []):
-        if b["type"] == "list":
-            for line in b["text"].split("\n"):
-                out.extend(words(ENUMERATOR.sub("", line, count=1)))
-        elif b["type"] != "table":
-            out.extend(words(b["text"]))
+        if b["type"] != "table":
+            out.extend(text_words(b["text"]))
     return out
 
 
@@ -106,7 +111,7 @@ def order_score(g: dict, p: dict) -> float | None:
     """The share of consecutive gold text units of five words or more
     (paragraphs, items, headings, code) that the parse holds in the same order."""
     units = [
-        words(b["text"])
+        text_words(b["text"])
         for b in g["blocks"]
         if b["kind"] in ("paragraph", "item", "heading", "code")
     ]
@@ -282,7 +287,7 @@ def per_page_loss(g: dict, p: dict) -> bool:
     pages: dict[int, Counter] = defaultdict(Counter)
     for b in g["blocks"]:
         if b.get("page"):
-            pages[b["page"]].update(words(b["text"]))
+            pages[b["page"]].update(text_words(b["text"]))
     for c in pages.values():
         tot = sum(c.values())
         if tot >= 8 and sum((c & ow).values()) / tot < 0.5:

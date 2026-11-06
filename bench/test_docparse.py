@@ -138,7 +138,8 @@ def test_a_list_items_number_is_no_extra_word() -> None:
         "blocks": [{**block, "text": "1. Alpha beta"}, {**block, "text": "2. Gamma"}],
         "tables": [],
     }
-    for p in (one, each):
+    para = {"blocks": [{**block, "type": "paragraph", "text": "1. Alpha beta\n2. Gamma"}]}
+    for p in (one, each, {**para, "tables": []}):
         assert S.text_scores(g, p) == {"text_recall": 1.0, "text_precision": 1.0}
     # an item that starts with a number of its own keeps it, however the parse writes it
     g = {"blocks": [{"kind": "item", "text": "3.11 adds the flag", "page": 1}], "tables": []}
@@ -148,6 +149,11 @@ def test_a_list_items_number_is_no_extra_word() -> None:
         ("list", "- 3.11 adds the flag"),
         ("paragraph", "3.11 adds the flag"),
     ]:
+        p = {"blocks": [{**block, "type": kind, "text": text}], "tables": []}
+        assert S.text_scores(g, p) == {"text_recall": 1.0, "text_precision": 1.0}, text
+    # a numbered heading, written as a heading without its number or as a paragraph with it
+    g = {"blocks": [{"kind": "heading", "level": 1, "text": "2. Goals", "page": 1}], "tables": []}
+    for kind, text in [("heading", "Goals"), ("paragraph", "2. Goals"), ("heading", "2. Goals")]:
         p = {"blocks": [{**block, "type": kind, "text": text}], "tables": []}
         assert S.text_scores(g, p) == {"text_recall": 1.0, "text_precision": 1.0}, text
 

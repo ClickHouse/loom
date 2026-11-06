@@ -13,7 +13,8 @@ files and all PDFs, each metric's mean for every parse given and the paired
 difference of each from the first with a 95% bootstrap interval:
 
 - text recall and precision: the gold text's words found in the parse, and the
-  parse's words found in the gold (word multisets; a table counted as its cells);
+  parse's words found in the gold (word multisets; a table counted as its cells,
+  and a line's enumerator, "1." or "a)", left out on both sides);
 - reading order: the share of consecutive gold text units (paragraphs, items,
   headings, code; five words or more) held in order;
 - heading F1 and level accuracy (levels compared by rank, numbering aside);
