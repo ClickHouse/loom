@@ -274,8 +274,7 @@ async def _settle(
     try:
         raced = await _erasures_since(held.org, held.namespace, since)
         if not raced:
-            # Left to the sweep: a delete with no age bound could take a racing writer's
-            # only row.
+            # No erasure raced the switch: it stands.
             return True
         # Taken back at once only for an erasure that certainly deletes the namespace's
         # originals; any other is waited for and decided by the moved object.

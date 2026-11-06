@@ -56,8 +56,8 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
     assert result.bytes == 20
     (error,) = result.errors
     assert error.startswith(f"acme/docs/{page[2].sha}: ") and "do not hash" in error
-    # One read for the namespace, one after the switch an erasure raced, and one after the
-    # original that was not switched (an erasure may be what took it).
+    # One read for the namespace, one after the switch that could not be confirmed, and
+    # one after the original that was not switched (an erasure may be what took it).
     assert len(fences) == 3
     (unconfirmed,) = result.unconfirmed
     assert unconfirmed.startswith(f"acme/docs/{page[3].sha}: switched")
