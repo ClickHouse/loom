@@ -727,8 +727,9 @@ async def _bulk_build_rows(
                 _BulkSetResult(memory_key=entry.memory_key, version=0, conflict_verdict=verdict)
             )
             log.warning(
-                "bulk_set dropped blacklisted entry key=%r pattern=%s scope=%s",
+                "bulk_set dropped entry key=%r verdict=%s pattern=%s scope=%s",
                 entry.memory_key,
+                verdict,
                 bl_hit.pattern_id,
                 bl_hit.scope,
             )

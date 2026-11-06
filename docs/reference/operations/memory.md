@@ -360,7 +360,7 @@ Insert many memory entries in one batched CH insert.
 | `written` | `list[_BulkSetResult]` | One result per entry, in order: key, version (0 when not inserted) and verdict. |
 | `skipped_pinned` | `list[str]` | Keys whose live row is pinned: skipped (result version=0) rather than overwritten, since overwriting would also unpin (entries default pinned=False). |
 | `skipped_locked` | `list[str]` | Keys whose live row is locked read_only: skipped (result version=0), where memory.set would answer 423 LOCKED. |
-| `skipped_blacklisted` | `list[str]` | Keys whose entry the blacklist refused: not written (result version=0), where memory.set would answer 422 BLACKLISTED. |
+| `skipped_blacklisted` | `list[str]` | Keys whose entry the blacklist refused or could not check in the request's budget: not written (result version=0), where memory.set would answer 422 BLACKLISTED. |
 | `merged` | `list[str]` | Conflict verdicts, the same four memory.set produces: canonical restatement of an existing row → not inserted, existing row reinforced; close to a pinned peer → not inserted; same fact in other words → inserted as status=duplicate… |
 | `value_updates_linked` | `int` | Older rows marked superseded by a value update in this batch. |
 | `rejected_pinned` | `list[str]` | Keys not inserted because they are too close to a pinned row. |
@@ -2147,7 +2147,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `written` | `list[_BulkSetResult]` | Key and version of each extracted fact written; empty on a deferred call. |
-| `refused` | `list[_RefusedFact]` | The extracted facts the write refused (a blacklisted, pinned or locked key, or a pinned row close by), with the verdict; not in `written` or the counts. |
+| `refused` | `list[_RefusedFact]` | The extracted facts the write refused (a blacklisted or unchecked value, a pinned or locked key, or a pinned row close by), with the verdict; not in `written` or the counts. |
 | `tokens_in` | `int` | Prompt tokens of the extraction LLM calls. |
 | `tokens_out` | `int` | Completion tokens of the extraction LLM calls. |
 | `llm_provider` | `str` | The LLM provider that ran the extraction; '' when deferred. |

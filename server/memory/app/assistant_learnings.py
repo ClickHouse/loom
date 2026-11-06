@@ -156,7 +156,8 @@ async def _blacklisted(state: WorkflowState, key: str, text: str, outcome: str) 
         return False
     await blacklist_guard.note_hit(hit.pattern_id)
     log.warning(
-        "learnings queue: blacklisted text, %s key=%r pattern=%s scope=%s",
+        "learnings queue: %s text, %s key=%r pattern=%s scope=%s",
+        "blacklisted" if hit.pattern_id else "unchecked (over the request's budget)",
         outcome,
         key,
         hit.pattern_id,

@@ -225,7 +225,8 @@ class MemorySetFromMessagesInput(_Identity):
 class _RefusedFact(BaseModel):
     # The key of an extracted fact the write refused.
     memory_key: str
-    # Why: blacklisted | pinned | locked | rejected (close to a pinned row).
+    # Why: blacklisted | blacklist_unchecked (too long to check in this request's
+    # budget; retry in a smaller one) | pinned | locked | rejected (close to a pinned row).
     verdict: str
 
 
@@ -236,8 +237,8 @@ class MemorySetFromMessagesOutput(BaseModel):
 
     # Key and version of each extracted fact written; empty on a deferred call.
     written: list[_BulkSetResult] = Field(default_factory=list)
-    # The extracted facts the write refused (a blacklisted, pinned or locked key, or a
-    # pinned row close by), with the verdict; not in `written` or the counts.
+    # The extracted facts the write refused (a blacklisted or unchecked value, a pinned or
+    # locked key, or a pinned row close by), with the verdict; not in `written` or the counts.
     refused: list[_RefusedFact] = Field(default_factory=list)
     # Prompt tokens of the extraction LLM calls.
     tokens_in: int = 0
@@ -388,8 +389,9 @@ class MemoryBulkSetOutput(BaseModel):
     # Keys whose live row is locked read_only: skipped (result version=0), where memory.set
     # would answer 423 LOCKED. Unlocking is the owner's act (memory.unlock).
     skipped_locked: list[str] = Field(default_factory=list)
-    # Keys whose entry the blacklist refused: not written (result version=0), where
-    # memory.set would answer 422 BLACKLISTED.
+    # Keys whose entry the blacklist refused or could not check in the request's budget:
+    # not written (result version=0), where memory.set would answer 422 BLACKLISTED. The
+    # result's conflict_verdict tells them apart: blacklist_unchecked may be retried.
     skipped_blacklisted: list[str] = Field(default_factory=list)
     # Conflict verdicts, the same four memory.set produces:
     # canonical restatement of an existing row → not inserted, existing row
