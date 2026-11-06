@@ -117,7 +117,6 @@ def test_a_module_that_is_not_a_test_file_is_never_ignored(tmp_path: Path) -> No
 
 def test_a_bad_shard_spec_is_a_usage_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOOM_TEST_SHARD", "5/4")
-    monkeypatch.setattr(_shards, "_split", None)
     with pytest.raises(pytest.UsageError, match="LOOM_TEST_SHARD"):
         _shards.ignored(Path("tests/unit/test_x.py"), None)  # type: ignore[arg-type]
 
@@ -189,4 +188,3 @@ def test_a_directory_argument_skips_the_other_parts_files_before_collecting_them
     whole = _collect("tests/analyzer", shard=None)
     parts = [_collect("tests/analyzer", shard=f"{k}/2", deselect_free=True) for k in (1, 2)]
     assert sorted(parts[0] + parts[1]) == sorted(whole)
-    assert sorted(len(p) for p in parts) == [0, len(whole)]

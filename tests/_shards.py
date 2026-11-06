@@ -85,11 +85,12 @@ def test_files(paths: list[Path]) -> list[Path]:
 
 
 class Split:
-    """The files of the requested part, worked out once per session."""
+    """The files of the requested part, worked out once per session (`requested`)."""
 
     def __init__(self, k: int, n: int, args: list[Path]) -> None:
         files = test_files(args)
         sources = {_name(f): f.read_text(encoding="utf-8", errors="replace") for f in files}
+        # Without the weights file every file weighs its count of test functions.
         recorded = json.loads(WEIGHTS.read_text()) if WEIGHTS.exists() else {}
         part = assign(weigh(sources, recorded), n)
         self.walked = set(part)
@@ -106,22 +107,22 @@ class Split:
         return name in self.kept
 
 
-_split: Split | None = None
+_SPLIT = pytest.StashKey[Split]()
 
 
 def requested(config: pytest.Config) -> Split | None:
-    """The split LOOM_TEST_SHARD asks for, built once per process; None without one."""
-    global _split
+    """The split LOOM_TEST_SHARD asks for, built once per session; None without one."""
     spec = os.environ.get("LOOM_TEST_SHARD", "")
     if not spec:
         return None
-    if _split is None:
-        try:
-            k, n = parse(spec)
-        except ValueError as e:
-            raise pytest.UsageError(str(e)) from e
-        _split = Split(k, n, [Path(a.split("::", 1)[0]).resolve() for a in config.args])
-    return _split
+    try:
+        k, n = parse(spec)
+    except ValueError as e:
+        raise pytest.UsageError(str(e)) from e
+    if _SPLIT not in config.stash:
+        args = [Path(a.split("::", 1)[0]).resolve() for a in config.args]
+        config.stash[_SPLIT] = Split(k, n, args)
+    return config.stash[_SPLIT]
 
 
 def ignored(path: Path, config: pytest.Config) -> bool | None:

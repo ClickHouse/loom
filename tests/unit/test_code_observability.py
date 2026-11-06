@@ -197,6 +197,7 @@ def test_a_trace_task_of_another_loop_is_dropped_when_the_next_is_scheduled(
             async def insert(table: str, rows: list[Any], **_: Any) -> None:
                 return None
 
+    monkeypatch.setattr(cc, "_TRACE_TASKS", set())
     other = asyncio.new_event_loop()
     stale = other.create_task(asyncio.sleep(0))
     cc._TRACE_TASKS.add(stale)

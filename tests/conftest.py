@@ -1,4 +1,5 @@
-"""Fixtures shared by the integration and analyzer suites.
+"""Fixtures shared by the integration and analyzer suites, and the
+LOOM_TEST_SHARD split every suite runs under (`_shards`).
 
 They need a control plane at $LOOM_BASE_URL (tests that ask for it skip
 without one), its ClickHouse at $LOOM_CH_* (default localhost:8123), and the

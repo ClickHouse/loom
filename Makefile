@@ -148,7 +148,8 @@ test-integration:
 test-mixed-version:
 	$(PYTHON) scripts/gates/mixed_version.py $(if $(BASE),--base $(BASE),) $(if $(REQUIRE),--require,)
 
-# Unit suite + coverage (mirrors the CI `unit` job). Fails under the floor.
+# Unit suite + coverage, as the CI `unit` parts and `unit-coverage` measure it
+# together. Fails under the floor.
 test-unit-cov:
 	$(PYTHON) -m pytest tests/unit -q -n auto \
 		--cov=server --cov=sdk/python/loom \
