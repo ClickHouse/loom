@@ -175,7 +175,8 @@ async def move_to_bucket(held: blobs.Held, *, ch: Any = None) -> bool:
     # This move's own start: an erasure that finished before it cannot race its copy, and
     # one still running then, or finished within the margin, is caught after the copy.
     since = await blobs.ch_now_s(ch=ch)
-    # Before any read: a key too long for the bucket walk's cursor refuses the move.
+    # Before any read: a key too long for the bucket walk's cursor refuses the move (the
+    # walk refuses such a namespace whole; this guards a direct call).
     loc = objects.new_location(held.org, held.namespace, held.sha)
     data = await blobs.read(
         held.org, held.namespace, held.sha, stored=blobs.Stored(held.size, ""), ch=ch
@@ -194,29 +195,23 @@ async def move_to_bucket(held: blobs.Held, *, ch: Any = None) -> bool:
     try:
         back = await objects.read(loc)
     except objects.ObjectStoreError:
-        try:
-            await objects.delete(loc.bucket, [loc.key])  # no row names it yet
-        except objects.ObjectStoreError as e:
-            log.warning("originals: %s left to the bucket walk: %s", loc.uri(), e)
+        await _drop(loc)  # no row names it yet
         raise
     if back is not None and hashlib.sha256(back).hexdigest() != held.sha:
-        await objects.delete(loc.bucket, [loc.key])
+        await _drop(loc)
         raise CorruptOriginal("bytes read back from the bucket do not hash to its sha256")
     # The latest row read again just before the switch: an erasure or a re-upload
     # since the walk keeps what it left.
     with sequential_reads():
         now = await blobs.locate(held.org, held.namespace, held.sha, ch=ch)
     if now is None or now.location:
-        await objects.delete(loc.bucket, [loc.key])  # no row names it, nor will
+        await _drop(loc)  # no row names it, nor will
         return False
     overtaken = await _erasures_since(held.org, held.namespace, since)
     if overtaken or back is None:
         # No row names the object yet. The original is the erasure's: gone, or kept,
         # and then still held here.
-        try:
-            await objects.delete(loc.bucket, [loc.key])
-        except objects.ObjectStoreError as e:
-            log.warning("originals: %s left to the bucket walk: %s", loc.uri(), e)
+        await _drop(loc)
         with sequential_reads():
             after = await blobs.locate(held.org, held.namespace, held.sha, ch=ch)
         if after is None or after.location:
@@ -232,7 +227,7 @@ async def move_to_bucket(held: blobs.Held, *, ch: Any = None) -> bool:
             operation="read",
         )
     if time.monotonic() - started > DOCUMENT_UPLOAD_BUDGET_S:
-        await objects.delete(loc.bucket, [loc.key])
+        await _drop(loc)
         raise objects.ObjectStoreError(
             f"object store write took longer than {DOCUMENT_UPLOAD_BUDGET_S} s before its row",
             operation="write",
@@ -246,6 +241,15 @@ async def move_to_bucket(held: blobs.Held, *, ch: Any = None) -> bool:
             moved=False,
         ) from e
     return await _settle(held, since, loc, ch)
+
+
+async def _drop(loc: objects.Location) -> None:
+    """Delete an object of the move's own that no row names; when the bucket refuses, the
+    bucket walk takes it once it is old enough, and the move's outcome stands."""
+    try:
+        await objects.delete(loc.bucket, [loc.key])
+    except objects.ObjectStoreError as e:
+        log.warning("originals: %s left to the bucket walk: %s", loc.uri(), e)
 
 
 async def _settle(held: blobs.Held, since: int, loc: objects.Location, ch: Any) -> bool:
@@ -278,7 +282,7 @@ async def _settle(held: blobs.Held, since: int, loc: objects.Location, ch: Any) 
             # It took the row but not the object: a replica without the bucket set that
             # read the scope's rows before this one landed deletes rows only. The object
             # holds bytes nothing names, and goes now.
-            await objects.delete(loc.bucket, [loc.key])
+            await _drop(loc)
             return False
     except SwitchUnconfirmed:
         raise
@@ -404,7 +408,6 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
         CorruptOriginal,
         ErasureOpen,
         objects.ObjectStoreError,
-        ValidationError,  # its object key would be too long (objects.MAX_KEY)
     ) as e:
         log.warning("originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e)
         out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")

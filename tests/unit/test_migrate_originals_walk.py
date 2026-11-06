@@ -9,7 +9,6 @@ from typing import Any
 
 import pytest
 
-from server.core.errors import ValidationError
 from server.knowledge.app import originals
 from server.knowledge.store import blobs
 
@@ -30,7 +29,7 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
 
     outcomes: dict[str, Any] = {
         page[1].sha: True,
-        page[2].sha: ValidationError("the org and namespace names are too long for an object key"),
+        page[2].sha: originals.CorruptOriginal("bytes in ClickHouse do not hash to its sha256"),
         page[3].sha: originals.SwitchUnconfirmed("switched to s3://b/k, but the check failed"),
         page[4].sha: False,
     }
@@ -55,7 +54,7 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
     assert (result.unneeded, result.moved, result.skipped) == (1, 2, 1)
     assert result.bytes == 20
     (error,) = result.errors
-    assert error.startswith(f"acme/docs/{page[2].sha}: ") and "too long" in error
+    assert error.startswith(f"acme/docs/{page[2].sha}: ") and "do not hash" in error
     # One read for the namespace, one after the switch an erasure raced, and one after the
     # original that was not switched (an erasure may be what took it).
     assert len(fences) == 3
@@ -164,3 +163,49 @@ async def test_a_namespace_whose_keys_would_be_too_long_is_refused_before_any_re
     result = await originals.migrate_originals(org="acme", namespace="n" * 600)
     (line,) = result.refused
     assert line.startswith(f"acme/{'n' * 600}: ") and "too long" in line
+
+
+@pytest.mark.asyncio
+async def test_a_refused_cleanup_delete_leaves_the_object_to_the_bucket_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+    from contextlib import asynccontextmanager
+
+    from server.core import object_store as objects
+
+    data = b"replaced meanwhile"
+    held = blobs.Held("acme", "docs", hashlib.sha256(data).hexdigest(), len(data))
+
+    async def ch_now_s(*, ch: Any = None) -> int:
+        return 0
+
+    async def read(*a: Any, **kw: Any) -> bytes:
+        return data
+
+    @asynccontextmanager
+    async def transfer() -> Any:
+        yield None
+
+    async def put(*a: Any) -> None:
+        return None
+
+    async def read_back(loc: Any) -> bytes:
+        return data
+
+    async def locate(*a: Any, **kw: Any) -> blobs.Stored:
+        return blobs.Stored(len(data), "s3://bucket/a-re-upload")  # replaced since the walk
+
+    async def refused(*a: Any) -> None:
+        raise objects.ObjectStoreError("object store delete failed (503)", operation="delete")
+
+    monkeypatch.setattr(blobs, "ch_now_s", ch_now_s)
+    monkeypatch.setattr(blobs, "read", read)
+    monkeypatch.setattr(blobs, "locate", locate)
+    monkeypatch.setattr(objects, "transfer", transfer)
+    monkeypatch.setattr(objects, "put", put)
+    monkeypatch.setattr(objects, "read", read_back)
+    monkeypatch.setattr(objects, "delete", refused)
+    monkeypatch.setattr(objects, "new_location", lambda *a: objects.Location("bucket", "k"))
+    # The row was replaced: the move does not stand, whatever its cleanup met.
+    assert await originals.move_to_bucket(held) is False
