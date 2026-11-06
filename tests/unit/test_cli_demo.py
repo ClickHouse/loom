@@ -167,6 +167,7 @@ def test_demo_fake_llm_ingests_then_prints_hits_and_hint(repo: Path, serve, caps
     assert (ingest["org"], ingest["namespace"], ingest["upload_id"]) == ("dev", "local", "up-1")
     assert ingest["source_uri"] == f"file://{(repo / 'AGENTS.md').resolve()}"
     assert ingest["title"] == "AGENTS" and ingest["tags"] == ["loom", "project-memory"]
+    assert ingest["metadata"] == {"ingested_from": ingest["source_uri"]}  # as `make ingest` writes
     assert fake.posts[1][1]["ingestion_id"] == "job-1"
     search = fake.posts[3][1]
     assert search["query"] == demo.DEFAULT_QUESTION and search["top_k"] == 3

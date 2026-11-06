@@ -124,6 +124,7 @@ def ingest_file(
         "source_uri": source_uri,
         "title": path.stem,
         "tags": [t.strip() for t in tags.split(",") if t.strip()],
+        "metadata": {"ingested_from": source_uri},
     }
     status, job = _post_json(base_url, "knowledge.ingest", body, token)
     if status != 200:
@@ -228,7 +229,8 @@ def _add_demo_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--file",
         default=None,
-        help=f"Document to ingest (default: {DEFAULT_FILE} at the checkout root).",
+        help=f"Document to ingest (default: {DEFAULT_FILE} in the cwd, "
+        "then the package's checkout).",
     )
     p.add_argument(
         "--question",

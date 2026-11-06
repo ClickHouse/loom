@@ -118,6 +118,10 @@ class _Server:
             )
         if op == "knowledge.ingest_status":
             self.polls += 1
+            if self.state == "gone":
+                return httpx.Response(200, json={"found": False, "ingestion_id": "job-1"})
+            if self.state == "stuck":
+                return httpx.Response(200, json={"found": True, "state": "processing"})
             if self.polls % 2:  # every job is seen running once before it ends
                 return httpx.Response(200, json={"found": True, "state": "processing"})
             ended = {"found": True, "state": self.state, "revision": 1, "chunks": 3}
@@ -210,6 +214,28 @@ def test_a_failed_job_is_reported_with_its_code_and_fails_the_run(
     assert loom_ingest.main([str(doc), *_ID]) == 1
     err = capsys.readouterr().err
     assert "failed (format_unavailable): no extractor" in err and "1 of 1 failed" in err
+
+
+def test_a_job_still_running_past_the_timeout_fails_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    doc = tmp_path / "n.txt"
+    doc.write_text("hello")
+    _Server(monkeypatch, state="stuck")
+    assert loom_ingest.main([str(doc), *_ID, "--timeout", "0"]) == 1
+    err = capsys.readouterr().err
+    assert "job-1 is still processing after 0s" in err and "1 of 1 failed" in err
+
+
+def test_a_job_the_server_cannot_find_is_reported_as_not_found(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    doc = tmp_path / "n.txt"
+    doc.write_text("hello")
+    server = _Server(monkeypatch, state="gone")
+    assert loom_ingest.main([str(doc), *_ID]) == 1
+    assert server.polls == 1
+    assert "not found: no such job" in capsys.readouterr().err
 
 
 def test_a_partial_job_published_and_counts_as_ingested(

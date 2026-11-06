@@ -19,8 +19,15 @@ class _Server:
     """A scripted server: what each route was sent, and jobs that end in
     `state` after `running` polls."""
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, *, state: str = "ready", running: int = 1):
-        self.state, self.running = state, running
+    def __init__(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        state: str = "ready",
+        running: int = 1,
+        refused: int = 0,
+    ):
+        self.state, self.running, self.refused = state, running, refused
         self.requests: list[httpx.Request] = []
         monkeypatch.setattr(
             httpx,
@@ -32,9 +39,16 @@ class _Server:
         self.requests.append(req)
         op = req.url.path.removeprefix("/v1/")
         if op == "knowledge.upload":
+            if self.refused:
+                self.refused -= 1
+                return httpx.Response(
+                    429, headers={"Retry-After": "2"}, json={"detail": {"code": "RATE_LIMITED"}}
+                )
             return httpx.Response(201, json={"upload_id": "up-1", "size": len(req.content)})
         if op == "knowledge.ingest":
             return httpx.Response(200, json={"ingestion_id": "job-1", "state": "pending"})
+        if op == "knowledge.ingest_status" and self.state == "gone":
+            return httpx.Response(200, json={"found": False, "ingestion_id": "job-1"})
         if op == "knowledge.ingest_status":
             polls = sum(r.url.path.endswith("ingest_status") for r in self.requests)
             state = "processing" if polls <= self.running else self.state
@@ -46,16 +60,22 @@ class _Server:
         return dict(json.loads(req.content))
 
 
+SLEPT: list[float] = []
+
+
 @pytest.fixture(autouse=True)
 def _no_poll_delay(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
 
     real_sleep = asyncio.sleep
+    SLEPT.clear()
 
     async def _sleep(delay: float) -> None:
+        SLEPT.append(delay)
         await real_sleep(0)
 
     monkeypatch.setattr("loom.knowledge.asyncio.sleep", _sleep)
+    monkeypatch.setattr("loom.transport.asyncio.sleep", _sleep)
 
 
 def _agent() -> Agent:
@@ -81,6 +101,38 @@ async def test_upload_sends_the_bytes_as_they_are_with_their_sha256(
         "content_type": "application/pdf",
         "sha256": hashlib.sha256(data).hexdigest(),
     }
+
+
+async def test_an_upload_the_rate_limit_refused_is_sent_again_after_its_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = _Server(monkeypatch, refused=2)
+    async with _agent() as a:
+        up = await a.knowledge.upload(b"bytes", "n.txt")
+    # A 429 stores nothing, so the same bytes go again once the server's hint has passed.
+    assert up["upload_id"] == "up-1" and SLEPT == [2.0, 2.0]
+    assert [r.content for r in server.requests] == [b"bytes"] * 3
+
+
+async def test_an_upload_past_the_pacing_budget_raises_rate_limited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom.errors import RateLimited
+
+    _Server(monkeypatch, refused=10)
+    agent = Agent(
+        "acme",
+        "support",
+        "a",
+        base_url="http://loom.test",
+        api_key="k",
+        auto_run=False,
+        ratelimit_max_wait_s=3,
+    )
+    async with agent as a:
+        with pytest.raises(RateLimited):
+            await a.knowledge.upload(b"bytes", "n.txt")
+    assert SLEPT == [2.0, 1.0]  # the budget's last second, then it surfaces
 
 
 async def test_ingest_names_the_upload_and_the_document(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -121,6 +173,15 @@ async def test_wait_for_ingest_times_out_while_the_job_runs(
     async with _agent() as a:
         with pytest.raises(TimeoutError, match="job-1 is still processing"):
             await a.knowledge.wait_for_ingest("job-1", timeout_s=0)
+
+
+async def test_wait_for_ingest_returns_at_once_for_a_job_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = _Server(monkeypatch, state="gone")
+    async with _agent() as a:
+        status = await a.knowledge.wait_for_ingest("job-1")
+    assert status["found"] is False and len(server.requests) == 1 and SLEPT == []
 
 
 async def test_ingest_file_uploads_ingests_and_waits(
