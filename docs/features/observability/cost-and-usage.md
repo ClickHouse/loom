@@ -166,11 +166,14 @@ citations by `LOOM_MEMORY_USED_CITED_REINFORCEMENT_WEIGHT`, and harm subtracts w
 [retrieval and ranking](../../concepts/retrieval-and-ranking.md).
 
 `recall_count` counts **recall credits** only: a `memory.search` from a reader that closes
-the loop (`server/memory/app/recall_credit.py`). Every other agent read that returns a key
-writes a `served` event instead, one per key per request: a context pack, a `memory.ask`, a
-`procedure.match`, or a search whose reader is not credited. The dashboard, the assistant,
-bench labels and a `memory.search` sent with `auto_touch: false` write neither, nor do the
-other ops that run a search (`decision.precedents`, `memory.apply`, the workers' passes).
+the loop (`server/memory/app/recall_credit.py`). Every other agent read that returns memory
+writes one `served` event per key its answer returned (`server/memory/app/served_reads.py`):
+an uncredited `memory.search`, `search.query`, `context.pack` (the rows its blocks cite),
+`memory.ask` and `procedure.match`. A hit the op trims before answering is not counted.
+Neither is a `memory.search` sent with `auto_touch: false`, a read by the dashboard or the
+assistant, a measurement read (a bench label, or the `*` / `-` agent with no named
+consumer), or an op that runs a search for its own use (`decision.precedents`,
+`memory.apply`, the workers' passes).
 
 Nothing ranks on `served`: the reinforcement boost decays from the last event of any other
 kind, and the fold leaves `loom.memory` alone when a bump changes none of its counters.

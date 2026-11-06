@@ -32,6 +32,7 @@ from server.memory.app.procedure_evolve import (
     handle_procedure_fork,
     handle_procedure_revise,
 )
+from server.memory.app.served_reads import procedure_keys, records_served
 from server.operations.base import Operation, Role
 
 procedure_add = Operation(
@@ -48,7 +49,8 @@ procedure_match = Operation(
     name="procedure.match",
     input_model=ProcedureMatchInput,
     output_model=ProcedureMatchOutput,
-    handler=handle_procedure_match,
+    # The keys its answer returns are recorded as `served` (server/memory/app/served_reads.py).
+    handler=records_served(procedure_keys)(handle_procedure_match),
     idempotent=True,
     required_role=Role.VIEWER,
     audit=False,

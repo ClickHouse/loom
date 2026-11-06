@@ -338,12 +338,8 @@ def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> li
                     if reinforcing
                     else None
                 ),
-                # Both recall AND positive-outcome (evidence) feed the
-                # search-side reinforcement signal; last_reinforced_at tracks
-                # the most recent reinforcing activity of either kind, which
-                # the rank's efficacy-decay term reads.
-                # The decay anchor: the last event other than `served`, read beside the
-                # identity row. `bumped` moves on a `served` event too.
+                # The rank's decay anchor: the last event other than `served`, read beside
+                # the identity row (`bumped` moves on `served` too).
                 last_activity=max(last_recalled, _utc(ident.get("last_counted_at"))),
                 changes_memory=changes_memory,
             )

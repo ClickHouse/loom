@@ -409,6 +409,15 @@ async def handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     return out
 
 
+def served_scope(row: Any) -> tuple[str, str] | None:
+    """Which rows of the key memory.get's served figures count: the row's own (user_id,
+    session_id) for a reader narrowed to one user or session, who may not learn of another
+    user's copy; None (every live row of the key in the namespace) otherwise."""
+    from server.identity.app.request_scope import request_narrowed
+
+    return (row.user_id, row.session_id) if request_narrowed() else None
+
+
 async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     import server.memory.store as memory_repo
 
@@ -473,12 +482,12 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
         # newest copy of the key, which need not be the row this read resolved. A reader
         # narrowed to one user or session sees its own row's figures only.
         try:
-            from server.identity.app.request_scope import request_narrowed
             from server.memory.api.models_crud import _RecallByAgent
             from server.memory.store.usage import served_by_agent
 
-            own = (row.user_id, row.session_id) if request_narrowed() else None
-            agent_rows = await served_by_agent(row.org, row.namespace, row.memory_key, row=own)
+            agent_rows = await served_by_agent(
+                row.org, row.namespace, row.memory_key, row=served_scope(row)
+            )
             served = served_totals(agent_rows, row.recall_count, row.last_recalled_at)
             recall_by_agent = [
                 _RecallByAgent(agent=str(r["agent"]), count=int(r["n_30d"]), last_at=r["last_at"])

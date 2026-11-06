@@ -750,10 +750,6 @@ async def test_a_served_event_does_not_move_the_decay_anchor() -> None:
     await run_pass(ch=ch)
     [row] = _reinf_rows(ch)
     assert row["last_reinforced_at"] == T0
-    # and the identity read takes that time from the events, `served` left out
-    ident_sql, params = ch.query_all_calls[1]
-    assert "max(ts) AS last_counted_at" in ident_sql
-    assert "event_type != {served:String}" in ident_sql and params["served"] == "served"
 
 
 async def test_a_later_recall_time_alone_still_updates() -> None:

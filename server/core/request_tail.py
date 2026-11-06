@@ -21,15 +21,13 @@ log = logging.getLogger("loom.request_tail")
 
 
 class _Tail:
-    __slots__ = ("closed", "keys", "seen", "steps")
+    __slots__ = ("closed", "keys", "steps")
 
     def __init__(self) -> None:
         # Each step with the query tag of the request that deferred it: the
         # middleware runs it outside the request's own context.
         self.steps: list[tuple[str, Callable[[], Awaitable[Any]]]] = []
         self.keys: set[str] = set()
-        # What `first_in_request` has seen; apart from `keys`, which name deferred steps.
-        self.seen: set[tuple[str, ...]] = set()
         self.closed = False
 
 
@@ -66,17 +64,6 @@ def deferred(key: str) -> bool:
     """Whether a step was deferred under `key` in this request."""
     tail = _tail.get()
     return tail is not None and key in tail.keys
-
-
-def first_in_request(key: tuple[str, ...]) -> bool:
-    """True the first time `key` is seen in this request, and outside a request."""
-    tail = _tail.get()
-    if tail is None:
-        return True
-    if key in tail.seen:
-        return False
-    tail.seen.add(key)
-    return True
 
 
 async def settle(tail: _Tail) -> None:
@@ -119,12 +106,4 @@ class RequestTailMiddleware:
             _tail.reset(token)
 
 
-__all__ = [
-    "RequestTailMiddleware",
-    "active",
-    "defer",
-    "defer_once",
-    "deferred",
-    "first_in_request",
-    "settle",
-]
+__all__ = ["RequestTailMiddleware", "active", "defer", "defer_once", "deferred", "settle"]
