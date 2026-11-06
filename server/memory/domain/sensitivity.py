@@ -99,7 +99,9 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 _MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),  # email
+    # Email, its parts bounded by RFC 5321's lengths: an unbounded local part
+    # rescans a long run with no `@` from every word boundary (quadratic).
+    re.compile(r"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}\b"),
     # Phone numbers: E.164 (+14155550123) or grouped national forms with at
     # least 10 digits — separators allowed, so "415-555-0123" and
     # "(415) 555 0123" match but a 4-digit year or a 6-digit count does not.

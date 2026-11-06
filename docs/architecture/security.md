@@ -668,8 +668,8 @@ limiter error admits the call and is counted. Sizing and the shared backend are 
 ## Refuse: the blacklist
 
 `blacklist.add` registers a `substring` or `regex` pattern at `global`, `org` or
-`namespace` scope (`server/memory/app/blacklist_guard.py`). A regex is length-capped, rejected if it nests
-quantifiers, and probed against a time budget, so it cannot stall writes. Matching writes
+`namespace` scope (`server/memory/app/blacklist_guard.py`). A regex is length-capped and runs on
+RE2, in time linear in the value, so it cannot stall writes. Matching writes
 get 422 `BLACKLISTED` on `memory.set` and the other write paths before anything is
 stored; `sweep=true` tombstones existing matches. Replicas invalidate their pattern
 caches from a one-row version watermark in `loom.blacklist_version`, checked every

@@ -437,30 +437,42 @@ def test_ordinary_regexes_are_accepted(pattern: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "pattern", ["(a+)+$", "(a*)*b", "(.*)*x", "(a+){2,}", "(?:x+)*y", "(x+x+)+y"]
+    "pattern",
+    ["(a+)+$", "(a*)*b", "(.*)*x", "(?:x+)*y", "(a|aa)+$", "(a|a)*c", r"q?(\d|\d)*z"],
 )
-def test_nested_quantifiers_are_refused_by_shape(pattern: str) -> None:
-    reason = validate_regex(pattern)
-    assert reason is not None and "nests a quantifier" in reason
+def test_a_backtracking_shape_runs_in_linear_time(pattern: str) -> None:
+    """Every regex runs on RE2, so a shape that backtracks exponentially in
+    Python's engine matches a long hostile value at once: no shape check or
+    probe to slip past (`q?(\\d|\\d)*z` passed both)."""
+    import time
+
+    from server.core.caller_regex import compile_caller_regex
+
+    assert validate_regex(pattern) is None
+    compiled = compile_caller_regex(pattern)
+    started = time.perf_counter()
+    for text in ("a" * 50_000 + "!", "1" * 50_000, "x" * 50_000):
+        compiled.search(text)
+    assert time.perf_counter() - started < 0.5
 
 
-@pytest.mark.parametrize("pattern", ["(a|aa)+$", "(a|a)*c", "(a+a)+$", "a*a*a*a*a*a*a*a*a*b"])
-def test_catastrophic_shapes_the_static_rule_misses_fail_the_probe(pattern: str) -> None:
+@pytest.mark.parametrize("pattern", [r"(a)\1", r"foo(?=bar)", r"(?<!x)y"])
+def test_a_regex_re2_cannot_run_is_refused(pattern: str) -> None:
     reason = validate_regex(pattern)
-    assert reason is not None and "probe" in reason
+    assert reason is not None and "RE2" in reason
 
 
 def test_length_and_syntax_bounds() -> None:
     assert validate_regex("a" * (REGEX_MAX_LENGTH + 1)) is not None
     assert validate_regex("a" * REGEX_MAX_LENGTH) is None
-    assert "compile" in (validate_regex("(") or "")
+    assert "RE2" in (validate_regex("(") or "")
 
 
 def test_add_refuses_a_bad_regex_with_422_before_it_is_stored(repo: _Repo) -> None:
     set_current_auth(_auth("WRITER"))
     with pytest.raises(HTTPException) as ei:
         asyncio.run(
-            h.handle_blacklist_add(_add("namespace", pattern_type="regex", pattern="(a+)+$"))
+            h.handle_blacklist_add(_add("namespace", pattern_type="regex", pattern="(?=a)b"))
         )
     assert ei.value.status_code == 422
     assert ei.value.detail["code"] == "BLACKLIST_PATTERN_INVALID"
@@ -477,7 +489,7 @@ def test_substring_patterns_are_not_regex_validated(repo: _Repo) -> None:
     assert out.pattern_id and repo.inserted[0]["pattern_type"] == "substring"
 
 
-def test_cache_refresh_drops_a_stored_catastrophic_regex(monkeypatch) -> None:
+def test_cache_refresh_drops_a_stored_regex_re2_cannot_run(monkeypatch) -> None:
     """A row with or without a `scope` column never reaches the hot path."""
     import server.memory.app.blacklist_guard as bl
 
@@ -488,7 +500,7 @@ def test_cache_refresh_drops_a_stored_catastrophic_regex(monkeypatch) -> None:
                     "pattern_id": "bad",
                     "org": "*",
                     "namespace": "*",
-                    "pattern": "(a+)+$",
+                    "pattern": "(?=a)b",
                     "pattern_type": "regex",
                     "scope": "global",
                     "reason": "",

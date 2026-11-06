@@ -11,105 +11,39 @@ scope first, so a namespace pattern beats an org pattern beats a global one.
 from __future__ import annotations
 
 import logging
-import re
 import threading
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import HTTPException
 
+from server.core.caller_regex import compile_caller_regex
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
+from server.core.errors import ValidationError
 from server.memory.store import blacklist as _repo
 from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-# A regex pattern runs on every write the scope covers — for a global
-# pattern, every tenant's — so its cost is bounded here, at add time and
-# again when the cache loads a row. Length, then shape,
-# then a timed probe; `re2` is not in the deployment, so Python `re` stays
-# and the pattern is proven cheap before it is stored.
+# A regex pattern runs on every write the scope covers (for a global pattern,
+# every tenant's), so it runs on RE2: time linear in the value whatever the
+# pattern, and the engine the sweep's ClickHouse `match()` uses, so a pattern
+# refuses on write exactly the rows the sweep tombstones.
 REGEX_MAX_LENGTH = 256
-REGEX_PROBE_BUDGET_MS = 1.0
-# Probe input lengths, growing slowly at first: a stage that finishes under
-# the budget bounds the next — an exponential pattern with base b costs at
-# most b² more two characters later — so a catastrophic pattern is caught at
-# a few milliseconds, never at seconds.
-_PROBE_LENGTHS = (4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32, 48, 64, 96, 128, 192, 256)
-# A quantifier directly after a group whose body ends in a quantified atom:
-# (a+)+, (a*)*, (.*)*, (a+){2,}, (?:a?){20}, (x+x+)+. Static shape check for
-# the textbook exponential form; a group with a mandatory separator after
-# the inner quantifier, (a+\\.)+, is not this shape and goes to the probe,
-# as does every alternation.
-_QUANTIFIER = r"(?:[*+?]|\{\d+(?:,\d*)?\})\??"
-_NESTED_QUANTIFIER_RE = re.compile(r"\((?:\?[:=!<P]?)?[^()]*" + _QUANTIFIER + r"\)" + _QUANTIFIER)
-_ESCAPE_RE = re.compile(r"\\.")
-_CLASS_RE = re.compile(r"\[(?:\\.|[^\]])*\]")
-
-
-def _strip_atoms(pattern: str) -> str:
-    """Remove escapes and character classes so `_NESTED_QUANTIFIER_RE` sees
-    only the grouping structure (`[+*]` and `\\(` are not quantifiers or groups)."""
-    return _CLASS_RE.sub("x", _ESCAPE_RE.sub("x", pattern))
-
-
-def _probe_inputs(pattern: str, n: int) -> list[str]:
-    """Inputs a backtracking engine dislikes: runs of the pattern's own
-    literal characters, with and without a trailing character that defeats
-    the match at the end."""
-    literals: list[str] = []
-    for ch in _strip_atoms(pattern):
-        if ch.isalnum() and ch not in literals:
-            literals.append(ch)
-        if len(literals) == 3:
-            break
-    if not literals:
-        literals = ["a"]
-    out: list[str] = []
-    for ch in literals:
-        out.append(ch * n)
-        out.append(ch * n + "!")
-    if len(literals) > 1:
-        mixed = "".join(literals) * (n // len(literals) + 1)
-        out.append(mixed[:n] + "!")
-    return out
 
 
 def validate_regex(pattern: str) -> str | None:
-    """Reason the pattern is refused, or None when it may be stored.
-
-    Refuses: over `REGEX_MAX_LENGTH`; a pattern `re` cannot compile; a
-    quantified group whose body is itself quantified or an alternation; and
-    a pattern whose search over any probe input exceeds
-    `REGEX_PROBE_BUDGET_MS`. The probe grows the input in small steps so the
-    check itself stays under a few tens of milliseconds for any pattern."""
+    """Reason the pattern is refused, or None when it may be stored: over
+    `REGEX_MAX_LENGTH`, or not a regex RE2 can run (RE2 has no
+    backreferences or lookaround)."""
     if len(pattern) > REGEX_MAX_LENGTH:
         return f"regex longer than {REGEX_MAX_LENGTH} characters ({len(pattern)})"
     try:
-        compiled = re.compile(pattern)
-    except re.error as e:
-        return f"regex does not compile: {e}"
-    if _NESTED_QUANTIFIER_RE.search(_strip_atoms(pattern)):
-        return (
-            "regex nests a quantifier inside a quantified group (catastrophic backtracking shape)"
-        )
-    budget_s = REGEX_PROBE_BUDGET_MS / 1000.0
-    for n in _PROBE_LENGTHS:
-        for text in _probe_inputs(pattern, n):
-            # Best of two: a scheduler hiccup must not refuse a cheap pattern.
-            spent = budget_s * 2
-            for _ in range(2):
-                t0 = time.perf_counter()
-                compiled.search(text)
-                spent = min(spent, time.perf_counter() - t0)
-                if spent <= budget_s:
-                    break
-            if spent > budget_s:
-                return (
-                    f"regex search took {spent * 1000:.2f} ms on a {len(text)}-character "
-                    f"probe (budget {REGEX_PROBE_BUDGET_MS:g} ms)"
-                )
+        compile_caller_regex(pattern)
+    except ValidationError as e:
+        return str(e)
     return None
 
 
@@ -122,7 +56,7 @@ class BlacklistPattern:
     pattern_type: str  # 'substring' | 'regex'
     scope: str  # 'namespace' | 'org' | 'global'
     reason: str
-    compiled: re.Pattern[str] | None = None  # set for regex patterns
+    compiled: Any = None  # the RE2 pattern, set for regex patterns
 
 
 # The first match wins, so the cache holds the most specific scope first; the
@@ -190,7 +124,7 @@ async def _refresh_cache() -> None:
     new_cache: list[BlacklistPattern] = []
     for r in rows:
         pattern_type = r["pattern_type"]
-        compiled: re.Pattern[str] | None = None
+        compiled: Any = None
         if pattern_type == "regex":
             # A row written past add-time validation is dropped from the hot
             # path rather than run on every write; the refusal is logged so
@@ -203,7 +137,7 @@ async def _refresh_cache() -> None:
                     reason,
                 )
                 continue
-            compiled = re.compile(r["pattern"])
+            compiled = compile_caller_regex(r["pattern"])
         new_cache.append(
             BlacklistPattern(
                 pattern_id=str(r["pattern_id"]),

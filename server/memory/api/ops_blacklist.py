@@ -26,9 +26,9 @@ from server.operations.base import Operation, Role
 # without a dashboard round-trip. The default scope is `namespace`,
 # which a writer already controls. A wider scope is gated in the handler
 # by the role whose reach matches it: scope="org" needs
-# ORG_ADMIN, scope="global" PLATFORM_ADMIN. A regex pattern is bounded at
-# add (≤ 256 characters, no nested quantifier, a 1 ms probe) because it
-# runs on every write its scope covers.
+# ORG_ADMIN, scope="global" PLATFORM_ADMIN. A regex pattern is at most 256
+# characters and runs on RE2, in time linear in the value, because it runs
+# on every write its scope covers.
 blacklist_add = Operation(
     name="blacklist.add",
     maturity="experimental",

@@ -288,8 +288,8 @@ honour "never remember my home address" inside the conversation. A token bounded
 user (`read_scope` `own_user` / `own_session`) gets `AUTH_INSUFFICIENT` on every
 `blacklist.*` op: a pattern refuses every user's writes in the namespace.
 
-A regex is checked at add time: at most 256 characters, no nested quantifier such as
-`(a+)+`, and a probe that finishes inside 1 ms.
+A regex is at most 256 characters and is RE2 syntax (no backreferences or lookaround).
+It runs on RE2, in time linear in the value, on writes and in the sweep alike.
 
 | Operation          | Role   | Does                                                                              |
 | ------------------ | ------ | --------------------------------------------------------------------------------- |
