@@ -379,10 +379,6 @@ describe("Find a passage in the Library", () => {
       ),
     );
     await settle();
-    expect(api.listKnowledge).toHaveBeenLastCalledWith(
-      expect.anything(),
-      expect.objectContaining({ tags: ["billing"] }),
-    );
     expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
   });
 

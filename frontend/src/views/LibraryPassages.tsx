@@ -27,6 +27,11 @@ function excerpt(text: string): string {
   return truncate(text.replace(/\s+/g, " ").trim(), EXCERPT_CHARS);
 }
 
+/** A hit's name among the others: its document and its chunk. */
+function hitKey(h: KnowledgeHit): string {
+  return `${h.source_uri}#${h.chunk_idx}`;
+}
+
 /** The last path segment of a source URI, its document's short name. */
 function shortName(uri: string): string {
   return (
@@ -58,8 +63,10 @@ export function LibraryPassages({
 }) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<KnowledgeHit[] | null>(null);
-  // What the hits on screen answer: the query searched and how many were asked for.
-  const [asked, setAsked] = useState({ query: "", topK: TOP_K });
+  // What the hits on screen answer: the query searched, how many were asked for, and
+  // whether asking for more found none (the op keeps one hit per section, so a short
+  // answer is no sign that nothing is left).
+  const [asked, setAsked] = useState({ query: "", topK: TOP_K, done: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const searching = useRef<AbortController | null>(null);
@@ -92,8 +99,10 @@ export function LibraryPassages({
     try {
       const found = await searchKnowledge(identity, q, topK, { signal: ctrl.signal });
       if (!ctrl.signal.aborted) {
+        const before = new Set(q === asked.query ? (hits ?? []).map(hitKey) : []);
+        const added = found.some((h) => !before.has(hitKey(h)));
         setHits(found);
-        setAsked({ query: q, topK });
+        setAsked({ query: q, topK, done: topK > TOP_K && !added });
       }
     } catch (e) {
       if (!ctrl.signal.aborted) setError(humanizeError(e));
@@ -102,8 +111,9 @@ export function LibraryPassages({
     }
   };
 
-  // A full answer may have more behind it, up to the most the op lists.
-  const more = !!hits && hits.length >= asked.topK && asked.topK < MAX_TOP_K;
+  // More may be behind any answer until asking for more adds none, up to the most the op
+  // lists.
+  const more = !!hits?.length && !asked.done && asked.topK < MAX_TOP_K;
   // The last Show more removes the button that held the focus: it goes to the first hit
   // that read added, else the last hit, else the field.
   const markShown = useLastPageFocus({
@@ -121,8 +131,8 @@ export function LibraryPassages({
       ? ""
       : hits.length === 0
         ? "No passage answers that."
-        : hits.length >= asked.topK
-          ? `The best ${hits.length} passages`
+        : more
+          ? `The best ${hits.length} passage${hits.length === 1 ? "" : "s"}`
           : `${hits.length} passage${hits.length === 1 ? "" : "s"}`;
 
   // Built once per answer, not per keystroke in the field above it.
@@ -137,12 +147,12 @@ export function LibraryPassages({
             const matched = (h.keys_matched ?? []).filter((k) => k !== h.locator?.key_path);
             const excerptId = `${PASSAGES_PANEL_ID}-excerpt-${i}`;
             return (
-              <li key={`${h.source_uri}#${h.chunk_idx}`}>
+              <li key={hitKey(h)}>
                 <ListRow>
                   <button
                     type="button"
                     data-row-open=""
-                    data-hit-key={`${h.source_uri}#${h.chunk_idx}`}
+                    data-hit-key={hitKey(h)}
                     // Named by what the row shows but the excerpt, which is its description.
                     aria-label={[
                       `Open ${h.source_uri}`,
@@ -221,7 +231,7 @@ export function LibraryPassages({
             htmlType="button"
             busy={busy}
             onClick={() => {
-              markShown((hits ?? []).map((h) => `${h.source_uri}#${h.chunk_idx}`));
+              markShown((hits ?? []).map((h) => hitKey(h)));
               void search(asked.query, Math.min(asked.topK + TOP_K, MAX_TOP_K));
             }}
           >

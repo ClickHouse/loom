@@ -1,7 +1,8 @@
 /**
- * Finding a passage in the Library: the panel opens, a query runs `knowledge.search` in
- * the namespace shown, each hit is cited by revision and place, and a hit opens its
- * document; no match and a failure each say so.
+ * The passage panel (its toggle is the Library's, tested with the page): a query runs
+ * `knowledge.search` in the namespace shown, each hit is cited by revision and place and
+ * opens its document, Show more asks for more until a read adds none, and no match and a
+ * failure each say so.
  */
 import { cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
@@ -72,7 +73,8 @@ describe("LibraryPassages", () => {
     const { user, onOpen, onHitsShown } = await openAndFind("how long are events kept");
     const list = await screen.findByRole("list", { name: "Passages found" });
     expect(vi.mocked(searchKnowledge).mock.calls[0].slice(0, 2)).toEqual([identity, "how long are events kept"]);
-    expect(screen.getByRole("status")).toHaveTextContent("2 passages");
+    // The op keeps one hit per section, so even a short answer may have more behind it.
+    expect(screen.getByRole("status")).toHaveTextContent("The best 2 passages");
     // The list below hands its row keys over while hits show.
     expect(onHitsShown).toHaveBeenLastCalledWith(true);
     const [first, second] = within(list).getAllByRole("listitem");
@@ -105,21 +107,28 @@ describe("LibraryPassages", () => {
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 10 passages"));
   });
 
-  it("shows more of a full answer, ten at a time, for the query that was searched", async () => {
+  it("shows more, ten at a time, for the query searched, until a read adds none", async () => {
     const page = (n: number) => Array.from({ length: n }, (_, i) => ({ ...HIT, chunk_idx: i }));
-    vi.mocked(searchKnowledge).mockResolvedValueOnce(page(10)).mockResolvedValueOnce(page(14));
+    // Six for ten: sections folded, more may be left.
+    vi.mocked(searchKnowledge)
+      .mockResolvedValueOnce(page(6))
+      .mockResolvedValueOnce(page(14))
+      .mockResolvedValueOnce(page(14));
     const { user } = await openAndFind("events");
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 10 passages"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 6 passages"));
     // Text typed since does not change what "Show more" asks.
     await user.type(screen.getByLabelText("Passage to find"), " and more");
     await user.click(screen.getByRole("button", { name: "Show more" }));
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("14 passages"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 14 passages"));
     expect(vi.mocked(searchKnowledge).mock.calls[1].slice(1, 3)).toEqual(["events", 20]);
-    // Fewer than were asked for: that is all of them. The button that held the focus is
-    // gone, and the focus is on the first hit that read added.
+    // Asking for thirty adds nothing: that is all of them. The button that held the focus
+    // is gone, and the focus is on the last hit, the read having added none.
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^14 passages$/));
+    expect(vi.mocked(searchKnowledge).mock.calls[2].slice(1, 3)).toEqual(["events", 30]);
     expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
     const rows = within(screen.getByRole("list", { name: "Passages found" })).getAllByRole("button");
-    await waitFor(() => expect(document.activeElement).toBe(rows[10]));
+    await waitFor(() => expect(document.activeElement).toBe(rows[13]));
   });
 
   it("keeps the hits on screen when Show more fails", async () => {
