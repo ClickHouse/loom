@@ -80,8 +80,8 @@ class DocumentTotals(BaseModel):
     # The newest `ingested_at` among live documents.
     newest_ingested_at: datetime | None = None
     # By the format the row records (knowledge.ingest sets it), else the format a source
-    # sync converted it from (transcript, markdown, slides, or the extractor's pdf or
-    # pptx), else the stored content type, else the file extension of the original
+    # sync converted it from (transcript, markdown, slides, or the extractor's pdf,
+    # pptx or docx), else the stored content type, else the file extension of the original
     # filename or the source_uri, most live first.
     by_format: list[DocumentCount] = Field(default_factory=list)
     # By the source_uri's scheme (`https`, `gdrive`, ...), most live first.

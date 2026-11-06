@@ -42,7 +42,7 @@ _PATH = (
 _EXT = f"lower(extract({_PATH}, '[.]([A-Za-z0-9]{{1,10}})$'))"
 # The format the row records (knowledge.ingest sets it, knowledge.get serves it), else
 # the format a source sync converted it from (metadata `ingested_format`: transcript,
-# markdown, slides, or the extractor's pdf or pptx), else the stored content type, else
+# markdown, slides, or the extractor's pdf, pptx or docx), else the stored content type, else
 # ".<extension>", else '(none)'.
 _SYNCED = "JSONExtractString(metadata, 'ingested_format')"
 FORMAT_SQL = (

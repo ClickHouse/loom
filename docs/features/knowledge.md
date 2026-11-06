@@ -77,7 +77,7 @@ A repository's admins register the document sources Loom pulls the repository's
 documents from. A source lives on the repository's trunk code namespace, the one its
 documents live in, so whoever reads the repository sees where its documents come from,
 and only the namespace's admins change that. Four kinds are served: `gdrive`, a shared
-folder of docs, slides, decks and PDFs, read with a service account the folders are
+folder of docs, slides, decks, Word documents and PDFs, read with a service account the folders are
 shared to read-only, whose credential is the account's JSON key; `linear`, the
 documents of a project tracker's projects, read with a read-only API key of an account
 that sees the projects; `notion`, a page store's pages and databases, read with an
@@ -644,8 +644,8 @@ bounds the listed documents and every finding's samples.
 
 - **`documents`**: live and deleted (`knowledge.delete`) documents by format (the row's
   `format`, which `knowledge.ingest` sets, else the `ingested_format` a source sync
-  records in its metadata (`transcript`, `markdown`, `slides`, or the extractor's `pdf`
-  or `pptx`), else the stored content type, else the extension of the original filename
+  records in its metadata (`transcript`, `markdown`, `slides`, or the extractor's `pdf`,
+  `pptx` or `docx`), else the stored content type, else the extension of the original filename
   or the `source_uri` path) and by `source_uri` scheme, and the newest ingest. A
   document row holds only its current version, and its `revision` numbers it (1, 2,
   ...): `earlier_revisions` sums the revisions before each current one, and `unnumbered`

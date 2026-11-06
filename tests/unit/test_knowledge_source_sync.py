@@ -94,8 +94,8 @@ class _World:
         self.upserts: list[Any] = []
         self.fail_listing: int = 0
         # Formats an extractor is configured for, and those its service declares.
-        self.routes: set[str] = {"pdf", "pptx"}
-        self.declared: set[str] = {"pdf", "pptx"}
+        self.routes: set[str] = {"pdf", "pptx", "docx"}
+        self.declared: set[str] = {"pdf", "pptx", "docx"}
         self.extractor_down = False
         self.extract_error: Exception | None = None
         # Per-file extraction failures, by file id.
@@ -849,8 +849,6 @@ def test_a_file_the_extractor_refuses_is_unconverted(world: _World) -> None:
 def test_an_uploaded_deck_or_document_goes_to_the_extractor_with_its_bytes_kept(
     world: _World, mime: str, fmt: str
 ) -> None:
-    world.routes.add(fmt)
-    world.declared.add(fmt)
     world.files = [_file("file2", mime, "2026-01-03T00:00:00.000Z", size="14")]
     asyncio.run(source_sync.run_sync())
     [(inp, _)] = world.upserts

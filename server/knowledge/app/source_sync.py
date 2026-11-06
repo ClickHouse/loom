@@ -21,8 +21,8 @@ file whose stored copy has the listed revision is skipped without a fetch. A
 changed file is fetched, turned into Markdown and written with
 `knowledge.upsert` as `worker:knowledge-source-sync`, `imported`, tagged
 `source:<name>`. A native document is exported as Markdown, a presentation
-converted slide by slide, and a PDF or `.pptx` sent to the extractor service its
-format is routed to (the server parses no original itself); the bytes are kept
+converted slide by slide, and a PDF, `.pptx` or `.docx` file sent to the extractor
+service its format is routed to (the server parses no original itself); the bytes are kept
 as the document's original. A file that cannot be stored is counted
 `unconverted` with its reason and not written. One the store or the extractor
 refuses, one over the size bound and one whose write is refused are also given
