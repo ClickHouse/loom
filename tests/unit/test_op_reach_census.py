@@ -126,7 +126,7 @@ def test_a_test_beside_its_source_is_not_reach(tmp_path):
     src = tmp_path / "frontend" / "src"
     src.mkdir(parents=True)
     (src / "Page.tsx").write_text('post("/v1/memory.pin");\n')
-    (src / "Page.test.tsx").write_text('const OP = "memory.unpin";\n')
+    (src / "Page.test.tsx").write_text('post("/v1/memory.unpin");\n')
     derived = derive_static_reach(tmp_path)
     assert derived.get("memory.pin") == ("dashboard",)
     assert "memory.unpin" not in derived

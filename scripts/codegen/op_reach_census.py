@@ -66,8 +66,11 @@ _QUOTED = re.compile(r"""["']([a-z_]+(?:\.[a-z_]+){1,2})["']""")
 # A dashboard call site: the path as a string literal (`post("/v1/memory.pin", …)`),
 # outside a comment. A bare op name there is an audit label, not a call.
 _DASHBOARD_CALL = re.compile(r"""["'`]/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b""")
-# `//` not after a `:`, so a URL in a string is not taken for a comment.
-_TS_COMMENT = re.compile(r"/\*.*?\*/|(?<!:)//[^\n]*", re.DOTALL)
+# Comments, without parsing strings: a line that starts as one (`//`, `/*`, a
+# JSDoc `*`), a JSX `{/* … */}`, and a `//` after a statement's end on its line.
+_TS_COMMENT = re.compile(
+    r"^[ \t]*(?://|/\*|\*)[^\n]*|\{/\*[\s\S]*?\*/\}|(?<=[;,{(])[ \t]*//[^\n]*", re.MULTILINE
+)
 _SDK_CALL = re.compile(r"\.([a-z_]+)\.([a-z_]+)\(")
 
 

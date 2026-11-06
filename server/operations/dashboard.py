@@ -3,7 +3,7 @@
 Every op is served over HTTP, is in both generated SDKs and is reachable over
 MCP unless `toolsets._MCP_HIDDEN_OPS` keeps it for people and operators. The
 dashboard is the people's surface: an op reaches it when a quoted
-``"/v1/<op>"`` call site sits in ``frontend/src`` (the `dashboard` reach kind,
+`"/v1/<op>"` call site sits in `frontend/src` (the `dashboard` reach kind,
 `server.operations.reach`). An op a person needs (to administer, review,
 inspect, configure, or to delete with a confirmation) has a control there; an
 op only an agent or a client program calls is named in `NOT_IN_DASHBOARD` with
@@ -204,8 +204,8 @@ NOT_IN_DASHBOARD: dict[str, str] = {
         "namespace.inventory"
     ),
     "search.query": (
-        "the dashboard's search calls each plane's own search (memory.search, knowledge.search, "
-        "conversation.search)"
+        "each page searches its own plane: Memories memory.search, the Library knowledge.search, "
+        "Conversations conversation.search"
     ),
 }
 
