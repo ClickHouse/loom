@@ -9,15 +9,21 @@ they are an object in the bucket that the row's `location` names
 (`server/core/object_store.py`), and `data` is empty. A row is read from
 wherever it says, whatever the setting is now.
 
-`created_at` is the row's version, so a re-upload restamps it. Outside erasure
-only the sweep (`server/knowledge/workers/blob_gc.py`) deletes an original, and
-only one unwritten for `document_blob_min_age_seconds`: a write stores its
-original before the document row that names it, so a check that finds no
-document naming a fresh original may be racing that write.
+`created_at` is the row's version, so a re-upload restamps it; the move's switching
+row does not (it is one millisecond after the row it replaces), so a moved original
+keeps its age. Outside erasure only the sweep (`server/knowledge/workers/blob_gc.py`)
+deletes an original, and only one unwritten for `document_blob_min_age_seconds`: a
+write stores its original before the document row that names it, so a check that
+finds no document naming a fresh original may be racing that write.
 
 Every S3 write is a new object, written before the row that names it; an object
 no row names (a replaced row's, a write whose row never landed) is the sweep's
 once it is older than the same age.
+
+The move of originals to the bucket (`server/knowledge/app/originals.py`) deletes
+only what it wrote: an object of its own that no row names, at once, and, after an
+erasure took the original as its switch landed, its switching row by the location
+only that row names (`unwrite`).
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.core import object_store as objects
@@ -43,12 +49,20 @@ log = logging.getLogger(__name__)
 
 TABLE = "loom.document_blobs"
 UPLOADS = "loom.blob_uploads"
-_KEY = "org = {org:String} AND namespace = {ns:String} AND sha256 = {sha:String}"
+_NS = "org = {org:String} AND namespace = {ns:String}"
+_KEY = f"{_NS} AND sha256 = {{sha:String}}"
 _IN_KEYS = "(org, namespace, sha256) IN {keys:Array(Tuple(String, String, String))}"
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 # Rows written before a cutoff read from the ClickHouse clock and bound: a replicated
 # table refuses now64() in a mutation.
 _OLDER_THAN_CUTOFF = "created_at < fromUnixTimestamp64Milli({cutoff_ms:Int64})"
+
+
+async def ch_now_s(*, ch: _CHClient | None = None) -> int:
+    """Now on the ClickHouse clock, in whole seconds: what the erasure ledger's times are
+    read against."""
+    return await _cutoff_ms(0, ch or _default_client()) // 1000
 
 
 async def _cutoff_ms(min_age_s: int, ch: _CHClient) -> int:
@@ -133,6 +147,25 @@ async def locate(
     return Stored(int(row["size"]), str(row["location"])) if row else None
 
 
+@dataclass(frozen=True)
+class Latest:
+    location: str  # '' when the row holds the bytes in ClickHouse
+    version_ms: int  # its created_at in epoch milliseconds
+
+
+async def latest(held: Held, *, ch: _CHClient | None = None) -> Latest | None:
+    """The original's latest row, read with sequential consistency for a decision on it;
+    None when no row holds it. Reads no data."""
+    ch = ch or _default_client()
+    with sequential_reads():
+        row = await ch.query_one(
+            f"SELECT location, toUnixTimestamp64Milli(created_at) AS version_ms FROM {TABLE} "
+            f"WHERE {_KEY} ORDER BY created_at DESC LIMIT 1",
+            params={"org": held.org, "ns": held.namespace, "sha": held.sha},
+        )
+    return Latest(str(row["location"]), int(row["version_ms"])) if row else None
+
+
 async def read(
     org: str, namespace: str, sha: str, *, stored: Stored, ch: Any = None
 ) -> bytes | None:
@@ -173,6 +206,130 @@ async def stream(
         {"org": org, "ns": namespace, "sha": sha},
     ) as raw:
         yield raw
+
+
+@dataclass(frozen=True)
+class Held:
+    """An original whose latest catalog row holds its bytes in ClickHouse."""
+
+    org: str
+    namespace: str
+    sha: str
+    size: int
+    # The latest row's created_at in epoch milliseconds: the switching row is one later,
+    # so a write after the walk's read outranks it.
+    version_ms: int
+
+
+@dataclass(frozen=True)
+class HeldPage:
+    held: list[Held]  # of the page's keys, those whose latest row is the ClickHouse store's
+    after: str  # the sha the next page starts after; '' when it reached the namespace's last key
+
+
+async def held_in_clickhouse(
+    org: str, namespace: str, after: str, limit: int, *, ch: _CHClient | None = None
+) -> HeldPage:
+    """One page of the namespace's originals: the keys of the next `limit` rows after
+    the sha `after` (a key with versions not yet merged takes a row for each), and of
+    them those whose latest row holds its bytes in ClickHouse, the ones a move to the
+    bucket has left. Each page ends past `after`, so a walk always moves on. Reads no
+    data.
+
+    The page's last key is read first, in key order on one thread, so a page reads
+    about its own rows however many the namespace holds (an aggregate over the rest of
+    the namespace with a LIMIT reads all of it); the held ones are then aggregated
+    within that key range."""
+    ch = ch or _default_client()
+    scope = {"org": org, "ns": namespace, "after": after}
+    last = await ch.query_one(
+        f"SELECT count() AS n, toString(max(sha256)) AS last FROM ("
+        f"SELECT sha256 FROM {TABLE} WHERE {_NS} AND sha256 > {{after:String}} "
+        "ORDER BY sha256 LIMIT {lim:UInt32}) "
+        "SETTINGS max_threads = 1",
+        params={**scope, "lim": int(limit)},
+    )
+    if not last or not int(last["n"]):
+        return HeldPage([], "")
+    upper = str(last["last"])
+    rows = await ch.query_all(
+        f"SELECT toString(sha256) AS sha, argMax(size, created_at) AS size, "
+        f"toUnixTimestamp64Milli(max(created_at)) AS version_ms FROM {TABLE} "
+        f"WHERE {_NS} AND sha256 > {{after:String}} AND sha256 <= {{upper:String}} "
+        "GROUP BY sha256 HAVING argMax(location, created_at) = '' ORDER BY sha256",
+        params={**scope, "upper": upper},
+    )
+    held = [Held(org, namespace, str(r["sha"]), int(r["size"]), int(r["version_ms"])) for r in rows]
+    # A short page reached the namespace's last key: no page follows.
+    return HeldPage(held, upper if int(last["n"]) == limit else "")
+
+
+async def needed(
+    org: str, namespace: str, shas: list[str], *, ch: _CHClient | None = None
+) -> set[str]:
+    """Of `shas`, the originals the namespace still needs: named by a live document (as
+    its original or its extraction artifact), or held by an unexpired upload or an open
+    ingestion. The rest are the sweep's (`unreferenced`). One read for a page of the
+    walk."""
+    ch = ch or _default_client()
+    if not shas:
+        return set()
+    with sequential_reads():
+        rows = await ch.query_all(
+            "SELECT sha FROM ("
+            " SELECT arrayJoin([blob_path, artifact_sha256]) AS sha FROM loom.documents FINAL"
+            f" WHERE {_NS} AND {LIVE_ORIGINAL_SQL}"
+            "  AND (blob_path IN {shas:Array(String)} OR artifact_sha256 IN {shas:Array(String)})"
+            f" UNION DISTINCT SELECT sha FROM ({HELD_SQL})"
+            ") WHERE sha IN {shas:Array(String)}",
+            params={"org": org, "ns": namespace, "shas": shas},
+        )
+    return {str(r["sha"]) for r in rows}
+
+
+async def switch_to(held: Held, loc: objects.Location, *, ch: _CHClient | None = None) -> None:
+    """Write the catalog row that switches the original to the object at `loc`: the next
+    version of its key after the row the walk read, with no bytes. Stamped one millisecond
+    after that row rather than now, so a re-upload that lands after the walk's read
+    outranks the switch in every merge, and taking the switch back (`unwrite`) can only
+    remove the move's own version."""
+    ch = ch or _default_client()
+    await ch.insert(
+        TABLE,
+        [
+            {
+                "org": held.org,
+                "namespace": held.namespace,
+                "sha256": held.sha,
+                "size": held.size,
+                "data": b"",
+                "location": loc.uri(),
+                "created_at": _EPOCH + timedelta(milliseconds=held.version_ms + 1),
+            }
+        ],
+        settings={"async_insert": 0},
+    )
+
+
+async def row_names(held: Held, loc: objects.Location, *, ch: _CHClient | None = None) -> bool:
+    """Whether a row of the original still names the object at `loc`."""
+    ch = ch or _default_client()
+    with sequential_reads():
+        row = await ch.query_one(
+            f"SELECT count() AS n FROM {TABLE} WHERE {_KEY} AND location = {{loc:String}}",
+            params={"org": held.org, "ns": held.namespace, "sha": held.sha, "loc": loc.uri()},
+        )
+    return bool(row and int(row["n"]))
+
+
+async def unwrite(held: Held, loc: objects.Location, *, ch: _CHClient | None = None) -> None:
+    """Delete the row that switched the original to `loc`, by the location only it names;
+    the object is the caller's to delete."""
+    ch = ch or _default_client()
+    await ch.execute(
+        f"DELETE FROM {TABLE} WHERE {_KEY} AND location = {{loc:String}}",
+        params={"org": held.org, "ns": held.namespace, "sha": held.sha, "loc": loc.uri()},
+    )
 
 
 @dataclass(frozen=True)
@@ -275,16 +432,18 @@ async def _locations(where: str, params: dict[str, object], ch: _CHClient) -> se
 
 
 async def namespaces(
-    after: tuple[str, str], limit: int, *, ch: _CHClient | None = None
+    after: tuple[str, str], limit: int, *, org: str = "", ch: _CHClient | None = None
 ) -> list[tuple[str, str]]:
     """Up to `limit` (org, namespace) pairs holding originals, in key order after
-    `after`: the sweep walks them one namespace at a time."""
+    `after`, of `org` alone when named: the sweep and the move to the bucket walk
+    them one namespace at a time."""
     ch = ch or _default_client()
     rows = await ch.query_all(
         f"SELECT DISTINCT org, namespace FROM {TABLE} "
         "WHERE (org, namespace) > ({org:String}, {ns:String}) "
-        "ORDER BY org, namespace LIMIT {lim:UInt32}",
-        params={"org": after[0], "ns": after[1], "lim": int(limit)},
+        + ("AND org = {only:String} " if org else "")
+        + "ORDER BY org, namespace LIMIT {lim:UInt32}",
+        params={"org": after[0], "ns": after[1], "only": org, "lim": int(limit)},
     )
     return [(str(r["org"]), str(r["namespace"])) for r in rows]
 

@@ -18,6 +18,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from server.erasure.domain.scopes import parse_namespace_list
+
 ScopeType = Literal["user_id", "namespace", "namespace_list"]
 ErasureStatus = Literal["in_progress", "completed", "failed"]
 
@@ -78,22 +80,6 @@ _NO_USER = frozenset({"", "-", "*"})
 def _check_user_scope(scope_type: str, scope_value: str) -> None:
     if scope_type == "user_id" and scope_value.strip() in _NO_USER:
         raise ValueError(f"user_id scope_value {scope_value!r} names no user")
-
-
-def parse_namespace_list(scope_value: str) -> list[str]:
-    """The namespaces of a `namespace_list` scope: a JSON array of strings or
-    an object with a `namespaces` array. Duplicates fold; order is kept."""
-    try:
-        parsed = json.loads(scope_value or "")
-    except json.JSONDecodeError as e:
-        raise ValueError(f"not JSON ({e.msg})") from None
-    raw = parsed.get("namespaces") if isinstance(parsed, dict) else parsed
-    if not isinstance(raw, list) or not all(isinstance(x, str) and x.strip() for x in raw):
-        raise ValueError("expected a JSON array of non-empty strings")
-    seen: dict[str, None] = {}
-    for x in raw:
-        seen.setdefault(x.strip(), None)
-    return list(seen)
 
 
 def _scope_flag(scope_value: str, key: str, default: bool) -> bool:

@@ -1013,6 +1013,72 @@ missing from the bucket answers `410 BLOB_GONE` and a bucket that fails answers
 transfers (uploads, and downloads up to 4 MB) and 4 bucket streams at once; one more
 waits up to `LOOM_CH_POOL_WAIT_MS` and then answers `503 OVERLOADED`.
 
+`loom knowledge migrate-originals` moves the originals still held in ClickHouse to the
+bucket (`--org`, and `--namespace` with it, narrow it; `--dry-run` counts them and their
+bytes, and exits 1 when it lists a namespace a run would refuse). It refuses to move
+anything unless `LOOM_DOCUMENT_OBJECT_STORE=s3` (a dry run, which only reads ClickHouse,
+sizes the move before that); set that on every replica first, so no new original lands in
+ClickHouse behind it, and only once every replica runs a build that reads bucket rows. It
+walks one namespace at a time in key order, and moves only the originals the namespace
+needs now: those a live document names, or an unexpired upload or an open ingestion holds.
+The rest are counted as left to the `document_blob_gc` sweep, which deletes each once it
+is older than `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`; one that is needed again by then moves
+on a later run. For each original it checks the row's bytes against their size and sha256,
+writes them to a new object with the store's SHA-256 check, reads the object back and
+hashes it, and then writes the catalog row naming the object. That row switches every
+document with those bytes at once. Its version is one millisecond after the row it
+replaces, not the time it lands, so a write of the same bytes after the walk read the
+original outranks it however the rows merge, and a moved original keeps its age for the
+sweep. The ClickHouse copy stays until `loom.document_blobs` merges the two rows;
+`OPTIMIZE TABLE loom.document_blobs FINAL` drops it at once. From then on a ClickHouse
+backup holds no bytes of the moved originals: back the bucket up on its own ([backup and
+recovery](../operations/backup-and-recovery.md)).
+
+A move is fenced by the erasure ledger. An erasure covers an original when it is its
+namespace's or any user's of the org: a user's erasure finds that user's originals through
+their upload records and documents, which any write can add to, so the move does not guess
+whose an original is. A namespace is not started while the ledger holds a covering erasure
+that is unfinished or finished within the last minute, and an erasure registered later
+ends each move it catches after that move's copy (below); run the command again once it
+has finished. A failed erasure counts as unfinished: the erasure recovery worker retries
+it, and one past its attempts finishes through `loom erasure-re-verify --resume`.
+
+One registered while the object was written ends the move before its row, and the move
+deletes its own object, which no row names. While the original is still held in ClickHouse
+after that (the erasure has not reached it yet, or a user's erasure kept it for another
+writer), it is reported, to move on a later run if it is still there. One registered as
+the row lands may have deleted the original first. A namespace's erasure deletes every
+original of its namespace, so the move deletes its row and object at once. A user's
+erasure deletes every object of an original it takes, so the move waits for it to finish
+and deletes its row when its object is gone; when the object is still there and its row
+too, the erasure kept the original and the switch stands (unless a later write outranks
+it, as below), and when only the row went (a replica without the bucket set deletes rows
+only), the move deletes the object. The fence counts on every replica running with
+`LOOM_DOCUMENT_OBJECT_STORE=s3`: a replica without the bucket that runs a user's erasure
+may keep a moved row it did not see, and no check can tell that from an erasure that kept
+the original. One that has not finished after 600 seconds (a failed one is waited for
+too), or a check that fails after the switch, is named, and the switched row is left to
+it.
+
+The row is written only within the time an upload has to write its object, counted from
+the write as an upload's is and well inside `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`, after
+which the bucket walk may take an object no row names; a copy that takes longer deletes
+its object and is reported. An original nothing needs any more by the time its row lands
+(its last document went meanwhile) keeps its switched row, which the sweep deletes once it
+is old enough (counted from its last upload, not the move), as any original nothing names.
+When the move's last read of the row finds none (the sweep took the original, row and all,
+as it landed), the move deletes its object at once; a sweep delete landing after that read
+leaves the object to the bucket walk.
+
+An original whose bytes do not hash to their sha256 or fill their size, one an erasure
+held back, one whose object key would be too long, or one the bucket refused or was too
+slow for is reported and stays where it was. The command exits 1 for those, and for a
+switched original it could not confirm. An original uploaded again or deleted while the
+command ran keeps what that write left, and the move deletes the object it wrote (or, when
+the write landed after the move's last read of the row, leaves it to the bucket walk once
+the rows merge). An object a crash leaves is the sweep's, as an upload's is. The command
+is idempotent: run it again after a stop or a failure.
+
 The server's credentials need `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and
 `s3:ListBucket` on the bucket and prefix. Without `s3:ListBucket`, S3 answers a read of a
 missing object with `403 AccessDenied` instead of `404 NoSuchKey`, so a gone original

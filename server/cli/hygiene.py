@@ -508,11 +508,8 @@ def _utc_instant(text: str) -> datetime:
 
 def _re_verify_scope(row: Mapping[str, Any]) -> tuple[str, str | list[str], bool, bool]:
     """(census scope_type, census scope_value, purge, external) of a ledger row."""
-    from server.erasure.api.erasure import (
-        parse_external_flag,
-        parse_namespace_list,
-        parse_purge_flag,
-    )
+    from server.erasure.api.erasure import parse_external_flag, parse_purge_flag
+    from server.erasure.domain.scopes import parse_namespace_list
 
     scope_type = str(row["scope_type"])
     scope_value = str(row["scope_value"])
@@ -530,7 +527,8 @@ def _re_verify_input(row: Mapping[str, Any], *, skip_external: bool) -> Any:
     """The request the saga resumes with. `--skip-external` rewrites the
     `namespace_list` scope object (the ledger's copy wins over the field, so
     the flag must change there) and is refused for any other scope."""
-    from server.erasure.api.erasure import ErasureRequestInput, parse_namespace_list
+    from server.erasure.api.erasure import ErasureRequestInput
+    from server.erasure.domain.scopes import parse_namespace_list
 
     scope_type = str(row["scope_type"])
     scope_value = str(row["scope_value"])

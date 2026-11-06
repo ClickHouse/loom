@@ -1,15 +1,20 @@
 """`loom knowledge sync`: one sync pass over a repository namespace's document
 sources and the decisions mined from them, in-process with no token (operator only), the pass the
-knowledge_source_sync worker runs (server/knowledge/app/source_sync.py)."""
+knowledge_source_sync worker runs (server/knowledge/app/source_sync.py). `loom knowledge
+migrate-originals`: the originals held in ClickHouse moved to the document bucket
+(server/knowledge/app/originals.py)."""
 
 from __future__ import annotations
 
 import argparse
 import sys
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.cli._ch import run_connected
+
+if TYPE_CHECKING:
+    from server.knowledge.app.originals import Migrated
 
 
 def register_knowledge_cli(sub: Any) -> None:
@@ -37,6 +42,25 @@ def register_knowledge_cli(sub: Any) -> None:
         "while that request is unfinished goes on with it",
     )
     p_sync.set_defaults(func=_cmd_sync)
+    p_move = ksub.add_parser(
+        "migrate-originals",
+        help="Move the document originals still held in ClickHouse, that a document, upload "
+        "or ingestion needs, to LOOM_DOCUMENT_S3_BUCKET: each is copied to its own object, "
+        "hash-verified and switched, fenced by the erasure ledger. Needs "
+        "LOOM_DOCUMENT_OBJECT_STORE=s3 on every replica first (a dry run does not). "
+        "Idempotent. Exits 1 when an original was not moved, a namespace was refused, or a "
+        "switch could not be confirmed; each is listed. See docs/features/knowledge.md, "
+        "Where originals are stored.",
+    )
+    p_move.add_argument("--org", default="", help="Only this org's originals")
+    p_move.add_argument("--namespace", default="", help="Only this namespace of --org")
+    p_move.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Count the originals held in ClickHouse; move none. Exits 1 when a namespace would "
+        "be refused",
+    )
+    p_move.set_defaults(func=_cmd_migrate_originals)
 
 
 def _cmd_sync(args: argparse.Namespace) -> int:
@@ -64,6 +88,68 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         return 1 if result.failed else 0
 
     return run_connected(_run)
+
+
+def _cmd_migrate_originals(args: argparse.Namespace) -> int:
+    from server.settings import settings
+
+    if args.namespace and not args.org:
+        print("error: --namespace needs --org", file=sys.stderr)
+        return 2
+    # A dry run only reads ClickHouse: it sizes the move before the store is switched.
+    if not args.dry_run and settings.document_object_store != "s3":
+        print(
+            "error: set LOOM_DOCUMENT_OBJECT_STORE=s3 (and LOOM_DOCUMENT_S3_BUCKET) first, "
+            "so no new original is written to ClickHouse behind the move",
+            file=sys.stderr,
+        )
+        return 2
+
+    async def _run(_ch: Any) -> int:
+        from server.core import object_store
+        from server.knowledge.app.originals import Migrated, migrate_originals
+
+        if args.dry_run:
+            counted = await migrate_originals(org=args.org, namespace=args.namespace, dry_run=True)
+            print(
+                f"{counted.pending} original(s), {counted.bytes} bytes, held in ClickHouse; "
+                f"{counted.unneeded} more nothing needs now, left to the sweep; "
+                f"{len(counted.refused)} namespace(s) a run would refuse"
+            )
+            for line in counted.refused:
+                print(f"refused: {line}", file=sys.stderr)
+            return 1 if counted.refused else 0
+        object_store.require_client()
+        result = Migrated()
+        try:
+            await migrate_originals(org=args.org, namespace=args.namespace, out=result)
+        finally:
+            # Printed even when an error stops the run: a switched row is not walked again.
+            _report_migrated(result)
+        return 1 if result.errors or result.refused or result.unconfirmed else 0
+
+    return run_connected(_run)
+
+
+def _report_migrated(result: Migrated) -> None:
+    print(
+        f"{result.moved} original(s) moved to the bucket ({result.bytes} bytes), "
+        f"{result.skipped} gone, replaced or erased meanwhile, {result.unneeded} nothing "
+        f"needs now (left to the sweep), {len(result.errors)} not moved, "
+        f"{len(result.unconfirmed)} switched but unconfirmed, {len(result.refused)} "
+        "namespace(s) refused"
+    )
+    if result.moved:
+        print(
+            "the ClickHouse copies stay until loom.document_blobs merges their parts; "
+            "OPTIMIZE TABLE loom.document_blobs FINAL drops them now"
+        )
+    for line in result.errors:
+        print(f"error: {line}", file=sys.stderr)
+    for line in result.refused:
+        print(f"refused: {line}", file=sys.stderr)
+    for line in result.unconfirmed:
+        print(f"switched, unconfirmed: {line}", file=sys.stderr)
 
 
 async def _record(namespace: str, started: float, result: Any) -> None:
