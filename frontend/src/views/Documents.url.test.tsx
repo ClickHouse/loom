@@ -251,8 +251,9 @@ describe("Find a passage in the Library", () => {
     fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "who to escalate to" } });
     fireEvent.click(screen.getByRole("button", { name: "Find" }));
     await settle();
+    // The place the list reads; the search uses its org and namespace.
     expect(api.searchKnowledge.mock.calls[0].slice(0, 2)).toEqual([
-      { org: "acme", namespace: "team" },
+      expect.objectContaining({ org: "acme", namespace: "team" }),
       "who to escalate to",
     ]);
     const list = screen.getByRole("list", { name: "Passages found" });
