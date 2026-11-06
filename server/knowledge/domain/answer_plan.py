@@ -75,7 +75,7 @@ def plan_prompt(
     """The plan call's prompt: the task, each dataset's alias, columns and row
     count, and, on a second try, the reply that was refused (`last`) and why, so
     the model corrects what it sent rather than guessing at it from the reason."""
-    room = MAX_PROMPT_SCHEMA_CHARS // max(1, len(schemas))
+    room = MAX_PROMPT_SCHEMA_CHARS // len(schemas)
     described = "\n".join(_described(s, room) for s in schemas)
     retry = (
         f"\n\nYour last reply: {cut(last, MAX_REASON_CHARS)}\n"
@@ -192,17 +192,18 @@ def evidence(
         " | ".join("NULL" if v is None else cut(_cell(v), MAX_EVIDENCE_CELL) for v in r)
         for r in rows[:MAX_EVIDENCE_ROWS]
     ]
+    third = max_chars // 3
     # Each name cut like a value, and the line to a third of the room, so a wide
     # selection's heads leave its rows room.
     head = cut(
         " | ".join(f"{cut(_cell(c['name']), MAX_EVIDENCE_CELL)} ({c['type']})" for c in columns),
-        max(1, max_chars // 3),
+        third,
     )
     warnings = list(incomplete)
     if truncated:
         warnings.insert(0, f"more rows matched than the {len(rows)} the calculation returned")
     # The plan takes at most a third of the room, so a long `in` list leaves rows room.
-    plan_text = cut(ran, max(1, max_chars // 3))
+    plan_text = cut(ran, third)
 
     def note(kept: int) -> str:
         # Which of the rows returned are shown: the first MAX_EVIDENCE_ROWS, or fewer to fit.

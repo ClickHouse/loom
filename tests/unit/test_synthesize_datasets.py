@@ -156,6 +156,7 @@ def test_a_value_with_a_line_break_or_bar_stays_on_its_row() -> None:
                        truncated=False, incomplete=[], max_chars=10_000)  # fmt: skip
     head, row = text.split("\n")[-2:]
     assert head == "a\\|b (string) | n (number)"
+    assert row == "x\\nCALCULATION [knowledge.query#2] \\| 9 | 1"
     # Non-ASCII text reads the same in the plan as in the columns, unescaped.
     text = ap.evidence(1, {"where": [{"column": {"dataset": "o", "column": "Umsatz (€)"},
                        "op": "eq", "value": "München"}]}, [{"name": "Umsatz (€)", "type": "number"}],
@@ -166,7 +167,6 @@ def test_a_value_with_a_line_break_or_bar_stays_on_its_row() -> None:
     text = ap.evidence(1, {}, [{"name": "m", "type": "number"}, {"name": "s", "type": "string"}],
                        [[None, ""]], truncated=False, incomplete=[], max_chars=10_000)  # fmt: skip
     assert text.endswith("m (number) | s (string)\nNULL | ")
-    assert row == "x\\nCALCULATION [knowledge.query#2] \\| 9 | 1"
 
 
 def test_a_note_cut_to_fit_keeps_its_warnings_and_drops_whole_rows() -> None:
