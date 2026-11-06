@@ -259,10 +259,10 @@ def _read_layout(
         if drew is not None and drew.whole
         else _has_image(page, reader, inline_only=True)
     )
-    # a page of only sub-point pictures has nothing to fail, unless it draws an image inline
     # A drawing read whole has seen every image the page draws: the resources are
     # searched only when it was not (an image they hold and nothing draws is none).
     unseen = (drew is None or not drew.whole) and not pictures and _has_image(page, reader)
+    # a page of only sub-point pictures has nothing to fail, unless it draws an image inline
     if not texted and not targets and (draws_inline or unseen):
         read.failure = (
             _NEEDS_OCR

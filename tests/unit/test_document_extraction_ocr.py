@@ -833,15 +833,13 @@ def test_an_image_in_the_deepest_form_walked_is_read(engine: FakeEngine) -> None
     assert a.coverage.complete and len(engine.seen) == 1
 
 
-def test_a_drawing_read_whole_with_no_picture_needs_no_resource_search(
-    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+def test_shared_forms_past_the_depth_that_nothing_draws_leave_the_page_complete(
+    engine: FakeEngine,
 ) -> None:
-    # resources that seem to hold an image (shared forms past the depth) nothing draws
-    monkeypatch.setattr(
-        pdffile, "_has_image", lambda *a, **kw: False if kw.get("inline_only") else True
-    )
-    a = extract(laid_out_pdf([b"0 0 m 100 100 l S"]), "v.pdf")
-    assert a.coverage.complete
+    # the page holds a chain of forms five deep (an image at its end) and draws none of them
+    chain = tuple(b"/Ch%d Do" % n for n in range(2, 6)) + (b"q 400 0 0 300 100 300 cm /Im1 Do Q",)
+    a = extract(laid_out_pdf([b"0 0 m 100 100 l S"], chain=chain), "v.pdf")
+    assert a.coverage.complete and engine.seen == []
 
 
 def test_a_text_page_whose_layout_fails_beside_an_image_is_partial(
