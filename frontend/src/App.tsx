@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, type ReactElement } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { flushView, installVitals, startView } from "./lib/vitals";
 import { ReloadBar } from "./components/ReloadBar";
 import { sharedMine, sharedHealth } from "./lib/sharedReads";
@@ -28,7 +28,14 @@ import {
   landingTarget,
   needsMemoryNamespace,
 } from "./lib/namespace";
-import { claimsFromToken, provisionalNamespace, rememberKinds, takeLinkToken } from "./lib/boot";
+import {
+  claimsFromToken,
+  linkTokenTrusted,
+  provisionalNamespace,
+  rememberKinds,
+  takeLinkToken,
+  takeSignInStarted,
+} from "./lib/boot";
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
 import { useStore, pathnameView, linkedNamespace, addressPageNamespace } from "./lib/state";
@@ -97,6 +104,7 @@ const ProfileSectionDialog = lazy(() =>
 );
 const HelpDialog = lazy(() => import("./components/HelpDialog").then((m) => ({ default: m.HelpDialog })));
 const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.TokenGate })));
+const LinkTokenConfirm = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.LinkTokenConfirm })));
 // The expired-session card's chunk is fetched as the app loads, from the build that served
 // it: it shows on a long-lived tab, the one most likely to predate a deploy, and a chunk
 // first asked for then would be gone and its stale-chunk reload would lose the page.
@@ -210,6 +218,8 @@ export default function App() {
   const helpOpen = useStore((s) => s.helpOpen);
   const inspectedProfileLabel = useStore((s) => s.inspectedProfileLabel);
   const setHelpOpen = useStore((s) => s.openHelp);
+  // A link token boot holds, unstored, until the person says whose account to sign in as.
+  const [linkAsk, setLinkAsk] = useState<{ token: string; answer: (ok: boolean) => void } | null>(null);
 
   // Global keyboard bindings — disabled while focus is in an input.
   useKeyboard(
@@ -312,8 +322,17 @@ export default function App() {
         // A login link (federation redirect) carries the token in the #token= fragment: taken
         // and scrubbed before anything can fail. The return to the page its sign-in started on
         // is a chunk of its own, and boot goes on without it.
+        const started = takeSignInStarted();
         link = takeLinkToken();
         if (link) {
+          // A token this tab did not ask for waits, in memory only, for the person to confirm
+          // the account it names; a cancelled one is dropped and boot goes on as before.
+          const token = link.token;
+          if (token && !linkTokenTrusted(token, storedToken(), started)) {
+            const ok = await new Promise<boolean>((answer) => setLinkAsk({ token, answer }));
+            setLinkAsk(null);
+            if (!ok) link = { ...link, token: null };
+          }
           if (link.token) setToken(link.token);
           try {
             (await import("./lib/linkToken")).returnToSignInStart(link.atRoot);
@@ -530,6 +549,17 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  if (linkAsk) {
+    return (
+      <Suspense fallback={null}>
+        <LinkTokenConfirm
+          claims={claimsFromToken(linkAsk.token)}
+          onConfirm={() => linkAsk.answer(true)}
+          onCancel={() => linkAsk.answer(false)}
+        />
+      </Suspense>
+    );
+  }
   // Unauthed → token gate
   if (!authed && !isProxyMode()) {
     return (

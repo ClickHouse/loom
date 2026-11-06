@@ -1,11 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   claimsFromToken,
   provisionalNamespace,
   rememberKinds,
   rememberedKinds,
   sameIdentity,
+  linkTokenTrusted,
+  markSignInStarted,
   takeLinkToken,
+  takeSignInStarted,
 } from "./boot";
 import type { MyNamespaceEntry } from "../api";
 import { VIEW_LOADERS } from "../views/registry";
@@ -167,5 +170,34 @@ describe("login link token", () => {
     history.replaceState(null, "", "/#token=%E0%A4%A");
     expect(takeLinkToken()).toEqual({ token: null, atRoot: true });
     expect(address()).toBe("/");
+  });
+});
+
+describe("a sign-in this tab started", () => {
+  beforeEach(() => sessionStorage.clear());
+
+  it("is fresh for ten minutes and used up once taken", () => {
+    markSignInStarted(1_000);
+    expect(takeSignInStarted(1_000 + 10 * 60 * 1000)).toBe(true);
+    expect(takeSignInStarted(1_000 + 1)).toBe(false);
+  });
+
+  it("is none once older than ten minutes, or never marked", () => {
+    markSignInStarted(1_000);
+    expect(takeSignInStarted(1_000 + 10 * 60 * 1000 + 1)).toBe(false);
+    expect(takeSignInStarted()).toBe(false);
+  });
+
+  it("trusts a link token only for that sign-in or the subject and org already held", () => {
+    const alice = jwt({ sub: "alice", org: "acme" });
+    const alice2 = jwt({ sub: "alice", org: "acme", iat: 2 });
+    const aliceElsewhere = jwt({ sub: "alice", org: "other" });
+    const bob = jwt({ sub: "bob", org: "acme" });
+    expect(linkTokenTrusted(bob, alice, true)).toBe(true);
+    expect(linkTokenTrusted(alice2, alice, false)).toBe(true);
+    expect(linkTokenTrusted(bob, alice, false)).toBe(false);
+    expect(linkTokenTrusted(aliceElsewhere, alice, false)).toBe(false);
+    expect(linkTokenTrusted(alice, null, false)).toBe(false);
+    expect(linkTokenTrusted("garbage", "garbage", false)).toBe(false);
   });
 });

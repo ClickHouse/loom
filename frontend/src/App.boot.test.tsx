@@ -500,6 +500,7 @@ describe("a link's namespace", () => {
         "loom_sign_in_from_v1",
         JSON.stringify({ path: "/memories?namespace=joined", at: Date.now() }),
       );
+      sessionStorage.setItem("loom_sign_in_pending_v1", String(Date.now()));
       localStorage.removeItem("loom_token_v1");
       useStore.setState({ authed: false });
       const token = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
@@ -539,6 +540,7 @@ describe("a link's namespace", () => {
         "loom_sign_in_from_v1",
         JSON.stringify({ path: "/memories?namespace=joined", at: Date.now() }),
       );
+      sessionStorage.setItem("loom_sign_in_pending_v1", String(Date.now()));
       localStorage.removeItem("loom_token_v1");
       useStore.setState({ authed: false });
       window.history.replaceState(
@@ -562,6 +564,7 @@ describe("login link", () => {
   let stored: string[];
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     useStore.setState({ authed: false, whoami: null, myNamespaces: null, identity: null, view: "setup" });
     Element.prototype.scrollTo = vi.fn();
     vi.stubGlobal(
@@ -591,12 +594,76 @@ describe("login link", () => {
     expect(window.location.href).not.toContain("query.jwt.value");
   });
 
-  it("stores a #token= fragment and scrubs it", async () => {
+  it("stores a #token= fragment from a sign-in this tab started, without asking, and scrubs it", async () => {
+    sessionStorage.setItem("loom_sign_in_pending_v1", String(Date.now()));
     window.history.replaceState(null, "", "/memories#token=frag.jwt.value");
     render(<App />);
     await settle();
     expect(stored).toEqual(["frag.jwt.value"]);
     expect(window.location.href).not.toContain("frag.jwt.value");
+    expect(sessionStorage.getItem("loom_sign_in_pending_v1")).toBeNull();
+    expect(screen.queryByText(/Sign in from a link/)).toBeNull();
+  });
+
+  const mallory = jwt({ sub: "mallory", org: ORG, namespaces: ["mallory-ns"], roles: ["ADMIN"] });
+  const alice = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+
+  it("holds a link token this tab did not ask for, unstored, and names the account it signs in as", async () => {
+    localStorage.setItem("loom_token_v1", alice);
+    stored = [];
+    window.history.replaceState(null, "", `/settings#token=${mallory}`);
+    render(<App />);
+    await screen.findByRole("button", { name: "Sign in as mallory" });
+    expect(screen.getByText("acme")).toBeTruthy();
+    expect(stored).toEqual([]);
+    expect(localStorage.getItem("loom_token_v1")).toBe(alice);
+    expect(window.location.href).not.toContain("token=");
+    expect(JSON.stringify({ ...localStorage, ...sessionStorage })).not.toContain(mallory);
+  });
+
+  it("stores the link token once the person confirms the account", async () => {
+    localStorage.setItem("loom_token_v1", alice);
+    stored = [];
+    window.history.replaceState(null, "", `/settings#token=${mallory}`);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in as mallory" }));
+    await settle();
+    expect(stored).toEqual([mallory]);
+    expect(screen.queryByRole("button", { name: "Sign in as mallory" })).toBeNull();
+  });
+
+  it("cancelling drops the link token and keeps the browser's own session", async () => {
+    localStorage.setItem("loom_token_v1", alice);
+    stored = [];
+    window.history.replaceState(null, "", `/settings#token=${mallory}`);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    await settle();
+    expect(stored).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Sign in as mallory" })).toBeNull();
+    // whoami was asked about the token the browser held, never the link's.
+    const sent = vi.mocked(fetch).mock.calls.map(([, init]) => new Headers(init?.headers).get("Authorization"));
+    expect(sent).toContain(`Bearer ${alice}`);
+    expect(sent).not.toContain(`Bearer ${mallory}`);
+  });
+
+  it("a sign-in mark older than ten minutes counts as none", async () => {
+    sessionStorage.setItem("loom_sign_in_pending_v1", String(Date.now() - 11 * 60 * 1000));
+    window.history.replaceState(null, "", `/me#token=${mallory}`);
+    render(<App />);
+    await screen.findByRole("button", { name: "Sign in as mallory" });
+    expect(stored).toEqual([]);
+  });
+
+  it("stores without asking a link token for the same subject and org as the one held", async () => {
+    localStorage.setItem("loom_token_v1", alice);
+    stored = [];
+    const again = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"], iat: 2 });
+    window.history.replaceState(null, "", `/me#token=${again}`);
+    render(<App />);
+    await settle();
+    expect(stored).toEqual([again]);
+    expect(screen.queryByText(/Sign in from a link/)).toBeNull();
   });
 });
 
@@ -946,6 +1013,8 @@ describe("a refused token", { timeout: 30_000 }, () => {
     window.__LOOM_SSO = true;
     localStorage.clear();
     refuse = true; // whoami refuses the link's token
+    // The SSO sign-in this tab started comes back with a token the server refuses.
+    sessionStorage.setItem("loom_sign_in_pending_v1", String(Date.now()));
     window.history.replaceState(null, "", `/me#token=${alice}`);
     render(<App />);
     await until(() => useStore.getState().authed === false);
@@ -969,6 +1038,8 @@ describe("a refused token", { timeout: 30_000 }, () => {
     window.__LOOM_SSO = true;
     localStorage.clear();
     refuseWhoamiOnly = true; // list_mine answers; only whoami refuses the link's token
+    // The SSO sign-in this tab started comes back with a token the server refuses.
+    sessionStorage.setItem("loom_sign_in_pending_v1", String(Date.now()));
     window.history.replaceState(null, "", `/me#token=${alice}`);
     render(<App />);
     await until(() => useStore.getState().authed === false);

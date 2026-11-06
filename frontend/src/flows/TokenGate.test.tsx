@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SIGN_IN_FROM } from "../lib/boot";
+import { SIGN_IN_FROM, SIGN_IN_PENDING } from "../lib/boot";
 import { ApiError } from "../lib/errors";
 import { axeViolations } from "../test/axe";
 import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, TokenGate, resumeSsoOnce } from "./TokenGate";
@@ -169,6 +169,8 @@ describe("TokenGate", () => {
       expect(JSON.parse(sessionStorage.getItem(SIGN_IN_FROM) ?? "{}")).toMatchObject({
         path: "/knowledge?namespace=group-a-shared",
       });
+      // The token that comes back is this tab's own, stored without asking.
+      expect(Number(sessionStorage.getItem(SIGN_IN_PENDING))).toBeGreaterThan(0);
       history.replaceState(null, "", "/");
     });
 
@@ -218,6 +220,8 @@ describe("TokenGate", () => {
       history.replaceState(null, "", "/");
       fireEvent.click(link);
       expect(sessionStorage.getItem(SIGN_IN_FROM)).toBeNull();
+      // The sign-in is still this tab's own.
+      expect(Number(sessionStorage.getItem(SIGN_IN_PENDING))).toBeGreaterThan(0);
     });
 
     it("shows the password gate when it is off", () => {

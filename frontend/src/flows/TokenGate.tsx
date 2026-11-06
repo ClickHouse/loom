@@ -8,7 +8,7 @@ import { ExternalLink } from "../components/ui/ExternalLink";
 import { Panel } from "../components/ui/Panel";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { selfSignup, setToken, loginWithPassword } from "../api";
-import { SIGN_IN_FROM } from "../lib/boot";
+import { SIGN_IN_FROM, markSignInStarted, type TokenClaims } from "../lib/boot";
 import { goToSso } from "../lib/navigation";
 import { errorRequestId, humanizeError } from "../lib/format";
 import type { GateReason } from "../lib/state";
@@ -44,10 +44,12 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
   return <PasswordGate onLogin={onLogin} reason={reason} />;
 }
 
-/** Remember the page a sign-in starts on, and when: the identity provider sends the
- *  browser back to the root, and boot returns here within ten minutes
+/** Remember that this tab starts a sign-in, and the page it starts on: the token that
+ *  comes back is stored without asking (`lib/boot.ts`), and the identity provider sends
+ *  the browser back to the root, where boot returns here within ten minutes
  *  (`lib/linkToken.ts`). From the bare root there is nothing to come back to. */
 function rememberSignInStart(): void {
+  markSignInStarted();
   const path = window.location.pathname + window.location.search;
   try {
     if (path === "/") sessionStorage.removeItem(SIGN_IN_FROM);
@@ -107,6 +109,42 @@ function GateNotice({ reason }: { reason?: GateReason }) {
   if (reason === "refused")
     return <Alert role="status" state="neutral" text="The token this sign-in brought was refused — sign in again." />;
   return null;
+}
+
+/** Asks before a `#token=` link this tab did not ask for signs the browser in: anyone
+ *  holding a token can send one, and storing it unasked would put what this browser
+ *  writes next in the sender's account. */
+export function LinkTokenConfirm({
+  claims,
+  onConfirm,
+  onCancel,
+}: {
+  claims: TokenClaims | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const subject = claims?.subject || "an unnamed account";
+  return (
+    <GateShell>
+      <Panel className="space-y-4">
+        <h2 className="m-0 text-base">Sign in from a link?</h2>
+        <p className="m-0 text-sm">
+          This link signs this browser in as <strong>{subject}</strong>
+          {claims?.org ? (
+            <>
+              {" "}
+              in org <strong>{claims.org}</strong>
+            </>
+          ) : null}
+          . What you upload, write or mint next goes to that account. Continue only if you opened a link you asked for.
+        </p>
+        <div className="flex gap-2">
+          <Button type="primary" htmlType="button" label={`Sign in as ${subject}`} onClick={onConfirm} />
+          <Button type="secondary" htmlType="button" label="Cancel" onClick={onCancel} />
+        </div>
+      </Panel>
+    </GateShell>
+  );
 }
 
 /** The sign-in page around either gate: the logo and its tagline. */

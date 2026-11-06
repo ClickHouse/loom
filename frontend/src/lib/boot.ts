@@ -57,6 +57,45 @@ export function claimsFromToken(jwt: string | null | undefined): TokenClaims | n
  *  writes it, and the return to it (`lib/linkToken.ts`) reads it. */
 export const SIGN_IN_FROM = "loom_sign_in_from_v1";
 
+/** The session key for when this tab last sent the browser to single sign-on: the sign-in
+ *  gate writes it beside {@link SIGN_IN_FROM}, and boot takes it with the token that comes
+ *  back. A link token with no fresh mark is one this tab never asked for. */
+export const SIGN_IN_PENDING = "loom_sign_in_pending_v1";
+
+/** How long a sign-in this tab started stays its own. */
+const SIGN_IN_PENDING_TTL_MS = 10 * 60 * 1000;
+
+/** Mark that this tab starts a sign-in now. */
+export function markSignInStarted(now: number = Date.now()): void {
+  try {
+    sessionStorage.setItem(SIGN_IN_PENDING, String(now));
+  } catch {
+    /* no session storage: the returning token asks to be confirmed */
+  }
+}
+
+/** Whether this tab started a sign-in in the last ten minutes; the mark is used up. */
+export function takeSignInStarted(now: number = Date.now()): boolean {
+  try {
+    const at = Number(sessionStorage.getItem(SIGN_IN_PENDING));
+    sessionStorage.removeItem(SIGN_IN_PENDING);
+    return at > 0 && now - at >= 0 && now - at <= SIGN_IN_PENDING_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a link token may replace the stored one without asking: this tab started the
+ *  sign-in it answers, or it signs in the same subject of the same org as the token held
+ *  (a session refreshed). Anyone holding a token can send a link; storing it unasked would
+ *  sign this browser in as them. */
+export function linkTokenTrusted(link: string, held: string | null, started: boolean): boolean {
+  if (started) return true;
+  const a = claimsFromToken(link);
+  const b = claimsFromToken(held);
+  return !!a?.subject && !!a.org && a.subject === b?.subject && a.org === b?.org;
+}
+
 /** Accept fragment tokens only; scrub both token forms before boot can fail.
  * Query tokens reach server logs and are never accepted. */
 export function takeLinkToken(): { token: string | null; atRoot: boolean } | null {
