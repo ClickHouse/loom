@@ -254,9 +254,7 @@ def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> 
     )
     failed = run()
     assert failed.returncode != 0
-    assert (
-        "Pin" not in (tmp_path / "summary").read_text() if (tmp_path / "summary").exists() else True
-    )
+    assert not (tmp_path / "summary").exists()  # no pin, empty or not
     (bin_dir / "docker").write_text(
         '#!/bin/sh\necho "$@" >> "$CALLS"\n'
         'case "$3" in inspect) printf \'{"digest":"sha256:index-%s"}\\n\' "${4%%:*}" ;; esac\n'
