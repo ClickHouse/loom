@@ -106,6 +106,8 @@ _FORGET_MSG_RE = re.compile(
 )
 # "forget it", "forget about that, let's move on": no object to resolve.
 _FORGET_MSG_PRONOUNS = frozenset("it this that them those these everything anything all".split())
+# A longer sentence is not read as a request to forget.
+MAX_FORGET_SENTENCE_CHARS = 400
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
@@ -287,7 +289,7 @@ def forget_requests_from_messages(messages: list[dict[str, Any]]) -> list[dict[s
             continue
         for sent in _SENTENCE_SPLIT_RE.split(text):
             sent = sent.strip().strip("\"'“”‘’")
-            if not sent or len(sent) > 400:
+            if not sent or len(sent) > MAX_FORGET_SENTENCE_CHARS:
                 continue
             mt = _FORGET_MSG_RE.match(sent)
             if not mt:
@@ -323,7 +325,12 @@ def forget_sentences(
         text = str(m.get("content") or "")
         sents = [x.strip() for x in _SENTENCE_SPLIT_RE.split(text) if x.strip()]
         for raw in sents:
-            mt = _FORGET_MSG_RE.match(raw.strip("\"'“”‘’"))
+            sent = raw.strip("\"'“”‘’")
+            # the length forget_requests_from_messages reads: the match is
+            # quadratic in a sentence's trailing whitespace
+            if len(sent) > MAX_FORGET_SENTENCE_CHARS:
+                continue
+            mt = _FORGET_MSG_RE.match(sent)
             if not mt:
                 continue
             _, rest = split_replacement(mt.group("what"))

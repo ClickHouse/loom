@@ -24,13 +24,19 @@ from server.code.store.index import CodeRepo
 # sanitizer frames (`#2 0x… in DB::Foo::bar path.cpp:42`), plus bare
 # `path.cpp:123` locations. Qualified names must contain `::` — a bare word
 # in prose is not a frame.
-_TRACE_SYMBOL_RE = re.compile(r"(?:[A-Za-z_~][\w~]*::)+[A-Za-z_~][\w~]*")
+# Group 1 is the name, read from the first letter of a word: a start inside
+# a word would rescan it, so a long word costs one pass, not one per letter.
+_TRACE_SYMBOL_RE = re.compile(
+    r"(?<![\w~])[^\WA-Za-z_]*+((?:[A-Za-z_~][\w~]*+::)+[A-Za-z_~][\w~]*+)"
+)
 
 
 # At least one directory component required: a bare `raise.c:50` is a libc
 # frame the index can never resolve — repo paths in real traces carry dirs.
+# A path is read from the start of its first directory only, so a long
+# path costs one pass, not one per directory.
 _TRACE_FILELINE_RE = re.compile(
-    r"((?:[\w.+-]+/)+[\w.+-]+\.(?:cpp|cc|cxx|c|h|hpp|hh|proto))[:(](\d+)"
+    r"(?<![\w.+-])(?<![\w.+-]/)((?:[\w.+-]+/)+[\w.+-]+\.(?:cpp|cc|cxx|c|h|hpp|hh|proto))[:(](\d+)"
 )
 
 
@@ -41,7 +47,7 @@ def _parse_trace_frames(trace: str, max_frames: int) -> list[dict[str, Any]]:
     seen: set[str] = set()
     for line in trace.splitlines():
         for m in _TRACE_SYMBOL_RE.finditer(line):
-            name = m.group(0)
+            name = m.group(1)
             # skip stdlib / abseil / boost frames: they resolve to nothing and pad the
             # budget.
 

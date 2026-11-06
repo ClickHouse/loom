@@ -23,7 +23,7 @@ _CODE_FILE_EXTS = (
     "vue|svelte|dart|lua|r|jl|tf|tfvars|dockerfile|makefile|gradle|xml"
 )
 _FILE_PATH_RE = re.compile(
-    r"(?<![\w./-])"  # left boundary: not mid-token
+    r"(?<![\w./@-])"  # left boundary: not mid-token
     r"((?:[\w.@-]+/)+[\w.@-]+\.(?:" + _CODE_FILE_EXTS + r"))"
     r"(?::\d+(?::\d+)?)?"  # optional :line or :line:col
     r"(?![\w])",
@@ -34,7 +34,7 @@ _FILE_PATH_RE = re.compile(
 # is plausibly a filename, not a sentence ending. Requires the extension
 # to be one of the closed-class code extensions.
 _BARE_FILE_RE = re.compile(
-    r"(?<![\w./-])([\w@-]+\.(?:" + _CODE_FILE_EXTS + r"))(?::\d+(?::\d+)?)?(?![\w])",
+    r"(?<![\w./@-])([\w@-]+\.(?:" + _CODE_FILE_EXTS + r"))(?::\d+(?::\d+)?)?(?![\w])",
     re.IGNORECASE,
 )
 # Extensionless conventional filenames coding agents touch constantly.

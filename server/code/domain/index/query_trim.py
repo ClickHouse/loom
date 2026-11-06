@@ -67,8 +67,11 @@ _BOILERPLATE_RE = re.compile(
     ),
     re.IGNORECASE,
 )
-# A `Namespace::name` reference: both sides are identifiers to keep.
-_QUALIFIED_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?:::([A-Za-z_][A-Za-z0-9_]*))+")
+# A `Namespace::name` reference: both sides are identifiers to keep. Group 1
+# is the name, read from a word's first letter so a long word costs one pass.
+_QUALIFIED_RE = re.compile(
+    r"(?<![A-Za-z0-9_])[0-9]*+([A-Za-z_][A-Za-z0-9_]*+(?:::[A-Za-z_][A-Za-z0-9_]*+)+)"
+)
 # Tokens that cannot name a subject: a bare number, or a hex fragment of a
 # commit / fiddle hash (letters a–f with at least one digit, 4+ chars).
 _NOISE_RE = re.compile(r"^(?:[0-9]+|(?=.*[0-9])[0-9a-f]{4,})$")
@@ -105,7 +108,7 @@ def identifier_forms(text: str) -> frozenset[str]:
     letter-digit edges like an identifier but is noise, not one."""
     keep = {t for t in compound_identifiers(text) if not is_noise_token(t)}
     for m in _QUALIFIED_RE.finditer(text):
-        for part in m.group(0).split("::"):
+        for part in m.group(1).split("::"):
             if len(part) >= 2:
                 keep.add(part.lower())
     return frozenset(keep)

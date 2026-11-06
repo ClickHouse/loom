@@ -49,9 +49,13 @@ DF_BUDGET = 2500
 # the frame shapes `code.trace` parses (server/code/app/symbol/trace.py);
 # mirrored here rather than imported so the tracker plane does not load the code
 # handlers — tests/unit/test_tracker_similar.py pins the two in step
-TRACE_SYMBOL_RE = re.compile(r"(?:[A-Za-z_~][\w~]*::)+[A-Za-z_~][\w~]*")
+# Group 1 is the name, read from the first letter of a word: a start inside
+# a word would rescan it, so a long word costs one pass, not one per letter.
+TRACE_SYMBOL_RE = re.compile(r"(?<![\w~])[^\WA-Za-z_]*+((?:[A-Za-z_~][\w~]*+::)+[A-Za-z_~][\w~]*+)")
+# A path is read from the start of its first directory only, so a long
+# path costs one pass, not one per directory.
 TRACE_FILELINE_RE = re.compile(
-    r"((?:[\w.+-]+/)+[\w.+-]+\.(?:cpp|cc|cxx|c|h|hpp|hh|proto))[:(](\d+)"
+    r"(?<![\w.+-])(?<![\w.+-]/)((?:[\w.+-]+/)+[\w.+-]+\.(?:cpp|cc|cxx|c|h|hpp|hh|proto))[:(](\d+)"
 )
 _NOISE_PREFIXES = ("std::", "__", "absl::", "boost::")
 # Frames every trace carries whatever broke — the capture and
@@ -292,7 +296,7 @@ def normalise_frames(frames: list[str], *, max_frames: int = 12) -> list[Frame]:
     seen: set[str] = set()
     for line in frames or []:
         for m in TRACE_SYMBOL_RE.finditer(line or ""):
-            name = m.group(0)
+            name = m.group(1)
             if name.startswith(_NOISE_PREFIXES):
                 continue
             parts = [p for p in name.split("::") if p]
@@ -323,6 +327,9 @@ def normalise_frames(frames: list[str], *, max_frames: int = 12) -> list[Frame]:
     return out[:max_frames]
 
 
+# the first `Name::x` on the line: each word is read once from its first
+# letter, so a long line is one pass, not one pass per character
+_QUALIFIED_AHEAD = r".*?(?<!\w)[^\WA-Za-z_]*+[A-Za-z_]\w*+::[A-Za-z_~]"
 # a frame line as ClickHouse and its sanitizers print one:
 # `0. DB::Exception::Exception(...) @ 0x...`, the server log's
 # `2. /…/src/Storages/MergeTree/MarkRange.cpp:19: DB::MarkRange::MarkRange(…)`
@@ -330,7 +337,11 @@ def normalise_frames(frames: list[str], *, max_frames: int = 12) -> list[Frame]:
 # frames leg), a sanitizer's `#3 0x55d1 in DB::Foo::bar(…) /…/Foo.cpp:12`, and
 # the CI report's unnumbered `DB::Foo::bar(…) @ 0x000000001c465289`
 _TRACE_LINE_RE = re.compile(
-    r"^\s*(?:(?:#\d+|\d+\.)\s+.*[A-Za-z_]\w*::[A-Za-z_~]|.*[A-Za-z_]\w*::[A-Za-z_~]\w*.*\s@\s0x[0-9A-Fa-f]{6,})"
+    r"^\s*+(?:(?:#\d+|\d+\.)\s++"
+    + _QUALIFIED_AHEAD
+    + "|(?>"
+    + _QUALIFIED_AHEAD
+    + r").*\s@\s0x[0-9A-Fa-f]{6,})"
 )
 MIN_TRACE_LINES = 3
 

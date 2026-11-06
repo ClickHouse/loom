@@ -21,7 +21,7 @@ MAX_FILE_CHARS = 1024
 
 # A URL's path segments look like repo paths (`github.com/o/r/blob/x.py`);
 # they are removed before detection, never attached.
-_URL_RE = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)\S+", re.IGNORECASE)
+_URL_RE = re.compile(r"(?:[a-z][a-z0-9+.-]{0,31}://|www\.)\S+", re.IGNORECASE)
 # Library names that read as a bare `<name>.js` file in prose.
 _LIBRARY_NAMES = frozenset(
     {

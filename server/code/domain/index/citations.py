@@ -38,11 +38,11 @@ _EXTS = (
     "jinja|tpl|patch|diff|gradle|sbt|mk|ninja|jsonl|ndjson|arrow|feather|npy|npz"
 )
 _PATH = rf"(?:[\w.+\-@]+/)+[\w.+\-@]+\.(?:{_EXTS})"
-_PATH_RE = re.compile(rf"(?<![\w/.\-])(?P<path>{_PATH})(?![\w/])")
+_PATH_RE = re.compile(rf"(?<![\w/.+\-@])(?P<path>{_PATH})(?![\w/])")
 # `path:12`, `path:12-20`, `path:12:34` (column dropped), `path#L12-L20`,
 # `path:L12`; inside brackets or backticks or bare.
 _LOC_RE = re.compile(
-    rf"(?<![\w/.\-])(?P<path>{_PATH})"
+    rf"(?<![\w/.+\-@])(?P<path>{_PATH})"
     r"(?:(?::|#)L?(?P<start>\d+)(?:(?:-|–|—|\.\.|-L)(?P<end>\d+))?(?::\d+)?)"
     r"(?![\w/])"
 )
@@ -77,7 +77,7 @@ _BARE_EXTS = (
 )
 _BARE_FILE = rf"[A-Za-z_][\w.+\-]+\.(?:{_BARE_EXTS})"
 _BARE_LOC_RE = re.compile(
-    rf"(?<![\w/.\-])(?P<path>{_BARE_FILE})"
+    rf"(?<![\w/.\-])(?<![\w.+\-]\+)(?P<path>{_BARE_FILE})"
     r"(?:(?::|#)L?(?P<start>\d+)(?:(?:-|–|—|\.\.|-L)(?P<end>\d+))?(?::\d+)?)"
     r"(?![\w/])"
 )

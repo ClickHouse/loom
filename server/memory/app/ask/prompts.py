@@ -184,7 +184,7 @@ _SPAN_TOTAL_NOTE = (
 )
 
 _AMOUNT_RE = re.compile(
-    r"(?:\$|€|£)\s?(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s?(?:dollars?|usd|followers?|"
+    r"(?:\$|€|£)\s?(\d[\d,]*(?:\.\d+)?)|(?<![\d,]),*(\d[\d,]*(?:\.\d+)?)\s?(?:dollars?|usd|followers?|"
     r"miles|km|kg|lbs?|hours?|hrs|minutes?|mins|steps|calories|points|views|subscribers)\b",
     re.IGNORECASE,
 )

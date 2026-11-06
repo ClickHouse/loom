@@ -114,7 +114,7 @@ _CONTENT_STOP = frozenset(
 )
 
 
-_PARENTHETICAL_RE = re.compile(r"\s*\([^()]*\)")
+_PARENTHETICAL_RE = re.compile(r"(?<!\s)\s*\([^()]*\)")
 
 
 def strip_parentheticals(text: str) -> str:

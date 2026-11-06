@@ -227,7 +227,7 @@ async def _existing(org: str, group_id: str) -> dict[str, Any]:
     return row
 
 
-_EQ = re.compile(r"\s+eq\s+", re.IGNORECASE)
+_EQ = re.compile(r"(?<!\s)\s+eq\s+", re.IGNORECASE)
 
 
 @router.get("/Groups")

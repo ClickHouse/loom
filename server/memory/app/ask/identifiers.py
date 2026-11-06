@@ -178,7 +178,7 @@ async def _mention_window_chunks(search_input: Any, question: str, ranked: list[
 _TECH_PASCAL_RE = re.compile(r"\b[A-Z][a-z0-9]+(?:[A-Z][a-zA-Z0-9]+)+(?:::\w+)?\b")
 _TECH_CAMEL_RE = re.compile(r"\b[a-z]{2,}[A-Z][A-Za-z0-9]+\b")
 _TECH_FILE_RE = re.compile(
-    r"\b[\w/.-]+\.(?:cpp|hpp|cc|cxx|h|py|sql|go|rs|cmake|sh|yml|yaml|reference|xml)(?::\d+)?\b"
+    r"\b[\w/.-]{1,255}\.(?:cpp|hpp|cc|cxx|h|py|sql|go|rs|cmake|sh|yml|yaml|reference|xml)(?::\d+)?\b"
 )
 _TECH_QUOTE_RE = re.compile(r"[\"“'‘]([^\"”'’\n]{8,120})[\"”'’]")
 _TECH_SNAKE_RE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b")
