@@ -3,6 +3,7 @@ yield metric on the server and the efficiency columns in the bench."""
 
 from __future__ import annotations
 
+import contextvars
 import sys
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,27 @@ def test_handler_accounts_build_on_the_way_out(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(metrics, "record_extraction_build", _boom)
     h._account_build("ns", 1, 1, 1, 1)  # never raises into the write path
+
+
+def test_the_handler_prices_each_written_row_from_the_requests_accumulator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app.extract import handler as h
+    from server.observability import cost_accumulator, metrics
+
+    seen: list[dict[str, Any]] = []
+    monkeypatch.setattr(metrics, "record_extraction_build", lambda **kw: None)
+    monkeypatch.setattr(metrics, "record_extract_cost_per_row", lambda **kw: seen.append(kw))
+
+    def request() -> None:
+        cost_accumulator.begin_op().cost_usd = 0.3
+        h._account_build("ns", 1, 1, 3, 1)
+
+    # Its own context, so the accumulator it binds ends with it.
+    contextvars.copy_context().run(request)
+    assert seen == [{"namespace_kind": "unclassified", "cost_usd": 0.3, "rows": 3}]
+    h._account_build("ns", 1, 1, 3, 1)  # no accumulator outside a request: nothing priced
+    assert len(seen) == 1
 
 
 def test_bench_efficiency_summary_and_usage_sink() -> None:

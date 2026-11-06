@@ -113,6 +113,30 @@ def test_collapse_outline_rows_is_source_ordered_two_tier_and_drops_extentless_c
     ], "source order; one row per declaration; the alias (one-line class) is gone"
 
 
+def test_the_wider_of_two_rows_for_one_declaration_wins_and_either_scip_row_marks_it() -> None:
+    from server.code.store.index import collapse_outline_rows
+
+    def row(end: int, tier: str, signature: str = "") -> dict[str, Any]:
+        return {
+            "qualified_name": "DB::f",
+            "start_line": 10,
+            "end_line": end,
+            "kind": "function",
+            "tier": tier,
+            "signature": signature,
+        }
+
+    for rows in (
+        [row(10, "scip", "void f()"), row(40, "treesitter")],
+        [row(10, "treesitter"), row(40, "scip", "void f()")],
+    ):
+        (got,) = collapse_outline_rows(rows)
+        assert (got["end_line"], got["tier"]) == (40, "scip"), rows
+    # A narrower scip row keeps the wider span and lends its tier and signature.
+    (got,) = collapse_outline_rows([row(40, "treesitter"), row(10, "scip", "void f()")])
+    assert (got["end_line"], got["tier"], got["signature"]) == (40, "scip", "void f()")
+
+
 class _FakeRepo:
     def __init__(self) -> None:
         self.outline_calls: list[tuple[str, tuple[str, ...] | None]] = []

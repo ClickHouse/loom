@@ -184,6 +184,52 @@ def test_schedule_code_trace_writes_otel_ids_and_stamps_trace_run_id(
     assert row["trace_run_id"] == "run1" and row["op"] == "code.callers"
 
 
+def test_a_trace_task_of_another_loop_is_dropped_when_the_next_is_scheduled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A task left by a loop that is gone can never finish here; a later gather of the
+    set would fail on it, so scheduling the next trace drops it."""
+    monkeypatch.setattr(settings, "code_trace_log_enabled", True)
+
+    class _Client:
+        class client:
+            @staticmethod
+            async def insert(table: str, rows: list[Any], **_: Any) -> None:
+                return None
+
+    other = asyncio.new_event_loop()
+    stale = other.create_task(asyncio.sleep(0))
+    cc._TRACE_TASKS.add(stale)
+
+    async def go() -> None:
+        with patch("server.core.ch.get_client", return_value=_Client()):
+            cc.schedule_code_trace(
+                org="o",
+                ns="n",
+                op="code.callers",
+                query="f",
+                route="graph_callers",
+                returned_ids=[],
+                returned_paths=[],
+                returned_scores=[],
+                top_k=1,
+                tokens_returned=0,
+                abstain=False,
+                retrieval_risk="low",
+                embedding_model="",
+                started_monotonic=0.0,
+                trace_run_id="run2",
+            )
+            assert stale not in cc._TRACE_TASKS and cc._TRACE_TASKS
+            await asyncio.gather(*cc._TRACE_TASKS)
+
+    try:
+        asyncio.run(go())
+    finally:
+        other.run_until_complete(stale)
+        other.close()
+
+
 # --------------------------------------------------------------------------
 # code.outcome: shunt actions
 # --------------------------------------------------------------------------
