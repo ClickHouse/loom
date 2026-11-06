@@ -19,6 +19,7 @@ from server.memory.api.models_bulk import (
     PINNED,
     REFUSED,
     REJECTED,
+    UNCHECKED,
     MemoryBulkSetInput,
     _BulkSetEntry,
     _BulkSetResult,
@@ -48,6 +49,7 @@ log = logging.getLogger(__name__)
 # The check behind each verdict of `models_bulk.REFUSED`, the entries a bulk write refuses.
 _CHECK_OF: dict[str, Reason] = {
     BLACKLISTED: "blacklist",
+    UNCHECKED: "blacklist",
     PINNED: "pinned",
     LOCKED: "locked",
     REJECTED: "pinned_peer",

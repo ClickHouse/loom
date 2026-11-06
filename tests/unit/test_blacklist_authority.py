@@ -625,7 +625,7 @@ def test_scope_program_sums_the_regexes_at_exactly_the_scope(monkeypatch) -> Non
         _pattern("c", "global", "z+", "regex"),
         _pattern("d", "global", "w+", "regex"),
     ]
-    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "_refresh_cache", _loaded)  # read fresh at add
     monkeypatch.setattr(bl, "_cache", rows)
     size = rows[0].compiled.programsize
     assert asyncio.run(bl.scope_program("namespace", ORG, NS)) == size
@@ -743,7 +743,6 @@ def test_a_bulk_writes_entries_share_one_regex_budget(monkeypatch) -> None:
     request's, so a thousand entries cannot each spend a write's worth. A substring
     pattern that matches still names itself once the regexes are out of budget."""
     import server.memory.app.blacklist_guard as bl
-    from server.core import request_work
 
     monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
     regex = _pattern("r", "namespace", "x+", "regex")
@@ -751,7 +750,7 @@ def test_a_bulk_writes_entries_share_one_regex_budget(monkeypatch) -> None:
     monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 3 * 1_000 * regex.compiled.programsize)
 
     async def _bulk() -> list[Any]:
-        request_work.begin()
+        bl.begin_request_budget()  # what the transports do at each op
         return [
             await bl.find_match(org=ORG, namespace=NS, value=value)
             for value in (
@@ -769,3 +768,9 @@ def test_a_bulk_writes_entries_share_one_regex_budget(monkeypatch) -> None:
     assert hits[4] is not None and hits[4].pattern_id == "s"
     # a new request has its own budget
     assert asyncio.run(bl.find_match(org=ORG, namespace=NS, value="y" * 1_000)) is None
+
+    async def _worker_pass() -> list[Any]:
+        # a worker binds no request budget: one tenant's values never spend another's
+        return [await bl.find_match(org=ORG, namespace=NS, value="y" * 1_000) for _ in range(5)]
+
+    assert asyncio.run(_worker_pass()) == [None] * 5

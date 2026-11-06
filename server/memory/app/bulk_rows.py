@@ -20,6 +20,7 @@ from server.memory.api.models_bulk import (
     BLACKLISTED,
     LOCKED,
     PINNED,
+    UNCHECKED,
     MemoryBulkSetInput,
     _BulkSetResult,
 )
@@ -721,8 +722,9 @@ async def _bulk_build_rows(
         if bl_hit is not None:
             await note_hit(bl_hit.pattern_id)
             state.skipped_blacklisted.append(entry.memory_key)
+            verdict = BLACKLISTED if bl_hit.pattern_id else UNCHECKED
             state.results.append(
-                _BulkSetResult(memory_key=entry.memory_key, version=0, conflict_verdict=BLACKLISTED)
+                _BulkSetResult(memory_key=entry.memory_key, version=0, conflict_verdict=verdict)
             )
             log.warning(
                 "bulk_set dropped blacklisted entry key=%r pattern=%s scope=%s",

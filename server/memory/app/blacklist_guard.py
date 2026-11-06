@@ -15,12 +15,12 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException
 
-from server.core import request_work
 from server.core.caller_regex import compile_caller_regex
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
@@ -49,6 +49,14 @@ REGEX_WORK_BUDGET = 250_000_000  # not a setting: what keeps one write from hold
 # Regex matching runs on its own few threads (RE2 releases the GIL), so a long value
 # under many patterns waits for these, never the event loop or the shared pool.
 _MATCHERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="loom-blacklist")
+# Bytes x instructions this request's regexes scanned, a bulk write's entries together;
+# bound by the transports for each op. A worker binds none: there the budget is per value.
+_request_work: ContextVar[list[int] | None] = ContextVar("blacklist_regex_work", default=None)
+
+
+def begin_request_budget() -> None:
+    """Start this request's regex work at zero (the transports, at each op)."""
+    _request_work.set([0])
 
 
 def compile_regex(pattern: str) -> Any:
@@ -68,8 +76,9 @@ def compile_regex(pattern: str) -> Any:
 
 
 async def scope_program(scope: str, org: str, namespace: str) -> int:
-    """The RE2 instructions of the regexes stored at exactly this scope, from the cache."""
-    await _ensure_loaded()
+    """The RE2 instructions of the regexes stored at exactly this scope, read fresh (an
+    add decides on it; a stale cache would let two adds each pass)."""
+    await _refresh_cache()
     return sum(
         p.compiled.programsize
         for p in _cache
@@ -168,16 +177,16 @@ async def _refresh_cache() -> None:
                 )
                 continue
             where = (r["scope"], r["org"], r["namespace"])
-            program[where] = program.get(where, 0) + compiled.programsize
-            if program[where] > REGEX_PROGRAM_PER_SCOPE:
+            total = program.get(where, 0) + compiled.programsize
+            if total > REGEX_PROGRAM_PER_SCOPE:
                 log.warning(
                     "blacklist: dropping regex pattern %s from the cache: its scope's regexes "
                     "pass %d RE2 instructions",
                     r["pattern_id"],
                     REGEX_PROGRAM_PER_SCOPE,
                 )
-                program[where] -= compiled.programsize
                 continue
+            program[where] = total
         new_cache.append(
             BlacklistPattern(
                 pattern_id=str(r["pattern_id"]),
@@ -212,9 +221,9 @@ def _applies_to(p: BlacklistPattern, org: str, namespace: str) -> bool:
 
 
 def _matches(p: BlacklistPattern, value: str | bytes) -> bool:
-    if p.pattern_type == "regex":
-        return p.compiled is not None and bool(p.compiled.search(value))
-    return isinstance(value, str) and p.pattern in value
+    if p.compiled is not None:
+        return bool(p.compiled.search(value))
+    return p.pattern_type != "regex" and p.pattern in str(value)
 
 
 async def find_match(
@@ -233,8 +242,8 @@ async def find_match(
     # cost is per byte.
     data = value.encode("utf-8", "replace")
     program = sum(p.compiled.programsize for p in regexes)
-    bag = request_work.current()  # a bulk write's entries share one request's budget
-    spent = (bag.regex_work if bag is not None else 0) + len(data) * program
+    spent_box = _request_work.get()  # bound per request by the transports
+    spent = (spent_box[0] if spent_box is not None else 0) + len(data) * program
     if spent > REGEX_WORK_BUDGET:
         # A substring pattern costs nothing to check: one that matches still names itself.
         hit = next((p for p in applicable if p.compiled is None and p.pattern in value), None)
@@ -242,8 +251,8 @@ async def find_match(
             return hit
         widest = max(regexes, key=lambda p: _SCOPE_PRECEDENCE.get(p.scope, 0)).scope
         return _over_budget(org, namespace, widest, len(data), program)
-    if bag is not None:
-        bag.regex_work = spent
+    if spent_box is not None:
+        spent_box[0] = spent
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(_MATCHERS, _first_match, applicable, value, data)
 
@@ -338,10 +347,13 @@ async def enforce_on_insert(
     await note_hit(hit.pattern_id)
     from server.identity.app.request_scope import request_narrowed
 
-    if not hit.pattern_id:  # no pattern matched: the value is too long to check
-        detail = {"code": "BLACKLISTED", "message": hit.reason, "scope": hit.scope}
-        if not request_narrowed():
-            detail |= {"pattern_id": "", "reason": hit.reason}
+    if not hit.pattern_id:  # no stored pattern matched: the value is too long to check
+        detail = {
+            "code": "BLACKLISTED",
+            "message": hit.reason,
+            "scope": hit.scope,
+            "pattern_id": "",
+        }
     # Under a narrowed token the pattern may be another user's: its id and reason are theirs.
     elif request_narrowed():
         detail = {

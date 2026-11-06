@@ -334,6 +334,10 @@ class MemorySetFromMessagesOutput(BaseModel):
 
 # The verdict of an entry the blacklist refused (memory.set answers 422 BLACKLISTED).
 BLACKLISTED = "blacklisted"
+# The verdict of an entry the blacklist could not check: the request's values are too long
+# for the regexes that apply (memory.set answers 422 BLACKLISTED with an empty
+# pattern_id); the same entry in a smaller request is checked.
+UNCHECKED = "blacklist_unchecked"
 # The verdict of an entry skipped on a pinned key (memory.set answers 409 PINNED_CONFLICT).
 PINNED = "pinned"
 # The verdict of an entry skipped on a read_only key (memory.set answers 423 LOCKED).
@@ -343,7 +347,7 @@ REJECTED = "rejected"
 # The verdicts of an entry refused outright (version 0): the message produced no row,
 # so nothing it carries attaches to the stored one. A restatement of the stored value
 # is not among them.
-REFUSED = frozenset({BLACKLISTED, PINNED, LOCKED, REJECTED})
+REFUSED = frozenset({BLACKLISTED, UNCHECKED, PINNED, LOCKED, REJECTED})
 
 
 class _BulkSetResult(BaseModel):
@@ -353,7 +357,8 @@ class _BulkSetResult(BaseModel):
     memory_id: str = ""
     # The per-row verdict memory.set returns, so a caller of
     # bulk_set can act on one entry without decoding the aggregate lists, plus
-    # `blacklisted`, `pinned` or `locked` (refused, version 0; a restatement of a
+    # `blacklisted`, `blacklist_unchecked` (too long for this request's blacklist regexes:
+    # send it in a smaller one), `pinned` or `locked` (refused, version 0; a restatement of a
     # pinned or locked key's value is not).
     # Empty when the entry was not checked (non-searchable, past the cap).
     conflict_verdict: str = ""
