@@ -250,10 +250,11 @@ describe("the add form's other kinds", () => {
 
 describe("toggleInclude", () => {
   it("keeps the options' order, so unticking and ticking again gives the same list", () => {
-    const all = emptySourceForm().include;
-    const without = toggleInclude(all, "docs");
+    const defaults = emptySourceForm().include;
+    expect(defaults).not.toContain("docx");
+    const without = toggleInclude(defaults, "docs");
     expect(without).toEqual(["slides", "pdf", "pptx"]);
-    expect(toggleInclude(without, "docs")).toEqual(all);
+    expect(toggleInclude(without, "docs")).toEqual(defaults);
     expect(toggleInclude(["pptx"], "pdf")).toEqual(["pdf", "pptx"]);
     expect(toggleInclude(["docx"], "pdf")).toEqual(["pdf", "docx"]);
   });

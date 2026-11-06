@@ -335,8 +335,8 @@ schema. These rules keep that safe. The operator procedure is in
     that churn while N-1 serves, and after a rollback until the document is mined by N.
 31. **A new shared-folder file kind** (`docx` in a `gdrive` source's `include`): N
     accepts the kind and writes it only when a caller names it; a config without
-    `include`, and the dashboard's form, take the four kinds N-1 knows. N-1 has no
-    `docx` in its file-kind table, so it refuses to add a config that names it
+    `include`, and the dashboard form's default, take the four kinds N-1 knows. N-1 has
+    no `docx` in its file-kind table, so it refuses to add a config that names it
     (`BAD_CONFIG`), its `check` and `rotate` of such a source answer a server error, and
     its sync worker fails such a source's turn before any request: the source's state
     shows status `failed`, error `KeyError`, nothing is retired, and the next turn by N
@@ -344,8 +344,8 @@ schema. These rules keep that safe. The operator procedure is in
     names `docx`, and it ends once no N-1 replica serves. After a rollback it stays for
     those sources, every file kind of them unsynced, until each is removed with its
     documents and added again without `docx`. N+1 may take `docx` by default. This
-    departs from rule 3 the way rule 28 does for a new source kind: holding `add` back
-    a release would hold back every folder of Word files, while the cost falls on the
+    departs from rule 3 the way rule 28 does for a new source kind: holding `add` back a
+    release would hold back every folder of Word files, while the cost falls on the
     sources a maintainer opts in, ends with the rollout, and loses nothing.
 
 ## What checks them

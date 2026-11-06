@@ -139,8 +139,7 @@ class KnowledgeSourceAddInput(BaseModel):
         description="The ids and filters the source reads, per kind; gdrive: {folder_ids: "
         "[1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all but docx)}; "
         "linear: {project_ids: [1-20 project ids, UUIDs]}; notion: {page_ids: [...], "
-        "database_ids: "
-        "[...]} (1-20 ids in all); recording: {provider: meet | zoom, ids: "
+        "database_ids: [...]} (1-20 ids in all); recording: {provider: meet | zoom, ids: "
         "[1-20 space ids (meet) or meeting ids (zoom)]}.",
     )
     credential: str = Field(
