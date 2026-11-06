@@ -612,3 +612,69 @@ def test_the_matcher_thread_keeps_scope_precedence_and_reads_a_lone_surrogate(
     assert hit is not None and hit.pattern_id == "ns"
     hit = asyncio.run(bl.find_match(org=ORG, namespace="other", value="assn"))
     assert hit is not None and hit.pattern_id == "global"
+
+
+def test_count_regexes_counts_regex_rows_at_exactly_the_scope(monkeypatch) -> None:
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(
+        bl,
+        "_cache",
+        [
+            _pattern("a", "namespace", "x+", "regex"),
+            _pattern("b", "namespace", "y", "substring"),
+            _pattern("c", "global", "z+", "regex"),
+            _pattern("d", "global", "w+", "regex"),
+        ],
+    )
+    assert asyncio.run(bl.count_regexes("namespace", ORG, NS)) == 1
+    assert asyncio.run(bl.count_regexes("global", *h._scope_args("global", ORG, NS))) == 2
+    assert asyncio.run(bl.count_regexes("namespace", ORG, "other")) == 0
+
+
+def test_the_cache_keeps_a_scopes_first_regexes_past_the_cap(monkeypatch) -> None:
+    """Racing adds or a lagging replica can store more than the cap; every replica
+    keeps the same first ones, by pattern id."""
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "REGEXES_PER_SCOPE", 2)
+    rows = [
+        {
+            "pattern_id": pid,
+            "org": ORG,
+            "namespace": NS,
+            "pattern": f"{pid}+",
+            "pattern_type": "regex",
+            "scope": "namespace",
+            "reason": "",
+        }
+        for pid in ("c", "a", "b")
+    ]
+
+    class _CH:
+        async def query_all(self, *a, **k):
+            return rows
+
+        async def query_one(self, *a, **k):
+            return {"n": 1, "s": 1}
+
+    monkeypatch.setattr(bl, "get_client", lambda: _CH())
+    asyncio.run(bl._refresh_cache())
+    assert [p.pattern_id for p in bl._cache] == ["a", "b"]
+
+
+def test_a_value_past_the_regex_work_budget_is_refused(monkeypatch) -> None:
+    """Characters x instructions bound what one write's regexes scan; a value past it
+    is refused, as a matched pattern is, without running them."""
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 90_000)
+    pattern = _pattern("r", "namespace", r"\bssn\b", "regex")
+    monkeypatch.setattr(bl, "_cache", [pattern])
+    budget = bl.REGEX_WORK_BUDGET // pattern.compiled.programsize
+    assert asyncio.run(bl.find_match(org=ORG, namespace=NS, value="x" * budget)) is None
+    hit = asyncio.run(bl.find_match(org=ORG, namespace=NS, value="x" * (budget + 1)))
+    assert hit is not None and hit.pattern_id == "" and "too long" in hit.reason
+    asyncio.run(bl.note_hit(""))  # no stored pattern to count against

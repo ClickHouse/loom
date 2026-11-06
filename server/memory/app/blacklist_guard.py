@@ -34,7 +34,10 @@ log = logging.getLogger(__name__)
 # defeats RE2's DFA cache), so the program and the count per scope are capped.
 REGEX_MAX_LENGTH = 256
 REGEX_MAX_PROGRAM = 300  # not a setting: the bound that keeps a pattern cheap per character
-REGEXES_PER_SCOPE = 50  # not a setting: with the program cap, bounds what one write runs
+REGEXES_PER_SCOPE = 50  # not a setting: the add-time cap, enforced again at cache load
+# Characters x RE2 instructions one write's regexes may scan, a few seconds of the
+# matcher threads at worst; a value past it is refused, as if a pattern matched.
+REGEX_WORK_BUDGET = 1_000_000_000  # not a setting: what keeps one write from holding them
 # Regex matching runs on its own few threads (RE2 releases the GIL), so a long value
 # under many patterns waits for these, never the event loop or the shared pool.
 _MATCHERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="loom-blacklist")
@@ -141,10 +144,23 @@ async def _refresh_cache() -> None:
         new_version = await _current_version()
         rows = await _repo.active_patterns(ch=get_client())
     new_cache: list[BlacklistPattern] = []
-    for r in rows:
+    regexes: dict[tuple[str, str, str], int] = {}
+    # In one order on every replica, so each keeps the same regexes past the cap.
+    for r in sorted(rows, key=lambda r: str(r["pattern_id"])):
         pattern_type = r["pattern_type"]
         compiled: Any = None
         if pattern_type == "regex":
+            # The add-time cap can be passed by adds racing, or replicas lagging.
+            where = (r["scope"], r["org"], r["namespace"])
+            regexes[where] = regexes.get(where, 0) + 1
+            if regexes[where] > REGEXES_PER_SCOPE:
+                log.warning(
+                    "blacklist: dropping regex pattern %s from the cache: its scope holds "
+                    "more than %d",
+                    r["pattern_id"],
+                    REGEXES_PER_SCOPE,
+                )
+                continue
             # A row written past add-time validation is dropped from the hot
             # path rather than run on every write; the refusal is logged so
             # the operator can remove it.
@@ -203,16 +219,39 @@ async def find_match(
     """Return the first applicable + matching pattern, or None."""
     await _ensure_loaded()
     applicable = [p for p in _cache if _applies_to(p, org, namespace)]
-    if not any(p.pattern_type == "regex" for p in applicable):
-        return _first_match(applicable, value)
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_MATCHERS, _first_match, applicable, value)
-
-
-def _first_match(patterns: list[BlacklistPattern], value: str) -> BlacklistPattern | None:
+    program = sum(p.compiled.programsize for p in applicable if p.compiled is not None)
+    if not program:
+        return _first_match(applicable, value, value)
+    if len(value) * program > REGEX_WORK_BUDGET:
+        return _over_budget(org, namespace, len(value), program)
     # RE2 reads UTF-8: a lone surrogate (an unpaired JSON escape) is read as `?`.
-    value = value.encode("utf-8", "replace").decode("utf-8")
-    return next((p for p in patterns if _matches(p, value)), None)
+    text = value.encode("utf-8", "replace").decode("utf-8")
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_MATCHERS, _first_match, applicable, value, text)
+
+
+def _first_match(
+    patterns: list[BlacklistPattern], value: str, text: str
+) -> BlacklistPattern | None:
+    """The first pattern that matches: a substring in `value`, a regex in `text`."""
+    return next((p for p in patterns if _matches(p, text if p.compiled else value)), None)
+
+
+def _over_budget(org: str, namespace: str, chars: int, program: int) -> BlacklistPattern:
+    """The refusal of a value too long for the regexes its scopes hold to check."""
+    return BlacklistPattern(
+        pattern_id="",
+        org=org,
+        namespace=namespace,
+        pattern="",
+        pattern_type="regex",
+        scope="namespace",
+        reason=(
+            f"a {chars}-character value is too long to check against this scope's "
+            f"blacklist regexes ({program} RE2 instructions); store it shorter or "
+            "remove regex patterns"
+        ),
+    )
 
 
 # Refusals per pattern since its last hit-count write, and when that was.
@@ -228,6 +267,8 @@ async def note_hit(pattern_id: str) -> None:
     """Count one refusal against `pattern_id`. The counter lands in
     loom.blacklist at most once per `_HIT_FLUSH_INTERVAL_S` per pattern;
     recording never blocks or fails the refusal it accompanies."""
+    if not pattern_id:  # a value over the regex budget: no stored pattern refused it
+        return
     with _lock:
         _pending_hits[pattern_id] = _pending_hits.get(pattern_id, 0) + 1
         now = time.monotonic()
