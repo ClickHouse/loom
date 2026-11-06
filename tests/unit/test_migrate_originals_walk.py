@@ -35,7 +35,10 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
         page[4].sha: False,
     }
 
-    async def move(held: blobs.Held) -> bool:
+    async def fence(org: str, ns: str) -> blobs.Fence:
+        return blobs.Fence(0)
+
+    async def move(held: blobs.Held, fenced: blobs.Fence | None = None) -> bool:
         out = outcomes[held.sha]
         if isinstance(out, Exception):
             raise out
@@ -44,6 +47,7 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
     monkeypatch.setattr(blobs, "needed", needed)
     monkeypatch.setattr(blobs, "move_to_bucket", move)
+    monkeypatch.setattr(blobs, "fence", fence)
     result = await originals.migrate_originals(org="acme", namespace="docs")
     assert (result.unneeded, result.moved, result.skipped) == (1, 2, 1)
     assert result.bytes == 20

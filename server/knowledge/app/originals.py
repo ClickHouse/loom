@@ -51,11 +51,14 @@ async def migrate_originals(
         while True:
             page = await blobs.held_in_clickhouse(org_, ns, after, _PAGE)
             wanted = await blobs.needed(org_, ns, [h.sha for h in page.held])
+            # One read of the clock and the ledger for the page; each move reads the
+            # ledger again around its own copy.
+            fenced = None if dry_run or not page.held else await blobs.fence(org_, ns)
             for held in page.held:
                 if held.sha not in wanted:
                     out.unneeded += 1
                     continue
-                await _one(held, dry_run, out)
+                await _one(held, fenced, dry_run, out)
             if not page.after:
                 break
             after = page.after
@@ -76,13 +79,13 @@ async def _scopes(org: str, namespace: str) -> list[tuple[str, str]]:
         after = page[-1]
 
 
-async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> None:
+async def _one(held: blobs.Held, fenced: blobs.Fence | None, dry_run: bool, out: Migrated) -> None:
     if dry_run:
         out.pending += 1
         out.bytes += held.size
         return
     try:
-        if await blobs.move_to_bucket(held):
+        if await blobs.move_to_bucket(held, fenced):
             out.moved += 1
             out.bytes += held.size
         else:

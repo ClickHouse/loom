@@ -518,7 +518,8 @@ async def _raced(
     by erasures of `scopes`: they register as the row lands."""
     org, ns = unique_org(label), "docs"
     monkeypatch.setattr(settings, "document_object_store", "clickhouse")
-    await blobs.put(org, ns, b"erased as it lands", uploader="alice", ch=ch)
+    sha = await blobs.put(org, ns, b"erased as it lands", uploader="alice", ch=ch)
+    await _document(ch, org, ns, sha)
     monkeypatch.setattr(settings, "document_object_store", "s3")
     (held,) = (await blobs.held_in_clickhouse(org, ns, "", 10, ch=ch)).held
     monkeypatch.setattr(blobs, "_ERASURE_POLL_S", 0.05)
@@ -616,6 +617,51 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
 
 
 @pytest.mark.asyncio
+async def test_a_move_whose_original_stopped_being_needed_is_taken_back(
+    s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns = unique_org("objstore-unneeded"), "docs"
+    held = await _held(ch, org, ns, b"its document goes", monkeypatch)
+    insert = ch.insert
+
+    async def insert_then_document_goes(table: str, rows: Any, **kw: Any) -> Any:
+        out = await insert(table, rows, **kw)
+        if table == blobs.TABLE and rows[0]["location"]:
+            await ch.execute(
+                "DELETE FROM loom.documents WHERE org = {org:String} AND namespace = {ns:String}",
+                params={"org": org, "ns": ns},
+            )
+        return out
+
+    monkeypatch.setattr(ch, "insert", insert_then_document_goes)
+    assert await blobs.move_to_bucket(held, ch=ch) is False
+    stored = await blobs.locate(org, ns, held.sha, ch=ch)
+    assert stored is None or stored.location == ""
+    assert _keys(s3) == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_erasure_as_the_row_lands_is_not_waited_out(
+    s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns, held, landed = await _raced(ch, s3, monkeypatch, "objstore-race-failed", [])
+    insert = ch.insert
+
+    async def insert_then_failed(table: str, rows: Any, **kw: Any) -> Any:
+        out = await insert(table, rows, **kw)
+        if table == blobs.TABLE and rows[0]["location"]:
+            await _erasure(ch, org, "user_id", "alice", "failed")
+        return out
+
+    monkeypatch.setattr(ch, "insert", insert_then_failed)
+    monkeypatch.setattr(blobs, "ERASURE_WAIT_S", 60)
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(blobs.SwitchedUnderErasure, match="loom erasure-re-verify --resume"):
+        await blobs.move_to_bucket(held, ch=ch)
+    assert asyncio.get_running_loop().time() - started < 10
+
+
+@pytest.mark.asyncio
 async def test_a_copy_past_the_upload_budget_is_not_switched(
     s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -692,6 +738,8 @@ async def test_the_walk_pages_a_namespace_by_key(
     org, ns = unique_org("objstore-pages"), "docs"
     monkeypatch.setattr(settings, "document_object_store", "clickhouse")
     shas = sorted([await blobs.put(org, ns, f"page {i}".encode(), ch=ch) for i in range(5)])
+    for sha in shas:
+        await _document(ch, org, ns, sha)
     monkeypatch.setattr(settings, "document_object_store", "s3")
     first = await blobs.held_in_clickhouse(org, ns, "", 2, ch=ch)
     assert ([h.sha for h in first.held], first.after) == (shas[:2], shas[1])

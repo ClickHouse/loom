@@ -1044,12 +1044,16 @@ deleted the original first. A namespace's erasure deletes every original of its 
 so the move deletes its row and object at once. A user's erasure deletes every object of
 an original it takes, so the move waits for it to finish and deletes its row when its
 object is gone; when the object is still there, the erasure kept the original and the
-switch stands. One that has not finished after 600 seconds, or a check that fails after
-the switch, is named, and the switched row is left to it.
+switch stands. One that has not finished after 600 seconds, or that has failed (it waits
+for a re-verify), or a check that fails after the switch, is named, and the switched row
+is left to it.
 
-The row is written only within the time an upload has to write its object, well inside
-`LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`, after which the bucket walk may take an object no
-row names; a copy that takes longer deletes its object and is reported.
+The row is written only within the time an upload has to write its object, counted from
+the write as an upload's is and well inside `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`, after
+which the bucket walk may take an object no row names; a copy that takes longer deletes
+its object and is reported. An original nothing needs any more by the time its row lands
+(its last document went meanwhile) is taken back too, so the moved row never outlives the
+upload records an erasure finds it by.
 
 An original whose bytes do not hash to their sha256 or fill their size, one an erasure
 held back, one whose object key would be too long, or one the bucket refused or was too

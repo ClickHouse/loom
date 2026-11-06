@@ -351,6 +351,13 @@ async def _await_erasures(held: Held, since_s: int, ch: _CHClient) -> None:
         open_ = [e for e in await _erasures_since(held, since_s, ch) if not e.done]
         if not open_:
             return
+        # A failed erasure finishes only through a re-verify: waiting gains nothing.
+        if any(e.status == "failed" for e in open_):
+            raise SwitchedUnderErasure(
+                _fence_advice(
+                    open_, "started as its row was switched; the switched row is left to it"
+                )
+            )
         if time.monotonic() >= deadline:
             raise SwitchedUnderErasure(
                 f"{open_[0]} started as its row was switched and has not finished within "
@@ -359,7 +366,27 @@ async def _await_erasures(held: Held, since_s: int, ch: _CHClient) -> None:
         await asyncio.sleep(_ERASURE_POLL_S)
 
 
-async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
+@dataclass(frozen=True)
+class Fence:
+    """A namespace's erasure fence as one read of the ledger sees it: when (on the
+    ClickHouse clock, in seconds) and what refusal holds every original of it, if any.
+    Coverage depends on the namespace alone, so one read serves a page of the walk."""
+
+    since: int
+    refusal: str = ""
+
+
+async def fence(org: str, namespace: str, *, ch: _CHClient | None = None) -> Fence:
+    """The namespace's fence now: the refusal names the erasure that holds it longest."""
+    ch = ch or _default_client()
+    since = await _cutoff_ms(0, ch) // 1000
+    fenced = await _erasures_since(Held(org, namespace, "", 0), since, ch)
+    return Fence(since, _fence_advice(fenced, "covers it") if fenced else "")
+
+
+async def move_to_bucket(
+    held: Held, fenced: Fence | None = None, *, ch: _CHClient | None = None
+) -> bool:
     """Copy one original from its ClickHouse row to a new object in the bucket and
     switch its catalog row to that object; every document naming the sha reads from
     the bucket from then on. False when there is nothing to move: the row went (an
@@ -398,10 +425,10 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     - An erasure registered after the row landed reads that row.
     """
     ch = ch or _default_client()
-    since = await _cutoff_ms(0, ch) // 1000
-    fenced = await _erasures_since(held, since, ch)
-    if fenced:
-        raise ErasureOpen(_fence_advice(fenced, "covers it"))
+    fenced = fenced or await fence(held.org, held.namespace, ch=ch)
+    if fenced.refusal:
+        raise ErasureOpen(fenced.refusal)
+    since = fenced.since
     data = await read(held.org, held.namespace, held.sha, stored=Stored(held.size, ""), ch=ch)
     if data is None:
         with sequential_reads():
@@ -412,8 +439,8 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     if hashlib.sha256(data).hexdigest() != held.sha:
         raise CorruptOriginal("bytes in ClickHouse do not hash to its sha256")
     loc = objects.new_location(held.org, held.namespace, held.sha)
-    started = time.monotonic()
     async with objects.transfer() as lease:
+        started = time.monotonic()  # as an upload's: from the write, not the slot's wait
         await objects.put(loc, data, held.sha, lease)
     back = await objects.read(loc)
     if back is not None and hashlib.sha256(back).hexdigest() != held.sha:
@@ -489,6 +516,12 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
             "check that no erasure of its namespace or a user ran then"
         ) from e
     if namespace_raced or taken:
+        await _unwrite(held, loc, ch)
+        return False
+    # Nothing needs it any more (its last document went, and the sweep may have taken its
+    # ClickHouse row and upload records meanwhile): the move's row and object go too,
+    # rather than outlive the records an erasure finds them by.
+    if not await needed(held.org, held.namespace, [held.sha], ch=ch):
         await _unwrite(held, loc, ch)
         return False
     return True
