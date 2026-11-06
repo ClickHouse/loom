@@ -276,6 +276,14 @@ Access patterns where vector-only memory falls down.
   cited, over a private task set read from a directory
   (`python -m bench.design_rationale --help`; synthetic set in `example/`).
 
+## Document parsing
+
+- **`docparse/`** — how well the reference extractor reads the documents Loom ingests
+  (design docs, specs, runbooks and decks as PDF, DOCX and PPTX, scanned pages among
+  them): text, reading order, headings, tables, locators and silent loss against the gold
+  labels of a committed corpus, split into dev and held-out, offline
+  (`python -m bench.docparse --help`).
+
 ## Tracker
 
 - **`tracker_similar_bench.py`** — `tracker.similar` per leg, paired per query.

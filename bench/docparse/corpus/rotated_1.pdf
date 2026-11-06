@@ -1,0 +1,984 @@
+%PDF-1.3
+%‚„œ”
+1 0 obj
+<<
+/PageMode /UseNone
+/Pages 2 0 R
+/Type /Catalog
+>>
+endobj
+2 0 obj
+<<
+/Count 2
+/Kids [ 3 0 R 10 0 R ]
+/Type /Pages
+>>
+endobj
+3 0 obj
+<<
+/Contents 4 0 R
+/MediaBox [ 0 0 595.2756 841.8898 ]
+/Parent 2 0 R
+/Resources <<
+/Font 5 0 R
+/ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>>
+/Rotate 90
+/Trans <<
+>>
+/Type /Page
+>>
+endobj
+4 0 obj
+<<
+/Length 3367
+>>
+stream
+q
+0.00000000000000006123234 1 -1 0.00000000000000006123234 595.2756 0.0 cm
+1 0 0 1 0 0 cm
+BT
+/F1 12 Tf
+14.4 TL
+ET
+q
+1 0 0 1 78 495.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 4 Tm
+/F2 18 Tf
+22 TL
+(Lattice runbook) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 463.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 15.5 Tm
+/F3 10.5 Tf
+13 TL
+(The audit writer never validates expired sessions without holding the global lock\056 The alert evaluator compacts replication logs before the nightly window closes\056) Tj
+T*
+(We measured 33 hours for expired sessions on the orion staging tier\056) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 434.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 3.5 Tm
+/F2 13.5 Tf
+17 TL
+(Non\055goals) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 402.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 15.5 Tm
+/F3 10.5 Tf
+13 TL
+(The compaction job throttles delta snapshots with a jittered exponential backoff\056 Option saffron keeps hourly rollups for 1320 megabytes and rejects the rest\056 The) Tj
+T*
+(cache layer never streams replication logs once every replica reports healthy\056 Option atlas keeps pending writes for 75 minutes and retries the rest\056) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 376.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2.5 Tm
+/F2 11.5 Tf
+14 TL
+(Write path) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 357.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2.5 Tm
+/F3 10.5 Tf
+13 TL
+(In the basalt cluster\054 the feature flag service signs cold segments every 2825 megabytes\056) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 338.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2.5 Tm
+/F3 10.5 Tf
+13 TL
+(We measured 7675 percent for cold segments on the cobalt staging tier\056) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 309.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 3.5 Tm
+/F2 13.5 Tf
+17 TL
+(API changes) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 290.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2.5 Tm
+/F3 10.5 Tf
+13 TL
+(Option vector keeps malformed payloads for 3160 seconds and rotates the rest\056 We measured 1305 minutes for stale partitions on the tundra staging tier\056) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 264.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2.5 Tm
+/F2 11.5 Tf
+14 TL
+(Cutover) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 232.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 15.5 Tm
+/F3 10.5 Tf
+13 TL
+(The alert evaluator never buffers replication logs once every replica reports healthy\056 Each replica never streams expired sessions while the previous build still) Tj
+T*
+(serves reads\056) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 200.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 15.5 Tm
+/F3 10.5 Tf
+13 TL
+(In the atlas cluster\054 the schema registry retries malformed payloads every 68 requests per second\056 The compaction job deduplicates incoming events under the) Tj
+T*
+(tenant\047s own quota\056 Every shard leader streams tenant quotas with a jittered exponential backoff\056) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 171.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 3.5 Tm
+/F2 13.5 Tf
+17 TL
+(Operational runbook) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 152.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2.5 Tm
+/F3 10.5 Tf
+13 TL
+(Option quill keeps access tokens for 2377 megabytes and rejects the rest\056 Each replica partitions stale partitions without holding the global lock\056) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 126.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2.5 Tm
+/F2 11.5 Tf
+14 TL
+(Backfill) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 107.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2.5 Tm
+/F3 10.5 Tf
+13 TL
+(The schema registry retries access tokens after the leader confirms the lease\056) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 86.27559 cm
+0 0 0 rg
+BT
+1 0 0 1 0 12.5 Tm
+/F4 8.5 Tf
+10.5 TL
+(saffron\072) Tj
+T*
+(  replicas\072 9) Tj
+T*
+ET
+Q
+Q
+
+endstream
+endobj
+5 0 obj
+<<
+/F1 6 0 R
+/F2 7 0 R
+/F3 8 0 R
+/F4 9 0 R
+>>
+endobj
+6 0 obj
+<<
+/BaseFont /Helvetica
+/Encoding /WinAnsiEncoding
+/Name /F1
+/Subtype /Type1
+/Type /Font
+>>
+endobj
+7 0 obj
+<<
+/BaseFont /Helvetica-Bold
+/Encoding /WinAnsiEncoding
+/Name /F2
+/Subtype /Type1
+/Type /Font
+>>
+endobj
+8 0 obj
+<<
+/BaseFont /Times-Roman
+/Encoding /WinAnsiEncoding
+/Name /F3
+/Subtype /Type1
+/Type /Font
+>>
+endobj
+9 0 obj
+<<
+/BaseFont /Courier
+/Encoding /WinAnsiEncoding
+/Name /F4
+/Subtype /Type1
+/Type /Font
+>>
+endobj
+10 0 obj
+<<
+/Contents 11 0 R
+/MediaBox [ 0 0 595.2756 841.8898 ]
+/Parent 2 0 R
+/Resources <<
+/Font 5 0 R
+/ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>>
+/Rotate 90
+/Trans <<
+>>
+/Type /Page
+>>
+endobj
+11 0 obj
+<<
+/Length 4842
+>>
+stream
+q
+0.00000000000000006123234 1 -1 0.00000000000000006123234 595.2756 0.0 cm
+1 0 0 1 0 0 cm
+BT
+/F1 12 Tf
+14.4 TL
+ET
+q
+1 0 0 1 78 475.2756 cm
+0 0 0 rg
+BT
+1 0 0 1 0 33.5 Tm
+/F4 8.5 Tf
+10.5 TL
+(  queue\137depth\137limit\072 2551) Tj
+T*
+(  retry\072) Tj
+T*
+(    max\137attempts\072 12) Tj
+T*
+(    backoff\137ms\072 675) Tj
+T*
+ET
+Q
+q
+1 0 0 1 78 456.2756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2.5 Tm
+/F3 10.5 Tf
+13 TL
+(We measured 7047 minutes for audit records on the harbor staging tier\056) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 78 452.2756 cm
+Q
+q
+1 0 0 1 78 294.7756 cm
+q
+0 0 0 rg
+BT
+/F1 10 Tf
+12 TL
+ET
+q
+1 0 0 1 6 143 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(Service) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 177.4724 143 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(p50 ms) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 348.9449 143 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(p99 ms) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 520.4173 143 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(Error rate) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 6 125.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(atlas\0550) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 177.4724 125.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(14) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 348.9449 125.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(629) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 520.4173 125.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(0\05641\045) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 6 108 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(saffron\0551) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 177.4724 108 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(88) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 348.9449 108 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(1071) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 520.4173 108 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(0\05604\045) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 6 90.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(basalt\0552) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 177.4724 90.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(16) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 348.9449 90.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(2393) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 520.4173 90.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(0\05642\045) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 6 73 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(atlas\0553) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 177.4724 73 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(75) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 348.9449 73 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(2192) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 520.4173 73 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(0\05649\045) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 6 55.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(tundra\0554) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 177.4724 55.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(80) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 348.9449 55.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(983) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 520.4173 55.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(0\05692\045) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 6 38 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(basalt\0555) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 177.4724 38 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(4) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 348.9449 38 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(2302) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 520.4173 38 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(0\05617\045) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 6 20.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(tundra\0556) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 177.4724 20.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(88) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 348.9449 20.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(1342) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 520.4173 20.5 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(0\05601\045) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 6 3 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(saffron\0557) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 177.4724 3 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(81) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 348.9449 3 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(1741) Tj
+T*
+ET
+Q
+Q
+q
+1 0 0 1 520.4173 3 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 2 Tm
+/F3 9.5 Tf
+11.5 TL
+(0\05655\045) Tj
+T*
+ET
+Q
+Q
+q
+1 J
+1 j
+0 0 0 RG
+0.5 w
+n
+0 157.5 m
+685.8898 157.5 l
+S
+n
+0 0 m
+685.8898 0 l
+S
+n
+0 0 m
+0 157.5 l
+S
+n
+685.8898 0 m
+685.8898 157.5 l
+S
+n
+0 140 m
+685.8898 140 l
+S
+n
+0 122.5 m
+685.8898 122.5 l
+S
+n
+0 105 m
+685.8898 105 l
+S
+n
+0 87.5 m
+685.8898 87.5 l
+S
+n
+0 70 m
+685.8898 70 l
+S
+n
+0 52.5 m
+685.8898 52.5 l
+S
+n
+0 35 m
+685.8898 35 l
+S
+n
+0 17.5 m
+685.8898 17.5 l
+S
+n
+171.4724 0 m
+171.4724 157.5 l
+S
+n
+342.9449 0 m
+342.9449 157.5 l
+S
+n
+514.4173 0 m
+514.4173 157.5 l
+S
+Q
+Q
+Q
+q
+1 0 0 1 78 288.7756 cm
+Q
+q
+1 0 0 1 78 256.7756 cm
+q
+0 0 0 rg
+BT
+1 0 0 1 0 15.5 Tm
+/F3 10.5 Tf
+13 TL
+(We measured 47 hours for dead letters on the meridian staging tier\056 Option saffron keeps malformed payloads for 7226 seconds and rejects the rest\056 In the juniper) Tj
+T*
+(cluster\054 the rate limiter partitions replication logs every 89 megabytes\056) Tj
+T*
+ET
+Q
+Q
+Q
+
+endstream
+endobj
+12 0 obj
+<<
+/Author (\050anonymous\051)
+/CreationDate (D\07220261106140817\05300\04700\047)
+/Creator (\050unspecified\051)
+/Keywords ()
+/ModDate (D\07220261106140817\05300\04700\047)
+/Producer (ReportLab PDF Library \055 \050opensource\051)
+/Subject (\050unspecified\051)
+/Title (\050anonymous\051)
+/Trapped /False
+>>
+endobj
+xref
+0 13
+0000000000 65535 f 
+0000000015 00000 n 
+0000000083 00000 n 
+0000000149 00000 n 
+0000000349 00000 n 
+0000003768 00000 n 
+0000003829 00000 n 
+0000003936 00000 n 
+0000004048 00000 n 
+0000004157 00000 n 
+0000004262 00000 n 
+0000004464 00000 n 
+0000009359 00000 n 
+trailer
+<<
+/Size 13
+/Root 1 0 R
+/Info 12 0 R
+/ID [ <d79986147aaae45b6cf44b5c6bb3b7cc> <d79986147aaae45b6cf44b5c6bb3b7cc> ]
+>>
+startxref
+9684
+%%EOF
