@@ -449,7 +449,7 @@ def test_a_page_past_its_picture_bound_is_partial(
     )
     a = extract(laid_out_pdf([page], image=[GRAY] * 3), "s.pdf")
     assert [f.reason for f in a.coverage.failed] == [
-        "OCR did not read all of its pictures: it draws more than 2 pictures, which OCR reads"
+        "OCR did not read all of its pictures: it shows more than 2 pictures OCR would read"
     ]
 
 
@@ -505,3 +505,62 @@ def test_the_real_engine_reads_light_text_on_a_dark_band() -> None:
     # a dark band 1200 x 400, its strokes no rules: what OCR reads of it is not painted out
     words, rules, _, _ = eng.read(ocr.pnm(1200, 400, 1, 8, bytes([40]) * 1200 * 400), 4.0)
     assert rules == [] and words == []
+
+
+def test_a_text_page_of_many_small_pictures_is_complete(engine: FakeEngine) -> None:
+    icons = b"".join(
+        b"q 10 0 0 10 %d 300 cm /Im%d Do Q\n" % (20 + 11 * n, n + 1) for n in range(52)
+    )
+    text = text_at(72, 740, "A page of text with a row of icons.")
+    a = extract(laid_out_pdf([text + icons], image=[GRAY] * 52), "i.pdf")
+    assert a.coverage.complete and engine.seen == []
+
+
+def test_an_image_past_the_files_bound_is_not_decoded(engine: FakeEngine) -> None:
+    images = ocr.Images(left=0)
+    decoded: list[int] = []
+    with pytest.raises(ValueError, match="past the"):
+        images.read((1, 0), lambda: decoded.append(1) or b"", 1.0)
+    assert decoded == []
+
+
+def test_an_image_page_names_why_its_image_was_not_read(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inline = b"q 400 0 0 400 100 200 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q"
+    a = extract(laid_out_pdf([inline]), "i.pdf")
+    assert a.coverage.failed[0].reason == (
+        "no text layer: its image is drawn inline, which OCR does not read"
+    )
+    # an image the page holds and never draws
+    b = extract(laid_out_pdf([b"q Q"], image=GRAY), "n.pdf")
+    assert b.coverage.failed[0].reason == "no text layer, and no image it draws is one OCR finds"
+
+    def broken(*args: object) -> None:
+        raise KeyError("/XObject")
+
+    monkeypatch.setattr(layout, "drawing", broken)
+    c = extract(laid_out_pdf([b"q 400 0 0 400 100 200 cm /Im1 Do Q"], image=GRAY), "d.pdf")
+    assert c.coverage.failed[0].reason == "no text layer, and its drawing could not be read"
+
+
+def test_the_real_engine_finds_no_rule_in_a_dark_band_between_its_letters() -> None:
+    if ocr.check("eng")[0]:
+        pytest.skip("Tesseract is not installed here")
+    eng = ocr._load("eng")
+    assert eng is not None
+    # a light image 1800 x 900, a dark band 140 high holding light bars (a heading's
+    # letters, the dark between them is no rule), and a thin rule below
+    rows = []
+    for y in range(900):
+        row = bytearray(b"\xf0" * 1800)
+        if 60 <= y < 200:
+            row[:] = b"\x1e" * 1800
+            if 100 <= y < 150:
+                for x in range(80, 1200, 24):
+                    row[x : x + 12] = b"\xff" * 12
+        if 419 <= y < 422:
+            row[60:1701] = b"\x00" * 1641
+        rows.append(bytes(row))
+    _, rules, _, _ = eng.read(ocr.pnm(1800, 900, 1, 8, b"".join(rows)), 6.0)
+    assert [(r.y0, r.y1) for r in rules] == [(419, 422)]

@@ -7,10 +7,11 @@ of its text than its text layer, or that is past the reader's bounds, is read
 as its text layer: its text split at blank lines, the outline's headings at the
 lines that hold their titles.
 
-A page with no text that draws an image (an image object, one in a form, or
-one inline in its content) is a failed unit: its text needs OCR, which this
-parser does not run, so a page of images and no text is never reported as
-complete.
+A page with no text is read with OCR (`ocr`) from the images it draws, and a
+picture covering a fifth of a page with text is read into lines of its own;
+where OCR is off, cannot read an image, or the image is drawn inline, the page
+is partial or a failed unit naming why, so a page of images is never reported
+complete when its text was not read.
 
 Pure and I/O-free.
 """
@@ -231,19 +232,15 @@ def _read_layout(
     texted = bool(read.text.strip())
     area = read.width * read.page_height
     problems = []
-    if len(pictures) > layout.MAX_PICTURES:
-        problems.append(f"it draws more than {layout.MAX_PICTURES} pictures, which OCR reads")
-        pictures = pictures[: layout.MAX_PICTURES]
-    keys: set[tuple[int, int] | None] = set()
-    targets = []
-    for p in pictures:
-        ref = getattr(p.image, "indirect_reference", None)
-        key = (ref.idnum, ref.generation) if ref is not None else None
-        if key in keys and key is not None:
-            continue  # drawn again: its text is the page's once
-        keys.add(key)
-        if not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p)):
-            targets.append((key, p))
+    # each image once (`drawing` collects it where it is first drawn)
+    targets = [
+        p
+        for p in pictures
+        if not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p))
+    ]
+    if len(targets) > layout.MAX_PICTURES:
+        problems.append(f"it shows more than {layout.MAX_PICTURES} pictures OCR would read")
+        targets = targets[: layout.MAX_PICTURES]
     if not texted and not targets and _has_image(page, reader):
         contents = page.get_contents()
         read.failure = (
@@ -255,10 +252,16 @@ def _read_layout(
             if contents is not None and _draws_inline_image(contents, reader)
             else "no text layer, and no image it draws is one OCR finds"
         )
-    for key, picture in targets:
+    for picture in targets:
+        ref = getattr(picture.image, "indirect_reference", None)
+        if ref is None:  # an image is a stream, so an indirect object; this one is neither
+            problems.append("its image is not an object of the file")
+            continue
         try:
             words, boxes, w, h = images.read(
-                key, partial(_image_file, picture.image), (picture.box[2] - picture.box[0]) / 72
+                (ref.idnum, ref.generation),
+                partial(_image_file, picture.image),
+                (picture.box[2] - picture.box[0]) / 72,
             )
         except ValueError as e:
             problems.append(str(e))

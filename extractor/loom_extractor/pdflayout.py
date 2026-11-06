@@ -47,7 +47,8 @@ from pypdf.generic import ContentStream
 # Not settings: bounds on hostile input and the geometry's tolerances.
 _MAX_RULES = 4_000  # the rules a page is searched for grids by
 _MAX_OPERATIONS = 400_000  # the drawing operators a page's rules are read from
-MAX_PICTURES = 50  # the images one page is read for; one more is kept to say there were more
+MAX_PICTURES = 50  # the images OCR reads on one page
+_MAX_DRAWN = 1_000  # the distinct images a page's drawing is collected for
 _MAX_FORM_DEPTH = 4  # how deep form XObjects are walked for rules
 _MAX_CMAP_BYTES = 1 << 20  # a ToUnicode map read for widths
 _MAX_CMAP_CODES = 65_536  # the codes a map's ranges are read for, and a font's widths
@@ -453,7 +454,8 @@ def drawing(
         return turn(*shown(x, y))
 
     found: list[_Rule] = []
-    pictures: list[Picture] = []
+    pictures: list[Picture] = []  # each image once, where it is first drawn
+    collected: set[object] = set()
     budget = [_MAX_OPERATIONS]
 
     def add(ax: float, ay: float, bx: float, by: float) -> None:
@@ -526,7 +528,11 @@ def drawing(
                 if form is not None and form.get("/Subtype") == "/Image":
                     corners = [to(*tp(u, v)) for u, v in ((0, 0), (1, 0), (1, 1), (0, 1))]
                     xs, ys = [c[0] for c in corners], [c[1] for c in corners]
-                    if len(pictures) <= MAX_PICTURES:
+                    # an image drawn again (a tiled logo) is collected once
+                    ref = getattr(form, "indirect_reference", None)
+                    key = (ref.idnum, ref.generation) if ref is not None else id(form)
+                    if key not in collected and len(pictures) < _MAX_DRAWN:
+                        collected.add(key)
                         pictures.append(
                             Picture(form, list(ctm), (min(xs), min(ys), max(xs), max(ys)))
                         )

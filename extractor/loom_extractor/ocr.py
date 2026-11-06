@@ -198,9 +198,17 @@ class Engine:
             if not gray:
                 raise ValueError("its image could not be turned to gray")
             held.append(gray)
-            if self._mostly_dark(gray, held):  # light text on dark: read as dark on light
+            # where the strokes are, in black and white; not what OCR reads
+            mono = lp.pixConvertTo1(gray, 160)
+            if not mono:
+                raise ValueError("its image could not be turned to black and white")
+            held.append(mono)
+            dark = ctypes.c_int()
+            lp.pixCountPixels(mono, ctypes.byref(dark), None)
+            if dark.value > 0.5 * w * h:  # light text on dark: read as dark on light
                 lp.pixInvert(gray, gray)
-            rules = self._unrule(gray, dpi, w, h, held)
+                lp.pixInvert(mono, mono)
+            rules = self._unrule(gray, mono, dpi, w, h, held)
             self._t.TessBaseAPISetImage2(self._api, gray)
             self._t.TessBaseAPISetSourceResolution(
                 self._api, max(1, round(dpi))
@@ -222,30 +230,26 @@ class Engine:
             for one in held:
                 self._destroy(one)
 
-    def _mostly_dark(self, gray: int, held: list[int]) -> bool:
-        lp = self._l
-        mono = lp.pixConvertTo1(gray, 160)
-        if not mono:
-            return False
-        held.append(mono)
-        dark = ctypes.c_int()
-        if lp.pixCountPixels(mono, ctypes.byref(dark), None) != 0:
-            return False
-        return bool(dark.value > 0.5 * int(lp.pixGetWidth(mono)) * int(lp.pixGetHeight(mono)))
-
-    def _unrule(self, gray: int, dpi: float, w: int, h: int, held: list[int]) -> list[Box]:
+    def _unrule(
+        self, gray: int, mono: int, dpi: float, w: int, h: int, held: list[int]
+    ) -> list[Box]:
         """The rules' boxes, painted out of the gray image: thin strokes, in
         black and white, longer than half an inch across or a third of an inch
         down, longer than a letter's in type up to about 36 points (a larger
-        letter's stem goes with them). A dark band (a heading's background, a
-        dark screenshot) is no stroke: what is thicker than a tenth of an inch
-        stays."""
+        letter's stem goes with them), outside any dark region (`mono` is the
+        image in black and white)."""
         lp = self._l
-        mono = lp.pixConvertTo1(gray, 160)  # where the strokes are, not what OCR reads
-        if not mono:
-            return []
-        held.append(mono)
         thin = max(4, round(dpi / 10))
+        # A dark region thicker than `thin` both ways (a heading's band, a dark
+        # panel), widened by as much: no stroke in or beside it is a rule, as the
+        # gaps between its light letters would read as strokes.
+        near = None
+        bands = lp.pixOpenBrick(None, mono, thin, thin)
+        if bands:
+            held.append(bands)
+            near = lp.pixDilateBrick(None, bands, 2 * thin + 1, 2 * thin + 1)
+            if near:
+                held.append(near)
         rules: list[Box] = []
         across, down = min(w, max(8, round(0.5 * dpi))), min(h, max(8, round(0.35 * dpi)))
         for hsize, vsize in ((across, 1), (1, down)):
@@ -253,11 +257,8 @@ class Engine:
             if not lines:
                 continue
             held.append(lines)
-            # what is thicker than `thin` both ways is a band, not a stroke
-            bands = lp.pixOpenBrick(None, lines, thin, thin)
-            if bands:
-                held.append(bands)
-                strokes = lp.pixSubtract(None, lines, bands)
+            if near:
+                strokes = lp.pixSubtract(None, lines, near)
                 if not strokes:
                     continue
                 held.append(strokes)
@@ -378,15 +379,16 @@ class Images:
     )
 
     def read(
-        self, key: Hashable | None, data: Callable[[], bytes], shown_inches: float
+        self, key: Hashable, data: Callable[[], bytes], shown_inches: float
     ) -> tuple[list[Word], list[Box], int, int]:
         """The image's words, rules and size in pixels (`Engine.read`), from the
-        file `data()` gives; ValueError naming why it is not read. An image with
-        no `key` is read each time; only an image the engine reads counts."""
-        got = self._done.get(key) if key is not None else None
+        file `data()` gives; ValueError naming why it is not read. Only an image
+        the engine reads counts against the file's bound, and one past it is
+        not decoded."""
+        got = self._done.get(key)
         if got is None:
-            got, counted = self._read(data, shown_inches)
-            if key is not None and counted:
+            got, keep = self._read(data, shown_inches)
+            if keep:
                 self._done[key] = got
         if isinstance(got, str):
             raise ValueError(got)
@@ -400,6 +402,8 @@ class Images:
         eng = engine()
         if eng is None:
             return NOT_RUN, False
+        if self.left <= 0:
+            return f"past the {max_images()} images OCR reads in one file", False
         try:
             file = data()
         except MemoryError:
@@ -408,8 +412,6 @@ class Images:
             return str(e), True
         except Exception as e:  # noqa: BLE001 — an image that cannot be decoded leaves its page or slide partial
             return f"its image could not be read: {_why(e)}", True
-        if self.left <= 0:
-            return f"past the {max_images()} images OCR reads in one file", False
         self.left -= 1
         try:
             return eng.read(file, shown_inches), True

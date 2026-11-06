@@ -67,9 +67,6 @@ class _Slide:
     def __init__(self, root: Element) -> None:
         self.title = ""
         self.shapes: list[tuple[str, dict[str, object]]] = []  # (text, attrs)
-        self.unread = (
-            False  # it holds a picture, chart, diagram or object this parser does not read
-        )
         self.charts = False  # a chart, diagram or embedded object among them
         self.picture_count = 0  # its pictures, those `pictures` lists and any other
         self.pictures: list[tuple[str, int, int]] = []  # (relationship id, width, height in EMU)
@@ -86,7 +83,6 @@ class _Slide:
                 if choice is not None:
                     self._walk(choice)
             elif el.tag == q("p:pic"):
-                self.unread = True
                 self.picture_count += 1
                 blip = el.find(f"{q('p:blipFill')}/{q('a:blip')}")
                 ext = el.find(f"{q('p:spPr')}/{q('a:xfrm')}/{q('a:ext')}")
@@ -110,7 +106,7 @@ class _Slide:
             elif el.tag == q("p:graphicFrame"):
                 tables = list(el.iter(q("a:tbl")))
                 if not tables:
-                    self.unread = self.charts = True  # a chart, a diagram or an embedded object
+                    self.charts = True  # a chart, a diagram or an embedded object
                 for tbl in tables:
                     text, rows, columns = _table(tbl)
                     if text.strip(" |\n"):
@@ -235,8 +231,7 @@ def extract_pptx(data: bytes) -> Artifact:
             ocr_slides.append(number)
         if not (slide.title or slide.shapes or notes or pictured):
             # pictures that OCR read every one of, and found no text in, lose nothing
-            whole = seen == slide.picture_count and not slide.charts
-            if slide.unread and not unread and not whole:
+            if not unread and (slide.charts or seen < slide.picture_count):
                 failed.append(
                     Failure(
                         f"slide {number}", "no text: its pictures, charts or diagrams are not read"
