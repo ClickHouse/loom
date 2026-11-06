@@ -260,6 +260,7 @@ class Span:
     # Whether a space parts it from the run before it on its line, once a line
     # has decided (None until then).
     space: bool | None = None
+    ocr: bool = False  # read from an image
 
 
 def _mul(m: list[float], n: list[float]) -> list[float]:
@@ -425,18 +426,38 @@ class _Rule:
         return abs(self.y1 - self.y0) < 1.5
 
 
-def rules(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> list[_Rule]:
+@dataclass
+class Picture:
+    """An image XObject the page draws: the object, the matrix it is drawn with
+    (its unit square to user space), and its box as shown and turned."""
+
+    image: Any
+    ctm: list[float]
+    box: tuple[float, float, float, float]
+
+    @property
+    def area(self) -> float:
+        return (self.box[2] - self.box[0]) * (self.box[3] - self.box[1])
+
+
+def drawing(
+    page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn
+) -> tuple[list[_Rule], list[Picture]]:
     """The horizontal and vertical lines the page draws (stroked lines and thin
-    filled boxes), as shown and turned as its text is; none past the bounds."""
+    filled boxes) and the images it draws, as shown and turned as its text is;
+    no rules past their bound, nothing past the operators' bound."""
     shown, _, _ = _display(page)
 
     def to(x: float, y: float) -> tuple[float, float]:
         return turn(*shown(x, y))
 
     found: list[_Rule] = []
+    pictures: list[Picture] = []
     budget = [_MAX_OPERATIONS]
 
     def add(ax: float, ay: float, bx: float, by: float) -> None:
+        if len(found) > _MAX_RULES:
+            return
         (x0, y0), (x1, y1) = to(ax, ay), to(bx, by)
         if abs(y1 - y0) < 1.5 and abs(x1 - x0) > 3:
             found.append(_Rule(min(x0, x1), (y0 + y1) / 2, max(x0, x1), (y0 + y1) / 2))
@@ -454,7 +475,7 @@ def rules(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> list[_
 
         for operands, op in ContentStream(contents, reader).operations:
             budget[0] -= 1
-            if budget[0] <= 0 or len(found) > _MAX_RULES:
+            if budget[0] <= 0:
                 return
             if op == b"q":
                 stack.append(list(ctm))
@@ -501,6 +522,11 @@ def rules(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> list[_
                     continue
                 ref = xobjects.get_object().get(operands[0])
                 form = ref.get_object() if ref is not None else None
+                if form is not None and form.get("/Subtype") == "/Image":
+                    corners = [to(*tp(u, v)) for u, v in ((0, 0), (1, 0), (1, 1), (0, 1))]
+                    xs, ys = [c[0] for c in corners], [c[1] for c in corners]
+                    pictures.append(Picture(form, list(ctm), (min(xs), min(ys), max(xs), max(ys))))
+                    continue
                 if form is None or form.get("/Subtype") != "/Form":
                     continue
                 matrix = [float(v) for v in form.get("/Matrix", [1, 0, 0, 1, 0, 0])]
@@ -510,7 +536,69 @@ def rules(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> list[_
     if contents is not None:
         walk(contents, page.get("/Resources"), [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 0)
     # Past either bound a grid may be half read: no rules rather than a wrong table.
-    return found if len(found) <= _MAX_RULES and budget[0] > 0 else []
+    return (found if len(found) <= _MAX_RULES and budget[0] > 0 else []), pictures
+
+
+def picture_spans(
+    page: pypdf.PageObject, turn: Turn, picture: Picture, words: list[Any], width: int, height: int
+) -> list[Span]:
+    """OCR's words in `picture` (boxes in its `width` by `height` pixels, top
+    left origin) as runs where the page shows them, each on its line's
+    baseline."""
+    shown, _, _ = _display(page)
+    a, b, c, d, e, f = picture.ctm
+
+    def at(px: float, py: float) -> tuple[float, float]:
+        u, v = px / width, 1 - py / height
+        return turn(*shown(a * u + c * v + e, b * u + d * v + f))
+
+    # Tesseract's point size, from its line's x-height, when it gives one (the
+    # page's points, as the image's resolution is passed); else the line's
+    # height less the room above and below.
+    sizes = [
+        w.points or abs(at(w.x0, w.baseline)[1] - at(w.x0, w.baseline - w.height)[1]) / 1.2
+        for w in words
+    ]
+    out: list[Span] = []
+    for w, size in zip(words, sizes, strict=True):
+        x0, y = at(w.x0, w.baseline)
+        x1, _ = at(w.x1, w.baseline)
+        out.append(
+            Span(
+                min(x0, x1),
+                max(x0, x1),
+                y,
+                size,
+                False,
+                False,
+                w.text,
+                None if w.first else True,
+                True,
+            )
+        )
+    return out
+
+
+def picture_rules(
+    page: pypdf.PageObject, turn: Turn, picture: Picture, boxes: list[Any], width: int, height: int
+) -> list[_Rule]:
+    """The rules OCR found in `picture` (boxes in its pixels) where the page shows them."""
+    shown, _, _ = _display(page)
+    a, b, c, d, e, f = picture.ctm
+
+    def at(px: float, py: float) -> tuple[float, float]:
+        u, v = px / width, 1 - py / height
+        return turn(*shown(a * u + c * v + e, b * u + d * v + f))
+
+    out: list[_Rule] = []
+    for box in boxes:
+        (x0, y0), (x1, y1) = at(box.x0, box.y0), at(box.x1, box.y1)
+        x0, x1, y0, y1 = min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)
+        if x1 - x0 >= y1 - y0:
+            out.append(_Rule(x0, (y0 + y1) / 2, x1, (y0 + y1) / 2))
+        else:
+            out.append(_Rule((x0 + x1) / 2, y0, (x0 + x1) / 2, y1))
+    return out
 
 
 # ---- lines
@@ -1002,6 +1090,10 @@ class Element:
         return " ".join(ln.text for ln in self.lines).strip()
 
     @property
+    def ocr(self) -> bool:
+        return any(s.ocr for ln in self.lines for s in ln.spans)
+
+    @property
     def style(self) -> tuple[float, bool]:
         return (round(max(ln.size for ln in self.lines) * 2) / 2, all(ln.bold for ln in self.lines))
 
@@ -1093,7 +1185,8 @@ def heading_levels(els: list[Element], body: float) -> None:
         size, bold = e.style
         if not 1 <= words <= 20 or len(text) > 160 or not _WORD.search(text):
             continue
-        if size >= body * 1.12 or (bold and size >= body * 0.95):
+        # OCR reads a size in whole points (12 for 12.5), so its step up is smaller
+        if size >= body * (1.08 if e.ocr else 1.12) or (bold and size >= body * 0.95):
             if text.endswith((".", ",", ";")) and not _NUMBERED.match(text):
                 continue
             cands.append(e)

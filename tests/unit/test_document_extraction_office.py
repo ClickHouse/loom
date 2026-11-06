@@ -11,10 +11,17 @@ from typing import Any
 import pytest
 from pypdf import PdfWriter
 
-from loom_extractor import ExtractionError, Options, extract, ooxml
+from loom_extractor import ExtractionError, Options, extract, ocr, ooxml
 from loom_extractor.artifact import Artifact
 from server.knowledge.domain.extract import InvalidArtifact, parse_artifact, structural
 from tests.fixtures.office_files import FORM_IMAGE, FORM_INLINE_IMAGE, INLINE_IMAGE, pdf
+
+
+@pytest.fixture(autouse=True)
+def _no_ocr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These files' pictures need OCR whether or not this machine has Tesseract."""
+    monkeypatch.setattr(ocr, "engine", lambda: None)
+
 
 _W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 _P = (
@@ -286,7 +293,7 @@ def test_pdf_pages_are_cited_by_page_and_the_outline_gives_their_sections() -> N
         {"page_start": 2, "page_end": 2},
     ]
     assert a.attrs == {"pages": 3}
-    assert a.parser_version.startswith("2+pypdf")
+    assert a.parser_version.startswith("3+pypdf")
     # The image-only page needs OCR: the extraction says so and is not complete.
     assert (a.coverage.unit, a.coverage.total, a.coverage.extracted) == ("pages", 3, 2)
     assert a.coverage.failed[0].unit == "page 3" and "OCR" in a.coverage.failed[0].reason

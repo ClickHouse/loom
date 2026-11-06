@@ -115,7 +115,7 @@ pages and rows, and keeps a sheet when all of them name one.
 The artifact is serialized as sorted, compact JSON with a `schema_version` and addressed by the SHA-256 of those bytes.
 A parser or option change produces a new artifact of the same source revision; an artifact is never edited. A reader
 refuses a `schema_version` it does not know. `parser_version` names what a parse depends on: sqlglot's version for SQL,
-pypdf's for PDF, and the Python version for HTML, TOML, CSV and XLSX, whose parsers ship with it (`csv` and its sniffer;
+pypdf's for PDF (and Tesseract's when OCR read a page or a slide), and the Python version for HTML, TOML, CSV and XLSX, whose parsers ship with it (`csv` and its sniffer;
 `datetime.fromisoformat` for an XLSX date written as text).
 
 ## Formats in the reference extractor
@@ -135,7 +135,7 @@ in undeclared UTF-8 text (behind a byte-order mark or not) is binary; neither is
 | HTML       | the standard library's parser                                         | headings, paragraphs, list items, table cells, quotes, definitions, `pre`    |
 | SQL        | `sqlglot`, never executed                                             | one block per statement                                                      |
 | TOML       | `tomllib` and a line scanner                                          | one block per table header and per key                                       |
-| PDF        | `pypdf`: its text runs' positions and the lines it draws              | per page: headings, paragraphs, lists, code, tables; furniture left out      |
+| PDF        | `pypdf`: its text runs' positions and the lines it draws; OCR         | per page: headings, paragraphs, lists, code, tables; furniture left out      |
 | DOCX       | the standard library's zip and XML readers                            | headings, paragraphs, lists, tables, footnotes and endnotes                  |
 | PPTX       | the standard library's zip and XML readers                            | per slide: its title as a heading, each text shape, tables, speaker notes    |
 | CSV        | the standard library's `csv`                                          | one table; its rows as blocks of up to 20 rows                               |
@@ -258,11 +258,31 @@ text split at blank lines, the outline's headings at the lines that hold their t
 less than 99.8% of the letters and digits its text layer does (counted apart from spacing and case), when it holds more
 than 5,000 lines, or when its layout cannot be read, with a warning naming it and why, so a layout the reader gets wrong
 never drops text. A page with no text that draws an image (an image object, one in a form, or one inline in its
-content) is a failed unit: its text needs OCR, which the reference extractor does not run, so a PDF with such a page is
-not complete and is published only with `allow_partial`; a scan whose pages carry some text (a stamped number) is read
-as that text. A page pypdf cannot read is a failed unit, not the file; a failed page's outline headings still open
+content) is read with OCR (below) where the extractor has it, and is otherwise a failed unit: its text needs OCR, so a
+PDF with such a page is not complete and is published only with `allow_partial`; a scan whose pages carry some text (a
+stamped number) is read as that text and its pictures by the rule below. A page with text that draws a picture covering
+a fifth of the page or more (a screenshot, a whiteboard photo) has its picture read with OCR, or, without OCR, is not
+complete: the page is read, and a failed unit says the picture's text needs OCR. A page pypdf cannot read is a failed unit, not the file; a failed page's outline headings still open
 their sections. A character a font's map gives no Unicode character (a lone surrogate) is read as U+FFFD, with a
 warning naming its page. A PDF that opens only with a password is `unsupported_format`.
+
+**OCR.** The extractor image installs Tesseract's and Leptonica's libraries and Tesseract's English model
+(`LOOM_EXTRACTOR_OCR_LANGUAGES` names others the image holds); the extraction child loads them in its own process through
+ctypes (`extractor/loom_extractor/ocr.py`), as it may start no program, with OpenMP held to one thread. A build with
+`OCR=off`, or `LOOM_EXTRACTOR_OCR=off`, reads no image, and the rules above say what is then not complete. A PDF image
+is read as the file it holds (JPEG, JPEG 2000, CCITT fax, which pypdf wraps as a TIFF) or its raw samples (gray, RGB,
+CMYK or an index of gray or RGB, 1 or 8 bits) as a PNM; JBIG2, which only a separate program decodes, is not read, and
+says so. An image is at most 40 M pixels, decoded or scaled; one shown at under 200 pixels an inch is scaled to about
+300 first. Before the words are read, the strokes longer than half an inch across or a third of an inch down (a ruled
+table's grid) are taken out of the image, and are the page's rules for its ruled tables, as Tesseract reads a ruled
+table's cells as a picture; a stroke left on a word's edge (`[Owner`, `rota-8|`) is taken off it. Each word lands on
+the page where the image is drawn, at the point size Tesseract reads from its line's x-height (headings come from it,
+at a step of 8% rather than 12%, as OCR reads whole points), so the layout reading above makes paragraphs, headings and
+tables of it, and its blocks are marked `attrs.ocr`. A file reads at most `LOOM_EXTRACTOR_OCR_MAX_IMAGES` images (30);
+a page whose image is past that, or that OCR cannot read, is a failed unit naming why. The artifact lists the pages
+read with OCR (`attrs.ocr_pages`; a deck's `attrs.ocr_slides`), and `parser_version` names Tesseract's version when it
+read one. The OCR engine adds about 42 MB to the image (12 MB compressed). OCR reads what an image shows as text, not a
+chart's or a diagram's structure.
 
 **DOCX and PPTX.** Both are zips of XML parts, read with the standard library: no third-party XML or image library runs
 on a hostile file. A part must be stored or deflated (the methods OOXML writes) and declare at most 256 MiB
@@ -282,8 +302,9 @@ An embedded document (`altChunk`) is a failed unit, as is a document of pictures
 text. A PPTX deck is read in its slide order (the presentation's slide list, not the parts' names): a slide's title is a
 heading its other blocks sit under, each text shape (grouped ones in place, and a shape in alternate content through its
 first choice) is a block, and the speaker notes are a block marked `attrs.notes`; a hidden slide (`show` false) is read
-and marked `attrs.hidden`. A slide whose pictures, charts, diagrams or embedded objects carry all it shows, with no
-text, is a failed unit. So is a slide id whose relationship names no slide part, and a slide nested deeper than the
+and marked `attrs.hidden`. A picture that covers a fifth of its slide or more is read with OCR into a paragraph block
+marked `attrs.ocr` after the slide's shapes, and without OCR the slide is a failed unit that says its text needs OCR.
+A slide whose pictures, charts, diagrams or embedded objects carry all it shows, with no text, is a failed unit. So is a slide id whose relationship names no slide part, and a slide nested deeper than the
 reader walks. A table, in either format, is one block, a row per line with its cells joined by a pipe, and `attrs.table`
 its `rows` and `columns`.
 

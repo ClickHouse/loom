@@ -26,6 +26,7 @@ import struct
 import sys
 from typing import Any
 
+from loom_extractor import ocr
 from loom_extractor.source import ExtractionError, Options, extract
 
 EXIT_REFUSED = 3
@@ -130,6 +131,7 @@ def main(argv: list[str]) -> int:
     no_dump()
     no_sockets()
     _limit(limits["memory_bytes"], limits["cpu_s"])
+    ocr.configure(**limits["ocr"])
     # sqlglot warns once per statement it falls back on, pypdf on each repair it
     # makes; coverage records what was lost.
     logging.getLogger("sqlglot").setLevel(logging.ERROR)

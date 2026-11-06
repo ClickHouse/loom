@@ -10,10 +10,16 @@ from io import BytesIO
 import pytest
 from pypdf import PdfReader
 
-from loom_extractor import extract, pdffile
+from loom_extractor import extract, ocr, pdffile
 from loom_extractor import pdflayout as layout
 from server.knowledge.domain.extract import parse_artifact
 from tests.fixtures.office_files import laid_out_pdf, rule, text_at
+
+
+@pytest.fixture(autouse=True)
+def _no_ocr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These files' pictures need OCR whether or not this machine has Tesseract."""
+    monkeypatch.setattr(ocr, "engine", lambda: None)
 
 
 def _blocks(a) -> list[tuple[str, int, str]]:
@@ -185,7 +191,7 @@ def test_a_page_of_more_rules_than_the_bound_is_read_without_ruled_tables() -> N
     assert a.coverage.complete
     reader = PdfReader(BytesIO(laid_out_pdf([page])))
     # no rules past the bound
-    assert layout.rules(reader.pages[0], reader, lambda x, y: (x, y)) == []
+    assert layout.drawing(reader.pages[0], reader, lambda x, y: (x, y))[0] == []
 
 
 def test_a_fonts_unicode_map_gives_its_codes_widths() -> None:

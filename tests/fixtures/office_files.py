@@ -117,10 +117,14 @@ def _assemble(objs: list[bytes], pages_id: int) -> bytes:
     return bytes(out)
 
 
-def laid_out_pdf(pages: list[bytes], *, rotate: tuple[int, ...] = (), width: float = 612) -> bytes:
+def laid_out_pdf(
+    pages: list[bytes], *, rotate: tuple[int, ...] = (), width: float = 612, image: bytes = b""
+) -> bytes:
     """A PDF of `pages`, each its content stream as written: fonts F1
     (Helvetica), F2 (Helvetica-Bold) and F3 (Courier), `width` points wide and
-    792 high, and `/Rotate 90` on the pages `rotate` lists."""
+    792 high, and `/Rotate 90` on the pages `rotate` lists. `image` is an image
+    XObject's dictionary entries and stream (`/Width 1 ... >>\nstream\n...`),
+    drawn as /Im1."""
     objs: list[bytes] = []
 
     def add(body: bytes) -> int:
@@ -137,6 +141,11 @@ def laid_out_pdf(pages: list[bytes], *, rotate: tuple[int, ...] = (), width: flo
         )
         for i, name in enumerate((b"Helvetica", b"Helvetica-Bold", b"Courier"), start=1)
     )
+    xobjects = b""
+    if image:
+        xobjects = b" /XObject << /Im1 %d 0 R >>" % add(
+            b"<< /Type /XObject /Subtype /Image " + image + b"\nendstream"
+        )
     pages_id = len(objs) + 1 + 2 * len(pages)
     page_ids = []
     for k, stream in enumerate(pages):
@@ -145,8 +154,8 @@ def laid_out_pdf(pages: list[bytes], *, rotate: tuple[int, ...] = (), width: flo
         page_ids.append(
             add(
                 b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d 792]%s"
-                b" /Contents %d 0 R /Resources << /Font << %s >> >> >>"
-                % (pages_id, int(width), turn, contents, fonts)
+                b" /Contents %d 0 R /Resources << /Font << %s >>%s >> >>"
+                % (pages_id, int(width), turn, contents, fonts, xobjects)
             )
         )
     kids = b" ".join(b"%d 0 R" % p for p in page_ids)

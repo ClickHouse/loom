@@ -6,7 +6,10 @@ its cells joined by ` | `, `attrs.table` its shape), and the speaker notes a
 block marked `attrs.notes`. A hidden slide is read and marked `attrs.hidden`.
 
 A shape PowerPoint wraps in alternate content (an equation, a newer shape
-kind) is read through its first choice. A slide that holds pictures, charts,
+kind) is read through its first choice. A picture that covers a fifth of its
+slide or more may carry text of its own (a screenshot, a whiteboard photo):
+OCR reads it into a block marked `attrs.ocr` after the slide's shapes, and
+without OCR the slide is a failed unit. A slide that holds pictures, charts,
 diagrams or embedded objects and no text is a failed unit: what it shows is in
 them, which this parser does not read.
 
@@ -17,10 +20,15 @@ from __future__ import annotations
 
 from xml.etree.ElementTree import Element
 
+from loom_extractor import ocr
 from loom_extractor.artifact import Artifact, Blocks, Coverage, Failure, Locator
 from loom_extractor.ooxml import Package, PartError, q
 
-PARSER_VERSION = "2"  # parts past a package-wide bound fail
+PARSER_VERSION = "3"  # pictures a fifth of a slide or more are read with OCR
+# A picture this share of its slide, or larger, may carry text of its own.
+_PICTURE_SHARE = 0.2  # not a setting: which pictures are read
+_EMU_PER_INCH = 914_400
+_MAX_PICTURE_BYTES = 32 * 1024 * 1024  # not a setting: an image part OCR reads
 _PRESENTATION = "ppt/presentation.xml"
 _TITLES = {"title", "ctrTitle"}
 _MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
@@ -61,6 +69,7 @@ class _Slide:
         self.title = ""
         self.shapes: list[tuple[str, dict[str, object]]] = []  # (text, attrs)
         self.unread = False
+        self.pictures: list[tuple[str, int, int]] = []  # (relationship id, width, height in EMU)
         tree = root.find(f"{q('p:cSld')}/{q('p:spTree')}")
         if tree is not None:
             self._walk(tree)
@@ -75,6 +84,16 @@ class _Slide:
                     self._walk(choice)
             elif el.tag == q("p:pic"):
                 self.unread = True
+                blip = el.find(f"{q('p:blipFill')}/{q('a:blip')}")
+                ext = el.find(f"{q('p:spPr')}/{q('a:xfrm')}/{q('a:ext')}")
+                if blip is not None and ext is not None:
+                    rid = blip.get(q("r:embed"), "")
+                    try:
+                        cx, cy = int(ext.get("cx", "0")), int(ext.get("cy", "0"))
+                    except ValueError:
+                        continue
+                    if rid and cx > 0 and cy > 0:
+                        self.pictures.append((rid, cx, cy))
             elif el.tag == q("p:sp"):
                 body = el.find(q("p:txBody"))
                 text = _paragraphs(body) if body is not None else ""
@@ -122,9 +141,55 @@ def _slide_parts(pkg: Package) -> list[str | None]:
     return parts
 
 
+def _slide_size(pkg: Package) -> tuple[int, int]:
+    size = pkg.xml(_PRESENTATION).find(q("p:sldSz"))
+    try:
+        return (int(size.get("cx", "0")), int(size.get("cy", "0"))) if size is not None else (0, 0)
+    except ValueError:
+        return 0, 0
+
+
+def _picture_texts(
+    pkg: Package, part: str, slide: _Slide, area: int, eng: ocr.Engine | None, left: list[int]
+) -> tuple[list[str], str]:
+    """The text OCR reads in each of the slide's pictures that covers a fifth of
+    it, and why one was not read (empty when all were)."""
+    big = [p for p in slide.pictures if area and p[1] * p[2] >= _PICTURE_SHARE * area]
+    if not big:
+        return [], ""
+    if eng is None:
+        return [], "a picture covers a fifth of it or more: its text needs OCR, which is not run"
+    rels = pkg.rels(part)
+    texts: list[str] = []
+    for rid, cx, _ in big:
+        kind, target = rels.get(rid, ("", ""))
+        if kind != "image":
+            continue
+        if left[0] <= 0:
+            return texts, f"past the {ocr.max_images()} images OCR reads in one file"
+        left[0] -= 1
+        try:
+            words, _, _, _ = eng.read(pkg.read(target, _MAX_PICTURE_BYTES), cx / _EMU_PER_INCH)
+        except (PartError, ValueError) as e:
+            return texts, f"a picture could not be read with OCR: {e}"
+        lines: list[list[str]] = []
+        for w in words:
+            if w.first or not lines:
+                lines.append([])
+            lines[-1].append(w.text)
+        text = "\n".join(" ".join(line) for line in lines).strip()
+        if text:
+            texts.append(text)
+    return texts, ""
+
+
 def extract_pptx(data: bytes) -> Artifact:
     pkg = Package(data)
     parts = _slide_parts(pkg)
+    width, height = _slide_size(pkg)
+    eng = ocr.engine()
+    left = [ocr.max_images()]  # the images OCR may still read in this file
+    ocr_slides: list[int] = []
     acc = Blocks()
     failed: list[Failure] = []
     incomplete: set[int] = set()  # slides with a failure, their own or their notes'
@@ -149,8 +214,20 @@ def extract_pptx(data: bytes) -> Artifact:
             notes = ""
         # `show` is an XML boolean.
         hidden = {"hidden": True} if root.get("show") in ("0", "false") else {}
-        if not (slide.title or slide.shapes or notes):
-            if slide.unread:
+        try:
+            pictured, unread = _picture_texts(pkg, part, slide, width * height, eng, left)
+        except (
+            PartError,
+            RecursionError,
+        ) as e:  # the slide's relationships: its pictures are not read
+            pictured, unread = [], f"its pictures could not be read: {e}"
+        if unread:
+            failed.append(Failure(f"slide {number}", unread))
+            incomplete.add(number)
+        if pictured:
+            ocr_slides.append(number)
+        if not (slide.title or slide.shapes or notes or pictured):
+            if slide.unread and not unread:
                 failed.append(
                     Failure(
                         f"slide {number}", "no text: its pictures, charts or diagrams are not read"
@@ -164,13 +241,15 @@ def extract_pptx(data: bytes) -> Artifact:
             acc.close_sections()
         for text, attrs in slide.shapes:
             acc.add("paragraph", text, loc, **attrs, **hidden)
+        for text in pictured:
+            acc.add("paragraph", text, loc, ocr=True, **hidden)
         if notes:
             acc.add("paragraph", notes, loc, notes=True, **hidden)
     return Artifact(
         format="pptx",
         parser="loom-pptx",
-        parser_version=PARSER_VERSION,
+        parser_version=PARSER_VERSION + (f"+tesseract{eng.version}" if eng and ocr_slides else ""),
         blocks=tuple(acc.blocks),
         coverage=Coverage("slides", len(parts), len(parts) - len(incomplete), failed=tuple(failed)),
-        attrs={"slides": len(parts)},
+        attrs={"slides": len(parts), **({"ocr_slides": ocr_slides} if ocr_slides else {})},
     )

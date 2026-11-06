@@ -127,6 +127,15 @@ class Package:
             raise PartError(f"{name} is damaged: {type(e).__name__}") from e
         return _parse(name, raw)
 
+    def read(self, name: str, limit: int | None = None) -> bytes:
+        """Part `name`'s bytes, when it is at most `limit` bytes (MAX_PART_BYTES)."""
+        info = self._info(name, limit)
+        try:
+            with self._zip.open(info) as f:
+                return f.read(info.file_size)
+        except _DAMAGED as e:
+            raise PartError(f"{name} is damaged: {type(e).__name__}") from e
+
     def stream(self, name: str, handler: Handler) -> None:
         """Part `name` read through `handler`'s callbacks as it inflates, a
         chunk at a time, so a large part (a sheet's cells) is never a tree in

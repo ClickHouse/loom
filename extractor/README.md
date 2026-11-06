@@ -36,11 +36,16 @@ sudo sh -c 'export LOOM_EXTRACTOR_TOKEN="$(cat /etc/loom-extractor.token)" LOOM_
 | `LOOM_EXTRACTOR_CONCURRENCY`        | `1`         | sources read and extracted at once, the rest waiting; see below |
 | `LOOM_EXTRACTOR_MAX_BYTES`          | `67108864`  | the largest original accepted                                   |
 | `LOOM_EXTRACTOR_MAX_ARTIFACT_BYTES` | `67108864`  | the largest artifact an extraction may write                    |
+| `LOOM_EXTRACTOR_OCR`                | `on`        | `off` reads no image with OCR, though the image installs it     |
+| `LOOM_EXTRACTOR_OCR_LANGUAGES`      | `eng`       | Tesseract models joined by `+` (`eng+deu`), each installed      |
+| `LOOM_EXTRACTOR_OCR_MAX_IMAGES`     | `30`        | the images OCR reads in one file; past them a page is partial   |
 
 The image (`extractor/Dockerfile`, built from the repository root; released as
 `ghcr.io/clickhouse/loom-extractor`) does this for you: the venv is root's, the
-service runs as uid 10001, and Loom's compose stack and Helm chart run it with no
-route out and the token alone
+service runs as uid 10001, it holds Tesseract's and Leptonica's libraries and
+English model for OCR (`docker build --build-arg OCR=off` leaves them out, about
+42 MB), and Loom's compose stack and Helm chart run it with no route out and the
+token alone
 ([deployment](../docs/operations/deployment.md#container-images)):
 
 ```bash
