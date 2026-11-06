@@ -40,6 +40,8 @@ from bench.docparse.score import words
 
 FORMATS = ("pdf", "docx", "pptx")
 INGEST_DEADLINE_S = 1800  # one system's ingest of the corpus
+# The states an ingest ends this run's parse in; any other leaves an earlier one serving.
+FINISHED = ("ready", "partial")
 
 
 # ---- a normalized parse as an artifact, for a parser that writes only that
@@ -352,7 +354,7 @@ def search(
     finish (`states`) is not found: an earlier run's revision may still serve."""
     out = []
     for q in qs:
-        if states.get(q["file"]) not in ("ready", "partial"):
+        if states.get(q["file"]) not in FINISHED:
             out.append({"found": 0, "cited": 0})
             continue
         # within its own document (the parse decides what chunks hold and cite) and
@@ -515,7 +517,7 @@ def decisions(
                 "unread": 0,
             }
             for uri in uris:
-                if states[system].get(uri.removeprefix("docparse://")) not in ("ready", "partial"):
+                if states[system].get(uri.removeprefix("docparse://")) not in FINISHED:
                     counts[system]["unread"] += 1
                     continue
                 current[:] = [system, uri]
