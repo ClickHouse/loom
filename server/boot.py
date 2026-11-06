@@ -84,10 +84,14 @@ def require_safe_bind(
     auth_required: bool,
     dev_secret: bool,
     allow_insecure: bool,
+    mcp_open: bool = False,
+    short_secret: bool = False,
 ) -> None:
     """Refuse to start on a non-loopback LOOM_BIND_HOST without
     LOOM_PUBLIC_BASE_URL (generated URLs would otherwise echo a request's Host),
-    or with auth off or the dev signing secret unless LOOM_ALLOW_INSECURE=1.
+    or, unless LOOM_ALLOW_INSECURE=1, with auth off, MCP open (`mcp_open`: every
+    tool runs with no principal), the dev signing secret, or an HMAC root secret
+    shorter than 32 bytes (`short_secret`: one token lets it be guessed offline).
     A loopback bind is not checked."""
     from server.auth.public_url import is_loopback_host
 
@@ -107,10 +111,22 @@ def require_safe_bind(
             "access. Turn auth on, bind 127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if the port "
             "is not actually reachable."
         )
+    if mcp_open:
+        raise InsecureBindRefused(
+            f"refusing to start: {where} and LOOM_MCP_AUTH_MODE=open runs every MCP tool "
+            "with no principal, whatever auth the HTTP API requires. Set it to required, "
+            "bind 127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
+        )
     if dev_secret:
         raise InsecureBindRefused(
             f"refusing to start: {where} and LOOM_JWT_SECRET is the checked-in dev default, "
             "which anyone can mint accepted tokens with. Set a private LOOM_JWT_SECRET, bind "
+            "127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
+        )
+    if short_secret:
+        raise InsecureBindRefused(
+            f"refusing to start: {where} and LOOM_JWT_SECRET is shorter than 32 bytes, so "
+            "one token lets it be guessed offline. Set 32 or more random bytes, bind "
             "127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
         )
 

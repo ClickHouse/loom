@@ -49,6 +49,43 @@ def test_auth_off_on_a_reachable_bind_is_refused() -> None:
         _bind(bind_host="10.0.0.5", auth_required=False)
 
 
+def test_mcp_open_on_a_reachable_bind_is_refused() -> None:
+    """LOOM_MCP_AUTH_MODE=open runs every MCP tool with no principal, whatever auth
+    the HTTP API requires."""
+    with pytest.raises(InsecureBindRefused, match="LOOM_MCP_AUTH_MODE=open"):
+        _bind(mcp_open=True)
+    _bind(mcp_open=True, allow_insecure=True)
+    _bind(bind_host="127.0.0.1", mcp_open=True)
+
+
+def test_a_short_root_secret_on_a_reachable_bind_is_refused() -> None:
+    with pytest.raises(InsecureBindRefused, match="shorter than 32 bytes"):
+        _bind(short_secret=True)
+    _bind(short_secret=True, allow_insecure=True)
+
+
+@pytest.mark.parametrize(
+    ("secret", "short"),
+    [("a" * 31, True), ("a" * 32, False), ("é" * 16, False)],
+)
+def test_a_short_root_secret_is_one_under_32_bytes(
+    monkeypatch: pytest.MonkeyPatch, secret: str, short: bool
+) -> None:
+    from server import main
+
+    monkeypatch.setattr(settings, "jwt_secret", secret)
+    assert main._short_hmac_root() is short
+
+
+def test_the_dev_stack_publishes_clickhouse_on_loopback_only() -> None:
+    """The dev ClickHouse password is the checked-in default: its ports are never
+    published on the address LOOM_BIND_HOST publishes Loom on."""
+    compose = (Path(__file__).resolve().parents[2] / "dev/docker-compose.dev.yml").read_text()
+    ports = re.findall(r'^\s*- "([^"]*):(\d+)"$', compose, flags=re.M)
+    published = [p for p in ports if p[1] in ("8123", "9000")]
+    assert published and all(p[0].startswith("127.0.0.1:") for p in published), published
+
+
 def test_allow_insecure_lets_either_start() -> None:
     _bind(dev_secret=True, allow_insecure=True)
     _bind(auth_required=False, allow_insecure=True)
