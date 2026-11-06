@@ -244,7 +244,8 @@ def _read_layout(
     if len(targets) > layout.MAX_PICTURES:
         problems.append(f"it shows more than {layout.MAX_PICTURES} pictures OCR would read")
         targets = targets[: layout.MAX_PICTURES]
-    if not texted and not targets and _has_image(page, reader):
+    # a picture drawn but left out (under a point wide) holds no text: nothing to fail
+    if not texted and not pictures and _has_image(page, reader):
         contents = page.get_contents()
         read.failure = (
             _NEEDS_OCR

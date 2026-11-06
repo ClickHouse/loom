@@ -1181,16 +1181,17 @@ def body_style(all_lines: Iterable[Line]) -> tuple[float, Callable[[float], floa
     gaps: dict[float, Counter[float]] = defaultdict(Counter)
     prev: Line | None = None
     for ln in all_lines:
-        size = round(ln.size * 2) / 2
+        size = size_class(ln.size)
         chars[size] += len(ln.text)
-        if prev is not None and round(prev.size * 2) / 2 == size and 0 < ln.y - prev.y < 3 * size:
-            gaps[size][round(ln.y - prev.y, 0)] += 1
+        if prev is not None and size_class(prev.size) == size and 0 < ln.y - prev.y < 3 * size:
+            # a gap to a whole point, or a tenth for type under six points
+            gaps[size][round(ln.y - prev.y, 0 if size >= 6 else 1)] += 1
         prev = ln
     body = chars.most_common(1)[0][0] if chars else 10.0
     common = {s: c.most_common(1)[0][0] for s, c in gaps.items() if c}
 
     def spacing(size: float) -> float:
-        return common.get(round(size * 2) / 2, 1.25 * size)
+        return common.get(size_class(size), 1.25 * size)
 
     return body, spacing
 

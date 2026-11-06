@@ -189,8 +189,6 @@ class Engine:
             w, h = lp.pixGetWidth(pix), lp.pixGetHeight(pix)
             if w <= 0 or h <= 0 or w * h > MAX_PIXELS:
                 raise ValueError(f"its image is past {MAX_PIXELS:,} pixels")
-            if 0 < shown_inches < 1 / 72:
-                return [], [], w, h  # shown under a point wide: no text to read
             scale = 1.0
             if shown_inches > 0 and w / shown_inches < _MIN_DPI:
                 scale = min(_MAX_SCALE, _TARGET_DPI / (w / shown_inches))

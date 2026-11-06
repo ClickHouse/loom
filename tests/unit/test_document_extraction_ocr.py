@@ -620,6 +620,11 @@ def test_a_spacer_under_a_point_wide_leaves_a_scanned_page_complete(engine: Fake
     assert a.coverage.complete and len(engine.seen) == 1
 
 
-def test_sizes_under_six_points_compare_at_a_tenth(engine: FakeEngine) -> None:
+def test_sizes_under_six_points_compare_at_a_tenth() -> None:
     assert layout.size_class(2.4) != layout.size_class(2.6)
     assert layout.size_class(12.2) == layout.size_class(12.0)
+
+
+def test_a_page_of_only_a_spacer_is_complete(engine: FakeEngine) -> None:
+    a = extract(laid_out_pdf([b"q 0.75 0 0 0.75 10 10 cm /Im1 Do Q"], image=GRAY), "s.pdf")
+    assert a.coverage.complete and engine.seen == []
