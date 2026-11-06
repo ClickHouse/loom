@@ -82,8 +82,7 @@ dev = [
   "pytest-httpx>=0.32",
   "pytest-rerunfailures>=15.0",
   "pytest-cov>=5.0",
-  # Unit tests run in a random order with the seed CI prints; without `-n`,
-  # `pytest -p randomly --randomly-seed=N` repeats it (tests/README.md).
+  # Unit tests run in a random order with the seed CI prints (tests/README.md).
   "pytest-randomly>=3.15",
   # The unit job spreads the suite over the runner's cores (`-n auto`).
   "pytest-xdist>=3.6",

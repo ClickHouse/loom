@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -250,6 +251,11 @@ def test_the_child_exits_by_itself_past_the_deadline() -> None:
     assert rc == 1 and time.monotonic() - started < 15
 
 
+def _read_pid(path: Path) -> int:
+    text = path.read_text().strip() if path.exists() else ""
+    return int(text) if text else 0
+
+
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG is Linux")
 def test_the_child_dies_with_its_parent(tmp_path) -> None:
     pid_file = tmp_path / "pid"
@@ -269,12 +275,9 @@ def test_the_child_dies_with_its_parent(tmp_path) -> None:
     proc = subprocess.Popen([sys.executable, "-c", parent], start_new_session=True)
     try:
         deadline = time.monotonic() + 30
-        while not (pid_file.exists() and pid_file.read_text()) and time.monotonic() < deadline:
+        while not (pid := _read_pid(pid_file)):
+            assert time.monotonic() < deadline, "the grandchild never set its death signal"
             time.sleep(0.05)
-        assert pid_file.exists() and pid_file.read_text(), (
-            "the grandchild never set its death signal"
-        )
-        pid = int(pid_file.read_text())
         proc.kill()
         proc.wait()
         for _ in range(100):
