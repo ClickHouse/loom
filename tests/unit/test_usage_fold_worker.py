@@ -101,7 +101,6 @@ def _ident_row(
     memory_id: str = MID,
     memory_key: str = "k",
     namespace: str = "ns",
-    last_counted_at: datetime = T0,
 ) -> dict[str, Any]:
     # The worker selects `toString(memory_id) AS mid` — the renamed alias.
     return {
@@ -112,8 +111,6 @@ def _ident_row(
         "user_id": "-",
         "memory_key": memory_key,
         "reinforcement_count": reinforcement_count,
-        # the last event other than `served`: the decay anchor
-        "last_counted_at": last_counted_at,
     }
 
 
@@ -312,7 +309,7 @@ async def test_import_seeded_base_preserved_above_live_total() -> None:
 async def test_evidence_only_activity_feeds_embeddings_reinforcement() -> None:
     """Positive-outcome (evidence) events fold onto the search-side
     reinforcement signal too — so memory.outcome drives ranking, not just the
-    promote gate. last_reinforced_at advances off the last counted event (the decay clock)."""
+    promote gate. last_reinforced_at advances off bumped_at (the decay clock)."""
     ch = StubCH()
     _seed_active_pass(
         ch,
@@ -324,7 +321,7 @@ async def test_evidence_only_activity_feeds_embeddings_reinforcement() -> None:
     rows = _reinf_rows(ch)
     assert len(rows) == 1
     assert rows[0]["reinforcement_count"] == 1 + 0 + 2  # base + recall + evidence
-    assert rows[0]["last_reinforced_at"] == T0  # the last counted event
+    assert rows[0]["last_reinforced_at"] == T0  # bumped_at
     # evidence_count still folds onto loom.memory for the promote gate.
     (sql, params) = _updates(ch, "loom.memory")[0]
     assert params["evs"] == [1 + 2]
@@ -705,60 +702,3 @@ async def test_read_only_replica_does_not_fall_back_to_alter() -> None:
     with pytest.raises(RuntimeError):
         await run_pass(ch=ch)
     assert not [sql for sql, _ in ch.execute_calls if sql.startswith("ALTER TABLE ")]
-
-
-async def test_a_bump_that_changes_no_counter_issues_no_memory_update() -> None:
-    """A `served` (or `acted`) event bumps the totals row without changing the counters it
-    folds: the absolute targets equal what loom.memory carries, so no lightweight UPDATE
-    (a patch part each) is issued. A row whose counters moved is still updated."""
-    ch = StubCH()
-    _seed_active_pass(
-        ch,
-        totals=[
-            _totals_row(recall=3, evidence=1, last_recalled=T0),
-            _totals_row(recall=2, evidence=0, last_recalled=T0, memory_id=MID2),
-        ],
-        idents=[
-            {**_ident_row(), "recall_count": 3, "evidence_count": 2, "last_recalled_at": T0},
-            {
-                **_ident_row(memory_id=MID2, memory_key="k2"),
-                "recall_count": 1,
-                "evidence_count": 1,
-                "last_recalled_at": T0,
-            },
-        ],
-    )
-    result = await run_pass(ch=ch)
-    assert result.folded == 2
-    [(_sql, params)] = _updates(ch, "loom.memory")
-    assert params["ids"] == [MID2]
-    # the reinforcement rows are re-written with the same absolute values
-    assert {r["memory_key"] for r in _reinf_rows(ch)} == {"k", "k2"}
-
-
-async def test_a_served_event_does_not_move_the_decay_anchor() -> None:
-    """A context pack returns a memory on every turn and writes `served`, which bumps the
-    totals row. The reinforcement boost decays from last_reinforced_at; it stays at the last
-    counted event (here the old recall), not the served bump, so ranking is unchanged."""
-    ch = StubCH()
-    served_now = T0 + timedelta(days=40)
-    _seed_active_pass(
-        ch,
-        totals=[_totals_row(recall=1, last_recalled=T0, bumped=served_now)],
-        idents=[_ident_row(last_counted_at=T0)],
-    )
-    await run_pass(ch=ch)
-    [row] = _reinf_rows(ch)
-    assert row["last_reinforced_at"] == T0
-
-
-async def test_a_later_recall_time_alone_still_updates() -> None:
-    ch = StubCH()
-    later = T0 + timedelta(minutes=5)
-    _seed_active_pass(
-        ch,
-        totals=[_totals_row(recall=3, evidence=0, last_recalled=later)],
-        idents=[{**_ident_row(), "recall_count": 3, "evidence_count": 1, "last_recalled_at": T0}],
-    )
-    await run_pass(ch=ch)
-    assert len(_updates(ch, "loom.memory")) == 1

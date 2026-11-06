@@ -887,7 +887,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `char_limit` | `int \| None` | Server-enforced char cap on `value` (NULL = no cap). |
 | `recall_count` | `int` | Recall credits: reads by a credited reader (memory.search with auto_touch, from a client that posts outcomes), folded from loom.memory_usage_* into the ranking signal. |
 | `last_recalled_at` | `datetime \| None` | When a credited read last returned the row; None = no credit yet. |
-| `served_count` | `int \| None` | Agent reads that returned the key, credited or not (recall credits plus `served` events, across the key's live rows inside the reader's scope: a token narrowed to one user never counts another's copy; never below recall_count). |
+| `served_count` | `int \| None` | Agent reads that returned the key, credited or not (memory.search, search.query, context.pack, memory.stack, memory.ask, procedure.match), across the key's live rows inside the reader's scope (a token narrowed to one user never counts… |
 | `last_served_at` | `datetime \| None` | When an agent read last returned the key; None = none recorded, or not asked for. |
 | `verified_by` | `str` | Attestation (memory.verify). |
 | `verified_at` | `datetime \| None` | When the attestation in `verified_by` was made; None = never attested, or revoked. |
@@ -964,7 +964,7 @@ Knowledge-base health for (org, namespace): how much of what is stored is ever r
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `live` | `int` | Active, untombstoned rows in the namespace, across every agent and user. |
-| `recalled_ever` | `int` | Live rows whose key carries a recall credit on any live row, or was returned by an agent read (a search, context pack or memory.ask) in the last `silent_after_days` days. |
+| `recalled_ever` | `int` | Live rows whose key carries a recall credit on any live row, or was returned by an agent read (memory.search, search.query, context.pack, memory.stack, memory.ask, procedure.match) in the last `silent_after_days` days. |
 | `used_ever` | `int` | Live rows with at least one reported use. |
 | `harmed_ever` | `int` | live rows with at least one harm event |
 | `silent` | `int` | live, no recall credit, and no agent read in the last silent_after_days |

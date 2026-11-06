@@ -1365,10 +1365,11 @@ function ProvenanceSection({
 }
 
 const RECALLED_TIP =
-  "Times an agent's search, context pack or ask returned this memory, across its copies in the namespace. " +
-  "The dashboard's own reads are not counted, and a read takes a few seconds to show.";
+  "Times an agent read returned this memory (a search, a context pack or memory stack, an ask, a " +
+  "procedure match), across its copies you can read. The dashboard's own reads are not counted, " +
+  "and a read takes a few seconds to show.";
 const CREDIT_TIP =
-  "Recalls from readers that report outcomes. Search ranking reads these; " +
+  "Searches by readers that report outcomes. Search ranking reads these; " +
   "a context pack, an ask or an uncredited search adds none.";
 
 /** "N× · <when>" from the agent reads that returned the key (`served_count`), else "No

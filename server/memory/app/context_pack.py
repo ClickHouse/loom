@@ -184,6 +184,14 @@ class _PackState:
     truncated: bool = False
     shown_procedures: list[str] = field(default_factory=list)
     withheld_procedures: list[str] = field(default_factory=list)
+    # Each citation that names a stored row, with its (namespace, memory_key): the rows the
+    # kept blocks cite are what the pack records as served to the agent.
+    cited_rows: dict[str, tuple[str, str]] = field(default_factory=dict)
+
+    def cite_row(self, citation: str, namespace: str, memory_key: str) -> str:
+        """`citation`, noted as naming the stored row (namespace, memory_key)."""
+        self.cited_rows[citation] = (namespace, memory_key)
+        return citation
 
     def put(
         self,
@@ -280,6 +288,9 @@ async def _pack_memory_stack(st: _PackState) -> None:
         if layer not in layers:
             layers.append(layer)
         cite = f"stack:{layer}/{entry.memory_key or entry.memory_type}"
+        if layer in _STACK_MEMORY_LAYERS and entry.memory_key:
+            # the stack reads the request's namespace only
+            st.cite_row(cite, input.namespace, entry.memory_key)
         citations.append(cite)
         author = author_label([entry.actor]) if layer in _STACK_MEMORY_LAYERS else ""
         label = label_part(f"{layer}/{entry.memory_key}")
@@ -391,7 +402,9 @@ async def _pack_startup_recall(st: _PackState) -> None:
 
     evidence = [
         EvidenceItem(
-            citation=f"memory:{input.namespace}/{r.memory_key}",
+            citation=st.cite_row(
+                f"memory:{input.namespace}/{r.memory_key}", input.namespace, r.memory_key
+            ),
             text=_vtext(r.value),
             source="fact",
             group=f"fact:{input.namespace}",
@@ -532,7 +545,7 @@ async def _pack_decisions_from_hits(
             verdict = " (succeeded)" if succ is True else " (failed)" if succ is False else ""
             line += f"; realized: {realized}{verdict}"
         lines.append(one_item(line))
-        citations.append(f"decision:{ns}/{h.memory_key}")
+        citations.append(st.cite_row(f"decision:{ns}/{h.memory_key}", ns, str(h.memory_key)))
     st.put(
         "decisions",
         "\n".join(lines),
@@ -608,6 +621,7 @@ async def _pack_memories(st: _PackState) -> None:
             cite = f"memory:{ns}/{h.memory_key}"
             if resource:
                 cite = f"{cite}#{resource}"
+            st.cite_row(cite, ns, str(h.memory_key))
             group = resource or f"{source}:{ns}"
             evidence.append(
                 EvidenceItem(
@@ -699,7 +713,11 @@ async def _pack_procedures(st: _PackState) -> None:
         citations = []
         for m in matches:
             steps = "; ".join(m.steps[:6])
-            citations.append(f"procedure:{m.namespace}/{m.memory_key}")
+            citations.append(
+                st.cite_row(
+                    f"procedure:{m.namespace}/{m.memory_key}", m.namespace, str(m.memory_key)
+                )
+            )
             st.shown_procedures.append(str(m.memory_key))
             # Trust labels ride the line: an unexercised machine-mined
             # procedure is advice to weigh, not a script; fail-prone steps
@@ -949,7 +967,7 @@ async def handle_context_pack(input: ContextPackInput) -> ContextPackOutput:
         input, present, rendered_parts, rendered
     )
 
-    return ContextPackOutput(
+    out = ContextPackOutput(
         procedure_keys=list(dict.fromkeys(st.shown_procedures)),
         procedure_keys_withheld=list(dict.fromkeys(st.withheld_procedures)),
         rendered=rendered,
@@ -968,6 +986,10 @@ async def handle_context_pack(input: ContextPackInput) -> ContextPackOutput:
         stable_prefix_chars=prefix_len,
         stable_hash=stable_hash,
     )
+    out._served_rows = [
+        st.cited_rows[c] for block in blocks for c in block.citations if c in st.cited_rows
+    ]
+    return out
 
 
 async def _working_memory_layers(input: Any) -> tuple[list[Any], str]:

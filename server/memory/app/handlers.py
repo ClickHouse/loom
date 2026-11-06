@@ -474,7 +474,7 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
         # this read resolved. A reader narrowed to one user never counts another's copy.
         try:
             from server.memory.api.models_crud import _RecallByAgent
-            from server.memory.store.usage import served_by_agent
+            from server.memory.store.served import served_by_agent
 
             agent_rows = await served_by_agent(
                 row.org, row.namespace, row.memory_key, scope=request_scope()

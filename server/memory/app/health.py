@@ -3,11 +3,10 @@
 Reports coverage by type, top recalled entries, silent entries (no recall credit, and not
 served to an agent in the last `silent_after_days`) and the staleness of live rows, so a
 namespace where most rows are never read shows it. One query over loom.memory FINAL joined
-to the summed loom.memory_usage_totals and the `served` usage events of the last
+to the summed loom.memory_usage_totals and to loom.memory_served_daily's last
 `silent_after_days` days, scoped to (org, namespace). A key counts as read when any of its
-live rows carries a recall credit, or a `served` event in that window: an agent read puts
-its event on the newest copy of the key in the namespace only. The window bounds the events
-read, since a context pack writes one per key it returns on every turn.
+live rows carries a recall credit or a served row in that window: a read lands on one copy
+of the key only (the newest inside the reader's scope).
 """
 
 from __future__ import annotations
@@ -47,10 +46,10 @@ _LIVE = """
         GROUP BY memory_id
     ) AS u ON u.memory_id = m.memory_id
     LEFT JOIN (
-        SELECT memory_id, sum(event_count) AS served_count
-        FROM loom.memory_usage_events
-        WHERE org = {org:String} AND namespace = {ns:String} AND event_type = 'served'
-          AND ts > now() - toIntervalDay({days:UInt32})
+        SELECT memory_id, sum(served) AS served_count
+        FROM loom.memory_served_daily
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND day > today() - {days:UInt32}
         GROUP BY memory_id
     ) AS s ON s.memory_id = m.memory_id
 """

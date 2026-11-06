@@ -76,7 +76,6 @@ from clickhouse_connect.driver.external import ExternalData
 
 from server.core.ch_names import split_table
 from server.core.datetimes import UNIX_EPOCH
-from server.memory.store.usage import SERVED_EVENT
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import record_pass
@@ -265,10 +264,6 @@ class _Target:
     last_recalled: datetime  # UNIX_EPOCH when never recalled
     reinforcement: int | None  # None: no reinforcing activity, embeddings untouched
     last_activity: datetime
-    # False when loom.memory already carries every counter above, so its UPDATE is skipped.
-    # A bump from an event the totals do not count (`served`, `acted`, ...) re-folds the same
-    # absolute values, and a lightweight UPDATE that changes nothing still costs a patch part.
-    changes_memory: bool = True
 
 
 def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> list[_Target]:
@@ -298,17 +293,6 @@ def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> li
             or harm_total > 0
         )
         base_rc = int(ident.get("reinforcement_count") or 1)
-        evidence = _u32(1 + evidence_total)
-        recall = _u32(recall_total)
-        stored_lra = ident.get("last_recalled_at")
-        changes_memory = (
-            evidence > int(ident.get("evidence_count") or 0)
-            or recall > int(ident.get("recall_count") or 0)
-            or (
-                last_recalled > UNIX_EPOCH
-                and (stored_lra is None or last_recalled > _utc(stored_lra))
-            )
-        )
         out.append(
             _Target(
                 memory_id=str(row["memory_id"]),
@@ -317,8 +301,8 @@ def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> li
                 agent=str(ident["agent"]),
                 user_id=str(ident["user_id"]),
                 memory_key=str(ident["memory_key"]),
-                evidence=evidence,
-                recall=recall,
+                evidence=_u32(1 + evidence_total),
+                recall=_u32(recall_total),
                 last_recalled=last_recalled,
                 # Harm subtracts, floored at the write-time base: a memory the
                 # agent relied on in failed runs loses the reinforcement it
@@ -338,10 +322,11 @@ def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> li
                     if reinforcing
                     else None
                 ),
-                # The rank's decay anchor: the last event other than `served`, read beside
-                # the identity row (`bumped` moves on `served` too).
-                last_activity=max(last_recalled, _utc(ident.get("last_counted_at"))),
-                changes_memory=changes_memory,
+                # Both recall AND positive-outcome (evidence) feed the
+                # search-side reinforcement signal; last_reinforced_at tracks
+                # the most recent reinforcing activity of either kind, which
+                # the rank's efficacy-decay term reads.
+                last_activity=max(last_recalled, _utc(row.get("bumped"))),
             )
         )
     return out
@@ -462,23 +447,19 @@ async def _derive_cold_start_watermark(ch: _CHClient, hwm: datetime) -> datetime
     return first - timedelta(seconds=1)
 
 
-# The identity read of a batch, keyed on the batch's ids in one statement: memory_id →
-# fold identity, the write-time reinforcement base, and the stored evidence_count /
-# recall_count / last_recalled_at (`changes_memory` compares the targets with them). From
-# the events beside it: memory.ask's `used_cited` credit, which the totals view does not
-# map, and `last_counted_at`, the last event other than `served` (the decay anchor).
-# `AS mid`, never `AS memory_id`.
+# The identity read of a batch: memory_id → fold identity + write-time base,
+# with memory.ask's `used_cited` credit summed from the events
+# table beside it. The totals view (memory_usage_totals_mv) maps only `used`
+# into used_count, so the self-credit is read here,
+# keyed on the same ids in one statement. `AS mid`, never
+# `AS memory_id`.
 IDENTITY_STATEMENT = """
         SELECT toString(m.memory_id) AS mid, m.org AS org, m.namespace AS namespace,
                m.agent AS agent, m.user_id AS user_id, m.memory_key AS memory_key,
                m.reinforcement_count AS reinforcement_count,
-               m.evidence_count AS evidence_count, m.recall_count AS recall_count,
-               m.last_recalled_at AS last_recalled_at,
-               coalesce(c.used_cited_total, 0) AS used_cited_total,
-               c.last_counted_at AS last_counted_at
+               coalesce(c.used_cited_total, 0) AS used_cited_total
         FROM (
-            SELECT memory_id, org, namespace, agent, user_id, memory_key, reinforcement_count,
-                   evidence_count, recall_count, last_recalled_at
+            SELECT memory_id, org, namespace, agent, user_id, memory_key, reinforcement_count
             FROM loom.memory FINAL
             WHERE org IN {orgs:Array(String)}
               AND namespace IN {nss:Array(String)}
@@ -486,14 +467,12 @@ IDENTITY_STATEMENT = """
               AND tombstoned_at IS NULL
         ) AS m
         LEFT JOIN (
-            SELECT org, namespace, memory_id,
-                   sumIf(event_count, event_type = 'used_cited') AS used_cited_total,
-                   max(ts) AS last_counted_at
+            SELECT org, namespace, memory_id, sum(event_count) AS used_cited_total
             FROM loom.memory_usage_events
             WHERE org IN {orgs:Array(String)}
               AND namespace IN {nss:Array(String)}
               AND memory_id IN {ids:Array(UUID)}
-              AND event_type != {served:String}
+              AND event_type = 'used_cited'
             GROUP BY org, namespace, memory_id
         ) AS c ON c.org = m.org AND c.namespace = m.namespace AND c.memory_id = m.memory_id
 """
@@ -554,7 +533,6 @@ async def _fold_batch(ch: _CHClient, cfg: UsageFoldConfig, result: UsageFoldResu
             "orgs": sorted({r["org"] for r in rows}),
             "nss": sorted({r["namespace"] for r in rows}),
             "ids": [r["memory_id"] for r in rows],
-            "served": SERVED_EVENT,
         },
     )
     by_id = {str(r["mid"]): r for r in idents}
@@ -562,9 +540,7 @@ async def _fold_batch(ch: _CHClient, cfg: UsageFoldConfig, result: UsageFoldResu
     result.skipped_no_memory += len(rows) - len(targets)
 
     if targets:
-        result.statements += await _fold_memory_rows(
-            ch, [t for t in targets if t.changes_memory], cfg.update_chunk_rows
-        )
+        result.statements += await _fold_memory_rows(ch, targets, cfg.update_chunk_rows)
         result.statements += await _fold_reinforcement_rows(ch, targets, cfg.update_chunk_rows)
         result.folded += len(targets)
 

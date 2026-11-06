@@ -1,19 +1,18 @@
-"""`served` usage events: which keys an agent read returned to the agent.
+"""Served reads: which keys an agent read returned to the agent.
 
 `recall_count` holds only the recall credit (`recall_credit.py`), which a credited
-`memory.search` writes. Every other agent read that returns memory writes one `served`
-event per key it returned, in the background, through the same key funnel as the credits
-(`usage.record_usage_for_keys`). Nothing ranks on `served`; it answers "has an agent been
-shown this?" beside the credits.
+`memory.search` writes and the rank reads. Every agent read that returns memory, credited
+or not, also writes one row per key it returned to `loom.memory_served_daily`, in the
+background (`store.served`). Nothing ranks on it; it answers "has an agent been shown
+this?" for the inspector and `memory.health`.
 
-The event is written by the op, over what its answer carries, so a hit the op trims
-(a transcript row a context pack drops, an item past a section budget) is never counted.
-The op's handler is wrapped where the op is declared; a handler another op calls directly
-records nothing of its own. Not written: a credited `memory.search` (its credit stands for
-it), a `memory.search` sent with `auto_touch: false` or a `memory.ask` with
-`reinforce: false` (an evaluation read), a read by the dashboard or the assistant (a person
-inspecting), and a measurement read (a bench label, or the `*` / `-` agent with no named
-consumer behind it, as `recall_credit.is_measurement_read` says).
+The row is written by the op, over what its answer carries, so a hit the op trims (a
+transcript row a context pack drops, an item past a section budget) is never counted. The
+op's handler is wrapped where the op is declared; a handler another op calls directly
+records nothing of its own. Not written: a `memory.search` sent with `auto_touch: false`
+or a `memory.ask` with `reinforce: false` (evaluation reads), a read by the dashboard or
+the assistant (a person inspecting), and a measurement read (a bench label, or the `*` /
+`-` agent with no named consumer behind it, as `recall_credit.is_measurement_read` says).
 """
 
 from __future__ import annotations
@@ -43,33 +42,24 @@ def _counted_agent(agent: str) -> bool:
 
 
 def schedule_served(org: str, agent: str, keys: Iterable[tuple[str, str]]) -> None:
-    """One `served` event per (namespace, key), in the background."""
-    from server.memory.store import usage
-    from server.observability.consumer import current_consumer
+    """One served row per (namespace, key), in the background, on the newest live row of
+    the key inside the request's read scope: a token narrowed to one user records on its
+    own copy, where its reads are read."""
+    from server.identity.app.request_scope import request_scope
+    from server.memory.store import served
 
     ns_keys: dict[str, list[str]] = {}
     for ns, key in dict.fromkeys(keys):
         ns_keys.setdefault(ns, []).append(key)
     if not ns_keys or not _counted_agent(agent):
         return
-    from server.identity.app.request_scope import request_scope
-
-    consumer = str(current_consumer() or "")
-    # A narrowed reader's event lands on a row inside its scope, where its reads are read.
     scope = request_scope()
 
     async def _write() -> None:
         try:
-            await usage.record_usage_for_keys(
-                org,
-                ns_keys,
-                event_type=usage.SERVED_EVENT,
-                agent=agent,
-                consumer=consumer,
-                scope=scope,
-            )
-        except Exception as e:  # noqa: BLE001 — a served event must not fail the read
-            log.warning("served-event log failed (non-fatal): %s", e)
+            await served.record_served(org, ns_keys, agent=agent, scope=scope)
+        except Exception as e:  # noqa: BLE001 — a served row must not fail the read
+            log.warning("served-read log failed (non-fatal): %s", e)
 
     after_write.schedule(_write(), name="memory.served")
 
@@ -88,7 +78,7 @@ def records_served[I, O](
                 if keys:
                     i: Any = input
                     schedule_served(str(i.org), str(i.agent or ""), keys)
-            except Exception as e:  # noqa: BLE001 — a served event must not fail the read
+            except Exception as e:  # noqa: BLE001 — a served row must not fail the read
                 log.warning("served keys of %s failed (non-fatal): %s", handler.__name__, e)
             return out
 
@@ -102,8 +92,8 @@ def _hit_keys(hits: Iterable[Any], namespace: str) -> Keys:
 
 
 def search_keys(input: Any, out: Any) -> Keys:
-    """memory.search: the hits served, unless the read was credited or asked for no usage."""
-    if not input.auto_touch or out.reinforcement == "credited":
+    """memory.search: the hits served, unless the caller asked for no usage."""
+    if not input.auto_touch:
         return []
     return _hit_keys(out.results, input.namespace)
 
@@ -121,32 +111,14 @@ def procedure_keys(input: Any, out: Any) -> Keys:
     return [(str(m.namespace or input.namespace), str(m.memory_key)) for m in out.matches]
 
 
-# The citations of a pack block that name a stored row: `<kind>:<namespace>/<key>`, a
-# memory's with an optional `#<resource>`.
-_ROW_CITATIONS = ("memory:", "decision:", "procedure:")
-# The memory stack's layers that are stored rows, cited `stack:<layer>/<key>`; the stack
-# reads the request's namespace only.
+# The memory stack's layers that are stored rows; profile and knowledge are not.
 _STACK_ROW_LAYERS = ("pinned", "recent_recall", "procedure")
 
 
 def pack_keys(input: Any, out: Any) -> Keys:
-    """context.pack: the rows its blocks cite, which are the ones the pack kept within its
-    section budgets."""
-    keys: Keys = []
-    for block in out.blocks:
-        for cite in block.citations:
-            kind = next((k for k in _ROW_CITATIONS if cite.startswith(k)), "")
-            if kind:
-                ns, _, key = cite[len(kind) :].partition("/")
-            elif cite.startswith("stack:"):
-                layer, _, key = cite.removeprefix("stack:").partition("/")
-                ns = input.namespace if layer in _STACK_ROW_LAYERS else ""
-            else:
-                continue
-            key = key.partition("#")[0]
-            if ns and key:
-                keys.append((ns, key))
-    return keys
+    """context.pack: the stored rows its kept blocks cite (the pack notes each row's key
+    where it makes the citation), which are the ones within its section budgets."""
+    return list(out._served_rows)
 
 
 def stack_keys(input: Any, out: Any) -> Keys:
@@ -159,10 +131,8 @@ def stack_keys(input: Any, out: Any) -> Keys:
 
 
 def search_query_keys(input: Any, out: Any) -> Keys:
-    """search.query: the memory section's hits it kept, unless that pass was credited."""
+    """search.query: the memory section's hits it kept."""
     memory = out.memory or {}
-    if memory.get("reinforcement") == "credited":
-        return []
     return [
         (str(h.get("namespace") or input.namespace), str(h["memory_key"]))
         for h in memory.get("results") or []

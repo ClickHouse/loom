@@ -1,99 +1,88 @@
-"""The served reads on clickhouse-local against the production tables: which rows of a
-key memory.get counts, and the window memory.health reads."""
+"""The served reads on clickhouse-local against the production tables: where a read lands,
+which rows of a key memory.get counts, and the window memory.health reads."""
 
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
 from server.identity.domain.read_scope import ReadFilters
-from server.memory.store import usage
-from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl
+from server.memory.store import served
+from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
 
 M1 = "00000000-0000-0000-0000-0000000000a1"
 M2 = "00000000-0000-0000-0000-0000000000a2"
-
-
-def _memory(mid: str, user: str, session: str, key: str = "k") -> str:
-    return (
-        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
-        "memory_id, value, version) VALUES "
-        f"('o', 'n', 'w', '{user}', '{session}', '{key}', '{mid}', 'v', 1)"
-    )
-
-
-def _event(mid: str, kind: str, agent: str, days_ago: int = 0) -> str:
-    return (
-        "INSERT INTO loom.memory_usage_events (memory_id, org, namespace, event_type, "
-        f"event_count, ts, agent) VALUES ('{mid}', 'o', 'n', '{kind}', 1, "
-        f"now() - INTERVAL {days_ago} DAY, '{agent}')"
-    )
-
-
-def _ch(*rows: str) -> LocalCH:
-    return LocalCH(ddl("memory"), ddl("memory_usage_events"), ddl("memory_usage_totals"), *rows)
-
-
-def _memory_at(mid: str, user: str, session: str, updated: str) -> str:
-    return (
-        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
-        "memory_id, value, version, updated_at) VALUES "
-        f"('o', 'n', 'w', '{user}', '{session}', 'k', '{mid}', 'v', 1, '{updated}')"
-    )
-
-
 OWN_U1 = ReadFilters(scope="own_user", user_id="u1", session_id=None)
 
 
-def test_the_key_counts_every_live_row_and_a_narrowed_reader_its_own() -> None:
-    ch = _ch(
-        _memory(M1, "u1", "s1"),
-        _memory(M2, "u2", "s2"),
-        _event(M1, "recall", "a1"),
-        _event(M2, "served", "a2"),
-        _event(M2, "used", "a2"),  # not a read
+def _memory(mid: str, user: str, updated: str) -> str:
+    return (
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+        "memory_id, value, version, updated_at) VALUES "
+        f"('o', 'n', 'w', '{user}', 's', 'k', '{mid}', 'v', 1, '{updated}')"
     )
-    every = asyncio.run(usage.served_by_agent("o", "n", "k", ch=ch))  # type: ignore[arg-type]
-    assert sorted((r["agent"], int(r["n"])) for r in every) == [("a1", 1), ("a2", 1)]
-    own = asyncio.run(usage.served_by_agent("o", "n", "k", scope=OWN_U1, ch=ch))  # type: ignore[arg-type]
-    assert [(r["agent"], int(r["n"])) for r in own] == [("a1", 1)]
 
 
-def test_a_narrowed_readers_event_lands_on_its_own_row(monkeypatch: pytest.MonkeyPatch) -> None:
-    """u2's copy of the key is the newest; u1's narrowed read was served u1's copy, so its
-    event lands there, where u1's figures are read, and never on u2's."""
-    ch = _ch(
-        _memory_at(M1, "u1", "s1", "2026-01-01 00:00:00"),
-        _memory_at(M2, "u2", "s2", "2026-02-01 00:00:00"),
+@pytest.fixture
+def ch(tmp_path: Path) -> KeptCH:
+    """u2's copy of key `k` is the newest."""
+    db = KeptCH(
+        tmp_path,
+        ddl("memory"),
+        ddl("memory_served_daily"),
+        ddl("memory_usage_totals"),
     )
-    landed: list[str] = []
-
-    async def _event_on(**kw: object) -> None:
-        landed.append(str(kw["memory_id"]))
-
-    monkeypatch.setattr(usage, "record_usage_event", _event_on)
-    asyncio.run(
-        usage.record_usage_for_keys("o", {"n": ["k"]}, event_type="served", ch=ch)  # type: ignore[arg-type]
+    db.create(
+        _memory(M1, "u1", "2026-01-01 00:00:00"),
+        _memory(M2, "u2", "2026-02-01 00:00:00"),
     )
-    asyncio.run(
-        usage.record_usage_for_keys(  # type: ignore[arg-type]
-            "o", {"n": ["k"]}, event_type="served", scope=OWN_U1, ch=ch
-        )
+    return db
+
+
+def _record(ch: KeptCH, agent: str, scope: ReadFilters | None = None) -> None:
+    kw = {"scope": scope} if scope else {}
+    asyncio.run(served.record_served("o", {"n": ["k"]}, agent=agent, ch=ch, **kw))  # type: ignore[arg-type]
+
+
+def _by_agent(ch: KeptCH, scope: ReadFilters | None = None) -> list[tuple[str, int]]:
+    kw = {"scope": scope} if scope else {}
+    rows = asyncio.run(served.served_by_agent("o", "n", "k", ch=ch, **kw))  # type: ignore[arg-type]
+    return sorted((r["agent"], int(r["n"])) for r in rows)
+
+
+def test_a_read_lands_on_the_newest_copy_inside_the_readers_scope(ch: KeptCH) -> None:
+    _record(ch, "wide")  # a namespace-wide reader: the newest copy, u2's
+    _record(ch, "mine", OWN_U1)  # u1's narrowed reader: u1's own copy
+    rows = asyncio.run(
+        ch.query_all("SELECT toString(memory_id) AS m, agent FROM loom.memory_served_daily")
     )
-    assert landed == [M2, M1]
+    assert sorted((r["m"], r["agent"]) for r in rows) == [(M1, "mine"), (M2, "wide")]
 
 
-def test_health_counts_served_events_inside_the_silent_window_only() -> None:
+def test_the_key_counts_every_live_row_and_a_narrowed_reader_its_own(ch: KeptCH) -> None:
+    _record(ch, "wide")
+    _record(ch, "wide")
+    _record(ch, "mine", OWN_U1)
+    assert _by_agent(ch) == [("mine", 1), ("wide", 2)]
+    # u1 sees its own agent's read, never what landed on u2's copy
+    assert _by_agent(ch, OWN_U1) == [("mine", 1)]
+
+
+def test_health_counts_served_rows_inside_the_silent_window_only(ch: KeptCH) -> None:
     from server.memory.app import health
 
-    ch = _ch(_memory(M1, "u1", "s1"), _event(M1, "served", "a1", days_ago=40))
+    ch.create(
+        "INSERT INTO loom.memory_served_daily (org, namespace, memory_id, agent, day, served, "
+        f"last_at) VALUES ('o', 'n', '{M1}', 'a', today() - 40, 3, now() - INTERVAL 40 DAY)"
+    )
 
-    def served(days: int) -> int:
+    def served_count(days: int) -> int:
         rows = asyncio.run(ch.query_all(health._LIVE, {"org": "o", "ns": "n", "days": days}))
-        return int(rows[0]["served_count"])
+        return {r["memory_id"]: int(r["served_count"]) for r in rows}[M1]
 
-    assert served(30) == 0
-    assert served(60) == 1
+    assert served_count(30) == 0
+    assert served_count(60) == 3

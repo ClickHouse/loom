@@ -1,4 +1,4 @@
-"""`served` events: the keys an agent read's answer returned, written by the op."""
+"""Served reads: the keys an agent read's answer returned, recorded by the op."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from server.observability.consumer import SOURCE_SELF_REPORTED
 
 @pytest.fixture
 def written(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    from server.memory.store import usage
+    from server.memory.store import served
 
     calls: list[dict[str, Any]] = []
 
@@ -24,7 +24,7 @@ def written(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         calls.append({"org": org, "ns_keys": ns_keys, **kw})
         return 1
 
-    monkeypatch.setattr(usage, "record_usage_for_keys", _rec)
+    monkeypatch.setattr(served, "record_served", _rec)
     return calls
 
 
@@ -67,46 +67,39 @@ def _search_input(**kw: Any) -> SimpleNamespace:
     )
 
 
-def test_an_uncredited_search_records_what_it_returned(written: list[dict[str, Any]]) -> None:
-    out = SimpleNamespace(
-        results=[_hit("a"), _hit("b", ns="m")], reinforcement="not_credited (no_closer)"
-    )
+@pytest.mark.parametrize("credit", ["credited", "not_credited (no_closer)"])
+def test_a_search_records_what_it_returned_credited_or_not(
+    written: list[dict[str, Any]], credit: str
+) -> None:
+    out = SimpleNamespace(results=[_hit("a"), _hit("b", ns="m")], reinforcement=credit)
     _run(_wrapped(served_reads.search_keys, out), _search_input())
     assert written == [
         {
             "org": "o",
             "ns_keys": {"n": ["a"], "m": ["b"]},
-            "event_type": "served",
             "agent": "codex",
-            "consumer": "codex",
             "scope": WHOLE_NAMESPACE,
         }
     ]
 
 
-def test_a_credited_search_or_one_without_usage_records_no_served(
-    written: list[dict[str, Any]],
-) -> None:
-    credited = SimpleNamespace(results=[_hit("a")], reinforcement="credited")
-    _run(_wrapped(served_reads.search_keys, credited), _search_input())
+def test_a_search_without_usage_records_nothing(written: list[dict[str, Any]]) -> None:
     untouched = SimpleNamespace(results=[_hit("a")], reinforcement=None)
     _run(_wrapped(served_reads.search_keys, untouched), _search_input(auto_touch=False))
     assert written == []
 
 
-def test_a_pack_records_the_rows_its_blocks_cite() -> None:
-    """A transcript row the pack dropped, or an item past a section budget, is not cited."""
-    blocks = [
-        SimpleNamespace(citations=["memory:n/a", "memory:n/b#res-1", "guide:3"]),
-        SimpleNamespace(citations=["decision:n/d1", "procedure:m/p1", "profile:role"]),
-        SimpleNamespace(citations=["working_memory:scratch"]),
-        # the memory stack's stored layers, in the request's namespace; profile is not a row
-        SimpleNamespace(
-            citations=["stack:pinned/pin1", "stack:procedure/p2", "stack:profile/fact"]
-        ),
+def test_a_pack_records_the_rows_its_kept_blocks_cite() -> None:
+    """The pack notes each row where it makes the citation; a key holding `#` is read
+    whole, never cut at a resource suffix."""
+    from server.memory.api.models_context import ContextPackOutput
+
+    out = ContextPackOutput(rendered="", sections={}, section_count=0, token_budget=1)
+    out._served_rows = [("n", "code/app.py#main"), ("m", "p1")]
+    assert served_reads.pack_keys(SimpleNamespace(namespace="n"), out) == [
+        ("n", "code/app.py#main"),
+        ("m", "p1"),
     ]
-    keys = served_reads.pack_keys(SimpleNamespace(namespace="n"), SimpleNamespace(blocks=blocks))
-    assert keys == [("n", "a"), ("n", "b"), ("n", "d1"), ("m", "p1"), ("n", "pin1"), ("n", "p2")]
 
 
 def test_memory_stack_records_its_stored_rows() -> None:
@@ -128,7 +121,7 @@ def test_search_query_records_the_memory_hits_it_kept() -> None:
     credited = SimpleNamespace(
         memory={"reinforcement": "credited", "results": [{"memory_key": "a"}]}
     )
-    assert served_reads.search_query_keys(inp, credited) == []
+    assert served_reads.search_query_keys(inp, credited) == [("n", "a")]
 
 
 def test_ask_and_procedure_match_record_what_they_return() -> None:
@@ -160,7 +153,7 @@ def test_reads_that_are_not_an_agents_record_nothing(
 def test_a_sentinel_agent_with_a_named_consumer_is_counted(written: list[dict[str, Any]]) -> None:
     out = SimpleNamespace(results=[_hit("a")])
     _run(_wrapped(served_reads.ask_keys, out), _search_input(agent="*"), consumer="codex")
-    assert [(w["event_type"], w["agent"]) for w in written] == [("served", "*")]
+    assert [w["agent"] for w in written] == ["*"]
 
 
 def test_a_failing_key_read_never_fails_the_answer(written: list[dict[str, Any]]) -> None:
@@ -215,7 +208,6 @@ def test_each_extractor_reads_its_ops_real_models() -> None:
     """A renamed field would make `records_served` log and record nothing, with every
     stand-in test green; these run the extractors on the models the ops answer with."""
     from server.memory.api.models_ask import MemoryAskInput, MemoryAskOutput
-    from server.memory.api.models_context import ContextBlock, ContextPackInput, ContextPackOutput
     from server.memory.api.models_loom_search import SearchInput, SearchOutput
     from server.memory.api.models_procedure import ProcedureMatchInput, ProcedureMatchOutput
     from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput
@@ -247,23 +239,22 @@ def test_each_extractor_reads_its_ops_real_models() -> None:
     )
     assert served_reads.procedure_keys(match_in, match_out) == [("n", "proc")]
 
-    pack_in = ContextPackInput(org="o", namespace="n", agent="w", query="q")
-    block = ContextBlock(
-        label="Memories",
-        section="memories",
-        rendered="x",
-        tokens_estimate=1,
-        citations=["memory:n/a"],
-        priority=0,
+    from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutput
+
+    stack_in = MemoryStackInput(org="o", namespace="n", agent="w")
+    stack_out = MemoryStackOutput.model_validate(
+        {
+            "entries": [
+                {"section": "pinned", "memory_key": "pin", "tokens": 1},
+                {"section": "profile", "memory_key": "role", "tokens": 1},
+            ],
+            "tokens_used": 2,
+            "tokens_budget": 10,
+            "truncated": False,
+            "section_counts": {},
+        }
     )
-    pack_out = ContextPackOutput(
-        rendered="x",
-        sections={"memories": "x"},
-        blocks=[block],
-        section_count=1,
-        token_budget=100,
-    )
-    assert served_reads.pack_keys(pack_in, pack_out) == [("n", "a")]
+    assert served_reads.stack_keys(stack_in, stack_out) == [("n", "pin")]
 
     query_in = SearchInput(org="o", namespace="n", query="q")
     query_out = SearchOutput.model_validate({"memory": search_out.model_dump(mode="json")})

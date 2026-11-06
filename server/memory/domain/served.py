@@ -1,9 +1,10 @@
-"""How often agents were shown a memory, from its usage events.
+"""How often agents were shown a memory, from its served reads.
 
-An agent read writes one event per returned key: a `recall` credit when its reader is
-credited (the ranking signal folded into `recall_count`), else a `served` event. The figure
-a person reads as "recalled" counts both. `recall_count` can also hold a count seeded by a
-bulk import with no events behind it, so it is the floor.
+Every agent read that returns a key, credited or not, adds a served row
+(`loom.memory_served_daily`); the figure a person reads as "recalled" is their count.
+`recall_count` (the ranking credit) can hold a count a bulk import seeded, or credits
+written before served rows were recorded, with no served rows behind them, so it is the
+floor, and its time stands in when no served row is newer.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ def served_totals(
     last_recalled_at: datetime | None,
 ) -> dict[str, Any]:
     """`served_count` and `last_served_at` from the per-agent rows of
-    `usage.served_by_agent` (`n`, `last_at`) and the row's own credit columns.
+    `store.served.served_by_agent` (`n`, `last_at`) and the row's own credit columns.
     `last_served_at` is None when no read served the key."""
     times = [to_naive_utc(r["last_at"]) for r in agent_rows if r.get("last_at")]
     events = sum(int(r.get("n") or 0) for r in agent_rows)
