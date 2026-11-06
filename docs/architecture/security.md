@@ -1189,7 +1189,8 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   vetted to, with no redirect and no gateway identity headers; a host
   `LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS` names is the operator's exception, reachable on any
   port and path, so it lists only a host that serves nothing else. A failed call is
-  reported in `degraded` by its kind alone, so the answer maps no address it was refused.
+  reported in `degraded` by its kind alone, so the write's answer cannot map which addresses
+  and ports answer.
 - **No slow receiver holds a worker.** One deadline per POST covers the name lookup, the
   connection and the status line (`LOOM_MEMORY_WEBHOOK_ACK_TIMEOUT_SECONDS` for memory
   webhooks, a fixed 10 s for task inbox notices), and the answer's body is never read.

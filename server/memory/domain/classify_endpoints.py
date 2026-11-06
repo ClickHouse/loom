@@ -12,6 +12,7 @@ namespace admin cannot aim the server at its own network.
 from __future__ import annotations
 
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import httpx
 from pydantic import AfterValidator
@@ -25,12 +26,14 @@ def classify_refusal(url: str) -> str:
     if not url.strip():
         return ""
     if not settings.gateway_required():
+        # Parsed as the call parses it (`webhooks.pinned_target`), so both read one host.
         try:
-            parsed = httpx.URL(url.strip())
-        except httpx.InvalidURL:
+            parts = urlsplit(url.strip())
+            host = (parts.hostname or "").lower()
+        except ValueError:
             return "it is not a valid URL"
-        private = parsed.host.lower() in settings.memory_classify_private_host_set()
-        if parsed.scheme != "https" and not (private and parsed.scheme == "http"):
+        private = host in settings.memory_classify_private_host_set()
+        if parts.scheme != "https" and not (private and parts.scheme == "http"):
             return "it must be https"
         return ""
     host = settings.off_gateway(url)

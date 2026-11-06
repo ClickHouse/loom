@@ -132,15 +132,13 @@ async def _post_vetted(endpoint: str, body: Mapping[str, object]) -> Any:
     and the answer, at most `_MAX_ANSWER_BYTES`, are under one deadline. None, noted,
     when the host is refused."""
     private = settings.memory_classify_private_host_set()
-    schemes = ("https", "http") if private else ("https",)
+    listed = (urlsplit(endpoint).hostname or "").lower() in private
     async with asyncio.timeout(settings.memory_classify_timeout_s):
         refusal, url, host, server_name = await webhooks.pinned_target(
-            endpoint, schemes=schemes, private_hosts=private
+            endpoint, schemes=("https", "http") if listed else ("https",), private_hosts=private
         )
-        if refusal or (
-            url.startswith("http:") and (urlsplit(endpoint).hostname or "").lower() not in private
-        ):
-            log.warning("classify: the endpoint's host is refused: %s", refusal or "plain http")
+        if refusal:
+            log.warning("classify: the endpoint's host is refused: %s", refusal)
             _degradations.note("classify", "caller_type_kept", "endpoint host refused")
             return None
         async with (
@@ -149,14 +147,18 @@ async def _post_vetted(endpoint: str, body: Mapping[str, object]) -> Any:
                 "POST",
                 url,
                 json=body,
-                headers={"Host": host} if host else {},
+                # The cap counts bytes on the wire: a compressed answer would inflate in
+                # one step before any cap is seen.
+                headers={"Accept-Encoding": "identity", **({"Host": host} if host else {})},
                 timeout=_timeout(),
                 extensions={"sni_hostname": server_name} if server_name else {},
             ) as resp,
         ):
             resp.raise_for_status()
+            if resp.headers.get("content-encoding", "identity").strip().lower() != "identity":
+                raise ValueError("the classifier's answer is compressed")
             answer = bytearray()
-            async for chunk in resp.aiter_bytes():
+            async for chunk in resp.aiter_raw():
                 answer += chunk
                 if len(answer) > _MAX_ANSWER_BYTES:
                     raise ValueError("the classifier's answer is over 64 KiB")

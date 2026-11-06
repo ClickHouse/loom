@@ -39,12 +39,13 @@ def _off_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
 class _Answer:
     def __init__(self, chunks: list[bytes], status: int = 200) -> None:
         self.chunks, self.status_code = chunks, status
+        self.headers: dict[str, str] = {}
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise RuntimeError(f"status {self.status_code}")
 
-    async def aiter_bytes(self) -> AsyncIterator[bytes]:
+    async def aiter_raw(self) -> AsyncIterator[bytes]:
         for chunk in self.chunks:
             await asyncio.sleep(0)
             yield chunk
@@ -174,7 +175,8 @@ def test_the_call_goes_to_the_vetted_address_and_reports_only_the_failures_kind(
     assert _classify("https://classifier.example/c") == ""
     (seen,) = client.seen
     assert seen["url"] == "https://203.0.113.7/c" and seen["follow_redirects"] is False
-    assert seen["headers"] == {"Host": "classifier.example"}  # no identity headers off it
+    # no identity headers off the gateway, and no compressed answer asked for
+    assert seen["headers"] == {"Accept-Encoding": "identity", "Host": "classifier.example"}
     assert seen["extensions"] == {"sni_hostname": "classifier.example"}
     assert degradations.current() == ["classify: caller_type_kept (ConnectionRefusedError)"]
 
@@ -187,7 +189,7 @@ def test_a_listed_private_host_is_reached_by_name(
     assert _classify("http://classifier.local:9000/c") == "note"
     (seen,) = client.seen
     assert seen["url"] == "http://classifier.local:9000/c"
-    assert seen["headers"] == {} and seen["extensions"] == {}
+    assert seen["headers"] == {"Accept-Encoding": "identity"} and seen["extensions"] == {}
 
 
 def test_a_lookup_that_never_answers_is_cut_by_the_calls_deadline(
@@ -216,7 +218,7 @@ def test_an_answer_that_trickles_is_cut_by_the_calls_deadline(
     monkeypatch: pytest.MonkeyPatch, vetted: None, client: type[_Client]
 ) -> None:
     class _Trickle(_Answer):
-        async def aiter_bytes(self) -> AsyncIterator[bytes]:
+        async def aiter_raw(self) -> AsyncIterator[bytes]:
             while True:
                 await asyncio.sleep(0.05)
                 yield b" "
@@ -235,3 +237,58 @@ def test_an_answer_over_the_cap_is_not_read_whole(vetted: None, client: type[_Cl
     degradations.begin()
     assert _classify("https://classifier.example/c") == ""
     assert degradations.current() == ["classify: caller_type_kept (ValueError)"]
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "gzip, gzip", "deflate"])
+def test_a_compressed_answer_is_refused_before_it_inflates(
+    monkeypatch: pytest.MonkeyPatch, vetted: None, encoding: str
+) -> None:
+    """Through httpx's own response handling: a compressed answer would inflate in one
+    step past any cap, so it is refused unread, whatever it holds."""
+    import gzip
+
+    import httpx
+
+    bomb = gzip.compress(gzip.compress(b" " * (8 * 1024 * 1024)))
+    asked: list[str] = []
+
+    class _Wire(httpx.AsyncByteStream):  # as a network answer arrives: unread until read
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield bomb
+
+    def _answer(request: httpx.Request) -> httpx.Response:
+        asked.append(request.headers.get("accept-encoding", ""))
+        return httpx.Response(200, headers={"content-encoding": encoding}, stream=_Wire())
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        classify.httpx,
+        "AsyncClient",
+        lambda **kw: real(transport=httpx.MockTransport(_answer), follow_redirects=False),
+    )
+    degradations.begin()
+    assert _classify("https://classifier.example/c") == ""
+    assert asked == ["identity"]
+    assert degradations.current() == ["classify: caller_type_kept (ValueError)"]
+
+
+def test_a_plain_answer_through_httpx_is_read(
+    monkeypatch: pytest.MonkeyPatch, vetted: None
+) -> None:
+    import httpx
+
+    class _Wire(httpx.AsyncByteStream):  # as a network answer arrives
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield b'{"memory_type": "decision"}'
+
+    def _answer(request: httpx.Request) -> httpx.Response:
+        assert request.headers["host"] == "classifier.example"
+        return httpx.Response(200, stream=_Wire())
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        classify.httpx,
+        "AsyncClient",
+        lambda **kw: real(transport=httpx.MockTransport(_answer), follow_redirects=False),
+    )
+    assert _classify("https://classifier.example/c") == "decision"
