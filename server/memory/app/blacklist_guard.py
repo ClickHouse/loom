@@ -34,6 +34,10 @@ log = logging.getLogger(__name__)
 # defeats RE2's DFA cache), so a pattern's program and a scope's total program are capped.
 REGEX_MAX_LENGTH = 256
 REGEX_MAX_PROGRAM = 300  # not a setting: the bound that keeps a pattern cheap per character
+# RE2's memory for one pattern, its DFA cache included (8 MiB by default): a scope's
+# regexes hold a few dozen MB at most, and a DFA that runs out falls back to the NFA,
+# whose cost the work budget prices.
+REGEX_MAX_MEMORY = 256 * 1024  # not a setting: bounds what a writer's patterns hold resident
 # RE2 instructions the regexes of one scope may hold together: checked at add, and again
 # at cache load, which keeps the oldest when racing adds or an older build stored more.
 REGEX_PROGRAM_PER_SCOPE = 3_000  # not a setting: with the budget below, bounds one write
@@ -51,7 +55,7 @@ def compile_regex(pattern: str) -> Any:
     or lookaround), or a program over `REGEX_MAX_PROGRAM`."""
     if len(pattern) > REGEX_MAX_LENGTH:
         raise ValidationError(f"regex longer than {REGEX_MAX_LENGTH} characters ({len(pattern)})")
-    compiled = compile_caller_regex(pattern, dot_nl=True)
+    compiled = compile_caller_regex(pattern, dot_nl=True, match_only=True, max_mem=REGEX_MAX_MEMORY)
     if compiled.programsize > REGEX_MAX_PROGRAM:
         raise ValidationError(
             f"regex compiles to {compiled.programsize} RE2 instructions (at most "
@@ -205,10 +209,10 @@ def _applies_to(p: BlacklistPattern, org: str, namespace: str) -> bool:
     return p.org == org and p.namespace == namespace
 
 
-def _matches(p: BlacklistPattern, value: str) -> bool:
+def _matches(p: BlacklistPattern, value: str | bytes) -> bool:
     if p.pattern_type == "regex":
         return p.compiled is not None and bool(p.compiled.search(value))
-    return p.pattern in value
+    return isinstance(value, str) and p.pattern in value
 
 
 async def find_match(
@@ -230,16 +234,16 @@ async def find_match(
     if len(data) * program > REGEX_WORK_BUDGET:
         widest = max(regexes, key=lambda p: _SCOPE_PRECEDENCE.get(p.scope, 0)).scope
         return _over_budget(org, namespace, widest, len(data), program)
-    text = data.decode("utf-8")
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_MATCHERS, _first_match, applicable, value, text)
+    return await loop.run_in_executor(_MATCHERS, _first_match, applicable, value, data)
 
 
 def _first_match(
-    patterns: list[BlacklistPattern], value: str, text: str
+    patterns: list[BlacklistPattern], value: str, data: str | bytes
 ) -> BlacklistPattern | None:
-    """The first pattern that matches: a substring in `value`, a regex in `text`."""
-    return next((p for p in patterns if _matches(p, text if p.compiled else value)), None)
+    """The first pattern that matches: a substring in `value`, a regex in `data` (the
+    value as UTF-8, which RE2 reads without copying it again per pattern)."""
+    return next((p for p in patterns if _matches(p, data if p.compiled else value)), None)
 
 
 def _over_budget(org: str, namespace: str, scope: str, size: int, program: int) -> BlacklistPattern:
@@ -323,11 +327,11 @@ async def enforce_on_insert(
     await note_hit(hit.pattern_id)
     from server.identity.app.request_scope import request_narrowed
 
-    # Under a narrowed token the pattern may be another user's: its id and reason are theirs.
     if not hit.pattern_id:  # no pattern matched: the value is too long to check
         detail = {"code": "BLACKLISTED", "message": hit.reason, "scope": hit.scope}
         if not request_narrowed():
             detail |= {"pattern_id": "", "reason": hit.reason}
+    # Under a narrowed token the pattern may be another user's: its id and reason are theirs.
     elif request_narrowed():
         detail = {
             "code": "BLACKLISTED",

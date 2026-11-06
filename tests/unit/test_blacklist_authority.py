@@ -724,3 +724,15 @@ def test_a_value_too_long_to_check_is_refused_saying_so(monkeypatch) -> None:
         detail = ei.value.detail
         assert detail["code"] == "BLACKLISTED" and "too long" in detail["message"]
         assert detail.get("pattern_id", "") == ""
+
+
+def test_a_blacklist_regex_keeps_no_captures_and_a_small_memory() -> None:
+    """A yes/no search needs no capture groups, and each compiled pattern's memory
+    (RE2's DFA cache included, 8 MiB by default) is bounded, so a writer's patterns
+    hold little resident on every replica."""
+    from server.memory.app.blacklist_guard import REGEX_MAX_MEMORY
+
+    compiled = compile_regex("(a)(b)+c")
+    assert compiled.groups == 0 and compiled.options.never_capture
+    assert compiled.options.max_mem == REGEX_MAX_MEMORY
+    assert compiled.search(b"xabbc") is not None  # the write path searches UTF-8 bytes
