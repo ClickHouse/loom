@@ -145,9 +145,9 @@ def _parse_s3_uri(uri: str) -> tuple[str, str]:
 
 
 def _is_s3_prefix(uri: str) -> bool:
-    """A prefix is anything ending with `/` or with no extension on the
-    final segment: a key with no extension is listed as a prefix, and the
-    objects found are named by their stored media type."""
+    """A prefix is a key ending in `/`, or with no extension on its final
+    segment (no key at all is the whole bucket); a listed object with no
+    extension is named by its stored media type."""
     _, key = _parse_s3_uri(uri)
     # No key at all (`s3://acme.docs`) is the whole bucket, a dot in its name or not.
     return not key or key.endswith("/") or "." not in key.rsplit("/", 1)[-1]
