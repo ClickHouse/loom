@@ -580,8 +580,8 @@ def picture_spans(
     out: list[Span] = []
     for w in words:
         # Tesseract's point size, from its line's x-height, when it gives one
-        # (the page's points, as the image's resolution is passed); else the
-        # line's height less the room above and below.
+        # (already turned to the size shown, `ocr.page_points`); else the line's
+        # height less the room above and below.
         size = w.points or abs(at(w.x0, w.baseline)[1] - at(w.x0, w.baseline - w.height)[1]) / 1.2
         x0, y = at(w.x0, w.baseline)
         x1, _ = at(w.x1, w.baseline)
@@ -1111,7 +1111,15 @@ class Element:
 
     @property
     def style(self) -> tuple[float, bool]:
-        return (round(max(ln.size for ln in self.lines) * 2) / 2, all(ln.bold for ln in self.lines))
+        return (size_class(max(ln.size for ln in self.lines)), all(ln.bold for ln in self.lines))
+
+
+def size_class(size: float) -> float:
+    """`size` to the step sizes are compared at: half a point, or a tenth of one
+    under 6 points (OCR's text in a finely shown image, whose whole-point
+    readings turn to fractions)."""
+    step = 0.1 if size < 6 else 0.5
+    return round(size / step) * step
 
 
 def _code_text(lines: list[Line]) -> str:
@@ -1161,7 +1169,7 @@ def _continues(
         return cur.kind == kind
     if kind == "item":
         return False  # a bullet opens an item
-    if (round(ln.size * 2), ln.bold) != (round(prev.size * 2), prev.bold):
+    if (size_class(ln.size), ln.bold) != (size_class(prev.size), prev.bold):
         return False
     return True
 
@@ -1201,7 +1209,8 @@ def heading_levels(els: list[Element], body: float) -> None:
         size, bold = e.style
         if not 1 <= words <= 20 or len(text) > 160 or not _WORD.search(text):
             continue
-        # OCR reads a size in whole points (12 for 12.5), so its step up is smaller
+        # OCR reads a size in whole points at 300 pixels an inch (12 for 12.5), so
+        # its step up is smaller
         if size >= body * (1.08 if e.ocr else 1.12) or (bold and size >= body * 0.95):
             if text.endswith((".", ",", ";")) and not _NUMBERED.match(text):
                 continue

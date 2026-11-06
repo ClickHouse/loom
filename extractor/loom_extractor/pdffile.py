@@ -237,7 +237,9 @@ def _read_layout(
     targets = [
         p
         for p in pictures
-        if not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p))
+        # one shown under a point wide (a spacer, a tracking pixel) holds no text
+        if math.hypot(p.ctm[0], p.ctm[1]) >= 1
+        and (not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p)))
     ]
     if len(targets) > layout.MAX_PICTURES:
         problems.append(f"it shows more than {layout.MAX_PICTURES} pictures OCR would read")

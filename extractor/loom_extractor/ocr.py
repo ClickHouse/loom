@@ -91,7 +91,7 @@ class Word:
     baseline: float  # the line's baseline at the word, in pixels from the top
     height: float  # the line's height in pixels
     first: bool  # the first word of its line
-    points: float  # its line's type size in points, as Tesseract reads it (0 when it cannot)
+    points: float  # its line's type size in points as shown (`page_points`; 0 when unread)
 
 
 class Engine:
@@ -190,7 +190,7 @@ class Engine:
             if w <= 0 or h <= 0 or w * h > MAX_PIXELS:
                 raise ValueError(f"its image is past {MAX_PIXELS:,} pixels")
             if 0 < shown_inches < 1 / 72:
-                raise ValueError("its picture is shown less than a point wide")
+                return [], [], w, h  # shown under a point wide: no text to read
             scale = 1.0
             if shown_inches > 0 and w / shown_inches < _MIN_DPI:
                 scale = min(_MAX_SCALE, _TARGET_DPI / (w / shown_inches))
@@ -243,9 +243,10 @@ class Engine:
     ) -> list[Box]:
         """The rules' boxes, painted out of the gray image: thin strokes, in
         black and white, longer than half an inch across or a third of an inch
-        down, longer than a letter's in type up to about 36 points (a larger
-        letter's stem goes with them), outside any dark region (`mono` is the
-        image in black and white)."""
+        down at `dpi` (600 at most, so 300 and 210 pixels), longer than a
+        letter's (one taller than that, about 36 points at 300 pixels an inch,
+        loses its stem with them), outside any dark region (`mono` is the image
+        in black and white)."""
         lp = self._l
         thin = max(4, round(dpi / 10))
         # A dark region thicker than `thin` both ways (a heading's band, a dark

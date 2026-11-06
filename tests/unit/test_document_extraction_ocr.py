@@ -606,3 +606,20 @@ def test_with_ocr_off_a_page_past_its_drawing_bound_says_ocr_is_off(
     text = text_at(72, 740, "A page of text and two screenshots.")
     a = extract(laid_out_pdf([text + pictures], image=[GRAY, GRAY]), "o.pdf")
     assert a.coverage.failed[0].reason == ocr.NOT_RUN
+
+
+def test_a_turned_image_is_measured_along_its_own_width(engine: FakeEngine) -> None:
+    # 400 points along the image's own x axis, drawn turned a quarter: its box is 300 wide
+    extract(laid_out_pdf([b"q 0 400 -300 0 400 200 cm /Im1 Do Q"], image=GRAY), "t.pdf")
+    assert engine.seen[0][1] == pytest.approx(400 / 72)
+
+
+def test_a_spacer_under_a_point_wide_leaves_a_scanned_page_complete(engine: FakeEngine) -> None:
+    page = b"q 400 0 0 400 100 200 cm /Im1 Do Q\nq 0.75 0 0 0.75 10 10 cm /Im2 Do Q\n"
+    a = extract(laid_out_pdf([page], image=[GRAY, GRAY]), "s.pdf")
+    assert a.coverage.complete and len(engine.seen) == 1
+
+
+def test_sizes_under_six_points_compare_at_a_tenth(engine: FakeEngine) -> None:
+    assert layout.size_class(2.4) != layout.size_class(2.6)
+    assert layout.size_class(12.2) == layout.size_class(12.0)
