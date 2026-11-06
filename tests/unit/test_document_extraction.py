@@ -48,10 +48,13 @@ def _lines(name: str, loc: Locator) -> str:
 
 
 def _zip(*names: str) -> bytes:
+    """A zip of `names`, byte for byte the same in every process: these bytes are
+    parametrize ids, which every xdist worker must collect identically, and an entry
+    written by name alone carries the current time."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for n in names:
-            z.writestr(n, "<x/>")
+            z.writestr(zipfile.ZipInfo(n, date_time=(1980, 1, 1, 0, 0, 0)), "<x/>")
     return buf.getvalue()
 
 
