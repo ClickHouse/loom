@@ -47,24 +47,28 @@ async def migrate_originals(
     set_query_tag("cli:knowledge-migrate-originals")
     out = Migrated()
     for org_, ns in await _scopes(org, namespace):
+        # One read of the ledger for the namespace; again after an erasure held one back.
+        fenced = None if dry_run else await blobs.fence(org_, ns)
         after = ""
-        while True:
+        while not (fenced and fenced.refusal):
             page = await blobs.held_in_clickhouse(org_, ns, after, _PAGE)
             wanted = await blobs.needed(org_, ns, [h.sha for h in page.held])
-            # One read of the clock and the ledger for the page; each move reads the
-            # ledger again around its own copy.
-            fenced = None if dry_run or not page.held else await blobs.fence(org_, ns)
             for held in page.held:
                 if held.sha not in wanted:
                     out.unneeded += 1
                     continue
                 if not await _one(held, fenced, dry_run, out):
-                    # An erasure held this one back: read the fence again for the rest,
-                    # so they are refused by it before a copy rather than after.
                     fenced = await blobs.fence(org_, ns)
+                    if fenced.refusal:
+                        break
             if not page.after:
                 break
             after = page.after
+        if fenced and fenced.refusal:
+            # The rest of the namespace is refused alike: once, not once per original.
+            out.errors.append(
+                f"{org_}/{ns}: {fenced.refusal}; its originals are left in ClickHouse"
+            )
     return out
 
 
@@ -83,7 +87,7 @@ async def _scopes(org: str, namespace: str) -> list[tuple[str, str]]:
 
 
 async def _one(held: blobs.Held, fenced: blobs.Fence | None, dry_run: bool, out: Migrated) -> bool:
-    """Count one original. False when an erasure held it back."""
+    """Count one original. False when an erasure held it back or raced its switch."""
     if dry_run:
         out.pending += 1
         out.bytes += held.size
@@ -102,6 +106,7 @@ async def _one(held: blobs.Held, fenced: blobs.Fence | None, dry_run: bool, out:
         out.moved += 1
         out.bytes += held.size
         out.left_to_erasure.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
+        return False
     except (
         blobs.CorruptOriginal,
         objects.ObjectStoreError,

@@ -39,7 +39,7 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
 
     async def fence(org: str, ns: str) -> blobs.Fence:
         fences.append(1)
-        return blobs.Fence(0)
+        return blobs.Fence()
 
     async def move(held: blobs.Held, fenced: blobs.Fence | None = None) -> bool:
         out = outcomes[held.sha]
@@ -56,14 +56,14 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
     assert result.bytes == 20
     (error,) = result.errors
     assert error.startswith(f"acme/docs/{page[2].sha}: ") and "too long" in error
-    # One read for the page: no erasure held an original back.
-    assert len(fences) == 1
+    # One read for the namespace, and one after the switch an erasure raced.
+    assert len(fences) == 2
     (unconfirmed,) = result.left_to_erasure
     assert unconfirmed.startswith(f"acme/docs/{page[3].sha}: switched")
 
 
 @pytest.mark.asyncio
-async def test_an_erasure_holding_one_back_rereads_the_fence(
+async def test_an_erasure_holding_one_back_refuses_the_rest_of_the_namespace_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page = [_held(i) for i in range(3)]
@@ -79,7 +79,7 @@ async def test_an_erasure_holding_one_back_rereads_the_fence(
         reads.append("fence")
         # The second read sees the erasure that held the first original back.
         return blobs.Fence(
-            0, "erasure e1 (namespace, in_progress) covers it" if len(reads) > 1 else ""
+            "erasure e1 (namespace, in_progress) covers it" if len(reads) > 1 else ""
         )
 
     async def move(held: blobs.Held, fenced: blobs.Fence | None = None) -> bool:
@@ -94,6 +94,31 @@ async def test_an_erasure_holding_one_back_rereads_the_fence(
     monkeypatch.setattr(blobs, "fence", fence)
     monkeypatch.setattr(blobs, "move_to_bucket", move)
     result = await originals.migrate_originals(org="acme", namespace="docs")
-    assert result.moved == 0 and len(result.errors) == 3
-    # The page's read, then one after each original an erasure held back.
-    assert reads == ["fence"] * 4
+    # The first is held back after its copy; the fence read again then refuses the rest
+    # of the namespace in one line, before any more copies.
+    assert result.moved == 0
+    assert result.errors[0].startswith(f"acme/docs/{page[0].sha}: ")
+    assert result.errors[1] == (
+        "acme/docs: erasure e1 (namespace, in_progress) covers it; its originals are left in "
+        "ClickHouse"
+    )
+    assert len(result.errors) == 2 and reads == ["fence", "fence"]
+
+
+@pytest.mark.asyncio
+async def test_a_namespace_the_fence_refuses_is_reported_once_and_not_walked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fence(org: str, ns: str) -> blobs.Fence:
+        return blobs.Fence("erasure e9 (user_id, failed) covers it; complete it first")
+
+    async def held_in_clickhouse(*a: object) -> blobs.HeldPage:
+        raise AssertionError("a refused namespace is not walked")
+
+    monkeypatch.setattr(blobs, "fence", fence)
+    monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
+    result = await originals.migrate_originals(org="acme", namespace="docs")
+    assert result.errors == [
+        "acme/docs: erasure e9 (user_id, failed) covers it; complete it first; its originals are "
+        "left in ClickHouse"
+    ]

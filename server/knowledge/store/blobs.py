@@ -369,11 +369,10 @@ async def _await_erasures(held: Held, since_s: int, ch: _CHClient) -> None:
 
 @dataclass(frozen=True)
 class Fence:
-    """A namespace's erasure fence as one read of the ledger sees it: when (on the
-    ClickHouse clock, in seconds) and what refusal holds every original of it, if any.
-    Coverage depends on the namespace alone, so one read serves a page of the walk."""
+    """A namespace's erasure fence as one read of the ledger sees it: the refusal that
+    holds every original of it, if any. Coverage depends on the namespace alone, so one
+    read serves a walk until an erasure holds an original back."""
 
-    since: int
     refusal: str = ""
 
 
@@ -382,7 +381,7 @@ async def fence(org: str, namespace: str, *, ch: _CHClient | None = None) -> Fen
     ch = ch or _default_client()
     since = await _cutoff_ms(0, ch) // 1000
     fenced = await _erasures_since(org, namespace, since, ch)
-    return Fence(since, _fence_advice(fenced, "covers it") if fenced else "")
+    return Fence(_fence_advice(fenced, "covers it") if fenced else "")
 
 
 async def move_to_bucket(
@@ -429,7 +428,9 @@ async def move_to_bucket(
     fenced = fenced or await fence(held.org, held.namespace, ch=ch)
     if fenced.refusal:
         raise ErasureOpen(fenced.refusal)
-    since = fenced.since
+    # This move's own start: an erasure that finished before it cannot race its copy, and
+    # one still running then, or finished within the margin, is caught after the copy.
+    since = await _cutoff_ms(0, ch) // 1000
     data = await read(held.org, held.namespace, held.sha, stored=Stored(held.size, ""), ch=ch)
     if data is None:
         with sequential_reads():
@@ -524,8 +525,8 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
         await _unwrite(held, loc, ch)
     except Exception as e:  # the row is switched: a failed take-back is reported, not lost
         raise SwitchedUnderErasure(
-            f"switched to {loc.uri()} as an erasure took it, but taking the switch back failed "
-            f"({e}); run that erasure again"
+            f"switched to {loc.uri()} as an erasure took it, but deleting that row failed ({e}); "
+            f"delete the loom.document_blobs row of this original whose location is {loc.uri()}"
         ) from e
     return False
 
@@ -540,11 +541,8 @@ async def _unwrite(held: Held, loc: objects.Location, ch: _CHClient) -> None:
     try:
         await objects.delete(loc.bucket, [loc.key])
     except objects.ObjectStoreError as e:
-        raise objects.ObjectStoreError(
-            f"the switched row was taken back, but deleting its object failed ({e}); the bucket "
-            "walk takes it",
-            operation="delete",
-        ) from e
+        # No row names it any more: the bucket walk takes it once it is old enough.
+        log.warning("blobs: %s taken back; its object is left to the bucket walk: %s", loc.uri(), e)
 
 
 @dataclass(frozen=True)
