@@ -68,7 +68,7 @@ env:
 
 jobs:
   version:
-    name: Version from the tag
+    name: Version from the tag or the server
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -551,21 +551,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # `releases/latest` serves the installer and `:latest` the image, so only
-      # the highest final version takes them: a patch to an older line keeps both.
-      # Asked here, when it is applied, of the tags, which exist from the push on:
-      # a re-run, or a newer tag released meanwhile, never moves Latest back.
+      # Asked when it is applied, so a re-run never moves Latest back (make_latest.py).
       - name: Is this the highest final version
         id: latest
-        shell: bash # with pipefail: a failed listing must not read as "no tags"
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
+        # An assignment, so a failed listing fails the step (an echo of it would not).
         run: |
-          latest=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --paginate \
-            --jq '.[].ref | ltrimstr("refs/tags/")' | python3 scripts/release/make_latest.py "$VERSION")
+          latest=$(python3 scripts/release/make_latest.py "$VERSION")
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
-          echo "Latest: $latest"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Log in to ghcr.io
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -580,6 +575,7 @@ jobs:
       # one index of its amd64 and arm64 digests. A failure here can leave one
       # image tagged and not the other; re-running this job tags both again.
       - name: Tag the scanned images
+        shell: bash # with pipefail: a failed inspect must not print an empty pin
         env:
           LATEST: ${{ steps.latest.outputs.latest }}
         run: |
@@ -587,15 +583,15 @@ jobs:
           [ "$#" = 4 ] || { echo "::error::expected the server's and the extractor's scans on amd64 and arm64, got: $*"; exit 1; }
           for artifact in server extractor; do
             set -- scanned-"$artifact"-*/
-            [ "$#" = 2 ] || { echo "::error::expected two $artifact scans, got: $*"; exit 1; }
             image=$(cat "$1image") pin=$(cat "$1pin")
+            version_tag=$(head -n 1 "$1tags")
             args=()
             while read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <"$1tags"
             [ "$LATEST" != true ] || args+=(-t "$image:latest")
             sources=()
             for dir in "$@"; do sources+=("$image@$(cat "${dir}digest")"); done
             docker buildx imagetools create "${args[@]}" "${sources[@]}"
-            digest=$(docker buildx imagetools inspect "${args[1]}" --format '{{json .Manifest}}' | jq -r .digest)
+            digest=$(docker buildx imagetools inspect "$version_tag" --format '{{json .Manifest}}' | jq -re .digest)
             echo "Pin $image with \`$pin: $digest\`" >> "$GITHUB_STEP_SUMMARY"
           done
 
@@ -667,21 +663,16 @@ jobs:
         with:
           name: release-files
           path: release
-      # `releases/latest` serves the installer and `:latest` the image, so only
-      # the highest final version takes them: a patch to an older line keeps both.
-      # Asked here, when it is applied, of the tags, which exist from the push on:
-      # a re-run, or a newer tag released meanwhile, never moves Latest back.
+      # Asked when it is applied, so a re-run never moves Latest back (make_latest.py).
       - name: Is this the highest final version
         id: latest
-        shell: bash # with pipefail: a failed listing must not read as "no tags"
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
+        # An assignment, so a failed listing fails the step (an echo of it would not).
         run: |
-          latest=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --paginate \
-            --jq '.[].ref | ltrimstr("refs/tags/")' | python3 scripts/release/make_latest.py "$VERSION")
+          latest=$(python3 scripts/release/make_latest.py "$VERSION")
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
-          echo "Latest: $latest"
       # Replacing an asset deletes it first: a failed upload would leave an
       # installed version without its bundle, and its pin with it. A published
       # bundle and its checksum stay; a checksum file the release lost is

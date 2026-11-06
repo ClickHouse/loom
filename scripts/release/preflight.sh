@@ -59,7 +59,7 @@ for image in $IMAGES; do
     403)
       echo "::warning::$image does not exist yet: this run's push creates it private, and docker-smoke fails to pull it. Set it public in $settings, then re-run the failed jobs"
       ;;
-    *) say "$image: anyone cannot pull it (HTTP $status), and an install signs in to nobody. In $settings, under Danger Zone, set the visibility to Public" ;;
+    *) say "$image refuses anonymous pulls (HTTP $status), and an install pulls without signing in. In $settings, under Danger Zone, set the visibility to Public" ;;
   esac
 done
 

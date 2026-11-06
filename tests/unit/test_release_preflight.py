@@ -96,9 +96,9 @@ def test_each_missing_prerequisite_names_its_fix_and_fails_a_release(tmp_path: P
     assert "ghcr.io/clickhouse/loom: this workflow cannot push (HTTP 403)" in errors[1]
     assert "Manage Actions access, add ClickHouse/loom with the Write role" in errors[1]
     assert "packages/container/package/loom," in errors[1]
-    assert "ghcr.io/clickhouse/loom: anyone cannot pull it (HTTP 401)" in errors[2]
+    assert "ghcr.io/clickhouse/loom refuses anonymous pulls (HTTP 401)" in errors[2]
     assert "set the visibility to Public" in errors[2]
-    assert "loom-extractor: anyone cannot pull" in errors[3]
+    assert "loom-extractor refuses anonymous pulls" in errors[3]
     assert "4 release prerequisite(s) missing" in errors[4]
     assert "can push" in result.stdout  # the extractor
 
@@ -174,9 +174,11 @@ def test_the_image_and_the_release_ask_for_latest_when_they_apply_it() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     for name in ("docker-tag", "github-release"):
         (answer,) = [s for s in jobs[name]["steps"] if s.get("id") == "latest"]
-        assert answer["shell"] == "bash", name  # pipefail: a failed listing fails the step
-        assert "git/matching-refs/tags/v" in answer["run"], name
-        assert "make_latest.py" in answer["run"], name
+        # An assignment, which fails the step under `bash -e` when the listing fails.
+        assert answer["run"].startswith(
+            'latest=$(python3 scripts/release/make_latest.py "$VERSION")\n'
+        )
+        assert answer["env"]["GH_TOKEN"] == "${{ github.token }}", name
     (meta,) = [s for s in jobs["docker"]["steps"] if s.get("id") == "meta"]
     # metadata-action would otherwise add `:latest` to any final version itself.
     assert meta["with"]["flavor"] == "latest=false"
@@ -220,3 +222,41 @@ def test_a_dry_run_smokes_its_own_images_and_a_release_the_published_ones() -> N
     assert "matrix.image, needs.version.outputs.version" in build["with"]["outputs"]
     (run,) = [s for s in smoke["steps"] if "docker_quickstart_smoke.py" in s.get("run", "")]
     assert '"ghcr.io/clickhouse/loom:$VERSION"' in run["run"]
+
+
+def test_make_latest_fails_when_the_tags_cannot_be_listed(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text("#!/bin/sh\necho 'HTTP 502' >&2\nexit 1\n")
+    (bin_dir / "gh").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "GITHUB_REPOSITORY": "o/r"}
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/release/make_latest.py"), "1.2.0"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0 and result.stdout == ""
+
+
+def test_make_latest_reads_the_repositorys_tags(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(
+        '#!/bin/sh\n[ "$2" = repos/o/r/git/matching-refs/tags/v ] || exit 3\n'
+        "printf 'v1.2.0\\nv1.1.0\\nv1.3.0-rc.1\\n'\n"
+    )
+    (bin_dir / "gh").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "GITHUB_REPOSITORY": "o/r"}
+
+    def latest(version: str) -> str:
+        return subprocess.run(
+            [sys.executable, str(ROOT / "scripts/release/make_latest.py"), version],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    assert latest("1.2.1") == "true"
+    assert latest("1.1.1") == "false"

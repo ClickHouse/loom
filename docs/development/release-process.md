@@ -90,14 +90,14 @@ A release publishes public packages, and a registry version can never be reused,
 refuses a release from a private repository. The `preflight` job checks what only an owner can grant,
 in seconds, before any build, and names the fix for each one it finds missing:
 
-| Prerequisite                                                                     | Checked by                                               |
-| -------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| The repository is public                                                         | `preflight`                                              |
-| `ghcr.io/clickhouse/loom` and `loom-extractor` give this repository Write access | `preflight` (an upload session it opens and cancels)     |
-| Both packages are public, since an install pulls without signing in              | `preflight` (an anonymous pull token)                    |
-| A `pypi` environment and a PyPI trusted publisher for `release.yml`              | the `pypi` job                                           |
-| An `npm` environment, and npm trusted publishing or an `NPM_TOKEN` secret        | the `npm` job                                            |
-| An `mcp-registry` environment with the same protection rules as `pypi` and `npm` | the `mcp-registry` job, which skips a private repository |
+| Prerequisite                                                                     | Checked by                                           |
+| -------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| The repository is public                                                         | `preflight`                                          |
+| `ghcr.io/clickhouse/loom` and `loom-extractor` give this repository Write access | `preflight` (an upload session it opens and cancels) |
+| Both packages are public, since an install pulls without signing in              | `preflight` (an anonymous pull token)                |
+| A `pypi` environment and a PyPI trusted publisher for `release.yml`              | the `pypi` job                                       |
+| An `npm` environment, and npm trusted publishing or an `NPM_TOKEN` secret        | the `npm` job                                        |
+| An `mcp-registry` environment with the same protection rules as `pypi` and `npm` | the `mcp-registry` job                               |
 
 Only a push creates a ghcr.io package, and it creates it private. For an image no release has pushed
 yet, `preflight` warns instead of failing, and that run's `docker-smoke` jobs fail to pull it: set
@@ -158,7 +158,7 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    for one tag at a time, so two tags released together cannot both pass the check against
    the same older bundle. Only one more such job waits: a third tag's publish cancels the
    waiting one, which must then be re-run by hand (Re-run failed jobs). A refusal here
-   comes after `docker-tag` pushed the tag's image tags (and `:latest` for a final release). A
+   comes after `docker-tag` pushed the tag's image tags (and `:latest` when it is the highest final version). A
    re-run keeps the run's inputs and fails again, so dispatch the tag instead, which also
    publishes the SDKs and the MCP Registry listing:
    `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=<the newer release the error names>`
