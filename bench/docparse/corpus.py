@@ -438,6 +438,7 @@ def scan(d: Dirs, pdf: Path, out: Path, seed: int, dpi: int = 110) -> None:
         "-png",
         d.in_container(pdf),
         d.in_container(prefix),
+        source=d.in_container(pdf),  # its last argument is the output's prefix
     )
     pages = sorted(d.work.glob(f"scan_{out.stem}-*.png"))
     imgs = []

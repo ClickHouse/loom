@@ -285,9 +285,6 @@ def test_a_container_that_sees_another_directory_says_so(
     _no_container(monkeypatch, subprocess.CalledProcessError(1, ["docker"], stderr=b""))
     with pytest.raises(SystemExit, match="its /c is not"):
         P.prepare(tmp_path / "corpus", pep_src)
-    (tmp_path / "file").write_text("x")
-    with pytest.raises(SystemExit, match="is a file"):
-        P.prepare(tmp_path / "file", pep_src)
 
 
 def test_a_failed_container_call_names_its_program_file_and_error() -> None:
@@ -296,6 +293,11 @@ def test_a_failed_container_call_names_its_program_file_and_error() -> None:
         message = str(P.failed(subprocess.CalledProcessError(1, cmd, stderr=stderr)))
         assert message.startswith("pdftotext failed on /c/a.pdf")
         assert ("broken xref" in message) == (stderr is not None)
+    error = subprocess.CalledProcessError(
+        1, ["docker", "exec", "c", "pdftoppm", "/c/a.pdf", "/c/_work/scan"]
+    )
+    error.source = "/c/a.pdf"  # type: ignore[attr-defined]  # as docker() sets it
+    assert str(P.failed(error)).startswith("pdftoppm failed on /c/a.pdf")
 
 
 def test_a_build_without_docker_says_so(
@@ -312,6 +314,10 @@ def test_a_build_refuses_before_making_or_removing_anything(tmp_path: Path, pep_
     (corpus / "gold.jsonl").write_text("{}\n")
     with pytest.raises(SystemExit, match="lacks pep518.html"):
         P.prepare(corpus, tmp_path / "nowhere")
+    (tmp_path / "file").write_text("x")
+    with pytest.raises(SystemExit, match="is a file"):
+        P.prepare(tmp_path / "file", pep_src)
+    assert (tmp_path / "file").read_text() == "x"
     with pytest.raises(SystemExit, match="is not a directory"):  # a corpus's parent is not made
         P.prepare(tmp_path / "missing" / "corpus", pep_src)
     other = tmp_path / "other"
