@@ -261,9 +261,10 @@ async def _drop(loc: objects.Location) -> None:
 
 async def _stands(held: blobs.Held, loc: objects.Location, ch: _CHClient | None) -> bool:
     """Whether the switched row is still the original's latest. Outranked, its object is
-    left to the bucket walk, which takes it once no row names it; with no row left (the
-    sweep took the original with the switched row), the move deletes its object now, as
-    no row can name it again."""
+    left to the bucket walk, which takes it once no row names it. When this read finds no
+    row (the sweep took the original with the switched row), the move deletes its object
+    now, as no row can name it again; a sweep delete landing after the read leaves the
+    object to the bucket walk."""
     try:
         now = await blobs.latest(held, ch=ch)
     except Exception as e:  # the row is switched: an unread latest row is reported, not lost

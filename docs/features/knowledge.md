@@ -1066,8 +1066,9 @@ which the bucket walk may take an object no row names; a copy that takes longer 
 its object and is reported. An original nothing needs any more by the time its row lands
 (its last document went meanwhile) keeps its switched row, which the sweep deletes once it
 is old enough (counted from its last upload, not the move), as any original nothing names.
-When the sweep takes the original as the row lands, row and all, the move deletes its
-object at once: no row can name it again.
+When the move's last read of the row finds none (the sweep took the original, row and all,
+as it landed), the move deletes its object at once; a sweep delete landing after that read
+leaves the object to the bucket walk.
 
 An original whose bytes do not hash to their sha256 or fill their size, one an erasure
 held back, one whose object key would be too long, or one the bucket refused or was too
