@@ -16,7 +16,6 @@ from types import SimpleNamespace
 import pytest
 
 from server.workers import child
-from tests.unit.test_cli_child_stop import _read_pid
 
 # A stand-in child: writes the first deadline it reads to a file, then waits
 # for SIGTERM.
@@ -270,9 +269,10 @@ def test_the_child_dies_with_its_parent(tmp_path) -> None:
     proc = subprocess.Popen([sys.executable, "-c", parent], start_new_session=True)
     try:
         deadline = time.monotonic() + 30
-        while not (pid := _read_pid(pid_file)):
+        while not pid_file.exists() or not pid_file.read_text().strip():
             assert time.monotonic() < deadline, "the grandchild never set its death signal"
             time.sleep(0.05)
+        pid = int(pid_file.read_text())
         proc.kill()
         proc.wait()
         for _ in range(100):
