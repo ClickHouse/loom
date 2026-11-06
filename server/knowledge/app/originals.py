@@ -167,7 +167,7 @@ async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bo
     True when the switch stands. False when there is nothing to move or the move did
     not stand: the row went or was replaced since the walk read it, or an erasure took
     the original while it moved; its object is deleted, or left to the bucket walk when
-    the bucket refuses the delete.
+    the bucket refuses the delete or a write outranked the switched row.
     `CorruptOriginal`: the bytes do not fill their size or hash to their sha256, in
     ClickHouse or read back. `ErasureOpen`: an erasure that overlapped the copy, the
     original still held in ClickHouse. `SwitchUnconfirmed`: the row switched (or may
@@ -274,8 +274,10 @@ async def _settle(
     try:
         raced = await _erasures_since(held.org, held.namespace, since)
         if not raced:
-            # No erasure raced the switch: it stands.
-            return True
+            # No erasure raced the switch: it stands, unless a write since the re-read
+            # outranks it. Its object is then named only by a superseded row, and the
+            # bucket walk takes it once the rows merge.
+            return await blobs.latest_names(held, loc, ch=ch)
         # Taken back at once only for an erasure that certainly deletes the namespace's
         # originals; any other is waited for and decided by the moved object.
         taken = any(e.deletes_namespace(held.namespace) for e in raced)

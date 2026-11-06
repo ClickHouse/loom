@@ -395,6 +395,27 @@ async def test_a_row_replaced_since_the_walk_is_kept(
     assert await originals.move_to_bucket(held, ch=ch) is False
     assert await blobs.locate(org, ns, sha, ch=ch) == blobs.Stored(5, "")
     assert not _keys(s3, object_store.namespace_prefix(org, ns))
+    # Uploaded again on the ClickHouse store after the re-read, just before the switch:
+    # the re-upload outranks the switched row, so the move is not counted.
+    org = unique_org("objstore-race-late")
+    monkeypatch.setattr(settings, "document_object_store", "clickhouse")
+    sha = await blobs.put(org, ns, b"raced", ch=ch)
+    (held,) = (await blobs.held_in_clickhouse(org, ns, "", 10, ch=ch)).held
+    monkeypatch.setattr(settings, "document_object_store", "s3")
+    insert = ch.insert
+
+    async def upload_then_switch(table: str, rows: Any, **kw: Any) -> Any:
+        if table == blobs.TABLE and rows[0]["location"]:
+            await asyncio.sleep(0.01)  # a later millisecond than the row the walk read
+            monkeypatch.setattr(settings, "document_object_store", "clickhouse")
+            await blobs.put(org, ns, b"raced", ch=ch)  # its row has no location
+            monkeypatch.setattr(settings, "document_object_store", "s3")
+        return await insert(table, rows, **kw)
+
+    monkeypatch.setattr(ch, "insert", upload_then_switch)
+    assert await originals.move_to_bucket(held, ch=ch) is False
+    monkeypatch.setattr(ch, "insert", insert)
+    assert await blobs.locate(org, ns, sha, ch=ch) == blobs.Stored(5, "")
     # An original no row holds any more has nothing to move.
     gone = blobs.Held(org, ns, "0" * 64, 1, 0)
     assert await originals.move_to_bucket(gone, ch=ch) is False

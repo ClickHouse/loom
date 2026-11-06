@@ -1070,7 +1070,9 @@ An original whose bytes do not hash to their sha256 or fill their size, one an e
 held back, one whose object key would be too long, or one the bucket refused or was too
 slow for is reported and stays where it was. The command exits 1 for those, and for a
 switched original it could not confirm. An original uploaded again or deleted while the
-command ran keeps what that write left, and the move deletes the object it wrote. An
+command ran keeps what that write left, and the move deletes the object it wrote (or, when
+the write landed after its switched row, leaves it to the bucket walk once the rows
+merge). An
 object a crash leaves is the sweep's, as an upload's is. The command is idempotent: run it
 again after a stop or a failure.
 

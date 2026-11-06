@@ -316,6 +316,17 @@ async def row_names(held: Held, loc: objects.Location, *, ch: _CHClient | None =
     return bool(row and int(row["n"]))
 
 
+async def latest_names(held: Held, loc: objects.Location, *, ch: _CHClient | None = None) -> bool:
+    """Whether the original's latest row names the object at `loc`."""
+    ch = ch or _default_client()
+    with sequential_reads():
+        row = await ch.query_one(
+            f"SELECT location FROM {TABLE} WHERE {_KEY} ORDER BY created_at DESC LIMIT 1",
+            params={"org": held.org, "ns": held.namespace, "sha": held.sha},
+        )
+    return row is not None and str(row["location"]) == loc.uri()
+
+
 async def unwrite(held: Held, loc: objects.Location, *, ch: _CHClient | None = None) -> None:
     """Delete the row that switched the original to `loc`, by the location only it names;
     the object is the caller's to delete."""
