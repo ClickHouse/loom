@@ -172,10 +172,10 @@ async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bo
     ClickHouse or read back. `ErasureOpen`: an erasure that overlapped the copy, the
     original still held in ClickHouse. `SwitchUnconfirmed`: the row switched (or may
     have) but could not be confirmed, against an erasure or against a later write that
-    may outrank it. `ObjectStoreError`: the bucket
-    refused, the new object was gone before its read-back, or the copy outlasted
-    DOCUMENT_UPLOAD_BUDGET_S. `ValidationError`: its object key would be too long (the
-    walk refuses such a namespace before calling this).
+    may outrank it. `ObjectStoreError`: the bucket refused, the new object was gone
+    before its read-back, or the copy outlasted DOCUMENT_UPLOAD_BUDGET_S.
+    `ValidationError`: its object key would be too long (the walk refuses such a
+    namespace before calling this).
 
     `ch` is the client for the knowledge plane's own reads and writes; the erasure ledger
     is read through the erasure plane, on its client."""
@@ -192,8 +192,9 @@ async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bo
             held.org, held.namespace, held.sha, stored=blobs.Stored(held.size, ""), ch=ch
         )
     if data is None:
-        now = await blobs.latest(held, ch=ch)
-        if now is not None and not now.location:
+        # Corrupt only while the row the walk read is still the latest; any other was
+        # written since, and keeps what its write left.
+        if await blobs.latest(held, ch=ch) == blobs.Latest("", held.version_ms):
             raise CorruptOriginal("bytes in ClickHouse do not fill its size")
         return False
     if hashlib.sha256(data).hexdigest() != held.sha:

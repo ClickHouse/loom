@@ -350,6 +350,12 @@ async def test_the_bytes_are_read_as_the_checks_after_them_are(
         await originals.move_to_bucket(held)
     assert reads == [True]
 
+    async def uploaded_again(*a: Any, **kw: Any) -> blobs.Latest:
+        return blobs.Latest("", held.version_ms + 5)  # written since the walk
+
+    monkeypatch.setattr(blobs, "latest", uploaded_again)
+    assert await originals.move_to_bucket(held) is False
+
     async def gone(*a: Any, **kw: Any) -> None:
         return None
 
