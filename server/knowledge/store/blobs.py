@@ -176,6 +176,104 @@ async def stream(
 
 
 @dataclass(frozen=True)
+class Held:
+    """An original whose latest catalog row holds its bytes in ClickHouse."""
+
+    org: str
+    namespace: str
+    sha: str
+    size: int
+
+
+async def held_in_clickhouse(
+    after: tuple[str, str, str],
+    limit: int,
+    *,
+    org: str = "",
+    namespace: str = "",
+    ch: _CHClient | None = None,
+) -> list[Held]:
+    """Up to `limit` originals, in key order after `after` (org, namespace, sha256),
+    whose latest row is the ClickHouse store's: those a move to the bucket has left.
+    `org`, and `namespace` with it, narrow the walk. Reads no data."""
+    ch = ch or _default_client()
+    where = "(org, namespace, sha256) > ({a_org:String}, {a_ns:String}, {a_sha:String})"
+    params: dict[str, object] = {
+        "a_org": after[0],
+        "a_ns": after[1],
+        "a_sha": after[2],
+        "lim": int(limit),
+    }
+    if org:
+        where += " AND org = {org:String}"
+        params["org"] = org
+    if namespace:
+        where += " AND namespace = {ns:String}"
+        params["ns"] = namespace
+    rows = await ch.query_all(
+        f"SELECT org, namespace, toString(sha256) AS sha, argMax(size, created_at) AS size "
+        f"FROM {TABLE} WHERE {where} GROUP BY org, namespace, sha256 "
+        "HAVING argMax(location, created_at) = '' "
+        "ORDER BY org, namespace, sha256 LIMIT {lim:UInt32}",
+        params=params,
+    )
+    return [Held(str(r["org"]), str(r["namespace"]), str(r["sha"]), int(r["size"])) for r in rows]
+
+
+class CorruptOriginal(Exception):
+    """An original's bytes do not hash to its sha256, in ClickHouse or read back
+    from the bucket: nothing is switched."""
+
+
+async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
+    """Copy one original from its ClickHouse row to a new object in the bucket and
+    switch its catalog row to that object; every document naming the sha reads
+    from the bucket from then on. False when there is nothing to move: the row went
+    (an erasure, the sweep) or was replaced since the walk read it.
+
+    The bytes are checked against the sha256 before the write, by the store as it
+    writes them, and again as read back from the bucket. The object is written
+    before the row naming it, as an upload's is; one no row comes to name (a check
+    that failed, a row that went meanwhile) is the bucket walk's once it is old
+    enough. The new row is a later version of the same key, so the ClickHouse row's
+    bytes go when the table's parts merge. The upload records are keyed by the sha
+    and stay as they are."""
+    ch = ch or _default_client()
+    data = await read(held.org, held.namespace, held.sha, stored=Stored(held.size, ""), ch=ch)
+    if data is None:
+        return False
+    if hashlib.sha256(data).hexdigest() != held.sha:
+        raise CorruptOriginal(f"{held.org}/{held.namespace}/{held.sha}: bytes in ClickHouse")
+    loc = objects.new_location(held.org, held.namespace, held.sha)
+    async with objects.transfer() as lease:
+        await objects.put(loc, data, held.sha, lease)
+    back = await objects.read(loc)
+    if back is None or hashlib.sha256(back).hexdigest() != held.sha:
+        raise CorruptOriginal(f"{held.org}/{held.namespace}/{held.sha}: bytes read back")
+    # The latest row read again just before the switch: an erasure or a re-upload
+    # since the walk keeps what it left.
+    with sequential_reads():
+        now = await locate(held.org, held.namespace, held.sha, ch=ch)
+    if now is None or now.location:
+        return False
+    await ch.insert(
+        TABLE,
+        [
+            {
+                "org": held.org,
+                "namespace": held.namespace,
+                "sha256": held.sha,
+                "size": held.size,
+                "data": b"",
+                "location": loc.uri(),
+            }
+        ],
+        settings={"async_insert": 0},
+    )
+    return True
+
+
+@dataclass(frozen=True)
 class Deleted:
     gone: int  # originals whose rows are gone
     kept: int = 0  # objects outside the configured bucket, or any with it unset: rows kept

@@ -8,6 +8,9 @@ local S3-compatible store (`LOOM_TEST_S3_ENDPOINT`, skipped without it).
 - Namespace erasure deletes every object of the scope and its census counts
   none left; user erasure deletes the objects of the user's own originals and
   keeps another writer's.
+- `loom knowledge migrate-originals` moves the originals held in ClickHouse to
+  checked objects and switches their rows, refuses bytes that do not hash to
+  their sha, and keeps a row replaced since the walk read it.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import pytest
 from server.core import object_store
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_memory
+from server.knowledge.app.originals import migrate_originals
 from server.knowledge.store import blobs
 from server.settings import settings
 from tests.integration._resources import unique_org
@@ -229,3 +233,77 @@ async def test_the_upload_record_cleanup_statement_runs_on_clickhouse(s3: Any, c
         params={"org": org},
     )
     assert [str(r["sha"]) for r in rows] == [kept]
+
+
+@pytest.mark.asyncio
+async def test_originals_in_clickhouse_move_to_checked_objects(
+    s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns = unique_org("objstore-move"), "docs"
+    client, bucket = s3
+    monkeypatch.setattr(settings, "document_object_store", "clickhouse")
+    big = await blobs.put(org, ns, RAW, uploader="alice", ch=ch)
+    small = await blobs.put(org, ns, b"small", ch=ch)
+    # A row whose bytes do not hash to its sha: refused, and left where it is.
+    bad = hashlib.sha256(b"what it should hold").hexdigest()
+    await ch.insert(
+        "loom.document_blobs",
+        [{"org": org, "namespace": ns, "sha256": bad, "data": b"other bytes", "size": 11}],
+        settings={"async_insert": 0},
+    )
+    monkeypatch.setattr(settings, "document_object_store", "s3")
+
+    counted = await migrate_originals(org=org, dry_run=True)
+    assert (counted.pending, counted.bytes_moved, counted.moved) == (3, len(RAW) + 5 + 11, 0)
+    assert _keys(s3) == []
+
+    result = await migrate_originals(org=org)
+    assert (result.moved, result.bytes_moved, result.skipped) == (2, len(RAW) + 5, 0)
+    assert len(result.errors) == 1 and bad in result.errors[0]
+    for sha, raw in ((big, RAW), (small, b"small")):
+        stored = await blobs.locate(org, ns, sha, ch=ch)
+        assert stored is not None and stored.size == len(raw)
+        key = objects_key(stored.location, bucket)
+        assert key.startswith(object_store.original_prefix(org, ns, sha))
+        body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+        assert hashlib.sha256(body).hexdigest() == sha
+        assert await _read(ch, org, ns, sha) == raw
+    assert (await blobs.locate(org, ns, bad, ch=ch)) == blobs.Stored(11, "")
+    # The uploader's record stays, so their erasure still finds the moved original.
+    uploads = await ch.query_all(
+        "SELECT toString(sha256) AS sha, user_id FROM loom.blob_uploads"
+        " WHERE org = {org:String} AND namespace = {ns:String}",
+        params={"org": org, "ns": ns},
+    )
+    assert uploads == [{"sha": big, "user_id": "alice"}]
+
+    # Run again: nothing more moves, and the refused row is reported again.
+    again = await migrate_originals(org=org, namespace=ns)
+    assert (again.moved, again.skipped, len(again.errors)) == (0, 0, 1)
+    assert len(_keys(s3, object_store.namespace_prefix(org, ns))) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_row_replaced_since_the_walk_is_kept(
+    s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns = unique_org("objstore-race"), "docs"
+    monkeypatch.setattr(settings, "document_object_store", "clickhouse")
+    sha = await blobs.put(org, ns, b"raced", ch=ch)
+    monkeypatch.setattr(settings, "document_object_store", "s3")
+    (held,) = await blobs.held_in_clickhouse(("", "", ""), 10, org=org, ch=ch)
+    assert held == blobs.Held(org, ns, sha, 5)
+    # Uploaded again on the bucket store after the walk read the row.
+    await blobs.put(org, ns, b"raced", ch=ch)
+    uploaded = await blobs.locate(org, ns, sha, ch=ch)
+    assert await blobs.move_to_bucket(held, ch=ch) is False
+    assert await blobs.locate(org, ns, sha, ch=ch) == uploaded
+    # An original no row holds any more has nothing to move.
+    gone = blobs.Held(org, ns, "0" * 64, 1)
+    assert await blobs.move_to_bucket(gone, ch=ch) is False
+
+
+def objects_key(location: str, bucket: str) -> str:
+    loc = object_store.Location.parse(location)
+    assert loc.bucket == bucket
+    return loc.key

@@ -1013,6 +1013,20 @@ missing from the bucket answers `410 BLOB_GONE` and a bucket that fails answers
 transfers (uploads, and downloads up to 4 MB) and 4 bucket streams at once; one more
 waits up to `LOOM_CH_POOL_WAIT_MS` and then answers `503 OVERLOADED`.
 
+`loom knowledge migrate-originals` moves the originals still held in ClickHouse to the
+bucket (`--org`, and `--namespace` with it, narrow it; `--dry-run` counts them and their
+bytes). It runs only with `LOOM_DOCUMENT_OBJECT_STORE=s3`, so no new original lands in
+ClickHouse behind it, and so only once every replica runs a build that reads bucket rows.
+For each original it checks the row's bytes against their sha256, writes them to a new
+object with the store's SHA-256 check, reads the object back and hashes it, and then
+writes the catalog row naming the object. That row switches every document with those
+bytes at once; the ClickHouse copy goes when `loom.document_blobs` merges its parts. An
+original whose bytes do not hash to their sha256, or that the bucket refused, is
+reported and stays where it was, and the command exits 1. An original erased or uploaded
+again while the command ran keeps what that write left; an object no row came to name is
+the sweep's, as an upload's is. The command is idempotent: run it again after a stop or
+a failure.
+
 The server's credentials need `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and
 `s3:ListBucket` on the bucket and prefix. Without `s3:ListBucket`, S3 answers a read of a
 missing object with `403 AccessDenied` instead of `404 NoSuchKey`, so a gone original
