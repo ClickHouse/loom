@@ -409,19 +409,23 @@ class Transport:
         *,
         json: Mapping[str, Any] | None = None,
         params: Mapping[str, Any] | None = None,
+        content: bytes | None = None,
     ) -> httpx.Response:
         """One request to a route outside the op registry (`/v1/me/...`,
-        `/v1/admin/...`, `/v1/health`): the body goes as given, with no
-        identity or consumer added, and is not retried. Raises the typed
-        error for a 4xx/5xx; returns the response for the caller to read.
-        `path` is a path on this server: the credential goes nowhere else."""
+        `/v1/admin/...`, `/v1/health`, `/v1/knowledge.upload`): the body goes as
+        given (`json`, or `content` as raw bytes), with no identity or consumer
+        added, and is not retried. Raises the typed error for a 4xx/5xx; returns
+        the response for the caller to read. `path` is a path on this server: the
+        credential goes nowhere else."""
         if not path.startswith("/") or path.startswith("//"):
             raise ValueError(f"not a path on {self.base_url}: {path!r}")
         request_id = str(uuid.uuid4())
         headers = {**self._ident_headers, "X-Request-Id": request_id}
+        if content is not None:
+            headers["Content-Type"] = "application/octet-stream"
         try:
             resp = await self._client.request(
-                method, path, json=json, params=params, headers=headers
+                method, path, json=json, params=params, content=content, headers=headers
             )
         except httpx.RequestError as e:
             raise unreachable_error(self.base_url, e, request_id=request_id) from e
@@ -436,9 +440,10 @@ class Transport:
         *,
         json: Mapping[str, Any] | None = None,
         params: Mapping[str, Any] | None = None,
+        content: bytes | None = None,
     ) -> dict[str, Any]:
         """`request`, decoded: the JSON object the route answers."""
-        resp = await self.request(method, path, json=json, params=params)
+        resp = await self.request(method, path, json=json, params=params, content=content)
         return _json_object(path, resp, resp.headers.get("X-Request-Id", ""))
 
     async def post_with_meta(
