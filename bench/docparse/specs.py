@@ -3,7 +3,7 @@ so its gold labels are the spec itself.
 
 A spec is a dict: title, kind ("doc" or "deck"), and elements. A doc's elements:
   ("h", level, text), ("p", text), ("ul", items), ("ol", items),
-  ("code", text), ("table", rows, style), ("break",)
+  ("code", text), ("table", rows), ("break",)
 where an item is text or (text, [sub items]) and rows[0] is the header.
 A deck's elements are slides: {"title", "bullets", "table", "notes", "labels", "image"}.
 """
@@ -255,7 +255,6 @@ def design_doc(
     numbered: bool = False,
     tables: int = 1,
     table_rows: int = 5,
-    table_style: str = "grid",
     code: bool = True,
 ) -> dict:
     w = Words(seed)
@@ -280,7 +279,7 @@ def design_doc(
             els.append(("code", w.code()))
         if i - 1 in table_at:
             els.append(("p", w.sentence()))
-            els.append(("table", w.table(table_rows), table_style))
+            els.append(("table", w.table(table_rows)))
         els.append(("p", w.paragraph(1, 3)))
     return {"title": title, "kind": "doc", "elements": els}
 
@@ -290,8 +289,6 @@ def deck(
     *,
     slides: int = 6,
     notes: bool = True,
-    table: bool = True,
-    diagram: bool = True,
     image: bool = False,
 ) -> dict:
     w = Words(seed)
@@ -307,8 +304,7 @@ def deck(
     ]
     kinds = (
         ["bullets"] * max(1, slides - 4)
-        + (["table"] if table else [])
-        + (["diagram"] if diagram else [])
+        + ["table", "diagram"]
         + (["image"] if image else [])
         + ["bullets"]
     )
@@ -338,29 +334,10 @@ def deck(
 
 
 class _PepParser(HTMLParser):
-    BLOCK = {
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "p",
-        "li",
-        "pre",
-        "td",
-        "th",
-        "tr",
-        "table",
-        "ul",
-        "ol",
-        "dl",
-        "details",
-    }
-
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.inside = False
         self.depth_skip = 0
-        self.stack: list[str] = []
         self.els: list = []
         self.buf: list[str] = []
         self.list_stack: list[list] = []
@@ -449,7 +426,7 @@ class _PepParser(HTMLParser):
             self.row = None
         elif tag == "table":
             if self.table and len(self.table) > 1 and len({len(r) for r in self.table}) == 1:
-                self.els.append(("table", self.table, "grid"))
+                self.els.append(("table", self.table))
             self.table = None
 
     def _flush_text(self) -> None:

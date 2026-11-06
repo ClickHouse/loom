@@ -81,7 +81,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--corpus", type=Path, default=CORPUS)
     b = sub.add_parser("build", help="regenerate the corpus and its gold labels")
     b.add_argument("--src", type=Path, required=True, help="the directory holding pepNNN.html")
-    b.add_argument("--out", type=Path, default=CORPUS)
+    b.add_argument(
+        "--out",
+        type=Path,
+        default=CORPUS,
+        help="the directory mounted at /c in the tools container",
+    )
     args = ap.parse_args(argv)
     if args.cmd == "run":
         from bench.docparse.run import run
@@ -96,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "score":
         from bench.docparse.score import score
 
+        if bad := [p for p in args.parses if "=" not in p]:
+            ap.error(f"a parse is NAME=PARSES.jsonl, not {bad[0]}")
         systems = [(p.split("=", 1)[0], Path(p.split("=", 1)[1])) for p in args.parses]
         score(args.corpus, systems, args.split, args.json)
     else:

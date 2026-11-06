@@ -24,7 +24,7 @@ from docx.shared import Pt
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from pptx import Presentation
 from pptx.util import Inches
-from pypdf import PdfReader, PdfWriter
+from pypdf import PdfReader, PdfWriter, Transformation
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -42,13 +42,11 @@ from reportlab.platypus import (
 )
 
 from bench.docparse import specs as S
+from bench.docparse.score import words
 
 OUT = Path(".")
-SRC = Path(".")
 WORK = Path(".")
-CONTAINER = (
-    "docparse-tools-run"  # docker run -d --name docparse-tools-run -v OUT:/c ... sleep infinity
-)
+CONTAINER = "docparse-tools-run"
 HAND = "/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf"
 
 
@@ -125,9 +123,8 @@ def gold_deck(spec: dict, *, notes: bool, image_text: bool = True) -> dict:
 
 
 def norm_words(s: str) -> list[str]:
-    import re
-
-    return re.findall(r"[a-z0-9]+", s.lower().replace("ﬁ", "fi").replace("ﬂ", "fl"))
+    """`s` split into words as the scorer splits them."""
+    return words(s)
 
 
 def pages_text(pdf: Path) -> list[list[str]]:
@@ -181,7 +178,9 @@ class _Stream:
                 return 0, 0
             tail = self.find(words[-6:], start)
             end = tail + min(6, len(words)) - 1 if tail >= 0 else start
-        self.at = start + 1
+        # past a whole match (a short title is never found inside it); a partial
+        # one is passed only its start, as its words may not all be there
+        self.at = end + 1 if whole >= 0 else start + 1
         return self.page[start], self.page[min(end, len(self.page) - 1)]
 
 
@@ -486,13 +485,9 @@ def rl_story(spec: dict, *, borderless: bool = False, heading_bold_only: bool = 
         ),
     }
     if heading_bold_only:  # headings the size of the text, set apart by weight alone
-        for k in hs:
+        for k in (2, 3):
             hs[k] = ParagraphStyle(
-                f"hb{k}",
-                parent=body,
-                fontName="Times-Bold",
-                fontSize=10.5 + (3 - k) * 0.0,
-                spaceBefore=8,
+                f"hb{k}", parent=body, fontName="Times-Bold", fontSize=10.5, spaceBefore=8
             )
         hs[1] = ParagraphStyle("hb1", parent=body, fontName="Times-Bold", fontSize=16, leading=20)
     out: list = []
@@ -596,8 +591,6 @@ def landscape_table_pdf(spec: dict, path: Path) -> None:
     story = rl_story(spec)
     a = WORK / f"{path.stem}_a.pdf"
     SimpleDocTemplate(str(a), pagesize=landscape(A4)).build(story)
-    from pypdf import Transformation
-
     w = PdfWriter(clone_from=str(a))
     for p in w.pages:
         pw, ph = float(p.mediabox.width), float(p.mediabox.height)
@@ -609,8 +602,9 @@ def landscape_table_pdf(spec: dict, path: Path) -> None:
 
 
 def build(out: Path, src: Path) -> None:
-    global OUT, SRC, WORK
-    OUT, SRC, WORK = out.resolve(), src.resolve(), out.resolve() / "_work"
+    global OUT, WORK
+    OUT, WORK = out.resolve(), out.resolve() / "_work"
+    src = src.resolve()
     OUT.mkdir(parents=True, exist_ok=True)
     if any(OUT.iterdir()) and not (OUT / "gold.jsonl").is_file():
         raise SystemExit(
@@ -654,7 +648,7 @@ def build(out: Path, src: Path) -> None:
         chromium_pdf(h, OUT / f"web_doc_{k}.pdf")
         add(f"web_doc_{k}.pdf", "pdf_export", "pdf", gold_doc(sp), src="synthetic")
     for k in range(3):
-        sp = S.design_doc(next(seeds), sections=5, tables=2, table_rows=4, table_style="borderless")
+        sp = S.design_doc(next(seeds), sections=5, tables=2, table_rows=4)
         h = WORK / f"web_borderless_{k}.html"
         h.write_text(html_doc(sp, style="borderless", footer=k == 1))
         chromium_pdf(h, OUT / f"web_borderless_{k}.pdf")
@@ -674,7 +668,7 @@ def build(out: Path, src: Path) -> None:
     # Public-domain PEPs, printed from their HTML
     peps = [(518, 40), (621, 45), (668, 45), (723, 40), (735, 40), (691, 40)]
     for n, cut in peps:
-        sp = S.pep(SRC / f"pep{n}.html", cut)
+        sp = S.pep(src / f"pep{n}.html", cut)
         h = WORK / f"pep{n}.html"
         h.write_text(html_doc(sp, footer=n % 2 == 1))
         chromium_pdf(h, OUT / f"pep{n}.pdf")

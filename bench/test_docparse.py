@@ -57,7 +57,15 @@ def test_a_perfect_parse_scores_full_marks_and_loses_nothing() -> None:
         assert s["text_recall"] == 1.0 and s["silent_loss"] == 0 and s["lost_blocks"] == 0, g[
             "file"
         ]
-        for m in ("order_acc", "heading_f1", "heading_level_acc", "table_cell_f1", "table_det_f1"):
+        for m in (
+            "order_acc",
+            "heading_f1",
+            "heading_level_acc",
+            "table_cell_f1",
+            "table_det_f1",
+            "locator_acc",
+            "notes_acc",
+        ):
             assert s.get(m, 1.0) == 1.0, (g["file"], m)
 
 
@@ -187,11 +195,13 @@ def test_a_failed_parse_scores_zero_on_every_metric_its_gold_defines(tmp_path: P
     assert s["lost_blocks"] > 0
     good = tmp_path / "good.jsonl"
     bad = tmp_path / "bad.jsonl"
-    good.write_text(json.dumps({"file": g["file"], **_perfect(g)}) + "\n")
+    good.write_text("".join(json.dumps({"file": x["file"], **_perfect(x)}) + "\n" for x in _gold()))
+    # one file failed, and every other one left out: each scored as a failure
     bad.write_text(json.dumps({"file": g["file"], "error": "boom"}) + "\n")
     report = S.score(CORPUS, [("good", good), ("bad", bad)])
-    assert report["ALL"]["error"] == {"good": 0, "bad": 1}
-    assert report["ALL"]["locator_acc"]["bad"] == 0.0
+    assert report["ALL"]["n"] == len(_gold())
+    assert report["ALL"]["error"] == {"good": 0, "bad": len(_gold())}
+    assert report["ALL"]["locator_acc"] == {"good": 1.0, "bad": 0.0}
 
 
 def test_a_parse_past_its_time_is_an_error_and_the_run_goes_on(

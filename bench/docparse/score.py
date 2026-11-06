@@ -225,11 +225,12 @@ def locator_scores(g: dict, p: dict) -> dict:
     on from the block the gold block before it was found in (text recurs), and is
     cited right when that block's pages hold its page and span no more pages
     than it does: one block over every page cites nothing. A table is cited
-    right when a parse table with its header starts on its first page."""
+    right when a parse table with its header starts on its first page and
+    spans no more pages than it does."""
     if g["format"] == "docx":
         return {}
     blocks = [b for b in p.get("blocks", []) if b["type"] != "table"]
-    texts = [key(b["text"]) for b in blocks]
+    texts = [f" {key(b['text'])} " for b in blocks]  # spaced, so a probe matches whole words
     ok = n = 0
     note_ok = note_n = 0
     last = 0
@@ -239,11 +240,11 @@ def locator_scores(g: dict, p: dict) -> dict:
             continue
         n += 1
         note_n += gb["kind"] == "note"
-        hits = [i for i, t in enumerate(texts) if probe in t]
+        hits = [i for i, t in enumerate(texts) if f" {probe} " in t]
         at = next((i for i in hits if i >= last), hits[0] if hits else None)
         if at is None:
             continue
-        last = at
+        last = max(last, at)
         b = blocks[at]
         lo, hi = b["page_start"], max(b["page_end"], b["page_start"])
         page, end = gb["page"], gb.get("page_end", gb["page"])
@@ -253,8 +254,11 @@ def locator_scores(g: dict, p: dict) -> dict:
     for gt in g["tables"]:
         n += 1
         head = [key(c) for c in gt["rows"][0]]
+        span = gt.get("page_end", 0) - gt.get("page_start", 0)
         if any(
-            t["page_start"] == gt.get("page_start") and [key(c) for c in t["rows"][0]] == head
+            t["page_start"] == gt.get("page_start")
+            and t["page_end"] - t["page_start"] <= span
+            and [key(c) for c in t["rows"][0]] == head
             for t in p.get("tables", [])
         ):
             ok += 1
@@ -361,8 +365,8 @@ def score(
     scores: dict[str, dict[str, dict]] = {name: {} for name, _ in systems_read}
     for g in gold:
         for name, parses in systems_read:
-            if g["file"] in parses:
-                scores[name][g["file"]] = score_file(g, parses[g["file"]])
+            # a file a parse leaves out is scored as a failure, not dropped from the comparison
+            scores[name][g["file"]] = score_file(g, parses.get(g["file"], {"error": "no parse"}))
     cats = sorted({g["category"] for g in gold})
     groups = {c: [g["file"] for g in gold if g["category"] == c] for c in cats}
     groups["ALL"] = [g["file"] for g in gold]
@@ -370,7 +374,6 @@ def score(
     report: dict = {}
     names = [n for n, _ in systems_read]
     for grp, files in groups.items():
-        files = [f for f in files if all(f in scores[n] for n in names)]
         report[grp] = {"n": len(files)}
         print(f"\n== {grp} (n={len(files)}, split={split})")
         print(
