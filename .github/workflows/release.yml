@@ -575,7 +575,6 @@ jobs:
       # one index of its amd64 and arm64 digests. A failure here can leave one
       # image tagged and not the other; re-running this job tags both again.
       - name: Tag the scanned images
-        shell: bash # with pipefail: a failed inspect must not print an empty pin
         env:
           LATEST: ${{ steps.latest.outputs.latest }}
         run: |
@@ -591,6 +590,7 @@ jobs:
             sources=()
             for dir in "$@"; do sources+=("$image@$(cat "${dir}digest")"); done
             docker buildx imagetools create "${args[@]}" "${sources[@]}"
+            # jq -e: a failed inspect leaves no digest, which fails the step, never an empty pin.
             digest=$(docker buildx imagetools inspect "$version_tag" --format '{{json .Manifest}}' | jq -re .digest)
             echo "Pin $image with \`$pin: $digest\`" >> "$GITHUB_STEP_SUMMARY"
           done

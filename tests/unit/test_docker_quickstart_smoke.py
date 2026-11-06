@@ -217,24 +217,12 @@ def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> 
     }
 
     def run() -> subprocess.CompletedProcess[str]:
+        for log in ("calls", "summary"):
+            (tmp_path / log).unlink(missing_ok=True)
+        # The step's shell: `bash -e`, as GitHub runs a step with no `shell:`.
         return subprocess.run(
             ["bash", "-e", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True
         )
-
-    # Only the highest final version takes `:latest`, on both images.
-    assert run().returncode == 0
-    assert ":latest" not in (tmp_path / "calls").read_text()
-    (tmp_path / "calls").unlink()
-    env["LATEST"] = "true"
-    assert run().returncode == 0
-    latest = [c for c in (tmp_path / "calls").read_text().splitlines() if " create " in c]
-    assert "-t ghcr.io/clickhouse/loom:latest ghcr.io/clickhouse/loom@" in latest[0]
-    assert (
-        "-t ghcr.io/clickhouse/loom-extractor:latest ghcr.io/clickhouse/loom-extractor@"
-        in latest[1]
-    )
-    (tmp_path / "calls").unlink()
-    env["LATEST"] = "false"
 
     assert run().returncode == 0
     calls = (tmp_path / "calls").read_text().splitlines()
@@ -248,8 +236,33 @@ def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> 
     summary = (tmp_path / "summary").read_text()
     assert "`image.digest: sha256:index-loom`" in summary
     assert "`extractor.image.digest: sha256:index-x`" in summary
+
+    # Only the highest final version takes `:latest`, on both images.
+    env["LATEST"] = "true"
+    assert run().returncode == 0
+    latest = [c for c in (tmp_path / "calls").read_text().splitlines() if " create " in c]
+    assert "-t ghcr.io/clickhouse/loom:latest ghcr.io/clickhouse/loom@" in latest[0]
+    assert (
+        "-t ghcr.io/clickhouse/loom-extractor:latest ghcr.io/clickhouse/loom-extractor@"
+        in latest[1]
+    )
+    env["LATEST"] = "false"
+
+    # An index the registry cannot show fails the step instead of printing an empty pin.
+    (bin_dir / "docker").write_text(
+        '#!/bin/sh\necho "$@" >> "$CALLS"\ncase "$3" in inspect) exit 1 ;; esac\n'
+    )
+    failed = run()
+    assert failed.returncode != 0
+    assert (
+        "Pin" not in (tmp_path / "summary").read_text() if (tmp_path / "summary").exists() else True
+    )
+    (bin_dir / "docker").write_text(
+        '#!/bin/sh\necho "$@" >> "$CALLS"\n'
+        'case "$3" in inspect) printf \'{"digest":"sha256:index-%s"}\\n\' "${4%%:*}" ;; esac\n'
+    )
+
     shutil.rmtree(tmp_path / "scanned-extractor-arm64")
-    (tmp_path / "calls").unlink()
     failed = run()
     assert (
         failed.returncode != 0
