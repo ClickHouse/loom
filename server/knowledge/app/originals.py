@@ -88,7 +88,8 @@ async def _scopes(org: str, namespace: str) -> list[tuple[str, str]]:
 
 
 async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
-    """Count one original. False when an erasure held it back or raced its switch."""
+    """Count one original. False when it was not switched cleanly (an erasure may have
+    held it back, raced its switch or taken it), so the walk reads the fence again."""
     if dry_run:
         out.pending += 1
         out.bytes += held.size
@@ -98,7 +99,9 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
             out.moved += 1
             out.bytes += held.size
         else:
+            # Gone, replaced, or erased: an erasure may be what took it.
             out.skipped += 1
+            return False
     except blobs.ErasureOpen as e:
         log.warning("originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e)
         out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")

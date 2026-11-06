@@ -41,7 +41,7 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
         fences.append(1)
         return ""
 
-    async def move(held: blobs.Held, *, fenced: bool = False) -> bool:
+    async def move(held: blobs.Held) -> bool:
         out = outcomes[held.sha]
         if isinstance(out, Exception):
             raise out
@@ -56,8 +56,9 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
     assert result.bytes == 20
     (error,) = result.errors
     assert error.startswith(f"acme/docs/{page[2].sha}: ") and "too long" in error
-    # One read for the namespace, and one after the switch an erasure raced.
-    assert len(fences) == 2
+    # One read for the namespace, one after the switch an erasure raced, and one after the
+    # original that was not switched (an erasure may be what took it).
+    assert len(fences) == 3
     (unconfirmed,) = result.left_to_erasure
     assert unconfirmed.startswith(f"acme/docs/{page[3].sha}: switched")
 
@@ -80,11 +81,9 @@ async def test_an_erasure_holding_one_back_refuses_the_rest_of_the_namespace_onc
         # The second read sees the erasure that held the first original back.
         return "erasure e1 (namespace, in_progress) covers it" if len(reads) > 1 else ""
 
-    async def move(held: blobs.Held, *, fenced: bool = False) -> bool:
+    async def move(held: blobs.Held) -> bool:
         if held is page[0]:
-            raise blobs.ErasureOpen(
-                "erasure e1 (namespace, in_progress) started while it was copied"
-            )
+            raise blobs.ErasureOpen("erasure e1 (namespace, in_progress) overlapped its copy")
         return True
 
     monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)

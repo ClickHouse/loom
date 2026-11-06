@@ -45,7 +45,7 @@ def test_the_advice_names_the_erasure_that_holds_the_move_longest() -> None:
         "completed it, or complete it with loom erasure-re-verify --resume"
     )
     # Only one that finished just now: a minute's wait, said where it reads right.
-    assert _fence_advice([done], "started while it was copied, and it stays in ClickHouse") == (
-        "erasure e1 (user_id, completed), which finished just now, started while it was "
-        "copied, and it stays in ClickHouse; run again in a minute"
+    assert _fence_advice([done], "overlapped its copy, and it stays in ClickHouse") == (
+        "erasure e1 (user_id, completed), which finished just now, overlapped its copy, and "
+        "it stays in ClickHouse; run again in a minute"
     )

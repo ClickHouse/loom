@@ -54,6 +54,12 @@ _IN_KEYS = "(org, namespace, sha256) IN {keys:Array(Tuple(String, String, String
 _OLDER_THAN_CUTOFF = "created_at < fromUnixTimestamp64Milli({cutoff_ms:Int64})"
 
 
+async def _ch_now_s(ch: _CHClient) -> int:
+    """Now on the ClickHouse clock, in whole seconds: what the erasure ledger's times are
+    read against."""
+    return await _cutoff_ms(0, ch) // 1000
+
+
 async def _cutoff_ms(min_age_s: int, ch: _CHClient) -> int:
     """Now on the ClickHouse clock, less `min_age_s`, in epoch milliseconds."""
     row = await ch.query_one(
@@ -368,7 +374,7 @@ async def fence(org: str, namespace: str, *, ch: _CHClient | None = None) -> str
     erasure that holds it longest; '' when none does. Coverage depends on the namespace
     alone, so one read serves a walk until an erasure holds an original back."""
     ch = ch or _default_client()
-    since = await _cutoff_ms(0, ch) // 1000
+    since = await _ch_now_s(ch)
     fenced = await _erasures_since(org, namespace, since, ch)
     return _fence_advice(fenced, "covers it") if fenced else ""
 
@@ -414,7 +420,7 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     ch = ch or _default_client()
     # This move's own start: an erasure that finished before it cannot race its copy, and
     # one still running then, or finished within the margin, is caught after the copy.
-    since = await _cutoff_ms(0, ch) // 1000
+    since = await _ch_now_s(ch)
     data = await read(held.org, held.namespace, held.sha, stored=Stored(held.size, ""), ch=ch)
     if data is None:
         with sequential_reads():
@@ -492,7 +498,8 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
         taken = False
         if raced and not namespace_raced:
             await _await_erasures(held, since, ch)
-            taken = await objects.read(loc) is None
+            # Listed, not read: whether it is there is all that decides.
+            taken = not await objects.count_under(loc.bucket, loc.key)
     except SwitchedUnderErasure:
         raise
     except Exception as e:  # the row is switched: an unread ledger or object is reported, not lost
