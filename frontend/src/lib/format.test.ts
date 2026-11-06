@@ -193,6 +193,19 @@ describe("truncate", () => {
     expect(truncate("abe\u0301cd", 4)).toBe("abe\u0301…");
   });
 
+  it("cuts between code points where the browser has no Intl.Segmenter", async () => {
+    vi.resetModules();
+    const segmenter = Object.getOwnPropertyDescriptor(Intl, "Segmenter");
+    Object.defineProperty(Intl, "Segmenter", { value: undefined, configurable: true, writable: true });
+    try {
+      const fresh = await import("./format");
+      expect(fresh.truncate("ab😀cd", 4)).toBe("ab😀…");
+      expect(fresh.truncate("ab🇺🇸cd", 4)).toBe("ab🇺…");
+    } finally {
+      if (segmenter) Object.defineProperty(Intl, "Segmenter", segmenter);
+    }
+  });
+
   it("cuts to max characters including the ellipsis", () => {
     expect(truncate("abcdefgh", 5)).toBe("abcd…");
     expect(truncate("abcdefgh", 5)).toHaveLength(5);

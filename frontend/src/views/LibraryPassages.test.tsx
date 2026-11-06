@@ -84,7 +84,8 @@ describe("LibraryPassages", () => {
     expect(second).toHaveTextContent("revision 1, key retention.days");
     expect(await axeViolations(document.body)).toEqual([]);
     expect(within(second).getByRole("button")).toHaveAccessibleName(
-      "Open repo://conf/limits.toml, revision 1, key retention.days, matched retention.days",
+      // The matched key is the one the citation names: said once.
+      "Open repo://conf/limits.toml, revision 1, key retention.days",
     );
     expect(within(first).getByRole("button")).toHaveAccessibleName(
       "Open repo://handbook/retention.pdf, Retention > Events, revision 3, page 7",
@@ -114,8 +115,22 @@ describe("LibraryPassages", () => {
     await user.click(screen.getByRole("button", { name: "Show more" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("14 passages"));
     expect(vi.mocked(searchKnowledge).mock.calls[1].slice(1, 3)).toEqual(["events", 20]);
-    // Fewer than were asked for: that is all of them.
+    // Fewer than were asked for: that is all of them. The button that held the focus is
+    // gone, and the focus is on the first hit that read added.
     expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+    const rows = within(screen.getByRole("list", { name: "Passages found" })).getAllByRole("button");
+    await waitFor(() => expect(document.activeElement).toBe(rows[10]));
+  });
+
+  it("keeps the hits on screen when Show more fails", async () => {
+    const page = Array.from({ length: 10 }, (_, i) => ({ ...HIT, chunk_idx: i }));
+    vi.mocked(searchKnowledge).mockResolvedValueOnce(page).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const { user } = await openAndFind("events");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 10 passages"));
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/Lost connection to Loom/));
+    expect(within(screen.getByRole("list", { name: "Passages found" })).getAllByRole("listitem")).toHaveLength(10);
+    expect(screen.getByRole("button", { name: "Show more" })).toBeInTheDocument();
   });
 
   it("shows a hit from a server older than revisions and locators, uncited", async () => {

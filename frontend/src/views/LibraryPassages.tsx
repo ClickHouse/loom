@@ -3,7 +3,7 @@
  * as an agent would cite it: its document, the revision it was read from and where it
  * sits (lines, a key, pages or slides, a sheet's rows). A hit opens its document.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { type Identity, type KnowledgeHit, searchKnowledge } from "../api";
@@ -12,6 +12,7 @@ import { BusyButton } from "../components/ui/BusyButton";
 import { ListRow } from "../components/ui/ListRow";
 import { humanizeError, truncate } from "../lib/format";
 import { citation } from "../lib/locator";
+import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowNav } from "../lib/useRowNav";
 
 // The passages a search lists first, and how many more each "Show more" adds.
@@ -64,8 +65,18 @@ export function LibraryPassages({
   const searching = useRef<AbortController | null>(null);
   // A search still running when the panel goes (another place) is dropped.
   useEffect(() => () => searching.current?.abort(), []);
-  const shown = !error && !!hits?.length;
-  const nav = useRowNav({ enabled: navEnabled && shown });
+  // A failed search keeps the hits it would have replaced (a failed Show more, say).
+  const shown = !!hits?.length;
+  const rowNav = useRowNav({ enabled: navEnabled && shown });
+  const listEl = useRef<HTMLOListElement | null>(null);
+  const fieldEl = useRef<HTMLInputElement | null>(null);
+  const nav = useCallback(
+    (el: HTMLOListElement | null) => {
+      rowNav(el);
+      listEl.current = el;
+    },
+    [rowNav],
+  );
   useEffect(() => {
     onHitsShown(shown);
     return () => onHitsShown(false);
@@ -93,8 +104,20 @@ export function LibraryPassages({
 
   // A full answer may have more behind it, up to the most the op lists.
   const more = !!hits && hits.length >= asked.topK && asked.topK < MAX_TOP_K;
+  // The last Show more removes the button that held the focus: it goes to the first hit
+  // that read added, else the last hit, else the field.
+  const markShown = useLastPageFocus({
+    loading: busy,
+    more,
+    rows: () =>
+      Array.from(listEl.current?.querySelectorAll<HTMLElement>("[data-hit-key]") ?? [], (el) => [
+        el.dataset.hitKey ?? "",
+        el,
+      ]),
+    fallback: () => fieldEl.current,
+  });
   const count =
-    hits === null || error
+    hits === null
       ? ""
       : hits.length === 0
         ? "No passage answers that."
@@ -110,6 +133,8 @@ export function LibraryPassages({
           {hits.map((h, i) => {
             const cited = citation(h);
             const name = shortName(h.source_uri);
+            // A key the citation already names is not named again.
+            const matched = (h.keys_matched ?? []).filter((k) => k !== h.locator?.key_path);
             const excerptId = `${PASSAGES_PANEL_ID}-excerpt-${i}`;
             return (
               <li key={`${h.source_uri}#${h.chunk_idx}`}>
@@ -117,12 +142,13 @@ export function LibraryPassages({
                   <button
                     type="button"
                     data-row-open=""
+                    data-hit-key={`${h.source_uri}#${h.chunk_idx}`}
                     // Named by what the row shows but the excerpt, which is its description.
                     aria-label={[
                       `Open ${h.source_uri}`,
                       h.section,
                       cited,
-                      h.keys_matched?.length ? `matched ${h.keys_matched.join(", ")}` : "",
+                      matched.length ? `matched ${matched.join(", ")}` : "",
                     ]
                       .filter(Boolean)
                       .join(", ")}
@@ -138,7 +164,7 @@ export function LibraryPassages({
                       )}
                       {h.section && <span className="text-text-muted">{h.section}</span>}
                       {cited && <Badge size="sm" state="neutral" text={cited} />}
-                      {(h.keys_matched ?? []).map((k) => (
+                      {matched.map((k) => (
                         <Badge key={k} size="sm" state="neutral" text={k} />
                       ))}
                     </span>
@@ -171,6 +197,7 @@ export function LibraryPassages({
         >
           <div className="min-w-0 flex-1">
             <SearchField
+              ref={fieldEl}
               value={query}
               onChange={setQuery}
               placeholder="What the passage says or names, e.g. retention period"
@@ -193,7 +220,10 @@ export function LibraryPassages({
             type="secondary"
             htmlType="button"
             busy={busy}
-            onClick={() => void search(asked.query, Math.min(asked.topK + TOP_K, MAX_TOP_K))}
+            onClick={() => {
+              markShown((hits ?? []).map((h) => `${h.source_uri}#${h.chunk_idx}`));
+              void search(asked.query, Math.min(asked.topK + TOP_K, MAX_TOP_K));
+            }}
           >
             Show more
           </BusyButton>
