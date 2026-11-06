@@ -63,12 +63,12 @@ function jwt(payload: Record<string, unknown>): string {
   return `${b64(JSON.stringify({ alg: "HS256" }))}.${b64(JSON.stringify(payload))}.sig`;
 }
 
-/** The mark the sign-in gate writes as this tab leaves for SSO; its nonce comes back after
- *  the token, `#token=…&n=<nonce>`. */
+/** The mark the sign-in gate writes as this tab leaves for SSO; its nonce comes back in the
+ *  landing's query, `/me?n=<nonce>#token=…`. */
 const TAB_NONCE = "tab-nonce-0123456789abcdef";
 function markSignIn(at = Date.now()): string {
   sessionStorage.setItem("loom_sign_in_pending_v1", JSON.stringify({ nonce: TAB_NONCE, at }));
-  return `&n=${TAB_NONCE}`;
+  return `?n=${TAB_NONCE}`;
 }
 
 type Deferred = { resolve: (r: Response) => void; promise: Promise<Response> };
@@ -512,7 +512,7 @@ describe("a link's namespace", () => {
       localStorage.removeItem("loom_token_v1");
       useStore.setState({ authed: false });
       const token = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
-      window.history.replaceState(null, "", `/#token=${token}${n}`);
+      window.history.replaceState(null, "", `/${n}#token=${token}`);
       serve(MINE);
       render(<App />);
       await until(() => useStore.getState().identity !== null && useStore.getState().view === "setup");
@@ -554,7 +554,7 @@ describe("a link's namespace", () => {
       window.history.replaceState(
         null,
         "",
-        `${root}#token=${jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] })}${n}`,
+        `${root}${n}#token=${jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] })}`,
       );
       serve([...MINE, JOINED]);
       render(<App />);
@@ -603,11 +603,12 @@ describe("login link", () => {
   });
 
   it("stores a #token= fragment from a sign-in this tab started, without asking, and scrubs it", async () => {
-    window.history.replaceState(null, "", `/memories#token=frag.jwt.value${markSignIn()}`);
+    window.history.replaceState(null, "", `/memories${markSignIn()}#token=frag.jwt.value`);
     render(<App />);
     await settle();
     expect(stored).toEqual(["frag.jwt.value"]);
     expect(window.location.href).not.toContain("frag.jwt.value");
+    expect(window.location.search).toBe("");
     expect(sessionStorage.getItem("loom_sign_in_pending_v1")).toBeNull();
     expect(screen.queryByText(/Sign in from a link/)).toBeNull();
   });
@@ -655,7 +656,7 @@ describe("login link", () => {
   });
 
   it("a sign-in mark older than ten minutes counts as none", async () => {
-    window.history.replaceState(null, "", `/me#token=${mallory}${markSignIn(Date.now() - 11 * 60 * 1000)}`);
+    window.history.replaceState(null, "", `/me${markSignIn(Date.now() - 11 * 60 * 1000)}#token=${mallory}`);
     render(<App />);
     await screen.findByRole("button", { name: "Sign in as mallory" });
     expect(stored).toEqual([]);
@@ -663,14 +664,15 @@ describe("login link", () => {
 
   it("a fresh mark trusts no token that does not bring its nonce back", async () => {
     // Another page sends this tab a token while it is away at the identity provider.
-    for (const fragment of [`#token=${mallory}`, `#token=${mallory}&n=someone-elses-nonce-xyz`]) {
+    for (const landing of [`/me#token=${mallory}`, `/me?n=someone-elses-nonce-xyz#token=${mallory}`]) {
       cleanup();
       markSignIn();
-      window.history.replaceState(null, "", `/me${fragment}`);
+      window.history.replaceState(null, "", landing);
       render(<App />);
       await screen.findByRole("button", { name: "Sign in as mallory" });
-      expect(stored, fragment).toEqual([]);
+      expect(stored, landing).toEqual([]);
       expect(window.location.hash).toBe("");
+      expect(window.location.search).toBe("");
     }
   });
 
@@ -836,6 +838,18 @@ describe("a refused token", { timeout: 30_000 }, () => {
     expect(localStorage.getItem("loom_token_v1")).toBeNull();
     expect(document.getElementById("main")).not.toBeNull();
     expect(useStore.getState().authed).toBe(true);
+  });
+
+  it("with SSO on, the card's new tab opens the gate that starts that tab's own marked sign-in", async () => {
+    window.__LOOM_SSO = true;
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    try {
+      await expireMidSession();
+      fireEvent.click(screen.getByRole("button", { name: "Sign in in a new tab" }));
+      expect(open).toHaveBeenCalledWith("/me?sign_in=sso", "_blank", "noopener");
+    } finally {
+      delete window.__LOOM_SSO;
+    }
   });
 
   it("takes the same person's token from another tab once the server confirms it, and carries on", async () => {
@@ -1064,7 +1078,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
     localStorage.clear();
     refuse = true; // whoami refuses the link's token
     // The SSO sign-in this tab started comes back with a token the server refuses.
-    window.history.replaceState(null, "", `/me#token=${alice}${markSignIn()}`);
+    window.history.replaceState(null, "", `/me${markSignIn()}#token=${alice}`);
     render(<App />);
     await until(() => useStore.getState().authed === false);
     await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });
@@ -1088,7 +1102,7 @@ describe("a refused token", { timeout: 30_000 }, () => {
     localStorage.clear();
     refuseWhoamiOnly = true; // list_mine answers; only whoami refuses the link's token
     // The SSO sign-in this tab started comes back with a token the server refuses.
-    window.history.replaceState(null, "", `/me#token=${alice}${markSignIn()}`);
+    window.history.replaceState(null, "", `/me${markSignIn()}#token=${alice}`);
     render(<App />);
     await until(() => useStore.getState().authed === false);
     await screen.findByRole("link", { name: "Sign in with SSO" }, { timeout: 8000 });

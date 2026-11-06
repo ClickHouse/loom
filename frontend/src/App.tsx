@@ -333,11 +333,13 @@ export default function App() {
           // account it names; a cancelled one is dropped and boot goes on as before.
           const token = link.token;
           const held = storedToken();
-          if (token && !started && sameAccount(token, held)) replaced = held;
-          else if (token && !started) {
-            const ok = await new Promise<boolean>((answer) => setLinkAsk({ token, answer }));
-            setLinkAsk(null);
-            if (!ok) link = { ...link, token: null };
+          if (token && !started) {
+            if (sameAccount(token, held)) replaced = held;
+            else {
+              const ok = await new Promise<boolean>((answer) => setLinkAsk({ token, answer }));
+              setLinkAsk(null);
+              if (!ok) link = { ...link, token: null };
+            }
           }
           if (link.token) setToken(link.token);
           try {

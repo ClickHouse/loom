@@ -68,6 +68,17 @@ function startSso(e: MouseEvent<HTMLAnchorElement>): void {
   goToSso(rememberSignInStart());
 }
 
+/** Whether the address asks the gate to start SSO (`SSO_REQUEST_PATH` in `lib/boot.ts`); the
+ *  ask is scrubbed, so neither a reload nor the way back after the sign-in repeats it. */
+function takeSsoRequest(): boolean {
+  const query = new URLSearchParams(window.location.search);
+  if (query.get("sign_in") !== "sso") return false;
+  query.delete("sign_in");
+  const qs = query.toString();
+  history.replaceState(history.state, "", window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash);
+  return true;
+}
+
 // When the gate last started an SSO sign-in on its own in this tab, so a provider that
 // sends the browser straight back with a token the server refuses cannot loop.
 const SSO_RESUMED_AT = "loom_sso_resumed_v1";
@@ -86,12 +97,14 @@ export function resumeSsoOnce(now: number = Date.now()): boolean {
   return true;
 }
 
-/** Sends the browser to the identity provider; it comes back to `/me#token=…`. After an
- *  expired session (the gate shows only while the app boots) it goes there by itself, so a
- *  person still signed in at the provider returns to the page they were on. */
+/** Sends the browser to the identity provider; it comes back to `/me?n=…#token=…`. After an
+ *  expired session (the gate shows only while the app boots), and in the tab the
+ *  session-expired card opens, it goes there by itself, so a person still signed in at the
+ *  provider returns to the page they were on. */
 function SsoGate({ reason }: { reason?: GateReason }) {
   useEffect(() => {
-    if (reason !== "expired" || !resumeSsoOnce()) return;
+    const asked = takeSsoRequest();
+    if ((reason !== "expired" && !asked) || !resumeSsoOnce()) return;
     goToSso(rememberSignInStart());
   }, [reason]);
   return (
@@ -134,7 +147,7 @@ export function LinkTokenConfirm({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const subject = claims?.subject || "an unnamed account";
+  const subject = claims?.subject || null;
   return (
     <GateShell>
       <Panel className="space-y-4">
@@ -146,7 +159,7 @@ export function LinkTokenConfirm({
           </p>
         ) : null}
         <p className="m-0 text-sm">
-          This link signs this browser in as <strong>{subject}</strong>
+          This link signs this browser in as {subject ? <strong>{subject}</strong> : "an account it does not name"}
           {claims?.org ? (
             <>
               {" "}
@@ -156,7 +169,12 @@ export function LinkTokenConfirm({
           . What you upload, write or mint next goes to that account. Continue only if you opened a link you asked for.
         </p>
         <div className="flex gap-2">
-          <Button type="primary" htmlType="button" label={`Sign in as ${subject}`} onClick={onConfirm} />
+          <Button
+            type="primary"
+            htmlType="button"
+            label={subject ? `Sign in as ${subject}` : "Sign in"}
+            onClick={onConfirm}
+          />
           <Button type="secondary" htmlType="button" label="Cancel" onClick={onCancel} />
         </div>
       </Panel>

@@ -59,10 +59,15 @@ export const SIGN_IN_FROM = "loom_sign_in_from_v1";
 
 /** The session key for the mark of the single sign-on this tab started, `{ nonce, at }`: the
  *  sign-in gate writes it beside {@link SIGN_IN_FROM} and sends the nonce to `/oauth/sso?n=`,
- *  and the server hands it back beside the token (`#token=…&n=…`). A link token without this
+ *  and the server hands it back with the token (`/me?n=…#token=…`). A link token without this
  *  tab's nonce is one it never asked for, even one that arrives while the tab is away at the
  *  identity provider. */
 export const SIGN_IN_PENDING = "loom_sign_in_pending_v1";
+
+/** The address the session-expired card opens in a new tab: the sign-in gate there starts
+ *  SSO itself (`?sign_in=sso`), so that tab marks the sign-in as its own and the token it
+ *  brings back is stored without asking. */
+export const SSO_REQUEST_PATH = "/me?sign_in=sso";
 
 /** How long a sign-in this tab started stays its own. */
 const SIGN_IN_PENDING_TTL_MS = 10 * 60 * 1000;
@@ -107,28 +112,24 @@ export function sameAccount(link: string, held: string | null): boolean {
 }
 
 /** Accept fragment tokens only; scrub both token forms before boot can fail.
- * Query tokens reach server logs and are never accepted. A sign-in's fragment carries its
- * tab's nonce after the token, `#token=<jwt>&n=<nonce>`. */
+ * Query tokens reach server logs and are never accepted. A sign-in's landing carries its
+ * tab's nonce in the query, `/me?n=<nonce>#token=<jwt>`, scrubbed with the token. */
 export function takeLinkToken(): { token: string | null; atRoot: boolean; nonce: string | null } | null {
   const { hash, search, pathname } = window.location;
   const fromHash = hash.startsWith("#token=");
   const query = new URLSearchParams(search);
   if (!fromHash && !query.has("token")) return null;
+  const n = (fromHash && query.get("n")) || "";
+  const nonce = /^[A-Za-z0-9_-]{16,64}$/.test(n) ? n : null;
   query.delete("token");
+  if (fromHash) query.delete("n");
   const qs = query.toString();
   history.replaceState(history.state, "", pathname + (qs ? `?${qs}` : "") + (fromHash ? "" : hash));
   let token: string | null = null;
-  let nonce: string | null = null;
-  if (fromHash) {
-    const body = hash.slice("#token=".length);
-    const at = body.indexOf("&n=");
-    const n = at < 0 ? "" : body.slice(at + "&n=".length);
-    nonce = /^[A-Za-z0-9_-]{16,64}$/.test(n) ? n : null;
-    try {
-      token = decodeURIComponent(at < 0 ? body : body.slice(0, at)) || null;
-    } catch {
-      /* a fragment that does not decode carries no token */
-    }
+  try {
+    token = fromHash ? decodeURIComponent(hash.slice("#token=".length)) || null : null;
+  } catch {
+    /* a fragment that does not decode carries no token */
   }
   return { token, atRoot: fromHash && !qs && (pathname === "/" || pathname === "/me"), nonce };
 }

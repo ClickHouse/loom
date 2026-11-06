@@ -500,7 +500,9 @@ async def test_the_dashboard_landing_hands_back_the_tab_mark_beside_the_token(
 ) -> None:
     mark = "Ab_-" * 8
     location = await _landing(monkeypatch, {"kind": "dashboard", "tab_nonce": mark})
-    assert location.startswith("/me#token=") and location.endswith(f"&n={mark}")
+    # In the query, so a dashboard that predates the mark still reads the fragment as a token.
+    assert location.startswith(f"/me?n={mark}#token=")
+    assert "&" not in location.split("#", 1)[1]
 
 
 @pytest.mark.parametrize(
@@ -510,4 +512,4 @@ async def test_the_dashboard_landing_echoes_no_mark_it_was_not_given(
     monkeypatch: pytest.MonkeyPatch, pending: dict[str, Any]
 ) -> None:
     location = await _landing(monkeypatch, pending)
-    assert location.startswith("/me#token=") and "&" not in location
+    assert location.startswith("/me#token=") and "&" not in location and "?" not in location

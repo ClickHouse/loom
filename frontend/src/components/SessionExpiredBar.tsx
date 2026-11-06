@@ -1,6 +1,7 @@
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { reloadPage } from "../lib/navigation";
+import { SSO_REQUEST_PATH } from "../lib/boot";
 
 // The cross-tab handler rides in this chunk: App fetches it as it loads, and the shell's
 // own chunk stays within its budget.
@@ -26,8 +27,9 @@ export default function SessionExpiredBar() {
             type="primary"
             htmlType="button"
             iconLeft="lock"
-            // With SSO the new tab goes straight to the identity provider: one click.
-            onClick={() => window.open(window.__LOOM_SSO ? "/oauth/sso" : "/", "_blank", "noopener")}
+            // With SSO the new tab's gate starts the sign-in itself, marked as that tab's own,
+            // so the token it brings back is stored without asking: one click.
+            onClick={() => window.open(window.__LOOM_SSO ? SSO_REQUEST_PATH : "/", "_blank", "noopener")}
           >
             Sign in in a new tab
           </Button>

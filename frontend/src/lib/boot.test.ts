@@ -197,12 +197,20 @@ describe("a sign-in this tab started", () => {
     expect(takeSignInStarted(nonce)).toBe(false);
   });
 
-  it("reads the sign-in's nonce after the token, and only a well-formed one", () => {
-    history.replaceState(null, "", "/me#token=abc.def.ghi&n=Ab_-Ab_-Ab_-Ab_-");
+  it("reads the sign-in's nonce from the landing's query, only a well-formed one, and scrubs it", () => {
+    history.replaceState(null, "", "/me?n=Ab_-Ab_-Ab_-Ab_-#token=abc.def.ghi");
     expect(takeLinkToken()).toEqual({ token: "abc.def.ghi", atRoot: true, nonce: "Ab_-Ab_-Ab_-Ab_-" });
-    history.replaceState(null, "", "/me#token=abc&n=short");
+    expect(window.location.search + window.location.hash).toBe("");
+    history.replaceState(null, "", "/me?n=short#token=abc");
     expect(takeLinkToken()).toEqual({ token: "abc", atRoot: true, nonce: null });
-    expect(window.location.hash).toBe("");
+    expect(window.location.search + window.location.hash).toBe("");
+    // The fragment is the token alone, as a dashboard that predates the nonce reads it.
+    history.replaceState(null, "", "/me#token=abc&n=Ab_-Ab_-Ab_-Ab_-");
+    expect(takeLinkToken()?.nonce).toBeNull();
+    // A page's own `n` stays when no token comes with it.
+    history.replaceState(null, "", "/library?n=1&token=leak");
+    takeLinkToken();
+    expect(window.location.search).toBe("?n=1");
   });
 
   it("names the same account only for the same subject and org", () => {

@@ -436,8 +436,17 @@ browser that started the sign-in, never stored on the server. The callback finis
 sign-in only with that cookie, once: its state is marked used in Keeper. The callback URL
 alone (from a log, browser history or a screenshot) finishes nothing. The cookie is scoped
 to `/oauth/callback`, not `__Host-`, so it is not sent on every request; a site on a
-sibling subdomain could therefore plant its own sign-in for the victim to finish (login
-CSRF), which serving Loom on a host of its own rules out.
+sibling subdomain can therefore plant its own sign-in for the victim to finish.
+
+**The dashboard's hand-off is bound to its tab.** The sign-in gate starts SSO as
+`/oauth/sso?n=<nonce>`, with a random nonce it keeps in that tab's session storage. The
+server seals the nonce into the sign-in's cookie and lands the token at
+`/me?n=<nonce>#token=<jwt>`. The dashboard stores a token without asking only when its
+nonce is the one the tab kept (used once, for ten minutes), or when it names the account
+already signed in; any other token, a planted sign-in's or a link's, waits for the person to
+confirm the account it names. The dashboard page sends `Cross-Origin-Opener-Policy:
+same-origin`, so a page of another origin that opened it cannot navigate it while it is
+away at the identity provider.
 
 **A revocation that cannot be written is owed.** When ending a session cannot write
 `loom.revoked_tokens`, a `revocation_owed` row in `loom.oauth_state` stands in for it for

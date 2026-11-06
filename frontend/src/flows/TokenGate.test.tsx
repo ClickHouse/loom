@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SIGN_IN_FROM, SIGN_IN_PENDING } from "../lib/boot";
 import { ApiError } from "../lib/errors";
 import { axeViolations } from "../test/axe";
-import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, TokenGate, resumeSsoOnce } from "./TokenGate";
+import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, LinkTokenConfirm, TokenGate, resumeSsoOnce } from "./TokenGate";
 
 // The gate says why it is showing, tells a stranger how to get in, and every field is
 // labelled.
@@ -229,11 +229,81 @@ describe("TokenGate", () => {
       expect(vi.mocked(goToSso).mock.calls[0][0]).not.toBe(nonce);
     });
 
+    it("a click that opens another tab or window follows the bare link and marks nothing here", () => {
+      window.__LOOM_SSO = true;
+      render(<TokenGate onLogin={() => undefined} reason={null} />);
+      const link = screen.getByRole("link", { name: "Sign in with SSO" });
+      // Read once the click has passed the gate's own handler (on the React root), then
+      // stopped: jsdom does not navigate.
+      let followed = 0;
+      const after = (e: Event) => {
+        if (!e.defaultPrevented) followed++;
+        e.preventDefault();
+      };
+      document.addEventListener("click", after);
+      try {
+        for (const init of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }])
+          fireEvent.click(link, init);
+        expect(followed).toBe(5);
+        expect(goToSso).not.toHaveBeenCalled();
+        expect(sessionStorage.getItem(SIGN_IN_PENDING)).toBeNull();
+        // A plain click is the gate's: it starts this tab's marked sign-in instead.
+        fireEvent.click(link);
+        expect(followed).toBe(5);
+        expect(goToSso).toHaveBeenCalledTimes(1);
+      } finally {
+        document.removeEventListener("click", after);
+      }
+    });
+
+    it("starts the sign-in by itself in the tab the session-expired card opens, and scrubs the ask", () => {
+      window.__LOOM_SSO = true;
+      history.replaceState(null, "", "/me?sign_in=sso");
+      render(<TokenGate onLogin={() => undefined} reason={null} />);
+      const { nonce } = JSON.parse(sessionStorage.getItem(SIGN_IN_PENDING) ?? "{}");
+      expect(goToSso).toHaveBeenCalledWith(nonce);
+      expect(window.location.pathname + window.location.search).toBe("/me");
+      history.replaceState(null, "", "/");
+    });
+
     it("shows the password gate when it is off", () => {
       window.__LOOM_SSO = false;
       render(<TokenGate onLogin={() => undefined} reason={null} />);
       expect(screen.queryByRole("link", { name: "Sign in with SSO" })).not.toBeInTheDocument();
       expect(screen.getAllByLabelText(/password/i).length).toBeGreaterThan(0);
     });
+  });
+});
+
+describe("LinkTokenConfirm", () => {
+  const claims = (subject: string | null, org: string | null) => ({ subject, org, namespaces: [], session: null });
+
+  it("names both accounts and passes axe", async () => {
+    const { container } = render(
+      <LinkTokenConfirm
+        claims={claims("mallory", "acme")}
+        current={claims("alice", "acme")}
+        onConfirm={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Sign in as mallory" })).toBeInTheDocument();
+    expect(screen.getByText(/You are signed in as/)).toHaveTextContent("You are signed in as alice (acme).");
+    expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("offers a plain Sign in for a token that names no subject", async () => {
+    const { container } = render(
+      <LinkTokenConfirm
+        claims={claims(null, null)}
+        current={null}
+        onConfirm={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByText(/You are signed in as/)).not.toBeInTheDocument();
+    expect(screen.getByText(/an account it does not name/)).toBeInTheDocument();
+    expect(await axeViolations(container)).toEqual([]);
   });
 });

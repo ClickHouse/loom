@@ -46,12 +46,14 @@ A `#token=` link signs this browser in as whoever the token names, so the page s
 without asking only when it answers the SSO sign-in this tab started from the sign-in screen
 within the last ten minutes, or when it names the same subject and org as the token already
 held. The sign-in screen sends a nonce it keeps in the tab to `/oauth/sso?n=<nonce>`, and
-the server hands it back as `/me#token=<jwt>&n=<nonce>`; a token without that nonce, such
-as one from an SSO sign-in started by typing `/oauth/sso`, is not the tab's own. Any other
-link waits on a screen that names the token's subject and org, and the account the browser
-is signed in as: **Sign in as …** stores it, and **Cancel** drops it and keeps the session
-the browser had. Until then the token is held only in the page's memory. A same-account
-token the server refuses gives the held token back.
+the server hands it back as `/me?n=<nonce>#token=<jwt>`; a token without that nonce, such as
+one from an SSO sign-in started by typing `/oauth/sso`, is not the tab's own. Any other link
+waits on a screen that names the token's subject and org, and the account the browser is
+signed in as: **Sign in as …** stores it, and **Cancel** drops it and keeps the session the
+browser had. Until then the token is held only in the page's memory. A same-account token
+the server refuses gives the held token back. **Sign in in a new tab** on the session-ended
+card opens `/me?sign_in=sso`, whose sign-in screen starts SSO with a nonce of that tab's
+own.
 
 `loom init --agent NAME` signs an agent up on its own and prints a one-time code a person
 enters in the dashboard to claim the namespace. The token sits in the browser's local storage;
