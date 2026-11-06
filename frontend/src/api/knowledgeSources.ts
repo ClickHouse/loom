@@ -23,6 +23,25 @@ export async function listKnowledgeSources(id: Ns, opts: RequestOpts = {}): Prom
   return post<KnowledgeSourceList>("/v1/knowledge.source.list", { org: id.org, namespace: id.namespace }, opts.signal);
 }
 
+/** One source's config (credential never returned), sync state and the documents it wrote. */
+export interface KnowledgeSourceDetail {
+  name: string;
+  kind: string;
+  config: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
+  sync: { status: string; last_synced_at: string; documents_seen: number; error: string };
+  documents: { source_uri: string; title: string; source_revision: string; ingested_at: string }[];
+}
+
+export async function inspectKnowledgeSource(
+  id: Ns,
+  name: string,
+  opts: RequestOpts = {},
+): Promise<KnowledgeSourceDetail> {
+  return post("/v1/knowledge.source.inspect", { org: id.org, namespace: id.namespace, name }, opts.signal);
+}
+
 /** `dryRun` probes the credential and stores nothing. */
 export async function addKnowledgeSource(id: Ns, form: SourceForm, dryRun: boolean): Promise<KnowledgeSourceAddResult> {
   return post<KnowledgeSourceAddResult>("/v1/knowledge.source.add", sourceAddBody(id.org, id.namespace, form, dryRun));

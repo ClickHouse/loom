@@ -33,6 +33,7 @@ import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
+import { DatasetsDialog } from "../flows/DatasetsDialog";
 import { Modal } from "../components/ui/Modal";
 import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
@@ -199,6 +200,8 @@ export function Documents() {
   const [previewDoc, setPreviewDoc] = useState<KnowledgeDocument | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewFile, setPreviewFile] = useState<InlinePreview | null>(null);
+  // The preview's Tables dialog: the typed datasets its file became.
+  const [tablesFor, setTablesFor] = useState<string | null>(null);
   const [showText, setShowText] = useState(false);
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
@@ -1051,6 +1054,16 @@ export function Documents() {
           </div>
           {previewEntry && (
             <div className="flex items-center gap-2 shrink-0">
+              {previewEntry.has_blob && (
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  iconLeft="table"
+                  onClick={() => setTablesFor(previewEntry.source_uri)}
+                >
+                  Tables
+                </Button>
+              )}
               {!readOnly && (
                 <Tip content="Upload a new file version of this document">
                   <Button
@@ -1184,6 +1197,14 @@ export function Documents() {
           )}
         </div>
       </Modal>
+      {tablesFor && (
+        <DatasetsDialog
+          identity={identity}
+          sourceUri={tablesFor}
+          canApprove={!readOnly}
+          onClose={() => setTablesFor(null)}
+        />
+      )}
     </PageContainer>
   );
 }

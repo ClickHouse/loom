@@ -15,6 +15,7 @@ vi.mock("../api", async (importOriginal) => ({
   ingestKnowledge: vi.fn(),
   knowledgeIngestStatus: vi.fn(),
   addKnowledge: vi.fn(),
+  cancelIngestion: vi.fn(),
 }));
 vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
@@ -24,6 +25,7 @@ import { toast } from "../components/Toast";
 import {
   type KnowledgeUpload,
   addKnowledge,
+  cancelIngestion,
   ingestKnowledge,
   type KnowledgeIngestStatus,
   knowledgeFormats,
@@ -183,6 +185,20 @@ describe("AddDocumentDialog", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(vi.mocked(knowledgeIngestStatus).mock.calls.length).toBe(polls);
     expect(onAdded).not.toHaveBeenCalled();
+  });
+
+  it("stops the job it follows with knowledge.ingest_cancel", async () => {
+    ingestClock.sleep = () => new Promise<void>(() => {});
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("processing", { stage: "embed" }));
+    vi.mocked(cancelIngestion).mockResolvedValue({ found: true, state: "cancelled", cancelled: true });
+    const { dialog, onOpenChange } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
+    await waitFor(() => expect(cancelIngestion).toHaveBeenCalledWith(identity, "job-1"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toBe("Stopped spec.pdf");
   });
 
   it("can cancel a pending upload, which queues nothing, and holds through the ingest call", async () => {

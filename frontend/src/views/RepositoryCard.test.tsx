@@ -845,6 +845,8 @@ describe("RepositoryCard — sources", () => {
     expect(within(group).getByText(/Sync is off on this deployment/)).toBeInTheDocument();
     expect(within(group).queryByRole("button", { name: "Add a source" })).toBeNull();
     expect(within(group).queryByRole("button", { name: "Actions for design-docs" })).toBeNull();
+    // A reader opens the source's details from its name.
+    expect(within(group).getByRole("button", { name: "design-docs" })).toBeInTheDocument();
     cleanup();
     mount([branch({ my_status: "member" })], []); // no docs namespace: no Sources facet
     expect(screen.queryByRole("group", { name: "Sources" })).toBeNull();

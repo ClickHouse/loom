@@ -247,11 +247,6 @@ DASHBOARD_PENDING: frozenset[str] = frozenset(
         "profile_schema.get",
         "profile_schema.set",
         # documents and sources
-        "collection.move",
-        "knowledge.dataset_approve",
-        "knowledge.dataset_get",
-        "knowledge.ingest_cancel",
-        "knowledge.source.inspect",
         # pages of their own
         "conversation.delete",
         "conversation.update",

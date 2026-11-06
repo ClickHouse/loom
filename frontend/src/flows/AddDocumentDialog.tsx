@@ -4,7 +4,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { addKnowledge, type Identity } from "../api";
+import { addKnowledge, cancelIngestion, type Identity } from "../api";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { TabTrigger } from "../components/ui/TabTrigger";
@@ -65,6 +65,8 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const following = useRef<AbortController | null>(null);
+  // The job being followed, for Stop.
+  const [jobId, setJobId] = useState<string | null>(null);
   const formats = useKnowledgeFormats(identity, open);
   const verdict = file ? fileVerdict(file, formats) : null;
   // Leaving the page stops the following, as closing does; the job goes on on the server.
@@ -96,6 +98,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
     setError(null);
     setBusy(null);
     setStep("");
+    setJobId(null);
   };
 
   const onPickFile = (f: File | null) => {
@@ -142,7 +145,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
           setStep(line);
           setBusy(phase);
         },
-        { signal: ctrl.signal },
+        { signal: ctrl.signal, onQueued: setJobId },
       );
       if (status.state === "ready" || status.state === "partial") {
         const what = `${replaceMode ? "Replaced" : "Added"} ${sourceUri.trim()}: revision ${status.revision}`;
@@ -204,6 +207,18 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
     if (!v && busy === "follow") toast(goesOn(sourceUri.trim(), !!replaceMode), "info");
     if (!v) reset();
     onOpenChange(v);
+  };
+  // Stop the job being followed: knowledge.ingest_cancel. One that ended meanwhile says how.
+  const stop = async () => {
+    if (!jobId) return;
+    try {
+      const r = await cancelIngestion(identity, jobId);
+      toast(r.cancelled ? `Stopped ${sourceUri.trim()}` : `${sourceUri.trim()} had already ${r.state}`, "info");
+      reset();
+      onOpenChange(false);
+    } catch (e) {
+      setError(humanizeError(e));
+    }
   };
   const holdWhileBusy = (e: Event) => {
     if (busy === "queue" || busy === "save") e.preventDefault();
@@ -320,6 +335,11 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
           >
             {busy === "follow" ? "Close" : "Cancel"}
           </Button>
+          {busy === "follow" && jobId && (
+            <Button type="danger" htmlType="button" onClick={() => void stop()}>
+              Stop ingestion
+            </Button>
+          )}
           <Button type="primary" htmlType="submit" disabled={!canSubmit} loading={busy !== null}>
             {replaceMode ? "Save changes" : mode === "file" ? "Upload" : "Add"}
           </Button>
