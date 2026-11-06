@@ -84,7 +84,8 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
 - **Parts.** `LOOM_TEST_SHARD=k/n` collects only the test files of the k-th of n parts. A
   part holds whole files, so a module fixture is built in one part only. Files are dealt
   by the seconds `tests/shard_weights.json` records for each, and a file it does not list
-  (every integration file) by its count of test functions (`tests/_shards.py`). CI splits
+  by its count of test functions times the recorded seconds per test function, or one
+  second each when nothing is recorded, as for every integration file (`tests/_shards.py`). CI splits
   the suite into four parts, each on its own stack, beside the isolation gates part; a
   failure in part k reproduces with `LOOM_TEST_SHARD=k/4 make test-integration`. The
   `unit-coverage` job uploads a `shard-weights` artifact with its run's unit times; commit

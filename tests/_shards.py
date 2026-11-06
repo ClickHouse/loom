@@ -113,8 +113,8 @@ class Split:
 _split: Split | None = None
 
 
-def ignored(path: Path, config: pytest.Config) -> bool | None:
-    """True for a test file outside the requested part; None (no opinion) otherwise."""
+def requested(config: pytest.Config) -> Split | None:
+    """The split LOOM_TEST_SHARD asks for, built once per process; None without one."""
     global _split
     spec = os.environ.get("LOOM_TEST_SHARD", "")
     if not spec:
@@ -125,16 +125,22 @@ def ignored(path: Path, config: pytest.Config) -> bool | None:
         except ValueError as e:
             raise pytest.UsageError(str(e)) from e
         _split = Split(k, n, [Path(a.split("::", 1)[0]).resolve() for a in config.args])
-    return True if _split.ignores(path) else None
+    return _split
+
+
+def ignored(path: Path, config: pytest.Config) -> bool | None:
+    """True for a test file outside the requested part; None (no opinion) otherwise."""
+    split = requested(config)
+    return True if split is not None and split.ignores(path) else None
 
 
 def deselect(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Drop the items of files outside the requested part that collection still
     reached: pytest asks `pytest_ignore_collect` only about paths it walks to, not
     about a file or node id named on the command line."""
-    if _split is None:
+    split = requested(config)
+    if split is None:
         return
-    split = _split
     kept: list[pytest.Item] = []
     dropped: list[pytest.Item] = []
     for item in items:
@@ -174,4 +180,6 @@ def _module_file(classname: str) -> str | None:
 
 
 if __name__ == "__main__":
+    if not sys.argv[1:]:
+        sys.exit("usage: python -m tests._shards <junit xml>...")
     WEIGHTS.write_text(json.dumps(record([Path(p) for p in sys.argv[1:]]), indent=2) + "\n")

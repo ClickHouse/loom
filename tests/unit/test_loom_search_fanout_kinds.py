@@ -110,13 +110,12 @@ def test_a_failed_read_after_the_ttl_serves_the_last_snapshot(
 
     directory = _Directory()
     monkeypatch.setattr(ch, "get_client", lambda: directory)
-    nk.reset_cache()
+    monkeypatch.setattr(nk, "_cache", {})
     assert asyncio.run(nk.kind_map(ORG)) == KINDS
-    _, snapshot = nk._cache[ORG]
-    nk._cache[ORG] = (0.0, snapshot)  # its TTL has run out
+    real = nk.time.monotonic
+    monkeypatch.setattr(nk.time, "monotonic", lambda: real() + nk._TTL_S + 1)  # the TTL ran out
     directory.fail = True
     assert asyncio.run(nk.kind_map(ORG)) == KINDS
-    nk.reset_cache()
 
 
 def test_a_failed_read_with_no_snapshot_narrows_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -125,7 +124,7 @@ def test_a_failed_read_with_no_snapshot_narrows_nothing(monkeypatch: pytest.Monk
     directory = _Directory()
     directory.fail = True
     monkeypatch.setattr(ch, "get_client", lambda: directory)
-    nk.reset_cache()
+    monkeypatch.setattr(nk, "_cache", {})
     assert asyncio.run(nk.kind_map(ORG)) == {}
 
 
