@@ -46,6 +46,9 @@ _TESSDATA = (
 # edge, or a word of strokes alone.
 _STROKES = "|[]{}¦‖_—"
 _ONLY_STROKES = re.compile(f"[{re.escape(_STROKES)}=~-]+")
+# A word of vertical bars alone is a rule OCR read, near a rule it found or not
+# (a light grid's): no text is a bar alone.
+_BARS = re.compile("[|¦‖]+")
 _NEAR = 6  # pixels: a word this close to a rule touches it
 _CELL = 64  # pixels: the grid rules are found in by place
 
@@ -144,11 +147,16 @@ class Engine:
         lp.pixConvertTo1.argtypes = [p, i]
         lp.pixConvertTo8.restype = p
         lp.pixConvertTo8.argtypes = [p, i]
+        lp.pixInvert.restype = p
+        lp.pixInvert.argtypes = [p, p]
+        lp.pixCountPixels.argtypes = [p, ip, p]
         lp.pixPaintThroughMask.argtypes = [p, p, i, i, ctypes.c_uint32]
-        lp.pixOpenBrick.restype = p
-        lp.pixOpenBrick.argtypes = [p, p, i, i]
+        lp.pixSubtract.restype = p
+        lp.pixSubtract.argtypes = [p, p, p]
         lp.pixDilateBrick.restype = p
         lp.pixDilateBrick.argtypes = [p, p, i, i]
+        lp.pixOpenBrick.restype = p
+        lp.pixOpenBrick.argtypes = [p, p, i, i]
         lp.pixConnCompBB.restype = p
         lp.pixConnCompBB.argtypes = [p, i]
         lp.boxaGetCount.argtypes = [p]
@@ -190,7 +198,9 @@ class Engine:
             if not gray:
                 raise ValueError("its image could not be turned to gray")
             held.append(gray)
-            rules = self._unrule(gray, dpi, held)
+            if self._mostly_dark(gray, held):  # light text on dark: read as dark on light
+                lp.pixInvert(gray, gray)
+            rules = self._unrule(gray, dpi, w, h, held)
             self._t.TessBaseAPISetImage2(self._api, gray)
             self._t.TessBaseAPISetSourceResolution(
                 self._api, max(1, round(dpi))
@@ -212,22 +222,46 @@ class Engine:
             for one in held:
                 self._destroy(one)
 
-    def _unrule(self, gray: int, dpi: float, held: list[int]) -> list[Box]:
-        """The rules' boxes, painted out of the gray image: strokes, in black
-        and white, longer than half an inch across or a third of an inch down,
-        longer than a letter's in type up to about 36 points (a larger letter's
-        stem goes with them)."""
+    def _mostly_dark(self, gray: int, held: list[int]) -> bool:
+        lp = self._l
+        mono = lp.pixConvertTo1(gray, 160)
+        if not mono:
+            return False
+        held.append(mono)
+        dark = ctypes.c_int()
+        if lp.pixCountPixels(mono, ctypes.byref(dark), None) != 0:
+            return False
+        return bool(dark.value > 0.5 * int(lp.pixGetWidth(mono)) * int(lp.pixGetHeight(mono)))
+
+    def _unrule(self, gray: int, dpi: float, w: int, h: int, held: list[int]) -> list[Box]:
+        """The rules' boxes, painted out of the gray image: thin strokes, in
+        black and white, longer than half an inch across or a third of an inch
+        down, longer than a letter's in type up to about 36 points (a larger
+        letter's stem goes with them). A dark band (a heading's background, a
+        dark screenshot) is no stroke: what is thicker than a tenth of an inch
+        stays."""
         lp = self._l
         mono = lp.pixConvertTo1(gray, 160)  # where the strokes are, not what OCR reads
         if not mono:
             return []
         held.append(mono)
+        thin = max(4, round(dpi / 10))
         rules: list[Box] = []
-        for hsize, vsize in ((max(8, round(0.5 * dpi)), 1), (1, max(8, round(0.35 * dpi)))):
+        across, down = min(w, max(8, round(0.5 * dpi))), min(h, max(8, round(0.35 * dpi)))
+        for hsize, vsize in ((across, 1), (1, down)):
             lines = lp.pixOpenBrick(None, mono, hsize, vsize)
             if not lines:
                 continue
             held.append(lines)
+            # what is thicker than `thin` both ways is a band, not a stroke
+            bands = lp.pixOpenBrick(None, lines, thin, thin)
+            if bands:
+                held.append(bands)
+                strokes = lp.pixSubtract(None, lines, bands)
+                if not strokes:
+                    continue
+                held.append(strokes)
+                lines = strokes
             rules += self._boxes(lines)
             # a stroke's edges, a pixel or two either side, go with it, or OCR
             # reads what is left of them as quotes and colons
@@ -286,7 +320,9 @@ class Engine:
                     self._t.TessDeleteText(ptr)
                     self._t.TessPageIteratorBoundingBox(pi, _RIL_WORD, *map(ctypes.byref, box))
                     x0, y0, x1, y1 = (b.value for b in box)
-                    if near.touches(x0, y0, x1, y1):
+                    if _BARS.fullmatch(text):
+                        text = ""
+                    elif near.touches(x0, y0, x1, y1):
                         text = _unruled(text)
                     if text:
                         yield Word(text, x0, y0, x1, y1, line[0], line[1], first, line[2])
@@ -326,6 +362,10 @@ class _RuleGrid:
         return False
 
 
+def _why(e: Exception) -> str:
+    return f"{type(e).__name__}: {str(e)[:200]}" if str(e) else type(e).__name__
+
+
 @dataclass
 class Images:
     """OCR in one file: the images it may still read, and each image's reading
@@ -338,30 +378,47 @@ class Images:
     )
 
     def read(
-        self, key: Hashable, data: Callable[[], bytes], shown_inches: float
+        self, key: Hashable | None, data: Callable[[], bytes], shown_inches: float
     ) -> tuple[list[Word], list[Box], int, int]:
         """The image's words, rules and size in pixels (`Engine.read`), from the
-        file `data()` gives; ValueError naming why it is not read."""
-        if key not in self._done:
-            eng = engine()
-            if eng is None:
-                raise ValueError(NOT_RUN)
-            if self.left <= 0:
-                raise ValueError(f"past the {max_images()} images OCR reads in one file")
-            self.left -= 1
-            try:
-                self._done[key] = eng.read(data(), shown_inches)
-            except MemoryError:
-                raise  # the extraction's limit, not this image's defect
-            except ValueError as e:
-                self._done[key] = str(e)
-            except Exception as e:  # noqa: BLE001 — an image OCR cannot read leaves its page or slide partial
-                why = f"{type(e).__name__}: {str(e)[:200]}" if str(e) else type(e).__name__
-                self._done[key] = f"its image could not be read: {why}"
-        got = self._done[key]
+        file `data()` gives; ValueError naming why it is not read. An image with
+        no `key` is read each time; only an image the engine reads counts."""
+        got = self._done.get(key) if key is not None else None
+        if got is None:
+            got, counted = self._read(data, shown_inches)
+            if key is not None and counted:
+                self._done[key] = got
         if isinstance(got, str):
             raise ValueError(got)
         return got
+
+    def _read(
+        self, data: Callable[[], bytes], shown_inches: float
+    ) -> tuple[tuple[list[Word], list[Box], int, int] | str, bool]:
+        """The reading or why there is none, and whether it is the image's own
+        (kept for its next showing) rather than this file's bound or OCR off."""
+        eng = engine()
+        if eng is None:
+            return NOT_RUN, False
+        try:
+            file = data()
+        except MemoryError:
+            raise  # the extraction's limit, not this image's defect
+        except ValueError as e:
+            return str(e), True
+        except Exception as e:  # noqa: BLE001 — an image that cannot be decoded leaves its page or slide partial
+            return f"its image could not be read: {_why(e)}", True
+        if self.left <= 0:
+            return f"past the {max_images()} images OCR reads in one file", False
+        self.left -= 1
+        try:
+            return eng.read(file, shown_inches), True
+        except MemoryError:
+            raise
+        except ValueError as e:
+            return str(e), True
+        except Exception as e:  # noqa: BLE001 — an image OCR fails on leaves its page or slide partial
+            return f"its image could not be read: {_why(e)}", True
 
     @property
     def version(self) -> str:
@@ -414,17 +471,21 @@ def _datapath(languages: str) -> str | None:
     )
 
 
-def check(languages: str) -> str:
-    """Why OCR with `languages` cannot run here (no libraries, a model missing),
-    or empty when it can; the service checks it when it starts."""
+def check(languages: str) -> tuple[str, str]:
+    """What keeps OCR with `languages` from running here, `libraries` or
+    `model`, and why, or two empty strings when it can; the service checks it
+    when it starts."""
     for lib in ("libtesseract.so.5", "libleptonica.so.6"):
         try:
             ctypes.CDLL(lib)
         except OSError:
-            return f"{lib} is not installed"
+            return "libraries", f"{lib} is not installed"
     if _datapath(languages) is None:
-        return f"a model {languages} names is not installed (looked in {', '.join(_TESSDATA)})"
-    return ""
+        return (
+            "model",
+            f"a model {languages} names is not installed (looked in {', '.join(_TESSDATA)})",
+        )
+    return "", ""
 
 
 def _load(languages: str) -> Engine | None:

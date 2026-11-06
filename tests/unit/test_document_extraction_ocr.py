@@ -188,6 +188,12 @@ def test_a_jbig2_image_is_not_read_and_says_so(engine: FakeEngine) -> None:
             b"P5\n2 2\n255\n",
             bytes([255, 0, 255, 0]),
         ),
+        (  # a negative's samples, turned back
+            b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Decode [1 0]",
+            bytes([0, 255, 10, 20]),
+            b"P5\n2 2\n255\n",
+            bytes([255, 0, 245, 235]),
+        ),
     ],
 )
 def test_raw_samples_become_a_file_leptonica_reads(
@@ -392,7 +398,7 @@ def test_a_picture_read_leaves_the_text_parts_their_room() -> None:
 
 
 def test_the_real_engine_reads_a_ruled_image_end_to_end() -> None:
-    if ocr.check("eng"):
+    if ocr.check("eng")[0]:
         pytest.skip("Tesseract is not installed here")
     eng = ocr._load("eng")
     assert eng is not None
@@ -416,9 +422,86 @@ def test_the_service_refuses_a_missing_model_it_was_set_to_and_warns_without_ocr
     from loom_extractor.service import Config
 
     config = Config(token="t", ocr_languages="deu")
-    monkeypatch.setattr(ocr, "check", lambda languages: "a model deu names is not installed")
+    monkeypatch.setattr(
+        ocr, "check", lambda languages: ("model", "a model deu names is not installed")
+    )
     with pytest.raises(SystemExit, match="LOOM_EXTRACTOR_OCR_LANGUAGES"):
         check_ocr(config, {"LOOM_EXTRACTOR_OCR_LANGUAGES": "deu"})
-    monkeypatch.setattr(ocr, "check", lambda languages: "libtesseract.so.5 is not installed")
+    monkeypatch.setattr(
+        ocr, "check", lambda languages: ("libraries", "libtesseract.so.5 is not installed")
+    )
     check_ocr(Config(token="t"), {})
     assert "OCR cannot run (libtesseract.so.5 is not installed)" in caplog.text
+
+
+def test_an_image_drawn_again_on_its_page_is_read_once_there(engine: FakeEngine) -> None:
+    page = b"q 400 0 0 400 100 200 cm /Im1 Do Q\n" * 5
+    a = extract(laid_out_pdf([page], image=GRAY), "s.pdf")
+    assert " ".join(b.text for b in a.blocks).count("Scanned runbook text") == 1
+
+
+def test_a_page_past_its_picture_bound_is_partial(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(layout, "MAX_PICTURES", 2)
+    page = b"".join(
+        b"q 100 0 0 100 %d 200 cm /Im%d Do Q\n" % (20 + 120 * n, n + 1) for n in range(3)
+    )
+    a = extract(laid_out_pdf([page], image=[GRAY] * 3), "s.pdf")
+    assert [f.reason for f in a.coverage.failed] == [
+        "OCR did not read all of its pictures: it draws more than 2 pictures, which OCR reads"
+    ]
+
+
+def test_a_slide_with_a_chart_beside_a_picture_ocr_read_is_not_complete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.unit.test_document_extraction_office import _P, _rels, _slide, _zip
+
+    eng = FakeEngine([])  # the picture holds no text
+    monkeypatch.setattr(ocr, "engine", lambda: eng)
+    pic = (
+        '<p:pic><p:blipFill><a:blip r:embed="img"/></p:blipFill>'
+        '<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="6000000" cy="3000000"/></a:xfrm></p:spPr></p:pic>'
+    )
+    chart = "<p:graphicFrame><a:graphic><a:graphicData/></a:graphic></p:graphicFrame>"
+    deck = _zip(
+        {
+            "ppt/presentation.xml": (
+                f'<p:presentation {_P}><p:sldIdLst><p:sldId id="256" r:id="s1"/></p:sldIdLst>'
+                '<p:sldSz cx="12192000" cy="6858000"/></p:presentation>'
+            ),
+            "ppt/_rels/presentation.xml.rels": _rels(("s1", "slide", "slides/slide1.xml")),
+            "ppt/slides/slide1.xml": _slide(pic + chart),
+            "ppt/slides/_rels/slide1.xml.rels": _rels(("img", "image", "../media/image1.png")),
+            "ppt/media/image1.png": b"\x89PNG fake",
+        }
+    )
+    a = extract(deck, "c.pptx")
+    assert not a.coverage.complete and len(eng.seen) == 1
+    assert [f.reason for f in a.coverage.failed] == [
+        "no text: its pictures, charts or diagrams are not read"
+    ]
+
+
+def test_an_image_page_whose_layout_fails_says_so(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fails(*args: object) -> None:
+        raise RuntimeError("layout")
+
+    monkeypatch.setattr(pdffile, "_read_layout", fails)
+    a = extract(laid_out_pdf([b"q 400 0 0 400 100 200 cm /Im1 Do Q"], image=GRAY), "s.pdf")
+    assert [f.reason for f in a.coverage.failed] == [
+        "no text layer, and its layout could not be read: RuntimeError"
+    ]
+
+
+def test_the_real_engine_reads_light_text_on_a_dark_band() -> None:
+    if ocr.check("eng")[0]:
+        pytest.skip("Tesseract is not installed here")
+    eng = ocr._load("eng")
+    assert eng is not None
+    # a dark band 1200 x 400, its strokes no rules: what OCR reads of it is not painted out
+    words, rules, _, _ = eng.read(ocr.pnm(1200, 400, 1, 8, bytes([40]) * 1200 * 400), 4.0)
+    assert rules == [] and words == []

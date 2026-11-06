@@ -67,7 +67,11 @@ class _Slide:
     def __init__(self, root: Element) -> None:
         self.title = ""
         self.shapes: list[tuple[str, dict[str, object]]] = []  # (text, attrs)
-        self.unread = False
+        self.unread = (
+            False  # it holds a picture, chart, diagram or object this parser does not read
+        )
+        self.charts = False  # a chart, diagram or embedded object among them
+        self.picture_count = 0  # its pictures, those `pictures` lists and any other
         self.pictures: list[tuple[str, int, int]] = []  # (relationship id, width, height in EMU)
         tree = root.find(f"{q('p:cSld')}/{q('p:spTree')}")
         if tree is not None:
@@ -83,6 +87,7 @@ class _Slide:
                     self._walk(choice)
             elif el.tag == q("p:pic"):
                 self.unread = True
+                self.picture_count += 1
                 blip = el.find(f"{q('p:blipFill')}/{q('a:blip')}")
                 ext = el.find(f"{q('p:spPr')}/{q('a:xfrm')}/{q('a:ext')}")
                 if blip is not None and ext is not None:
@@ -105,7 +110,7 @@ class _Slide:
             elif el.tag == q("p:graphicFrame"):
                 tables = list(el.iter(q("a:tbl")))
                 if not tables:
-                    self.unread = True  # a chart, a diagram or an embedded object
+                    self.unread = self.charts = True  # a chart, a diagram or an embedded object
                 for tbl in tables:
                     text, rows, columns = _table(tbl)
                     if text.strip(" |\n"):
@@ -152,14 +157,15 @@ def _picture_texts(
     pkg: Package, part: str, slide: _Slide, area: int, images: ocr.Images
 ) -> tuple[list[str], int, str]:
     """The text OCR reads in each of the slide's pictures that covers a fifth of
-    it, how many it read, and why one was not read (empty when all were). An
-    image several slides show is read once."""
+    it, how many it read, and why the first it could not read was not (empty
+    when it read all). An image several slides show is read once."""
     big = [p for p in slide.pictures if area and p[1] * p[2] >= ocr.PICTURE_SHARE * area]
     if not big:
         return [], 0, ""
     rels = pkg.rels(part)
     texts: list[str] = []
     read = 0
+    why = ""
     for rid, cx, _ in big:
         kind, target = rels.get(rid, ("", ""))
         if kind != "image":
@@ -169,11 +175,10 @@ def _picture_texts(
                 target, partial(pkg.media, target, _MAX_PICTURE_BYTES), cx / _EMU_PER_INCH
             )
         except ValueError as e:
-            return (
-                texts,
-                read,
-                str(e) if str(e) == ocr.NOT_RUN else f"a picture could not be read with OCR: {e}",
+            why = why or (
+                str(e) if str(e) == ocr.NOT_RUN else f"a picture could not be read with OCR: {e}"
             )
+            continue
         read += 1
         lines: list[list[str]] = []
         for w in words:
@@ -183,7 +188,7 @@ def _picture_texts(
         text = "\n".join(" ".join(line) for line in lines).strip()
         if text:
             texts.append(text)
-    return texts, read, ""
+    return texts, read, why
 
 
 def extract_pptx(data: bytes) -> Artifact:
@@ -229,8 +234,9 @@ def extract_pptx(data: bytes) -> Artifact:
         if seen:
             ocr_slides.append(number)
         if not (slide.title or slide.shapes or notes or pictured):
-            # a picture OCR read and found no text in has nothing to lose
-            if slide.unread and not unread and not seen:
+            # pictures that OCR read every one of, and found no text in, lose nothing
+            whole = seen == slide.picture_count and not slide.charts
+            if slide.unread and not unread and not whole:
                 failed.append(
                     Failure(
                         f"slide {number}", "no text: its pictures, charts or diagrams are not read"

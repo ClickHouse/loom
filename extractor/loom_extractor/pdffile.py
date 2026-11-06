@@ -52,8 +52,6 @@ PARSER_VERSION = "3"  # pictures with text are read with OCR, or the page says i
 # read as its text layer.
 _TRUSTED = 0.998  # not a setting: a guard against a layout reading that drops text
 _MAX_FURNITURE = 200  # not a setting: the furniture lines the artifact names
-# A picture this share of a page with text, or larger, may carry text of its own:
-# it is read with OCR, or the page is not complete.
 _NEEDS_OCR = "no text layer: its images need OCR, which is not run"
 
 
@@ -219,31 +217,45 @@ def _read_layout(
     page with no text, all of them, laid out as the page; on one with text,
     those that cover a fifth of it and that its own text does not already fill
     (a scan's text layer over its image), as lines of their own (`pictured`).
-    What OCR could not read is the page's partial or failure."""
+    An image drawn more than once on the page is read once, and a page reads
+    at most `layout.MAX_PICTURES` images. What OCR could not read is the page's
+    partial or failure."""
     found, read.other, read.width, read.page_height, turn = layout.spans(page, read.dropped)
+    drawn = True
     try:
         rules, pictures = layout.drawing(page, reader, turn)
     except MemoryError:
         raise
     except Exception:  # noqa: BLE001 — unreadable drawing costs the ruled tables and pictures, not the text
-        rules, pictures = [], []
+        rules, pictures, drawn = [], [], False
     texted = bool(read.text.strip())
     area = read.width * read.page_height
-    targets = (
-        [p for p in pictures if p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p)]
-        if texted
-        else pictures
-    )
+    problems = []
+    if len(pictures) > layout.MAX_PICTURES:
+        problems.append(f"it draws more than {layout.MAX_PICTURES} pictures, which OCR reads")
+        pictures = pictures[: layout.MAX_PICTURES]
+    keys: set[tuple[int, int] | None] = set()
+    targets = []
+    for p in pictures:
+        ref = getattr(p.image, "indirect_reference", None)
+        key = (ref.idnum, ref.generation) if ref is not None else None
+        if key in keys and key is not None:
+            continue  # drawn again: its text is the page's once
+        keys.add(key)
+        if not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p)):
+            targets.append((key, p))
     if not texted and not targets and _has_image(page, reader):
+        contents = page.get_contents()
         read.failure = (
             _NEEDS_OCR
             if ocr.engine() is None
+            else "no text layer, and its drawing could not be read"
+            if not drawn
             else "no text layer: its image is drawn inline, which OCR does not read"
+            if contents is not None and _draws_inline_image(contents, reader)
+            else "no text layer, and no image it draws is one OCR finds"
         )
-    problems = []
-    for picture in targets:
-        ref = getattr(picture.image, "indirect_reference", None)
-        key = (ref.idnum, ref.generation) if ref is not None else id(picture.image)
+    for key, picture in targets:
         try:
             words, boxes, w, h = images.read(
                 key, partial(_image_file, picture.image), (picture.box[2] - picture.box[0]) / 72

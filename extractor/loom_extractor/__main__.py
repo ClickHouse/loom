@@ -55,10 +55,10 @@ def check_ocr(config: Config, env: Mapping[str, str]) -> None:
     OCR=off) is said once, as such pages are then reported not complete."""
     if not config.ocr:
         return
-    why = ocr.check(config.ocr_languages)
-    if why and "LOOM_EXTRACTOR_OCR_LANGUAGES" in env and "model" in why:
+    missing, why = ocr.check(config.ocr_languages)
+    if missing == "model" and "LOOM_EXTRACTOR_OCR_LANGUAGES" in env:
         raise SystemExit(f"LOOM_EXTRACTOR_OCR_LANGUAGES: {why}")
-    if why:
+    if missing:
         logging.getLogger("loom_extractor").warning(
             "OCR cannot run (%s): scanned pages and large pictures are reported not complete", why
         )

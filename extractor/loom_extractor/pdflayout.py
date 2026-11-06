@@ -47,6 +47,7 @@ from pypdf.generic import ContentStream
 # Not settings: bounds on hostile input and the geometry's tolerances.
 _MAX_RULES = 4_000  # the rules a page is searched for grids by
 _MAX_OPERATIONS = 400_000  # the drawing operators a page's rules are read from
+MAX_PICTURES = 50  # the images one page is read for; one more is kept to say there were more
 _MAX_FORM_DEPTH = 4  # how deep form XObjects are walked for rules
 _MAX_CMAP_BYTES = 1 << 20  # a ToUnicode map read for widths
 _MAX_CMAP_CODES = 65_536  # the codes a map's ranges are read for, and a font's widths
@@ -525,7 +526,10 @@ def drawing(
                 if form is not None and form.get("/Subtype") == "/Image":
                     corners = [to(*tp(u, v)) for u, v in ((0, 0), (1, 0), (1, 1), (0, 1))]
                     xs, ys = [c[0] for c in corners], [c[1] for c in corners]
-                    pictures.append(Picture(form, list(ctm), (min(xs), min(ys), max(xs), max(ys))))
+                    if len(pictures) <= MAX_PICTURES:
+                        pictures.append(
+                            Picture(form, list(ctm), (min(xs), min(ys), max(xs), max(ys)))
+                        )
                     continue
                 if form is None or form.get("/Subtype") != "/Form":
                     continue
