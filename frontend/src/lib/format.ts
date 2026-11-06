@@ -140,15 +140,15 @@ export function sentenceCase(s: string): string {
 // Made on first use, and only where the browser has one: this module loads on every page.
 let graphemes: Intl.Segmenter | null | undefined;
 
-function characters(s: string): Iterable<string> {
+function* characters(s: string): Iterable<string> {
   if (graphemes === undefined)
     graphemes =
       typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
-  if (!graphemes) return s; // by code point
-  const segments = graphemes.segment(s);
-  return (function* () {
-    for (const { segment } of segments) yield segment;
-  })();
+  if (!graphemes) {
+    yield* s; // by code point
+    return;
+  }
+  for (const { segment } of graphemes.segment(s)) yield segment;
 }
 
 /** `s` cut to at most `max` UTF-16 units, the ellipsis included, when it is longer, at the

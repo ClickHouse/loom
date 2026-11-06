@@ -35,7 +35,7 @@ export function formatLocator(format: string, locator: Locator | null | undefine
       : span("page", "pages", locator.page_start, locator.page_end),
     [locator.sheet ?? "", span("row", "rows", locator.row_start, locator.row_end)].filter(Boolean).join(", "),
   ].filter(Boolean);
-  // Lines only where nothing coarser places it: a key path, a page or a row says more.
+  // Lines only where nothing else places it: a key path, a page or a row says more.
   if (!parts.length) parts.push(span("line", "lines", locator.line_start, locator.line_end));
   return parts.filter(Boolean).join(" · ");
 }
