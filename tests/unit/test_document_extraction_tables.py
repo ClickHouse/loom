@@ -315,6 +315,22 @@ def test_an_xlsx_merge_left_unspread_groups_no_header(
     assert "S merges" in [f.unit for f in a.coverage.failed]
 
 
+def test_a_second_xlsx_header_row_counts_against_the_rows_a_table_holds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = {
+        1: [cell("A1", "2025", t="inlineStr")],
+        2: [cell("A2", "H1", t="inlineStr"), cell("B2", "H2", t="inlineStr")],
+        **{n: [cell(f"A{n}", n), cell(f"B{n}", n)] for n in (3, 4, 5)},
+    }
+    monkeypatch.setattr(xlsxfile, "MAX_ROWS", 3)
+    a = extract(workbook([("S", sheet(rows, merges=("A1:B1",)))]), "s.xlsx")
+    (table,) = a.tables
+    # The header and three rows under it are held; the second header row is one of them.
+    assert table.header_rows == 2 and table.rows == ((3, 3), (4, 4))
+    assert "S rows 5-" in [f.unit for f in a.coverage.failed]
+
+
 def test_the_columns_a_header_rows_merges_cover_are_found_in_one_pass() -> None:
     assert xlsxfile._covered([(1, 3), (2, 2), (6, 9)], 0, 7) == [
         False,

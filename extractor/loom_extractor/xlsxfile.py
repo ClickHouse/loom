@@ -478,10 +478,15 @@ class _Reader:
                     names[id(cell)] = read_name(cell)
                 return names[id(cell)]
 
-            joined = [
-                _named_over(above.get(col, EMPTY), under.get(col, EMPTY), named)
-                for col in range(left, right + 1)
-            ]
+            # A pair of cells spanning many columns shares one joined name, read once.
+            pairs: dict[tuple[int, int], tuple[Cell, bool]] = {}
+            joined = []
+            for col in range(left, right + 1):
+                pair = above.get(col, EMPTY), under.get(col, EMPTY)
+                ids = id(pair[0]), id(pair[1])
+                if ids not in pairs:
+                    pairs[ids] = _named_over(*pair, named)
+                joined.append(pairs[ids])
             header = [cell for cell, _ in joined]
             cut = {i for i, (_, was_cut) in enumerate(joined) if was_cut}
         out = Rows(

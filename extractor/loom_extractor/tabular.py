@@ -158,12 +158,12 @@ def read_name(cell: Cell) -> tuple[str, bool]:
 
 
 def _names(
-    header: list[Cell], width: int, first: int = 0, cut_before: frozenset[int] = frozenset()
+    header: list[Cell], width: int, first: int = 0, cut_names: frozenset[int] = frozenset()
 ) -> tuple[list[str], int]:
     """Column names from the header, one per column, unique and at most
     MAX_COLUMN_CHARS: an empty one is `column N`, a repeated one gets ` (2)`,
-    ` (3)`, ... after it (its text cut to make room). A column in `cut_before` was
-    cut before it got here."""
+    ` (3)`, ... after it (its text cut to make room). A column in `cut_names` was
+    cut before it got here (`Rows.cut_names`)."""
     out: list[str] = []
     seen: set[str] = set()
     cut = 0
@@ -179,7 +179,7 @@ def _names(
         base = folded[:MAX_COLUMN_CHARS] or f"column {first + i + 1}"  # as the source counts
         name = base
         # Cut when the folded name is too long, or text lies past what was read of the cell.
-        was_cut = len(folded) > MAX_COLUMN_CHARS or tail or i in cut_before
+        was_cut = len(folded) > MAX_COLUMN_CHARS or tail or i in cut_names
         if name in seen:
             stem = base[:_STEM_CHARS]
             was_cut = was_cut or len(base) > _STEM_CHARS  # a suffix cuts the stem
