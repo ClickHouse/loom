@@ -1065,10 +1065,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "every chunk in order (windows by section), noting each window, and "
         "folding the notes into one cited answer. Not a search: use it when "
         "loom_search returns slices and the task needs the whole.\n"
-        "ARGS: `source_uris` (1-50 documents) and `task` required; "
+        "With `datasets` (up to 4, as knowledge.query names them) it also "
+        "calculates over every row, cited as [knowledge.query#1], or abstains "
+        "`ambiguous`, `needs_clarification` or `invalid_plan`, with `clarification` "
+        "saying what to ask, which dataset to approve, or why no plan held.\n"
+        "ARGS: `task`, and `source_uris` (up to 50 documents), `datasets` or both; "
         "`window_chars` per map call (default 24000), `max_answer_chars`, "
-        "`max_windows` (cap on LLM calls; `truncated` reports the cut). "
-        "Costs one LLM call per window plus the reduce."
+        "`max_windows` (cap on map calls; `truncated` reports the cut). "
+        "Costs one LLM call per window, one or two for a calculation's plan, "
+        "plus the reduce."
     ),
     "knowledge.outline": (
         "A document's table of contents, from the headings recorded on its "

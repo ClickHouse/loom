@@ -49,7 +49,7 @@ the operations reference.
 | `knowledge.get`             | viewer | One document's full text and metadata by `source_uri`.                                 |
 | `knowledge.list`            | viewer | Documents of a namespace, paged by an opaque cursor, filterable by tag and URI prefix. |
 | `knowledge.outline`         | viewer | A document's table of contents, and optionally one section's assembled text.           |
-| `knowledge.synthesize`      | viewer | Complete a task over whole documents (summaries, spread-out evidence) with the LLM.    |
+| `knowledge.synthesize`      | viewer | Complete a task over whole documents, or calculate over datasets, with the LLM.        |
 | `knowledge.update_metadata` | writer | Edit `title`, `description` or `tags`; `reindex=true` rewrites the chunks' context.    |
 | `knowledge.delete`          | writer | Supersede a document and its chunks.                                                   |
 | `knowledge.bulk_delete`     | writer | The same for up to 500 `source_uris`.                                                  |
@@ -613,6 +613,16 @@ Search finds a passage; three other reads cover the rest of the work with a long
   and stays as written (of nested brackets, the innermost is read). An answer that is
   empty (no letter or digit) as written or once those citations are removed abstains
   with `abstain_reason="empty_answer"`.
+  With `datasets` (up to four, `source_uri`, `dataset_id` and an `alias`, as
+  `knowledge.query` takes them; `source_uris` is then optional), the model reads the
+  task and the datasets' schemas and proposes a `knowledge.query` plan, which the
+  server checks and runs over every row; the result is a note the answer cites as
+  `[knowledge.query#1]`, and `calculations` returns it with its `receipt`. The model
+  never writes SQL, and a plan it proposes cannot name another dataset. It abstains
+  rather than guesses: `needs_clarification` when a dataset's schema needs an answer
+  (`knowledge.dataset_approve`), `ambiguous` when the model would need to ask which
+  column, unit, period or relation is meant (`clarification` holds the question), and
+  `invalid_plan` when no plan it proposes holds (it is told why once and tries again).
   It needs a real LLM provider.
 
 `memory.ask` also reads knowledge: it runs one hybrid knowledge search over the same

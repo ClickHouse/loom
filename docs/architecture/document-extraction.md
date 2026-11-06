@@ -489,6 +489,17 @@ The result names each snapshot read in its receipt, with the plan as validated, 
 `complete: false`, saying why, when a dataset's extraction left part of its table out or rejected rows. Nothing is
 stored: the receipt is the response.
 
+`knowledge.synthesize` with `datasets` (`server/knowledge/app/synthesize.py`, the prompt and the reading of the reply in
+`server/knowledge/domain/answer_plan.py`) asks the model once for a `knowledge.query` plan from the task and each
+dataset's alias, name, row count and stored columns, or for the question it would need to ask (`ambiguous`). The
+datasets are the caller's: a plan's own `datasets`, `org` and `namespace` are dropped. The plan is validated as a
+`knowledge.query` input and run by its handler, so it is checked against the schemas, pinned, bounded and revalidated as
+any query is; a plan refused by either is proposed once more with the reason, then the answer abstains (`invalid_plan`).
+The result's columns and first 50 rows, with what it may not cover, are one more note for the reduce, cited as
+`[knowledge.query#1]` and grounded like a chunk citation (`ground_citations`), so a citation of a calculation that was
+not run is removed. Column names, dataset names and the task are untrusted input to the plan, which grants nothing: the
+query runs in the caller's scope, as the reader user where one is set.
+
 ## Dependencies
 
 The reference extractor's parsers need `sqlglot` for SQL, `pypdf` (and `cryptography`, for a PDF encrypted with AES) for
