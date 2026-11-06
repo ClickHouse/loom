@@ -191,7 +191,7 @@ def test_a_page_of_more_rules_than_the_bound_is_read_without_ruled_tables() -> N
     assert a.coverage.complete
     reader = PdfReader(BytesIO(laid_out_pdf([page])))
     # no rules past the bound
-    assert layout.drawing(reader.pages[0], reader, lambda x, y: (x, y))[0] == []
+    assert layout.drawing(reader.pages[0], reader, lambda x, y: (x, y)).rules == []
 
 
 def test_a_fonts_unicode_map_gives_its_codes_widths() -> None:

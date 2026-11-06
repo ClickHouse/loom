@@ -69,8 +69,9 @@ def test_ocr_words_land_where_the_picture_is_drawn(engine: FakeEngine) -> None:
     # image's top left (pixel 0, 0) is at (100, 192) from the shown page's top
     reader = PdfReader(BytesIO(laid_out_pdf([b"q 400 0 0 400 100 200 cm /Im1 Do Q"], image=GRAY)))
     page = reader.pages[0]
-    _, pictures, whole = layout.drawing(page, reader, lambda x, y: (x, y))
-    assert whole
+    drew = layout.drawing(page, reader, lambda x, y: (x, y))
+    pictures = drew.pictures
+    assert drew.whole
     (pic,) = pictures
     assert pic.box == pytest.approx((100, 192, 500, 592))
     words, _, w, h = engine.read(b"", 0)
@@ -693,6 +694,52 @@ def test_a_text_page_with_a_large_inline_picture_is_partial(engine: FakeEngine) 
     ]
 
 
-def test_a_gifs_size_is_read_from_its_first_bytes() -> None:
-    gif = b"GIF89a" + (30_000).to_bytes(2, "little") + (30_000).to_bytes(2, "little") + bytes(4)
-    assert ocr._header_pixels(None, gif) == 900_000_000  # a GIF never reaches Leptonica
+def _gif(screen: tuple[int, int], frames: list[tuple[int, int]]) -> bytes:
+    def u16(v: int) -> bytes:
+        return v.to_bytes(2, "little")
+
+    out = b"GIF89a" + u16(screen[0]) + u16(screen[1]) + b"\x00\x00\x00"
+    out += b"\x21\xf9\x04\x00\x00\x00\x00\x00"  # a graphic control extension
+    for w, h in frames:
+        out += b"\x2c" + u16(0) + u16(0) + u16(w) + u16(h) + b"\x00" + b"\x02\x02\x44\x01\x00"
+    return out + b"\x3b"
+
+
+def test_a_gifs_pixels_are_its_screens_and_every_frames() -> None:
+    # a GIF never reaches Leptonica's header reader, which decodes it whole
+    assert ocr._header_pixels(None, _gif((30_000, 30_000), [])) == 900_000_000
+    # a 1 by 1 screen over a frame of 30,000 by 30,000: the frame is what is decoded
+    assert ocr._header_pixels(None, _gif((1, 1), [(30_000, 30_000)])) == 900_000_001
+    assert ocr._header_pixels(None, _gif((10, 10), [(6, 6)] * 3)) == 208
+
+
+def test_a_text_layer_over_a_large_inline_scan_is_complete(engine: FakeEngine) -> None:
+    lines = b"".join(
+        text_at(110, 580 - 18 * k, f"Line {k} of the scanned page text.") for k in range(20)
+    )
+    inline = b"q 400 0 0 400 100 200 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q\n"
+    a = extract(laid_out_pdf([inline + lines]), "t.pdf")
+    assert a.coverage.complete
+
+
+def test_an_inline_scan_beside_a_readable_logo_is_not_complete(engine: FakeEngine) -> None:
+    inline = b"q 400 0 0 400 100 200 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q\n"
+    logo = b"q 60 0 0 40 20 700 cm /Im1 Do Q"
+    a = extract(laid_out_pdf([inline + logo], image=GRAY), "l.pdf")
+    assert not a.coverage.complete and len(engine.seen) == 1
+    assert a.coverage.failed[0].reason == (
+        "OCR did not read all of its pictures:"
+        " a picture drawn inline covers a fifth of it, which OCR does not read"
+    )
+
+
+def test_an_inline_icon_drawn_many_times_takes_no_picture_room(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(layout, "_MAX_DRAWN", 2)
+    icon = b"q 4 0 0 4 0 0 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q"
+    icons = b"".join(b"q 1 0 0 1 %d 300 cm /Fm1 Do Q\n" % (20 + 6 * n) for n in range(10))
+    shot = b"q 400 0 0 300 100 300 cm /Im1 Do Q\n"
+    text = text_at(72, 740, "A page of text, a row of icons and a screenshot.")
+    a = extract(laid_out_pdf([text + icons + shot], image=GRAY, forms=(icon,)), "i.pdf")
+    assert a.coverage.complete and len(engine.seen) == 1

@@ -228,13 +228,13 @@ def _read_layout(
     at most `layout.MAX_PICTURES` images. What OCR could not read is the page's
     partial or failure."""
     found, read.other, read.width, read.page_height, turn = layout.spans(page, read.dropped)
-    drawn = True
     try:
-        rules, pictures, whole = layout.drawing(page, reader, turn)
+        drew: layout.Drawing | None = layout.drawing(page, reader, turn)
     except MemoryError:
         raise
     except Exception:  # noqa: BLE001 — unreadable drawing costs the ruled tables and pictures, not the text
-        rules, pictures, drawn, whole = [], [], False, True
+        drew = None
+    rules, pictures = (drew.rules, drew.pictures) if drew else ([], [])
     texted = bool(read.text.strip())
     area = read.width * read.page_height
     problems = []
@@ -243,22 +243,28 @@ def _read_layout(
         p
         for p in pictures
         # one shown under a point wide (a spacer, a tracking pixel) holds no text
-        if p.image is not None
-        and math.hypot(p.ctm[0], p.ctm[1]) >= 1
+        if math.hypot(p.ctm[0], p.ctm[1]) >= 1
         and (not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p)))
     ]
     if len(targets) > layout.MAX_PICTURES:
         problems.append(f"it shows more than {layout.MAX_PICTURES} pictures OCR would read")
         targets = targets[: layout.MAX_PICTURES]
-    # a page of only sub-point pictures has nothing to fail, unless it draws an
-    # image inline, there or in a form (`drawing` collects no inline image)
-    inline = not texted and not targets and _has_image(page, reader, inline_only=True)
+    # The largest image the page draws inline, there or in a form, which OCR does
+    # not read: `drawing` says, and when it read the page whole the stream need
+    # not be parsed again.
+    largest = drew.inline if drew is not None else None
+    inline = (
+        largest is not None
+        if drew is not None and drew.whole
+        else _has_image(page, reader, inline_only=True)
+    )
+    # a page of only sub-point pictures has nothing to fail, unless it draws an image inline
     if not texted and not targets and (inline or (not pictures and _has_image(page, reader))):
         read.failure = (
             _NEEDS_OCR
             if ocr.engine() is None
             else "no text layer, and its drawing could not be read"
-            if not drawn
+            if drew is None
             else "no text layer: its image is drawn inline, which OCR does not read"
             if inline
             else "no text layer, and no image it draws is one OCR finds"
@@ -286,9 +292,19 @@ def _read_layout(
             rules += layout.picture_rules(page, turn, picture, boxes, w, h)
         read.ocr = True
     # after OCR's own reasons: one of them (OCR off) is what an operator can act on
-    if texted and any(p.image is None and p.area >= ocr.PICTURE_SHARE * area for p in pictures):
+    # an inline picture a fifth of a text page (its own text not filling it), or
+    # any beside the pictures OCR read on a page with no text of its own
+    if texted:
+        unread_inline = (
+            largest is not None
+            and largest.area >= ocr.PICTURE_SHARE * area
+            and not _filled(found, largest)
+        )
+    else:
+        unread_inline = bool(targets) and inline
+    if unread_inline:
         problems.append("a picture drawn inline covers a fifth of it, which OCR does not read")
-    if not whole and (pictures or _has_image(page, reader)):
+    if drew is not None and not drew.whole and (pictures or _has_image(page, reader)):
         problems.append("it draws more than its drawing is read for, so a picture may be unread")
     if problems:
         if texted:

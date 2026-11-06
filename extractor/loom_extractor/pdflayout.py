@@ -443,9 +443,20 @@ class Picture:
         return (self.box[2] - self.box[0]) * (self.box[3] - self.box[1])
 
 
-def drawing(
-    page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn
-) -> tuple[list[_Rule], list[Picture], bool]:
+@dataclass
+class Drawing:
+    """What a page draws besides its text: its rules, its image XObjects (each
+    once, where it is first drawn), whether every one was collected, and the
+    largest image it draws inline (None when it draws none), which OCR does not
+    read."""
+
+    rules: list[_Rule]
+    pictures: list[Picture]
+    whole: bool
+    inline: Picture | None
+
+
+def drawing(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> Drawing:
     """The horizontal and vertical lines the page draws (stroked lines and thin
     filled boxes), the images it draws, as shown and turned as its text is, and
     whether every image was collected (not when the operators' bound or
@@ -460,6 +471,7 @@ def drawing(
     pictures: list[Picture] = []  # each image once, where it is first drawn
     collected: set[object] = set()
     cut = [False]  # an image past the cap
+    inline: list[Picture] = []  # the largest image drawn inline, at most one
     budget = [_MAX_OPERATIONS]
 
     def add(ax: float, ay: float, bx: float, by: float) -> None:
@@ -526,10 +538,9 @@ def drawing(
             elif op == b"INLINE IMAGE":  # its box, though OCR reads no inline image
                 corners = [to(*tp(u, v)) for u, v in ((0, 0), (1, 0), (1, 1), (0, 1))]
                 xs, ys = [c[0] for c in corners], [c[1] for c in corners]
-                if len(pictures) >= _MAX_DRAWN:
-                    cut[0] = True
-                else:
-                    pictures.append(Picture(None, list(ctm), (min(xs), min(ys), max(xs), max(ys))))
+                one = Picture(None, list(ctm), (min(xs), min(ys), max(xs), max(ys)))
+                if not inline or one.area > inline[0].area:
+                    inline[:] = [one]
             elif op == b"Do" and operands and depth < _MAX_FORM_DEPTH and resources is not None:
                 xobjects = resources.get_object().get("/XObject")
                 if not xobjects:
@@ -560,8 +571,12 @@ def drawing(
         walk(contents, page.get("/Resources"), [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 0)
     # Past the rules' or the operators' bound a grid may be half read: no rules. Past
     # the operators' bound or the image cap, the pictures are not all collected.
-    whole = budget[0] > 0 and not cut[0]
-    return (found if len(found) <= _MAX_RULES and budget[0] > 0 else []), pictures, whole
+    return Drawing(
+        found if len(found) <= _MAX_RULES and budget[0] > 0 else [],
+        pictures,
+        budget[0] > 0 and not cut[0],
+        inline[0] if inline else None,
+    )
 
 
 def _pixel_to_page(

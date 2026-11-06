@@ -347,13 +347,43 @@ class Engine:
 def _header_pixels(lp: ctypes.CDLL, data: bytes) -> int:
     """The pixels an image file's header declares, 0 when it cannot be read. A
     GIF's are read here: Leptonica decodes a GIF whole to give its header."""
-    if data[:6] in (b"GIF87a", b"GIF89a") and len(data) >= 10:
-        return int.from_bytes(data[6:8], "little") * int.from_bytes(data[8:10], "little")
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return _gif_pixels(data)
     fmt, w, h, bps, spp, cmap = (ctypes.c_int() for _ in range(6))
     refs = (ctypes.byref(v) for v in (fmt, w, h, bps, spp, cmap))
     if lp.pixReadHeaderMem(data, len(data), *refs) != 0:
         return 0
     return w.value * h.value
+
+
+def _gif_pixels(data: bytes) -> int:
+    """A GIF's pixels as decoded: its screen's and every frame's, as each frame
+    is decoded at its own size. Its blocks are walked, never decoded."""
+
+    def u16(at: int) -> int:
+        return int.from_bytes(data[at : at + 2], "little")
+
+    def skip_table(flags: int, at: int) -> int:
+        return at + 3 * 2 ** ((flags & 7) + 1) if flags & 0x80 else at
+
+    def skip_blocks(at: int) -> int:  # data sub-blocks, to their 0 terminator
+        while at < len(data) and data[at]:
+            at += data[at] + 1
+        return at + 1
+
+    if len(data) < 13:
+        return 0
+    total = u16(6) * u16(8)
+    at = skip_table(data[10], 13)
+    while at < len(data) and data[at] != 0x3B:  # the trailer
+        if data[at] == 0x21:  # an extension: its label, then its sub-blocks
+            at = skip_blocks(at + 2)
+        elif data[at] == 0x2C and at + 10 <= len(data):  # an image: its descriptor
+            total += u16(at + 5) * u16(at + 7)
+            at = skip_blocks(skip_table(data[at + 9], at + 10) + 1)
+        else:
+            break
+    return total
 
 
 def page_points(dpi: float) -> Callable[[float], float]:
