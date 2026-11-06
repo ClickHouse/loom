@@ -268,13 +268,21 @@ def test_a_build_the_container_cannot_see_removes_nothing_and_a_stopped_one_can_
         for _ in range(2):  # refused at the mount twice: nothing it left stops a second try
             with pytest.raises(SystemExit, match="cannot be used"):
                 C.prepare(out, src)
-        assert sorted(p.name for p in out.iterdir() if p.name != "_work") == [
-            n for n in before if n != "_work"
-        ]
+        # as it was found: the same files, and no directory made where there was none
+        assert (sorted(p.name for p in out.iterdir()) if out.exists() else []) == before
     with pytest.raises(SystemExit, match="lacks pep518.html"):  # checked before anything is removed
         C.prepare(corpus, tmp_path / "nowhere")
+    with pytest.raises(SystemExit, match="cannot be used"):  # nothing made where nothing was
+        C.prepare(tmp_path / "typo", src)
+    assert not (tmp_path / "typo").exists() and not (empty / "_work").exists()
     other = tmp_path / "other"
     other.mkdir()
     (other / "notes.txt").write_text("x")
-    with pytest.raises(SystemExit, match="no gold.jsonl"):
+    with pytest.raises(SystemExit, match="neither gold.jsonl"):
         C.prepare(other, src)
+    # once the container sees the directory, it is emptied, a stopped build's scratch too
+    monkeypatch.setattr(C, "docker", lambda *cmd: None)
+    (stopped / "_work" / "scan_old-1.png").write_bytes(b"png")
+    for out in (corpus, stopped):
+        d = C.prepare(out, src)
+        assert [p.name for p in out.iterdir()] == ["_work"] and list(d.work.iterdir()) == []

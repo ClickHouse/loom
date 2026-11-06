@@ -42,13 +42,13 @@ from reportlab.platypus import (
 )
 
 from bench.docparse import specs as S
-from bench.docparse.prepare import CONTAINER, PEPS, _Dirs, docker, prepare
-
-HAND = "/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf"
+from bench.docparse.prepare import CONTAINER, PEPS, Dirs, docker, prepare
 from bench.docparse.score import words
 
+HAND = "/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf"
 
-def chromium_pdf(d: _Dirs, html_path: Path, pdf_path: Path) -> None:
+
+def chromium_pdf(d: Dirs, html_path: Path, pdf_path: Path) -> None:
     docker(
         "chromium",
         "--headless",
@@ -60,7 +60,7 @@ def chromium_pdf(d: _Dirs, html_path: Path, pdf_path: Path) -> None:
     )
 
 
-def soffice_pdf(d: _Dirs, src: Path, outdir: Path) -> Path:
+def soffice_pdf(d: Dirs, src: Path, outdir: Path) -> Path:
     docker(
         "soffice",
         "-env:UserInstallation=file:///tmp/lo",
@@ -116,7 +116,7 @@ def gold_deck(spec: dict, *, notes: bool, image_text: bool = True) -> dict:
     return {"blocks": blocks, "tables": tables}
 
 
-def pages_text(d: _Dirs, pdf: Path) -> list[list[str]]:
+def pages_text(d: Dirs, pdf: Path) -> list[list[str]]:
     out = subprocess.run(
         ["docker", "exec", CONTAINER, "pdftotext", "-raw", d.in_container(pdf), "-"],
         check=True,
@@ -172,7 +172,7 @@ class _Stream:
         return self.page[start], self.page[min(end, len(self.page) - 1)]
 
 
-def locate(d: _Dirs, gold: dict, pdf: Path) -> list[str]:
+def locate(d: Dirs, gold: dict, pdf: Path) -> list[str]:
     """Fill each block's and table's pages from the rendered PDF, in the
     document's order through one stream of its words (the synthetic text
     repeats its phrases, so a first match anywhere can be on an earlier page).
@@ -427,7 +427,7 @@ def whiteboard(labels: list[str], path: Path, seed: int) -> None:
     img.save(path)
 
 
-def scan(d: _Dirs, pdf: Path, out: Path, seed: int, dpi: int = 110) -> None:
+def scan(d: Dirs, pdf: Path, out: Path, seed: int, dpi: int = 110) -> None:
     r = random.Random(seed)
     prefix = d.work / f"scan_{out.stem}"
     docker(
@@ -573,7 +573,7 @@ def rotate_pages(src: Path, out: Path, which: set[int], angle: int = 90) -> None
         w.write(f)
 
 
-def landscape_table_pdf(d: _Dirs, spec: dict, path: Path) -> None:
+def landscape_table_pdf(d: Dirs, spec: dict, path: Path) -> None:
     """A landscape page (a wide table) inside a portrait document, stored as a
     portrait page whose content is drawn turned and shown with /Rotate."""
     story = rl_story(spec)
@@ -791,8 +791,8 @@ def build(out: Path, src: Path) -> None:
             g["split"] = split[scanned[g["file"]]]
         elif g["file"] == "whiteboard.pdf":
             g["split"] = "heldout"
-    shutil.rmtree(d.work)
     with open(d.out / "gold.jsonl", "w") as f:
         for g in gold_all:
             f.write(json.dumps(g, ensure_ascii=False, sort_keys=True) + "\n")
+    shutil.rmtree(d.work)  # after the gold, so a build that stops here can run again
     print(len(gold_all), "files;", {c: n for c, n in sorted(seen.items())})

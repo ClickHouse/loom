@@ -29,8 +29,9 @@ The split (`dev`, `heldout`, `all`) is in the gold: a parser change is tuned on
 `build` regenerates the corpus from its specs (`specs.py`, `corpus.py`): the
 files are rendered in a tools container (Chromium, LibreOffice and poppler;
 `Dockerfile.tools`) mounted on the corpus directory, which is the only
-directory `build` writes into (it refuses one that holds files and no
-`gold.jsonl`). The host needs `reportlab`, `python-docx`, `python-pptx`,
+directory `build` writes into: it refuses, before removing anything, one that
+holds files but neither `gold.jsonl` nor a stopped build's `_work`, and a
+`--src` that lacks a PEP page. The host needs `reportlab`, `python-docx`, `python-pptx`,
 `pillow` and `pypdf`, and the FreeFont fonts (Debian's `fonts-freefont-ttf`)
 for the whiteboard photo:
 
