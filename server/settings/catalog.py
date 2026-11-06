@@ -5580,8 +5580,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.ingest": 60,
     "knowledge.ingest_cancel": 60,
     "knowledge.ingest_status": 40,
-    # The configured extractors' capabilities, each cached a minute; a cold read of an
-    # unreachable one waits out the listing's 5 s bound.
+    # The configured extractors' capabilities, each cached a minute; a cold read waits at
+    # most the listing's 5 s bound, and a service it could not read is not waited for
+    # again for a minute.
     "knowledge.formats": 5500,
     # Thirteen reads: eight of the documents, chunks and retired ingestions (one a join), one
     # of the extractions' coverage, three of the knowledge.ingest jobs (each a GROUP BY

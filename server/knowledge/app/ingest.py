@@ -166,7 +166,12 @@ async def handle_knowledge_ingest_cancel(
 async def handle_knowledge_formats(input: KnowledgeFormatsInput) -> KnowledgeFormatsOutput:
     """Each known format with the names that select it and whether a configured
     extractor declares it (each service read at most once a minute)."""
-    from server.core.document_formats import KNOWN_FORMATS, legacy_extensions, names_of
+    from server.core.document_formats import (
+        DEFAULT_FORMAT,
+        KNOWN_FORMATS,
+        legacy_extensions,
+        names_of,
+    )
     from server.knowledge.app.extractors import available_formats
     from server.settings import settings
 
@@ -181,4 +186,5 @@ async def handle_knowledge_formats(input: KnowledgeFormatsInput) -> KnowledgeFor
         formats=formats,
         max_upload_bytes=settings.knowledge_upload_max_bytes,
         refused_extensions=legacy_extensions(),
+        default_format=DEFAULT_FORMAT,
     )

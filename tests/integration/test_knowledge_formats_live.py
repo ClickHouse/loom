@@ -1,11 +1,10 @@
 """`knowledge.formats` against a running server: every format it routes with the
 names that select it, the upload's limits, and as available the formats its
-configured extractor declares (none when LOOM_DOCUMENT_EXTRACTOR_URL names none).
+configured extractors declare, as the server's own routing reads them.
 """
 
 from __future__ import annotations
 
-import os
 import uuid
 from typing import Any
 
@@ -28,8 +27,7 @@ async def test_the_formats_the_deployment_reads_and_the_upload_limits(
     assert {"markdown", "pdf", "csv", "text"} <= set(by)
     assert "md" in by["markdown"]["extensions"] and "application/pdf" in by["pdf"]["media_types"]
     assert out["max_upload_bytes"] > 0 and out["refused_extensions"] == ["doc", "ppt", "xls"]
-    if os.environ.get("LOOM_DOCUMENT_EXTRACTOR_URL"):
-        # The reference extractor declares Markdown and text.
-        assert by["markdown"]["available"] and by["text"]["available"]
-    else:
-        assert not any(f["available"] for f in out["formats"])
+    # What the server's own routing reads, asked of the same extractors.
+    from server.knowledge.app.extractors import available_formats
+
+    assert {f for f, v in by.items() if v["available"]} == set(await available_formats())

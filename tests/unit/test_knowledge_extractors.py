@@ -69,9 +69,11 @@ def hosts(monkeypatch: pytest.MonkeyPatch, settings_override: Any) -> Iterator[_
     transport = _Hosts({"ref": service.create_app(service.Config(token=TOKEN))})
     monkeypatch.setattr(extractors, "transport", transport)
     extractors._declared.clear()
+    extractors._unreadable.clear()
     settings_override(document_extractor_url="http://ref", document_extractor_token=TOKEN)
     yield transport
     extractors._declared.clear()
+    extractors._unreadable.clear()
 
 
 async def test_a_source_is_extracted_by_the_service_and_read_back_checked(hosts: _Hosts) -> None:

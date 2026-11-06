@@ -208,21 +208,39 @@ def _origin(url: str) -> str:
 
 # How long a listing of the formats waits for the services' capabilities.
 FORMATS_READ_S = 5.0  # not a setting: a listing's read, which must not hold its caller
+# Each service whose last read for a listing failed, until it is read again: a down
+# service costs one wait a minute, not one per listing.
+_unreadable: dict[str, float] = {}
+
+
+async def _declared_within(url: str, timeout_s: float) -> frozenset[str]:
+    """What the service at `url` declares, or nothing when it is not read within
+    `timeout_s` (or was not, under a minute ago)."""
+    if _unreadable.get(url, 0.0) > time.monotonic():
+        return frozenset()
+    try:
+        async with asyncio.timeout(timeout_s):
+            return (await capabilities(url)).formats
+    except (ExtractorUnavailable, TimeoutError) as e:
+        logger.warning("document extractor %s: %s", _origin(url), e or "timed out")
+        _unreadable[url] = time.monotonic() + _CAPABILITIES_TTL_S
+        return frozenset()
 
 
 async def available_formats(*, timeout_s: float = FORMATS_READ_S) -> dict[str, str]:
-    """Each format some configured service declares, with the first such
-    service's URL. The services are read at once, all within `timeout_s`; one
-    that cannot be read in time declares nothing."""
-    declared = {
-        s.url: s.formats or frozenset() for s in await configured_services(timeout_s=timeout_s)
-    }
+    """Each format some service it can go to declares, with the first such
+    service's URL (`_endpoints`: its own route, else the default service and the
+    routes of the media types that name it; a media type's route serves uploads
+    of that media type). The services are read at once, within `timeout_s`."""
+    endpoints = {fmt: _endpoints(fmt) for fmt in KNOWN_FORMATS}
+    unique = sorted({url for urls in endpoints.values() for url in urls})
+    read = await asyncio.gather(*(_declared_within(u, timeout_s) for u in unique))
+    declared = dict(zip(unique, read, strict=True))
     out: dict[str, str] = {}
-    for fmt in KNOWN_FORMATS:
-        for url in _endpoints(fmt):
-            if fmt in declared.get(url, frozenset()):
-                out[fmt] = url
-                break
+    for fmt, urls in endpoints.items():
+        url = next((u for u in urls if fmt in declared[u]), "")
+        if url:
+            out[fmt] = url
     return out
 
 

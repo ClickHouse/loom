@@ -48,8 +48,10 @@ class _Hosts(httpx.AsyncBaseTransport):
 
     def __init__(self, apps: dict[str, Starlette]) -> None:
         self.apps = apps
+        self.calls: list[str] = []
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append(request.url.host)
         app = self.apps.get(request.url.host)
         if app is None:
             raise httpx.ConnectError("unreachable", request=request)
@@ -61,9 +63,11 @@ def hosts(monkeypatch: pytest.MonkeyPatch, settings_override: Any) -> Iterator[_
     transport = _Hosts({"ref": service.create_app(service.Config(token=TOKEN))})
     monkeypatch.setattr(extractors, "transport", transport)
     extractors._declared.clear()
+    extractors._unreadable.clear()
     settings_override(document_extractor_url="http://ref", document_extractor_token=TOKEN)
     yield transport
     extractors._declared.clear()
+    extractors._unreadable.clear()
 
 
 def _input() -> KnowledgeFormatsInput:
@@ -112,3 +116,22 @@ async def test_a_slow_service_costs_the_listing_its_bound_and_declares_nothing(
     served = await extractors.available_formats(timeout_s=0.2)
     assert time.monotonic() - started < 5
     assert "sql" not in served and served["markdown"] == "http://ref"
+
+
+async def test_a_down_service_costs_one_wait_a_minute_not_one_per_listing(
+    hosts: _Hosts, settings_override: Any
+) -> None:
+    hosts.apps["slow"] = _declaring(["sql"], delay_s=30)
+    settings_override(document_extractors_json=json.dumps({"sql": "http://slow"}))
+    await extractors.available_formats(timeout_s=0.2)
+    started = time.monotonic()
+    served = await extractors.available_formats(timeout_s=0.2)
+    assert time.monotonic() - started < 0.15 and "sql" not in served
+    assert hosts.calls.count("slow") == 1
+
+
+async def test_the_default_format_is_what_routing_falls_back_to(hosts: _Hosts) -> None:
+    from server.core.document_formats import format_of
+
+    out = await handle_knowledge_formats(_input())
+    assert out.default_format == format_of("notes", "application/x-unknown") == "text"

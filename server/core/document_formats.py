@@ -10,6 +10,9 @@ Pure and I/O-free.
 
 from __future__ import annotations
 
+# The format of a source whose declared format, extension and media type name none.
+DEFAULT_FORMAT = "text"
+
 KNOWN_FORMATS = (
     "markdown",
     "html",
@@ -108,4 +111,4 @@ def format_of(name: str, media_type: str = "", declared: str = "") -> str:
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     if ext in _LEGACY:
         raise ValueError(f".{ext} files are not supported; save it as {ext}x")
-    return _EXTENSIONS.get(ext) or _MEDIA_TYPES.get(media_type_of(media_type), "text")
+    return _EXTENSIONS.get(ext) or _MEDIA_TYPES.get(media_type_of(media_type), DEFAULT_FORMAT)

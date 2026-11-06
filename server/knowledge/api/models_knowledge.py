@@ -861,8 +861,9 @@ class KnowledgeFormat(BaseModel):
     extensions: list[str] = Field(default_factory=list)
     # The media types that name it, when the file name does not.
     media_types: list[str] = Field(default_factory=list)
-    # True when a configured extractor declares it; a file of a format that is not
-    # fails `format_unavailable`.
+    # True when an extractor a file of this format can go to declares it; a file of a
+    # format that is not fails `format_unavailable`. A format served only by a route
+    # keyed by its media type is read when the upload carries that media type.
     available: bool = False
 
 
@@ -874,7 +875,7 @@ class KnowledgeFormatsOutput(BaseModel):
     # Extensions the upload refuses by name (`doc`, `xls`, `ppt`).
     refused_extensions: list[str] = Field(default_factory=list)
     # The format of a file whose name and media type name none.
-    default_format: str = "text"
+    default_format: str = ""
 
 
 class KnowledgeIngestCancelOutput(BaseModel):
