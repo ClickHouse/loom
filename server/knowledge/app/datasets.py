@@ -208,7 +208,7 @@ async def carry(
         )
 
 
-def _value(v: Any) -> Any:
+def json_value(v: Any) -> Any:
     """A stored value as JSON carries it: a number a JSON reader would round
     (an integer past 2^53, a fraction a double cannot hold) as text."""
     if isinstance(v, Decimal):
@@ -247,7 +247,7 @@ def _out(row: dict[str, Any], sample: list[dict[str, Any]] | None = None) -> Dat
         approved_by=str(row["approved_by"]),
         approved_at=row["approved_at"],
         created_at=row["created_at"],
-        rows=[{c.name: _value(r[c.slot]) for c in columns if c.slot} for r in sample or []],
+        rows=[{c.name: json_value(r[c.slot]) for c in columns if c.slot} for r in sample or []],
     )
 
 

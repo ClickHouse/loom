@@ -361,6 +361,53 @@ export interface CodeRepoFixture {
   searchable: boolean;
 }
 
+// `knowledge.formats` as a server answers it with the reference extractor (every format
+// available): each known format sorted by name, with the extensions and media types that
+// name it (`server/core/document_formats.py`).
+const KNOWLEDGE_FORMATS = {
+  formats: [
+    {
+      format: "csv",
+      extensions: ["csv", "tsv"],
+      media_types: ["text/csv", "text/tab-separated-values"],
+      available: true,
+    },
+    {
+      format: "docx",
+      extensions: ["docx"],
+      media_types: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+      available: true,
+    },
+    {
+      format: "html",
+      extensions: ["htm", "html", "xhtml"],
+      media_types: ["application/xhtml+xml", "text/html"],
+      available: true,
+    },
+    { format: "markdown", extensions: ["markdown", "md", "mdx"], media_types: ["text/markdown"], available: true },
+    { format: "parquet", extensions: ["parquet"], media_types: ["application/vnd.apache.parquet"], available: true },
+    { format: "pdf", extensions: ["pdf"], media_types: ["application/pdf"], available: true },
+    {
+      format: "pptx",
+      extensions: ["pptx"],
+      media_types: ["application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+      available: true,
+    },
+    { format: "sql", extensions: ["sql"], media_types: ["application/sql"], available: true },
+    { format: "text", extensions: ["log", "rst", "text", "txt"], media_types: ["text/plain"], available: true },
+    { format: "toml", extensions: ["toml"], media_types: ["application/toml"], available: true },
+    {
+      format: "xlsx",
+      extensions: ["xlsx"],
+      media_types: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+      available: true,
+    },
+  ],
+  max_upload_bytes: 64 * 1024 * 1024,
+  refused_extensions: ["doc", "ppt", "xls"],
+  default_format: "text",
+};
+
 /** Roles `namespace.join` can grant; a join never yields a non-member, so `""` is not one. */
 const JOIN_ROLES = ["viewer", "writer", "admin"] as const;
 
@@ -1049,6 +1096,8 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
           status: "active",
         });
       }
+      case "/v1/knowledge.formats":
+        return json(KNOWLEDGE_FORMATS);
       case "/v1/knowledge.list":
         calls.knowledge.push(body);
         if (!options.knowledgeRows) break;

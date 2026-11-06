@@ -3550,7 +3550,7 @@
            "nargs": null,
            "type": null,
            "required": false,
-           "help": "With --repo, where the rows go: the repository's trunk code namespace (repo; the default for a document in a code namespace), or the document's namespace, tagged with the repository (source; the default otherwise), served before an edit to a session whose own namespace is the document's. A repository reader who cannot read the document's namespace sees a repo row's quote but is refused its source link.",
+           "help": "With --repo, where the rows go: the repository's trunk code namespace (repo; the default for a document in a code namespace), or the document's namespace, tagged with the repository (source; the default otherwise), served before an edit to a session whose own namespace is the document's. A repository reader who cannot read the document's namespace sees a repo row's decision but is refused its source link.",
            "metavar": null
           },
           {
@@ -3574,13 +3574,13 @@
            ],
            "dest": "window_chars",
            "action": "_StoreAction",
-           "default": 6000,
+           "default": null,
            "const": null,
            "choices": null,
            "nargs": null,
            "type": "server.cli.decisions:_window_chars",
            "required": false,
-           "help": "Characters of the document per model call, at least 500 (default 6000)",
+           "help": "Characters of the document per model call, at least 500 (default LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS)",
            "metavar": null
           },
           {
@@ -3622,7 +3622,7 @@
        "choices_help": [
         {
          "dest": "extract",
-         "help": "Mine one knowledge document into decision records: one model call per window of its sections (a heading over only an image and its caption is not sent), two when the first reply holds no decision or a reason that is not one span of the text, candidates kept only when their quote, reasoning and rejected options' reasons are the document's own words, the reasoning says more than the outcome (a ban may give no reason) and the quote is not in a recap, summary or background section, written through decision.record as agent loom-decisions. A re-run revises or retires the extractor's own rows and tags a pinned or attested row source-changed instead: pinning or attesting freezes a row against re-extraction. Dry run by default (still calls the model); --apply writes. Exits 1 when it could not run on the document (no document, no chunks, no usable model, model calls held for the org, which stops the run with nothing more written and nothing retired, an unknown --repo or a namespace it may not use, --into without --repo or source on another repository's namespace, a --repo with no remote to tag rows with, the dashboard's repositories unread, its own rows unreadable, left in another namespace or linked to another repository, no window read), 2 when a write, or a read it needed (a window included), was refused or failed (a row changed since the run read it is reported, not counted).",
+         "help": "Mine one knowledge document into decision records: the model reads the document whole (or in windows of whole sections past LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS; a heading over only an image and its caption is not sent), again when its reply holds no decision, and writes each decision's outcome, reasons and rejected options in its own words, each claim citing quotes of the text. A claim none of whose quotes is in the text is left out, and a decision whose outcome quote is missing or only in a recap, summary or background section is dropped; a second call, the support check, keeps only the claims their quotes state and reads the extractor's stored rows against the text. Kept decisions are written through decision.record as agent loom-decisions. A re-run revises or retires the extractor's own rows the text no longer states and tags a pinned or attested row source-changed instead: pinning or attesting freezes a row against re-extraction. Dry run by default (still calls the model); --apply writes. Exits 1 when it could not run on the document (no document, no chunks, no usable model, model calls held for the org, which stops the run with nothing more written and nothing retired, an unknown --repo or a namespace it may not use, --into without --repo or source on another repository's namespace, a --repo with no remote to tag rows with, the dashboard's repositories unread, its own rows unreadable, left in another namespace or linked to another repository, no window read), 2 when a write, or a read it needed (a window or its support check included), was refused or failed (a row changed since the run read it is reported, not counted).",
          "metavar": "extract"
         }
        ]
@@ -12352,7 +12352,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Document to ingest (default: AGENTS.md at the checkout root).",
+       "help": "Document to ingest (default: AGENTS.md in the cwd, then the package's checkout).",
        "metavar": null
       },
       {
@@ -12457,7 +12457,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Checkout root holding AGENTS.md and dev/loom_ingest.py (default: the package's checkout, then the cwd).",
+       "help": "Checkout root holding AGENTS.md (default: the cwd, then the package's checkout).",
        "metavar": null
       },
       {

@@ -492,35 +492,42 @@ def test_the_dry_run_counts_every_call(capsys):
     assert six - four == 9 * 2 * run.SEARCH_SECTION_TOKENS
 
 
-def test_the_extraction_bound_covers_every_window_the_extractor_reads():
+def test_the_extraction_estimate_covers_every_window_the_extractor_reads():
     # A long document with few headings: overlapping chunks, windows cut by size.
     body = "\n\n".join(f"Paragraph {i} " + "word " * 60 for i in range(80))
     doc = Document("long", "u", "Long", f"# Title\n\n{body}\n\n## Tail\n\n" + "end " * 300)
     for window_chars in (500, 1000, 2900, 6000):
         chunks = [CorpusChunk("u", c.idx, c.text, c.section_path) for c in _chunk_text(doc.content)]
         read = len(_windows(chunks, set(), window_chars))
-        calls, tin, tout = run.extraction_bound(doc, window_chars)
-        # Two calls per window the extractor reads (a window read again).
-        assert calls == 2 * read, window_chars
+        calls, tin, tout = run.extraction_estimate(doc, window_chars)
+        # Per window: two reads (a window read again) and one support check.
+        assert calls == 3 * read, window_chars
         cap = llm_max_tokens("decision_extract")
-        assert tout == calls * cap
-        # Each window's text as sent, its [document]/[section] lines included, and a
-        # second-call note up to the output cap.
+        assert tout == read * (2 * cap + llm_max_tokens("decision_support"))
+        # Each window's text as sent, its [document]/[section] lines included, three times,
+        # and the claims the check reads, up to the read's output cap.
         sent = sum(len(dx.user_prompt(w, doc.title)) for w in _windows(chunks, set(), window_chars))
-        assert tin >= 2 * sent // 3 + read * cap
+        assert tin >= 3 * sent // CHARS_PER_TOKEN_WORST + read * cap
     # A re-run over a revision lists the known decisions: a longer prompt per call.
     ts = load(EXAMPLE)
     first = ts.documents["upload-retries"]
-    calls, revised_in, _ = run.extraction_bound(dataclasses.replace(first, revision_of="x"), 6000)
-    _, first_in, _ = run.extraction_bound(first, 6000)
+    revised_calls, revised_in, _ = run.extraction_estimate(
+        dataclasses.replace(first, revision_of="x"), 6000
+    )
+    first_calls, first_in, _ = run.extraction_estimate(first, 6000)
+    # A re-run checks the stored decisions once more where a check finds one gone.
+    assert revised_calls == first_calls + first_calls // 3
     known = settings.memory_decision_extract_known_max
     # The longest rows decision.record accepts (category 120, scenario 2000 characters),
     # as the prompt lists them.
     assert (run.DECISION_CATEGORY_MAX_CHARS, run.DECISION_SCENARIO_MAX_CHARS) == (120, 2000)
-    longest = ("x" * 120, "x" * 2000, "x" * 5000)
+    longest = ("x" * 120, "x" * 2000)
     listed = len(dx.system_prompt(3, [longest] * known)) - len(dx.system_prompt(3))
-    # Each call carries the whole list.
-    assert revised_in - first_in >= listed // CHARS_PER_TOKEN_WORST * calls
+    # Each read carries the whole list, each check every stored statement.
+    stored = known * run.STORED_STATEMENT_MAX_CHARS
+    windows = first_calls // 3
+    reads = checks = 2 * windows
+    assert revised_in - first_in >= (listed * reads + stored * checks) // CHARS_PER_TOKEN_WORST
 
 
 # ---------------------------------------------------------------- end to end
@@ -804,7 +811,7 @@ def test_a_run_stopped_by_the_cap_resumes_without_spending_again(tmp_path, capsy
     # Room for the extraction estimates and a few answers, not for the whole run.
     probe = Ledger(tmp_path / "probe.jsonl", 100.0)
     for d in ts.documents.values():
-        probe.record("extract", "gpt-4o-mini", *run.extraction_bound(d, 6000)[1:])
+        probe.record("extract", "gpt-4o-mini", *run.extraction_estimate(d, 6000)[1:])
     tight = probe.spent() + 0.01
     cfg = _config(out, max_usd=tight)
     ledger = Ledger(out / "ledger.jsonl", tight)
@@ -845,8 +852,8 @@ def test_a_cap_below_the_first_extraction_stops_the_setup_and_the_resume_finishe
     out = tmp_path / "run"
     out.mkdir()
     loom = FakeLoom()
-    bound = run.extraction_bound(ts.documents["thumbnail-cache"], 6000)
-    cap = cost_usd("gpt-4o-mini", bound[1], bound[2]) / 2
+    estimate = run.extraction_estimate(ts.documents["thumbnail-cache"], 6000)
+    cap = cost_usd("gpt-4o-mini", estimate[1], estimate[2]) / 2
     cfg = _config(out, max_usd=cap)
     ledger = Ledger(out / "ledger.jsonl", cap)
     model = _fake_model(ledger)

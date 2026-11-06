@@ -402,6 +402,29 @@ class Transport:
         )
         return result.data
 
+    def _rate_limit_wait(
+        self, e: RateLimited, waited_s: float, path: str, request_id: str
+    ) -> float:
+        """How long to wait before resending a call a 429 refused, or 0 to raise:
+        the server's hint, each sleep capped and the call's total bounded, so a
+        glacial refill surfaces instead of stalling."""
+        if not self._pacing:
+            logger.error("%s 429 rate limited; pacing off (rid=%s)", path, request_id)
+            return 0.0
+        budget_left = self._ratelimit_max_wait_s - waited_s
+        if budget_left <= 0:
+            logger.error(
+                "%s 429 rate limited; %.1f s pacing budget spent (rid=%s)",
+                path,
+                self._ratelimit_max_wait_s,
+                request_id,
+            )
+            return 0.0
+        wait = min(max(float(e.retry_after_s), 0.0), self._MAX_PACING_SLEEP_S, budget_left)
+        if wait > 0:
+            logger.warning("%s 429 rate limited; waiting %.2f s (rid=%s)", path, wait, request_id)
+        return wait
+
     async def request(
         self,
         method: str,
@@ -409,25 +432,42 @@ class Transport:
         *,
         json: Mapping[str, Any] | None = None,
         params: Mapping[str, Any] | None = None,
+        content: bytes | None = None,
     ) -> httpx.Response:
         """One request to a route outside the op registry (`/v1/me/...`,
-        `/v1/admin/...`, `/v1/health`): the body goes as given, with no
-        identity or consumer added, and is not retried. Raises the typed
-        error for a 4xx/5xx; returns the response for the caller to read.
-        `path` is a path on this server: the credential goes nowhere else."""
+        `/v1/admin/...`, `/v1/health`, `/v1/knowledge.upload`): the body goes as
+        given (`json`, or `content` as raw bytes), with no identity or consumer
+        added. It is not retried, but for a 429, which the server answers before
+        doing anything, it is resent after the server's hint as an op is (see
+        `Transport`). Raises the typed error for a 4xx/5xx; returns the response
+        for the caller to read. `path` is a path on this server: the credential goes
+        nowhere else."""
         if not path.startswith("/") or path.startswith("//"):
             raise ValueError(f"not a path on {self.base_url}: {path!r}")
         request_id = str(uuid.uuid4())
         headers = {**self._ident_headers, "X-Request-Id": request_id}
-        try:
-            resp = await self._client.request(
-                method, path, json=json, params=params, headers=headers
+        if content is not None:
+            headers["Content-Type"] = "application/octet-stream"
+        waited_s = 0.0
+        while True:
+            try:
+                resp = await self._client.request(
+                    method, path, json=json, params=params, content=content, headers=headers
+                )
+            except httpx.RequestError as e:
+                raise unreachable_error(self.base_url, e, request_id=request_id) from e
+            if resp.status_code < 400:
+                return resp
+            error = self._error_for(path, resp, resp.headers.get("X-Request-Id") or request_id)
+            wait = (
+                self._rate_limit_wait(error, waited_s, path, request_id)
+                if isinstance(error, RateLimited)
+                else 0.0
             )
-        except httpx.RequestError as e:
-            raise unreachable_error(self.base_url, e, request_id=request_id) from e
-        if resp.status_code >= 400:
-            raise self._error_for(path, resp, resp.headers.get("X-Request-Id") or request_id)
-        return resp
+            if wait <= 0:
+                raise error
+            await asyncio.sleep(wait)
+            waited_s += wait
 
     async def request_json(
         self,
@@ -436,9 +476,10 @@ class Transport:
         *,
         json: Mapping[str, Any] | None = None,
         params: Mapping[str, Any] | None = None,
+        content: bytes | None = None,
     ) -> dict[str, Any]:
         """`request`, decoded: the JSON object the route answers."""
-        resp = await self.request(method, path, json=json, params=params)
+        resp = await self.request(method, path, json=json, params=params, content=content)
         return _json_object(path, resp, resp.headers.get("X-Request-Id", ""))
 
     async def post_with_meta(
@@ -513,35 +554,9 @@ class Transport:
             try:
                 out = await self._post_once(op_path, payload, headers, timeout_s)
             except RateLimited as e:
-                if not self._pacing:
-                    logger.error(
-                        "%s 429 rate limited; pacing off (rid=%s)", op_path, headers["X-Request-Id"]
-                    )
-                    raise
-                # Honor the server hint; every sleep is capped and the total
-                # is bounded, so a glacial refill surfaces instead of stalling.
-                budget_left = self._ratelimit_max_wait_s - waited_s
-                if budget_left <= 0:
-                    logger.error(
-                        "%s 429 rate limited; %.1f s pacing budget spent (rid=%s)",
-                        op_path,
-                        self._ratelimit_max_wait_s,
-                        headers["X-Request-Id"],
-                    )
-                    raise
-                wait = min(
-                    max(float(e.retry_after_s), 0.0),
-                    self._MAX_PACING_SLEEP_S,
-                    budget_left,
-                )
+                wait = self._rate_limit_wait(e, waited_s, op_path, headers["X-Request-Id"])
                 if wait <= 0:
                     raise
-                logger.warning(
-                    "%s 429 rate limited; waiting %.2f s (rid=%s)",
-                    op_path,
-                    wait,
-                    headers["X-Request-Id"],
-                )
                 await asyncio.sleep(wait)
                 waited_s += wait
             except LoomError as e:

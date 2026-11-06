@@ -65,6 +65,7 @@ _BODIES: dict[str, dict[str, Any]] = {
     "run.grade": {"run_id": "r", "grade": "pass"},
     "code.outcome": {"action": "opened_file", "trace_run_id": "r"},
     "code.scip_ingest": {"batch_id": "00000000-0000-4000-8000-000000000001"},
+    "knowledge.synthesize": {"source_uris": ["doc://a"]},
 }
 
 

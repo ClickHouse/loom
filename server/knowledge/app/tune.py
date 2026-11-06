@@ -88,9 +88,6 @@ _LARGER = (3 / 2, 2, 3, 4)
 MIN_CHUNK_SIZE = 200  # not a setting: the smallest size drafted
 # A size large enough that nothing is windowed: what a section's structure alone makes.
 _WHOLE = 1 << 62
-# Seconds the capabilities read of every configured extractor, run at once, may take
-# here; a slower one reads as unread.
-CAPABILITIES_READ_S = 5.0  # not a setting: a draft's read, which must not hold the report
 # Agents named as affected, most documents first.
 MAX_AFFECTED_AGENTS = 20  # not a setting: bounds one response
 
@@ -626,7 +623,7 @@ async def _routes(
         return None
     services = await guarded(
         "extractor.services",
-        lambda: extractors.configured_services(timeout_s=CAPABILITIES_READ_S),
+        lambda: extractors.configured_services(timeout_s=extractors.CAPABILITIES_READ_S),
         None,
     )
     routes = await guarded("extractor.routes", _current_routes, None)

@@ -42,6 +42,9 @@ log = logging.getLogger("loom.ratelimit")
 _OP_CLASS_OVERRIDES: dict[str, str] = {
     # A read; the prefix rule would file it under the write-shaped add bucket.
     "knowledge.search": "knowledge.search",
+    # A read too, and a scan of up to four datasets: its own bucket, so searches and
+    # queries never spend each other's budget.
+    "knowledge.query": "knowledge.query",
     # Cheap high-volume telemetry — rides the big memory bucket, not the
     # read-shaped code bucket.
     "code.outcome": "memory",
@@ -104,6 +107,7 @@ DEFAULT_LIMITS: dict[str, Limit] = {
     # primary-key read, so the cap is bounded by fairness, not by cost.
     "memory.read": Limit(capacity=300, rate=50),
     "knowledge.search": Limit(capacity=20, rate=3),  # ~200/min
+    "knowledge.query": Limit(capacity=20, rate=3),  # ~200/min
     "knowledge.add": Limit(capacity=10, rate=2),  # ~100/min (embedding is downstream-limited)
     "memory.import": Limit(capacity=10, rate=2),  # each call up to 200 embedded items
     # Read-shaped code-intelligence ops; agents burst on session start.

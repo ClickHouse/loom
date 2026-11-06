@@ -2741,9 +2741,12 @@ class MemorySettings(BaseModel):
     # loom.memory_drops as chunk.split/truncated.
     memory_set_chunk_max_chunks: int = 48
     # ---- decision extraction (loom decisions extract) ----
-    # Decisions already recorded from a document that the prompt lists, so a re-run
-    # keeps their keys and wording; past this many, the rest may be read as new. 0 = none.
+    # Decisions already recorded from a document that a re-run lists and judges against the
+    # text; one past this many is never flagged or retired. 0 = none.
     memory_decision_extract_known_max: Annotated[int, LIVE] = Field(default=30, ge=0)
+    # Characters one extraction read takes: a shorter document is read whole, a longer one in
+    # windows of whole sections. Sized so a dense window's reply fits the decision_extract cap.
+    memory_decision_extract_window_chars: Annotated[int, LIVE] = Field(default=24000, ge=500)
     # Closest decision keys a candidate is checked against for a pinned or attested restatement
     # under another key (cosine only); the fetch caps at 500 rows.
     memory_decision_extract_restatement_top_k: Annotated[int, LIVE] = Field(default=20, ge=1)
@@ -5573,6 +5576,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.dedup_list": 400,
     "knowledge.dedup_resolve": 400,
     "knowledge.delete": 100,
+    # The configured extractors' capabilities, each cached a minute; a cold read waits at
+    # most the listing's 5 s bound, and a service it could not read is not waited for
+    # again for a minute.
+    "knowledge.formats": 5500,
     "knowledge.get": 30,
     "knowledge.ingest": 60,
     "knowledge.ingest_cancel": 60,
@@ -5585,6 +5592,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.inspect": 4000,
     "knowledge.list": 150,
     "knowledge.outline": 80,
+    # Each source's live document and each dataset's catalog row read twice (before and
+    # after), then one scan of up to four snapshots, held to the caller-shaped ceilings.
+    "knowledge.query": 1500,
     "knowledge.reads": 500,
     "knowledge.search": 250,
     # add and rotate: a probe bounded by knowledge_source_probe_timeout_s, up to 5 s
@@ -5988,13 +5998,18 @@ LLM_MAX_TOKENS: dict[str, int] = {
     "consolidate_merge": 256,
     # conversation.compact: the summary of a thread's oldest turns.
     "conversation_compact": 600,
-    # loom decisions extract: one window's decision candidates as JSON, quotes and
-    # reasons copied from the document.
-    "decision_extract": 4000,
+    # loom decisions extract: one window's decisions as JSON (a whole document's, up to
+    # memory_decision_extract_window_chars), each claim with its quotes.
+    "decision_extract": 12000,
+    # loom decisions extract: the support check's verdict on each claim of one window and
+    # on each stored decision.
+    "decision_support": 8000,
     # the entity extractor: one memory's entities.
     "entity_extract": 160,
     # memory.search HyDE: the hypothetical answer embedded in place of the query.
     "hyde": 128,
+    # knowledge.synthesize with datasets: the knowledge.query plan proposed as JSON.
+    "knowledge_synthesize_plan": 1200,
     # observe: one transition pair's semantic memory.
     "observe_extract.event": 300,
     # observe: one session's procedure and hint.

@@ -163,3 +163,10 @@ def test_admin_override_reaches_the_read_class() -> None:
     assert lim.check("ns", "memory.get").limit == 5
     # memory.set still sees the class default.
     assert lim.check("ns", "memory.set").limit == 100
+
+
+def test_knowledge_query_draws_from_its_own_read_bucket() -> None:
+    """By the prefix rule it would draw on knowledge.add's write-shaped bucket,
+    so a few queries would refuse the namespace's next write."""
+    assert op_class_for("knowledge.query") == "knowledge.query"
+    assert DEFAULT_LIMITS["knowledge.query"] == DEFAULT_LIMITS["knowledge.search"]

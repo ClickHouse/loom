@@ -64,7 +64,6 @@ use both.
 | Sub-millisecond key lookups on a hot path                    | Every read is a ClickHouse query                            | A cache in front of your own store              |
 | Whole-graph analytics or long paths                          | Traversal is one bounded query per hop, at most four hops   | A graph store, fed by `loom entity-export`      |
 | You need an agent framework                                  | Loom does not run the agent loop, prompts or model          | An agent framework, with Loom as its memory     |
-| In-server parsing of PDFs, Office files or buckets           | `knowledge.add` takes text; `dev/loom_ingest.py` parses     | Your own pipeline feeding `knowledge.add`       |
 | A compliance guarantee out of the box                        | Erasure and audit are engineering primitives                | Your compliance process, using those primitives |
 | Production on single-node ClickHouse OSS with no backup plan | No replication or point-in-time recovery                    | ClickHouse Cloud                                |
 | Frozen APIs                                                  | Operations and fields change between releases               | Pin a release; check `ops.capabilities`         |

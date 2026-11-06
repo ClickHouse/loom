@@ -49,7 +49,7 @@ the operations reference.
 | `knowledge.get`             | viewer | One document's full text and metadata by `source_uri`.                                 |
 | `knowledge.list`            | viewer | Documents of a namespace, paged by an opaque cursor, filterable by tag and URI prefix. |
 | `knowledge.outline`         | viewer | A document's table of contents, and optionally one section's assembled text.           |
-| `knowledge.synthesize`      | viewer | Complete a task over whole documents (summaries, spread-out evidence) with the LLM.    |
+| `knowledge.synthesize`      | viewer | Complete a task over whole documents, or calculate over datasets, with the LLM.        |
 | `knowledge.update_metadata` | writer | Edit `title`, `description` or `tags`; `reindex=true` rewrites the chunks' context.    |
 | `knowledge.delete`          | writer | Supersede a document and its chunks.                                                   |
 | `knowledge.bulk_delete`     | writer | The same for up to 500 `source_uris`.                                                  |
@@ -60,6 +60,7 @@ the operations reference.
 | `knowledge.ingest`          | writer | Extract an uploaded file and publish it as a document revision (a job).                |
 | `knowledge.ingest_status`   | viewer | A job's state, stage, coverage, warnings, failure and published revision.              |
 | `knowledge.ingest_cancel`   | writer | Stop a job before it publishes.                                                        |
+| `knowledge.formats`         | viewer | The formats an ingest reads, the names that select each, and the upload's limits.      |
 
 `knowledge.search` and `knowledge.reads` are hidden from MCP: neither is listed, and
 `loom_op` refuses them too. An agent reaches the knowledge plane through
@@ -465,8 +466,9 @@ document: the document is written as the sync worker with `user_id` `-`, so a
 namespace's erasure removes it and an erasure scoped to one user does not; a speaker's
 words are removed with `knowledge.delete` of the document (and at the store, or the next
 full listing writes them again). Decision records mined from a transcript
-(by the sync's [mining](#mining-decisions), or `loom decisions extract`) can quote a speaker too; deleting the transcript leaves them,
-and `memory.delete` of each decision's row (which retires its record) or the
+(by the sync's [mining](#mining-decisions), or `loom decisions extract`) can
+name or paraphrase a speaker too; deleting the transcript leaves them, and
+`memory.delete` of each decision's row (which retires its record) or the
 namespace's erasure removes them.
 
 `loom knowledge sync --org O --namespace <trunk namespace> [--source NAME] [--full]` runs
@@ -612,6 +614,16 @@ Search finds a passage; three other reads cover the rest of the work with a long
   and stays as written (of nested brackets, the innermost is read). An answer that is
   empty (no letter or digit) as written or once those citations are removed abstains
   with `abstain_reason="empty_answer"`.
+  With `datasets` (up to four, `source_uri`, `dataset_id` and an `alias`, as
+  `knowledge.query` takes them; `source_uris` is then optional), the model reads the
+  task and the datasets' schemas and proposes a `knowledge.query` plan, which the
+  server checks and runs over every row; the result is a note the answer cites as
+  `[knowledge.query#1]`, and `calculations` returns it with its `receipt`. The model
+  never writes SQL, and a plan it proposes cannot name another dataset. It abstains
+  rather than guesses: `needs_clarification` when a dataset's schema needs an answer
+  (`knowledge.dataset_approve`), `ambiguous` when the model would need to ask which
+  column, unit, period or relation is meant (`clarification` holds the question), and
+  `invalid_plan` when no plan it proposes holds (it is told why once and tries again).
   It needs a real LLM provider.
 
 `memory.ask` also reads knowledge: it runs one hybrid knowledge search over the same
@@ -877,26 +889,48 @@ last change, an upload's for 7 days after it expires. A failed job names why in
 A transient failure (an extractor that cannot be reached, times out, or answers a `5xx`,
 `408`, `429` or another status that is neither a result nor a refusal; a provider or a
 store outage) puts the job back with a doubling delay (at most an hour); a source the
-extractor refuses, or an artifact that breaks the contract, fails at once with its code.
-A pass runs one due job, one source's jobs in order and namespaces in turn, and is
-cancelled after `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS` (15 minutes); a job cut off
-there, or by a process that stopped, runs again from its start and counts the attempt. A
-job that fails, or is cancelled, publishes nothing, so the earlier revision keeps
-serving. `knowledge.ingest_cancel` stops a pending job at once and a running one before
-it publishes; a job past its publish check finishes. The reference extractor reads
-Markdown, HTML, plain text, SQL, TOML, CSV, PDF (its text layer: a scanned page needs OCR,
-so the job needs `allow_partial`), DOCX, PPTX, XLSX (a table of each sheet, and its rows
-as passages) and Parquet (a table, a decimal's digits kept; its dataset holds them as
+extractor refuses, or an artifact that breaks the contract, fails at once with its code. A
+pass runs one due job, one source's jobs in order and namespaces in turn, and is cancelled
+after `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS` (15 minutes); a job cut off there, or by a
+process that stopped, runs again from its start and counts the attempt. A job that fails,
+or is cancelled, publishes nothing, so the earlier revision keeps serving.
+`knowledge.ingest_cancel` stops a pending job at once and a running one before it
+publishes; a job past its publish check finishes. The reference extractor reads Markdown,
+HTML, plain text, SQL, TOML, CSV, PDF (its text layer: a scanned page needs OCR, so the
+job needs `allow_partial`), DOCX, PPTX, XLSX (a table of each sheet, and its rows as
+passages) and Parquet (a table, a decimal's digits kept; its dataset holds them as
 [Datasets](#datasets) says); any unit of a tabular file the extractor could not read, or a
 capability it lost, such as a table cut at its budget, a workbook saved without its
 formulas' values or a Parquet column of bytes, makes the job partial, and it needs
 `allow_partial`: see
 [tables](../architecture/document-extraction.md#formats-in-the-reference-extractor);
 another format fails `format_unavailable` until an extractor that declares it is
-configured. `knowledge.update_metadata` with `reindex=true` refuses an ingested document
-(its chunks come from the artifact): ingest it again to re-index it. A chunk's context
-(the title, description and section breadcrumb both search legs read) is filled as for
-`knowledge.add`.
+configured. `knowledge.formats` lists every format with the extensions and media types
+that select it, `max_upload_bytes` and the extensions the upload refuses, so a client can
+say before sending a file whether it will be read. A format's `available` is true when an
+extractor a file of it can go to declares it, and false when none does (an ingest fails
+`format_unavailable`). It is null while that service cannot be read: a listing waits at
+most 5 s for each service's capabilities (cached a minute), and one it could not read is
+not asked again for up to a minute, until a capabilities read of it succeeds; an ingest
+sent meanwhile waits for the service and retries. `knowledge.update_metadata` with
+`reindex=true` refuses an ingested document (its chunks come from the artifact): ingest it
+again to re-index it. A chunk's context (the title, description and section breadcrumb
+both search legs read) is filled as for `knowledge.add`.
+
+The Python and TypeScript SDKs run the two steps (TypeScript: `loom.knowledge.upload`,
+`waitForIngest` and `ingestFile`, in the [TypeScript SDK
+reference](../reference/typescript-sdk.md#files)). In Python,
+`agent.knowledge.upload(data, filename)` sends the bytes with their `sha256`,
+`agent.knowledge.ingest(upload_id, source_uri=...)` starts the job, and
+`agent.knowledge.wait_for_ingest(ingestion_id)` polls `knowledge.ingest_status` until the
+job ends (a `TimeoutError` after `timeout_s`, 600 by default, with the job still running).
+`agent.knowledge.ingest_file(path)` does all three for a local file, named
+`file://<absolute path>` unless `source_uri` says otherwise:
+
+```python
+status = await agent.knowledge.ingest_file("specs/q3.pdf", tags=["rfc"], allow_partial=True)
+print(status["state"], status["revision"], status["coverage"])
+```
 
 ## Datasets
 
@@ -944,6 +978,24 @@ same order, and is inferred again otherwise. A text write over the source, or
 document takes the source's claim, so it answers `503` while an ingest's publish or an
 approval of the source holds it, and `409 PRECONDITION_FAILED` when the source changed
 since it was read: retry either.
+
+`knowledge.query` (viewer) calculates over datasets with a typed plan, no model involved:
+up to four datasets of the namespace (`source_uri`, `dataset_id`, an `alias`), filters
+(`where`: `eq`, `ne`, `lt` to `ge`, `in`, `not_in`, `is_null`, `not_null`, `contains`,
+`starts_with`), an inner join of each dataset past the first to an earlier one (`joins`),
+groups (`group_by`, a date or date-time by `day`, `month` or `year`, in UTC) and
+aggregates (`count`, `count_distinct`, `sum`, `avg`, `min`, `max`), or the rows themselves
+(`select`, each with its `row_ids`). Every row of the live snapshots is read, never a
+sample; a decimal's sum and average keep every digit a dataset holds (an average rounded
+to nine places; a dataset's number columns past its first 24 number or duration columns
+are doubles), and a sum of no values is null. A plan that needs more rows, time or memory
+than one request may use fails with `422` rather than returning part of a total. The
+response carries a `receipt` naming each snapshot read (`snapshot_id`, `revision`,
+`row_count`, `rejected_rows`), the plan, the statement and its parameters; `complete` is
+false, with `incomplete` saying why, when a dataset left rows out. A dataset that needs
+clarification answers `422` until it is approved, and one replaced (by an ingest or a
+retyping approval) while the query ran answers `409 PRECONDITION_FAILED`: run it again
+([queries](../architecture/document-extraction.md#queries)).
 
 ## Where originals are stored
 
@@ -997,32 +1049,36 @@ a lifecycle rule expires their noncurrent versions ([backup and recovery](../ope
 
 ## Getting files in: the ingest CLI
 
-`knowledge.add` and `knowledge.upsert` take text: a caller sends the text it extracted.
-A folder registered as a [document source](#document-sources) is pulled by the server
-instead, with PDFs and `.pptx` files parsed by an extractor service. For a one-off push
-of a local file, an `s3://` object or an `https://` page, `dev/loom_ingest.py` parses on
-the client and posts the text:
+For a one-off push of a local file, an `s3://` object or an `https://` page,
+`dev/loom_ingest.py` uploads the bytes as they are and ingests them
+([ingesting files](#ingesting-files)), so the server's extractor parses them and the CLI
+parses nothing. A folder registered as a [document source](#document-sources) is pulled
+by the server instead.
 
 ```bash
 make ingest FILE=docs/runbook.md TAGS=ops,runbooks      # wraps dev/loom_ingest.py
 python dev/loom_ingest.py --namespace project-x --title "Q3 spec" spec.pdf
-python dev/loom_ingest.py --upsert --source-uri 'github://acme/spec.md' spec.md
+python dev/loom_ingest.py --source-uri 'github://acme/spec.md' spec.md
+python dev/loom_ingest.py --no-wait --allow-partial scans.pdf   # print the job id and return
 python dev/loom_ingest.py s3://acme-docs/runbooks/      # every object under the prefix
 python dev/loom_ingest.py https://example.com/page.html --dry-run
 ```
 
-| Source                                     | Handling                                                                                                     |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| Markdown, text, JSON, CSV, YAML, RST, logs | Read as UTF-8, no parsing.                                                                                   |
-| PDF                                        | Text extracted with `pypdf` (install it); the PDF outline becomes Markdown headings, so chunking follows it. |
-| `s3://bucket/key` or `s3://bucket/prefix/` | One object, or one ingest per object under the prefix (boto3 credential chain).                              |
-| `https://…`                                | Fetched with a 30 s timeout and a 10 MB cap; HTML, PDF, Markdown or text.                                    |
+| Source                                     | Handling                                                                                                             |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| A local path                               | Uploaded under its file name, which names the format.                                                                |
+| `s3://bucket/key` or `s3://bucket/prefix/` | One object, or one ingest per object under the prefix (boto3 credential chain, the `ingest` extra).                  |
+| `https://…`                                | Fetched with a 30 s timeout and a 10 MB cap; a path with no extension names the format by the response's media type. |
 
 It reads the token from `--token`, `LOOM_API_KEY`, `~/.loom/config.json` or `~/.loom/token`, the
 server from `--base-url` or `LOOM_BASE_URL`, and defaults `--namespace` to the token's first
-namespace, `--title` to the file name and `--source-uri` to `file://<absolute path>`.
-`--upsert` calls `knowledge.upsert` instead of `add`. Images, video, Parquet and Iceberg
-are out of scope. `loom demo` ingests `AGENTS.md` and asks a question of it, which is
+namespace, `--title` to the file name less its extension and `--source-uri` to `file://<absolute path>`.
+Each ingest publishes the source's next revision. The CLI waits for each job (`--timeout`,
+600 seconds) and prints its revision, chunks, format and warnings, or its `error_code`
+when it failed; `--no-wait` prints the job's id instead. `--format` names a format the file
+name does not, `--allow-partial` publishes an extraction that lost part of the file, and
+`--dry-run` prints what it would upload. A format no configured extractor serves fails
+`format_unavailable`. `loom demo` ingests `AGENTS.md` and asks a question of it, which is
 the shortest check that the knowledge plane works on a fresh stack.
 
 ## Example

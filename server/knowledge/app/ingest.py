@@ -1,5 +1,6 @@
 """knowledge.ingest / ingest_status / ingest_cancel: a job that has the extractor
-service extract an upload and publishes it as a document revision (`ingest_run`).
+service extract an upload and publishes it as a document revision (`ingest_run`);
+knowledge.formats: the formats those services read.
 
 An ingest names an upload of the same namespace that the caller made and that
 has not expired; the job carries the caller's authorship, so the worker writes
@@ -14,8 +15,12 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from server.core.document_formats import DEFAULT_FORMAT, KNOWN_FORMATS, legacy_extensions, names_of
 from server.core.errors import NotFoundError, PreconditionFailedError
 from server.knowledge.api.models_knowledge import (
+    KnowledgeFormat,
+    KnowledgeFormatsInput,
+    KnowledgeFormatsOutput,
     KnowledgeIngestCancelInput,
     KnowledgeIngestCancelOutput,
     KnowledgeIngestInput,
@@ -23,7 +28,9 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeIngestStatusInput,
     KnowledgeIngestStatusOutput,
 )
+from server.knowledge.app.extractors import format_availability
 from server.knowledge.store import ingestions
+from server.settings import settings
 
 
 def _uuid(value: str) -> str | None:
@@ -157,4 +164,28 @@ async def handle_knowledge_ingest_cancel(
     # It ended between the two reads: a published revision stays published.
     return KnowledgeIngestCancelOutput(
         found=True, state=job["state"], cancelled=job["state"] == "cancelled"
+    )
+
+
+async def handle_knowledge_formats(input: KnowledgeFormatsInput) -> KnowledgeFormatsOutput:
+    """Each known format with the names that select it and whether a configured
+    extractor declares it: unknown (None) while the service it goes to cannot be read."""
+    served = await format_availability()
+    formats = []
+    for fmt in sorted(KNOWN_FORMATS):
+        exts, media = names_of(fmt)
+        url = served[fmt]
+        formats.append(
+            KnowledgeFormat(
+                format=fmt,
+                extensions=exts,
+                media_types=media,
+                available=None if url is None else bool(url),
+            )
+        )
+    return KnowledgeFormatsOutput(
+        formats=formats,
+        max_upload_bytes=settings.knowledge_upload_max_bytes,
+        refused_extensions=legacy_extensions(),
+        default_format=DEFAULT_FORMAT,
     )

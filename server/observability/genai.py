@@ -107,6 +107,8 @@ _KNOWN_STAGES: frozenset[str] = frozenset(
         # knowledge.synthesize: one map call per window, then
         # the fold(s) into the answer.
         "knowledge_synthesize_map",
+        # knowledge.synthesize with datasets: the plan a model proposes for the calculation.
+        "knowledge_synthesize_plan",
         "bulk_contextualize",
         "knowledge_synthesize_reduce",
         "entity_extract",
@@ -140,8 +142,10 @@ _KNOWN_STAGES: frozenset[str] = frozenset(
         "ask_synthesize_deep",
         # The background conflict resolver's one call per marked row.
         "conflict_resolver",
-        # `loom decisions extract`: one candidate call per window of a document.
+        # `loom decisions extract`: per window of a document, the read of its decisions
+        # (decision_extract) and the support check of what was read (decision_support).
         "decision_extract",
+        "decision_support",
         # tracker.duplicate_check judge over the uncertain band
         "dupcheck_judge",
         "observe_extract.event",

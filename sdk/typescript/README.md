@@ -68,6 +68,21 @@ await loom.knowledge.bulkAdd({
 await loom.code.search({ query: "where is the parser?", path_prefix: "src/Parsers/" });
 ```
 
+A file goes to the server's extractor as its bytes, and the job is followed until it ends:
+
+```ts
+const status = await loom.knowledge.ingestFile({
+  org,
+  namespace,
+  data: new TextEncoder().encode("# Runbook\n\nRestart the worker after a config change."),
+  filename: "runbook.md",
+  source_uri: "repo://runbook.md",
+});
+// status.state: ready | partial | failed | cancelled; status.revision, status.chunks
+```
+
+`loom.knowledge.upload`, `loom.knowledge.ingest` and `loom.knowledge.waitForIngest` are its steps on their own.
+
 `OpMap` binds every operation name (`GENERATED_OP_COUNT` of them) to its input and output interface; `OPS` is the table of specs (group, method, required role, idempotency, maturity, latency budget). An op the SDK does not know yet (a newer server) is reachable through `loom.callRaw(name, body)`.
 
 ## Errors

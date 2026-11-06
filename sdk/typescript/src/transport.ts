@@ -134,7 +134,8 @@ export interface CallResult<T> {
   hintCode?: string;
 }
 
-function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+/** Sleep `ms`, or less when `signal` aborts (the caller's next send then throws). */
+export function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve) => {
     const done = () => {
       clearTimeout(timer);
@@ -249,7 +250,29 @@ export class Transport {
     return (await this.send<T>("GET", path, undefined, opts)).data;
   }
 
-  private async send<T>(method: "GET" | "POST", op: string, body: unknown, opts: CallOptions): Promise<CallResult<T>> {
+  /**
+   * POST raw bytes to `{baseUrl}/v1/{path}` with `query` as its parameters
+   * (`knowledge.upload`, which takes a file's bytes as the body). The server
+   * keeps no Idempotency-Key for it, so it is retried after a connection failure
+   * and on an answer only when that proves it never ran (a second upload a retry
+   * leaves expires unused), and a 429 is paced as an op's is.
+   */
+  async postBytes<T = unknown>(
+    path: string,
+    query: Record<string, string>,
+    data: Uint8Array,
+    opts: CallOptions = {},
+  ): Promise<T> {
+    return (await this.send<T>("POST", path, data, opts, new URLSearchParams(query).toString())).data;
+  }
+
+  private async send<T>(
+    method: "GET" | "POST",
+    op: string,
+    body: unknown,
+    opts: CallOptions,
+    query = "",
+  ): Promise<CallResult<T>> {
     const headers: Record<string, string> = { ...this.headers };
     if (this.#apiKey) headers.Authorization = `Bearer ${this.#apiKey}`;
     const given = opts.requestId;
@@ -268,8 +291,11 @@ export class Transport {
       ? undefined
       : (opts.idempotencyKey ?? (spec?.idempotent && !spec.readOnly ? randomId() : undefined));
     if (idem) headers["Idempotency-Key"] = idem;
-    const payload = isGet ? undefined : JSON.stringify(this.withConsumer(body));
-    const url = `${this.baseUrl}/v1/${op}`;
+    // Bytes go as they are; any other body is the op's JSON.
+    const raw = body instanceof Uint8Array;
+    if (raw) headers["Content-Type"] = "application/octet-stream";
+    const payload = isGet ? undefined : raw ? body : JSON.stringify(this.withConsumer(body));
+    const url = `${this.baseUrl}/v1/${op}${query ? `?${query}` : ""}`;
     const policy = resolveRetryPolicy(this.retry, opts.retry, `call ${op}`);
     const ctx: AttemptContext = {
       op,
@@ -348,7 +374,8 @@ export class Transport {
         res = await this.fetchImpl(ctx.url, {
           method: ctx.method,
           headers: ctx.headers,
-          body: ctx.payload,
+          // A byte array is a fetch body; TypeScript's lib types narrow it to ArrayBuffer-backed views.
+          body: ctx.payload as BodyInit | undefined,
           signal: ctrl.signal,
         });
       } catch (e) {
@@ -580,8 +607,8 @@ interface AttemptContext {
   op: string;
   method: "GET" | "POST";
   url: string;
-  /** The JSON body; none on a GET. */
-  payload: string | undefined;
+  /** The JSON body, or a file's bytes; none on a GET. */
+  payload: string | Uint8Array | undefined;
   headers: Record<string, string>;
   opts: CallOptions;
   policy: RetryPolicy;

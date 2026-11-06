@@ -20,6 +20,8 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeDedupResolveOutput,
     KnowledgeDeleteInput,
     KnowledgeDeleteOutput,
+    KnowledgeFormatsInput,
+    KnowledgeFormatsOutput,
     KnowledgeGetInput,
     KnowledgeGetOutput,
     KnowledgeIngestCancelInput,
@@ -43,6 +45,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeUpsertInput,
     KnowledgeUpsertOutput,
 )
+from server.knowledge.api.models_query import KnowledgeQueryInput, KnowledgeQueryOutput
 from server.knowledge.app.datasets import (
     handle_knowledge_dataset_approve,
     handle_knowledge_dataset_get,
@@ -54,12 +57,14 @@ from server.knowledge.app.document_reads import (
     handle_knowledge_outline,
 )
 from server.knowledge.app.ingest import (
+    handle_knowledge_formats,
     handle_knowledge_ingest,
     handle_knowledge_ingest_cancel,
     handle_knowledge_ingest_status,
 )
 from server.knowledge.app.inspect import handle_knowledge_inspect
 from server.knowledge.app.knowledge_search import handle_knowledge_search
+from server.knowledge.app.query import handle_knowledge_query
 from server.knowledge.app.reads import handle_knowledge_reads
 from server.knowledge.app.synthesize import handle_knowledge_synthesize
 from server.knowledge.app.writes import (
@@ -260,6 +265,17 @@ knowledge_ingest_cancel = Operation(
     maturity="experimental",
 )
 
+knowledge_formats = Operation(
+    name="knowledge.formats",
+    input_model=KnowledgeFormatsInput,
+    output_model=KnowledgeFormatsOutput,
+    handler=handle_knowledge_formats,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+    maturity="experimental",
+)
+
 knowledge_dataset_get = Operation(
     name="knowledge.dataset_get",
     input_model=KnowledgeDatasetGetInput,
@@ -279,6 +295,17 @@ knowledge_dataset_approve = Operation(
     idempotent=False,  # a retype moves the snapshot a retry names
     required_role=Role.WRITER,
     audit=True,
+    maturity="experimental",
+)
+
+knowledge_query = Operation(
+    name="knowledge.query",
+    input_model=KnowledgeQueryInput,
+    output_model=KnowledgeQueryOutput,
+    handler=handle_knowledge_query,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
     maturity="experimental",
 )
 
@@ -312,6 +339,8 @@ OPERATIONS: list[Operation] = [
     knowledge_ingest,
     knowledge_ingest_status,
     knowledge_ingest_cancel,
+    knowledge_formats,
     knowledge_dataset_get,
     knowledge_dataset_approve,
+    knowledge_query,
 ]

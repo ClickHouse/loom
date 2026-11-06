@@ -696,6 +696,7 @@
  "memory_coverage_sweep_gate_ttl_s": 60.0,
  "memory_decision_extract_known_max": 30,
  "memory_decision_extract_restatement_top_k": 20,
+ "memory_decision_extract_window_chars": 24000,
  "memory_durability_verifier_max_facts_per_call": 60,
  "memory_embed_answer_topic": true,
  "memory_embeddings_patch_parts_probe_seconds": 60,

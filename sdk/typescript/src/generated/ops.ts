@@ -3368,6 +3368,25 @@ export interface KnowledgeDeleteOutput {
   chunks_tombstoned: number;
 }
 
+export interface KnowledgeFormatsInput {
+  org: string;
+  namespace: string;
+}
+
+export interface KnowledgeFormat {
+  format: string;
+  extensions?: string[];
+  media_types?: string[];
+  available?: boolean | null;
+}
+
+export interface KnowledgeFormatsOutput {
+  formats?: KnowledgeFormat[];
+  max_upload_bytes?: number;
+  refused_extensions?: string[];
+  default_format?: string;
+}
+
 export interface KnowledgeGetInput {
   org: string;
   namespace: string;
@@ -3752,6 +3771,93 @@ export interface KnowledgeOutlineOutput {
   section_chunk_idxs?: number[];
 }
 
+export interface QueryDataset {
+  alias?: string;
+  source_uri: string;
+  dataset_id: string;
+}
+
+export interface QueryFilter {
+  column: QueryColumn;
+  op: "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "in" | "not_in" | "is_null" | "not_null" | "contains" | "starts_with";
+  value?: string | number | boolean | null;
+  values?: Array<string | number | boolean>;
+}
+
+export interface QueryColumn {
+  dataset?: string;
+  column: string;
+}
+
+export interface QueryJoin {
+  left: QueryColumn;
+  right: QueryColumn;
+}
+
+export interface QueryGroup {
+  column: QueryColumn;
+  bucket?: "" | "day" | "month" | "year";
+  name?: string;
+}
+
+export interface QueryAggregate {
+  fn: "count" | "count_distinct" | "sum" | "avg" | "min" | "max";
+  column?: QueryColumn | null;
+  name: string;
+}
+
+export interface QueryOrder {
+  by: string;
+  desc?: boolean;
+}
+
+export interface KnowledgeQueryInput {
+  org: string;
+  namespace: string;
+  datasets: QueryDataset[];
+  where?: QueryFilter[];
+  joins?: QueryJoin[];
+  group_by?: QueryGroup[];
+  aggregates?: QueryAggregate[];
+  select?: QueryColumn[];
+  order_by?: QueryOrder[];
+  limit?: number;
+}
+
+export interface QueryResultColumn {
+  name: string;
+  type: string;
+}
+
+export interface QueryReceipt {
+  snapshots: QuerySnapshot[];
+  plan: Record<string, unknown>;
+  sql: string;
+  params: Record<string, string>;
+}
+
+export interface QuerySnapshot {
+  alias: string;
+  source_uri: string;
+  dataset_id: string;
+  revision: number;
+  snapshot_id: string;
+  row_count: number;
+  rejected_rows: number;
+  complete: boolean;
+  schema_state: string;
+}
+
+export interface KnowledgeQueryOutput {
+  columns: QueryResultColumn[];
+  rows: unknown[][];
+  row_ids?: number[][];
+  truncated?: boolean;
+  complete: boolean;
+  incomplete?: string[];
+  receipt: QueryReceipt;
+}
+
 export interface KnowledgeReadsInput {
   org: string;
   namespace: string;
@@ -3992,7 +4098,8 @@ export interface KnowledgeSourceSyncNowOutput {
 export interface KnowledgeSynthesizeInput {
   org: string;
   namespace: string;
-  source_uris: string[];
+  source_uris?: string[];
+  datasets?: QueryDataset[];
   task: string;
   window_chars?: number;
   max_answer_chars?: number;
@@ -4004,6 +4111,17 @@ export interface CitedChunk {
   chunk_idx: number;
   revision?: number;
   locator?: Record<string, unknown> | null;
+}
+
+export interface SynthesizeCalculation {
+  columns: QueryResultColumn[];
+  rows: unknown[][];
+  row_ids?: number[][];
+  truncated?: boolean;
+  complete: boolean;
+  incomplete?: string[];
+  receipt: QueryReceipt;
+  citation: string;
 }
 
 export interface KnowledgeSynthesizeOutput {
@@ -4018,6 +4136,8 @@ export interface KnowledgeSynthesizeOutput {
   truncated?: boolean;
   abstain?: boolean;
   abstain_reason?: string;
+  clarification?: string;
+  calculations?: SynthesizeCalculation[];
   model?: string;
 }
 
@@ -9927,6 +10047,7 @@ export type OpName =
   | "knowledge.dedup_list"
   | "knowledge.dedup_resolve"
   | "knowledge.delete"
+  | "knowledge.formats"
   | "knowledge.get"
   | "knowledge.ingest"
   | "knowledge.ingest_cancel"
@@ -9934,6 +10055,7 @@ export type OpName =
   | "knowledge.inspect"
   | "knowledge.list"
   | "knowledge.outline"
+  | "knowledge.query"
   | "knowledge.reads"
   | "knowledge.search"
   | "knowledge.source.add"
@@ -10283,6 +10405,7 @@ export interface OpMap {
   "knowledge.dedup_list": { input: KnowledgeDedupListInput; output: KnowledgeDedupListOutput };
   "knowledge.dedup_resolve": { input: KnowledgeDedupResolveInput; output: KnowledgeDedupResolveOutput };
   "knowledge.delete": { input: KnowledgeDeleteInput; output: KnowledgeDeleteOutput };
+  "knowledge.formats": { input: KnowledgeFormatsInput; output: KnowledgeFormatsOutput };
   "knowledge.get": { input: KnowledgeGetInput; output: KnowledgeGetOutput };
   "knowledge.ingest": { input: KnowledgeIngestInput; output: KnowledgeIngestOutput };
   "knowledge.ingest_cancel": { input: KnowledgeIngestCancelInput; output: KnowledgeIngestCancelOutput };
@@ -10290,6 +10413,7 @@ export interface OpMap {
   "knowledge.inspect": { input: KnowledgeInspectInput; output: KnowledgeInspectOutput };
   "knowledge.list": { input: KnowledgeListInput; output: KnowledgeListOutput };
   "knowledge.outline": { input: KnowledgeOutlineInput; output: KnowledgeOutlineOutput };
+  "knowledge.query": { input: KnowledgeQueryInput; output: KnowledgeQueryOutput };
   "knowledge.reads": { input: KnowledgeReadsInput; output: KnowledgeReadsOutput };
   "knowledge.search": { input: KnowledgeSearchInput; output: KnowledgeSearchOutput };
   "knowledge.source.add": { input: KnowledgeSourceAddInput; output: KnowledgeSourceAddOutput };
@@ -10639,6 +10763,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.dedup_list", group: "knowledge", method: "dedupList", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: false },
   { name: "knowledge.dedup_resolve", group: "knowledge", method: "dedupResolve", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.delete", group: "knowledge", method: "delete", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
+  { name: "knowledge.formats", group: "knowledge", method: "formats", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 5500, audit: false, readOnly: true },
   { name: "knowledge.get", group: "knowledge", method: "get", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 30, audit: false, readOnly: true },
   { name: "knowledge.ingest", group: "knowledge", method: "ingest", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: false },
   { name: "knowledge.ingest_cancel", group: "knowledge", method: "ingestCancel", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: false },
@@ -10646,6 +10771,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.inspect", group: "knowledge", method: "inspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 4000, audit: false, readOnly: true },
   { name: "knowledge.list", group: "knowledge", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "knowledge.outline", group: "knowledge", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
+  { name: "knowledge.query", group: "knowledge", method: "query", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "knowledge.reads", group: "knowledge", method: "reads", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "knowledge.search", group: "knowledge", method: "search", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 250, audit: false, readOnly: true },
   { name: "knowledge.source.add", group: "knowledge", method: "sourceAdd", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
@@ -10870,4 +10996,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 353;
+export const GENERATED_OP_COUNT = 355;

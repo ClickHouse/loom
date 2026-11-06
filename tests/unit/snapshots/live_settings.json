@@ -190,6 +190,7 @@
  "memory_coverage_sweep_gate_ttl_s",
  "memory_decision_extract_known_max",
  "memory_decision_extract_restatement_top_k",
+ "memory_decision_extract_window_chars",
  "memory_durability_verifier_max_facts_per_call",
  "memory_embed_answer_topic",
  "memory_entity_extract_parse_fail_max",

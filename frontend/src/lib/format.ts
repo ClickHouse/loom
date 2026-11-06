@@ -175,6 +175,8 @@ const ERROR_CODE_PREFIXES: Record<string, string> = {
   VALIDATION: "Input rejected:",
   VALIDATION_FAILED: "Input rejected:",
   CHAR_LIMIT_EXCEEDED: "Too long:",
+  PAYLOAD_TOO_LARGE: "Too large:",
+  UNSUPPORTED_FILE: "This file type is not read:",
   PRECONDITION_FAILED: "Out of date — another writer changed this:",
   IDEMPOTENT_CONFLICT: "Already done — a request with this key was processed before.",
   BLACKLISTED: "Blocked by a policy:",

@@ -10,8 +10,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from server.knowledge.api.models_query import (
+    MAX_DATASETS,
+    KnowledgeQueryOutput,
+    QueryDataset,
+)
+from server.knowledge.domain.answer_plan import CALCULATION_SOURCE
 from server.knowledge.domain.datasets import DatasetType
 from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
 from server.memory.domain.rerank_names import RerankName
@@ -384,23 +390,49 @@ class KnowledgeSynthesizeInput(BaseModel):
     """Complete a task over WHOLE documents, not a search slice:
     every active chunk of the named documents is read in order, in windows
     that respect section boundaries, each window is noted once, and the notes
-    are folded into the answer. For summaries and questions whose evidence is
-    spread across a long text."""
+    are folded into the answer. With datasets, the task is also answered by a
+    calculation over all their rows (knowledge.query), proposed by the model
+    from their schemas and checked and run by the server. For summaries and
+    questions whose evidence is spread across a long text or a table."""
 
     org: str
     namespace: str
-    # The documents to read in full (1-50); unknown URIs contribute nothing.
-    source_uris: list[str] = Field(min_length=1, max_length=50)
-    # What to do with the documents: a question to answer or a summary to write.
+    # The documents to read in full (up to 50; this, `datasets` or both); unknown URIs
+    # contribute nothing.
+    source_uris: list[str] = Field(default_factory=list, max_length=50)
+    # Datasets to calculate over (up to 4, as knowledge.query takes them); one plan is
+    # proposed for the task, checked against their schemas and run over every row.
+    datasets: list[QueryDataset] = Field(default_factory=list, max_length=MAX_DATASETS)
+    # What to do with the documents and datasets: a question to answer or a summary to write.
     task: str = Field(min_length=1, max_length=4000)
-    # Characters of document text per map call; the reduce folds notes into
-    # batches of the same size.
+    # Characters of document text per map call; the reduce folds notes into batches of the
+    # same size, and a calculation's note is at most half of it.
     window_chars: int = Field(default=24000, ge=2000, le=120000)
     # Cap on the answer's length in characters; a longer answer is cut and ends with `…`.
     max_answer_chars: int = Field(default=8000, ge=200, le=40000)
     # Cap on map calls; a corpus needing more is answered from the first
     # `max_windows` windows and `truncated` is set.
     max_windows: int = Field(default=64, ge=1, le=512)
+
+    @model_validator(mode="after")
+    def _documents_and_datasets_hold(self) -> KnowledgeSynthesizeInput:
+        if not self.source_uris and not self.datasets:
+            raise ValueError("name source_uris, datasets or both")
+        # With a dataset, a document by that name would cite as the calculation does.
+        if self.datasets and CALCULATION_SOURCE in self.source_uris:
+            raise ValueError(f"{CALCULATION_SOURCE!r} names the calculation, not a document")
+        aliases = [d.alias for d in self.datasets]
+        if len(set(aliases)) != len(aliases):
+            raise ValueError("each dataset needs an alias of its own")
+        return self
+
+
+class SynthesizeCalculation(KnowledgeQueryOutput):
+    """The calculation run for the task: knowledge.query's result (its columns, rows,
+    row ids, completeness and receipt) and how the answer cites it."""
+
+    # How the answer cites it: `knowledge.query#1`.
+    citation: str
 
 
 class _CitedChunk(BaseModel):
@@ -414,7 +446,8 @@ class _CitedChunk(BaseModel):
 
 
 class KnowledgeSynthesizeOutput(BaseModel):
-    # The task's answer, citing chunks as `[source#idx]`; empty when it abstained.
+    # The task's answer, citing chunks as `[source#idx]` and the calculation as
+    # `[knowledge.query#1]`; empty when it abstained.
     answer: str
     # How many windows were read (one LLM map call each).
     windows: int
@@ -425,21 +458,27 @@ class KnowledgeSynthesizeOutput(BaseModel):
     # How many fold rounds merged the notes into the answer; 1 when they fit one call.
     reduce_rounds: int
     # Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning
-    # documents) citations in the answer, in the order found; each names chunks the passes read.
+    # documents) citations in the answer, and `knowledge.query#1`, in the order found; each
+    # names chunks the passes read or the calculation run.
     citations: list[str] = Field(default_factory=list)
     # Each chunk the kept `citations` name, once, in the order first cited: its revision
     # and its locator, so a caller can open the passage the answer came from.
     cited_chunks: list[_CitedChunk] = Field(default_factory=list)
-    # Citations the model wrote naming a chunk the passes did not read; removed from `answer`.
+    # Citations the model wrote naming a chunk the passes did not read, or a calculation not
+    # run; removed from `answer`.
     unsupported_citations: list[str] = Field(default_factory=list)
     # True when the documents needed more than `max_windows` windows and only the first were read.
     truncated: bool = False
     # True when there is no answer to give; `abstain_reason` says why.
     abstain: bool = False
-    # `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents have
-    # none) or `empty_answer` (no letter or digit once unread citations are removed);
-    # empty otherwise.
+    # Why it abstained: `budget_capped` (over the cost cap), `no_chunks` (nothing to read),
+    # `needs_clarification`, `ambiguous`, `invalid_plan` (see `clarification`) or `empty_answer`.
     abstain_reason: str = ""
+    # ambiguous: the question to ask; invalid_plan: why no plan held; needs_clarification:
+    # the dataset to approve (knowledge.dataset_approve); empty otherwise.
+    clarification: str = ""
+    # The calculation run over the datasets, cited in `answer` as `[knowledge.query#1]`.
+    calculations: list[SynthesizeCalculation] = Field(default_factory=list)
     # LLM that wrote the notes and the answer; empty when it abstained before any call.
     model: str = ""
 
@@ -816,6 +855,37 @@ class KnowledgeIngestCancelOutput(BaseModel):
     state: str = ""
     # True when this call stopped the job, or asked the worker to.
     cancelled: bool = False
+
+
+class KnowledgeFormatsInput(BaseModel):
+    """The document formats this deployment reads, as `knowledge.ingest` sends
+    them to its extractors, and the upload's limits."""
+
+    org: str
+    namespace: str
+
+
+class KnowledgeFormat(BaseModel):
+    # The format's name, as `knowledge.ingest_status` and a document's `format` say it.
+    format: str
+    # The file name extensions that name it, without the dot.
+    extensions: list[str] = Field(default_factory=list)
+    # The media types that name it, when the file name does not.
+    media_types: list[str] = Field(default_factory=list)
+    # True when an extractor a file of this format can go to declares it, false when none
+    # does (an ingest fails `format_unavailable`), null while that service cannot be read.
+    available: bool | None = None
+
+
+class KnowledgeFormatsOutput(BaseModel):
+    # Every format the server routes, sorted by name.
+    formats: list[KnowledgeFormat] = Field(default_factory=list)
+    # The largest file POST /v1/knowledge.upload stores, in bytes.
+    max_upload_bytes: int = 0
+    # Extensions the upload refuses by name (`doc`, `xls`, `ppt`).
+    refused_extensions: list[str] = Field(default_factory=list)
+    # The format of a file whose name and media type name none.
+    default_format: str = ""
 
 
 # ============================================================

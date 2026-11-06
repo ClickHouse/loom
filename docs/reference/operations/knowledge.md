@@ -176,6 +176,24 @@ Soft-delete a document by source_uri: tombstones all live chunks and version-bum
 | `deleted` | `bool` | true if any live chunks were tombstoned |
 | `chunks_tombstoned` | `int` | How many live chunks were tombstoned; 0 when the document was already gone. |
 
+## `knowledge.formats`
+
+The document formats this deployment reads, as `knowledge.ingest` sends them to its extractors, and the upload's limits.
+
+`POST /v1/knowledge.formats` · MCP `loom_knowledge_formats` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `formats` | `list[KnowledgeFormat]` | Every format the server routes, sorted by name. |
+| `max_upload_bytes` | `int` | The largest file POST /v1/knowledge.upload stores, in bytes. |
+| `refused_extensions` | `list[str]` | Extensions the upload refuses by name (`doc`, `xls`, `ppt`). |
+| `default_format` | `str` | The format of a file whose name and media type name none. |
+
 ## `knowledge.get`
 
 Fetch a single document by source_uri.
@@ -364,6 +382,35 @@ A document's table of contents, as recorded on its chunks at ingest, and optiona
 | `sections` | `list[_OutlineEntry]` | The table of contents in document order: each heading's path, depth, chunks and size. |
 | `section_content` | `str \| None` | When `section_path` was given: the section's text (its chunks in order) and the chunk indices it came from. |
 | `section_chunk_idxs` | `list[int]` | Chunk indices `section_content` was assembled from; empty when none matched. |
+
+## `knowledge.query`
+
+Calculate over the live snapshots of ingested datasets with a typed plan: filters, inner joins, groups and aggregates, or the rows themselves.
+
+`POST /v1/knowledge.query` · MCP `loom_knowledge_query` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `datasets` | `list[QueryDataset]` | required | The datasets the plan reads, each under its alias. |
+| `where` | `list[QueryFilter]` | *(computed)* | The conditions every row read must meet, applied in each dataset before any join. |
+| `joins` | `list[QueryJoin]` | *(computed)* | How the datasets past the first join one already in the plan: one join each. |
+| `group_by` | `list[QueryGroup]` | *(computed)* | The columns the aggregates are calculated per; empty for one result row. |
+| `aggregates` | `list[QueryAggregate]` | *(computed)* | The calculations; empty to return the rows themselves (`select`). |
+| `select` | `list[QueryColumn]` | *(computed)* | The columns of each row returned when the plan has no aggregates; each is named `<alias>.<column>` in the result when the plan reads several datasets. |
+| `order_by` | `list[QueryOrder]` | *(computed)* | The result's order, by result column names; groups, or rows in source order, by default. |
+| `limit` | `int` | `100` | The result rows returned at most; `truncated` says when more matched. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `columns` | `list[QueryResultColumn]` | The result's columns, in order. |
+| `rows` | `list[list[Any]]` | The result's rows; a decimal or an integer JSON cannot hold exactly is its text. |
+| `row_ids` | `list[list[int]]` | With no aggregates, each returned row's row id in each dataset, in the plan's dataset order. |
+| `truncated` | `bool` | True when more rows matched than `limit` returned. |
+| `complete` | `bool` | False when a dataset read is incomplete or rejected rows: the result may not cover the source. |
+| `incomplete` | `list[str]` | Why the result is not complete, one reason per dataset. |
+| `receipt` | `QueryReceipt` | What was read and how. |
 
 ## `knowledge.reads`
 
@@ -568,25 +615,28 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `source_uris` | `list[str]` | required | The documents to read in full (1-50); unknown URIs contribute nothing. |
-| `task` | `str` | required | What to do with the documents: a question to answer or a summary to write. |
-| `window_chars` | `int` | `24000` | Characters of document text per map call; the reduce folds notes into batches of the same size. |
+| `source_uris` | `list[str]` | *(computed)* | The documents to read in full (up to 50; this, `datasets` or both); unknown URIs contribute nothing. |
+| `datasets` | `list[QueryDataset]` | *(computed)* | Datasets to calculate over (up to 4, as knowledge.query takes them); one plan is proposed for the task, checked against their schemas and run over every row. |
+| `task` | `str` | required | What to do with the documents and datasets: a question to answer or a summary to write. |
+| `window_chars` | `int` | `24000` | Characters of document text per map call; the reduce folds notes into batches of the same size, and a calculation's note is at most half of it. |
 | `max_answer_chars` | `int` | `8000` | Cap on the answer's length in characters; a longer answer is cut and ends with `…`. |
 | `max_windows` | `int` | `64` | Cap on map calls; a corpus needing more is answered from the first `max_windows` windows and `truncated` is set. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `answer` | `str` | The task's answer, citing chunks as `[source#idx]`; empty when it abstained. |
+| `answer` | `str` | The task's answer, citing chunks as `[source#idx]` and the calculation as `[knowledge.query#1]`; empty when it abstained. |
 | `windows` | `int` | How many windows were read (one LLM map call each). |
 | `chunks_read` | `int` | How many chunks the read windows covered. |
 | `documents` | `int` | How many of the named documents had chunks to read. |
 | `reduce_rounds` | `int` | How many fold rounds merged the notes into the answer; 1 when they fit one call. |
-| `citations` | `list[str]` | Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning documents) citations in the answer, in the order found; each names chunks the passes read. |
+| `citations` | `list[str]` | Distinct `source#idx` (or `source#a-b`, or a list of them for a window spanning documents) citations in the answer, and `knowledge.query#1`, in the order found; each names chunks the passes read or the calculation run. |
 | `cited_chunks` | `list[_CitedChunk]` | Each chunk the kept `citations` name, once, in the order first cited: its revision and its locator, so a caller can open the passage the answer came from. |
-| `unsupported_citations` | `list[str]` | Citations the model wrote naming a chunk the passes did not read; removed from `answer`. |
+| `unsupported_citations` | `list[str]` | Citations the model wrote naming a chunk the passes did not read, or a calculation not run; removed from `answer`. |
 | `truncated` | `bool` | True when the documents needed more than `max_windows` windows and only the first were read. |
 | `abstain` | `bool` | True when there is no answer to give; `abstain_reason` says why. |
-| `abstain_reason` | `str` | `budget_capped` (the namespace is over its cost cap), `no_chunks` (the documents have none) or `empty_answer` (no letter or digit once unread citations are removed); empty otherwise. |
+| `abstain_reason` | `str` | Why it abstained: `budget_capped` (over the cost cap), `no_chunks` (nothing to read), `needs_clarification`, `ambiguous`, `invalid_plan` (see `clarification`) or `empty_answer`. |
+| `clarification` | `str` | ambiguous: the question to ask; invalid_plan: why no plan held; needs_clarification: the dataset to approve (knowledge.dataset_approve); empty otherwise. |
+| `calculations` | `list[SynthesizeCalculation]` | The calculation run over the datasets, cited in `answer` as `[knowledge.query#1]`. |
 | `model` | `str` | LLM that wrote the notes and the answer; empty when it abstained before any call. |
 
 ## `knowledge.update_metadata`

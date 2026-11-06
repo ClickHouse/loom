@@ -116,6 +116,15 @@ def require_real_llm(control_plane_url: str) -> None:
 
 
 @pytest.fixture
+def require_fake_llm(control_plane_url: str) -> None:
+    """Skip unless the server under test runs the fake LLM, for a test that asserts
+    what the fake writes (its /v1/health says so)."""
+    with httpx.Client(base_url=control_plane_url, timeout=5.0) as c:
+        if not c.get("/v1/health").json().get("fake_llm"):
+            pytest.skip("asserts the fake LLM's output (the server runs a real provider)")
+
+
+@pytest.fixture
 def ch_client() -> Iterator[Any]:
     """Sync client on the configured store. Synchronous inserts, and no block
     deduplication: two identical event rows are two events."""

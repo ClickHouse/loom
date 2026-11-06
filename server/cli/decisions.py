@@ -56,24 +56,27 @@ def register_decisions_cli(sub: Any) -> None:
     dsub = p.add_subparsers(dest="subcommand", required=True)
     p_ext = dsub.add_parser(
         "extract",
-        help="Mine one knowledge document into decision records: one model call per window of its "
-        "sections (a heading over only an image and its caption is not sent), two when the "
-        "first reply holds no decision or a reason that is not one span of the text, "
-        "candidates kept only when their quote, reasoning and rejected options' reasons are "
-        "the document's own words, the reasoning says more than the outcome (a ban may give "
-        "no reason) and the quote is not in a recap, summary or background section, written "
-        "through decision.record as agent loom-decisions. A re-run revises or retires the "
-        "extractor's own rows and tags a pinned or attested row source-changed instead: "
-        "pinning or attesting freezes a row against re-extraction. Dry run by default (still "
-        "calls the model); --apply writes. Exits 1 when it could not run on the document (no "
+        help="Mine one knowledge document into decision records: the model reads the document "
+        "whole (or in windows of whole sections past LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS; a "
+        "heading over only an image and its caption is not sent), again when its reply holds "
+        "no decision, and writes each decision's outcome, reasons and rejected options in its "
+        "own words, each claim citing quotes of the text. A claim none of whose quotes is in "
+        "the text is left out, and a decision whose outcome quote is missing or only in a "
+        "recap, summary or background section is dropped; a second call, the support check, "
+        "keeps only the claims their quotes state and reads the extractor's stored rows "
+        "against the text. Kept decisions are written through decision.record as agent "
+        "loom-decisions. A re-run revises or retires the extractor's own rows the text no "
+        "longer states and tags a pinned or attested row source-changed instead: pinning or "
+        "attesting freezes a row against re-extraction. Dry run by default (still calls the "
+        "model); --apply writes. Exits 1 when it could not run on the document (no "
         "document, no chunks, no usable model, model calls held for the org, which stops "
         "the run with nothing more written and nothing retired, an unknown --repo or a "
         "namespace it may not use, --into without --repo or source on another repository's "
         "namespace, a --repo with no remote to tag rows with, the dashboard's repositories "
         "unread, its own rows unreadable, left in another namespace or linked to another "
-        "repository, no window read), 2 when a write, or a read it needed (a window "
-        "included), was refused or failed (a row changed since the run read it is reported, "
-        "not counted).",
+        "repository, no window read), 2 when a write, or a read it needed (a window or its "
+        "support check included), was refused or failed (a row changed since the run read "
+        "it is reported, not counted).",
     )
     p_ext.add_argument("--org", required=True)
     p_ext.add_argument("--namespace", required=True, help="The namespace holding the document")
@@ -92,7 +95,7 @@ def register_decisions_cli(sub: Any) -> None:
         "the default for a document in a code namespace), or the document's namespace, "
         "tagged with the repository (source; the default otherwise), served before an edit "
         "to a session whose own namespace is the document's. A repository reader "
-        "who cannot read the document's namespace sees a repo row's quote but is refused "
+        "who cannot read the document's namespace sees a repo row's decision but is refused "
         "its source link.",
     )
     p_ext.add_argument(
@@ -104,9 +107,9 @@ def register_decisions_cli(sub: Any) -> None:
     p_ext.add_argument(
         "--window-chars",
         type=_window_chars,
-        default=6000,
+        default=None,
         help=f"Characters of the document per model call, at least {_MIN_WINDOW_CHARS} "
-        "(default 6000)",
+        "(default LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS)",
     )
     add_apply_flags(p_ext, writes="write the decision records")
     p_ext.set_defaults(func=_cmd_extract)
@@ -139,9 +142,9 @@ def exit_code(report: ExtractReport) -> int:
     repository's namespace, a --repo with no remote to tag rows with, the dashboard's
     repositories unread, the extractor's rows unreadable, left in another namespace or linked
     to another repository, no window read), 2 when a write, or a read it needed (a window
-    the model could not answer readably included), was refused or failed (in a dry run too),
-    else 0. A row deleted or rewritten since the run read it is reported, not counted: the
-    next run settles it."""
+    or its support check the model could not answer readably included), was refused or
+    failed (in a dry run too), else 0. A row deleted or rewritten since the run read it is
+    reported, not counted: the next run settles it."""
     if report.error:
         return 1
     return 2 if report.refused or any(d.refused for d in report.dropped) else 0
@@ -183,9 +186,9 @@ def print_report(report: ExtractReport) -> None:
         print(f"- image-only, rationale not extracted: {section or '(untitled)'}")
     retire = "would delete" if report.dry_run else "deleted"
     for key in report.retired:
-        print(f"- {retire} {key}: its reasoning is no longer in the document")
+        print(f"- {retire} {key}: the document no longer states it")
     for pair in report.replaced:
-        print(f"- {retire} {pair}: its reasoning is recorded under the new key")
+        print(f"- {retire} {pair}: no longer stated, recorded under the new key")
     tag = "would tag" if report.dry_run else "tagged"
     for key in report.linked:
         print(f"- {tag} {key} with the repository")
@@ -196,5 +199,5 @@ def print_report(report: ExtractReport) -> None:
         if key not in in_records:
             print(
                 f"- {tag} {key} source-changed: pinned, attested or with a recorded outcome, "
-                "its reasoning left the document"
+                "the document no longer states it"
             )

@@ -34,8 +34,13 @@ _PLAIN_FIELD_RE = re.compile(r"-\s+(?P<name>\w+):\s+(?P<type>[\w\s]+)$", re.M)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 # A sentence end or a line break: the parts the fake decision answer is cut into.
 _SENTENCE_OR_LINE_RE = re.compile(r"(?<=[.!?])\s+|\n")
-# server.memory.domain.decision_extract's candidate prompt.
-_DECISION_ANCHOR = "You extract design decisions"
+# server.memory.domain.decision_extract's read prompt and its support check.
+_DECISION_ANCHOR = "You read a design document and list the design decisions"
+_SUPPORT_ANCHOR = "You check claims extracted from a design document"
+_CLAIM_ID_RE = re.compile(r'"id": "(\d+\.[a-z]\d*)"')
+# server.knowledge.domain.answer_plan's plan prompt: the fake's plan counts the rows.
+_PLAN_ANCHOR = "You turn a question about tabular datasets into a calculation plan"
+_STORED_ID_RE = re.compile(r'\{"id": "([^"]+)", "statement"')
 _SECTION_RE = re.compile(
     r"^\[section: (?P<name>[^\]]*)\]\n\n(?P<body>.*?)(?=\n\n\[section: |\Z)", re.M | re.S
 )
@@ -44,7 +49,7 @@ _CAMEL_RE = re.compile(r"\b[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+\b")
 
 def _decisions_from_sections(user: str) -> dict[str, object]:
     """One decision per section of two sentences or lines or more: the first sentence or
-    line as the outcome, the next as the reasoning, both copied as they are."""
+    line as the outcome and its quote, the next as the reason and its quote."""
     out: list[dict[str, object]] = []
     for m in _SECTION_RE.finditer(user):
         body = m["body"].strip()
@@ -57,15 +62,25 @@ def _decisions_from_sections(user: str) -> dict[str, object]:
                 "category": "design:fake",
                 "scenario": m["name"],
                 "outcome": first[:120],
-                "reasoning": second,
-                "alternatives": [],
-                "quote": body[: body.index(second, len(first)) + len(second)],
+                "evidence": [first],
+                "reasons": [{"text": second, "evidence": [second]}],
+                "rejected": [],
                 "is_constraint": False,
                 "stage": "decided",
                 "mentions": _CAMEL_RE.findall(f"{first} {second}"),
             }
         )
     return {"decisions": out}
+
+
+def _support_verdicts(user: str) -> dict[str, object]:
+    """Every claim supported, every stored decision still stated and restated by none."""
+    claims = [{"id": i, "why": "fake", "supported": True} for i in _CLAIM_ID_RE.findall(user)]
+    stored = [
+        {"id": i, "why": "fake", "still_stated": True, "same_as": None}
+        for i in _STORED_ID_RE.findall(user)
+    ]
+    return {"claims": claims, "stored": stored}
 
 
 def _synthesize_typed_record(system: str, user: str) -> dict[str, object]:
@@ -228,6 +243,10 @@ class FakeLLMClient:
             synthesized = json.dumps(_fill_profile(system, user))
         elif _DECISION_ANCHOR in system:
             synthesized = json.dumps(_decisions_from_sections(user))
+        elif _SUPPORT_ANCHOR in system:
+            synthesized = json.dumps(_support_verdicts(user))
+        elif _PLAN_ANCHOR in system:
+            synthesized = json.dumps({"plan": {"aggregates": [{"fn": "count", "name": "rows"}]}})
         elif _EXTRACTION_ANCHOR in system:
             payload = _extract_facts_from_user_prompt(
                 user, agent_rules=_AGENT_RULES_ANCHOR in system

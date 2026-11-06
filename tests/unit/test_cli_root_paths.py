@@ -23,7 +23,7 @@ def test_root_is_the_checkout() -> None:
 
 def test_files_the_cli_resolves_against_the_root_exist() -> None:
     assert (REPO_ROOT / "scripts" / "scip_harness" / "run_delta.sh").is_file()
-    assert (REPO_ROOT / "dev" / "loom_ingest.py").is_file()
+    assert (REPO_ROOT / "AGENTS.md").is_file()  # what `loom demo` ingests by default
 
 
 def test_no_command_module_walks_parents_from_its_own_file() -> None:

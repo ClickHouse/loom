@@ -167,6 +167,7 @@ OpName = Literal[
     "knowledge.dedup_list",
     "knowledge.dedup_resolve",
     "knowledge.delete",
+    "knowledge.formats",
     "knowledge.get",
     "knowledge.ingest",
     "knowledge.ingest_cancel",
@@ -174,6 +175,7 @@ OpName = Literal[
     "knowledge.inspect",
     "knowledge.list",
     "knowledge.outline",
+    "knowledge.query",
     "knowledge.reads",
     "knowledge.search",
     "knowledge.source.add",
@@ -523,6 +525,7 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.dedup_list",
     "knowledge.dedup_resolve",
     "knowledge.delete",
+    "knowledge.formats",
     "knowledge.get",
     "knowledge.ingest",
     "knowledge.ingest_cancel",
@@ -530,6 +533,7 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.inspect",
     "knowledge.list",
     "knowledge.outline",
+    "knowledge.query",
     "knowledge.reads",
     "knowledge.search",
     "knowledge.source.add",
@@ -2287,6 +2291,18 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
+    "knowledge.formats": OpSpec(
+        "knowledge.formats",
+        "KnowledgeFormatsInput",
+        "KnowledgeFormatsBody",
+        "KnowledgeFormatsOutput",
+        True,
+        "viewer",
+        "experimental",
+        5500,
+        False,
+        True,
+    ),
     "knowledge.get": OpSpec(
         "knowledge.get",
         "KnowledgeGetInput",
@@ -2368,6 +2384,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         80,
+        False,
+        True,
+    ),
+    "knowledge.query": OpSpec(
+        "knowledge.query",
+        "KnowledgeQueryInput",
+        "KnowledgeQueryBody",
+        "KnowledgeQueryOutput",
+        True,
+        "viewer",
+        "experimental",
+        1500,
         False,
         True,
     ),
@@ -10140,6 +10168,34 @@ class KnowledgeDeleteOutput(TypedDict, total=False):
     chunks_tombstoned: Required[int]
 
 
+class KnowledgeFormatsInput(TypedDict, total=False):
+    "The document formats this deployment reads, as `knowledge.ingest` sends"
+
+    org: Required[str]
+    namespace: Required[str]
+
+
+class KnowledgeFormatsBody(TypedDict, total=False):
+    "The document formats this deployment reads, as `knowledge.ingest` sends"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class KnowledgeFormatsOutput(TypedDict, total=False):
+    formats: NotRequired[list["KnowledgeFormat"]]
+    max_upload_bytes: NotRequired[int]
+    refused_extensions: NotRequired[list[str]]
+    default_format: NotRequired[str]
+
+
+class KnowledgeFormat(TypedDict, total=False):
+    format: Required[str]
+    extensions: NotRequired[list[str]]
+    media_types: NotRequired[list[str]]
+    available: NotRequired[Optional[bool]]
+
+
 class KnowledgeGetInput(TypedDict, total=False):
     "Fetch a single document by source_uri."
 
@@ -10656,6 +10712,125 @@ class OutlineEntry(TypedDict, total=False):
     chars: Required[int]
 
 
+class KnowledgeQueryInput(TypedDict, total=False):
+    "Calculate over the live snapshots of ingested datasets with a typed"
+
+    org: Required[str]
+    namespace: Required[str]
+    datasets: Required[list["QueryDataset"]]
+    where: NotRequired[list["QueryFilter"]]
+    joins: NotRequired[list["QueryJoin"]]
+    group_by: NotRequired[list["QueryGroup"]]
+    aggregates: NotRequired[list["QueryAggregate"]]
+    select: NotRequired[list["QueryColumn"]]
+    order_by: NotRequired[list["QueryOrder"]]
+    limit: NotRequired[int]
+
+
+class QueryDataset(TypedDict, total=False):
+    alias: NotRequired[str]
+    source_uri: Required[str]
+    dataset_id: Required[str]
+
+
+class QueryFilter(TypedDict, total=False):
+    column: Required["QueryColumn"]
+    op: Required[
+        Literal[
+            "eq",
+            "ne",
+            "lt",
+            "le",
+            "gt",
+            "ge",
+            "in",
+            "not_in",
+            "is_null",
+            "not_null",
+            "contains",
+            "starts_with",
+        ]
+    ]
+    value: NotRequired[Union[str, int, float, bool, None]]
+    values: NotRequired[list[Union[str, int, float, bool]]]
+
+
+class QueryColumn(TypedDict, total=False):
+    dataset: NotRequired[str]
+    column: Required[str]
+
+
+class QueryJoin(TypedDict, total=False):
+    left: Required["QueryColumn"]
+    right: Required["QueryColumn"]
+
+
+class QueryGroup(TypedDict, total=False):
+    column: Required["QueryColumn"]
+    bucket: NotRequired[Literal["", "day", "month", "year"]]
+    name: NotRequired[str]
+
+
+class QueryAggregate(TypedDict, total=False):
+    fn: Required[Literal["count", "count_distinct", "sum", "avg", "min", "max"]]
+    column: NotRequired[Optional["QueryColumn"]]
+    name: Required[str]
+
+
+class QueryOrder(TypedDict, total=False):
+    by: Required[str]
+    desc: NotRequired[bool]
+
+
+class KnowledgeQueryBody(TypedDict, total=False):
+    "Calculate over the live snapshots of ingested datasets with a typed"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    datasets: Required[list["QueryDataset"]]
+    where: NotRequired[list["QueryFilter"]]
+    joins: NotRequired[list["QueryJoin"]]
+    group_by: NotRequired[list["QueryGroup"]]
+    aggregates: NotRequired[list["QueryAggregate"]]
+    select: NotRequired[list["QueryColumn"]]
+    order_by: NotRequired[list["QueryOrder"]]
+    limit: NotRequired[int]
+
+
+class KnowledgeQueryOutput(TypedDict, total=False):
+    columns: Required[list["QueryResultColumn"]]
+    rows: Required[list[list[Any]]]
+    row_ids: NotRequired[list[list[int]]]
+    truncated: NotRequired[bool]
+    complete: Required[bool]
+    incomplete: NotRequired[list[str]]
+    receipt: Required["QueryReceipt"]
+
+
+class QueryResultColumn(TypedDict, total=False):
+    name: Required[str]
+    type: Required[str]
+
+
+class QueryReceipt(TypedDict, total=False):
+    snapshots: Required[list["QuerySnapshot"]]
+    plan: Required[dict[str, Any]]
+    sql: Required[str]
+    params: Required[dict[str, str]]
+
+
+class QuerySnapshot(TypedDict, total=False):
+    alias: Required[str]
+    source_uri: Required[str]
+    dataset_id: Required[str]
+    revision: Required[int]
+    snapshot_id: Required[str]
+    row_count: Required[int]
+    rejected_rows: Required[int]
+    complete: Required[bool]
+    schema_state: Required[str]
+
+
 class KnowledgeReadsInput(TypedDict, total=False):
     "How often agents opened each document over the last `days` (`knowledge.get`"
 
@@ -10983,7 +11158,8 @@ class KnowledgeSynthesizeInput(TypedDict, total=False):
 
     org: Required[str]
     namespace: Required[str]
-    source_uris: Required[list[str]]
+    source_uris: NotRequired[list[str]]
+    datasets: NotRequired[list["QueryDataset"]]
     task: Required[str]
     window_chars: NotRequired[int]
     max_answer_chars: NotRequired[int]
@@ -10995,7 +11171,8 @@ class KnowledgeSynthesizeBody(TypedDict, total=False):
 
     org: NotRequired[str]
     namespace: NotRequired[str]
-    source_uris: Required[list[str]]
+    source_uris: NotRequired[list[str]]
+    datasets: NotRequired[list["QueryDataset"]]
     task: Required[str]
     window_chars: NotRequired[int]
     max_answer_chars: NotRequired[int]
@@ -11014,6 +11191,8 @@ class KnowledgeSynthesizeOutput(TypedDict, total=False):
     truncated: NotRequired[bool]
     abstain: NotRequired[bool]
     abstain_reason: NotRequired[str]
+    clarification: NotRequired[str]
+    calculations: NotRequired[list["SynthesizeCalculation"]]
     model: NotRequired[str]
 
 
@@ -11022,6 +11201,19 @@ class CitedChunk(TypedDict, total=False):
     chunk_idx: Required[int]
     revision: NotRequired[int]
     locator: NotRequired[Optional[dict[str, Any]]]
+
+
+class SynthesizeCalculation(TypedDict, total=False):
+    "The calculation run for the task: knowledge.query's result (its columns, rows,"
+
+    columns: Required[list["QueryResultColumn"]]
+    rows: Required[list[list[Any]]]
+    row_ids: NotRequired[list[list[int]]]
+    truncated: NotRequired[bool]
+    complete: Required[bool]
+    incomplete: NotRequired[list[str]]
+    receipt: Required["QueryReceipt"]
+    citation: Required[str]
 
 
 class KnowledgeUpdateMetadataInput(TypedDict, total=False):
