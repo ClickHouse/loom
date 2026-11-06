@@ -38,7 +38,6 @@ async function openAndFind(query: string, onOpen = vi.fn(), onHitsShown = vi.fn(
     </main>,
   );
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: /Find a passage/ }));
   await user.type(screen.getByLabelText("Passage to find"), query);
   await user.click(screen.getByRole("button", { name: "Find" }));
   return { user, onOpen, onHitsShown };
@@ -50,11 +49,10 @@ describe("LibraryPassages", () => {
     vi.resetAllMocks();
   });
 
-  it("is folded until opened", async () => {
+  it("says what it searches, tied to its field", () => {
     render(<LibraryPassages identity={identity} navEnabled onHitsShown={vi.fn()} onOpen={vi.fn()} />);
-    const toggle = screen.getByRole("button", { name: /Find a passage/ });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByLabelText("Passage to find")).toBeNull();
+    expect(screen.getByLabelText("Passage to find")).toHaveAccessibleDescription(/whatever the tag filter/);
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
   });
 
   it("cites each hit by revision and place, and opens its document", async () => {
@@ -74,7 +72,7 @@ describe("LibraryPassages", () => {
     const { user, onOpen, onHitsShown } = await openAndFind("how long are events kept");
     const list = await screen.findByRole("list", { name: "Passages found" });
     expect(vi.mocked(searchKnowledge).mock.calls[0].slice(0, 2)).toEqual([identity, "how long are events kept"]);
-    expect(screen.getByText("2 passages")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("2 passages");
     // The list below hands its row keys over while hits show.
     expect(onHitsShown).toHaveBeenLastCalledWith(true);
     const [first, second] = within(list).getAllByRole("listitem");
@@ -87,15 +85,16 @@ describe("LibraryPassages", () => {
     expect(await axeViolations(document.body)).toEqual([]);
     await user.click(within(first).getByRole("button"));
     expect(onOpen).toHaveBeenCalledWith("repo://handbook/retention.pdf");
-    // Folded, the hits no longer show and the list below takes its keys back.
-    await user.click(screen.getByRole("button", { name: /Find a passage/ }));
+    // Gone (folded, or another place), the hits no longer show and the list below takes its
+    // keys back.
+    cleanup();
     expect(onHitsShown).toHaveBeenLastCalledWith(false);
   });
 
   it("says a full page is the best passages, not all of them", async () => {
     vi.mocked(searchKnowledge).mockResolvedValue(Array.from({ length: 10 }, (_, i) => ({ ...HIT, chunk_idx: i })));
     await openAndFind("events");
-    expect(await screen.findByText("The best 10 passages")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 10 passages"));
   });
 
   it("shows a hit from a server older than revisions and locators, uncited", async () => {
@@ -111,9 +110,28 @@ describe("LibraryPassages", () => {
   it("says when no passage answers, and when the search failed", async () => {
     vi.mocked(searchKnowledge).mockResolvedValueOnce([]);
     const { user } = await openAndFind("nothing like this");
-    expect(await screen.findByText("No passage answers that.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("No passage answers that."));
     vi.mocked(searchKnowledge).mockRejectedValueOnce(new TypeError("Failed to fetch"));
     await user.click(screen.getByRole("button", { name: "Find" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/Lost connection to Loom/));
+  });
+
+  it("drops a search still running when the panel goes", async () => {
+    let signal: AbortSignal | undefined;
+    vi.mocked(searchKnowledge).mockImplementation((_id, _q, _k, opts) => {
+      signal = opts?.signal;
+      return new Promise(() => {});
+    });
+    await openAndFind("events");
+    expect(signal?.aborted).toBe(false);
+    cleanup();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("cuts a long excerpt between characters, not inside one", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValue([{ ...HIT, content: `${"a".repeat(278)}😀 and more after it` }]);
+    await openAndFind("events");
+    const [row] = within(await screen.findByRole("list", { name: "Passages found" })).getAllByRole("listitem");
+    expect(row.textContent).toContain(`${"a".repeat(278)}😀…`);
   });
 });

@@ -25,7 +25,7 @@ import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
 import { roleOnNamespace } from "../lib/namespaceRole";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError } from "../components/Toast";
-import { LibraryPassages } from "./LibraryPassages";
+import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { ListRow, Loading, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
@@ -191,6 +191,7 @@ export function Documents() {
   const focusSearchOnRead = useRef(false);
   const [sortBy, setSortBy] = useState<SortBy>("recency");
   const [passagesShown, setPassagesShown] = useState(false);
+  const [passagesOpen, setPassagesOpen] = useState(false);
   // The arrows and j/k move through the list focus was last in: the passages or the documents.
   const [keysIn, setKeysIn] = useState<"documents" | "passages">("documents");
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -382,7 +383,7 @@ export function Documents() {
     // A link to a document the namespace does not hold opens nothing, and the URL stops
     // naming it; a failed read says so and keeps the link.
     handlers.current.openByUri(uri, () => setViewParam("doc", null));
-  }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc]);
+  }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc, identity.org, identity.namespace]);
   // After a row's delete, the read that drops the row hands focus to the search field.
   useEffect(() => {
     if (!focusSearchOnRead.current) return;
@@ -607,6 +608,23 @@ export function Documents() {
     [listNav],
   );
   const passagesBox = useRef<HTMLDivElement | null>(null);
+  // Finding a passage: once the place's list has loaded and holds a document, and through a
+  // later failed read (it searches the whole namespace). A new place folds it.
+  const canFindPassages = rows !== null && !emptyLibrary && listedScope === `${identity.org}/${identity.namespace}`;
+  useEffect(() => setPassagesOpen(false), [identity.org, identity.namespace]);
+  const passagesToggle = (className: string) => (
+    <Button
+      type="empty"
+      htmlType="button"
+      iconLeft="search"
+      className={className}
+      aria-expanded={passagesOpen}
+      aria-controls={passagesOpen ? PASSAGES_PANEL_ID : undefined}
+      onClick={() => setPassagesOpen((v) => !v)}
+    >
+      Find a passage
+    </Button>
+  );
   useEffect(() => {
     const onFocusIn = (e: FocusEvent) => {
       const at = e.target instanceof Node ? e.target : null;
@@ -861,15 +879,20 @@ export function Documents() {
             Clear filters
           </Button>
         )}
+        {canFindPassages && passagesToggle("hidden shrink-0 sm:inline-flex")}
         {sortSelect("hidden w-40 shrink-0 sm:block")}
       </ListToolbar>
-      {/* A phone's toolbar has room for the search only; the sort sits under it. */}
-      <div className="-mt-1 mb-3 flex justify-end sm:hidden">{sortSelect("w-40")}</div>
+      {/* A phone's toolbar has room for the search only; the passage toggle and the sort sit
+          under it. */}
+      <div className="-mt-1 mb-3 flex items-center justify-end gap-2 sm:hidden">
+        {canFindPassages && passagesToggle("mr-auto")}
+        {sortSelect("w-40")}
+      </div>
 
       {/* Inside the documents: a passage, cited by revision and place, opens its document.
           Kept through a list filter and a later failed read (it searches the whole namespace);
           not shown before the place's list has loaded once, and a new place resets it. */}
-      {rows !== null && !emptyLibrary && listedScope === `${identity.org}/${identity.namespace}` && (
+      {canFindPassages && passagesOpen && (
         <div ref={passagesBox}>
           <LibraryPassages
             key={`${identity.org}/${identity.namespace}`}

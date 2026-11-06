@@ -229,7 +229,14 @@ describe("Library keeps the open document in its URL", () => {
     ]);
     render(<Documents />);
     await settle();
-    fireEvent.click(screen.getByRole("button", { name: /Find a passage/ }));
+    // Folded until its toggle opens it, which then names the panel it controls.
+    const toggle = screen.getAllByRole("button", { name: "Find a passage" })[0];
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Passage to find")).toBeNull();
+    fireEvent.click(toggle);
+    expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toContainElement(
+      screen.getByLabelText("Passage to find"),
+    );
     fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "who to escalate to" } });
     fireEvent.click(screen.getByRole("button", { name: "Find" }));
     await settle();
@@ -251,7 +258,7 @@ describe("Library keeps the open document in its URL", () => {
     ]);
     render(<Documents />);
     await settle();
-    fireEvent.click(screen.getByRole("button", { name: /Find a passage/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
     fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "passage" } });
     fireEvent.click(screen.getByRole("button", { name: "Find" }));
     await settle();
@@ -269,7 +276,7 @@ describe("Library keeps the open document in its URL", () => {
     ]);
     render(<Documents />);
     await settle();
-    fireEvent.click(screen.getByRole("button", { name: /Find a passage/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
     fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "passage" } });
     fireEvent.click(screen.getByRole("button", { name: "Find" }));
     await settle();
@@ -288,16 +295,17 @@ describe("Library keeps the open document in its URL", () => {
     api.searchKnowledge.mockResolvedValue([]);
     render(<Documents />);
     await settle();
-    fireEvent.click(screen.getByRole("button", { name: /Find a passage/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
     expect(screen.getByLabelText("Passage to find")).toBeInTheDocument();
     act(() => useStore.setState({ identity: { org: "acme", namespace: "ops", agent: "loom-ui" } }));
     await settle();
-    expect(screen.getByRole("button", { name: /Find a passage/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getAllByRole("button", { name: "Find a passage" })[0]).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Passage to find")).toBeNull();
     // A later read of the list that fails keeps the passages and what they found.
     api.searchKnowledge.mockResolvedValue([
       { source_uri: "docs/handbook.md", chunk_idx: 0, content: "One.", section: "", score: 1 },
     ]);
-    fireEvent.click(screen.getByRole("button", { name: /Find a passage/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
     fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "passage" } });
     fireEvent.click(screen.getByRole("button", { name: "Find" }));
     await settle();
@@ -312,7 +320,7 @@ describe("Library keeps the open document in its URL", () => {
     api.listKnowledge.mockRejectedValue(new Error("boom"));
     act(() => useStore.setState({ identity: { org: "acme", namespace: "broken", agent: "loom-ui" } }));
     await settle();
-    expect(screen.queryByRole("button", { name: /Find a passage/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
   });
 
   it("a passage in a document past the first page reads that document and opens it", async () => {
