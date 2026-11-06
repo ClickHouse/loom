@@ -843,7 +843,9 @@ MB without (OCR adds 44 MB unpacked); the baseline's image is 3.46 GB
 
 **Downstream.** Each system's artifacts are ingested into a running Loom through a stub
 extractor (the fake n-gram embedder and the fake LLM provider,
-`docparse_models_downstream.json`), and up to three paragraphs and two table rows of every
+`docparse_models_downstream.json`: the provider is held fake so that only the parse
+varies, which makes this a ranking of parses, not a measurement of Loom's retrieval under a
+real embedder), and up to three paragraphs and two table rows of every
 file in both splits (212 queries) go to `knowledge.search` within their own document and
 system's namespace. Found: a top-5 hit holds 70% of the answer's words; cited: that hit's
 locator holds the answer's page. Ingests that failed score zero: the text layer's four scans
