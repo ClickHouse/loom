@@ -180,10 +180,13 @@ they are deleted (`knowledge.delete`). A removed source with no documents frees 
 name at once.
 
 No op changes a stored source's `config`: a `gdrive` source lists only the kinds its
-stored `include` names. To change them, `remove` it with `delete_documents`, wait for the
-sync worker to retire its documents (`add` answers `SOURCE_DELETE_PENDING` until then),
-and add it again; every document of the source is then written, embedded and mined for
-decisions again.
+stored `include` names. To take in a kind it leaves out, add a second source on the same
+folders with only that kind in its `include`: it writes those files, whose addresses no
+source holds yet, and the first source's documents are not touched. To drop a kind, or
+to have one source hold them all, `remove` the source with `delete_documents`, wait for
+the sync worker to retire its documents (`add` answers `SOURCE_DELETE_PENDING` until
+then), and add it again; every document of the source is then written, embedded and
+mined for decisions again.
 
 | Code                    | When                                                                                                                                                                                                                         |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

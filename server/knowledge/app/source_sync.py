@@ -23,8 +23,8 @@ changed file is fetched, turned into Markdown and written with
 `source:<name>`. A native document is exported as Markdown, a presentation
 converted slide by slide, and a PDF, `.pptx` or `.docx` file sent to the
 extractor service its format is routed to (the server parses no original
-itself); the bytes are kept as the document's original. A file that cannot be stored is counted
-`unconverted` with its reason and not written. One the store or the extractor
+itself); the bytes are kept as the document's original. A file that cannot be
+stored is counted `unconverted` with its reason and not written. One the store or the extractor
 refuses, one over the size bound and one whose write is refused are also given
 up on their revision at once, so later passes skip them without a fetch; one
 with no https link or a format no extractor declares costs no fetch and is
