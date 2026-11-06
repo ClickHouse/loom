@@ -846,6 +846,22 @@ class KnowledgeIngestCancelInput(BaseModel):
     ingestion_id: str
 
 
+class KnowledgeIngestCancelOutput(BaseModel):
+    # False when no job of this id is in the namespace.
+    found: bool
+    # The job's state after the call: `cancelled` for a job that had not started,
+    # its running state when the worker will stop it before publishing, or where it
+    # already ended (a published revision stays published).
+    state: str = ""
+    # True when this call stopped the job, or asked the worker to.
+    cancelled: bool = False
+
+
+# ============================================================
+# knowledge.dataset_get / knowledge.dataset_approve
+# ============================================================
+
+
 class KnowledgeFormatsInput(BaseModel):
     """The document formats this deployment reads, as `knowledge.ingest` sends
     them to its extractors, and the upload's limits."""
@@ -876,22 +892,6 @@ class KnowledgeFormatsOutput(BaseModel):
     refused_extensions: list[str] = Field(default_factory=list)
     # The format of a file whose name and media type name none.
     default_format: str = ""
-
-
-class KnowledgeIngestCancelOutput(BaseModel):
-    # False when no job of this id is in the namespace.
-    found: bool
-    # The job's state after the call: `cancelled` for a job that had not started,
-    # its running state when the worker will stop it before publishing, or where it
-    # already ended (a published revision stays published).
-    state: str = ""
-    # True when this call stopped the job, or asked the worker to.
-    cancelled: bool = False
-
-
-# ============================================================
-# knowledge.dataset_get / knowledge.dataset_approve
-# ============================================================
 
 
 class DatasetColumnOut(BaseModel):

@@ -88,8 +88,6 @@ _LARGER = (3 / 2, 2, 3, 4)
 MIN_CHUNK_SIZE = 200  # not a setting: the smallest size drafted
 # A size large enough that nothing is windowed: what a section's structure alone makes.
 _WHOLE = 1 << 62
-# Seconds the capabilities read of every configured extractor, run at once, may take
-# here; a slower one reads as unread.
 # Agents named as affected, most documents first.
 MAX_AFFECTED_AGENTS = 20  # not a setting: bounds one response
 

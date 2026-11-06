@@ -254,17 +254,6 @@ knowledge_ingest_status = Operation(
     maturity="experimental",
 )
 
-knowledge_formats = Operation(
-    name="knowledge.formats",
-    input_model=KnowledgeFormatsInput,
-    output_model=KnowledgeFormatsOutput,
-    handler=handle_knowledge_formats,
-    idempotent=True,
-    required_role=Role.VIEWER,
-    audit=False,
-    maturity="experimental",
-)
-
 knowledge_ingest_cancel = Operation(
     name="knowledge.ingest_cancel",
     input_model=KnowledgeIngestCancelInput,
@@ -272,6 +261,17 @@ knowledge_ingest_cancel = Operation(
     handler=handle_knowledge_ingest_cancel,
     idempotent=True,
     required_role=Role.WRITER,
+    audit=False,
+    maturity="experimental",
+)
+
+knowledge_formats = Operation(
+    name="knowledge.formats",
+    input_model=KnowledgeFormatsInput,
+    output_model=KnowledgeFormatsOutput,
+    handler=handle_knowledge_formats,
+    idempotent=True,
+    required_role=Role.VIEWER,
     audit=False,
     maturity="experimental",
 )
@@ -338,8 +338,8 @@ OPERATIONS: list[Operation] = [
     knowledge_dedup_resolve,
     knowledge_ingest,
     knowledge_ingest_status,
-    knowledge_formats,
     knowledge_ingest_cancel,
+    knowledge_formats,
     knowledge_dataset_get,
     knowledge_dataset_approve,
     knowledge_query,

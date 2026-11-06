@@ -185,6 +185,7 @@ async def capabilities(url: str) -> Capabilities:
             f"the extractor's capabilities are not the contract's: {type(e).__name__}"
         ) from e
     _declared[url] = (time.monotonic() + _CAPABILITIES_TTL_S, caps)
+    _unreadable.pop(url, None)  # read again (by an ingest, say): the listing counts it
     return caps
 
 

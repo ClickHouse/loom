@@ -21,6 +21,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from loom_extractor import service
+from server.core.document_formats import format_of
 from server.knowledge.api.models_knowledge import KnowledgeFormatsInput
 from server.knowledge.app import extractors
 from server.knowledge.app.ingest import handle_knowledge_formats
@@ -133,7 +134,17 @@ async def test_a_down_service_costs_one_wait_a_minute_not_one_per_listing(
 
 
 async def test_the_default_format_is_what_routing_falls_back_to(hosts: _Hosts) -> None:
-    from server.core.document_formats import format_of
-
     out = await handle_knowledge_formats(_input())
     assert out.default_format == format_of("notes", "application/x-unknown") == "text"
+
+
+async def test_a_service_read_since_its_failed_listing_counts_again(
+    hosts: _Hosts, settings_override: Any
+) -> None:
+    hosts.apps["sqlx"] = _declaring(["sql"], delay_s=30)
+    settings_override(document_extractors_json=json.dumps({"sql": "http://sqlx"}))
+    assert "sql" not in await extractors.available_formats(timeout_s=0.2)
+    # It comes back, and an ingest reads it (its capabilities cached): the listing agrees.
+    hosts.apps["sqlx"] = _declaring(["sql"])
+    await extractors.capabilities("http://sqlx")
+    assert (await extractors.available_formats(timeout_s=0.2))["sql"] == "http://sqlx"
