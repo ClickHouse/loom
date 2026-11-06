@@ -140,11 +140,13 @@ def test_release_gate_installs_browser_dependencies_before_running_provider_flow
     )
     assert setup < browser < smoke
     assert '--extractor-image "ghcr.io/clickhouse/loom-extractor:$VERSION"' in steps[smoke]["run"]
-    images = workflow["jobs"]["docker"]["strategy"]["matrix"]["include"]
-    assert [i["image"] for i in images] == [
-        "ghcr.io/clickhouse/loom",
-        "ghcr.io/clickhouse/loom-extractor",
-    ]
+    matrix = workflow["jobs"]["docker"]["strategy"]["matrix"]
+    images = [i["image"] for i in matrix["include"] if "image" in i]
+    assert images == ["ghcr.io/clickhouse/loom", "ghcr.io/clickhouse/loom-extractor"]
+    # Each architecture on its own runner: no emulated build.
+    assert matrix["arch"] == ["amd64", "arm64"]
+    runners = {i["arch"]: i["runner"] for i in matrix["include"] if "runner" in i}
+    assert runners == {"amd64": "ubuntu-latest", "arm64": "ubuntu-24.04-arm"}
     # Tagged together after both scans, so a version never names one image alone.
     assert "docker-tag" in job["needs"] and workflow["jobs"]["docker-tag"]["needs"] == ["docker"]
     assert "docker-tag" in workflow["jobs"]["github-release"]["needs"]
@@ -180,35 +182,29 @@ def test_both_smoke_workflows_build_or_pull_the_extractor_beside_the_server() ->
 
 
 def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> None:
-    """The release's tag step, run against two scans' artifacts and a stub docker."""
+    """The release's tag step, run against four scans' artifacts and a stub docker:
+    each image's tags name one index of its amd64 and arm64 digests."""
     root = Path(__file__).resolve().parents[2]
     workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
     steps = workflow["jobs"]["docker-tag"]["steps"]
     script = next(s["run"] for s in steps if s.get("name") == "Tag the scanned images")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "docker").write_text('#!/bin/sh\necho "$@" >> "$CALLS"\n')
+    (bin_dir / "docker").write_text(
+        '#!/bin/sh\necho "$@" >> "$CALLS"\n'
+        'case "$3" in inspect) printf \'{"digest":"sha256:index-%s"}\\n\' "${4%%:*}" ;; esac\n'
+    )
     (bin_dir / "docker").chmod(0o755)
-    for name, image, pin, digest, tags in (
-        (
-            "server",
-            "ghcr.io/clickhouse/loom",
-            "image.digest",
-            "sha256:aa",
-            "loom:1.2.3\nloom:1.2\n\n",
-        ),
-        (
-            "extractor",
-            "ghcr.io/clickhouse/loom-extractor",
-            "extractor.image.digest",
-            "sha256:bb",
-            "x:1.2.3\n",
-        ),
+    for name, image, pin, tags in (
+        ("server", "ghcr.io/clickhouse/loom", "image.digest", "loom:1.2.3\nloom:1.2\n\n"),
+        ("extractor", "ghcr.io/clickhouse/loom-extractor", "extractor.image.digest", "x:1.2.3\n"),
     ):
-        d = tmp_path / f"scanned-{name}"
-        d.mkdir()
-        for file, value in (("image", image), ("pin", pin), ("digest", digest), ("tags", tags)):
-            (d / file).write_text(value if file == "tags" else value + "\n")
+        for arch in ("amd64", "arm64"):
+            d = tmp_path / f"scanned-{name}-{arch}"
+            d.mkdir()
+            digest = f"sha256:{name}-{arch}"
+            for file, value in (("image", image), ("pin", pin), ("digest", digest), ("tags", tags)):
+                (d / file).write_text(value if file == "tags" else value + "\n")
     env = {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -222,16 +218,18 @@ def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> 
         )
 
     assert run().returncode == 0
-    calls = sorted((tmp_path / "calls").read_text().splitlines())
-    assert calls == [
-        "buildx imagetools create -t loom:1.2.3 -t loom:1.2 ghcr.io/clickhouse/loom@sha256:aa",
-        "buildx imagetools create -t x:1.2.3 ghcr.io/clickhouse/loom-extractor@sha256:bb",
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert [c for c in calls if " create " in c] == [
+        "buildx imagetools create -t loom:1.2.3 -t loom:1.2"
+        " ghcr.io/clickhouse/loom@sha256:server-amd64 ghcr.io/clickhouse/loom@sha256:server-arm64",
+        "buildx imagetools create -t x:1.2.3 ghcr.io/clickhouse/loom-extractor@sha256:extractor-amd64"
+        " ghcr.io/clickhouse/loom-extractor@sha256:extractor-arm64",
     ]
+    # The pin is the index's digest, not one architecture's.
     summary = (tmp_path / "summary").read_text()
-    assert (
-        "`image.digest: sha256:aa`" in summary and "`extractor.image.digest: sha256:bb`" in summary
-    )
-    shutil.rmtree(tmp_path / "scanned-extractor")
+    assert "`image.digest: sha256:index-loom`" in summary
+    assert "`extractor.image.digest: sha256:index-x`" in summary
+    shutil.rmtree(tmp_path / "scanned-extractor-arm64")
     (tmp_path / "calls").unlink()
     failed = run()
     assert (

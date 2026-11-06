@@ -6,18 +6,20 @@ name: release
 # publishes the verified SDK files to PyPI and npm and lists the server in the
 # MCP Registry. Every tag publishes the server and extractor images to ghcr.io
 # before making the GitHub Release visible, so the release's one-line installer
-# never points at an image that does not exist.
+# never points at an image that does not exist. A dispatch with `dry_run` on any
+# branch runs every build, check and smoke test and publishes nothing.
 # docs/development/release-process.md is the maintainer procedure.
 #
-# Jobs: version (derive and gate the version) -> clickhouse (the ClickHouse
-# release the installer bundle names, migrated and schema-checked) -> build ->
-# verify (inspect the exact files) -> docker (build and scan both images) ->
-# docker-tag -> docker-smoke -> github-release -> pypi, npm, mcp-registry
-# (dispatch only). A re-run after a partial publish is safe: the bundle keeps
-# the ClickHouse release it was first published with, the release is updated in
-# place, PyPI skips files it already has, npm and the MCP Registry skip a
-# version they already have, and the image tags are overwritten with the same
-# build.
+# Jobs: version (derive and gate the version) -> preflight (the owner-granted
+# prerequisites, in seconds) -> clickhouse (the ClickHouse release the
+# installer bundle names, migrated and schema-checked) -> build -> verify
+# (inspect the exact files) -> docker (build and scan each image on each
+# architecture's own runner) -> docker-tag -> docker-smoke -> github-release ->
+# pypi, npm, mcp-registry (dispatch only). A re-run after a partial publish is
+# safe: the bundle keeps the ClickHouse release it was first published with,
+# the release is updated in place, PyPI skips files it already has, npm and the
+# MCP Registry skip a version they already have, and the image tags are
+# overwritten with the same build.
 #
 # The PyPI, npm and MCP Registry jobs are dispatch-only, so a tag's GitHub
 # Release can be checked before the SDKs and the server listing reach the
@@ -28,6 +30,13 @@ on:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
+      dry_run:
+        description: >-
+          Rehearse on any branch: build, verify and smoke-test everything, and
+          publish nothing (no image push, GitHub Release or registry upload)
+        type: boolean
+        required: false
+        default: false
       clickhouse_image:
         description: >-
           An exact ClickHouse release for a bundle not yet published (e.g.
@@ -46,7 +55,7 @@ on:
 # One release run per tag at a time; a second run waits instead of cancelling
 # a publish halfway.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.ref }}${{ inputs.dry_run && '-dry-run' || '' }}
   cancel-in-progress: false
 
 permissions:
@@ -65,20 +74,29 @@ jobs:
     outputs:
       version: ${{ steps.parse.outputs.version }}
       prerelease: ${{ steps.parse.outputs.prerelease }}
+      latest: ${{ steps.latest.outputs.latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # A dispatch from a branch would otherwise take the branch name as the
-      # version and publish it.
+      # version and publish it. A dry run publishes nothing, so it runs on any
+      # ref, at the version the server names.
       - name: Parse version from tag
         id: parse
         env:
           REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           case "$REF" in
             refs/tags/v*) VERSION="${REF#refs/tags/v}" ;;
-            *) echo "::error::run the release on a v* tag, not $REF"; exit 1 ;;
+            *)
+              if [ "$DRY_RUN" != true ]; then
+                echo "::error::run the release on a v* tag, not $REF (or dispatch it with -f dry_run=true)"
+                exit 1
+              fi
+              VERSION=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' server/__init__.py)
+              ;;
           esac
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::$VERSION is not a SemVer X.Y.Z[-pre] version"
@@ -88,7 +106,19 @@ jobs:
           [[ "$VERSION" == *-* ]] && PRERELEASE=true
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
-          echo "Releasing v$VERSION (prerelease: $PRERELEASE)"
+          echo "Releasing v$VERSION (prerelease: $PRERELEASE, dry run: ${DRY_RUN:-false})"
+      # `releases/latest` serves the installer and `:latest` the image, so only
+      # the highest final version takes them: a patch to an older line keeps both.
+      - name: Is this the highest final version
+        id: latest
+        env:
+          VERSION: ${{ steps.parse.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq '.[] | select(.draft | not) | .tag_name' | python3 scripts/release/make_latest.py "$VERSION")
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "Latest: $latest"
       # The server reports its version from server/__init__.py (= pyproject.toml);
       # a tag that disagrees would ship an image that names another release.
       # The mcp-registry job publishes server.json as committed, so it must agree too.
@@ -101,11 +131,34 @@ jobs:
           jq -e --arg v "$VERSION" '.version == $v' server.json >/dev/null \
             || { echo "::error file=server.json::version is not $VERSION"; exit 1; }
 
+  # What only an owner can grant (a public repository; ghcr.io packages this
+  # workflow can push and anyone can pull), checked before forty minutes of
+  # builds rather than at the push. A dry run reports each as a warning.
+  preflight:
+    name: Release prerequisites
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write # the push probe asks for the access the docker job uses
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the owner-granted prerequisites
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          IMAGES: ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor
+          MODE: ${{ inputs.dry_run && 'report' || 'strict' }}
+        run: bash scripts/release/preflight.sh "$MODE"
+
   # The bundle names the ClickHouse release that is latest now, so an installed
   # Loom version keeps its ClickHouse; it is migrated and checked here first.
   clickhouse:
     name: The ClickHouse release the bundle names
-    needs: version
+    needs: [version, preflight]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -385,39 +438,51 @@ jobs:
 
   docker:
     # The server's image, and the document extractor service's (extractor/), which
-    # the compose stack and the chart run beside it at the same version.
-    name: Docker (${{ matrix.image }})
+    # the compose stack and the chart run beside it at the same version. Each
+    # architecture builds on its own runner (an emulated arm64 build took most of
+    # the run's hour), is pushed by digest and scanned; docker-tag joins the two.
+    # A dry run exports each image to an artifact instead of pushing it, without
+    # the provenance and SBOM attestations, which only a registry keeps.
+    name: Docker (${{ matrix.artifact }}, ${{ matrix.arch }})
     needs: [version, verify]
     strategy:
       matrix:
+        artifact: [server, extractor]
+        arch: [amd64, arm64]
         include:
-          - image: ghcr.io/clickhouse/loom
+          - artifact: server
+            image: ghcr.io/clickhouse/loom
             file: Dockerfile
             cache: buildkit
-            artifact: server
             pin: image.digest
             # The repository's title and description, metadata-action's defaults.
             labels: ""
-          - image: ghcr.io/clickhouse/loom-extractor
+          - artifact: extractor
+            image: ghcr.io/clickhouse/loom-extractor
             file: extractor/Dockerfile
             cache: extractor
-            artifact: extractor
             pin: extractor.image.digest
             labels: |
               org.opencontainers.image.title=loom-extractor
               org.opencontainers.image.description=Loom's document extractor service, which parses originals apart from the server
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
+    env:
+      DRY_RUN: ${{ inputs.dry_run == true }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Log in to ghcr.io
+        if: ${{ !inputs.dry_run }}
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
@@ -430,44 +495,38 @@ jobs:
           images: ${{ matrix.image }}
           # The extractor's own title and description; the defaults are the repository's.
           labels: ${{ matrix.labels }}
+          # A dry run on a branch has no tag to derive them from.
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
-      - name: Build + push by digest (amd64 + arm64)
+            type=semver,pattern={{version}},value=v${{ needs.version.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.version.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.version.outputs.latest == 'true' }}
+      - name: Build + push by digest (linux/${{ matrix.arch }})
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.file }}
-          platforms: linux/amd64,linux/arm64
-          # By digest only: docker-tag adds the version tags once both images have scanned.
-          outputs: type=image,name=${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          platforms: linux/${{ matrix.arch }}
+          # By digest only: docker-tag adds the version tags once every image has scanned.
+          # A dry run's goes to a file instead, which docker-smoke loads.
+          outputs: ${{ inputs.dry_run && format('type=docker,name={0}:{1},dest={2}/image.tar', matrix.image, needs.version.outputs.version, runner.temp) || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', matrix.image) }}
           labels: ${{ steps.meta.outputs.labels }}
-          provenance: mode=max
-          sbom: true
-          cache-from: type=gha,scope=${{ matrix.cache }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cache }}
-      # Fails the release on a critical CVE that has a fixed package, on either architecture.
-      - name: Scan the pushed image (amd64)
+          provenance: ${{ !inputs.dry_run && 'mode=max' || 'false' }}
+          sbom: ${{ !inputs.dry_run }}
+          cache-from: type=gha,scope=${{ matrix.cache }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache }}-${{ matrix.arch }}
+      # Fails the release on a critical CVE that has a fixed package.
+      - name: Scan the image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
-          TRIVY_PLATFORM: linux/amd64
+          TRIVY_PLATFORM: linux/${{ matrix.arch }}
         with:
-          image-ref: ${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ !inputs.dry_run && format('{0}@{1}', matrix.image, steps.build.outputs.digest) || '' }}
+          input: ${{ inputs.dry_run && format('{0}/image.tar', runner.temp) || '' }}
           severity: CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      - name: Scan the pushed image (arm64)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        env:
-          TRIVY_PLATFORM: linux/arm64
-        with:
-          image-ref: ${{ matrix.image }}@${{ steps.build.outputs.digest }}
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-      # Tagged by docker-tag, which waits for both images to scan.
+      # Tagged by docker-tag, which waits for every image to scan.
       - name: Record the scanned image, digest and tags
         env:
           IMAGE: ${{ matrix.image }}
@@ -480,13 +539,17 @@ jobs:
           printf '%s\n' "$PIN" > scanned/pin
           printf '%s\n' "$DIGEST" > scanned/digest
           printf '%s\n' "$TAGS" > scanned/tags
+          if [ "$DRY_RUN" = true ]; then mv "$RUNNER_TEMP/image.tar" scanned/image.tar; fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: scanned-${{ matrix.artifact }}
+          name: scanned-${{ matrix.artifact }}-${{ matrix.arch }}
           path: scanned/
+          retention-days: ${{ inputs.dry_run && 1 || 90 }}
+          compression-level: ${{ inputs.dry_run && 1 || 6 }}
 
   docker-tag:
-    name: Tag both scanned images
+    name: Tag every scanned image
+    if: ${{ !inputs.dry_run }}
     needs: [docker]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -504,23 +567,32 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: scanned-*
-      # Neither image is tagged until both have scanned. A failure here can leave
-      # one tagged and not the other; re-running this job tags both again.
+      # No image is tagged until every one has scanned: each image's tags name
+      # one index of its amd64 and arm64 digests. A failure here can leave one
+      # image tagged and not the other; re-running this job tags both again.
       - name: Tag the scanned images
         run: |
           set -- scanned-*/
-          [ "$#" = 2 ] || { echo "::error::expected the server's and the extractor's scans, got: $*"; exit 1; }
-          for dir in scanned-*/; do
-            image=$(cat "${dir}image") pin=$(cat "${dir}pin") digest=$(cat "${dir}digest")
+          [ "$#" = 4 ] || { echo "::error::expected the server's and the extractor's scans on amd64 and arm64, got: $*"; exit 1; }
+          for artifact in server extractor; do
+            set -- scanned-"$artifact"-*/
+            [ "$#" = 2 ] || { echo "::error::expected two $artifact scans, got: $*"; exit 1; }
+            image=$(cat "$1image") pin=$(cat "$1pin")
             args=()
-            while read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <"${dir}tags"
-            docker buildx imagetools create "${args[@]}" "$image@$digest"
+            while read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <"$1tags"
+            sources=()
+            for dir in "$@"; do sources+=("$image@$(cat "${dir}digest")"); done
+            docker buildx imagetools create "${args[@]}" "${sources[@]}"
+            digest=$(docker buildx imagetools inspect "${args[1]}" --format '{{json .Manifest}}' | jq -r .digest)
             echo "Pin $image with \`$pin: $digest\`" >> "$GITHUB_STEP_SUMMARY"
           done
 
   docker-smoke:
     name: Released quickstart (${{ matrix.arch }})
-    needs: [version, clickhouse, docker-tag]
+    # A dry run smokes the images its docker jobs exported, as a release smokes
+    # the ones docker-tag published.
+    if: ${{ !cancelled() && needs.docker.result == 'success' && (needs.docker-tag.result == 'success' || (inputs.dry_run && needs.docker-tag.result == 'skipped')) }}
+    needs: [version, clickhouse, docker, docker-tag]
     strategy:
       fail-fast: false
       matrix:
@@ -545,6 +617,14 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
+      - name: Load this run's images (dry run)
+        if: ${{ inputs.dry_run }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: scanned-*-${{ matrix.arch }}
+      - name: Load this run's images into Docker (dry run)
+        if: ${{ inputs.dry_run }}
+        run: for tar in scanned-*/image.tar; do docker load -i "$tar"; done
       - name: Fresh installer stack, compiler indexing and dashboard provider recovery
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -556,6 +636,7 @@ jobs:
 
   github-release:
     name: GitHub Release (artifacts attached)
+    if: ${{ !inputs.dry_run }}
     needs: [version, verify, docker-tag, docker-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -630,6 +711,7 @@ jobs:
           generate_release_notes: ${{ steps.existing.outputs.release != 'true' }} # from the commits since the previous tag
           draft: false
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.version.outputs.latest }}
           overwrite_files: true
           fail_on_unmatched_files: true
           files: |
@@ -640,7 +722,7 @@ jobs:
 
   pypi:
     name: PyPI (clickhouse-loom)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
     needs: github-release
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -662,7 +744,7 @@ jobs:
 
   npm:
     name: npm (@clickhouse/loom)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
     needs: [version, github-release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -701,7 +783,7 @@ jobs:
     name: MCP Registry (io.github.ClickHouse/loom)
     # A prerelease is not listed. The listing links the repository and its icon,
     # so it waits until both are public.
-    if: github.event_name == 'workflow_dispatch' && needs.version.outputs.prerelease != 'true' && !github.event.repository.private
+    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && needs.version.outputs.prerelease != 'true' && !github.event.repository.private
     needs: [version, github-release]
     runs-on: ubuntu-latest
     timeout-minutes: 10

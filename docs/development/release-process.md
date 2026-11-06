@@ -67,6 +67,37 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
 5. Paste the pull request's release notes section into the GitHub Release, above the generated notes.
 
 A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not move the `latest` image tag.
+Only the highest final version becomes the repository's Latest release and moves `:latest`, so a
+patch to an older line leaves both where they are: `releases/latest` serves the installer.
+
+## Rehearsing a release
+
+A dry run builds, verifies and smoke-tests everything a release would, on any branch, and publishes
+nothing: no image push, GitHub Release, signature or registry upload.
+
+```bash
+gh workflow run release.yml --ref <branch> -f dry_run=true
+```
+
+It runs at the version `server/__init__.py` names. Its images go to run artifacts instead of ghcr.io,
+without the provenance and SBOM attestations that only a registry keeps, and `docker-smoke` loads them
+from there. The `preflight` job reports each missing [prerequisite](#before-the-first-release) as a
+warning instead of failing.
+
+## Before the first release
+
+A release publishes public packages, and a registry version can never be reused, so the workflow
+refuses a release from a private repository. The `preflight` job checks what only an owner can grant,
+in seconds, before any build, and names the fix for each one it finds missing:
+
+| Prerequisite                                                                     | Checked by                                               |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| The repository is public                                                         | `preflight`                                              |
+| `ghcr.io/clickhouse/loom` and `loom-extractor` give this repository Write access | `preflight` (an upload session it opens and cancels)     |
+| Both packages are public, since an install pulls without signing in              | `preflight` (an anonymous pull token)                    |
+| A `pypi` environment and a PyPI trusted publisher for `release.yml`              | the `pypi` job                                           |
+| An `npm` environment, and npm trusted publishing or an `NPM_TOKEN` secret        | the `npm` job                                            |
+| An `mcp-registry` environment with the same protection rules as `pypi` and `npm` | the `mcp-registry` job, which skips a private repository |
 
 ## What the release workflow does
 
@@ -77,7 +108,8 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
 1. `version` takes the version from the tag (`vX.Y.Z` → `X.Y.Z`) and refuses a ref that
    is not a `v*` tag or not SemVer; it fails unless `server/__init__.py` reads
    `__version__ = "X.Y.Z"` and `server.json` carries the same version;
-2. `clickhouse` names the ClickHouse release the Compose bundle runs: the release
+2. `preflight` fails the run on a missing [prerequisite](#before-the-first-release);
+3. `clickhouse` names the ClickHouse release the Compose bundle runs: the release
    `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`), or, on a
    re-run, the one this version's published bundle already names, so rerunning the
    installer for a version never moves ClickHouse (`scripts/release/published_bundle.sh`;
@@ -92,29 +124,25 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    otherwise regenerate it on that release (the
    [schema dump](./migrations.md#schema-dump-and-check) commands with
    `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`), commit it, and re-tag.
-   A ClickHouse downgrade (see step 7) is refused here first, so such a run stops before
+   A ClickHouse downgrade (see step 8) is refused here first, so such a run stops before
    it builds and pushes images;
-3. `build` writes the version into the Python and TypeScript SDK sources and builds the
+4. `build` writes the version into the Python and TypeScript SDK sources and builds the
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
    and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,
    `loom-codex-plugin-vX.Y.Z.zip`); it also builds the source-free Compose bundle and its
    SHA-256 file, naming that ClickHouse release;
-4. `verify` checks those exact files: their names and embedded versions, the plugin
+5. `verify` checks those exact files: their names and embedded versions, the plugin
    manifests, no tests in the Claude Code zip, the executable bits git records, and
    that the bundle names the ClickHouse release the `clickhouse` job checked, and
    smoke-tests the wheel in a clean venv with `scripts/gates/sdk_wheel_smoke.py`;
-5. `docker` publishes `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`
-   (the document extractor service), one matrix entry each, for linux/amd64 and
-   linux/arm64, each with provenance and an SBOM, each pushed by digest and scanned;
-   `docker-tag` tags neither until both have passed (a failure there can leave one tagged,
-   and re-running it tags both). A package GitHub creates on its first push is private, and
-   an install pulls without signing in: the first release run that pushes `loom-extractor`
-   creates it and its `docker-smoke` jobs fail to pull it. Set the package's visibility to
-   public in its settings, then re-run the failed jobs ("Re-run failed jobs"), which the
-   workflow allows;
-6. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
+6. `docker` builds `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`
+   (the document extractor service), each for linux/amd64 and linux/arm64 on that
+   architecture's own runner, with provenance and an SBOM, pushes each by digest and scans it;
+   `docker-tag` joins each image's two digests under its tags, and tags neither image until all
+   four have passed (a failure there can leave one tagged, and re-running it tags both);
+7. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64;
-7. `github-release` creates the GitHub Release only after both images exist, with notes
+8. `github-release` creates the GitHub Release only after both images exist, with notes
    generated from the commits since the previous tag, or updates it on a re-run, keeping
    its notes as they are, and attaches the verified files. A bundle the release already
    carries is kept, and so is its checksum (one the release lost is written again from
