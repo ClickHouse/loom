@@ -589,3 +589,20 @@ def test_a_page_past_its_drawing_bound_with_no_image_is_complete(
     lines = b"".join(rule(72, 700 - 4 * n, 500, 700 - 4 * n) for n in range(20))
     a = extract(laid_out_pdf([text_at(72, 740, "A dense chart drawn in lines.") + lines]), "v.pdf")
     assert a.coverage.complete
+
+
+def test_tesseracts_point_size_is_turned_to_the_size_shown() -> None:
+    # Tesseract sizes a word at 300 pixels an inch; shown at 1,500, it is a fifth as large
+    assert ocr.page_points(1500.0)(12.0) == pytest.approx(2.4)
+    assert ocr.page_points(300.0)(12.0) == pytest.approx(12.0)
+
+
+def test_with_ocr_off_a_page_past_its_drawing_bound_says_ocr_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ocr, "engine", lambda: None)
+    monkeypatch.setattr(layout, "_MAX_DRAWN", 1)
+    pictures = b"q 400 0 0 300 100 300 cm /Im1 Do Q\nq 400 0 0 300 100 300 cm /Im2 Do Q\n"
+    text = text_at(72, 740, "A page of text and two screenshots.")
+    a = extract(laid_out_pdf([text + pictures], image=[GRAY, GRAY]), "o.pdf")
+    assert a.coverage.failed[0].reason == ocr.NOT_RUN

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import bisect
 import io
+import math
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterator
@@ -261,7 +262,8 @@ def _read_layout(
             words, boxes, w, h = images.read(
                 (ref.idnum, ref.generation),
                 partial(_image_file, picture.image),
-                (picture.box[2] - picture.box[0]) / 72,
+                # the inches of the image's own width, however it is turned
+                math.hypot(picture.ctm[0], picture.ctm[1]) / 72,
             )
         except ValueError as e:
             problems.append(str(e))
@@ -274,7 +276,7 @@ def _read_layout(
             rules += layout.picture_rules(page, turn, picture, boxes, w, h)
         read.ocr = True
     # after OCR's own reasons: one of them (OCR off) is what an operator can act on
-    if not whole and _has_image(page, reader):
+    if not whole and (pictures or _has_image(page, reader)):
         problems.append("it draws more than its drawing is read for, so a picture may be unread")
     if problems:
         if texted:

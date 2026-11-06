@@ -447,8 +447,9 @@ def drawing(
 ) -> tuple[list[_Rule], list[Picture], bool]:
     """The horizontal and vertical lines the page draws (stroked lines and thin
     filled boxes), the images it draws, as shown and turned as its text is, and
-    whether every image was collected: no rules past their bound, nothing past
-    the operators' bound, no image past `_MAX_DRAWN`."""
+    whether every image was collected (not when the operators' bound or
+    `_MAX_DRAWN` was reached). Past the rules' bound or the operators' there
+    are no rules."""
     shown, _, _ = _display(page)
 
     def to(x: float, y: float) -> tuple[float, float]:
@@ -549,7 +550,8 @@ def drawing(
     contents = page.get_contents()
     if contents is not None:
         walk(contents, page.get("/Resources"), [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 0)
-    # Past either bound a grid may be half read (no rules), and its pictures not all collected.
+    # Past the rules' or the operators' bound a grid may be half read: no rules. Past
+    # the operators' bound or the image cap, the pictures are not all collected.
     whole = budget[0] > 0 and not cut[0]
     return (found if len(found) <= _MAX_RULES and budget[0] > 0 else []), pictures, whole
 

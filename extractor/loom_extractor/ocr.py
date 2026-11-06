@@ -136,7 +136,6 @@ class Engine:
         t.TessPageIteratorIsAtBeginningOf.argtypes = [p, i]
         t.TessPageIteratorNext.argtypes = [p, i]
         t.TessDeleteText.argtypes = [p]
-        t.TessBaseAPISetSourceResolution.argtypes = [p, i]
         t.TessResultIteratorWordFontAttributes.restype = s
         t.TessResultIteratorWordFontAttributes.argtypes = [p, ip, ip, ip, ip, ip, ip, ip, ip]
         lp.pixReadMem.restype = p
@@ -190,6 +189,8 @@ class Engine:
             w, h = lp.pixGetWidth(pix), lp.pixGetHeight(pix)
             if w <= 0 or h <= 0 or w * h > MAX_PIXELS:
                 raise ValueError(f"its image is past {MAX_PIXELS:,} pixels")
+            if 0 < shown_inches < 1 / 72:
+                raise ValueError("its picture is shown less than a point wide")
             scale = 1.0
             if shown_inches > 0 and w / shown_inches < _MIN_DPI:
                 scale = min(_MAX_SCALE, _TARGET_DPI / (w / shown_inches))
@@ -213,9 +214,6 @@ class Engine:
                 mono = self._mono(gray, held)
             rules = self._unrule(gray, mono, min(dpi, _MAX_DPI), w, h, held)
             self._t.TessBaseAPISetImage2(self._api, gray)
-            self._t.TessBaseAPISetSourceResolution(
-                self._api, max(1, round(dpi))
-            )  # so a word's points are the page's
             monitor = self._t.TessMonitorCreate()
             try:
                 self._t.TessMonitorSetDeadlineMSecs(monitor, _DEADLINE_S * 1000)
@@ -227,7 +225,7 @@ class Engine:
                 self._t.TessMonitorDelete(monitor)
             if failed:
                 raise ValueError("its image could not be recognised")
-            return list(self._words(rules)), rules, w, h
+            return list(self._words(rules, page_points(dpi))), rules, w, h
         finally:
             self._t.TessBaseAPIClear(self._api)
             for one in held:
@@ -303,7 +301,7 @@ class Engine:
         ref = ctypes.c_void_p(pix)
         self._l.pixDestroy(ctypes.byref(ref))
 
-    def _words(self, rules: list[Box]) -> Iterator[Word]:
+    def _words(self, rules: list[Box], to_page: Callable[[float], float]) -> Iterator[Word]:
         near = _RuleGrid(rules)
         ri = self._t.TessBaseAPIGetIterator(self._api)
         if not ri:
@@ -323,7 +321,7 @@ class Engine:
                     else:
                         base = float(bottom)
                     self._t.TessResultIteratorWordFontAttributes(ri, *map(ctypes.byref, font))
-                    line = (base, float(bottom - top), float(max(0, font[6].value)))
+                    line = (base, float(bottom - top), to_page(max(0, font[6].value)))
                 ptr = self._t.TessResultIteratorGetUTF8Text(ri, _RIL_WORD)
                 if ptr:
                     text = ctypes.string_at(ptr).decode("utf-8", "replace").strip()
@@ -340,6 +338,13 @@ class Engine:
                     return
         finally:
             self._t.TessResultIteratorDelete(ri)
+
+
+def page_points(dpi: float) -> Callable[[float], float]:
+    """A word's point size as Tesseract reports it to the size it is shown at:
+    Tesseract sizes a word at the 300 pixels an inch it is set to read at
+    (`user_defined_dpi`), and the image is shown at `dpi`."""
+    return lambda points: points * _TARGET_DPI / dpi
 
 
 class _RuleGrid:
