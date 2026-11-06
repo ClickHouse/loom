@@ -12,11 +12,11 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
 from server.core import object_store as objects
 from server.core.ch import sequential_reads, set_query_tag
 from server.core.errors import ValidationError
+from server.core.repo_base import _CHClient
 from server.erasure.app import ledger_reads
 from server.erasure.domain.scopes import parse_namespace_list
 from server.knowledge.store import blobs
@@ -157,7 +157,7 @@ async def fence(org: str, namespace: str) -> str:
     return _fence_advice(fenced, "covers it") if fenced else ""
 
 
-async def move_to_bucket(held: blobs.Held, *, ch: Any = None) -> bool:
+async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bool:
     """Copy one original from its ClickHouse row to a new object in the bucket and
     switch its catalog row to that object; every document naming the sha reads from
     the bucket from then on. The walk reads the namespace's erasure fence first
@@ -171,7 +171,10 @@ async def move_to_bucket(held: blobs.Held, *, ch: Any = None) -> bool:
     ClickHouse or read back. `ErasureOpen`: an erasure that overlapped the copy, the
     original still held in ClickHouse. `SwitchUnconfirmed`: the row switched (or may
     have) but could not be confirmed against an erasure. `ObjectStoreError`: the bucket
-    refused, or the copy outlasted DOCUMENT_UPLOAD_BUDGET_S."""
+    refused, or the copy outlasted DOCUMENT_UPLOAD_BUDGET_S.
+
+    `ch` is the client for the knowledge plane's own reads and writes; the erasure ledger
+    is read through the erasure plane, on its client."""
     # This move's own start: an erasure that finished before it cannot race its copy, and
     # one still running then, or finished within the margin, is caught after the copy.
     since = await blobs.ch_now_s(ch=ch)
@@ -252,7 +255,9 @@ async def _drop(loc: objects.Location) -> None:
         log.warning("originals: %s left to the bucket walk: %s", loc.uri(), e)
 
 
-async def _settle(held: blobs.Held, since: int, loc: objects.Location, ch: Any) -> bool:
+async def _settle(
+    held: blobs.Held, since: int, loc: objects.Location, ch: _CHClient | None
+) -> bool:
     """After the switched row landed, an erasure registered as it landed decides:
 
     - none: the switch stands;
@@ -299,6 +304,7 @@ async def _settle(held: blobs.Held, since: int, loc: objects.Location, ch: Any) 
             f"delete the loom.document_blobs row of this original whose location is {loc.uri()}",
             moved=False,
         ) from e
+    await _drop(loc)
     return False
 
 
@@ -312,7 +318,8 @@ class Migrated:
     pending: int = 0  # a dry run's originals still held in ClickHouse
     bytes: int = 0  # of the originals moved, or with a dry run of those held
     errors: list[str] = field(default_factory=list)  # originals not moved, one line each
-    # Namespaces an erasure refused for the rest of the walk, one line each.
+    # Namespaces refused for the rest of the walk (by an erasure, or object keys too long),
+    # one line each.
     refused: list[str] = field(default_factory=list)
     # Switches that could not be confirmed: an erasure that raced it has not finished, a
     # check or the row's insert failed, or taking it back failed. Each says what to check.

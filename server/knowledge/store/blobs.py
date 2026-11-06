@@ -288,17 +288,13 @@ async def row_names(held: Held, loc: objects.Location, *, ch: _CHClient | None =
 
 
 async def unwrite(held: Held, loc: objects.Location, *, ch: _CHClient | None = None) -> None:
-    """Delete the switch to `loc`: the row by the location only it names, then the
-    object, which the bucket walk takes when its delete fails."""
+    """Delete the row that switched the original to `loc`, by the location only it names;
+    the object is the caller's to delete."""
     ch = ch or _default_client()
     await ch.execute(
         f"DELETE FROM {TABLE} WHERE {_KEY} AND location = {{loc:String}}",
         params={"org": held.org, "ns": held.namespace, "sha": held.sha, "loc": loc.uri()},
     )
-    try:
-        await objects.delete(loc.bucket, [loc.key])
-    except objects.ObjectStoreError as e:
-        log.warning("blobs: %s taken back; its object is left to the bucket walk: %s", loc.uri(), e)
 
 
 @dataclass(frozen=True)

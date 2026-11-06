@@ -131,7 +131,7 @@ def _report_migrated(result: Migrated) -> None:
         f"{result.skipped} gone, replaced or erased meanwhile, {result.unneeded} nothing "
         f"needs now (left to the sweep), {len(result.errors)} not moved, "
         f"{len(result.unconfirmed)} switched but unconfirmed, {len(result.refused)} "
-        "namespace(s) refused by an erasure"
+        "namespace(s) refused"
     )
     if result.moved:
         print(

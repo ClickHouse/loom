@@ -242,7 +242,7 @@ async def unfinished_since(
     org: str, since_s: int, margin_s: int, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
     """The org's erasures that had not finished by `since_s` (ClickHouse clock, seconds):
-    queued, in progress, failed, or completed after `since_s - margin_s`. Each row has
+    in progress, failed, or completed after `since_s - margin_s`. Each row has
     `erasure_id`, `scope_type`, `scope_value` and `state`. Read with sequential
     consistency: a fence on it must see an erasure another replica just registered."""
     ch = ch or _default_client()
