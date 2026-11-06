@@ -48,10 +48,12 @@ def _lines(name: str, loc: Locator) -> str:
 
 
 def _zip(*names: str) -> bytes:
+    """The same bytes in every process: an entry written by name alone carries the
+    current time, and these bytes reach parametrize lists every xdist worker collects."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for n in names:
-            z.writestr(n, "<x/>")
+            z.writestr(zipfile.ZipInfo(n, date_time=(1980, 1, 1, 0, 0, 0)), "<x/>")
     return buf.getvalue()
 
 
@@ -62,8 +64,7 @@ def _zip(*names: str) -> bytes:
     ("data", "name", "fmt"),
     [
         (b"%PDF-1.7\n...", "report.bin", "pdf"),
-        # Named: a zip's bytes carry the time it was written, and an id must be the
-        # same in every xdist worker.
+        # Named: an id of escaped zip bytes is unreadable in a failure.
         pytest.param(_zip("[Content_Types].xml", "word/document.xml"), "a.docx", "docx", id="docx"),
         pytest.param(_zip("ppt/presentation.xml"), "deck", "pptx", id="pptx"),
         pytest.param(_zip("xl/workbook.xml"), "book.xlsx", "xlsx", id="xlsx"),
