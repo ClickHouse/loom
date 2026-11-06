@@ -140,6 +140,7 @@ class Engine:
         t.TessResultIteratorWordFontAttributes.argtypes = [p, ip, ip, ip, ip, ip, ip, ip, ip]
         lp.pixReadMem.restype = p
         lp.pixReadMem.argtypes = [s, ctypes.c_size_t]
+        lp.pixReadHeaderMem.argtypes = [s, ctypes.c_size_t, ip, ip, ip, ip, ip, ip]
         lp.pixGetWidth.argtypes = [p]
         lp.pixGetHeight.argtypes = [p]
         lp.pixScale.restype = p
@@ -181,6 +182,12 @@ class Engine:
         it is past the pixel bound, or its recognition passes _DEADLINE_S."""
         lp = self._l
         held: list[int] = []  # every image made here, destroyed at the end
+        # its size from its header, before it is decoded: a file's own size may
+        # say otherwise than the PDF's /Width and /Height
+        dims = [ctypes.c_int() for _ in range(6)]
+        if lp.pixReadHeaderMem(data, len(data), *map(ctypes.byref, dims)) == 0:
+            if dims[1].value * dims[2].value > MAX_PIXELS:
+                raise ValueError(f"its image is past {MAX_PIXELS:,} pixels")
         pix = lp.pixReadMem(data, len(data))
         if not pix:
             raise ValueError("its image could not be decoded")

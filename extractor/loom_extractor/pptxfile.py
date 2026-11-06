@@ -87,12 +87,12 @@ class _Slide:
                 blip = el.find(f"{q('p:blipFill')}/{q('a:blip')}")
                 ext = el.find(f"{q('p:spPr')}/{q('a:xfrm')}/{q('a:ext')}")
                 if blip is not None and ext is not None:
-                    rid = blip.get(q("r:embed"), "")
+                    rid = blip.get(q("r:embed"), "")  # empty for a linked picture
                     try:
                         cx, cy = int(ext.get("cx", "0")), int(ext.get("cy", "0"))
                     except ValueError:
                         continue
-                    if rid and cx > 0 and cy > 0:
+                    if cx > 0 and cy > 0:
                         self.pictures.append((rid, cx, cy))
             elif el.tag == q("p:sp"):
                 body = el.find(q("p:txBody"))
@@ -163,8 +163,9 @@ def _picture_texts(
     read = 0
     why = ""
     for rid, cx, _ in big:
-        kind, target = rels.get(rid, ("", ""))
-        if kind != "image":
+        kind, target = rels.get(rid, ("", "")) if rid else ("", "")
+        if kind != "image":  # linked, or its relationship names no image in the file
+            why = why or "a picture's image is not held in the file, so OCR cannot read it"
             continue
         try:
             words, _, _, _ = images.read(

@@ -97,10 +97,15 @@ def _draws_inline_image(contents: Any, reader: pypdf.PdfReader) -> bool:
 
 
 def _has_image(
-    holder: Any, reader: pypdf.PdfReader, depth: int = 0, seen: set[tuple[str, int]] | None = None
+    holder: Any,
+    reader: pypdf.PdfReader,
+    depth: int = 0,
+    seen: set[tuple[str, int]] | None = None,
+    inline_only: bool = False,
 ) -> bool:
     """Whether a page, or a form XObject on it, draws an image, as an image XObject
-    or inline; each form is searched once, however many times it is named."""
+    or inline (with `inline_only`, inline alone); each form is searched once,
+    however many times it is named."""
     seen = set() if seen is None else seen
     contents = holder.get_contents() if isinstance(holder, pypdf.PageObject) else holder
     if contents is not None and _draws_inline_image(contents, reader):
@@ -111,7 +116,7 @@ def _has_image(
         return False
     for ref in xobjects.get_object().values():
         x = ref.get_object()
-        if x.get("/Subtype") == "/Image":
+        if x.get("/Subtype") == "/Image" and not inline_only:
             return True
         # An indirect object by its number; a direct one (no number) is its own.
         idnum = getattr(ref, "idnum", None)
@@ -119,7 +124,7 @@ def _has_image(
         if x.get("/Subtype") != "/Form" or depth >= _MAX_FORM_DEPTH or key in seen:
             continue
         seen.add(key)
-        if _has_image(x, reader, depth + 1, seen):
+        if _has_image(x, reader, depth + 1, seen, inline_only):
             return True
     return False
 
@@ -244,9 +249,9 @@ def _read_layout(
     if len(targets) > layout.MAX_PICTURES:
         problems.append(f"it shows more than {layout.MAX_PICTURES} pictures OCR would read")
         targets = targets[: layout.MAX_PICTURES]
-    # a page of only sub-point pictures has nothing to fail, unless it draws an image inline
-    contents = page.get_contents() if not texted and not targets else None
-    inline = contents is not None and _draws_inline_image(contents, reader)
+    # a page of only sub-point pictures has nothing to fail, unless it draws an
+    # image inline, there or in a form (`drawing` collects no inline image)
+    inline = not texted and not targets and _has_image(page, reader, inline_only=True)
     if not texted and not targets and (inline or (not pictures and _has_image(page, reader))):
         read.failure = (
             _NEEDS_OCR

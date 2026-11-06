@@ -638,3 +638,46 @@ def test_an_inline_scan_beside_a_spacer_still_fails_its_page(engine: FakeEngine)
     assert a.coverage.failed[0].reason == (
         "no text layer: its image is drawn inline, which OCR does not read"
     )
+
+
+def test_an_inline_scan_in_a_form_beside_a_spacer_still_fails_its_page(engine: FakeEngine) -> None:
+    form = b"q 1 0 0 1 0 0 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x00 EI Q"
+    page = b"q 400 0 0 400 100 200 cm /Fm1 Do Q\nq 0.75 0 0 0.75 10 10 cm /Im1 Do Q"
+    a = extract(laid_out_pdf([page], image=GRAY, forms=(form,)), "f.pdf")
+    assert a.coverage.failed[0].reason == (
+        "no text layer: its image is drawn inline, which OCR does not read"
+    )
+
+
+def test_a_slides_large_linked_picture_leaves_it_partial(engine: FakeEngine) -> None:
+    from tests.unit.test_document_extraction_office import _P, _rels, _slide, _sp, _zip
+
+    pic = (
+        '<p:pic><p:blipFill><a:blip r:link="img"/></p:blipFill>'
+        '<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="6000000" cy="3000000"/></a:xfrm></p:spPr></p:pic>'
+    )
+    deck = _zip(
+        {
+            "ppt/presentation.xml": (
+                f'<p:presentation {_P}><p:sldIdLst><p:sldId id="256" r:id="s1"/></p:sldIdLst>'
+                '<p:sldSz cx="12192000" cy="6858000"/></p:presentation>'
+            ),
+            "ppt/_rels/presentation.xml.rels": _rels(("s1", "slide", "slides/slide1.xml")),
+            "ppt/slides/slide1.xml": _slide(_sp("Architecture", "title") + pic),
+        }
+    )
+    a = extract(deck, "l.pptx")
+    assert [f.reason for f in a.coverage.failed] == [
+        "a picture's image is not held in the file, so OCR cannot read it"
+    ]
+    assert engine.seen == []
+
+
+def test_the_real_engine_refuses_an_image_past_its_pixels_from_its_header() -> None:
+    if ocr.check("eng")[0]:
+        pytest.skip("Tesseract is not installed here")
+    eng = ocr._load("eng")
+    assert eng is not None
+    # a header of 10,000 by 10,000 pixels over a few bytes: refused before it is decoded
+    with pytest.raises(ValueError, match="past 40,000,000 pixels"):
+        eng.read(b"P5\n10000 10000\n255\n" + bytes(16), 1.0)
