@@ -239,3 +239,22 @@ def test_a_heading_is_cited_whether_the_parse_keeps_its_number_or_not() -> None:
         ]
     }
     assert S.locator_scores(g, p)["locator_acc"] == 1.0
+
+
+def test_a_build_the_container_cannot_see_removes_nothing_and_can_run_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pytest.importorskip("reportlab")
+    from bench.docparse import corpus as C
+
+    def unseen(*cmd: str) -> None:
+        raise subprocess.CalledProcessError(1, cmd, stderr=b"")
+
+    monkeypatch.setattr(C, "docker", unseen)
+    (tmp_path / "gold.jsonl").write_text("{}\n")
+    (tmp_path / "keep.pdf").write_bytes(b"%PDF")
+    for _ in range(2):  # refused twice: the first refusal left nothing that stops the second
+        with pytest.raises(SystemExit, match="cannot be used"):
+            C.build(tmp_path, tmp_path)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["_work", "gold.jsonl", "keep.pdf"]
+    assert list((tmp_path / "_work").iterdir()) == []

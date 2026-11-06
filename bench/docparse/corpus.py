@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import io
 import json
-from dataclasses import dataclass
 import random
 import shutil
 import subprocess
 import sys
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from docx import Document
@@ -53,7 +54,7 @@ class _Dirs:
     out: Path
     work: Path
 
-    def c(self, path: Path) -> str:
+    def in_container(self, path: Path) -> str:
         """`path`, under the corpus directory, as the container sees it."""
         return f"/c/{path.relative_to(self.out)}"
 
@@ -73,8 +74,8 @@ def chromium_pdf(d: _Dirs, html_path: Path, pdf_path: Path) -> None:
         "--no-sandbox",
         "--disable-gpu",
         "--no-pdf-header-footer",
-        f"--print-to-pdf={d.c(pdf_path)}",
-        f"file://{d.c(html_path)}",
+        f"--print-to-pdf={d.in_container(pdf_path)}",
+        f"file://{d.in_container(html_path)}",
     )
 
 
@@ -86,8 +87,8 @@ def soffice_pdf(d: _Dirs, src: Path, outdir: Path) -> Path:
         "--convert-to",
         "pdf",
         "--outdir",
-        d.c(outdir),
-        d.c(src),
+        d.in_container(outdir),
+        d.in_container(src),
     )
     return outdir / (src.stem + ".pdf")
 
@@ -136,7 +137,7 @@ def gold_deck(spec: dict, *, notes: bool, image_text: bool = True) -> dict:
 
 def pages_text(d: _Dirs, pdf: Path) -> list[list[str]]:
     out = subprocess.run(
-        ["docker", "exec", CONTAINER, "pdftotext", "-raw", d.c(pdf), "-"],
+        ["docker", "exec", CONTAINER, "pdftotext", "-raw", d.in_container(pdf), "-"],
         check=True,
         capture_output=True,
         text=True,
@@ -169,21 +170,21 @@ class _Stream:
                 return i
             i += 1
 
-    def place(self, words: list[str]) -> tuple[int, int]:
-        """The pages the item of `words` starts and ends on, found from the
+    def place(self, item_words: list[str]) -> tuple[int, int]:
+        """The pages the item of `item_words` starts and ends on, found from the
         stream's position (its whole run, else its first six words and then its
         last six), and the position moved past it; (0, 0) when not found."""
-        whole = self.find(words, self.at)
+        whole = self.find(item_words, self.at)
         if whole >= 0:
-            start, end = whole, whole + len(words) - 1
+            start, end = whole, whole + len(item_words) - 1
         else:
-            start = self.find(words[:6], self.at)
-            if start < 0 and len(words) > 3:
-                start = self.find(words[:3], self.at)
+            start = self.find(item_words[:6], self.at)
+            if start < 0 and len(item_words) > 3:
+                start = self.find(item_words[:3], self.at)
             if start < 0:
                 return 0, 0
-            tail = self.find(words[-6:], start)
-            end = tail + min(6, len(words)) - 1 if tail >= 0 else start
+            tail = self.find(item_words[-6:], start)
+            end = tail + min(6, len(item_words)) - 1 if tail >= 0 else start
         # past a whole match (a short title is never found inside it); a partial
         # one is passed only its start, as its words may not all be there
         self.at = end + 1 if whole >= 0 else start + 1
@@ -454,8 +455,8 @@ def scan(d: _Dirs, pdf: Path, out: Path, seed: int, dpi: int = 110) -> None:
         "-r",
         str(dpi),
         "-png",
-        d.c(pdf),
-        d.c(prefix),
+        d.in_container(pdf),
+        d.in_container(prefix),
     )
     pages = sorted(d.work.glob(f"scan_{out.stem}-*.png"))
     imgs = []
@@ -611,17 +612,30 @@ def build(out: Path, src: Path) -> None:
     d = _Dirs(out.resolve(), out.resolve() / "_work")
     src = src.resolve()
     d.out.mkdir(parents=True, exist_ok=True)
-    if any(d.out.iterdir()) and not (d.out / "gold.jsonl").is_file():
+    left = {p.name for p in d.out.iterdir()}
+    if (
+        left and "gold.jsonl" not in left and left != {"_work"}
+    ):  # an interrupted build leaves _work alone
         raise SystemExit(
             f"{d.out} holds files and no gold.jsonl: build writes only into a corpus directory"
         )
+    # The container's /c must be this directory: a file of a fresh name, written
+    # here, is looked for there before anything here is removed.
+    d.work.mkdir(exist_ok=True)
+    marker = d.work / f"mount-{uuid.uuid4().hex}"
+    marker.touch()
+    try:
+        docker("test", "-f", d.in_container(marker))
+    except subprocess.CalledProcessError as e:
+        reason = e.stderr.decode(errors="replace").strip() or f"its /c is not {d.out}"
+        raise SystemExit(
+            f"the tools container {CONTAINER} cannot be used ({reason}): mount {d.out} at /c"
+        ) from None
+    finally:
+        marker.unlink()
     for p in d.out.iterdir():
-        shutil.rmtree(p) if p.is_dir() else p.unlink()
-    d.work.mkdir()
-    try:  # the container's /c must be this directory
-        docker("test", "-d", d.c(d.work))
-    except subprocess.CalledProcessError:
-        raise SystemExit(f"the tools container's /c is not {d.out}: mount it there") from None
+        if p != d.work:
+            shutil.rmtree(p) if p.is_dir() else p.unlink()
     gold_all: list[dict] = []
     scanned: dict[str, str] = {}  # a scan: the file it is a scan of
 
@@ -631,7 +645,7 @@ def build(out: Path, src: Path) -> None:
         fmt: str,
         gold: dict,
         *,
-        src: str,
+        origin: str,
         ocr: bool = False,
         path: Path | None = None,
     ) -> None:
@@ -643,7 +657,14 @@ def build(out: Path, src: Path) -> None:
         for t in gold["tables"]:
             t.pop("_at", None)
         gold_all.append(
-            {"file": name, "category": category, "format": fmt, "source": src, "ocr": ocr, **gold}
+            {
+                "file": name,
+                "category": category,
+                "format": fmt,
+                "source": origin,
+                "ocr": ocr,
+                **gold,
+            }
         )
 
     # Browser-exported design docs (Skia text, no outline)
@@ -655,25 +676,31 @@ def build(out: Path, src: Path) -> None:
         h = d.work / f"web_doc_{k}.html"
         h.write_text(html_doc(sp, footer=k % 3 == 1))
         chromium_pdf(d, h, d.out / f"web_doc_{k}.pdf")
-        add(f"web_doc_{k}.pdf", "pdf_export", "pdf", gold_doc(sp), src="synthetic")
+        add(f"web_doc_{k}.pdf", "pdf_export", "pdf", gold_doc(sp), origin="synthetic")
     for k in range(3):
         sp = S.design_doc(next(seeds), sections=5, tables=2, table_rows=4)
         h = d.work / f"web_borderless_{k}.html"
         h.write_text(html_doc(sp, style="borderless", footer=k == 1))
         chromium_pdf(d, h, d.out / f"web_borderless_{k}.pdf")
-        add(f"web_borderless_{k}.pdf", "pdf_borderless_table", "pdf", gold_doc(sp), src="synthetic")
+        add(
+            f"web_borderless_{k}.pdf",
+            "pdf_borderless_table",
+            "pdf",
+            gold_doc(sp),
+            origin="synthetic",
+        )
     for k in range(3):
         sp = S.design_doc(next(seeds), sections=4, tables=1, table_rows=48 + 20 * k)
         h = d.work / f"web_longtable_{k}.html"
         h.write_text(html_doc(sp, footer=True))
         chromium_pdf(d, h, d.out / f"web_longtable_{k}.pdf")
-        add(f"web_longtable_{k}.pdf", "pdf_table_span", "pdf", gold_doc(sp), src="synthetic")
+        add(f"web_longtable_{k}.pdf", "pdf_table_span", "pdf", gold_doc(sp), origin="synthetic")
     for k in range(2):
         sp = S.design_doc(next(seeds), sections=6, tables=0, code=False)
         h = d.work / f"web_twocol_{k}.html"
         h.write_text(html_doc(sp, style="two_col"))
         chromium_pdf(d, h, d.out / f"web_twocol_{k}.pdf")
-        add(f"web_twocol_{k}.pdf", "pdf_two_column", "pdf", gold_doc(sp), src="synthetic")
+        add(f"web_twocol_{k}.pdf", "pdf_two_column", "pdf", gold_doc(sp), origin="synthetic")
     # Public-domain PEPs, printed from their HTML
     peps = [(518, 40), (621, 45), (668, 45), (723, 40), (735, 40), (691, 40)]
     for n, cut in peps:
@@ -686,7 +713,7 @@ def build(out: Path, src: Path) -> None:
             "pdf_public",
             "pdf",
             gold_doc(sp),
-            src=f"PEP {n}, public domain (peps.python.org)",
+            origin=f"PEP {n}, public domain (peps.python.org)",
         )
     # Office documents and their office-suite PDF export
     for k in range(6):
@@ -694,12 +721,12 @@ def build(out: Path, src: Path) -> None:
             next(seeds), sections=5 + k % 2, numbered=k % 3 == 0, tables=1 + k % 2, table_rows=4 + k
         )
         docx_doc(sp, d.out / f"office_{k}.docx", footer=k % 2 == 0, grid=k != 4)
-        add(f"office_{k}.docx", "docx", "docx", gold_doc(sp), src="synthetic")
+        add(f"office_{k}.docx", "docx", "docx", gold_doc(sp), origin="synthetic")
         if k < 4:
             shutil.copy(d.out / f"office_{k}.docx", d.work / f"office_export_{k}.docx")
             pdf = soffice_pdf(d, d.work / f"office_export_{k}.docx", d.work)
             pdf.rename(d.out / f"office_export_{k}.pdf")
-            add(f"office_export_{k}.pdf", "pdf_export", "pdf", gold_doc(sp), src="synthetic")
+            add(f"office_export_{k}.pdf", "pdf_export", "pdf", gold_doc(sp), origin="synthetic")
     # Typeset PDFs: no outline, headings by font, two columns, borderless, running furniture
     for k, kw in enumerate(
         [
@@ -720,18 +747,18 @@ def build(out: Path, src: Path) -> None:
             if kw.get("borderless")
             else "pdf_native"
         )
-        add(f"typeset_{k}.pdf", cat, "pdf", gold_doc(sp), src="synthetic")
+        add(f"typeset_{k}.pdf", cat, "pdf", gold_doc(sp), origin="synthetic")
     sp = S.design_doc(next(seeds), sections=4, tables=1, table_rows=70)
     rl_pdf(sp, d.out / "typeset_longtable.pdf", footer=True)
-    add("typeset_longtable.pdf", "pdf_table_span", "pdf", gold_doc(sp), src="synthetic")
+    add("typeset_longtable.pdf", "pdf_table_span", "pdf", gold_doc(sp), origin="synthetic")
     # Rotated pages
     sp = S.design_doc(next(seeds), sections=4, tables=1, table_rows=6)
     rl_pdf(sp, d.work / "rot_src.pdf")
     rotate_pages(d.work / "rot_src.pdf", d.out / "rotated_0.pdf", {0})
-    add("rotated_0.pdf", "pdf_rotated", "pdf", gold_doc(sp), src="synthetic")
+    add("rotated_0.pdf", "pdf_rotated", "pdf", gold_doc(sp), origin="synthetic")
     sp = S.design_doc(next(seeds), sections=3, tables=1, table_rows=8)
     landscape_table_pdf(d, sp, d.out / "rotated_1.pdf")
-    add("rotated_1.pdf", "pdf_rotated", "pdf", gold_doc(sp), src="synthetic")
+    add("rotated_1.pdf", "pdf_rotated", "pdf", gold_doc(sp), origin="synthetic")
     # Decks: PPTX, its office export, and a browser-exported deck
     for k in range(6):
         sp = S.deck(next(seeds), slides=5 + k % 3, image=k % 2 == 1)
@@ -741,13 +768,13 @@ def build(out: Path, src: Path) -> None:
                 whiteboard(s["image"], img, k * 10 + i)
                 s["_img"] = str(img)
         pptx_deck(sp, d.out / f"deck_{k}.pptx")
-        add(f"deck_{k}.pptx", "pptx", "pptx", gold_deck(sp, notes=True), src="synthetic")
+        add(f"deck_{k}.pptx", "pptx", "pptx", gold_deck(sp, notes=True), origin="synthetic")
         if k < 3:
             shutil.copy(d.out / f"deck_{k}.pptx", d.work / f"deck_export_{k}.pptx")
             pdf = soffice_pdf(d, d.work / f"deck_export_{k}.pptx", d.work)
             pdf.rename(d.out / f"deck_export_{k}.pdf")
             g = gold_deck(sp, notes=False)
-            add(f"deck_export_{k}.pdf", "pdf_slides", "pdf", g, src="synthetic")
+            add(f"deck_export_{k}.pdf", "pdf_slides", "pdf", g, origin="synthetic")
     for k in range(3):
         sp = S.deck(next(seeds), slides=6, notes=False, image=k == 2)
         for i, s in enumerate(sp["elements"]):
@@ -758,7 +785,9 @@ def build(out: Path, src: Path) -> None:
         h = d.work / f"web_deck_{k}.html"
         h.write_text(html_slides(sp))
         chromium_pdf(d, h, d.out / f"web_deck_{k}.pdf")
-        add(f"web_deck_{k}.pdf", "pdf_slides", "pdf", gold_deck(sp, notes=False), src="synthetic")
+        add(
+            f"web_deck_{k}.pdf", "pdf_slides", "pdf", gold_deck(sp, notes=False), origin="synthetic"
+        )
     # Scans and a whiteboard photo: text only an OCR reads
     for k, source in enumerate(
         ["office_export_1.pdf", "web_doc_2.pdf", "typeset_1.pdf", "web_deck_1.pdf"]
@@ -768,7 +797,12 @@ def build(out: Path, src: Path) -> None:
         for key in ("file", "category", "format", "source", "ocr"):
             g.pop(key)
         add(
-            f"scan_{k}.pdf", "pdf_scanned", "pdf", g, src=f"synthetic, a scan of {source}", ocr=True
+            f"scan_{k}.pdf",
+            "pdf_scanned",
+            "pdf",
+            g,
+            origin=f"synthetic, a scan of {source}",
+            ocr=True,
         )
         scanned[f"scan_{k}.pdf"] = source
     labels = ["ingest api", "event queue", "merge workers"]
@@ -785,7 +819,7 @@ def build(out: Path, src: Path) -> None:
             "tables": [],
             "pages": 1,
         },
-        src="synthetic",
+        origin="synthetic",
         ocr=True,
     )
 
