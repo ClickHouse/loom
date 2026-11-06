@@ -559,12 +559,21 @@ _UNSIZED = (
             _layout(_holder('<p:ph type="pic" idx="1"/>', 1_000_000), ""),
             False,
         ),
-        # the index wins over a placeholder of its type that comes first; untyped is content
+        # the index wins over a placeholder of its type that comes first
+        (
+            '<p:ph type="pic" idx="1"/>',
+            _layout(
+                _holder('<p:ph type="pic" idx="3"/>', 1_000_000)
+                + _holder('<p:ph type="pic" idx="1"/>', 9_000_000),
+                "",
+            ),
+            True,
+        ),
+        # an untyped placeholder is content, its layout's untyped one of the same index
         (
             '<p:ph sz="quarter" idx="2"/>',
             _layout(
                 _holder('<p:ph type="body" idx="1"/>', 1_000_000)
-                + _holder('<p:ph type="pic" idx="3"/>', 1_000_000)
                 + _holder('<p:ph sz="quarter" idx="2"/>', 9_000_000),
                 "",
             ),
@@ -611,26 +620,55 @@ def test_a_slides_picture_in_a_placeholder_is_sized_by_its_layout(
     assert [b.attrs for b in a.blocks][1:] == ([{"ocr": True}] if read else [])
 
 
-def test_a_layout_is_read_once_however_many_pictures_sit_in_it(
+def test_layouts_and_their_master_are_read_once_however_many_pictures_sit_in_them(
     engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from loom_extractor.ooxml import Package
-    from tests.unit.test_document_extraction_office import _sp
+    from tests.unit.test_document_extraction_office import _P, _rels, _slide, _sp, _zip
 
     reads: list[str] = []
     xml = Package.xml
     monkeypatch.setattr(
         Package, "xml", lambda self, name, limit=None: reads.append(name) or xml(self, name, limit)
     )
-    # sized by neither the layout's placeholder nor its type: each picture asks the master
-    parts = _layout(
-        _UNSIZED.format('<p:ph type="pic" idx="1"/>'), _holder('<p:ph type="body"/>', 1_000_000)
+
+    def part(tag: str, shapes: str) -> str:
+        return f"<p:{tag} {_P}><p:cSld><p:spTree>{shapes}</p:spTree></p:cSld></p:{tag}>"
+
+    # two layouts of one master, neither sizing its placeholder: each picture asks the master
+    unsized = part("sldLayout", _UNSIZED.format('<p:ph type="pic" idx="1"/>'))
+    master_rels = _rels(("m", "slideMaster", "../slideMasters/slideMaster1.xml"))
+    pics = _sp("Architecture", "title") + "".join(
+        _pic(ph=f'<p:ph type="pic" idx="{n}"/>') for n in (1, 2, 3)
     )
-    pics = "".join(_pic(ph=f'<p:ph type="pic" idx="{n}"/>') for n in (1, 2, 3))
-    a = extract(_one_slide(_sp("Architecture", "title") + pics, parts), "p.pptx")
+    parts: dict[str, str | bytes] = {
+        "ppt/presentation.xml": (
+            f"<p:presentation {_P}><p:sldIdLst>"
+            + "".join(f'<p:sldId id="{255 + n}" r:id="s{n}"/>' for n in (1, 2, 3, 4))
+            + '</p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/></p:presentation>'
+        ),
+        "ppt/_rels/presentation.xml.rels": _rels(
+            *[(f"s{n}", "slide", f"slides/slide{n}.xml") for n in (1, 2, 3, 4)]
+        ),
+        "ppt/media/image1.png": b"\x89PNG fake",
+        "ppt/slideMasters/slideMaster1.xml": part(
+            "sldMaster", _holder('<p:ph type="body"/>', 1_000_000)
+        ),
+    }
+    for n in (1, 2):
+        parts[f"ppt/slideLayouts/slideLayout{n}.xml"] = unsized
+        parts[f"ppt/slideLayouts/_rels/slideLayout{n}.xml.rels"] = master_rels
+    for n in (1, 2, 3, 4):
+        parts[f"ppt/slides/slide{n}.xml"] = _slide(pics)
+        parts[f"ppt/slides/_rels/slide{n}.xml.rels"] = _rels(
+            ("img", "image", "../media/image1.png"),
+            ("lay", "slideLayout", f"../slideLayouts/slideLayout{1 + n % 2}.xml"),
+        )
+    a = extract(_zip(parts), "p.pptx")
     assert a.coverage.complete and engine.seen == []
-    assert reads.count("ppt/slideLayouts/slideLayout1.xml") == 1
-    assert reads.count("ppt/slideLayouts/_rels/slideLayout1.xml.rels") == 1
+    for n in (1, 2):
+        assert reads.count(f"ppt/slideLayouts/slideLayout{n}.xml") == 1
+        assert reads.count(f"ppt/slideLayouts/_rels/slideLayout{n}.xml.rels") == 1
     assert reads.count("ppt/slideMasters/slideMaster1.xml") == 1
 
 

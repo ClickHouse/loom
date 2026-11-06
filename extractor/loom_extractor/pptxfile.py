@@ -84,9 +84,9 @@ class _Slide:
         self.shapes: list[tuple[str, dict[str, object]]] = []  # (text, attrs)
         self.charts = False  # a chart, diagram or embedded object among them
         self.picture_count = 0  # its pictures, those `pictures` lists and any other
-        # (relationship id, width and height in EMU, or None for a picture that takes
-        # its size from its layout's placeholder, and that placeholder)
-        self.pictures: list[tuple[str, tuple[int, int] | None, Element | None]] = []
+        # (relationship id, its width and height in EMU, or the placeholder it takes
+        # its size from when it states none)
+        self.pictures: list[tuple[str, tuple[int, int] | Element]] = []
         tree = root.find(f"{q('p:cSld')}/{q('p:spTree')}")
         if tree is not None:
             self._walk(tree, 1.0, 1.0)
@@ -114,9 +114,9 @@ class _Slide:
                 size = _extent(el)
                 ph = el.find(f"{q('p:nvPicPr')}/{q('p:nvPr')}/{q('p:ph')}")
                 if size is not None:
-                    self.pictures.append((rid, (round(size[0] * sx), round(size[1] * sy)), None))
+                    self.pictures.append((rid, (round(size[0] * sx), round(size[1] * sy))))
                 elif ph is not None:
-                    self.pictures.append((rid, None, ph))
+                    self.pictures.append((rid, ph))
             elif el.tag == q("p:sp"):
                 body = el.find(q("p:txBody"))
                 text = _paragraphs(body) if body is not None else ""
@@ -170,9 +170,6 @@ def _slide_size(pkg: Package) -> tuple[int, int]:
 
 # A layout's or master's placeholders: (idx, type, size or None) each.
 _Entries = list[tuple[str | None, str, tuple[int, int] | None]]
-# Each layout's placeholders and its master's, by the layout's part name: read once
-# a deck, however many pictures sit in them.
-_Holders = dict[str, tuple[_Entries, _Entries]]
 # The master placeholder each type inherits from: a content placeholder (a picture,
 # table, chart or one of no type) takes the body's.
 _MASTER_TYPE = {"title": "title", "ctrTitle": "title", "dt": "dt", "ftr": "ftr", "sldNum": "sldNum"}
@@ -187,11 +184,27 @@ def _entries(pkg: Package, part: str) -> _Entries:
     ]
 
 
-def _layout_holders(pkg: Package, layout: str, cache: _Holders) -> tuple[_Entries, _Entries]:
-    if layout not in cache:
-        master = next((t for k, t in pkg.rels(layout).values() if k == "slideMaster"), None)
-        cache[layout] = (_entries(pkg, layout), _entries(pkg, master) if master else [])
-    return cache[layout]
+class _Holders:
+    """The deck's layouts' and masters' placeholders, each part and each layout's
+    relationships read once a deck, however many pictures sit in them."""
+
+    def __init__(self, pkg: Package) -> None:
+        self._pkg = pkg
+        self._entries: dict[str, _Entries] = {}
+        self._masters: dict[str, str | None] = {}
+
+    def _of(self, part: str) -> _Entries:
+        if part not in self._entries:
+            self._entries[part] = _entries(self._pkg, part)
+        return self._entries[part]
+
+    def of(self, layout: str) -> tuple[_Entries, _Entries]:
+        """The layout's placeholders and its master's."""
+        if layout not in self._masters:
+            rels = self._pkg.rels(layout).values()
+            self._masters[layout] = next((t for k, t in rels if k == "slideMaster"), None)
+        master = self._masters[layout]
+        return self._of(layout), self._of(master) if master else []
 
 
 def _placeholder_extent(ph: Element, layout: _Entries, master: _Entries) -> tuple[int, int] | None:
@@ -226,18 +239,13 @@ def _picture_texts(
     width, height = size
     rels = pkg.rels(part)
     layout = next((t for k, t in rels.values() if k == "slideLayout"), None)
-    held = (
-        _layout_holders(pkg, layout, holders)
-        if layout is not None and any(e is None for _, e, _ in slide.pictures)
-        else ([], [])
-    )
-    sized = []
-    for rid, extent, ph in slide.pictures:
-        if extent is None and ph is not None:
-            # a placeholder whose size is nowhere stated is taken as the slide's
-            extent = _placeholder_extent(ph, *held) or size
-        if extent is not None:
-            sized.append((rid, extent))
+    placed = any(isinstance(e, Element) for _, e in slide.pictures)
+    held = holders.of(layout) if layout is not None and placed else ([], [])
+    # a placeholder whose size is nowhere stated is taken as the slide's
+    sized = [
+        (rid, e if isinstance(e, tuple) else _placeholder_extent(e, *held) or size)
+        for rid, e in slide.pictures
+    ]
     big = [(rid, cx) for rid, (cx, cy) in sized if cx * cy >= ocr.PICTURE_SHARE * width * height]
     if not big:
         return [], 0, ""
@@ -275,7 +283,7 @@ def extract_pptx(data: bytes) -> Artifact:
     parts = _slide_parts(pkg)
     size = _slide_size(pkg)
     images = ocr.Images()
-    holders: _Holders = {}
+    holders = _Holders(pkg)
     ocr_slides: list[int] = []
     acc = Blocks()
     failed: list[Failure] = []
