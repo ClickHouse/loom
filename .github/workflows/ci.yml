@@ -117,6 +117,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # The part count, 4, is also in docs/development/testing.md's unit row and
+        # the loom-investigate-ci row.
         part: [1, 2, 3, 4]
     env:
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
