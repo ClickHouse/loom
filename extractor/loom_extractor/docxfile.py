@@ -188,16 +188,14 @@ class _Body:
         style = _val(ppr, "w:pStyle")
         own = _val(ppr, "w:outlineLvl")
         depth = 0 if own == _BODY_TEXT else _OUTLINE.get(own) or self.levels.get(style, 0)
-        title = depth > 0 and style in self.titles
-        if title:
-            depth = 1  # a title is the document's top, whatever outline level it carries
+        if depth and style in self.titles:
+            # a title is the document's top, whatever outline level it carries
+            depth, self.shift = 1, 1
         elif depth:
             depth += self.shift
         if depth:
             self.close_list()
             self.acc.heading(depth, " ".join(text.split()), _NO_LOC)
-            if title:
-                self.shift = 1
         elif (ppr is not None and ppr.find(q("w:numPr")) is not None) or "list" in style.lower():
             self.items.append(text)
         else:
