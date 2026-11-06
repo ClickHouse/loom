@@ -177,16 +177,18 @@ def test_knowledge_query_draws_from_its_own_read_bucket() -> None:
 
 
 def test_knowledge_reads_draw_from_their_own_bucket() -> None:
-    """Every read-only knowledge op but search and query (their own buckets) draws on
-    knowledge.read, and every other knowledge op stays in knowledge.add: a new read the set
-    does not name fails here, not in production as a read that spends the write bucket."""
+    """Every read-only knowledge op but search and query (their own buckets) and inspect (a
+    whole-namespace report, kept in the tight bucket) draws on knowledge.read, and every
+    other knowledge op stays in knowledge.add: a new read the set does not name fails here,
+    not in production as a read that spends the write bucket."""
     for op in ALL_OPERATIONS:
         if not op.name.startswith("knowledge.") or op.name in (
             "knowledge.search",
             "knowledge.query",
         ):
             continue
-        want = "knowledge.read" if op.read_only else "knowledge.add"
+        read = op.read_only and op.name != "knowledge.inspect"
+        want = "knowledge.read" if read else "knowledge.add"
         assert op_class_for(op.name) == want, op.name
     assert _KNOWLEDGE_READS <= {o.name for o in ALL_OPERATIONS}, "a named read is not registered"
     assert DEFAULT_LIMITS["knowledge.read"] == DEFAULT_LIMITS["default"]

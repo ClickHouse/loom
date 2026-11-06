@@ -351,9 +351,9 @@ Cursors are opaque; pass them back unchanged. The TypeScript SDK's
 Every call that names a namespace draws from token buckets keyed by namespace
 and **op class**: `memory`, `memory.read` (exact-key reads such as
 `memory.get`), `memory.import`, `knowledge.search`, `knowledge.query`,
-`knowledge.read` (the other read-only knowledge ops), `knowledge.add`, `code`
-and `default` (`server/core/ratelimit.py`, `DEFAULT_LIMITS`). Three tiers must
-all admit it:
+`knowledge.read` (the other read-only knowledge ops but `knowledge.inspect`),
+`knowledge.add`, `code` and `default` (`server/core/ratelimit.py`,
+`DEFAULT_LIMITS`). Three tiers must all admit it:
 
 | Tier      | Key                            | Default (burst / per second)                                                                                                                                                                                |
 | --------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

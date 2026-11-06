@@ -73,17 +73,17 @@ _EXACT_KEY_READS: frozenset[str] = frozenset(
     }
 )
 
-# Knowledge reads other than search and query: a document, a listing, a job's status, an
-# inspection. A dashboard page or an agent polling an ingest issues several in a row, which
-# the write-shaped knowledge.add bucket (burst 10) would refuse, and a read burst would
-# then refuse the namespace's next write.
+# Knowledge reads other than search and query: a document, a listing, a job's status. A
+# dashboard page or an agent polling an ingest issues several in a row, which the
+# write-shaped knowledge.add bucket (burst 10) would refuse, and a read burst would then
+# refuse the namespace's next write. knowledge.inspect stays in knowledge.add: it reports
+# on the whole namespace, so the tight bucket bounds it.
 _KNOWLEDGE_READS: frozenset[str] = frozenset(
     {
         "knowledge.dataset_get",
         "knowledge.formats",
         "knowledge.get",
         "knowledge.ingest_status",
-        "knowledge.inspect",
         "knowledge.list",
         "knowledge.outline",
         "knowledge.reads",

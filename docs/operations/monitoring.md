@@ -334,17 +334,17 @@ Every request draws from two token buckets, one per namespace and one per org (t
 times the namespace size), keyed by operation class. Over the limit, the response is 429
 `RATE_LIMITED` with `Retry-After` and `X-RateLimit-*` headers.
 
-| Class              | Operations                                                                                    | Per-namespace burst / sustained |
-| ------------------ | --------------------------------------------------------------------------------------------- | ------------------------------- |
-| `memory`           | `memory.*`, `conversation.*` (except the exact-key reads and `memory.import`)                 | 100 / 17 per second             |
-| `memory.read`      | exact-key reads: `memory.get`, `memory.bulk_get`, `memory.history`, `working_memory.get`, …   | 300 / 50 per second             |
-| `memory.import`    | `memory.import`                                                                               | 10 / 2 per second               |
-| `knowledge.search` | `knowledge.search`                                                                            | 20 / 3 per second               |
-| `knowledge.query`  | `knowledge.query`                                                                             | 20 / 3 per second               |
-| `knowledge.read`   | other read-only `knowledge.*` ops (viewer, not audited): `knowledge.get`, `knowledge.list`, … | 50 / 10 per second              |
-| `knowledge.add`    | every other `knowledge.*` op, `knowledge.synthesize` and `knowledge.dedup_list` included      | 10 / 2 per second               |
-| `code`             | `code.*` (except `code.outcome`, which draws from `memory`)                                   | 60 / 10 per second              |
-| `default`          | everything else                                                                               | 50 / 10 per second              |
+| Class              | Operations                                                                                                    | Per-namespace burst / sustained |
+| ------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `memory`           | `memory.*`, `conversation.*` (except the exact-key reads and `memory.import`)                                 | 100 / 17 per second             |
+| `memory.read`      | exact-key reads: `memory.get`, `memory.bulk_get`, `memory.history`, `working_memory.get`, …                   | 300 / 50 per second             |
+| `memory.import`    | `memory.import`                                                                                               | 10 / 2 per second               |
+| `knowledge.search` | `knowledge.search`                                                                                            | 20 / 3 per second               |
+| `knowledge.query`  | `knowledge.query`                                                                                             | 20 / 3 per second               |
+| `knowledge.read`   | other read-only `knowledge.*` ops (viewer, not audited): `knowledge.get`, `knowledge.list`, …                 | 50 / 10 per second              |
+| `knowledge.add`    | every other `knowledge.*` op, `knowledge.inspect`, `knowledge.synthesize` and `knowledge.dedup_list` included | 10 / 2 per second               |
+| `code`             | `code.*` (except `code.outcome`, which draws from `memory`)                                                   | 60 / 10 per second              |
+| `default`          | everything else                                                                                               | 50 / 10 per second              |
 
 Requests are classed as `production`, `interactive` or `bench` (token claim from
 `loom mint-token --traffic-class`, else the namespace's registration, else the request's
