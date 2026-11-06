@@ -89,6 +89,46 @@ def test_kind_map_fails_open_without_a_connection(monkeypatch: pytest.MonkeyPatc
     assert asyncio.run(nk.kind_map(ORG)) == {}
 
 
+class _Directory:
+    """A client whose `query_all` answers `KINDS` until `fail` is set."""
+
+    _client = object()
+
+    def __init__(self) -> None:
+        self.fail = False
+
+    async def query_all(self, sql: str, params: dict[str, str]) -> list[dict[str, str]]:
+        if self.fail:
+            raise ConnectionError("ClickHouse went away")
+        return [{"namespace": ns, "kind": kind} for ns, kind in KINDS.items()]
+
+
+def test_a_failed_read_after_the_ttl_serves_the_last_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.core.ch as ch
+
+    directory = _Directory()
+    monkeypatch.setattr(ch, "get_client", lambda: directory)
+    nk.reset_cache()
+    assert asyncio.run(nk.kind_map(ORG)) == KINDS
+    _, snapshot = nk._cache[ORG]
+    nk._cache[ORG] = (0.0, snapshot)  # its TTL has run out
+    directory.fail = True
+    assert asyncio.run(nk.kind_map(ORG)) == KINDS
+    nk.reset_cache()
+
+
+def test_a_failed_read_with_no_snapshot_narrows_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import server.core.ch as ch
+
+    directory = _Directory()
+    directory.fail = True
+    monkeypatch.setattr(ch, "get_client", lambda: directory)
+    nk.reset_cache()
+    assert asyncio.run(nk.kind_map(ORG)) == {}
+
+
 def test_every_all_mine_leg_and_the_tool_call_the_fanout_resolver() -> None:
     from server.knowledge.app import conversations
     from server.knowledge.app import knowledge_search as knowledge
