@@ -133,9 +133,9 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
             )
         for line in result.errors:
             print(f"error: {line}", file=sys.stderr)
-        for line in result.left_to_erasure:
+        for line in result.unconfirmed:
             print(f"switched, unconfirmed: {line}", file=sys.stderr)
-        return 1 if result.errors or result.left_to_erasure else 0
+        return 1 if result.errors or result.unconfirmed else 0
 
     return run_connected(_run)
 

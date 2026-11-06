@@ -34,7 +34,7 @@ class Migrated:
     errors: list[str] = field(default_factory=list)
     # Switched as an erasure that may cover it started and had not finished (or its check
     # failed): what that erasure decides for the original holds for the switched row.
-    left_to_erasure: list[str] = field(default_factory=list)
+    unconfirmed: list[str] = field(default_factory=list)
 
 
 async def migrate_originals(
@@ -109,13 +109,13 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
         log.warning("originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e)
         out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
         return False
-    except blobs.SwitchedUnderErasure as e:
+    except blobs.SwitchUnconfirmed as e:
         if e.moved:
             out.moved += 1
             out.bytes += held.size
         else:
             out.skipped += 1  # the erasure took it; only its take-back is left
-        out.left_to_erasure.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
+        out.unconfirmed.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
         return False
     except (
         blobs.CorruptOriginal,

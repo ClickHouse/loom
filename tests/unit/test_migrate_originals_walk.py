@@ -31,7 +31,7 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
     outcomes: dict[str, Any] = {
         page[1].sha: True,
         page[2].sha: ValidationError("the org and namespace names are too long for an object key"),
-        page[3].sha: blobs.SwitchedUnderErasure("switched to s3://b/k, but the check failed"),
+        page[3].sha: blobs.SwitchUnconfirmed("switched to s3://b/k, but the check failed"),
         page[4].sha: False,
     }
 
@@ -59,7 +59,7 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
     # One read for the namespace, one after the switch an erasure raced, and one after the
     # original that was not switched (an erasure may be what took it).
     assert len(fences) == 3
-    (unconfirmed,) = result.left_to_erasure
+    (unconfirmed,) = result.unconfirmed
     assert unconfirmed.startswith(f"acme/docs/{page[3].sha}: switched")
 
 
@@ -137,7 +137,7 @@ async def test_an_erased_original_whose_take_back_failed_is_not_counted_moved(
         return ""
 
     async def move(held: blobs.Held) -> bool:
-        raise blobs.SwitchedUnderErasure("switched as an erasure took it, but ...", moved=False)
+        raise blobs.SwitchUnconfirmed("switched as an erasure took it, but ...", moved=False)
 
     monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
     monkeypatch.setattr(blobs, "needed", needed)
@@ -145,4 +145,4 @@ async def test_an_erased_original_whose_take_back_failed_is_not_counted_moved(
     monkeypatch.setattr(blobs, "move_to_bucket", move)
     result = await originals.migrate_originals(org="acme", namespace="docs")
     assert (result.moved, result.bytes, result.skipped) == (0, 0, 1)
-    assert len(result.left_to_erasure) == 1
+    assert len(result.unconfirmed) == 1

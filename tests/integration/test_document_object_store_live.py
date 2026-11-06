@@ -509,7 +509,7 @@ async def test_a_failed_check_after_the_switch_is_reported_as_switched(
     monkeypatch.setattr(blobs, "_erasures_since", third_fails)
     result = await migrate_originals(org=org)
     assert (result.moved, result.errors) == (1, [])
-    (line,) = result.left_to_erasure
+    (line,) = result.unconfirmed
     assert "ClickHouse went away" in line
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
     assert stored is not None and stored.location.startswith("s3://")
@@ -639,7 +639,7 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
         ch, s3, monkeypatch, "objstore-race-slow", [("user_id", "alice")]
     )
     monkeypatch.setattr(blobs, "_ERASURE_WAIT_S", 0.2)
-    with pytest.raises(blobs.SwitchedUnderErasure, match="user_id, in_progress"):
+    with pytest.raises(blobs.SwitchUnconfirmed, match="user_id, in_progress"):
         await blobs.move_to_bucket(held, ch=ch)
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
     assert stored is not None and stored.location == landed[0]
@@ -688,7 +688,7 @@ async def test_a_failed_erasure_as_the_row_lands_is_waited_for_like_any(
     # The recovery worker retries a failed erasure, so it is waited for: past the wait, the
     # switched row is left to it, named.
     monkeypatch.setattr(blobs, "_ERASURE_WAIT_S", 0.3)
-    with pytest.raises(blobs.SwitchedUnderErasure, match="user_id, failed"):
+    with pytest.raises(blobs.SwitchUnconfirmed, match="user_id, failed"):
         await blobs.move_to_bucket(held, ch=ch)
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
     assert stored is not None and stored.location == landed[0]

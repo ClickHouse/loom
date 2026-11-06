@@ -268,10 +268,11 @@ class ErasureOpen(Exception):
     copied and kept it: it stays in ClickHouse. The message names the erasure."""
 
 
-class SwitchedUnderErasure(Exception):
+class SwitchUnconfirmed(Exception):
     """A switch that could not be confirmed: an erasure that started as the row landed
     has not finished, or a check or write around the switch failed. The message says
-    what to check. `moved` is False when an erasure took the original and only taking
+    what to check. `moved` is False when the switch may not stand: its row's insert
+    failed (it may not have landed), or an erasure took the original and only taking
     the switch back failed."""
 
     def __init__(self, message: str, *, moved: bool = True) -> None:
@@ -373,7 +374,7 @@ async def _erasures_since(org: str, namespace: str, since_s: int, ch: _CHClient)
 
 async def _await_erasures(held: Held, since_s: int, ch: _CHClient) -> None:
     """Wait until every erasure covering the original that had not finished at
-    `since_s` has completed; `SwitchedUnderErasure` after _ERASURE_WAIT_S."""
+    `since_s` has completed; `SwitchUnconfirmed` after _ERASURE_WAIT_S."""
     deadline = time.monotonic() + _ERASURE_WAIT_S
     while True:
         raced = await _erasures_since(held.org, held.namespace, since_s, ch)
@@ -382,7 +383,7 @@ async def _await_erasures(held: Held, since_s: int, ch: _CHClient) -> None:
             return
         # A failed one is waited for too: the recovery worker retries it.
         if time.monotonic() >= deadline:
-            raise SwitchedUnderErasure(
+            raise SwitchUnconfirmed(
                 f"{open_[0]} started as its row was switched and has not finished within "
                 f"{_ERASURE_WAIT_S} s; the switched row and its object are left to it"
             )
@@ -434,7 +435,7 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
       original, the move's included, so the move waits for it to finish and deletes its
       row when its object is gone; when the object is still there the erasure kept the
       original and the switch stands. One that does not finish in _ERASURE_WAIT_S, or a
-      check that fails, leaves the switched row to it (`SwitchedUnderErasure`).
+      check that fails, leaves the switched row to it (`SwitchUnconfirmed`).
     - An erasure registered after the row landed reads that row.
     """
     ch = ch or _default_client()
@@ -506,49 +507,58 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
             settings={"async_insert": 0},
         )
     except Exception as e:  # the row may have landed: a failed insert is reported, not lost
-        raise SwitchedUnderErasure(
+        raise SwitchUnconfirmed(
             f"writing the row switching it to {loc.uri()} failed ({e}); check whether that row "
-            "landed, and if it did, that no erasure of its namespace or a user ran then"
+            "landed, and if it did, that no erasure of its namespace or a user ran then",
+            moved=False,
         ) from e
     return await _settle(held, since, loc, ch)
 
 
 async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) -> bool:
-    """After the switched row landed: an erasure registered as it landed decides. No race:
-    the switch stands. A namespace's erasure: the move is taken back. A user's: once it
-    has finished, the move is taken back if the erasure took the moved object. A read that
-    fails here leaves the switched row, reported (`SwitchedUnderErasure`)."""
+    """After the switched row landed, an erasure registered as it landed decides:
+
+    - none: the switch stands;
+    - a namespace's: the move is taken back at once;
+    - a user's: once it has finished, the move is taken back if the erasure took the
+      moved object, its object deleted if the erasure took the row alone, and it stands
+      if both are still there.
+
+    A read or delete that fails here leaves the switched row, reported
+    (`SwitchUnconfirmed`)."""
     try:
         raced = await _erasures_since(held.org, held.namespace, since, ch)
+        if not raced:
+            # An original nothing needs any more by now (its last document went as it
+            # moved) is left to the sweep, which deletes it once older than its min age: a
+            # delete here, unbounded by age, could take the only row a racing writer's
+            # merge left.
+            return True
         # Taken back at once only for an erasure that certainly deletes the namespace's
         # originals; any other is waited for and decided by the moved object.
-        namespace_raced = any(e.deletes_namespace(held.namespace) for e in raced)
-        taken = False
-        if raced and not namespace_raced:
+        taken = any(e.deletes_namespace(held.namespace) for e in raced)
+        if not taken:
             await _await_erasures(held, since, ch)
             # Listed, not read: whether it is there is all that decides.
             taken = not await objects.count_under(loc.bucket, loc.key)
-    except SwitchedUnderErasure:
+        if not taken:
+            if await _row_names(held, loc, ch):
+                return True  # the erasure kept the original
+            # It took the row but not the object (a replica without the bucket set
+            # deletes rows only): the object holds bytes nothing names. It goes now.
+            await objects.delete(loc.bucket, [loc.key])
+            return False
+    except SwitchUnconfirmed:
         raise
     except Exception as e:  # the row is switched: an unread ledger or object is reported, not lost
-        raise SwitchedUnderErasure(
+        raise SwitchUnconfirmed(
             f"switched to {loc.uri()}, but the check for an erasure that raced it failed ({e}); "
             "check that no erasure of its namespace or a user ran then"
         ) from e
-    if not (namespace_raced or taken) and raced and not await _row_names(held, loc, ch):
-        # The erasure took the row but not the object (a replica without the bucket set
-        # deletes rows only): the object holds bytes nothing names. It goes now.
-        await objects.delete(loc.bucket, [loc.key])
-        return False
-    if not (namespace_raced or taken):
-        # An original nothing needs any more by now (its last document went as it moved)
-        # is left to the sweep, which deletes it once older than its min age: a delete
-        # here, unbounded by age, could take the only row a racing writer's merge left.
-        return True
     try:
         await _unwrite(held, loc, ch)
     except Exception as e:  # the row is switched: a failed take-back is reported, not lost
-        raise SwitchedUnderErasure(
+        raise SwitchUnconfirmed(
             f"switched to {loc.uri()} as an erasure took it, but deleting that row failed ({e}); "
             f"delete the loom.document_blobs row of this original whose location is {loc.uri()}",
             moved=False,
