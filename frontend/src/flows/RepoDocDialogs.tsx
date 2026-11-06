@@ -103,6 +103,8 @@ export function RepoDocAddDialog({
           file,
           { source_uri: uri, title: title.trim(), description: description.trim(), allow_partial: allowPartial },
           setStep,
+          // Its own signal: a large file over a slow link is not cut off at the default request bound.
+          { signal: new AbortController().signal },
         );
         if (status.state !== "ready" && status.state !== "partial") {
           setError(
