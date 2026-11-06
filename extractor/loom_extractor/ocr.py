@@ -73,7 +73,8 @@ def _unruled(text: str) -> str:
 
 class NotDecoded(ValueError):
     """An image refused before it is decoded: its header is past the pixel bound,
-    or it is in a format Leptonica does not know."""
+    or Leptonica could not read its header (a format it does not know, or a
+    damaged header) and so decoded none of it."""
 
 
 @dataclass(frozen=True)
@@ -194,9 +195,10 @@ class Engine:
             raise NotDecoded(f"its image is past {MAX_PIXELS:,} pixels")
         pix = lp.pixReadMem(data, len(data))
         if not pix:
-            # a format Leptonica does not know cost nothing; a header it read may
-            # have been decoded at length before the data failed
-            raise (NotDecoded if pixels == 0 else ValueError)("its image could not be decoded")
+            if pixels == 0:  # a header Leptonica could not read: nothing was decoded
+                raise NotDecoded("its image could not be decoded")
+            # a header it read may have been decoded at length before the data failed
+            raise ValueError("its image could not be decoded")
         held.append(pix)
         try:
             w, h = lp.pixGetWidth(pix), lp.pixGetHeight(pix)

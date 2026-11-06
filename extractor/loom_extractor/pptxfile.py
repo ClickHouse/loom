@@ -168,46 +168,46 @@ def _slide_size(pkg: Package) -> tuple[int, int]:
     return _size(pkg.xml(_PRESENTATION).find(q("p:sldSz"))) or _DEFAULT_SLIDE
 
 
-# Each layout's and master's placeholders, (idx, type, size or None), by part name:
-# read once a deck, however many pictures sit in them.
-_Holders = dict[str, list[tuple[str | None, str, tuple[int, int] | None]]]
+# A layout's or master's placeholders: (idx, type, size or None) each.
+_Entries = list[tuple[str | None, str, tuple[int, int] | None]]
+# Each layout's placeholders and its master's, by the layout's part name: read once
+# a deck, however many pictures sit in them.
+_Holders = dict[str, tuple[_Entries, _Entries]]
+# The master placeholder each type inherits from: a content placeholder (a picture,
+# table, chart or one of no type) takes the body's.
+_MASTER_TYPE = {"title": "title", "ctrTitle": "title", "dt": "dt", "ftr": "ftr", "sldNum": "sldNum"}
 
 
-def _holders(pkg: Package, part: str, want: str, cache: _Holders) -> str | None:
-    """The part of kind `want` that `part` names, its placeholders read into `cache`."""
-    target = next((t for k, t in pkg.rels(part).values() if k == want), None)
-    if target is not None and target not in cache:
-        tree = pkg.xml(target).find(f"{q('p:cSld')}/{q('p:spTree')}")
-        found = [
-            (ph.get("idx"), ph.get("type", "obj"), _extent(el))
-            for el in (tree.iter() if tree is not None else [])
-            if (ph := el.find(f"*/{q('p:nvPr')}/{q('p:ph')}")) is not None
-        ]
-        cache[target] = found
-    return target
+def _entries(pkg: Package, part: str) -> _Entries:
+    tree = pkg.xml(part).find(f"{q('p:cSld')}/{q('p:spTree')}")
+    return [
+        (ph.get("idx"), ph.get("type", "obj"), _extent(el))
+        for el in (tree.iter() if tree is not None else [])
+        if (ph := el.find(f"*/{q('p:nvPr')}/{q('p:ph')}")) is not None
+    ]
 
 
-def _placeholder_extent(
-    pkg: Package, part: str, ph: Element, cache: _Holders
-) -> tuple[int, int] | None:
-    """The size of the placeholder `ph` names: in the slide's layout by its index,
-    then by its type; then in the master by its type, where a content placeholder
-    (`obj`, the type when none is named) is the body."""
+def _layout_holders(pkg: Package, layout: str, cache: _Holders) -> tuple[_Entries, _Entries]:
+    if layout not in cache:
+        master = next((t for k, t in pkg.rels(layout).values() if k == "slideMaster"), None)
+        cache[layout] = (_entries(pkg, layout), _entries(pkg, master) if master else [])
+    return cache[layout]
+
+
+def _placeholder_extent(ph: Element, layout: _Entries, master: _Entries) -> tuple[int, int] | None:
+    """The size of the placeholder `ph` names: its layout's placeholder of the same
+    index, else of the same type, when that one is sized; else the master's that
+    the layout's (or its own) type inherits from."""
     idx, kind = ph.get("idx"), ph.get("type", "obj")
-    layout = _holders(pkg, part, "slideLayout", cache)
-    if layout is None:
-        return None
-    held = [(i, t, e) for i, t, e in cache[layout] if e is not None]
-    found = next((e for i, t, e in held if idx is not None and i == idx), None) or next(
-        (e for i, t, e in held if t == kind), None
+    entry = next((e for e in layout if idx is not None and e[0] == idx), None) or next(
+        (e for e in layout if e[1] == kind), None
     )
-    if found:
-        return found
-    master = _holders(pkg, layout, "slideMaster", cache)
-    if master is None:
-        return None
-    kind = "body" if kind == "obj" else kind
-    return next((e for i, t, e in cache[master] if e is not None and t == kind), None)
+    if entry is not None:
+        if entry[2] is not None:
+            return entry[2]
+        kind = entry[1]
+    want = _MASTER_TYPE.get(kind, "body")
+    return next((e[2] for e in master if e[1] == want and e[2] is not None), None)
 
 
 def _picture_texts(
@@ -221,18 +221,26 @@ def _picture_texts(
     """The text OCR reads in each of the slide's pictures that covers a fifth of
     it, how many it read, and why the first it could not read was not (empty
     when it read all). An image several slides show is read once."""
+    if not slide.pictures:
+        return [], 0, ""
     width, height = size
+    rels = pkg.rels(part)
+    layout = next((t for k, t in rels.values() if k == "slideLayout"), None)
+    held = (
+        _layout_holders(pkg, layout, holders)
+        if layout is not None and any(e is None for _, e, _ in slide.pictures)
+        else ([], [])
+    )
     sized = []
     for rid, extent, ph in slide.pictures:
         if extent is None and ph is not None:
             # a placeholder whose size is nowhere stated is taken as the slide's
-            extent = _placeholder_extent(pkg, part, ph, holders) or size
+            extent = _placeholder_extent(ph, *held) or size
         if extent is not None:
             sized.append((rid, extent))
     big = [(rid, cx) for rid, (cx, cy) in sized if cx * cy >= ocr.PICTURE_SHARE * width * height]
     if not big:
         return [], 0, ""
-    rels = pkg.rels(part)
     texts: list[str] = []
     read = 0
     why = ""

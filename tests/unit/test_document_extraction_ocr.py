@@ -9,7 +9,6 @@ import zlib
 from dataclasses import dataclass, field
 from io import BytesIO
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from pypdf import PdfReader
@@ -571,14 +570,26 @@ _UNSIZED = (
             ),
             True,
         ),
-        # the layout's placeholder has no size: the master's of its type has
+        # the layout's placeholder of its index has no size: the master's body has, and
+        # another of its type in the layout is not taken for it
+        (
+            '<p:ph type="pic" idx="1"/>',
+            _layout(
+                _UNSIZED.format('<p:ph type="pic" idx="1"/>')
+                + _holder('<p:ph type="pic" idx="2"/>', 1_000_000),
+                _holder('<p:ph type="title"/>', 1_000_000)
+                + _holder('<p:ph type="body"/>', 9_000_000),
+            ),
+            True,
+        ),
         (
             '<p:ph type="pic" idx="1"/>',
             _layout(
                 _UNSIZED.format('<p:ph type="pic" idx="1"/>'),
-                _holder('<p:ph type="pic"/>', 9_000_000),
+                _holder('<p:ph type="title"/>', 9_000_000)
+                + _holder('<p:ph type="body"/>', 1_000_000),
             ),
-            True,
+            False,
         ),
         # a content placeholder is the master's body
         (
@@ -613,12 +624,13 @@ def test_a_layout_is_read_once_however_many_pictures_sit_in_it(
     )
     # sized by neither the layout's placeholder nor its type: each picture asks the master
     parts = _layout(
-        _UNSIZED.format('<p:ph type="pic" idx="1"/>'), _holder('<p:ph type="pic"/>', 1_000_000)
+        _UNSIZED.format('<p:ph type="pic" idx="1"/>'), _holder('<p:ph type="body"/>', 1_000_000)
     )
     pics = "".join(_pic(ph=f'<p:ph type="pic" idx="{n}"/>') for n in (1, 2, 3))
     a = extract(_one_slide(_sp("Architecture", "title") + pics, parts), "p.pptx")
     assert a.coverage.complete and engine.seen == []
     assert reads.count("ppt/slideLayouts/slideLayout1.xml") == 1
+    assert reads.count("ppt/slideLayouts/_rels/slideLayout1.xml.rels") == 1
     assert reads.count("ppt/slideMasters/slideMaster1.xml") == 1
 
 
@@ -679,19 +691,33 @@ def test_an_image_the_engine_cannot_decode_leaves_the_files_bound(
         images.read("png2", lambda: b"png", 1.0)
 
 
-@pytest.mark.parametrize(("known", "error"), [(False, ocr.NotDecoded), (True, ValueError)])
-def test_an_image_whose_header_was_read_and_fails_to_decode_is_charged(
-    known: bool, error: type[ValueError]
+@pytest.mark.parametrize(("pixels", "error"), [(0, ocr.NotDecoded), (100, ValueError)])
+def test_a_failed_decode_is_not_decoded_only_when_its_header_was_not_read(
+    monkeypatch: pytest.MonkeyPatch, pixels: int, error: type[ValueError]
 ) -> None:
-    def header(data: bytes, n: int, fmt: object, w: Any, h: Any, *rest: object) -> int:
-        w._obj.value = h._obj.value = 100 if known else 0
-        return 0 if known else 1
-
-    eng = object.__new__(ocr.Engine)
-    eng._l = SimpleNamespace(pixReadHeaderMem=header, pixReadMem=lambda data, n: 0)
+    monkeypatch.setattr(ocr, "_header_pixels", lambda lp, data: pixels)
+    eng = object.__new__(ocr.Engine)  # no libraries: only Leptonica's decode is called
+    eng._l = SimpleNamespace(pixReadMem=lambda data, n: 0)
     with pytest.raises(ValueError, match="could not be decoded") as raised:
         eng.read(b"\x89PNG broken", 1.0)
     assert type(raised.value) is error
+
+
+def test_an_image_whose_decode_fails_after_its_header_uses_the_files_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Broken(FakeEngine):
+        def read(
+            self, data: bytes, shown_inches: float = 0.0
+        ) -> tuple[list[ocr.Word], list[ocr.Box], int, int]:
+            raise ValueError("its image could not be decoded")
+
+    monkeypatch.setattr(ocr, "engine", lambda: Broken([]))
+    images = ocr.Images(left=1)
+    with pytest.raises(ValueError, match="could not be decoded"):
+        images.read("a", lambda: b"png", 1.0)
+    with pytest.raises(ValueError, match="past the"):
+        images.read("b", lambda: b"png", 1.0)
 
 
 def test_an_image_page_whose_layout_fails_says_so(
