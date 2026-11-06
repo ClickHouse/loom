@@ -230,13 +230,12 @@ after the page's own (`attrs.orientation`). Then, in order:
   from its item's text (`•`, `1.`, a symbol font's bullet) is no column;
 - page furniture, a line no table holds as a row, in the top or bottom tenth of a page, that holds a letter and whose
   text, digits aside, recurs there on at least two pages and two fifths of them, or a page number alone, is left out of
-  the blocks (a candidate at either end of a borderless table is one of its rows only when it fills every column, as the
-  table's own header repeated at the top of each page does (at the top, every column but the first will do, a header
-  over a column of row names), or, unless it is a page number alone, opens a row within half again the table's row
-  spacing of it; so a running header above, or a page number below, is not, nor a repeated header with a cell across
-  two columns); the artifact names each kind (one entry for a footer whose page number
-  changes) with its first text and the number of pages it is on (`attrs.furniture`, the first 200 kinds) and warns that
-  it did;
+  the blocks (a candidate at either end of a borderless table, unless it is a page number alone, is one of its rows only
+  when it fills every column, as the table's own header repeated at the top of each page does, or, within half again the
+  table's row spacing of it, opens a row or, at the top, fills every column but the first, a header over a column of row
+  names; so a running header above, a page number below, and a repeated header with a cell across two columns are not);
+  the artifact names each kind (one entry for a footer whose page number changes) with its first text and the number of
+  pages it is on (`attrs.furniture`, the first 200 kinds) and warns that it did;
 - the rest are paragraphs (lines of one style, split where the gap passes the document's most common line spacing for
   that size by more than 30%), list items (a marker first) and code (a monospaced font, its indentation kept), and
   headings: a paragraph of up to three lines and twenty words (a numbered one that reads as a list item, one line), set

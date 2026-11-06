@@ -522,13 +522,24 @@ def _node_table_pages(last: Callable[[int, float], bytes]) -> tuple[bytes, int]:
     return laid_out_pdf(pages), n
 
 
-def test_a_page_number_under_a_borderless_tables_first_column_is_no_row() -> None:
+@pytest.mark.parametrize(
+    ("cells", "furniture"),
+    [
+        ([(72, "{p}")], "1"),  # under the first column
+        ([(72, "Page"), (220, "{p}"), (360, "of 3")], "Page 1 of 3"),  # across every column
+    ],
+)
+def test_a_page_number_under_a_borderless_table_is_no_row(
+    cells: list[tuple[float, str]], furniture: str
+) -> None:
     # 18 points under the last row: within half again the row spacing
-    data, n = _node_table_pages(lambda p, y: text_at(72, y - 18, f"{p + 1}", size=10))
+    data, n = _node_table_pages(
+        lambda p, y: b"".join(text_at(x, y - 18, t.format(p=p + 1), size=10) for x, t in cells)
+    )
     a = extract(data, "p.pdf")
     (t,) = a.tables
     assert len(t.rows) == n and t.rows[-1][0] == f"node-{n - 1}"
-    assert {f["text"] for f in a.attrs["furniture"]} == {"1"}
+    assert {f["text"] for f in a.attrs["furniture"]} == {furniture}
 
 
 @pytest.mark.parametrize(("gap", "kept"), [(12, True), (20, False)])
@@ -548,13 +559,16 @@ def test_a_recurring_line_under_a_borderless_table_is_its_row_only_within_its_ro
     assert ("furniture" not in a.attrs) is kept
 
 
-def test_a_repeated_header_over_a_column_of_row_names_stays_the_tables_header() -> None:
+@pytest.mark.parametrize(("gap", "kept"), [(14, True), (22, False)])
+def test_a_repeated_header_over_a_column_of_row_names_is_the_tables_header_at_its_row_spacing(
+    gap: float, kept: bool
+) -> None:
     pages = []
     n = 0
     for _ in range(3):
-        # the header's first cell is empty, in the page's top tenth
+        # the header's first cell is empty, in the page's top tenth, over rows 14 apart
         page = text_at(150, 760, "Q1") + text_at(250, 760, "Q2") + text_at(350, 760, "Q3")
-        y = 760
+        y = 760 - gap + 14
         while y > 100:
             y -= 14
             page += text_at(72, y, f"Region {n}") + text_at(150, y, f"{n}")
@@ -563,6 +577,9 @@ def test_a_repeated_header_over_a_column_of_row_names_stays_the_tables_header() 
         pages.append(page)
     a = extract(laid_out_pdf(pages), "q.pdf")
     (t,) = a.tables
-    assert [c.name for c in t.columns][1:] == ["Q1", "Q2", "Q3"]
-    assert len(t.rows) == n and t.rows[0][0] == "Region 0"
-    assert "furniture" not in a.attrs
+    assert ([c.name for c in t.columns][1:] == ["Q1", "Q2", "Q3"]) is kept
+    if kept:
+        assert len(t.rows) == n and t.rows[0][0] == "Region 0"
+        assert "furniture" not in a.attrs
+    else:
+        assert [f["text"] for f in a.attrs["furniture"]] == ["Q1 Q2 Q3"]

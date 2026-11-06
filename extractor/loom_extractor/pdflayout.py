@@ -930,11 +930,11 @@ def _placed(line: Line, bands: list[tuple[float, float]]) -> dict[int, str] | No
 def _edges_kept(
     lines: list[Line], run: list[int], edges: set[int], bands: list[tuple[float, float]]
 ) -> list[int]:
-    """`run` without the `edges` lines at its ends that are no rows of it. One
-    stays when it fills every band, or, at the top, every band but the first (a
-    header over a column of row names); a page number alone never does; any
-    other stays when it opens a row (text in the first band) within half again
-    the run's row spacing of it."""
+    """`run` without the `edges` lines at its ends that are no rows of it. A
+    page number alone never stays; another candidate stays when it fills every
+    band, or, within half again the run's row spacing of it, when it opens a
+    row (text in the first band) or, at the top, fills every band but the first
+    (a header over a column of row names)."""
     if len(run) < 3:
         return run
     gaps = sorted(lines[b].y - lines[a].y for a, b in zip(run, run[1:], strict=False))
@@ -942,13 +942,12 @@ def _edges_kept(
 
     def row(k: int, gap: float, top: bool) -> bool:
         placed = _placed(lines[k], bands)
-        if placed is None:
+        if placed is None or _PAGE_NUMBER.match(lines[k].text.strip()):
             return False
-        if len(placed) == len(bands) or (top and set(placed) == set(range(1, len(bands)))):
+        if len(placed) == len(bands):
             return True
-        if _PAGE_NUMBER.match(lines[k].text.strip()):
-            return False
-        return 0 in placed and gap <= 1.5 * spacing
+        stub = top and set(placed) == set(range(1, len(bands)))
+        return (0 in placed or stub) and gap <= 1.5 * spacing
 
     while (
         len(run) >= 3
