@@ -901,7 +901,7 @@ export function Documents() {
           description={
             readOnly
               ? "Nothing has been added yet. Its members who write can add documents."
-              : "Upload PDFs, DOCX, Markdown or any text-shaped file. Your agents can search the extracted text via knowledge.search, and you can download the originals back any time."
+              : "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file: the server extracts it, your agents search it with knowledge.search, and you can download the original back any time."
           }
           action={readOnly ? undefined : { label: "Add document", onClick: () => setAddOpen(true) }}
         />

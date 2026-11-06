@@ -5,7 +5,8 @@
  * a title, and one line on what agents should use it for. The address a
  * document is stored under (`repo-doc://<repo>/<slug>`) is made for them and
  * shown, never typed; a clash with an existing document gets a free suffix
- * instead of silently replacing it.
+ * instead of silently replacing it. A file's bytes are uploaded and ingested
+ * (`knowledge.ingest`): the server's extractor reads it, the browser does not.
  *
  * Read shows the text as Loom stores it (what agents read) and offers the
  * original file. A preview is sent as the dashboard (`consumer: loom-ui`),
@@ -13,7 +14,6 @@
  */
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -22,7 +22,17 @@ import { humanizeError, relativeTime } from "../lib/format";
 import { toastError } from "../components/Toast";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { Loading } from "../components/ui/Loading";
-import { readDocumentFile, slugify, type ReadDocument } from "../lib/docFiles";
+import { slugify } from "../lib/docFiles";
+import { ingestFile } from "../lib/fileIngest";
+import {
+  AllowPartial,
+  IngestProgress,
+  PickedFile,
+  acceptFor,
+  readableFormats,
+  useKnowledgeFormats,
+  useVerdict,
+} from "./FileIngest";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 
 /** `repo-doc://Org/repo/<slug>`, suffixed `-2`, `-3`… past the URIs taken. */
@@ -52,39 +62,34 @@ export function RepoDocAddDialog({
   onAdded: (title: string) => void;
 }) {
   const [mode, setMode] = useState<"file" | "paste">("file");
-  const [file, setFile] = useState<ReadDocument | null>(null);
+  const [file, setFile] = useState<File | null>(null);
   const [pasted, setPasted] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [busy, setBusy] = useState<"reading" | "saving" | null>(null);
+  const [allowPartial, setAllowPartial] = useState(false);
+  const [busy, setBusy] = useState<"saving" | null>(null);
+  const [step, setStep] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const formats = useKnowledgeFormats({ org, namespace }, open);
+  const verdict = useVerdict(file, formats);
   const taken = new Set(takenUris);
   const uri = title.trim() ? repoDocUri(repo, title, taken) : "";
-  const text = mode === "file" ? (file?.text ?? "") : pasted;
-  const ready = !!title.trim() && !!text.trim() && busy === null;
+  const ready = !!title.trim() && busy === null && (mode === "file" ? !!file && !verdict?.refusal : !!pasted.trim());
 
-  const take = async (f: File | null | undefined) => {
+  const take = (f: File | null | undefined) => {
     if (!f) return;
-    setBusy("reading");
     setError(null);
-    try {
-      const doc = await readDocumentFile(f);
-      setFile(doc);
-      if (!title.trim()) setTitle(f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " "));
-    } catch (e) {
-      setFile(null);
-      setError(e instanceof Error ? e.message : humanizeError(e));
-    } finally {
-      setBusy(null);
-    }
+    setStep("");
+    setFile(f);
+    if (!title.trim()) setTitle(f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " "));
   };
 
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setOver(false);
-    void take(e.dataTransfer.files?.[0]);
+    take(e.dataTransfer.files?.[0]);
   };
 
   const save = async () => {
@@ -92,23 +97,25 @@ export function RepoDocAddDialog({
     setBusy("saving");
     setError(null);
     try {
-      await addKnowledge(
-        { org, namespace },
-        {
-          source_uri: uri,
-          content: text,
-          title: title.trim(),
-          description: description.trim(),
-          upsert: false,
-          ...(mode === "file" && file
-            ? {
-                original_bytes_b64: file.blob.b64,
-                original_filename: file.blob.name,
-                blob_content_type: file.blob.type,
-              }
-            : {}),
-        },
-      );
+      if (mode === "file" && file) {
+        const status = await ingestFile(
+          { org, namespace },
+          file,
+          { source_uri: uri, title: title.trim(), description: description.trim(), allow_partial: allowPartial },
+          setStep,
+        );
+        if (status.state !== "ready" && status.state !== "partial") {
+          setError(
+            status.found ? `${file.name}: ${status.error_message || status.state}` : "The ingest job was not found.",
+          );
+          return;
+        }
+      } else {
+        await addKnowledge(
+          { org, namespace },
+          { source_uri: uri, content: pasted, title: title.trim(), description: description.trim(), upsert: false },
+        );
+      }
       onAdded(title.trim());
       onOpenChange(false);
     } catch (e) {
@@ -158,18 +165,11 @@ export function RepoDocAddDialog({
             onDrop={onDrop}
             className={`rounded border border-dashed p-5 text-center text-sm ${over ? "border-accent bg-accent-soft" : "border-border-strong"}`}
           >
-            {file ? (
-              <div className="flex items-center justify-center gap-2">
-                <Icon name="document" size="sm" aria-hidden="true" />
-                <span className="font-medium">{file.blob.name}</span>
-                <span className="text-text-muted">
-                  · {Math.max(1, Math.round(file.blob.size / 1024))} KB · {file.text.length.toLocaleString()} characters
-                  read
-                </span>
-              </div>
+            {file && verdict ? (
+              <PickedFile file={file} verdict={verdict} />
             ) : (
               <p className="text-text-muted">
-                {busy === "reading" ? "Reading the file…" : "Drop a PDF, Word, Markdown or text file here"}
+                Drop a file here{readableFormats(formats) ? ` (${readableFormats(formats)})` : ""}
               </p>
             )}
             <div className="mt-3 flex justify-center">
@@ -188,10 +188,14 @@ export function RepoDocAddDialog({
               type="file"
               className="sr-only"
               aria-label="Choose a file"
-              accept=".pdf,.docx,.md,.markdown,.txt,.rst,.adoc,.json,.yaml,.yml,.csv,.html,.xml,text/*"
-              onChange={(e) => void take(e.target.files?.[0])}
+              accept={acceptFor(formats)}
+              onChange={(e) => take(e.target.files?.[0])}
               tabIndex={-1}
             />
+          </div>
+          <div className="mt-3 space-y-2">
+            {verdict?.refusal && <ErrorNote>{verdict.refusal}</ErrorNote>}
+            <AllowPartial checked={allowPartial} onChange={setAllowPartial} />
           </div>
         </Tabs.Content>
         <Tabs.Content value="paste" className="pt-4">
@@ -224,6 +228,7 @@ export function RepoDocAddDialog({
           Saved as <span className="font-mono">{uri}</span>
         </p>
       )}
+      <IngestProgress step={step} />
       {error && <ErrorNote>{error}</ErrorNote>}
     </DialogFrame>
   );

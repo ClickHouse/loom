@@ -24,6 +24,10 @@ vi.mock("../api", async (importOriginal) => {
     getKnowledge: vi.fn(),
     addKnowledge: vi.fn(),
     downloadKnowledge: vi.fn(),
+    knowledgeFormats: vi.fn(async () => null),
+    uploadKnowledgeFile: vi.fn(),
+    ingestKnowledge: vi.fn(),
+    knowledgeIngestStatus: vi.fn(),
   };
 });
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
@@ -34,7 +38,17 @@ vi.mock("../components/Toast", async (importOriginal) => ({
   toast: vi.fn(),
 }));
 import { ToastViewport } from "../components/Toast";
-import { addKnowledge, deleteKnowledge, downloadKnowledge, getKnowledge, knowledgeReads, listKnowledge } from "../api";
+import {
+  addKnowledge,
+  deleteKnowledge,
+  downloadKnowledge,
+  getKnowledge,
+  ingestKnowledge,
+  knowledgeIngestStatus,
+  knowledgeReads,
+  listKnowledge,
+  uploadKnowledgeFile,
+} from "../api";
 
 const DOC = {
   source_uri: "repo-doc://Acme/kj/on-call-runbook",
@@ -215,5 +229,52 @@ describe("RepoDocsList", () => {
         upsert: false,
       },
     ]);
+  });
+
+  it("a writer adds a file as its bytes, ingested under an address made from its name", async () => {
+    vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null });
+    vi.mocked(uploadKnowledgeFile).mockResolvedValue({
+      upload_id: "up-1",
+      sha256: "",
+      size: 9,
+      filename: "on_call.md",
+      format: "markdown",
+      expires_at: "",
+    });
+    vi.mocked(ingestKnowledge).mockResolvedValue({ ingestion_id: "job-1", state: "pending", source_uri: "x" });
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue({
+      found: true,
+      ingestion_id: "job-1",
+      source_uri: "repo-doc://Acme/kj/on-call",
+      state: "ready",
+      stage: "",
+      error_code: "",
+      error_message: "",
+      format: "markdown",
+      coverage: null,
+      warnings: [],
+      chunks: 2,
+      revision: 1,
+    });
+    mount(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Add a document" }));
+    const dialog = await screen.findByRole("dialog");
+    const user = userEvent.setup({ applyAccept: false });
+    await user.upload(within(dialog).getByLabelText("Choose a file"), new File(["# On call"], "on_call.md"));
+    expect(within(dialog).getByLabelText("Title")).toHaveValue("on call");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    await waitFor(() => expect(knowledgeIngestStatus).toHaveBeenCalled());
+    expect(vi.mocked(uploadKnowledgeFile).mock.calls[0][1].name).toBe("on_call.md");
+    expect(vi.mocked(ingestKnowledge).mock.calls[0]).toEqual([
+      { org: "dev", namespace: "code-kj" },
+      {
+        source_uri: "repo-doc://Acme/kj/on-call",
+        title: "on call",
+        description: "",
+        allow_partial: false,
+        upload_id: "up-1",
+      },
+    ]);
+    expect(addKnowledge).not.toHaveBeenCalled();
   });
 });
