@@ -87,7 +87,7 @@ def test_detect_format_reads_content_before_the_name(data: bytes, name: str, fmt
         (b"just text", "report.pdf", "", "format_mismatch"),
         (b"%PDF-1.4", "report.docx", "", "format_mismatch"),
         (b"%PDF-1.4", "x", "sql", "format_mismatch"),
-        pytest.param(_zip("data.txt"), "a.zip", "", "unsupported_format", id="plain zip"),
+        pytest.param(_zip("data.txt"), "a.zip", "", "unsupported_format", id="plain-zip"),
         (b"PK\x03\x04broken", "a.docx", "", "corrupt"),
         (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1rest", "old.bin", "", "unsupported_format"),
         (b"anything", "old.xls", "", "unsupported_format"),
