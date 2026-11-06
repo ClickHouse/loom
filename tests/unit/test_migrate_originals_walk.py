@@ -1,8 +1,9 @@
 """How `migrate_originals` counts each original of a page and each namespace: one nothing
 needs is left to the sweep, a refused original is an error and the walk goes on, one
 switched but unconfirmed is listed apart, and a namespace an erasure holds, or whose
-object keys would be too long, is refused once (in a dry run too). No ClickHouse: the
-store calls are stubbed."""
+object keys would be too long, is refused once (in a dry run too); and the move's own
+checks (the byte read, a refused cleanup delete, a switch a later write outranked). No
+ClickHouse: the store calls are stubbed."""
 
 from __future__ import annotations
 

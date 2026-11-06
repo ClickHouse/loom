@@ -152,7 +152,7 @@ async def _await_erasures(held: blobs.Held, since_s: int, ids: set[str]) -> None
 async def fence(org: str, namespace: str) -> str:
     """The refusal that holds every original of the namespace back now, naming the
     erasure that holds it longest; '' when none does. Coverage depends on the namespace
-    alone, so one read serves a walk until an erasure holds an original back."""
+    alone, so one read serves a walk until an original is not switched cleanly."""
     fenced = await _erasures_since(org, namespace, await blobs.ch_now_s())
     return _fence_advice(fenced, "covers it") if fenced else ""
 
@@ -363,9 +363,10 @@ async def migrate_originals(
     `org`, or of its `namespace`) to the bucket, counting the others as left to the
     sweep; with `dry_run`, count them. An original that fails (bytes that do not hash
     to their sha or fill their size, a bucket that refuses) is reported and left where
-    it is, and the walk goes on with the next. One an erasure held back makes the walk
-    read the namespace's fence again: an erasure holding it refuses the rest of the
-    namespace in one line. A ClickHouse error stops the run: the next run goes on."""
+    it is, and the walk goes on with the next. One not switched cleanly (gone or
+    replaced, held back, or unconfirmed) makes the walk read the namespace's fence
+    again: an erasure holding it refuses the rest of the namespace in one line. A
+    ClickHouse error stops the run: the next run goes on."""
     set_query_tag("cli:knowledge-migrate-originals")
     # The caller's, when given: what a run stopped by an error gathered is still its own.
     out = out if out is not None else Migrated()
