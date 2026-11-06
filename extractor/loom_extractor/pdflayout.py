@@ -1118,7 +1118,7 @@ def size_class(size: float) -> float:
     """`size` to the step sizes are compared at: half a point, or a tenth of one
     under 6 points (OCR's text in a finely shown image, whose whole-point
     readings turn to fractions)."""
-    # divided by a whole number, so 5.97 and 6.0 are the one 6.0
+    # divided by 10, not times 0.1, so a class is exact (5.97 is 6.0, not 6.000000000000001)
     return round(size * 10) / 10 if size < 6 else round(size * 2) / 2
 
 
