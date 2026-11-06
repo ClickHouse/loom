@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { installApi, warmUp } from "./fixtures";
 
-// Every route has a budget. One parametrized test over the twenty-two dashboard routes with
+// Every route has a budget. One parametrized test over every dashboard route in ROUTES with
 // the default fixtures at 4x CPU: the page paints (a heading in <main>), its largest
 // contentful paint and its long tasks stay under budget, and its reads stay one per
 // question. The budgets are set for CI's slower runners — they catch a doubling, not a
