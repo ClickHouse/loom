@@ -355,7 +355,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.outcome_run": ("sdk_method",),
     "memory.pin": (
         "sdk_method",
-        "sdk_example",
         "dashboard",
     ),
     "memory.promote": ("sdk_method",),

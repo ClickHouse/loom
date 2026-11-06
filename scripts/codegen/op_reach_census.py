@@ -63,11 +63,13 @@ _PLUGIN_SUFFIXES = (".mjs", ".js", ".ts", ".tsx", ".sh", ".py", ".yaml", ".yml",
 
 _V1 = re.compile(r"/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b")
 _QUOTED = re.compile(r"""["']([a-z_]+(?:\.[a-z_]+){1,2})["']""")
-# A dashboard call site: the path as a string literal (`post("/v1/memory.pin", …)`),
-# outside a comment. A bare op name there is an audit label, not a call.
+# A dashboard call site: the path as a string literal (`post("/v1/<op>", …)`), outside
+# a comment. A bare op name there is an audit label, not a call.
 _DASHBOARD_CALL = re.compile(r"""["'`]/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b""")
 # Comments, without parsing strings: a line that starts as one (`//`, `/*`, a
-# JSDoc `*`), a JSX `{/* … */}`, and a `//` after a statement's end on its line.
+# JSDoc `*`), a JSX `{/* … */}`, and a `//` after `;`, `,`, `{` or `(` on its line.
+# Two shapes still read as code: a block comment's line that does not start with
+# `*`, and a `//` after any other character.
 _TS_COMMENT = re.compile(
     r"^[ \t]*(?://|/\*|\*)[^\n]*|\{/\*[\s\S]*?\*/\}|(?<=[;,{(])[ \t]*//[^\n]*", re.MULTILINE
 )
@@ -247,13 +249,16 @@ def dashboard_violations(ops: list[Operation]) -> list[str]:
     """Every op is on the dashboard or says why not, and nothing says why not
     for an op the dashboard calls (`server.operations.dashboard`)."""
     out: list[str] = []
-    names = {op.name for op in ops}
+    names = {op.name for op in ALL_OPERATIONS}
     for op in ops:
         on = "dashboard" in op.reach
         skipped = op.name in NOT_IN_DASHBOARD
         pending = op.name in DASHBOARD_PENDING
         if not on and not skipped and not pending:
-            out.append(f"{op.name}: not on the dashboard and not in NOT_IN_DASHBOARD with a reason")
+            out.append(
+                f"{op.name}: no dashboard call site; add its control, or name it in "
+                "NOT_IN_DASHBOARD with the reason"
+            )
         if on and (skipped or pending):
             out.append(
                 f"{op.name}: the dashboard calls it, so drop it from server/operations/dashboard.py"
