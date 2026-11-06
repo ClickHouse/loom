@@ -5576,6 +5576,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.dedup_list": 400,
     "knowledge.dedup_resolve": 400,
     "knowledge.delete": 100,
+    # The configured extractors' capabilities, each cached a minute; a cold read waits at
+    # most the listing's 5 s bound, and a service it could not read is not waited for
+    # again for a minute.
+    "knowledge.formats": 5500,
     "knowledge.get": 30,
     "knowledge.ingest": 60,
     "knowledge.ingest_cancel": 60,

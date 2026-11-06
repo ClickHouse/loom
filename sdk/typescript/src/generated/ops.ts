@@ -3368,6 +3368,25 @@ export interface KnowledgeDeleteOutput {
   chunks_tombstoned: number;
 }
 
+export interface KnowledgeFormatsInput {
+  org: string;
+  namespace: string;
+}
+
+export interface KnowledgeFormat {
+  format: string;
+  extensions?: string[];
+  media_types?: string[];
+  available?: boolean | null;
+}
+
+export interface KnowledgeFormatsOutput {
+  formats?: KnowledgeFormat[];
+  max_upload_bytes?: number;
+  refused_extensions?: string[];
+  default_format?: string;
+}
+
 export interface KnowledgeGetInput {
   org: string;
   namespace: string;
@@ -10028,6 +10047,7 @@ export type OpName =
   | "knowledge.dedup_list"
   | "knowledge.dedup_resolve"
   | "knowledge.delete"
+  | "knowledge.formats"
   | "knowledge.get"
   | "knowledge.ingest"
   | "knowledge.ingest_cancel"
@@ -10385,6 +10405,7 @@ export interface OpMap {
   "knowledge.dedup_list": { input: KnowledgeDedupListInput; output: KnowledgeDedupListOutput };
   "knowledge.dedup_resolve": { input: KnowledgeDedupResolveInput; output: KnowledgeDedupResolveOutput };
   "knowledge.delete": { input: KnowledgeDeleteInput; output: KnowledgeDeleteOutput };
+  "knowledge.formats": { input: KnowledgeFormatsInput; output: KnowledgeFormatsOutput };
   "knowledge.get": { input: KnowledgeGetInput; output: KnowledgeGetOutput };
   "knowledge.ingest": { input: KnowledgeIngestInput; output: KnowledgeIngestOutput };
   "knowledge.ingest_cancel": { input: KnowledgeIngestCancelInput; output: KnowledgeIngestCancelOutput };
@@ -10742,6 +10763,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.dedup_list", group: "knowledge", method: "dedupList", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: false },
   { name: "knowledge.dedup_resolve", group: "knowledge", method: "dedupResolve", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.delete", group: "knowledge", method: "delete", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
+  { name: "knowledge.formats", group: "knowledge", method: "formats", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 5500, audit: false, readOnly: true },
   { name: "knowledge.get", group: "knowledge", method: "get", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 30, audit: false, readOnly: true },
   { name: "knowledge.ingest", group: "knowledge", method: "ingest", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: false },
   { name: "knowledge.ingest_cancel", group: "knowledge", method: "ingestCancel", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: false },
@@ -10974,4 +10996,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 354;
+export const GENERATED_OP_COUNT = 355;

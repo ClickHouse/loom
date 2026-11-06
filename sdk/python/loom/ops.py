@@ -167,6 +167,7 @@ OpName = Literal[
     "knowledge.dedup_list",
     "knowledge.dedup_resolve",
     "knowledge.delete",
+    "knowledge.formats",
     "knowledge.get",
     "knowledge.ingest",
     "knowledge.ingest_cancel",
@@ -524,6 +525,7 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.dedup_list",
     "knowledge.dedup_resolve",
     "knowledge.delete",
+    "knowledge.formats",
     "knowledge.get",
     "knowledge.ingest",
     "knowledge.ingest_cancel",
@@ -2288,6 +2290,18 @@ OPS: dict[str, OpSpec] = {
         100,
         True,
         False,
+    ),
+    "knowledge.formats": OpSpec(
+        "knowledge.formats",
+        "KnowledgeFormatsInput",
+        "KnowledgeFormatsBody",
+        "KnowledgeFormatsOutput",
+        True,
+        "viewer",
+        "experimental",
+        5500,
+        False,
+        True,
     ),
     "knowledge.get": OpSpec(
         "knowledge.get",
@@ -10152,6 +10166,34 @@ class KnowledgeDeleteBody(TypedDict, total=False):
 class KnowledgeDeleteOutput(TypedDict, total=False):
     deleted: Required[bool]
     chunks_tombstoned: Required[int]
+
+
+class KnowledgeFormatsInput(TypedDict, total=False):
+    "The document formats this deployment reads, as `knowledge.ingest` sends"
+
+    org: Required[str]
+    namespace: Required[str]
+
+
+class KnowledgeFormatsBody(TypedDict, total=False):
+    "The document formats this deployment reads, as `knowledge.ingest` sends"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class KnowledgeFormatsOutput(TypedDict, total=False):
+    formats: NotRequired[list["KnowledgeFormat"]]
+    max_upload_bytes: NotRequired[int]
+    refused_extensions: NotRequired[list[str]]
+    default_format: NotRequired[str]
+
+
+class KnowledgeFormat(TypedDict, total=False):
+    format: Required[str]
+    extensions: NotRequired[list[str]]
+    media_types: NotRequired[list[str]]
+    available: NotRequired[Optional[bool]]
 
 
 class KnowledgeGetInput(TypedDict, total=False):

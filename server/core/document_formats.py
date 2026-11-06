@@ -10,6 +10,9 @@ Pure and I/O-free.
 
 from __future__ import annotations
 
+# The format of a source whose declared format, extension and media type name none.
+DEFAULT_FORMAT = "text"
+
 KNOWN_FORMATS = (
     "markdown",
     "html",
@@ -66,6 +69,17 @@ _MEDIA_TYPES = {
 }
 
 
+def names_of(fmt: str) -> tuple[list[str], list[str]]:
+    """The file extensions and media types that name `fmt`, sorted."""
+    exts = sorted(e for e, f in _EXTENSIONS.items() if f == fmt)
+    return exts, sorted(m for m, f in _MEDIA_TYPES.items() if f == fmt)
+
+
+def legacy_extensions() -> list[str]:
+    """The extensions an upload refuses by name (legacy binary Office files)."""
+    return sorted(_LEGACY)
+
+
 def media_type_of(media_type: str) -> str:
     """`media_type` without its parameters, lowercased: `Text/HTML; charset=x`
     is `text/html`."""
@@ -97,4 +111,4 @@ def format_of(name: str, media_type: str = "", declared: str = "") -> str:
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     if ext in _LEGACY:
         raise ValueError(f".{ext} files are not supported; save it as {ext}x")
-    return _EXTENSIONS.get(ext) or _MEDIA_TYPES.get(media_type_of(media_type), "text")
+    return _EXTENSIONS.get(ext) or _MEDIA_TYPES.get(media_type_of(media_type), DEFAULT_FORMAT)

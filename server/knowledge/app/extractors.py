@@ -185,6 +185,7 @@ async def capabilities(url: str) -> Capabilities:
             f"the extractor's capabilities are not the contract's: {type(e).__name__}"
         ) from e
     _declared[url] = (time.monotonic() + _CAPABILITIES_TTL_S, caps)
+    _unreadable.pop(url, None)  # read again (by an ingest, say): the listing counts it
     return caps
 
 
@@ -206,25 +207,61 @@ def _origin(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}"
 
 
-async def available_formats() -> dict[str, str]:
-    """Each format some configured service declares, with the first such
-    service's URL. A service that cannot be read declares nothing, and is read
-    once per listing, so it costs one timeout, not one per format."""
-    out: dict[str, str] = {}
-    read: dict[str, Capabilities | None] = {}
-    for fmt in KNOWN_FORMATS:
-        for url in _endpoints(fmt):
-            if url not in read:
-                try:
-                    read[url] = await capabilities(url)
-                except ExtractorUnavailable as e:
-                    logger.warning("document extractor %s: %s", _origin(url), e)
-                    read[url] = None
-            caps = read[url]
-            if caps is not None and fmt in caps.formats:
-                out[fmt] = url
-                break
+# How long a listing of the formats, or a report, waits for the services' capabilities.
+CAPABILITIES_READ_S = 5.0  # not a setting: a read that must not hold its caller
+# Each service whose last read for a listing failed, until it is read again: a down
+# service costs one wait a minute, not one per listing.
+_unreadable: dict[str, float] = {}
+
+
+async def _formats_within(url: str, timeout_s: float) -> frozenset[str] | None:
+    """What the service at `url` declares, or None when it is not read within
+    `timeout_s` (logged)."""
+    try:
+        async with asyncio.timeout(timeout_s):
+            return (await capabilities(url)).formats
+    except (ExtractorUnavailable, TimeoutError) as e:
+        logger.warning("document extractor %s: %s", _origin(url), str(e) or "timed out")
+        return None
+
+
+async def _declared_within(url: str, timeout_s: float) -> frozenset[str] | None:
+    """`_formats_within` for a listing: None for a service not read, which is not
+    read again for a minute (unless a capabilities read of it succeeds first)."""
+    # A fresh read (an ingest's) wins over a mark a slower read left after it.
+    hit = _declared.get(url)
+    if hit is not None and hit[0] > time.monotonic():
+        return hit[1].formats
+    if _unreadable.get(url, 0.0) > time.monotonic():
+        return None
+    formats = await _formats_within(url, timeout_s)
+    if formats is None:
+        _unreadable[url] = time.monotonic() + _CAPABILITIES_TTL_S
+    return formats
+
+
+async def format_availability(*, timeout_s: float = CAPABILITIES_READ_S) -> dict[str, str | None]:
+    """Each known format: the URL of the first service it can go to that declares it
+    (`_endpoints`: its own route, else the default service and the routes of the
+    media types that name it; a media type's route serves uploads of that media type),
+    '' when every such service was read and none does, or None when none declares it
+    and one could not be read. The services are read at once, within `timeout_s`."""
+    endpoints = {fmt: _endpoints(fmt) for fmt in KNOWN_FORMATS}
+    unique = sorted({url for urls in endpoints.values() for url in urls})
+    read = await asyncio.gather(*(_declared_within(u, timeout_s) for u in unique))
+    declared = dict(zip(unique, read, strict=True))
+    out: dict[str, str | None] = {}
+    for fmt, urls in endpoints.items():
+        hit = next((u for u in urls if fmt in (declared[u] or frozenset())), "")
+        out[fmt] = hit if hit or all(declared[u] is not None for u in urls) else None
     return out
+
+
+async def available_formats(*, timeout_s: float = CAPABILITIES_READ_S) -> dict[str, str]:
+    """Each format some service it can go to declares, with that service's URL."""
+    return {
+        fmt: url for fmt, url in (await format_availability(timeout_s=timeout_s)).items() if url
+    }
 
 
 @dataclass(frozen=True)
@@ -252,13 +289,7 @@ async def configured_services(*, timeout_s: float) -> list[Service]:
         named.setdefault(url.rstrip("/"), f"LOOM_DOCUMENT_EXTRACTORS_JSON[{json.dumps(key)}]")
 
     async def read(url: str, setting: str) -> Service:
-        try:
-            async with asyncio.timeout(timeout_s):
-                formats: frozenset[str] | None = (await capabilities(url)).formats
-        except (ExtractorUnavailable, TimeoutError) as e:
-            logger.warning("document extractor %s: %s", _origin(url), e or "timed out")
-            formats = None
-        return Service(setting, url, formats)
+        return Service(setting, url, await _formats_within(url, timeout_s))
 
     return list(await asyncio.gather(*(read(u, s) for u, s in named.items())))
 

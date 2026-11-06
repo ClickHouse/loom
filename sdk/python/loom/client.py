@@ -1269,6 +1269,15 @@ class KnowledgeOps:
             await self._agent.call("knowledge.delete", body, **options),
         )
 
+    async def formats(
+        self, body: _ops.KnowledgeFormatsBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeFormatsOutput:
+        """`knowledge.formats`."""
+        return cast(
+            "_ops.KnowledgeFormatsOutput",
+            await self._agent.call("knowledge.formats", body, **options),
+        )
+
     async def get(
         self, body: _ops.KnowledgeGetBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeGetOutput:
