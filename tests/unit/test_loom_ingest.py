@@ -49,15 +49,19 @@ def test_is_url_detection() -> None:
 
 
 class _FakeS3Client:
-    """Stub boto3 S3 client recording download_file + list_objects_v2 calls."""
+    """Stub boto3 S3 client recording get_object + list_objects_v2 calls."""
 
-    def __init__(self, objects: dict[str, bytes] | None = None) -> None:
+    def __init__(self, objects: dict[str, bytes] | None = None, content_type: str = "") -> None:
         self.objects: dict[str, bytes] = objects or {}
-        self.download_calls: list[tuple[str, str, str]] = []
+        self.content_type = content_type
+        self.get_calls: list[tuple[str, str]] = []
 
-    def download_file(self, bucket: str, key: str, dest: str) -> None:
-        self.download_calls.append((bucket, key, dest))
-        Path(dest).write_bytes(self.objects.get(key, b"# fetched from s3\n"))
+    def get_object(self, Bucket: str, Key: str) -> dict[str, Any]:
+        import io
+
+        self.get_calls.append((Bucket, Key))
+        body = io.BytesIO(self.objects.get(Key, b"# fetched from s3\n"))
+        return {"Body": body, "ContentType": self.content_type}
 
     def get_paginator(self, name: str):
         assert name == "list_objects_v2"
@@ -223,12 +227,21 @@ def test_main_s3_single_object(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(loom_ingest, "_s3_client", lambda: fake)
     server = _Server(monkeypatch)
     assert loom_ingest.main(["s3://example-docs/docs/r1.md", *_ID]) == 0
-    assert [c[:2] for c in fake.download_calls] == [("example-docs", "docs/r1.md")]
+    assert fake.get_calls == [("example-docs", "docs/r1.md")]
     (up,) = server.uploads
     assert (up["filename"], up["data"]) == ("r1.md", b"# runbook 1\nbody")
     assert server.ingests[0]["source_uri"] == "s3://example-docs/docs/r1.md"
-    # The temp copy is gone once read.
-    assert not Path(fake.download_calls[0][2]).exists()
+
+
+def test_an_s3_key_with_no_extension_is_named_by_its_media_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeS3Client(objects={"docs/notes": b"# n"}, content_type="text/markdown")
+    monkeypatch.setattr(loom_ingest, "_s3_client", lambda: fake)
+    server = _Server(monkeypatch)
+    assert loom_ingest.main(["s3://b/docs/", *_ID]) == 0
+    (up,) = server.uploads
+    assert (up["filename"], up["content_type"], up["data"]) == ("notes", "text/markdown", b"# n")
 
 
 def test_main_s3_prefix_loops(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -270,7 +283,7 @@ def test_s3_prefix_refuses_a_single_document_flag(
     monkeypatch.setattr(loom_ingest, "_s3_client", lambda: fake)
     server = _Server(monkeypatch)
     assert loom_ingest.main(["s3://b/docs/", *_ID, *flag]) == 2
-    assert server.uploads == [] and fake.download_calls == []
+    assert server.uploads == [] and fake.get_calls == []
 
 
 def test_a_refused_object_is_counted_and_the_rest_still_ingest(
@@ -289,12 +302,14 @@ def test_an_object_that_cannot_be_fetched_is_counted_and_the_rest_still_ingest(
 ) -> None:
     fake = _FakeS3Client(objects={"docs/r1.md": b"# r1", "docs/r2.md": b"# r2"})
 
-    def _download(bucket: str, key: str, dest: str) -> None:
-        if key == "docs/r1.md":
-            raise RuntimeError("AccessDenied")
-        Path(dest).write_bytes(fake.objects[key])
+    real_get = fake.get_object
 
-    monkeypatch.setattr(fake, "download_file", _download)
+    def _get(Bucket: str, Key: str) -> dict[str, Any]:
+        if Key == "docs/r1.md":
+            raise RuntimeError("AccessDenied")
+        return real_get(Bucket=Bucket, Key=Key)
+
+    monkeypatch.setattr(fake, "get_object", _get)
     monkeypatch.setattr(loom_ingest, "_s3_client", lambda: fake)
     server = _Server(monkeypatch)
     assert loom_ingest.main(["s3://b/docs/", *_ID]) == 1
@@ -354,9 +369,8 @@ def test_fetch_url_rejects_oversize(monkeypatch: pytest.MonkeyPatch) -> None:
 
     big_body = b"x" * (loom_ingest._URL_MAX_BYTES + 1)
     monkeypatch.setattr(_httpx, "Client", lambda **kw: _FakeHTTPXClient(big_body))
-    with pytest.raises(loom_ingest._Stop, match="too large") as exc:
+    with pytest.raises(RuntimeError, match="too large"):
         loom_ingest._fetch_url("https://example.com/big")
-    assert exc.value.code == 1
 
 
 def test_dry_run_sends_nothing(

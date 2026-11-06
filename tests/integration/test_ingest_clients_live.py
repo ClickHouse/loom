@@ -6,6 +6,7 @@ published as a revision the SDK and the CLI report.
 - `ingest_file` publishes a Markdown file, and `wait_for_ingest` returns the job once
   it is ready, with the revision `knowledge.get` serves.
 - The CLI ingests a file and waits for it, printing the revision it published; a second
+- `loom demo` uploads its file, waits for the job and finds the passage it asked about.
   run publishes the next revision; `--no-wait` prints the job and returns.
 """
 
@@ -107,3 +108,33 @@ async def test_the_cli_uploads_waits_and_publishes_the_next_revision(
         got = await a.knowledge.get("repo://runbook.md")
     assert (got["revision"], got["title"]) == (2, "runbook")
     assert got["metadata"]["ingested_from"] == f"file://{doc.resolve()}"
+
+
+@pytest.mark.asyncio
+async def test_loom_demo_ingests_its_file_and_searches_it(
+    control_plane_url: str, mint_test_token: Any, tmp_path: Path, capfd: Any
+) -> None:
+    import argparse
+
+    import server.cli.demo as demo
+
+    org, ns = unique_org("ingest-demo"), f"docs-{uuid.uuid4().hex[:6]}"
+    (tmp_path / "AGENTS.md").write_bytes(RUNBOOK)
+    token = mint_test_token(org=org, namespaces=[ns], roles=["writer"])
+    parser = argparse.ArgumentParser()
+    demo.register_demo_cli(parser.add_subparsers(dest="cmd"))
+    args = parser.parse_args(
+        ["demo", "--base-url", control_plane_url, "--token", token, "--org", org]
+        + ["--namespace", ns, "--root", str(tmp_path), "--search-only"]
+        + ["--question", "When is the ingest worker restarted?"]
+    )
+    run = asyncio.ensure_future(asyncio.to_thread(demo._cmd_demo, args))
+
+    async def done() -> bool:
+        return run.done()
+
+    await _drain(done)
+    assert await run == 0
+    out = capfd.readouterr().out
+    assert "ingested AGENTS.md → revision=1" in out and "format=markdown state=ready" in out
+    assert "AGENTS.md#" in out and "Restart the ingest worker" in out

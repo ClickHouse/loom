@@ -87,9 +87,12 @@ async def test_ingest_names_the_upload_and_the_document(monkeypatch: pytest.Monk
     server = _Server(monkeypatch)
     async with _agent() as a:
         job = await a.knowledge.ingest(
-            "up-1", source_uri="repo://spec.pdf", tags=["rfc"], expected_revision=1,
+            "up-1",
+            source_uri="repo://spec.pdf",
+            tags=["rfc"],
+            expected_revision=1,
             options={"format": "markdown"},
-        )  # fmt: skip
+        )
     assert job["ingestion_id"] == "job-1"
     body = server.body("knowledge.ingest")
     assert (body["org"], body["namespace"], body["upload_id"]) == ("acme", "support", "up-1")

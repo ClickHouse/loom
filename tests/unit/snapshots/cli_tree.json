@@ -12457,7 +12457,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Checkout root holding AGENTS.md and dev/loom_ingest.py (default: the package's checkout, then the cwd).",
+       "help": "Checkout root holding AGENTS.md (default: the cwd, then the package's checkout).",
        "metavar": null
       },
       {

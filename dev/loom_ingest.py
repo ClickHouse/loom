@@ -45,7 +45,6 @@ import hashlib
 import json
 import os
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -208,16 +207,11 @@ class _File:
 
 
 def _fetch_s3_object(uri: str) -> _File:
+    """One object's bytes and its stored media type, which names the format of
+    a key with no extension."""
     bucket, key = _parse_s3_uri(uri)  # a URI with no key is a prefix (_plan)
-    client = _s3_client()
-    fd, tmp_path = tempfile.mkstemp(prefix="loom-ingest-")
-    os.close(fd)
-    try:
-        client.download_file(bucket, key, tmp_path)
-        data = Path(tmp_path).read_bytes()
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
-    return _File(data, key.rsplit("/", 1)[-1], "", uri)
+    obj = _s3_client().get_object(Bucket=bucket, Key=key)
+    return _File(obj["Body"].read(), key.rsplit("/", 1)[-1], obj.get("ContentType") or "", uri)
 
 
 def _fetch_url(uri: str) -> _File:
@@ -233,12 +227,11 @@ def _fetch_url(uri: str) -> _File:
             r = client.get(uri)
             r.raise_for_status()
     except httpx.HTTPError as e:
-        raise _Stop(1, f"URL fetch failed: {e}") from e
+        raise RuntimeError(f"URL fetch failed: {e}") from e
     if len(r.content) > _URL_MAX_BYTES:
-        raise _Stop(
-            1,
+        raise RuntimeError(
             f"URL response too large ({len(r.content)} bytes); cap is {_URL_MAX_BYTES}. "
-            "Save it to a file and ingest that.",
+            "Save it to a file and ingest that."
         )
     ctype = (r.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
     # From the path alone: a host such as `example.com` is no file name.

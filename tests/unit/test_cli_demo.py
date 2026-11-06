@@ -1,6 +1,7 @@
-"""`loom demo`: ingest the repo's own memory file through the
-`make ingest` code path, ask it a question, print answer + evidence. The HTTP
-layer (`_get_json` / `_post_json`) is replaced with a scripted server."""
+"""`loom demo`: upload the repo's own memory file and ingest it as
+`make ingest` does, ask it a question, print answer + evidence. The HTTP
+layer (`_get_json` / `_post_json` / `_post_bytes`) is replaced with a scripted
+server."""
 
 from __future__ import annotations
 
@@ -9,13 +10,12 @@ import base64
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
 import server.cli as cli
 import server.cli.demo as demo
-
-ROOT = Path(__file__).resolve().parents[2]
 
 HITS = [
     {
@@ -53,12 +53,17 @@ class FakeServer:
         fake_llm: bool,
         synth: dict[str, Any] | None = None,
         fail: dict[str, tuple[int, dict[str, Any]]] | None = None,
+        job: dict[str, Any] | None = None,
     ):
         self.fake_llm = fake_llm
         self.synth = synth or {}
         self.fail = fail or {}
+        # How the ingest job ends, after one poll that sees it running.
+        self.job = job or {"state": "ready", "revision": 3, "chunks": 12, "format": "markdown"}
         self.posts: list[tuple[str, dict[str, Any], str]] = []
         self.gets: list[tuple[str, str]] = []
+        self.uploads: list[tuple[dict[str, list[str]], bytes, str]] = []
+        self.polls = 0
 
     def get(self, url: str, token: str, timeout: float = 5.0) -> tuple[int, dict[str, Any]]:
         self.gets.append((url, token))
@@ -66,14 +71,27 @@ class FakeServer:
             return self.fail["health"]
         return 200, {"status": "ok", "fake_llm": self.fake_llm, "llm_model": "gpt-4o-mini"}
 
+    def post_bytes(
+        self, url: str, data: bytes, token: str, timeout: float = 90.0
+    ) -> tuple[int, dict[str, Any]]:
+        parts = urlsplit(url)
+        assert parts.path == "/v1/knowledge.upload"
+        self.uploads.append((parse_qs(parts.query), data, token))
+        if "knowledge.upload" in self.fail:
+            return self.fail["knowledge.upload"]
+        return 201, {"upload_id": "up-1", "format": "markdown"}
+
     def post(
         self, base_url: str, op: str, body: dict[str, Any], token: str, timeout: float = 90.0
     ) -> tuple[int, dict[str, Any]]:
         self.posts.append((op, body, token))
         if op in self.fail:
             return self.fail[op]
-        if op == "knowledge.upsert":
-            return 200, {"doc_id": "doc-1", "chunks_created": 12, "chunks_superseded": 12}
+        if op == "knowledge.ingest":
+            return 200, {"ingestion_id": "job-1", "state": "pending"}
+        if op == "knowledge.ingest_status":
+            self.polls += 1
+            return 200, {"found": True, "state": "processing"} if self.polls == 1 else self.job
         if op == "knowledge.search":
             return 200, {"results": HITS, "embedding_model": "fake-ngram-1024"}
         if op == "knowledge.synthesize":
@@ -83,9 +101,7 @@ class FakeServer:
 
 @pytest.fixture
 def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A checkout-shaped directory: AGENTS.md plus the real dev/loom_ingest.py."""
-    (tmp_path / "dev").mkdir()
-    (tmp_path / "dev" / "loom_ingest.py").write_text((ROOT / "dev" / "loom_ingest.py").read_text())
+    """A checkout-shaped directory holding AGENTS.md."""
     (tmp_path / "AGENTS.md").write_text(
         "# Loom\n\n## Invariants\n\n- **Identity tuple on every row:** `(org, namespace, agent, "
         "user_id, session_id)`\n"
@@ -102,6 +118,8 @@ def serve(monkeypatch: pytest.MonkeyPatch):
         fake = FakeServer(**kw)
         monkeypatch.setattr(demo, "_get_json", fake.get)
         monkeypatch.setattr(demo, "_post_json", fake.post)
+        monkeypatch.setattr(demo, "_post_bytes", fake.post_bytes)
+        monkeypatch.setattr(demo, "_sleep", lambda s: None)
         return fake
 
     return _install
@@ -133,18 +151,27 @@ def test_demo_fake_llm_ingests_then_prints_hits_and_hint(repo: Path, serve, caps
     assert demo._cmd_demo(_args()) == 0
     out = capsys.readouterr().out
     ops = [op for op, _, _ in fake.posts]
-    assert ops == ["knowledge.upsert", "knowledge.search"]  # no synthesize on a fake LLM
-    upsert = fake.posts[0][1]
-    assert upsert["org"] == "dev" and upsert["namespace"] == "local"
-    assert upsert["source_uri"] == f"file://{(repo / 'AGENTS.md').resolve()}"
-    assert upsert["title"] == "AGENTS" and upsert["tags"] == ["loom", "project-memory"]
-    assert "Identity tuple on every row" in upsert["content"]
-    assert upsert["metadata"]["ingested_format"] == ".md"
-    search = fake.posts[1][1]
+    # The job is polled until it ends; no synthesize on a fake LLM.
+    assert ops == [
+        "knowledge.ingest",
+        "knowledge.ingest_status",
+        "knowledge.ingest_status",
+        "knowledge.search",
+    ]
+    # The file goes as its bytes: the server's extractor parses it, the demo never does.
+    ((params, data, token),) = fake.uploads
+    assert data == (repo / "AGENTS.md").read_bytes() and token == ""
+    assert params == {"org": ["dev"], "namespace": ["local"], "filename": ["AGENTS.md"]}
+    ingest = fake.posts[0][1]
+    assert (ingest["org"], ingest["namespace"], ingest["upload_id"]) == ("dev", "local", "up-1")
+    assert ingest["source_uri"] == f"file://{(repo / 'AGENTS.md').resolve()}"
+    assert ingest["title"] == "AGENTS" and ingest["tags"] == ["loom", "project-memory"]
+    assert fake.posts[1][1]["ingestion_id"] == "job-1"
+    search = fake.posts[3][1]
     assert search["query"] == demo.DEFAULT_QUESTION and search["top_k"] == 3
-    assert search["uri_prefix"] == [upsert["source_uri"]]
+    assert search["uri_prefix"] == [ingest["source_uri"]]
     assert fake.posts[0][2] == ""  # tokenless single-user call
-    assert "ingested AGENTS.md → doc_id=doc-1 chunks=12" in out
+    assert "ingested AGENTS.md → revision=3 chunks=12 format=markdown state=ready" in out
     assert "Top 3 knowledge hits" in out
     assert "0.912" in out and "AGENTS.md#4 (Invariants)" in out
     assert "0.330" in out  # falls back to similarity when score is 0
@@ -171,8 +198,8 @@ def test_demo_real_llm_prints_answer_and_evidence(repo: Path, serve, capsys) -> 
     assert demo._cmd_demo(_args(question="Which columns identify a row?")) == 0
     out = capsys.readouterr().out
     ops = [op for op, _, _ in fake.posts]
-    assert ops == ["knowledge.upsert", "knowledge.search", "knowledge.synthesize"]
-    synth_body = fake.posts[2][1]
+    assert ops[-2:] == ["knowledge.search", "knowledge.synthesize"]
+    synth_body = fake.posts[-1][1]
     assert synth_body["task"] == "Which columns identify a row?"
     assert synth_body["source_uris"] == [fake.posts[0][1]["source_uri"]]
     assert "Q: Which columns identify a row?" in out
@@ -206,7 +233,8 @@ def test_demo_real_llm_abstain_is_shown(repo: Path, serve, capsys) -> None:
 def test_demo_search_only_skips_synthesis_without_the_fake_hint(repo: Path, serve, capsys) -> None:
     fake = serve(fake_llm=False)
     assert demo._cmd_demo(_args(search_only=True)) == 0
-    assert [op for op, _, _ in fake.posts] == ["knowledge.upsert", "knowledge.search"]
+    assert [op for op, _, _ in fake.posts][-1] == "knowledge.search"
+    assert "knowledge.synthesize" not in [op for op, _, _ in fake.posts]
     assert "synthesis needs a real LLM" not in capsys.readouterr().out
 
 
@@ -218,15 +246,36 @@ def test_demo_missing_file_is_actionable(repo: Path, serve, capsys) -> None:
     assert demo._cmd_demo(_args(file="docs/nope.md")) == 2
     err = capsys.readouterr().err
     assert "not a file: docs/nope.md" in err and "--file path/to/doc.md" in err
-    assert fake.posts == []  # nothing was ingested
+    assert fake.posts == [] and fake.uploads == []  # nothing was ingested
 
 
-def test_demo_no_agents_md_in_cwd_is_actionable(repo: Path, serve, capsys, monkeypatch) -> None:
+def test_demo_no_agents_md_under_root_is_actionable(repo: Path, serve, capsys) -> None:
     (repo / "AGENTS.md").unlink()
-    monkeypatch.setattr(demo, "load_loom_ingest", lambda root=None: None)
     serve(fake_llm=True)
-    assert demo._cmd_demo(_args()) == 2
-    assert "dev/loom_ingest.py not found" in capsys.readouterr().err
+    assert demo._cmd_demo(_args(root=str(repo))) == 2
+    assert "not a file: AGENTS.md" in capsys.readouterr().err
+
+
+def test_demo_failed_job_names_its_code_and_the_extractor(repo: Path, serve, capsys) -> None:
+    job = {"state": "failed", "error_code": "format_unavailable", "error_message": "no route"}
+    fake = serve(fake_llm=True, job=job)
+    assert demo._cmd_demo(_args()) == 1
+    err = capsys.readouterr().err
+    assert "the job failed (format_unavailable): no route" in err
+    assert "`loom up` starts the reference extractor" in err
+    assert "knowledge.search" not in [op for op, _, _ in fake.posts]
+
+
+def test_demo_job_that_never_ends_names_the_worker(
+    repo: Path, serve, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    serve(fake_llm=True, job={"state": "pending"})
+    clock = iter(range(0, 10_000, 60))
+    monkeypatch.setattr(demo.time, "monotonic", lambda: next(clock))
+    assert demo._cmd_demo(_args()) == 1
+    err = capsys.readouterr().err
+    assert "still pending after 120s" in err and "LOOM_BACKGROUND_WORKERS" in err
+    assert "knowledge.ingest_status job-1" in err
 
 
 def test_demo_unreachable_server_points_at_loom_up(repo: Path, serve, capsys) -> None:
@@ -237,8 +286,9 @@ def test_demo_unreachable_server_points_at_loom_up(repo: Path, serve, capsys) ->
 
 
 def test_demo_401_says_where_the_token_goes(repo: Path, serve, capsys) -> None:
-    serve(fake_llm=True, fail={"knowledge.upsert": (401, {"detail": "missing bearer"})})
+    fake = serve(fake_llm=True, fail={"knowledge.upload": (401, {"detail": "missing bearer"})})
     assert demo._cmd_demo(_args()) == 1
+    assert fake.posts == []  # nothing is ingested past a refused upload
     err = capsys.readouterr().err
     assert "HTTP 401" in err and "LOOM_API_KEY" in err and "~/.loom/token" in err
 
@@ -271,7 +321,7 @@ def test_identity_from_token_claims_then_defaults(repo: Path, serve) -> None:
     assert demo._cmd_demo(_args(token=tok)) == 0
     body = fake.posts[0][1]
     assert (body["org"], body["namespace"]) == ("acme", "team")
-    assert fake.posts[0][2] == tok
+    assert fake.posts[0][2] == tok and fake.uploads[0][2] == tok
     assert demo.resolve_identity(argparse.Namespace(org=None, namespace="x"), "") == ("dev", "x")
     assert demo.jwt_claims("not-a-jwt") == {}
 
@@ -285,34 +335,6 @@ def test_loom_demo_is_registered_on_the_cli(monkeypatch: pytest.MonkeyPatch) -> 
     assert cli.main(["demo", "--question", "why?", "--base-url", "http://h:1/"]) == 0
     assert seen[0].question == "why?" and seen[0].base_url == "http://h:1/"
     assert seen[0].file is None and seen[0].tags == demo.DEFAULT_TAGS
-
-
-def test_knowledge_body_is_the_make_ingest_shape(repo: Path) -> None:
-    mod = demo.load_loom_ingest(str(repo))
-    assert mod is not None
-    path = repo / "AGENTS.md"
-    body = mod.knowledge_body(
-        local_path=path,
-        source_uri="file://x",
-        content="c",
-        org="o",
-        namespace="n",
-        title="t",
-        tags=["a"],
-    )
-    assert body == {
-        "org": "o",
-        "namespace": "n",
-        "content": "c",
-        "source_uri": "file://x",
-        "title": "t",
-        "tags": ["a"],
-        "metadata": {
-            "ingested_from": "file://x",
-            "ingested_format": ".md",
-            "ingested_bytes": path.stat().st_size,
-        },
-    }
 
 
 class _Resp:
@@ -353,6 +375,7 @@ def test_the_http_seams_turn_every_answer_into_status_and_object(
     for status, body in (
         demo._get_json("http://x/v1/health", ""),
         demo._post_json("http://x", "knowledge.search", {}, "t"),
+        demo._post_bytes("http://x/v1/knowledge.upload", b"bytes", "t"),
     ):
         assert status == want[0]
         if isinstance(want[1], dict):
