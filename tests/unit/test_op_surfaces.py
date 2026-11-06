@@ -21,16 +21,14 @@ from server.operations.dashboard import (
     NOT_IN_DASHBOARD,
     TRACKER_QUESTION,
 )
-from server.operations.registry import ALL_OPERATIONS
+from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import mcp_op, mcp_tools
 from server.transport.http import build_router
 
-# DASHBOARD_PENDING as of the last change to it, so a change shows in this
-# file too: a control that lands drops its op from both, and an op that joins,
-# or moves to NOT_IN_DASHBOARD instead of getting a control, is a reviewer's
-# question.
-PENDING_PINNED = frozenset(
+# The most DASHBOARD_PENDING may hold. A control that lands drops its op from
+# both; an op that leaves for NOT_IN_DASHBOARD instead is a reviewer's question.
+PENDING_AT_MOST = frozenset(
     {
         "blacklist.sweep",
         "calibration.get",
@@ -112,8 +110,6 @@ PENDING_PINNED = frozenset(
         "webhook.remove",
     }
 )
-
-NAMES = {op.name for op in ALL_OPERATIONS}
 
 
 def test_http_serves_every_op():
@@ -210,15 +206,21 @@ def test_an_op_kept_off_mcp_is_never_an_agent_step():
     own step: an agent cannot call it, so that reason would leave it with no
     caller."""
     agent_only = {AGENT_STEP, CODE_QUESTION, TRACKER_QUESTION}
-    for name in _MCP_HIDDEN_OPS & NAMES:
+    for name in _MCP_HIDDEN_OPS:
         assert NOT_IN_DASHBOARD.get(name) not in agent_only, name
 
 
-def test_the_pending_set_is_pinned():
-    assert DASHBOARD_PENDING == PENDING_PINNED, {
-        "joined": sorted(DASHBOARD_PENDING - PENDING_PINNED),
-        "left": sorted(PENDING_PINNED - DASHBOARD_PENDING),
-    }
+def test_a_refusal_that_sends_the_user_to_the_dashboard_names_a_control():
+    """A hidden op with no alternative of its own tells the agent to ask the user to do
+    it in the dashboard: the dashboard calls it, or its control is pending."""
+    for name in _MCP_HIDDEN_OPS - set(mcp_op._INSTEAD):
+        op = OPERATIONS_BY_NAME[name]
+        assert "dashboard" in op.reach or name in DASHBOARD_PENDING, name
+
+
+def test_the_pending_set_only_shrinks():
+    joined = sorted(DASHBOARD_PENDING - PENDING_AT_MOST)
+    assert not joined, f"{joined}: a new op a person needs ships with its dashboard control"
 
 
 def test_a_dashboard_call_site_is_a_quoted_path(tmp_path: Path):
@@ -247,6 +249,9 @@ def test_a_dashboard_call_site_is_a_quoted_path(tmp_path: Path):
     }
 
 
-def test_the_census_sources_add_no_reach():
+def test_the_census_sources_add_no_reach(tmp_path: Path):
     """The scan reads `scripts/`, the census's own home: its comments name no op."""
-    assert "sdk_example" not in census.derive_static_reach(census.ROOT).get("memory.pin", ())
+    source = Path(census.__file__)
+    (tmp_path / "scripts" / "codegen").mkdir(parents=True)
+    (tmp_path / "scripts" / "codegen" / source.name).write_text(source.read_text())
+    assert census.derive_static_reach(tmp_path) == {}

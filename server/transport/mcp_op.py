@@ -159,6 +159,18 @@ _INSTEAD: dict[str, str] = {
         "call memory.extraction_status_mine (loom_op) with the queue_id each deferred "
         "memory.set_from_messages returned"
     ),
+    "memory.search_trace": (
+        "ask the user to open the dashboard's Recall lab, which explains each ranking"
+    ),
+    # Ops a client program calls, not a person: nothing for the user to do either.
+    "memory.outcome": (
+        "call memory.outcome_run (loom_op) to record whether the memories a run recalled helped"
+    ),
+    "code.outcome": "the plugin's hooks report what was done with a code answer; nothing to call",
+    "code.coverage.watch": "call code.index_status (loom_op) for what the index covers now",
+    "code.coverage.unwatch": "call code.index_status (loom_op) for what the index covers now",
+    "code.scip_ingest": "a CI job uploads the SCIP index; nothing to call",
+    "code.scip_status": "a CI job uploads the SCIP index and polls its batch; nothing to call",
 }
 
 

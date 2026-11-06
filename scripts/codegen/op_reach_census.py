@@ -76,23 +76,21 @@ _TS_COMMENT = re.compile(
 _SDK_CALL = re.compile(r"\.([a-z_]+)\.([a-z_]+)\(")
 
 
-def _files(
-    root: Path, rel: str, suffixes: tuple[str, ...], skip: frozenset[str] = frozenset()
-) -> list[Path]:
+def _files(root: Path, rel: str, suffixes: tuple[str, ...]) -> list[Path]:
     base = root / rel
     if not base.exists():
         return []
-    # Excluded directories are matched below `base` only: a checkout that
-    # itself sits under a `tests` directory still scans every file. A test kept
-    # beside its source (the dashboard's `*.test.tsx`) is skipped by its name.
-    skip = skip | {"tests", "__pycache__"}
+    # Excluded directories (`tests`, the dashboard's `src/test` helpers) are
+    # matched below `base` only: a checkout that itself sits under a `tests`
+    # directory still scans every file. A test kept beside its source (the
+    # dashboard's `*.test.tsx`) is skipped by its name.
     return sorted(
         p
         for p in base.rglob("*")
         if p.is_file()
         and p.suffix in suffixes
         and ".test." not in p.name
-        and not skip & set(p.relative_to(base).parts)
+        and not {"tests", "test", "__pycache__"} & set(p.relative_to(base).parts)
     )
 
 
@@ -184,9 +182,8 @@ def derive_static_reach(root: Path | None = None) -> dict[str, tuple[str, ...]]:
             for m in _QUOTED.finditer(text):
                 hit(m.group(1), "plugin_hook")
 
-    # dashboard: a quoted /v1/<op> call site in the dashboard source; the test
-    # helpers under src/test are not the dashboard.
-    for path in _files(root, _DASHBOARD_DIR, _DASHBOARD_SUFFIXES, skip=frozenset({"test"})):
+    # dashboard: a quoted /v1/<op> call site in the dashboard source.
+    for path in _files(root, _DASHBOARD_DIR, _DASHBOARD_SUFFIXES):
         code = _TS_COMMENT.sub("", path.read_text(encoding="utf-8", errors="replace"))
         for m in _DASHBOARD_CALL.finditer(code):
             hit(m.group(1), "dashboard")
