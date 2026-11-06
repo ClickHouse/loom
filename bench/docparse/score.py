@@ -33,9 +33,8 @@ def key(s: str) -> str:
 
 
 NUMBERING = re.compile(r"^\s*(?:\d{1,2}(?:\.\d{1,2})*\.?|[a-z][.)])\s+", re.I)
-# an enumerator ("1.", "2)", "a."), which a list item's gold leaves out and a
-# parse may keep, on a line of its own or with the list run onto one line; not
-# a number of the text's own ("3.11 adds ...")
+# an enumerator ("1.", "2)", "a.") wherever it stands, as a list's gold leaves it
+# out; a "3.11" stays, and a sentence-ending "12." goes too, on both sides
 ENUMERATOR = re.compile(r"(?:^|(?<=\s))(?:\d{1,3}|[a-z])[.)](?=\s)", re.I)
 
 

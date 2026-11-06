@@ -170,6 +170,19 @@ def test_a_list_items_number_is_no_extra_word() -> None:
     assert S.locator_scores({**g, "format": "pdf"}, p)["locator_acc"] == 1.0
 
 
+def test_a_short_number_ending_a_sentence_is_left_out_on_both_sides() -> None:
+    assert S.text_words("The queue grew to 12. Then 3.11 shipped") == [
+        "the",
+        "queue",
+        "grew",
+        "to",
+        "then",
+        "3",
+        "11",
+        "shipped",
+    ]
+
+
 def test_a_numbered_heading_counts_its_words_the_same_however_it_is_written() -> None:
     block = {"page_start": 1, "page_end": 1, "level": 0, "notes": False}
     g = {"blocks": [{"kind": "heading", "level": 1, "text": "2. Goals", "page": 1}], "tables": []}
