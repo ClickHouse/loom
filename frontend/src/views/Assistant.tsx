@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -46,11 +46,11 @@ const SUBJECTS: Array<{ value: InspectSubject; label: string }> = [
 ];
 
 // The id field's label for each subject, and the Inspect button's reason while the field
-// is empty: `pick` when the overview suggests names, else `empty`. No session is suggested.
-const SUBJECT_COPY: Record<InspectSubject, { field: string; empty: string; pick?: string }> = {
+// is empty: `pick` when the overview suggests names, else `empty`.
+const SUBJECT_COPY: Record<InspectSubject, { field: string; empty: string; pick: string }> = {
   user: { field: "User id", empty: "Type a user id.", pick: "Pick a user above or type an id." },
   agent: { field: "Agent name", empty: "Type an agent name.", pick: "Pick an agent above or type its name." },
-  session: { field: "Session id", empty: "Type a session id." },
+  session: { field: "Session id", empty: "Type a session id.", pick: "Type a session id." },
 };
 
 export function Assistant() {
@@ -68,11 +68,10 @@ export function Assistant() {
   const [subject, setSubject] = useState<InspectSubject>("user");
   const [subjectId, setSubjectId] = useState("");
   const [entity, setEntity] = useState("");
-  const inspectionPanel = useRef<HTMLElement>(null);
 
   // Each read is gated on its own op. All four are VIEWER, which every namespace role
-  // reaches, so a canCall refusal means the role is unknown (list_mine not read, failed, or
-  // with no row for the namespace). The server refuses memory.inspect and namespace.tune to a
+  // reaches, so a canCall refusal means the role is unknown (list_mine failed, or has no row
+  // for the namespace); while list_mine is still being read, the reason says so. The server refuses memory.inspect and namespace.tune to a
   // token pinned to one user or session (neither is a scoped op); namespace.inventory and
   // knowledge.inspect are scoped and answer it. The token's claims say so up front; for an
   // end-user token, or behind a proxy (no token here), only the inventory's answer does.
@@ -97,7 +96,7 @@ export function Assistant() {
   const tuneGate = gate("namespace.tune");
   const copy = SUBJECT_COPY[subject];
   const suggestions = inventory.data?.populations.find((p) => SUBJECT_OF[p.population] === subject)?.top ?? [];
-  const emptyReason = suggestions.length > 0 && copy.pick ? copy.pick : copy.empty;
+  const emptyReason = suggestions.length > 0 ? copy.pick : copy.empty;
   const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : emptyReason);
 
   const org = identity?.org ?? "";
@@ -127,7 +126,7 @@ export function Assistant() {
       setSubjectId(id);
       inspect(who, id);
     });
-    inspectionPanel.current?.focus();
+    document.getElementById("assistant-inspection-heading")?.focus();
   };
 
   return (
@@ -146,9 +145,11 @@ export function Assistant() {
           level={2}
           label="Overview"
           actions={
-            <GatedButton reason={overviewGate} type="secondary" busy={inventory.busy} onClick={readOverview}>
-              Refresh
-            </GatedButton>
+            <Unavailable reason={overviewGate}>
+              <BusyButton type="secondary" htmlType="button" busy={inventory.busy} onClick={readOverview}>
+                Refresh
+              </BusyButton>
+            </Unavailable>
           }
         />
         {roleLoading ? (
@@ -219,20 +220,25 @@ export function Assistant() {
               </datalist>
             )}
           </div>
-          <GatedButton reason={inspectBlocked} type="primary" htmlType="submit" busy={inspection.busy}>
-            Inspect memories
-          </GatedButton>
+          <Unavailable reason={inspectBlocked}>
+            <BusyButton type="primary" htmlType="submit" busy={inspection.busy}>
+              Inspect memories
+            </BusyButton>
+          </Unavailable>
         </form>
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <GatedButton
-            reason={documentsGate}
-            type="secondary"
-            busy={documents.busy}
-            onClick={() => documents.run((signal) => inspectKnowledge(where, { signal }))}
-            describedBy="assistant-documents-what"
-          >
-            Inspect documents
-          </GatedButton>
+          {/* A blocked button is described by its reason instead. */}
+          <Unavailable reason={documentsGate}>
+            <BusyButton
+              type="secondary"
+              htmlType="button"
+              busy={documents.busy}
+              onClick={() => documents.run((signal) => inspectKnowledge(where, { signal }))}
+              aria-describedby="assistant-documents-what"
+            >
+              Inspect documents
+            </BusyButton>
+          </Unavailable>
           <p id="assistant-documents-what" className="text-sm text-text-muted">
             Every document here: formats, what search serves, and ingest health.
           </p>
@@ -240,14 +246,8 @@ export function Assistant() {
       </Panel>
 
       {(inspection.busy || inspection.data || inspection.error) && (
-        <Panel
-          as="section"
-          ref={inspectionPanel}
-          tabIndex={-1}
-          aria-labelledby="assistant-inspection-heading"
-          className="mb-5 outline-none"
-        >
-          <SectionHeading id="assistant-inspection-heading" level={2} label="Memories" />
+        <Panel as="section" aria-labelledby="assistant-inspection-heading" className="mb-5">
+          <SectionHeading id="assistant-inspection-heading" level={2} label="Memories" focusable />
           <ReadState read={inspection} label="the memories" />
           {inspection.data && (
             <div aria-busy={inspection.busy || undefined}>
@@ -308,14 +308,16 @@ export function Assistant() {
           Draft changes to the categories, guide and extraction instructions that shape new memories, and to how
           documents are split. Drafts are suggestions: each says what to change, why, and who applies it.
         </p>
-        <GatedButton
-          reason={tuneGate}
-          type="secondary"
-          busy={tune.busy}
-          onClick={() => tune.run((signal) => tuneNamespace(where, { signal }))}
-        >
-          Draft improvements
-        </GatedButton>
+        <Unavailable reason={tuneGate}>
+          <BusyButton
+            type="secondary"
+            htmlType="button"
+            busy={tune.busy}
+            onClick={() => tune.run((signal) => tuneNamespace(where, { signal }))}
+          >
+            Draft improvements
+          </BusyButton>
+        </Unavailable>
         <div className="mt-3">
           <ReadState read={tune} label="the drafts" />
         </div>
@@ -333,41 +335,6 @@ export function Assistant() {
         )}
       </Panel>
     </PageContainer>
-  );
-}
-
-/** A read's button: BusyButton keeps the focus while the read runs; Unavailable needs a ref
- *  BusyButton does not forward, so a blocked one is the plain button with the reason. */
-function GatedButton({
-  reason,
-  busy,
-  type,
-  htmlType = "button",
-  onClick,
-  describedBy,
-  children,
-}: {
-  reason: string | null;
-  busy: boolean;
-  type: "primary" | "secondary";
-  htmlType?: "button" | "submit";
-  onClick?: () => void;
-  /** The id of the text that says what the button does; a blocked button says why instead. */
-  describedBy?: string;
-  children: ReactNode;
-}) {
-  if (reason)
-    return (
-      <Unavailable reason={reason}>
-        <Button type={type} htmlType={htmlType}>
-          {children}
-        </Button>
-      </Unavailable>
-    );
-  return (
-    <BusyButton type={type} htmlType={htmlType} busy={busy} onClick={onClick} aria-describedby={describedBy}>
-      {children}
-    </BusyButton>
   );
 }
 

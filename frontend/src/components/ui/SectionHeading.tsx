@@ -34,6 +34,8 @@ export interface SectionHeadingProps {
   className?: string;
   /** Make the label fold the section: `controls` is the id of the body it shows. */
   fold?: { open: boolean; onToggle: () => void; controls: string };
+  /** Let a script focus the heading (tabIndex -1), to move the focus to a section's answer. */
+  focusable?: boolean;
 }
 
 export function SectionHeading({
@@ -46,12 +48,13 @@ export function SectionHeading({
   id,
   className = "",
   fold,
+  focusable = false,
 }: SectionHeadingProps) {
   return (
     <div
       className={`flex flex-wrap items-center gap-x-inline gap-y-0.5 min-w-0 ${fold && !fold.open ? "" : "mb-1.5"} ${className}`}
     >
-      <Title type={`h${level}`} size="sm" id={id} className="whitespace-nowrap">
+      <Title type={`h${level}`} size="sm" id={id} className="whitespace-nowrap" tabIndex={focusable ? -1 : undefined}>
         {fold ? (
           <button
             type="button"

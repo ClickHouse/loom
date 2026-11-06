@@ -5,27 +5,32 @@ import { Tip } from "./Tooltip";
  * A control that is unavailable for a reason the user should be able to read. With a
  * `reason`, the child stays focusable but `aria-disabled` (a natively disabled control takes
  * no hover or focus, so the reason would be unreachable), its click does nothing, and the
- * reason is its tooltip and accessible description. Without one, the child renders as is.
+ * reason is its tooltip and accessible description. Without one, the child renders as is,
+ * inside the same tooltip turned off: a reason that comes and goes never remounts the child,
+ * so a focused control keeps its focus.
  *
  * The child is a Click UI Button. `data-unavailable` carries its `type` so styles.css can
  * give it the disabled look Click UI only gives `:disabled`.
  */
 export function Unavailable({ reason, children }: { reason?: string | null; children: ReactElement }) {
   const id = useId();
-  if (!reason) return children;
   return (
     <>
-      <Tip content={reason}>
-        {cloneElement(children, {
-          "aria-disabled": "true",
-          "data-unavailable": (children.props as { type?: string }).type ?? "primary",
-          "aria-describedby": id,
-          onClick: (e: MouseEvent) => e.preventDefault(),
-        })}
+      <Tip content={reason} disabled={!reason}>
+        {reason
+          ? cloneElement(children, {
+              "aria-disabled": "true",
+              "data-unavailable": (children.props as { type?: string }).type ?? "primary",
+              "aria-describedby": id,
+              onClick: (e: MouseEvent) => e.preventDefault(),
+            })
+          : children}
       </Tip>
-      <span id={id} className="sr-only">
-        {reason}
-      </span>
+      {reason && (
+        <span id={id} className="sr-only">
+          {reason}
+        </span>
+      )}
     </>
   );
 }

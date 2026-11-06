@@ -594,7 +594,7 @@ async function openWithEveryPanel(page: Page) {
   await expect(page.getByRole("tooltip")).toContainText(LONG_ID);
   await page.getByTestId("pick-user").first().click();
   await expect(page.getByTestId("assistant-inspection")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Memories", exact: true })).toBeFocused();
+  await expect(page.getByRole("heading", { level: 2, name: "Memories", exact: true })).toBeFocused();
   await page.getByRole("button", { name: "Draft improvements" }).click();
   await expect(page.getByTestId("assistant-review")).toBeVisible();
   await page.waitForTimeout(300); // entry animations
@@ -636,6 +636,21 @@ for (const width of [1400, 375]) {
     });
   });
 }
+
+test("blocked picks with a long id fit the phone width", async ({ page }) => {
+  // A token pinned to one user: the overview lists its user, and every pick is blocked.
+  await page.setViewportSize({ width: 375, height: 900 });
+  await installApi(page);
+  const pinned = { ...INVENTORY, scope: { ...INVENTORY.scope, read_scope: "own_user", user_id: LONG_ID } };
+  await page.route("**/v1/namespace.inventory", (r) => r.fulfill({ json: pinned }));
+  await page.goto("/assistant");
+  const pick = page.getByTestId("pick-user").first();
+  await expect(pick).toHaveAttribute("aria-disabled", "true");
+  await expect(pick).toHaveAccessibleDescription(new RegExp(LONG_ID));
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  expect(await clipped(page)).toEqual([]);
+});
 
 test("Back from the graph lands on the button that opened it", async ({ page }) => {
   await installApi(page);

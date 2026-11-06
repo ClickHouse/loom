@@ -905,9 +905,14 @@ describe("Assistant: overview", () => {
         "Your role on this namespace is still loading.",
       );
     expect(namespaceInventory).not.toHaveBeenCalled();
+    // A button focused while it waits keeps the focus once its read is allowed.
+    const draft = screen.getByRole("button", { name: "Draft improvements" });
+    draft.focus();
     await act(async () => answer([row("team", "viewer")]));
     await screen.findByTestId("assistant-inventory");
     expect(namespaceInventory).toHaveBeenCalledTimes(1);
+    expect(draft).toHaveFocus();
+    expect(draft).not.toHaveAttribute("aria-disabled");
   });
 
   it("says to type an id when the overview lists nobody", async () => {
@@ -950,7 +955,7 @@ describe("Assistant: overview", () => {
     await userEvent.click(screen.getByRole("button", { name: "ada 12 memories" }));
     expect(inspectMemories).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "user", "ada", expect.anything());
     await screen.findByTestId("assistant-inspection");
-    expect(screen.getByRole("region", { name: "Memories" })).toHaveFocus();
+    expect(screen.getByRole("heading", { level: 2, name: "Memories" })).toHaveFocus();
     expect(screen.getByLabelText("User id")).toHaveValue("ada");
   });
 
@@ -960,7 +965,7 @@ describe("Assistant: overview", () => {
     await userEvent.click(screen.getByRole("button", { name: "claude-code 40 memories" }));
     expect(inspectMemories).toHaveBeenCalledWith(expect.anything(), "agent", "claude-code", expect.anything());
     await screen.findByTestId("assistant-inspection");
-    expect(screen.getByRole("region", { name: "Memories" })).toHaveFocus();
+    expect(screen.getByRole("heading", { level: 2, name: "Memories" })).toHaveFocus();
     expect(screen.getByLabelText("Agent name")).toHaveValue("claude-code");
   });
 
@@ -1032,8 +1037,6 @@ describe("Assistant: overview", () => {
     await userEvent.click(draft);
     const pick = screen.getByRole("button", { name: "ada 12 memories" });
     expect(pick).toHaveAccessibleDescription(/bound to one user or session/);
-    // A blocked pick's tip is the reason, so its id is shown whole, never cut.
-    expect(within(pick).getByText("ada")).toHaveClass("break-all");
     expect(screen.queryByRole("button", { name: "About Who appears here" })).toBeNull();
     await userEvent.click(pick);
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");

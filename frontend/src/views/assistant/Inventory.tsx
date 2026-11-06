@@ -131,8 +131,8 @@ export function InventoryPopulations({
   );
 }
 
-/** One user or agent to inspect. Its name is cut past 24 characters, with the whole id in a
- *  tip when cut, as the name badges do; a blocked pick shows the id whole, as its tip says why. */
+/** One user or agent to inspect. Its name is cut at the badges' 180 px, with the whole id in
+ *  the tip when cut: the plain tip on an open pick, after the reason on a blocked one. */
 function PickButton({
   subject,
   name,
@@ -148,10 +148,10 @@ function PickButton({
 }) {
   const [label, setLabel] = useState<HTMLSpanElement | null>(null);
   const shown = subject === "agent" ? displayAgent(name) : name;
-  const cut = useClamped(blocked ? null : label, shown);
+  const cut = useClamped(label, shown);
   const button = (
     <Button type="secondary" htmlType="button" onClick={onPick} data-testid={`pick-${subject}`}>
-      <span ref={setLabel} className={blocked ? "break-all" : "truncate max-w-[24ch]"}>
+      <span ref={setLabel} className="truncate max-w-[180px]">
         {shown}
       </span>{" "}
       <span className="text-text-muted tabular">
@@ -159,9 +159,9 @@ function PickButton({
       </span>
     </Button>
   );
-  if (blocked) return <Unavailable reason={blocked}>{button}</Unavailable>;
+  if (blocked) return <Unavailable reason={cut ? `${blocked} (${name})` : blocked}>{button}</Unavailable>;
   return (
-    <Tip content={name} disabled={!cut && shown === name}>
+    <Tip content={name} disabled={!cut}>
       {button}
     </Tip>
   );
