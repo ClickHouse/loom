@@ -31,7 +31,7 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
     outcomes: dict[str, Any] = {
         page[1].sha: True,
         page[2].sha: ValidationError("the org and namespace names are too long for an object key"),
-        page[3].sha: blobs.SwitchUnconfirmed("switched to s3://b/k, but the check failed"),
+        page[3].sha: originals.SwitchUnconfirmed("switched to s3://b/k, but the check failed"),
         page[4].sha: False,
     }
 
@@ -49,8 +49,8 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
     monkeypatch.setattr(blobs, "needed", needed)
-    monkeypatch.setattr(blobs, "move_to_bucket", move)
-    monkeypatch.setattr(blobs, "fence", fence)
+    monkeypatch.setattr(originals, "move_to_bucket", move)
+    monkeypatch.setattr(originals, "fence", fence)
     result = await originals.migrate_originals(org="acme", namespace="docs")
     assert (result.unneeded, result.moved, result.skipped) == (1, 2, 1)
     assert result.bytes == 20
@@ -83,13 +83,13 @@ async def test_an_erasure_holding_one_back_refuses_the_rest_of_the_namespace_onc
 
     async def move(held: blobs.Held) -> bool:
         if held is page[0]:
-            raise blobs.ErasureOpen("erasure e1 (namespace, in_progress) overlapped its copy")
+            raise originals.ErasureOpen("erasure e1 (namespace, in_progress) overlapped its copy")
         return True
 
     monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
     monkeypatch.setattr(blobs, "needed", needed)
-    monkeypatch.setattr(blobs, "fence", fence)
-    monkeypatch.setattr(blobs, "move_to_bucket", move)
+    monkeypatch.setattr(originals, "fence", fence)
+    monkeypatch.setattr(originals, "move_to_bucket", move)
     result = await originals.migrate_originals(org="acme", namespace="docs")
     # The first is held back after its copy; the fence read again then refuses the rest
     # of the namespace in one line, before any more copies.
@@ -112,7 +112,7 @@ async def test_a_namespace_the_fence_refuses_is_reported_once_and_not_walked(
     async def held_in_clickhouse(*a: object) -> blobs.HeldPage:
         raise AssertionError("a refused namespace is not walked")
 
-    monkeypatch.setattr(blobs, "fence", fence)
+    monkeypatch.setattr(originals, "fence", fence)
     monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
     result = await originals.migrate_originals(org="acme", namespace="docs")
     assert result.errors == []
@@ -138,12 +138,12 @@ async def test_an_erased_original_whose_take_back_failed_is_not_counted_moved(
         return ""
 
     async def move(held: blobs.Held) -> bool:
-        raise blobs.SwitchUnconfirmed("switched as an erasure took it, but ...", moved=False)
+        raise originals.SwitchUnconfirmed("switched as an erasure took it, but ...", moved=False)
 
     monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
     monkeypatch.setattr(blobs, "needed", needed)
-    monkeypatch.setattr(blobs, "fence", fence)
-    monkeypatch.setattr(blobs, "move_to_bucket", move)
+    monkeypatch.setattr(originals, "fence", fence)
+    monkeypatch.setattr(originals, "move_to_bucket", move)
     result = await originals.migrate_originals(org="acme", namespace="docs")
     assert (result.moved, result.bytes, result.skipped) == (0, 0, 0)
     assert len(result.unconfirmed) == 1
@@ -159,7 +159,7 @@ async def test_a_namespace_whose_keys_would_be_too_long_is_refused_before_any_re
     async def held_in_clickhouse(*a: object) -> blobs.HeldPage:
         raise AssertionError("no original of it is read")
 
-    monkeypatch.setattr(blobs, "fence", fence)
+    monkeypatch.setattr(originals, "fence", fence)
     monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
     result = await originals.migrate_originals(org="acme", namespace="n" * 600)
     (line,) = result.refused

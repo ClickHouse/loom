@@ -44,22 +44,13 @@ def register_knowledge_cli(sub: Any) -> None:
     p_sync.set_defaults(func=_cmd_sync)
     p_move = ksub.add_parser(
         "migrate-originals",
-        help="Move document originals held in ClickHouse to LOOM_DOCUMENT_S3_BUCKET: each "
-        "one whose catalog row still holds its bytes, and that a live document, upload or "
-        "ingestion still needs (the rest are the sweep's), is written to its own object with the "
-        "store's SHA-256 check, read back and hash-verified, and its row then names the "
-        "object, so every document with those bytes downloads from the bucket. The "
-        "ClickHouse copy stays until loom.document_blobs merges its parts (OPTIMIZE TABLE "
-        "loom.document_blobs FINAL drops it now). Needs LOOM_DOCUMENT_OBJECT_STORE=s3, set "
-        "on every replica first so no new original lands in ClickHouse behind the walk. "
-        "An original an unfinished erasure may cover (its namespace's, or any user's of the "
-        "org) is not moved, and a move an erasure overtakes keeps what that erasure decides. "
-        "Idempotent: run it again to go on after a stop. Exits 1 when an original was not "
-        "moved (bytes that do not hash to their sha256 or fill their size, an erasure not "
-        "yet finished or one that kept it, a bucket that refused or a write past its "
-        "budget); it stays where it was. Exits 1 too when a switched original could not be "
-        "confirmed (an erasure of its users that started as it switched has not finished, or "
-        "the check after the switch failed); each is listed as switched, unconfirmed.",
+        help="Move the document originals still held in ClickHouse, that a document, upload "
+        "or ingestion needs, to LOOM_DOCUMENT_S3_BUCKET: each is copied to its own object, "
+        "hash-verified and switched, fenced by the erasure ledger. Needs "
+        "LOOM_DOCUMENT_OBJECT_STORE=s3 on every replica first (a dry run does not). "
+        "Idempotent. Exits 1 when an original was not moved, a namespace was refused, or a "
+        "switch could not be confirmed; each is listed. See docs/features/knowledge.md, "
+        "Where originals are stored.",
     )
     p_move.add_argument("--org", default="", help="Only this org's originals")
     p_move.add_argument("--namespace", default="", help="Only this namespace of --org")

@@ -6,6 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, cast
 
+from server.core.ch import sequential_reads
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.rows import (
     CheckpointRow,
@@ -235,3 +236,25 @@ async def list_requests(
         """,
         params=params,
     )
+
+
+async def unfinished_since(
+    org: str, since_s: int, margin_s: int, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The org's erasures that had not finished by `since_s` (ClickHouse clock, seconds):
+    queued, in progress, failed, or completed after `since_s - margin_s`. Each row has
+    `erasure_id`, `scope_type`, `scope_value` and `state`. Read with sequential
+    consistency: a fence on it must see an erasure another replica just registered."""
+    ch = ch or _default_client()
+    with sequential_reads():
+        return await ch.query_all(
+            """
+            SELECT toString(id) AS erasure_id, scope_type, scope_value, toString(status) AS state
+            FROM loom.erasure_requests FINAL
+            WHERE org = {org:String}
+              AND (status != 'completed'
+                   OR completed_at
+                      >= fromUnixTimestamp({since:Int64}) - INTERVAL {margin:UInt32} SECOND)
+            """,
+            params={"org": org, "since": int(since_s), "margin": int(margin_s)},
+        )

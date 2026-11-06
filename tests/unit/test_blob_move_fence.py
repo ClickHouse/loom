@@ -1,10 +1,10 @@
-"""Which erasures fence a move of an original to the bucket (`blobs._covers`): its
+"""Which erasures fence a move of an original to the bucket (`originals._covers`): its
 namespace's, a namespace list naming it (an unreadable one counts), and any user's
 of the org; another namespace's does not."""
 
 from __future__ import annotations
 
-from server.knowledge.store.blobs import _covers, _Erasure, _fence_advice
+from server.knowledge.app.originals import _covers, _Erasure, _fence_advice
 
 
 def test_a_namespace_erasure_covers_its_own_namespace() -> None:

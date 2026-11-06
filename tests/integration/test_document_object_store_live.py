@@ -33,6 +33,7 @@ import pytest
 from server.core import object_store
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_memory
+from server.knowledge.app import originals
 from server.knowledge.app.originals import migrate_originals
 from server.knowledge.store import blobs
 from server.settings import settings
@@ -330,11 +331,11 @@ async def test_a_row_replaced_since_the_walk_is_kept(
     # Uploaded again on the bucket store after the walk read the row.
     await blobs.put(org, ns, b"raced", ch=ch)
     uploaded = await blobs.locate(org, ns, sha, ch=ch)
-    assert await blobs.move_to_bucket(held, ch=ch) is False
+    assert await originals.move_to_bucket(held, ch=ch) is False
     assert await blobs.locate(org, ns, sha, ch=ch) == uploaded
     # An original no row holds any more has nothing to move.
     gone = blobs.Held(org, ns, "0" * 64, 1)
-    assert await blobs.move_to_bucket(gone, ch=ch) is False
+    assert await originals.move_to_bucket(gone, ch=ch) is False
 
 
 def objects_key(location: str, bucket: str) -> str:
@@ -355,12 +356,14 @@ async def _held(ch: Any, org: str, ns: str, data: bytes, monkeypatch: pytest.Mon
     return held
 
 
-async def _erasure(ch: Any, org: str, scope_type: str, scope_value: str, status: str) -> None:
+async def _erasure(ch: Any, org: str, scope_type: str, scope_value: str, status: str) -> str:
+    """A ledger row for an erasure of the scope; its id."""
+    erasure_id = str(uuid.uuid4())
     await ch.insert(
         "loom.erasure_requests",
         [
             {
-                "id": str(uuid.uuid4()),
+                "id": erasure_id,
                 "org": org,
                 "scope_type": scope_type,
                 "scope_value": scope_value,
@@ -371,6 +374,7 @@ async def _erasure(ch: Any, org: str, scope_type: str, scope_value: str, status:
         ],
         settings={"async_insert": 0},
     )
+    return erasure_id
 
 
 @pytest.mark.asyncio
@@ -378,17 +382,31 @@ async def test_a_move_waits_out_an_unfinished_erasure_of_its_scope(
     s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     org, ns = unique_org("objstore-fence"), "docs"
-    held = await _held(ch, org, ns, b"fenced", monkeypatch)
-    # Another namespace's erasure does not cover it.
+    await _held(ch, org, ns, b"fenced", monkeypatch)
+    # Another namespace's erasure, or a list of others, does not cover it: it moves.
     await _erasure(ch, org, "namespace", "other", "in_progress")
     await _erasure(ch, org, "namespace_list", '{"namespaces": ["other"]}', "in_progress")
-    # This namespace's does.
-    await _erasure(ch, org, "namespace", ns, "in_progress")
+    moved = await migrate_originals(org=org)
+    assert (moved.moved, moved.refused) == (1, [])
+    # This namespace's does: a second original stays, refused by that erasure by name.
+    second = await _held_another(ch, org, ns, b"fenced too", monkeypatch)
+    covering = await _erasure(ch, org, "namespace", ns, "in_progress")
     result = await migrate_originals(org=org)
     assert (result.moved, result.errors, len(result.refused)) == (0, [], 1)
-    assert "erasure" in result.refused[0]
-    assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(6, "")
-    assert _keys(s3) == []
+    assert f"erasure {covering} (namespace, in_progress)" in result.refused[0]
+    assert await blobs.locate(org, ns, second.sha, ch=ch) == blobs.Stored(10, "")
+    assert len(_keys(s3)) == 1  # the first original's object alone
+
+
+async def _held_another(
+    ch: Any, org: str, ns: str, data: bytes, monkeypatch: pytest.MonkeyPatch
+) -> Any:
+    """One more original of the namespace written on the ClickHouse store, as `_held`."""
+    monkeypatch.setattr(settings, "document_object_store", "clickhouse")
+    sha = await blobs.put(org, ns, data, ch=ch)
+    await _document(ch, org, ns, sha, uri=f"docs/{sha[:12]}-b.md")
+    monkeypatch.setattr(settings, "document_object_store", "s3")
+    return blobs.Held(org, ns, sha, len(data))
 
 
 @pytest.mark.asyncio
@@ -405,7 +423,7 @@ async def test_an_erasure_during_the_copy_ends_the_move_before_its_row(
         await steps_memory.delete_document_blobs_by_namespace(org, ns, ch=ch)
 
     monkeypatch.setattr(object_store, "put", put_then_erasure)
-    assert await blobs.move_to_bucket(held, ch=ch) is False
+    assert await originals.move_to_bucket(held, ch=ch) is False
     # No row named the object, so the move deleted it; the original is gone.
     assert await blobs.locate(org, ns, held.sha, ch=ch) is None
     assert _keys(s3) == []
@@ -428,8 +446,8 @@ async def test_an_original_a_user_erasure_started_on_during_the_copy_is_reported
         await _erasure(ch, org, "user_id", "alice", "in_progress")
 
     monkeypatch.setattr(object_store, "put", put_then_erasure)
-    with pytest.raises(blobs.ErasureOpen, match="stays in ClickHouse"):
-        await blobs.move_to_bucket(held, ch=ch)
+    with pytest.raises(originals.ErasureOpen, match="stays in ClickHouse"):
+        await originals.move_to_bucket(held, ch=ch)
     assert await blobs.locate(org, ns, sha, ch=ch) == blobs.Stored(held.size, "")
     assert _keys(s3) == []
 
@@ -498,7 +516,7 @@ async def test_a_failed_check_after_the_switch_is_reported_as_switched(
 ) -> None:
     org, ns = unique_org("objstore-unchecked"), "docs"
     held = await _held(ch, org, ns, b"checked after", monkeypatch)
-    erasures = blobs._erasures_since
+    erasures = originals._erasures_since
     insert = ch.insert
     switched: list[str] = []
 
@@ -514,9 +532,9 @@ async def test_a_failed_check_after_the_switch_is_reported_as_switched(
         return await erasures(*a, **kw)
 
     monkeypatch.setattr(ch, "insert", insert_then_mark)
-    monkeypatch.setattr(blobs, "_erasures_since", fails_after_the_switch)
-    with pytest.raises(blobs.SwitchUnconfirmed, match="ClickHouse went away"):
-        await blobs.move_to_bucket(held, ch=ch)
+    monkeypatch.setattr(originals, "_erasures_since", fails_after_the_switch)
+    with pytest.raises(originals.SwitchUnconfirmed, match="ClickHouse went away"):
+        await originals.move_to_bucket(held, ch=ch)
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
     assert stored is not None and stored.location == switched[0]
 
@@ -529,30 +547,30 @@ async def _raced(
     scopes: list[tuple[str, str]],
     step: Any = None,
 ) -> tuple[str, str, Any, list[str]]:
-    """An original of alice's, and the move's insert of its switched row followed at once
-    by erasures of `scopes`: they register as the row lands, and `step` (the erasure's
-    own blob step, when given) runs then too."""
+    """An original of alice's whose move meets erasures of `scopes` as its row lands: they
+    register after the move's last ledger read and before the switching insert, and
+    `step` (the erasure's own blob step, when given) runs there too, so the switched row
+    lands after the erasure deleted the original's rows."""
     org, ns = unique_org(label), "docs"
     monkeypatch.setattr(settings, "document_object_store", "clickhouse")
     sha = await blobs.put(org, ns, b"erased as it lands", uploader="alice", ch=ch)
     await _document(ch, org, ns, sha, user="alice")
     monkeypatch.setattr(settings, "document_object_store", "s3")
     (held,) = (await blobs.held_in_clickhouse(org, ns, "", 10, ch=ch)).held
-    monkeypatch.setattr(blobs, "_ERASURE_POLL_S", 0.05)
+    monkeypatch.setattr(originals, "_ERASURE_POLL_S", 0.05)
     insert = ch.insert
     landed: list[str] = []
 
-    async def insert_then_erasures(table: str, rows: Any, **kw: Any) -> Any:
-        out = await insert(table, rows, **kw)
+    async def erasures_then_insert(table: str, rows: Any, **kw: Any) -> Any:
         if table == blobs.TABLE and rows[0]["location"] and not landed:
             landed.append(rows[0]["location"])
             for scope_type, scope_value in scopes:
                 await _erasure(ch, org, scope_type, scope_value, "in_progress")
             if step is not None:
                 await step(org, ns)
-        return out
+        return await insert(table, rows, **kw)
 
-    monkeypatch.setattr(ch, "insert", insert_then_erasures)
+    monkeypatch.setattr(ch, "insert", erasures_then_insert)
     return org, ns, held, landed
 
 
@@ -591,7 +609,7 @@ async def test_a_namespace_erasure_as_the_row_lands_takes_the_move_back(
     ):
         # The namespace erasure's own blob step runs as the row lands.
         org, ns, held, landed = await _raced(ch, s3, monkeypatch, label, scopes, namespace_step)
-        assert await blobs.move_to_bucket(held, ch=ch) is False
+        assert await originals.move_to_bucket(held, ch=ch) is False
         assert await blobs.locate(org, ns, held.sha, ch=ch) is None
         assert not _keys(s3, object_store.namespace_prefix(org, ns))
 
@@ -602,19 +620,20 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
 ) -> None:
     client, bucket = s3
     # Each erasure here finishes within a second; a hung one fails the test, not the run.
-    monkeypatch.setattr(blobs, "_ERASURE_WAIT_S", 30)
-    # The erasure took the original: its step deleted every object under the original's
-    # prefix (the move's included) and its rows. The move deletes the row it wrote.
-    org, ns, held, landed = await _raced(
-        ch, s3, monkeypatch, "objstore-race-took", [("user_id", "alice")]
-    )
+    monkeypatch.setattr(originals, "_ERASURE_WAIT_S", 30)
 
-    async def took() -> None:
+    # The erasure took the original before the switched row landed: its step deleted every
+    # object under the original's prefix (the move's included) and the original's rows. The
+    # move's row lands alone, and the move deletes it.
+    async def alices_step(org: str, ns: str) -> None:
         # Alice's erasure's own blob step: the original is hers alone.
         await steps_memory.erase_blobs_by_user(org, "alice", ch=ch)
 
-    finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3, took))
-    assert await blobs.move_to_bucket(held, ch=ch) is False
+    org, ns, held, landed = await _raced(
+        ch, s3, monkeypatch, "objstore-race-took", [("user_id", "alice")], alices_step
+    )
+    finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3))
+    assert await originals.move_to_bucket(held, ch=ch) is False
     await finishing
     assert await blobs.locate(org, ns, held.sha, ch=ch) is None
     assert not _keys(s3, object_store.namespace_prefix(org, ns))
@@ -622,7 +641,7 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
     # The erasure kept it (another writer needs it): the moved object is still there, and
     # the switch stands.
     org, ns, held, landed = await _raced(
-        ch, s3, monkeypatch, "objstore-race-kept", [("user_id", "alice")]
+        ch, s3, monkeypatch, "objstore-race-kept", [("user_id", "alice")], alices_step
     )
     # Bob's live document names the same bytes, so alice's erasure keeps them.
     await ch.insert(
@@ -642,11 +661,8 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
         settings={"async_insert": 0},
     )
 
-    async def kept() -> None:
-        await steps_memory.erase_blobs_by_user(org, "alice", ch=ch)
-
-    finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3, kept))
-    assert await blobs.move_to_bucket(held, ch=ch) is True
+    finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3))
+    assert await originals.move_to_bucket(held, ch=ch) is True
     await finishing
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
     assert stored is not None and stored.location == landed[0]
@@ -665,7 +681,7 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
         )
 
     finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3, row_only))
-    assert await blobs.move_to_bucket(held, ch=ch) is False
+    assert await originals.move_to_bucket(held, ch=ch) is False
     await finishing
     assert not _keys(s3, object_store.namespace_prefix(org, ns))
 
@@ -673,9 +689,9 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
     org, ns, held, landed = await _raced(
         ch, s3, monkeypatch, "objstore-race-slow", [("user_id", "alice")]
     )
-    monkeypatch.setattr(blobs, "_ERASURE_WAIT_S", 0.2)
-    with pytest.raises(blobs.SwitchUnconfirmed, match="user_id, in_progress"):
-        await blobs.move_to_bucket(held, ch=ch)
+    monkeypatch.setattr(originals, "_ERASURE_WAIT_S", 0.2)
+    with pytest.raises(originals.SwitchUnconfirmed, match="user_id, in_progress"):
+        await originals.move_to_bucket(held, ch=ch)
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
     assert stored is not None and stored.location == landed[0]
 
@@ -699,7 +715,7 @@ async def test_a_move_whose_original_stopped_being_needed_is_left_to_the_sweep(
 
     monkeypatch.setattr(ch, "insert", insert_then_document_goes)
     # The switch stands: a delete unbounded by age could take a racing writer's only row.
-    assert await blobs.move_to_bucket(held, ch=ch) is True
+    assert await originals.move_to_bucket(held, ch=ch) is True
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
     assert stored is not None and stored.location.startswith("s3://")
     # The sweep takes it once it is old enough, as any original nothing names.
@@ -722,9 +738,9 @@ async def test_a_failed_erasure_as_the_row_lands_is_waited_for_like_any(
     monkeypatch.setattr(ch, "insert", insert_then_failed)
     # The recovery worker retries a failed erasure, so it is waited for: past the wait, the
     # switched row is left to it, named.
-    monkeypatch.setattr(blobs, "_ERASURE_WAIT_S", 0.3)
-    with pytest.raises(blobs.SwitchUnconfirmed, match="user_id, failed"):
-        await blobs.move_to_bucket(held, ch=ch)
+    monkeypatch.setattr(originals, "_ERASURE_WAIT_S", 0.3)
+    with pytest.raises(originals.SwitchUnconfirmed, match="user_id, failed"):
+        await originals.move_to_bucket(held, ch=ch)
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
     assert stored is not None and stored.location == landed[0]
 
@@ -735,9 +751,9 @@ async def test_a_copy_past_the_upload_budget_is_not_switched(
 ) -> None:
     org, ns = unique_org("objstore-slow"), "docs"
     held = await _held(ch, org, ns, b"slow copy", monkeypatch)
-    monkeypatch.setattr(blobs, "DOCUMENT_UPLOAD_BUDGET_S", -1)
+    monkeypatch.setattr(originals, "DOCUMENT_UPLOAD_BUDGET_S", -1)
     with pytest.raises(object_store.ObjectStoreError, match="before its row"):
-        await blobs.move_to_bucket(held, ch=ch)
+        await originals.move_to_bucket(held, ch=ch)
     assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(held.size, "")
     assert _keys(s3) == []
 
@@ -755,7 +771,7 @@ async def test_a_row_gone_before_the_switch_is_not_switched(
         await blobs.delete(org, ns, [held.sha], ch=ch)
 
     monkeypatch.setattr(object_store, "put", put_then_delete)
-    assert await blobs.move_to_bucket(held, ch=ch) is False
+    assert await originals.move_to_bucket(held, ch=ch) is False
     assert await blobs.locate(org, ns, held.sha, ch=ch) is None
     # No row names the object, nor will: the move deleted it.
     assert _keys(s3) == []
@@ -777,7 +793,7 @@ async def test_an_object_gone_before_its_read_back_is_not_switched(
     monkeypatch.setattr(object_store, "put", put_then_vanish)
     # Not an erasure's (none covers it): an error, and the original stays.
     with pytest.raises(object_store.ObjectStoreError, match="gone before its read-back"):
-        await blobs.move_to_bucket(held, ch=ch)
+        await originals.move_to_bucket(held, ch=ch)
     assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(held.size, "")
 
 
@@ -813,7 +829,7 @@ async def test_the_walk_pages_a_namespace_by_key(
     assert ([h.sha for h in first.held], first.after) == (shas[:2], shas[1])
     # A moved key is no longer held. Until the table merges, its two versions are two of
     # a page's rows; either way a walk moves on with every page and finds the rest.
-    assert await blobs.move_to_bucket(first.held[0], ch=ch) is True
+    assert await originals.move_to_bucket(first.held[0], ch=ch) is True
     found, after, pages = [], "", 0
     while True:
         page = await blobs.held_in_clickhouse(org, ns, after, 2, ch=ch)
