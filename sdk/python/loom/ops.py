@@ -12077,6 +12077,8 @@ class MemoryGetOutput(TypedDict, total=False):
     char_limit: NotRequired[Optional[int]]
     recall_count: NotRequired[int]
     last_recalled_at: NotRequired[Optional[str]]
+    served_count: NotRequired[Optional[int]]
+    last_served_at: NotRequired[Optional[str]]
     verified_by: NotRequired[str]
     verified_at: NotRequired[Optional[str]]
     verification: NotRequired[str]

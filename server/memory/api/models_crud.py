@@ -45,7 +45,8 @@ class MemoryGetInput(_Identity):
     # `unchanged: true` with the version and no body — a poll that holds the
     # row pays one point read and no payload. None = always return the body.
     if_version: int | None = None
-    # Opt-in per-agent recall breakdown; off by default to keep get cheap.
+    # Opt-in: the per-agent read breakdown and served_count / last_served_at; off by
+    # default to keep get cheap.
     include_recall_breakdown: bool = False
     # As-of replay filter: restrict to rows with coalesce(valid_at, created_at) <= as_of.
     # None = current row.
@@ -216,10 +217,18 @@ class MemoryGetOutput(ProjectedRow):
     content_sha256: str = ""
     # Server-enforced char cap on `value` (NULL = no cap).
     char_limit: int | None = None
-    # Recall telemetry from loom.memory_usage_*, bumped by search's auto_touch path.
+    # Recall credits: reads by a credited reader (memory.search with auto_touch, from a
+    # client that posts outcomes), folded from loom.memory_usage_* into the ranking signal.
+    # A context pack, a memory.ask or an uncredited search adds none: see served_count.
     recall_count: int = 0
-    # When a search last served the row; None = never recalled.
+    # When a credited read last returned the row; None = no credit yet.
     last_recalled_at: datetime | None = None
+    # Agent reads that returned the key, credited or not (recall credits plus `served`
+    # events, across the user's rows of the key; never below recall_count). Only with
+    # include_recall_breakdown=True; None otherwise.
+    served_count: int | None = None
+    # When an agent read last returned the key; None = none recorded, or not asked for.
+    last_served_at: datetime | None = None
     # Attestation (memory.verify). `verification` is derived against the live
     # content hash: human | process | stale (content changed since) | none.
     verified_by: str = ""
@@ -236,8 +245,8 @@ class MemoryGetOutput(ProjectedRow):
     lock_until: datetime | None = None
     # Who set the lock (`human:<subject>` / `process:<subject>` under auth); '' when unlocked.
     locked_by: str = ""
-    # Per-agent recall breakdown (last 30 days); populated only when
-    # include_recall_breakdown=True.
+    # Agent reads of the key per named agent (last 30 days, credited or not); populated
+    # only when include_recall_breakdown=True.
     recall_by_agent: list[_RecallByAgent] = Field(default_factory=list)
     # '' | low | medium | high. A 'high' read is audited.
     sensitivity: str = ""

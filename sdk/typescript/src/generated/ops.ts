@@ -4729,6 +4729,8 @@ export interface MemoryGetOutput {
   char_limit?: number | null;
   recall_count?: number;
   last_recalled_at?: string | null;
+  served_count?: number | null;
+  last_served_at?: string | null;
   verified_by?: string;
   verified_at?: string | null;
   verification?: string;

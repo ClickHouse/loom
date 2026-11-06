@@ -141,6 +141,39 @@ describe("MemoryInspector reads what is open", () => {
     expect(screen.getByText("docs/b.md")).toBeInTheDocument();
   });
 
+  it("Last recalled counts every agent read that served the key, apart from the ranking credit", async () => {
+    const base = {
+      found: true,
+      value: "hello",
+      memory_type: "semantic",
+      confidence: 1,
+      pinned: false,
+      tags: [],
+      created_at: new Date().toISOString(),
+      version: 1,
+    };
+    // A context pack served it twice: no ranking credit, yet recalled.
+    vi.mocked(getMemory).mockResolvedValueOnce({
+      ...base,
+      recall_count: 0,
+      last_recalled_at: null,
+      served_count: 2,
+      last_served_at: new Date().toISOString(),
+    } as MemoryDetail);
+    open();
+    await screen.findByText("hello");
+    expect(screen.getByText(/^2× · /)).toBeInTheDocument();
+    expect(screen.getByText("Recall credit")).toBeInTheDocument();
+    expect(screen.getByText("None")).toBeInTheDocument();
+    expect(screen.queryByText("No agent read recorded")).not.toBeInTheDocument();
+    cleanup();
+    // Nothing served it.
+    vi.mocked(getMemory).mockResolvedValueOnce({ ...base, recall_count: 0, served_count: 0 } as MemoryDetail);
+    open();
+    await screen.findByText("hello");
+    expect(screen.getByText("No agent read recorded")).toBeInTheDocument();
+  });
+
   it("opening History reads it once and shows the versions; a second open reads nothing", async () => {
     open();
     await screen.findByText("hello");

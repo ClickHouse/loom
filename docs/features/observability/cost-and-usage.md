@@ -165,6 +165,18 @@ citations by `LOOM_MEMORY_USED_CITED_REINFORCEMENT_WEIGHT`, and harm subtracts w
 `LOOM_MEMORY_HARM_REINFORCEMENT_WEIGHT`, floored at the write-time value. See
 [retrieval and ranking](../../concepts/retrieval-and-ranking.md).
 
+`recall_count` counts **recall credits** only: a `memory.search` from a reader that closes
+the loop (`server/memory/app/recall_credit.py`). Every other agent read that returns a key
+writes a `served` event instead: a context pack, a `memory.ask`, a `procedure.match`, or a
+search whose reader is not credited. Nothing ranks on `served`, and the fold leaves
+`loom.memory` alone when a bump changes none of its counters. The dashboard, the assistant,
+bench labels and a `memory.search` sent with `auto_touch: false` write neither. Both kinds
+land on the newest live row of the key, so a figure about whether an agent was shown a key
+reads every live row of it for that user: `memory.get` with `include_recall_breakdown` answers
+`served_count` and `last_served_at` (credits and `served` events, never below
+`recall_count`), which the inspector's **Last recalled** shows, and `memory.health` counts
+a user's key as recalled, not silent, on either kind.
+
 ## Settings
 
 | Setting                           | Default | Effect                                                               |

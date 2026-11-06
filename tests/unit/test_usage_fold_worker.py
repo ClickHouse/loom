@@ -702,3 +702,44 @@ async def test_read_only_replica_does_not_fall_back_to_alter() -> None:
     with pytest.raises(RuntimeError):
         await run_pass(ch=ch)
     assert not [sql for sql, _ in ch.execute_calls if sql.startswith("ALTER TABLE ")]
+
+
+async def test_a_bump_that_changes_no_counter_issues_no_memory_update() -> None:
+    """A `served` (or `acted`) event bumps the totals row without changing the counters it
+    folds: the absolute targets equal what loom.memory carries, so no lightweight UPDATE
+    (a patch part each) is issued. A row whose counters moved is still updated."""
+    ch = StubCH()
+    _seed_active_pass(
+        ch,
+        totals=[
+            _totals_row(recall=3, evidence=1, last_recalled=T0),
+            _totals_row(recall=2, evidence=0, last_recalled=T0, memory_id=MID2),
+        ],
+        idents=[
+            {**_ident_row(), "recall_count": 3, "evidence_count": 2, "last_recalled_at": T0},
+            {
+                **_ident_row(memory_id=MID2, memory_key="k2"),
+                "recall_count": 1,
+                "evidence_count": 1,
+                "last_recalled_at": T0,
+            },
+        ],
+    )
+    result = await run_pass(ch=ch)
+    assert result.folded == 2
+    [(_sql, params)] = _updates(ch, "loom.memory")
+    assert params["ids"] == [MID2]
+    # the reinforcement row is an INSERT that collapses on re-fold, still written for both
+    assert {r["memory_key"] for r in _reinf_rows(ch)} == {"k", "k2"}
+
+
+async def test_a_later_recall_time_alone_still_updates() -> None:
+    ch = StubCH()
+    later = T0 + timedelta(minutes=5)
+    _seed_active_pass(
+        ch,
+        totals=[_totals_row(recall=3, evidence=0, last_recalled=later)],
+        idents=[{**_ident_row(), "recall_count": 3, "evidence_count": 1, "last_recalled_at": T0}],
+    )
+    await run_pass(ch=ch)
+    assert len(_updates(ch, "loom.memory")) == 1

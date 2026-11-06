@@ -264,6 +264,10 @@ class _Target:
     last_recalled: datetime  # UNIX_EPOCH when never recalled
     reinforcement: int | None  # None: no reinforcing activity, embeddings untouched
     last_activity: datetime
+    # False when loom.memory already carries every counter above, so its UPDATE is skipped.
+    # A bump from an event the totals do not count (`served`, `acted`, ...) re-folds the same
+    # absolute values, and a lightweight UPDATE that changes nothing still costs a patch part.
+    changes_memory: bool = True
 
 
 def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> list[_Target]:
@@ -293,6 +297,17 @@ def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> li
             or harm_total > 0
         )
         base_rc = int(ident.get("reinforcement_count") or 1)
+        evidence = _u32(1 + evidence_total)
+        recall = _u32(recall_total)
+        stored_lra = ident.get("last_recalled_at")
+        changes_memory = (
+            evidence > int(ident.get("evidence_count") or 0)
+            or recall > int(ident.get("recall_count") or 0)
+            or (
+                last_recalled > UNIX_EPOCH
+                and (stored_lra is None or last_recalled > _utc(stored_lra))
+            )
+        )
         out.append(
             _Target(
                 memory_id=str(row["memory_id"]),
@@ -301,8 +316,8 @@ def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> li
                 agent=str(ident["agent"]),
                 user_id=str(ident["user_id"]),
                 memory_key=str(ident["memory_key"]),
-                evidence=_u32(1 + evidence_total),
-                recall=_u32(recall_total),
+                evidence=evidence,
+                recall=recall,
                 last_recalled=last_recalled,
                 # Harm subtracts, floored at the write-time base: a memory the
                 # agent relied on in failed runs loses the reinforcement it
@@ -327,6 +342,7 @@ def _targets(rows: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> li
                 # the most recent reinforcing activity of either kind, which
                 # the rank's efficacy-decay term reads.
                 last_activity=max(last_recalled, _utc(row.get("bumped"))),
+                changes_memory=changes_memory,
             )
         )
     return out
@@ -457,9 +473,12 @@ IDENTITY_STATEMENT = """
         SELECT toString(m.memory_id) AS mid, m.org AS org, m.namespace AS namespace,
                m.agent AS agent, m.user_id AS user_id, m.memory_key AS memory_key,
                m.reinforcement_count AS reinforcement_count,
+               m.evidence_count AS evidence_count, m.recall_count AS recall_count,
+               m.last_recalled_at AS last_recalled_at,
                coalesce(c.used_cited_total, 0) AS used_cited_total
         FROM (
-            SELECT memory_id, org, namespace, agent, user_id, memory_key, reinforcement_count
+            SELECT memory_id, org, namespace, agent, user_id, memory_key, reinforcement_count,
+                   evidence_count, recall_count, last_recalled_at
             FROM loom.memory FINAL
             WHERE org IN {orgs:Array(String)}
               AND namespace IN {nss:Array(String)}
@@ -540,7 +559,9 @@ async def _fold_batch(ch: _CHClient, cfg: UsageFoldConfig, result: UsageFoldResu
     result.skipped_no_memory += len(rows) - len(targets)
 
     if targets:
-        result.statements += await _fold_memory_rows(ch, targets, cfg.update_chunk_rows)
+        result.statements += await _fold_memory_rows(
+            ch, [t for t in targets if t.changes_memory], cfg.update_chunk_rows
+        )
         result.statements += await _fold_reinforcement_rows(ch, targets, cfg.update_chunk_rows)
         result.folded += len(targets)
 

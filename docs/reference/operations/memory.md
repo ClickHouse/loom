@@ -842,7 +842,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `memory_key` | `str` | required | The key to read: tried under this identity, then the same user's row under any agent. |
 | `if_version` | `int \| None` | `None` | Version precondition: the version the caller already holds. |
-| `include_recall_breakdown` | `bool` | `False` | Opt-in per-agent recall breakdown; off by default to keep get cheap. |
+| `include_recall_breakdown` | `bool` | `False` | Opt-in: the per-agent read breakdown and served_count / last_served_at; off by default to keep get cheap. |
 | `as_of` | `datetime \| None` | `None` | As-of replay filter: restrict to rows with coalesce(valid_at, created_at) <= as_of. |
 | `fields` | `list[str]` | *(computed)* | A whitelist of output field names (`value`, `tags`, `status`, `memory_type`, `recall_count`, `created_at`, …). |
 | `follow` | `bool` | `False` | Serve the live canonical a `status='duplicate'` row points to (its `duplicate_of`, same org and namespace, up to three hops) instead of the exact row; the response then carries `resolved_from` = the key asked for and `canonical_key` = the… |
@@ -885,8 +885,10 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `entities` | `list[str]` | Entity names stored on the row (lowercased), internal sentinels left out. |
 | `content_sha256` | `str` | SHA-256 of the live value (canonical JSON); pass back as if_match_sha256 for a no-clobber update against the value THIS read saw. |
 | `char_limit` | `int \| None` | Server-enforced char cap on `value` (NULL = no cap). |
-| `recall_count` | `int` | Recall telemetry from loom.memory_usage_*, bumped by search's auto_touch path. |
-| `last_recalled_at` | `datetime \| None` | When a search last served the row; None = never recalled. |
+| `recall_count` | `int` | Recall credits: reads by a credited reader (memory.search with auto_touch, from a client that posts outcomes), folded from loom.memory_usage_* into the ranking signal. |
+| `last_recalled_at` | `datetime \| None` | When a credited read last returned the row; None = no credit yet. |
+| `served_count` | `int \| None` | Agent reads that returned the key, credited or not (recall credits plus `served` events, across the user's rows of the key; never below recall_count). |
+| `last_served_at` | `datetime \| None` | When an agent read last returned the key; None = none recorded, or not asked for. |
 | `verified_by` | `str` | Attestation (memory.verify). |
 | `verified_at` | `datetime \| None` | When the attestation in `verified_by` was made; None = never attested, or revoked. |
 | `verification` | `str` | human \| process: attested and unchanged since; stale: the content changed after the attestation; none. |
@@ -894,7 +896,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `lock_reason` | `str` | Why the lock was set, as the locker gave it; '' when unlocked. |
 | `lock_until` | `datetime \| None` | When the lock lapses; None = open-ended, or no lock. |
 | `locked_by` | `str` | Who set the lock (`human:<subject>` / `process:<subject>` under auth); '' when unlocked. |
-| `recall_by_agent` | `list[_RecallByAgent]` | Per-agent recall breakdown (last 30 days); populated only when include_recall_breakdown=True. |
+| `recall_by_agent` | `list[_RecallByAgent]` | Agent reads of the key per named agent (last 30 days, credited or not); populated only when include_recall_breakdown=True. |
 | `sensitivity` | `str` | '' \| low \| medium \| high. |
 
 ## `memory.get_by_id`
@@ -956,21 +958,21 @@ Knowledge-base health for (org, namespace): how much of what is stored is ever r
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `silent_after_days` | `int` | `30` | A live row older than this and never recalled is "silent". |
+| `silent_after_days` | `int` | `30` | A live row older than this and never returned by an agent read is "silent". |
 | `top_k` | `int` | `10` | How many entries `top_recalled` lists. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `live` | `int` | Active, untombstoned rows in the namespace, across every agent and user. |
-| `recalled_ever` | `int` | Live rows recalled at least once. |
+| `recalled_ever` | `int` | Live rows whose key an agent read returned at least once (a recall credit or a `served` event on any live row of the key: a search, context pack or memory.ask). |
 | `used_ever` | `int` | Live rows with at least one reported use. |
 | `harmed_ever` | `int` | live rows with at least one harm event |
-| `silent` | `int` | live and never recalled |
+| `silent` | `int` | live and never returned by an agent read |
 | `silent_older` | `int` | silent AND older than silent_after_days |
 | `silent_share` | `float` | `silent` / `live`, 0..1; 0 when the namespace holds no live row. |
 | `silent_after_days` | `int` | Echo of the request's `silent_after_days`. |
-| `by_type` | `list[MemoryHealthTypeRow]` | Per memory type: live rows and how many were ever recalled, largest first. |
-| `top_recalled` | `list[MemoryHealthTopRow]` | The most recalled live rows (by recall count, then use count), at most `top_k`. |
+| `by_type` | `list[MemoryHealthTypeRow]` | Per memory type: live rows and how many were ever returned by an agent read, largest first. |
+| `top_recalled` | `list[MemoryHealthTopRow]` | The live rows with the most recall credits (then use count), at most `top_k`. |
 | `staleness` | `MemoryHealthStaleness` | Age buckets, validity-end, expiry and pin counts, and days since reinforced. |
 | `footprint` | `MemoryHealthFootprint` | Summed value length of the live rows and its chars/4 token estimate. |
 

@@ -29,6 +29,12 @@ USED_EVENT = "used"
 USED_CITED_EVENT = "used_cited"
 ACTED_EVENT = "acted"
 HARM_EVENT = "harm"
+# A read that returned the key to an agent and wrote no `recall` credit: a context pack, a
+# memory.ask, or a search whose reader is not credited. Nothing ranks on it (the totals view
+# maps no `served` column); it answers "has an agent been shown this?" beside the credits.
+SERVED_EVENT = "served"
+# What an agent read writes per returned key: the credit, or `served` without one.
+SERVED_EVENT_TYPES: tuple[str, ...] = ("recall", SERVED_EVENT)
 # The kinds an agent (not the server, not memory.ask) wrote: what the
 # two-counter worth term may read, and what the daily gauge
 # counts. `recall`, `evidence` (also written by extraction and auto-promote),
@@ -260,3 +266,44 @@ async def record_usage_for_keys(
         )
         credited += 1
     return credited
+
+
+# Agent reads of one key, per agent: every live row of the key for the user, since
+# record_usage_for_keys puts each event on the newest copy and a session's own copy may
+# carry none. Another user's copy is left out: its reads are not this user's to see. A read
+# keyed on (org, namespace, memory_id) for the few ids of the key.
+_SERVED_BY_AGENT_SQL = """
+    SELECT agent,
+           sum(event_count) AS n,
+           sumIf(event_count, ts > now() - INTERVAL 30 DAY) AS n_30d,
+           max(ts) AS last_at
+    FROM loom.memory_usage_events
+    WHERE org = {org:String}
+      AND namespace = {ns:String}
+      AND memory_id IN (
+          SELECT memory_id FROM loom.memory FINAL
+          WHERE org = {org:String} AND namespace = {ns:String}
+            AND user_id = {uid:String} AND memory_key = {key:String}
+            AND tombstoned_at IS NULL
+      )
+      AND event_type IN {types:Array(String)}
+    GROUP BY agent
+"""
+
+
+async def served_by_agent(
+    org: str, namespace: str, user_id: str, memory_key: str, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """`recall` credits and `served` events of a key, one row per agent: `n` all time,
+    `n_30d`, `last_at`."""
+    ch = ch or _default_client()
+    return await ch.query_all(
+        _SERVED_BY_AGENT_SQL,
+        params={
+            "org": org,
+            "ns": namespace,
+            "uid": user_id,
+            "key": memory_key,
+            "types": list(SERVED_EVENT_TYPES),
+        },
+    )

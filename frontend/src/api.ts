@@ -517,8 +517,14 @@ export interface MemoryDetail {
   /** When the fact became true, and the closing bound of its validity; null when unset. */
   valid_at?: string | null;
   valid_to?: string | null;
+  /** Recall credits: reads from a reader that posts outcomes, the ranking signal. */
   recall_count?: number;
   last_recalled_at?: string | null;
+  /** Agent reads that returned the key, credited or not (searches, context packs, asks);
+   *  only with include_recall_breakdown. */
+  served_count?: number | null;
+  last_served_at?: string | null;
+  /** Agent reads of the key per named agent, last 30 days. */
   recall_by_agent?: Array<{ agent: string; count: number; last_at: string | null }>;
   tags?: string[];
   /** Entity names on the row (memory.get returns them; the drill-down into the Graph

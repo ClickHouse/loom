@@ -1,9 +1,11 @@
 """memory.health — is the knowledge base earning its keep?
 
-Reports coverage by type, top recalled entries, silent (never recalled) entries and the
-staleness of live rows, so a namespace where most rows are never read shows it. One query
-over loom.memory FINAL joined to the summed loom.memory_usage_totals, scoped to
-(org, namespace).
+Reports coverage by type, top recalled entries, silent (never served to an agent) entries
+and the staleness of live rows, so a namespace where most rows are never read shows it. One
+query over loom.memory FINAL joined to the summed loom.memory_usage_totals and the `served`
+usage events, scoped to (org, namespace). A user's key counts as read when any of its live
+rows carries a recall credit or a `served` event: an agent read puts its event on the newest
+copy of the key only.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from server.core.datetimes import naive_utc_now
 from server.memory.api.models_admin import MemoryHealthInput, MemoryHealthOutput
 
 _LIVE = """
-    SELECT m.memory_id AS memory_id, m.memory_key AS memory_key,
+    SELECT m.memory_id AS memory_id, m.user_id AS user_id, m.memory_key AS memory_key,
            m.memory_type AS memory_type, m.created_at AS created_at,
            m.expires_at AS expires_at, m.valid_to AS valid_to,
            m.invalid_at AS invalid_at, m.pinned AS pinned,
@@ -24,9 +26,10 @@ _LIVE = """
            coalesce(u.recall_count, 0) AS recall_count,
            coalesce(u.used_count, 0) AS used_count,
            coalesce(u.harm_count, 0) AS harm_count,
-           u.last_recalled_at AS last_recalled_at
+           u.last_recalled_at AS last_recalled_at,
+           coalesce(s.served_count, 0) AS served_count
     FROM (
-        SELECT memory_id, memory_key, memory_type, created_at,
+        SELECT memory_id, user_id, memory_key, memory_type, created_at,
                expires_at, valid_to, invalid_at, pinned, last_reinforced_at,
                length(value) AS value_chars
         FROM loom.memory FINAL
@@ -41,6 +44,12 @@ _LIVE = """
         WHERE org = {org:String} AND namespace = {ns:String}
         GROUP BY memory_id
     ) AS u ON u.memory_id = m.memory_id
+    LEFT JOIN (
+        SELECT memory_id, sum(event_count) AS served_count
+        FROM loom.memory_usage_events
+        WHERE org = {org:String} AND namespace = {ns:String} AND event_type = 'served'
+        GROUP BY memory_id
+    ) AS s ON s.memory_id = m.memory_id
 """
 
 
@@ -63,12 +72,24 @@ def summarise(rows: list[dict[str, Any]], *, silent_after_days: int, top_k: int)
 
     cutoff = naive_utc_now() - timedelta(days=silent_after_days)
     live = len(rows)
+
+    def _key(r: dict[str, Any]) -> tuple[str, str]:
+        return (str(r.get("user_id") or "-"), str(r.get("memory_key") or ""))
+
+    reads_by_key: dict[tuple[str, str], int] = {}
+    for r in rows:
+        reads = int(r.get("recall_count") or 0) + int(r.get("served_count") or 0)
+        reads_by_key[_key(r)] = reads_by_key.get(_key(r), 0) + reads
+
+    def _read(r: dict[str, Any]) -> bool:
+        return reads_by_key.get(_key(r), 0) > 0
+
     recalled = [r for r in rows if int(r.get("recall_count") or 0) > 0]
     used = sum(1 for r in rows if int(r.get("used_count") or 0) > 0)
     # Relied on in a run that ended badly. A row both used and harmed is a candidate for
     # review, not deletion.
     harmed = sum(1 for r in rows if int(r.get("harm_count") or 0) > 0)
-    silent_rows = [r for r in rows if int(r.get("recall_count") or 0) == 0]
+    silent_rows = [r for r in rows if not _read(r)]
     silent_older = sum(
         1
         for r in silent_rows
@@ -80,14 +101,14 @@ def summarise(rows: list[dict[str, Any]], *, silent_after_days: int, top_k: int)
         t = str(r.get("memory_type") or "")
         d = by_type.setdefault(t, {"live": 0, "recalled": 0})
         d["live"] += 1
-        if int(r.get("recall_count") or 0) > 0:
+        if _read(r):
             d["recalled"] += 1
     top = sorted(recalled, key=lambda r: (-int(r["recall_count"]), -int(r.get("used_count") or 0)))
     return {
         "staleness": staleness(rows),
         "footprint": footprint(rows),
         "live": live,
-        "recalled_ever": len(recalled),
+        "recalled_ever": sum(1 for r in rows if _read(r)),
         "used_ever": used,
         "harmed_ever": harmed,
         "silent": len(silent_rows),

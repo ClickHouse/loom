@@ -277,9 +277,12 @@ def _run_auto_touch(
     *,
     consumer: tuple[str, str] = ("clickgap", SOURCE_SELF_REPORTED),
     closer_rows: list[dict[str, Any]] | None = None,
+    operation: str = "",
+    request_agent: str = "",
 ) -> list[dict[str, Any]]:
     from server.memory.app.search import telemetry as h
     from server.memory.store import usage as mru
+    from server.observability.genai import set_identity
 
     written: list[dict[str, Any]] = []
 
@@ -309,6 +312,7 @@ def _run_auto_touch(
 
     async def _go() -> None:
         consumer_mod.set_current_consumer(*consumer)
+        set_identity(org="o" if operation else "", agent=request_agent, operation=operation)
         try:
             await h._schedule_auto_touch(ctx)
             await _drain()
@@ -571,3 +575,66 @@ def test_a_person_looking_from_the_dashboard_or_the_assistant_is_never_credited(
         )
         assert decision == rc.CreditDecision(False, rc.REASON_NO_CONSUMER)
     assert ch.calls == []  # refused before the closer window is read
+
+
+# ---------------------------------------------------------------- served, not credited
+
+
+def _types(written: list[dict[str, Any]]) -> list[str]:
+    return [w["event_type"] for w in written]
+
+
+@pytest.mark.parametrize("operation", ["context.pack", "memory.ask", "procedure.match"])
+def test_an_op_that_turns_auto_touch_off_still_records_what_it_served(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    # context.pack and memory.ask run their search with auto_touch off to keep the ranking
+    # credit out; the keys they return were still shown to an agent.
+    ctx = _ctx(agent="*", auto_touch=False)
+    written = _run_auto_touch(monkeypatch, ctx, consumer=("", ""), operation=operation)
+    assert _types(written) == ["served"]
+    assert written[0]["ns_keys"] == {"n": ["lesson_1"]}
+    assert ctx.recall_credit is None
+    # the op searches as `*`; the event names the agent that called it
+    ctx = _ctx(agent="*", auto_touch=False)
+    written = _run_auto_touch(
+        monkeypatch, ctx, consumer=("", ""), operation=operation, request_agent="codex"
+    )
+    assert [w["agent"] for w in written] == ["codex"]
+
+
+def test_an_uncredited_search_records_served_and_a_credited_one_only_its_credit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _ctx()
+    written = _run_auto_touch(monkeypatch, ctx, closer_rows=[], operation="memory.search")
+    assert ctx.recall_credit == "not_credited (no_closer)"
+    assert _types(written) == ["served"]
+    rc._reset_for_tests()
+    ctx = _ctx()
+    assert _types(_run_auto_touch(monkeypatch, ctx, operation="memory.search")) == ["recall"]
+
+
+def test_reads_that_record_no_served_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    # the caller of memory.search / search.query asked for no usage
+    for op in ("memory.search", "search.query"):
+        ctx = _ctx(auto_touch=False)
+        assert _run_auto_touch(monkeypatch, ctx, operation=op) == []
+    # the dashboard and the assistant: a person inspecting the namespace
+    for consumer in ("loom-ui", "loom-assistant"):
+        ctx = _ctx(agent="*", auto_touch=False)
+        written = _run_auto_touch(
+            monkeypatch, ctx, consumer=(consumer, SOURCE_SELF_REPORTED), operation="context.pack"
+        )
+        assert written == []
+    # a bench label, on the agent or the consumer
+    ctx = _ctx(agent="latency-bench")
+    assert _run_auto_touch(monkeypatch, ctx, operation="memory.search") == []
+    ctx = _ctx(agent="*", auto_touch=False)
+    written = _run_auto_touch(
+        monkeypatch, ctx, consumer=("eval-w8", SOURCE_SELF_REPORTED), operation="context.pack"
+    )
+    assert written == []
+    # no wire operation: a worker's search
+    ctx = _ctx(auto_touch=False)
+    assert _run_auto_touch(monkeypatch, ctx) == []

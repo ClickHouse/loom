@@ -139,7 +139,7 @@ class MemoryHealthInput(_Identity):
 
     agent: str = "-"
     user_id: str = "-"
-    # A live row older than this and never recalled is "silent".
+    # A live row older than this and never returned by an agent read is "silent".
     silent_after_days: int = Field(default=30, ge=1, le=3650)
     # How many entries `top_recalled` lists.
     top_k: int = Field(default=10, ge=1, le=50)
@@ -188,20 +188,21 @@ class MemoryHealthFootprint(BaseModel):
 class MemoryHealthOutput(BaseModel):
     # Active, untombstoned rows in the namespace, across every agent and user.
     live: int
-    # Live rows recalled at least once.
+    # Live rows whose key an agent read returned at least once (a recall credit or a
+    # `served` event on any live row of the key: a search, context pack or memory.ask).
     recalled_ever: int
     # Live rows with at least one reported use.
     used_ever: int
     harmed_ever: int = 0  # live rows with at least one harm event
-    silent: int  # live and never recalled
+    silent: int  # live and never returned by an agent read
     silent_older: int  # silent AND older than silent_after_days
     # `silent` / `live`, 0..1; 0 when the namespace holds no live row.
     silent_share: float
     # Echo of the request's `silent_after_days`.
     silent_after_days: int
-    # Per memory type: live rows and how many were ever recalled, largest first.
+    # Per memory type: live rows and how many were ever returned by an agent read, largest first.
     by_type: list[MemoryHealthTypeRow] = Field(default_factory=list)
-    # The most recalled live rows (by recall count, then use count), at most `top_k`.
+    # The live rows with the most recall credits (then use count), at most `top_k`.
     top_recalled: list[MemoryHealthTopRow] = Field(default_factory=list)
     # Age buckets, validity-end, expiry and pin counts, and days since reinforced.
     staleness: MemoryHealthStaleness = Field(default_factory=MemoryHealthStaleness)

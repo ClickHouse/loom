@@ -464,7 +464,7 @@ export function MemoryInspector({
     if (!detail) return;
     const v = detail.value;
     const valueText = typeof v === "string" ? v : v == null ? "" : JSON.stringify(v, null, 2);
-    const lastRecalled = recalledLabel(detail.recall_count, detail.last_recalled_at);
+    const lastRecalled = recalledLabel(detail);
     const tags = detail.tags && detail.tags.length ? detail.tags.join(", ") : "—";
     const block = [
       `Key:           ${memoryKey}`,
@@ -474,6 +474,7 @@ export function MemoryInspector({
       `Created:       ${detail.created_at ? relativeTime(detail.created_at) : "—"}`,
       `Expires:       ${detail.expires_at ? relativeTime(detail.expires_at) : "Never expires"}`,
       `Last recalled: ${lastRecalled}`,
+      `Recall credit: ${creditLabel(detail.recall_count)}`,
       `Tags:          ${tags}`,
       ``,
       `Value:`,
@@ -813,7 +814,8 @@ export function MemoryInspector({
                     <dd>
                       <ExpiryEditor expiresAt={detail.expires_at ?? null} onChange={onChangeExpiry} />
                     </dd>
-                    <Row label="Last recalled" value={recalledLabel(detail.recall_count, detail.last_recalled_at)} />
+                    <TipRow label="Last recalled" tip={RECALLED_TIP} value={recalledLabel(detail)} />
+                    <TipRow label="Recall credit" tip={CREDIT_TIP} value={creditLabel(detail.recall_count)} />
                     {(() => {
                       // Drop sentinel agents (* wildcard, - no-agent default);
                       // they're query artefacts, not real tools.
@@ -1362,14 +1364,34 @@ function ProvenanceSection({
   );
 }
 
-/** "N× · <when>" for a recalled memory, else "Never recalled". A zero count
- *  or the epoch sentinel (ClickHouse toDateTime(0) → 1970-01-01) both mean
- *  never — the sentinel is truthy, so a plain `? :` would print "01/01/1970". */
-function recalledLabel(recallCount: number | undefined, lastRecalledAt: string | null | undefined): string {
+const RECALLED_TIP =
+  "Times an agent's search, context pack or ask returned this memory, across its copies in every session. " +
+  "The dashboard's own reads are not counted, and a read takes a few seconds to show.";
+const CREDIT_TIP =
+  "Recalls from readers that report outcomes. Search ranking reads these; " +
+  "a context pack, an ask or an uncredited search adds none.";
+
+/** "N× · <when>" from the agent reads that returned the key (`served_count`), else "No
+ *  agent read recorded". A server without the served figures answers the recall credits
+ *  instead. A zero count or the epoch sentinel (ClickHouse toDateTime(0) → 1970-01-01)
+ *  both mean none — the sentinel is truthy, so a plain `? :` would print "01/01/1970". */
+function recalledLabel(detail: {
+  recall_count?: number;
+  last_recalled_at?: string | null;
+  served_count?: number | null;
+  last_served_at?: string | null;
+}): string {
+  const served = detail.served_count != null;
+  const n = (served ? detail.served_count : detail.recall_count) ?? 0;
+  const at = served ? detail.last_served_at : detail.last_recalled_at;
+  const last = parseChTime(at);
+  if (n === 0 || !last || last.getFullYear() <= 1970) return "No agent read recorded";
+  return `${n}× · ${relativeTime(at)}`;
+}
+
+function creditLabel(recallCount: number | undefined): string {
   const n = recallCount ?? 0;
-  const last = parseChTime(lastRecalledAt);
-  if (n === 0 || !last || last.getFullYear() <= 1970) return "Never recalled";
-  return `${n}× · ${relativeTime(lastRecalledAt)}`;
+  return n === 0 ? "None" : `${n}×`;
 }
 
 function statusLabel(s?: string): string {
@@ -1391,6 +1413,24 @@ function statusLabel(s?: string): string {
     default:
       return s;
   }
+}
+
+/** A Row whose label explains itself in a tooltip; the label takes a tab stop so the
+ *  tooltip opens from the keyboard too. */
+function TipRow({ label, tip, value }: { label: string; tip: string; value: string }) {
+  return (
+    <>
+      <dt className="text-text-muted">
+        <Tip content={tip}>
+          {/* biome-ignore lint/a11y/noNoninteractiveTabindex: the tab stop is how the keyboard opens the tooltip that explains the figure */}
+          <span tabIndex={0} role="note" className="rounded underline decoration-dotted underline-offset-2">
+            {label}
+          </span>
+        </Tip>
+      </dt>
+      <dd className="text-text">{value}</dd>
+    </>
+  );
 }
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
