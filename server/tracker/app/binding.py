@@ -78,7 +78,7 @@ _OVERRIDES_AT = 0.0
 
 
 async def refresh_overrides(*, force: bool = False) -> dict[str, str]:
-    """Re-read the `tracker_binding` state rows when the snapshot is older than
+    """Re-read the `OVERRIDE_KEY` state rows when the snapshot is older than
     `code_repos_refresh_seconds` (or `force`); never raises — a directory that
     cannot be read keeps the last snapshot."""
     global _OVERRIDES, _OVERRIDES_AT

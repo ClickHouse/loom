@@ -302,7 +302,6 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
     from server.operations.base import Role
 
     admin_of = {QA, DESK, "tracker-kj"}  # the maintainer administers each tracker it links
-
     readers = {CODE, DESK, "tracker-new"}
 
     async def _scope(org, ns, role=None, *, hides_answer=True):

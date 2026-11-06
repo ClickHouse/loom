@@ -606,7 +606,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
 
 async def handle_code_repo_set_source(input: Any) -> Any:
     """The maintainer sets the trackers this repository reads, primary first
-    (`CodeRepoSetSourceInput`). The links are the `tracker_binding` state row of the code
+    (`CodeRepoSetSourceInput`). The links are the `binding.OVERRIDE_KEY` state row of the code
     namespace (comma-joined); `tracker_namespaces_for` reads it before the deployment's map."""
     require_code_intel()
     from server.code.domain.index.repos import repo_for_namespace
@@ -625,7 +625,8 @@ async def handle_code_repo_set_source(input: Any) -> Any:
         await CodeRepo().get_state(input.org, input.namespace, binding.OVERRIDE_KEY)
     )
     wanted = binding.parse_binding(input.tracker_namespaces)
-    # A link this call stores needs the tracker's admin; one only the operator map holds is new.
+    # A link the repository's stored links do not hold needs the tracker's admin; one only
+    # the operator map holds counts as new.
     targets = [await _tracker_or_refuse(input.org, qa, new=qa not in stored) for qa in wanted]
     # A record reads only the repositories it names (`splitByChar('#', source_id)[1] IN
     # repos`), so a link to one that does not name this repository answers nothing — said, not
