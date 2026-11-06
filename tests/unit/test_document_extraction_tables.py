@@ -222,7 +222,9 @@ def test_a_long_xlsx_header_over_two_rows_is_cut_counted_and_bounded_per_column(
     assert table.header_rows == 2 and all(len(c.name) <= 500 for c in table.columns)
     assert table.columns[0].name == "x" * 500
     # A joined name holds no more of a cell than a name reads, whatever the cell's size.
-    joined, cut = xlsxfile._named_over(tabular.Cell(long, "string"), tabular.Cell("h", "string"))
+    joined, cut = xlsxfile._named_over(
+        tabular.Cell(long, "string"), tabular.Cell("h", "string"), tabular.read_name
+    )
     assert joined.text == "x" * tabular.NAME_READ_CHARS + " / h" and cut
     assert [f.unit for f in a.coverage.failed] == ["S header"]
 
@@ -305,6 +307,30 @@ def test_the_columns_a_header_rows_merges_cover_are_found_in_one_pass() -> None:
     # A million spans over the sheet's width cost one pass, not one per column.
     spans = [(0, 16_383)] + [(c, c + 1) for c in range(1_000_000)]
     assert all(xlsxfile._covered(spans, 0, 16_383))
+
+
+def test_a_text_row_under_merges_over_every_column_it_fills_reads_as_names() -> None:
+    rows = {
+        1: [cell("A1", "Name", t="inlineStr"), cell("C1", "Contact", t="inlineStr")],
+        2: [
+            cell(f"{c}2", v, t="inlineStr")
+            for c, v in zip("ABCD", ("Alice", "Smith", "a@x.io", "Paris"), strict=True)
+        ],
+        3: [
+            cell(f"{c}3", v, t="inlineStr")
+            for c, v in zip("ABCD", ("Bob", "Lee", "b@x.io", "Oslo"), strict=True)
+        ],
+    }
+    a = extract(workbook([("S", sheet(rows, merges=("A1:B1", "C1:D1")))]), "s.xlsx")
+    # Nothing tells such a row from names under the groups: it reads as the second
+    # header row, as the docs say; a dataset's schema approval names the columns.
+    assert [n for n, _ in _columns(a)] == [
+        "Name / Alice",
+        "Name / Smith",
+        "Contact / a@x.io",
+        "Contact / Paris",
+    ]
+    assert a.tables[0].rows == (("Bob", "Lee", "b@x.io", "Oslo"),)
 
 
 def test_an_xlsx_title_merged_over_its_header_row_heads_each_name() -> None:

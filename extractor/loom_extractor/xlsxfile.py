@@ -482,7 +482,7 @@ class _Reader:
                 _named_over(above.get(col, EMPTY), under.get(col, EMPTY), named)
                 for col in range(left, right + 1)
             ]
-            header = [name for name, _ in joined]
+            header = [cell for cell, _ in joined]
             cut = {i for i, (_, was_cut) in enumerate(joined) if was_cut}
         out = Rows(
             header,
@@ -682,7 +682,7 @@ def _covered(spans: list[tuple[int, int]], left: int, right: int) -> list[bool]:
 
 
 def _named_over(
-    above: Cell, below: Cell, named: Callable[[Cell], tuple[str, bool]] = read_name
+    above: Cell, below: Cell, named: Callable[[Cell], tuple[str, bool]]
 ) -> tuple[Cell, bool]:
     """A column's name from a header over two rows, and whether it was cut: the
     first row's cell and the second's under it, each as a name reads it, joined
