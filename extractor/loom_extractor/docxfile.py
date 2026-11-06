@@ -67,7 +67,7 @@ def _heading_levels(pkg: Package) -> tuple[dict[str, int], set[str]]:
                 _val(s, "w:basedOn"),
             )
     levels = {}
-    titles = {sid for sid, (name, _, _) in styles.items() if name == "title"}
+    titles: set[str] = set()
     for sid, (name, own, _) in styles.items():
         m = _HEADING_NAME.fullmatch(name)
         if own == _BODY_TEXT:
@@ -76,6 +76,7 @@ def _heading_levels(pkg: Package) -> tuple[dict[str, int], set[str]]:
             levels[sid] = int(m.group(1))
         elif name == "title":
             levels[sid] = 1
+            titles.add(sid)
         else:
             cur, hops = sid, 0
             while cur in styles and hops < _MAX_BASED_ON:

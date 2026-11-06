@@ -229,7 +229,7 @@ to: a slide, a slide's notes, the styles, the footnotes; the document part itsel
 heading is a paragraph of a `Heading N` or `Title` style, or one with an outline level of its own or along its style's
 `basedOn` chain, the nearest one set deciding (level 9, body text, is no heading whatever the style); once a `Title`
 paragraph is read as a heading, it is depth 1 (whatever outline level it carries) and every other heading after it one
-level under its own (a later title is depth 1 again) (`Heading 1` at depth 2), so the sections sit under the title; a
+level under its own (`Heading 1` at depth 2), so the sections sit under the title, and a later title is depth 1 again; a
 numbered paragraph or a `List` style is a list item, and a run of them is one list block. Inserted text is read, and a
 tracked deletion (its runs, rows and cells) and moved text at its old place are not; a content control's or a custom XML
 element's text is read in place, in the body, a table's rows and its cells, and an alternate-content choice once.
