@@ -30,6 +30,7 @@ const ROOT_EXPORTS = [
   "DEFAULT_RETRY_POLICY",
   "Datapack",
   "GENERATED_OP_COUNT",
+  "INGEST_DONE",
   "INVALID_RESPONSE_CODE",
   "IdempotentConflict",
   "IdempotentInProgress",

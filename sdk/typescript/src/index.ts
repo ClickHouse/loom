@@ -39,6 +39,8 @@ export {
   TimeoutError,
   ValidationError,
 } from "./errors.js";
+export type { FileData, IngestFileInput, KnowledgeFiles, Upload, UploadOptions, WaitOptions } from "./files.js";
+export { INGEST_DONE } from "./files.js";
 export type * from "./generated/ops.js";
 export type { OpMap, OpName, OpSpec } from "./generated/ops.js";
 export { GENERATED_OP_COUNT, OP_BY_NAME, OPS } from "./generated/ops.js";

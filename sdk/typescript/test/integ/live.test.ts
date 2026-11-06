@@ -52,6 +52,21 @@ describe.skipIf(!base || !key)("live loom", () => {
     await expect(client.callRaw("memory.does_not_exist", { org, namespace: ns })).rejects.toBeInstanceOf(NotFound);
   });
 
+  it("uploads a file's bytes and queues its ingest, which knowledge.ingest_status finds", async () => {
+    const up = await client.knowledge.upload({ org, namespace: ns }, new TextEncoder().encode("# Smoke\n"), "smoke.md");
+    expect([up.format, up.size]).toEqual(["markdown", 8]);
+    const job = await client.knowledge.ingestFile({
+      org,
+      namespace: ns,
+      data: new TextEncoder().encode("# Smoke\n\nThe smoke file.\n"),
+      filename: "smoke.md",
+      source_uri: `repo://smoke-${Date.now()}.md`,
+      wait: false,
+    });
+    const status = await client.knowledge.ingestStatus({ org, namespace: ns, ingestion_id: job.ingestion_id });
+    expect([status.found, status.filename, status.source_uri]).toEqual([true, "smoke.md", job.source_uri]);
+  });
+
   it("paginates knowledge.list through the cursor helper", async () => {
     const rows = await collect(
       paginate((cursor) => client.knowledge.list({ org, namespace: ns, limit: 2, cursor } as never)),

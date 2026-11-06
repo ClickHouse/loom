@@ -10,12 +10,15 @@
  * is `loom.call("memory.search", input)`, `loom.knowledge.bulkAdd(...)` is
  * `knowledge.bulk_add`, and so on for every group. Both forms are the same
  * call; the dotted name is the one that appears in the server's ledger.
+ * `loom.knowledge` also uploads a file and follows its ingest job
+ * (`upload`, `waitForIngest`, `ingestFile`; see `files.ts`).
  */
 
 import { AccountClient } from "./account.js";
 import { type Capabilities, capabilities as fetchCapabilities } from "./capabilities.js";
 import { DEFAULT_SERVER, LocalCredential, StoredLogin, sameServer, signedInServer } from "./credentials.js";
 import { AuthError, LoomError } from "./errors.js";
+import { type KnowledgeFiles, knowledgeFiles } from "./files.js";
 import { OP_BY_NAME, OPS, type OpMap, type OpName, type OpSpec } from "./generated/ops.js";
 import { machineLogin } from "./machine.js";
 import { envVar, isBrowser } from "./runtime.js";
@@ -123,13 +126,16 @@ export class LoomClient {
       if (spec.group !== name) continue;
       target[spec.method] = (input: unknown, opts?: CallOptions) => this.transport.post(spec.name, input, opts);
     }
+    if (name === "knowledge") Object.assign(target, knowledgeFiles(this.transport));
     return target as GroupClient<G>;
   }
 }
 
 /** The generated groups as properties: `loom.memory`, `loom.knowledge`, … */
 export interface LoomClient extends LoomClientGroups {}
-export type LoomClientGroups = { readonly [G in Groups]: GroupClient<G> };
+export type LoomClientGroups = { readonly [G in Exclude<Groups, "knowledge">]: GroupClient<G> } & {
+  readonly knowledge: GroupClient<"knowledge"> & KnowledgeFiles;
+};
 
 /**
  * The server and credential a client uses, as the Python SDK picks them. A
