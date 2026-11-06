@@ -41,10 +41,15 @@ def unnumbered(s: str) -> str:
     return NUMBERING.sub("", s, count=1)
 
 
+def _gold_text(b: dict) -> str:
+    """A gold block's text, an item's leading number left out as the parse's is."""
+    return unnumbered(b["text"]) if b["kind"] == "item" else b["text"]
+
+
 def gold_words(g: dict) -> Counter:
     c: Counter = Counter()
     for b in g["blocks"]:
-        c.update(words(b["text"]))
+        c.update(words(_gold_text(b)))
     for t in g["tables"]:
         for r in t["rows"]:
             for cell in r:
@@ -103,7 +108,7 @@ def order_score(g: dict, p: dict) -> float | None:
     """The share of consecutive gold text units of five words or more
     (paragraphs, items, headings, code) that the parse holds in the same order."""
     units = [
-        words(b["text"])
+        words(_gold_text(b))
         for b in g["blocks"]
         if b["kind"] in ("paragraph", "item", "heading", "code")
     ]

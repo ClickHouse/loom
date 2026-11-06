@@ -140,6 +140,10 @@ def test_a_list_items_number_is_no_extra_word() -> None:
     }
     for p in (one, each):
         assert S.text_scores(g, p) == {"text_recall": 1.0, "text_precision": 1.0}
+    # an item that starts with a number of its own loses it on both sides
+    g = {"blocks": [{"kind": "item", "text": "3.11 adds the flag", "page": 1}], "tables": []}
+    p = {"blocks": [{**block, "text": "3.11 adds the flag"}], "tables": []}
+    assert S.text_scores(g, p) == {"text_recall": 1.0, "text_precision": 1.0}
 
 
 def test_a_heading_matches_without_its_number_and_levels_compare_by_rank() -> None:
