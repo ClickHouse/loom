@@ -35,6 +35,9 @@ except Exception as e:  # noqa: BLE001 — a file the extractor fails on is that
     print(json.dumps({"error": f"{type(e).__name__}: {e}"})); sys.exit(0)
 dt = time.perf_counter() - t0
 art = a.to_dict()
+if len(sys.argv) > 2 and sys.argv[2]:  # the artifact itself, for the downstream check
+    with open(sys.argv[2], "wb") as out:
+        out.write(a.to_json())
 blocks, tables = [], []
 art_tables = {t["id"]: t for t in art.get("tables", [])}
 def grid(t):
@@ -74,16 +77,21 @@ def run(
     extractor: Path,
     python: str = sys.executable,
     only: set[str] | None = None,
+    artifacts: Path | None = None,
 ) -> None:
     """Parse each corpus file with the extractor package in `extractor` (its
-    `extractor/` directory) under `python`."""
+    `extractor/` directory) under `python`; with `artifacts`, each file's
+    artifact is written there too, as `<file>.json`."""
+    if artifacts is not None:
+        empty_artifacts_dir(artifacts)
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(extractor)}
     gold = [json.loads(line) for line in (corpus / "gold.jsonl").read_text().splitlines()]
     with out.open("w") as f:
         for g in gold:
             if only and g["file"] not in only:
                 continue
-            res = _one(python, corpus / g["file"], env)
+            art = str(artifacts / f"{g['file']}.json") if artifacts else ""
+            res = _one(python, corpus / g["file"], env, art)
             res["file"] = g["file"]
             f.write(json.dumps(res) + "\n")
             f.flush()
@@ -95,11 +103,19 @@ def run(
             )
 
 
-def _one(python: str, path: Path, env: dict[str, str]) -> dict:
+def empty_artifacts_dir(path: Path) -> None:
+    """`path`, made when missing; SystemExit when it holds anything, as an
+    artifact left there from another run would be served as this run's parse."""
+    if path.is_dir() and any(path.iterdir()):
+        raise SystemExit(f"{path} is not empty: an artifact left there would be served as a parse")
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def _one(python: str, path: Path, env: dict[str, str], artifact: str = "") -> dict:
     t0 = time.perf_counter()
     try:
         p = subprocess.run(
-            [python, "-c", CHILD, str(path)],
+            [python, "-c", CHILD, str(path), artifact],
             capture_output=True,
             env=env,
             timeout=TIMEOUT_S,

@@ -7,6 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import httpx
 import pytest
 
 from bench.docparse import prepare as P
@@ -527,3 +528,301 @@ def test_a_build_the_container_sees_empties_its_directory_markers_last(
         assert [p.name for p in out.iterdir()] == ["_work"] and list(d.work.iterdir()) == []
     order = [n for n in removed if not n.startswith("mount-")]
     assert order.index("gold.jsonl") > max(order.index("a.pdf"), order.index("z.pdf"))
+
+
+def test_a_normalized_parse_becomes_an_artifact_the_server_accepts() -> None:
+    from bench.docparse.downstream import artifact_from_parse
+    from server.knowledge.domain.extract import parse_artifact
+
+    for g in _gold():
+        a = artifact_from_parse(_perfect(g), g["format"])
+        read = parse_artifact(json.dumps(a).encode(), fmt=g["format"], max_bytes=1 << 26)
+        assert len(read.blocks) == len([b for b in g["blocks"] if b["text"].strip()]), g["file"]
+        assert len(read.tables) == len([t for t in g["tables"] if len(t["rows"]) >= 2]), g["file"]
+    broken = artifact_from_parse({"complete": False, "blocks": [], "tables": []}, "pdf")
+    assert not parse_artifact(
+        json.dumps(broken).encode(), fmt="pdf", max_bytes=1 << 20
+    ).coverage.complete
+    block = {"page_start": 1, "page_end": 1, "notes": False}
+    parse = {
+        "complete": False,
+        "failed": [{"unit": "page 2", "reason": "its text needs OCR"}],
+        "blocks": [
+            {**block, "type": "heading", "text": "Design", "level": 1},
+            {**block, "type": "heading", "text": "Storage", "level": 2},
+            {**block, "type": "paragraph", "text": "Rows are kept by tenant.", "level": 0},
+        ],
+        "tables": [],
+    }
+    read = parse_artifact(
+        json.dumps(artifact_from_parse(parse, "pdf")).encode(), fmt="pdf", max_bytes=1 << 20
+    )
+    assert read.blocks[-1].section_path == ("Design", "Storage")
+    assert [(f.unit, f.reason) for f in read.coverage.failed] == [("page 2", "its text needs OCR")]
+
+
+def test_the_queries_are_paragraphs_and_table_rows_with_their_pages() -> None:
+    from bench.docparse.downstream import queries
+
+    qs = queries(_gold())
+    assert {q["kind"] for q in qs} == {"paragraph", "table row"}
+    for q in qs:
+        assert (
+            len(q["query"].split()) >= 2
+            and q["answer"]
+            and q["file"].endswith((".pdf", ".docx", ".pptx"))
+        )
+        assert q.get("within", False) == (q["kind"] == "table row")
+        if q["file"].endswith(".pdf"):
+            assert q["page"] >= 1 and q["page_end"] >= q["page"], q
+    assert (
+        max(
+            sum(1 for q in qs if q["file"] == f and q["kind"] == "paragraph")
+            for f in {q["file"] for q in qs}
+        )
+        == 3
+    )
+
+
+def test_the_report_pairs_each_system_with_the_first() -> None:
+    from bench.docparse.downstream import report
+
+    qs = [{"file": f"f{i}.pdf", "category": "c"} for i in range(6)]
+    results = {
+        "a": [{"found": 1, "cited": 0}] * 6,
+        "b": [{"found": 1, "cited": 1}] * 6,
+    }
+    out = report(["a", "b"], qs, results, 5)
+    assert out["ALL"]["cited@1"]["a"] == 0.0 and out["ALL"]["cited@1"]["b"] == 1.0
+    mean, lb, ub = out["ALL"]["cited@1"]["b-a"]
+    assert mean == 1.0 and lb == ub == 1.0 and out["c"]["n"] == 6
+
+
+def test_a_hit_is_found_by_its_words_and_cited_by_its_pages() -> None:
+    from bench.docparse.downstream import judge
+
+    q = {
+        "file": "a.pdf",
+        "answer": ["the", "ingest", "worker", "retries"],
+        "page": 2,
+        "page_end": 2,
+    }
+    ns = "docparse-mine"
+    hit = {
+        "source_uri": "docparse://a.pdf",
+        "namespace": ns,
+        "content": "The ingest worker retries.",
+        "locator": {"page_start": 2, "page_end": 2},
+    }
+    assert judge(q, [hit], ns) == {"found": 1, "cited": 1}
+    wide = {**hit, "locator": {"page_start": 1, "page_end": 5}}
+    other = {**hit, "source_uri": "docparse://b.pdf"}
+    assert judge(q, [other, wide, hit], ns) == {"found": 2, "cited": 3}
+    row = {**q, "within": True, "page": 2, "page_end": 4}
+    assert judge(row, [{**hit, "locator": {"page_start": 3, "page_end": 4}}], ns)["cited"] == 1
+    assert judge(row, [{**hit, "locator": {"page_start": 1, "page_end": 2}}], ns)["cited"] == 0
+    # another system's copy of the document, in its own namespace, is not this one's hit
+    theirs = {**hit, "namespace": "docparse-other"}
+    assert judge(q, [theirs, hit], ns) == {"found": 2, "cited": 2}
+
+
+def test_decision_counts_come_from_where_extraction_grounds_its_quotes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import types
+
+    from bench.docparse import downstream
+    from server.cli import _ch
+    from server.memory.app import decision_extract as app
+    from server.memory.domain import decision_extract as dx
+
+    def ground(cand: dx.Candidate, texts: list[str]) -> tuple[dx.Candidate | None, list[str]]:
+        return (cand if "keep" in cand.outcome else None), []
+
+    async def extract_document(org: str, namespace: str, uri: str, *, dry_run: bool) -> object:
+        for outcome in ("keep the queue", "drop it"):
+            cand = dx.Candidate(
+                "design",
+                "s",
+                outcome,
+                evidence=["the queue drains first"],
+                alternatives=[dx.Rejected("a lock", "", ("a lock was slower",))],
+            )
+            dx.ground(cand, [])
+        return types.SimpleNamespace(error="")
+
+    monkeypatch.setattr(dx, "ground", ground)
+    monkeypatch.setattr(app, "extract_document", extract_document)
+    monkeypatch.setattr(_ch, "run_connected", lambda run: asyncio.run(run(None)))
+    gold = {"a.pdf": S.words("first the queue drains first, then the rest")}
+    files = ["a.pdf", "b.pdf"]
+    states = {"new": {"a.pdf": "ready", "b.pdf": "failed"}}  # b.pdf: an earlier run's text
+    out = downstream.decisions("o", {"new": "docparse-new"}, files, gold, states)
+    c = out["new"]
+    assert (c["docs"], c["unread"]) == (1, 1)
+    # two candidates of two claims each, one kept; its two quotes, the rejected option's too
+    assert (c["claims"], c["kept"], c["quotes"], c["in_gold"]) == (4, 2, 2, 1)
+    assert c["quote_match"] == 0.5 and c["in_gold_rate"] == 0.5
+    assert dx.ground is ground  # put back
+
+
+def test_artifacts_takes_no_directory_that_holds_one_already(tmp_path: Path) -> None:
+    from bench.docparse.__main__ import main
+
+    art = tmp_path / "art"
+    art.mkdir()
+    (art / "old.pdf.json").write_text("{}")
+    parses = tmp_path / "p.jsonl"
+    parses.write_text("")
+    with pytest.raises(SystemExit, match="is not empty"):
+        main(["artifacts", str(parses), "--out", str(art)])
+
+
+def test_run_takes_no_artifacts_directory_that_holds_one_already(tmp_path: Path) -> None:
+    from bench.docparse import run as R
+
+    art = tmp_path / "art"
+    art.mkdir()
+    (art / f"{_gold()[0]['file']}.json").write_text("{}")  # a parse that fails would leave it
+    with pytest.raises(SystemExit, match="is not empty"):
+        R.run(CORPUS, tmp_path / "out.jsonl", tmp_path, artifacts=art)
+
+
+def test_downstream_refuses_what_would_mix_its_systems(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    from bench.docparse.__main__ import main
+
+    base = ["downstream", "--base-url", "http://127.0.0.1:1", "--out", str(tmp_path / "o")]
+    for argv, why in [
+        (["a=x", "A=y", "--token", "t"], "share a namespace"),
+        (["a=x", "a=y", "--token", "t"], "share a namespace"),
+        (["a=x", "--token", ""], "--token"),
+        (["a=x", "--token", "t", "--decisions", "99"], "--decisions is 0 to"),
+        (["a=x", "--token", "t", "--decisions", "-1"], "--decisions is 0 to"),
+    ]:
+        with pytest.raises(SystemExit):
+            main([*base, *argv])
+        assert why in capsys.readouterr().err
+
+
+def test_the_stub_serves_a_systems_artifact_to_the_token_alone(tmp_path: Path) -> None:
+    import socket
+    import threading
+
+    from bench.docparse.downstream import _Stub
+
+    (tmp_path / "a.pdf.json").write_text('{"schema_version": 1}')
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    stub = _Stub(port, "t" * 16, {"one": tmp_path})
+    stub.system = "one"
+    threading.Thread(target=stub.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{port}"
+        auth = {"authorization": "Bearer " + "t" * 16}
+        caps = httpx.get(f"{base}/v1/capabilities", headers=auth).json()
+        assert {f["format"] for f in caps["formats"]} == {"pdf", "docx", "pptx"}
+        assert httpx.post(
+            f"{base}/v1/extract?format=pdf&name=a.pdf", headers=auth, content=b"%PDF"
+        ).json() == {"schema_version": 1}
+        assert (
+            httpx.post(
+                f"{base}/v1/extract?format=pdf&name=b.pdf", headers=auth, content=b""
+            ).status_code
+            == 422
+        )
+        assert httpx.get(f"{base}/v1/capabilities").status_code == 401
+        outside = httpx.post(
+            f"{base}/v1/extract?format=pdf&name=../a.pdf", headers=auth, content=b""
+        )
+        assert outside.status_code == 422  # a corpus file's name, never a path
+        wrong = {"authorization": "Bearer " + "w" * 16}
+        assert httpx.get(f"{base}/v1/capabilities", headers=wrong).status_code == 401
+        post = f"{base}/v1/extract?format=pdf&name=a.pdf"
+        assert httpx.post(post, headers=wrong, content=b"%PDF").status_code == 401
+        assert httpx.post(post, content=b"%PDF").status_code == 401
+    finally:
+        stub.shutdown()
+        stub.server_close()
+
+
+class _FakeLoom:
+    """A Loom's ops as the harness calls them: each request recorded, a file's
+    ingest job named after it, and its state the one `states` gives it, else
+    `state`."""
+
+    def __init__(
+        self, state: str = "ready", results: list[dict] | None = None, states: dict | None = None
+    ) -> None:
+        self.state, self.sent, self.results = state, [], results or []
+        self.states = states or {}
+
+    def request(self, method: str, url: str, **kw: object) -> httpx.Response:
+        payload = kw.get("json") or {}
+        params = kw.get("params") or {}
+        assert isinstance(payload, dict) and isinstance(params, dict)
+        self.sent.append((url, payload or None))
+        job = payload.get("ingestion_id") or f"job-{payload.get('upload_id', '')}"
+        body: dict = {
+            "upload_id": params.get("filename", ""),
+            "ingestion_id": job,
+            "state": self.states.get(job.removeprefix("job-"), self.state),
+            "results": self.results,
+        }
+        return httpx.Response(200, json=body, request=httpx.Request(method, "http://loom" + url))
+
+
+def test_search_stays_in_the_systems_namespace_and_scores_an_unfinished_file_zero() -> None:
+    from bench.docparse.downstream import search
+
+    hit = {
+        "source_uri": "docparse://a.pdf",
+        "namespace": "docparse-new",
+        "content": "the answer",
+        "locator": {"page_start": 1, "page_end": 1},
+    }
+    loom = _FakeLoom(results=[hit])
+    q = {"file": "a.pdf", "query": "q", "answer": ["the", "answer"], "page": 1, "page_end": 1}
+    states = {"a.pdf": "ready", "b.pdf": "failed"}
+    out = search(loom, "o", "docparse-new", [q, {**q, "file": "b.pdf"}], 5, states)
+    assert out == [{"found": 1, "cited": 1}, {"found": 0, "cited": 0}]
+    ((url, payload),) = loom.sent  # b.pdf, failed this run, is not searched
+    assert url == "/v1/knowledge.search" and payload["namespace_scope"] == "this"
+    assert payload["uri_prefix"] == ["docparse://a.pdf"] and payload["namespace"] == "docparse-new"
+
+
+# the refusal keeps the whole deadline, and a second pass fails: only the refusal ends it
+@pytest.mark.parametrize(
+    ("refused", "deadline", "why"),
+    [(True, 1800, "another token"), (False, 0.2, "still running")],
+)
+def test_ingest_stops_after_a_poll_and_cancels_only_its_open_jobs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, refused: bool, deadline: float, why: str
+) -> None:
+    from bench.docparse import downstream
+
+    monkeypatch.setattr(downstream, "INGEST_DEADLINE_S", deadline)
+    if refused:  # a second pass would mean the refusal did not stop the poll: fail at once
+        sleeps: list[float] = []
+
+        def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            assert len(sleeps) == 1, "the refusal did not stop the poll"
+
+        monkeypatch.setattr("time.sleep", sleep)
+    for f in ("a.pdf", "b.pdf"):
+        (tmp_path / f).write_bytes(b"%PDF")
+    loom = _FakeLoom(states={"a.pdf": "ready", "b.pdf": "processing"})
+    polls: list[int] = []  # the token is refused once a poll has seen a.pdf finish
+
+    def refusal() -> bool:
+        polls.append(1)
+        return refused and len(polls) > 1
+
+    with pytest.raises(SystemExit, match=why):
+        downstream.ingest(loom, "o", "n", tmp_path, ["a.pdf", "b.pdf"], refused=refusal)
+    cancels = [p for url, p in loom.sent if url == "/v1/knowledge.ingest_cancel"]
+    assert cancels == [{"org": "o", "namespace": "n", "ingestion_id": "job-b.pdf"}]
