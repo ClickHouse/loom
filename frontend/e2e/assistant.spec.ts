@@ -2,8 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
 import { installApi } from "./fixtures";
 
-// The Assistant page reads nothing on mount, so the route-wide axe and layout runs see only
-// its starters. This spec draws every panel it has, with the server's full-length text and a
+// The Assistant page reads only its overview on load, so the route-wide axe and layout runs
+// see no inspection, documents or drafts. This spec draws every panel it has, with the server's full-length text and a
 // long subject id, and checks it at desktop and phone width: no horizontal scroll, no axe
 // violation.
 
@@ -585,37 +585,15 @@ async function openWithEveryPanel(page: Page) {
     await page.route(`**/v1/${op}`, (r) => r.fulfill({ json: body }));
   await page.goto("/assistant");
   await expect(page.getByRole("heading", { level: 1, name: "Assistant" })).toBeVisible();
-  await page.getByRole("button", { name: "Documents", exact: true }).click();
-  await page.getByRole("button", { name: "Inspect", exact: true }).click();
+  await expect(page.getByTestId("assistant-populations")).toBeVisible();
+  await page.getByRole("button", { name: "Inspect documents" }).click();
   await expect(page.getByTestId("assistant-documents")).toBeVisible();
-  await page.getByRole("button", { name: "User", exact: true }).click();
-  await page.getByRole("button", { name: "What is in this project?" }).click();
-  await expect(page.getByRole("table", { name: "What this namespace holds" })).toBeVisible();
-  await page.getByLabel("User id").fill(LONG_ID);
-  await page.getByLabel("User id").press("Enter");
+  // The longest user id, picked from the overview: no typing.
+  await page.getByTestId("pick-user").first().click();
   await expect(page.getByTestId("assistant-inspection")).toBeVisible();
-  await page.getByRole("button", { name: "Configure this project" }).click();
+  await page.getByRole("button", { name: "Draft improvements" }).click();
   await expect(page.getByTestId("assistant-review")).toBeVisible();
   await page.waitForTimeout(300); // entry animations
-}
-
-// One starter panel is open at a time; each is measured in turn with the rest drawn.
-const STARTER_PANELS: Array<[string, (page: Page) => Promise<void>]> = [
-  [
-    "What is in this project?",
-    async (page) => expect(page.getByRole("table", { name: "What this namespace holds" })).toBeVisible(),
-  ],
-  [
-    "Who are the users in this project?",
-    async (page) => expect(page.getByTestId("assistant-populations")).toBeVisible(),
-  ],
-  ["Show relationships between facts", async (page) => expect(page.getByLabel("Entity")).toBeVisible()],
-];
-
-async function openStarter(page: Page, [name, shown]: (typeof STARTER_PANELS)[number]) {
-  await page.getByRole("button", { name }).click();
-  await shown(page);
-  await page.waitForTimeout(300);
 }
 
 async function clipped(page: Page): Promise<string[]> {
@@ -643,33 +621,33 @@ for (const width of [1400, 375]) {
 
     test("every panel fits the page width", async ({ page }) => {
       await openWithEveryPanel(page);
-      for (const starter of STARTER_PANELS) {
-        await openStarter(page, starter);
-        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-        expect(overflow, starter[0]).toBeLessThanOrEqual(0);
-        expect(await clipped(page), starter[0]).toEqual([]);
-      }
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow).toBeLessThanOrEqual(0);
+      expect(await clipped(page)).toEqual([]);
     });
 
     test("every panel has no WCAG A/AA violations", async ({ page }) => {
       await openWithEveryPanel(page);
-      for (const starter of STARTER_PANELS) {
-        await openStarter(page, starter);
-        expect(await violations(page), starter[0]).toEqual([]);
-      }
+      expect(await violations(page)).toEqual([]);
     });
   });
 }
 
-test("Back from the graph lands on the Relationships starter", async ({ page }) => {
+test("Back from the graph lands on the button that opened it", async ({ page }) => {
   await installApi(page);
   await page.goto("/assistant");
-  await page.getByRole("button", { name: "Show relationships between facts" }).click();
-  await page.getByLabel("Entity").fill("invoices");
+  await page.getByLabel("Start from (optional)").fill("invoices");
   await page.getByRole("button", { name: "Open the graph" }).click();
   await expect(page).toHaveURL(/\/graph\?.*seed=invoices/);
   await page.goBack();
-  await expect(page.getByRole("button", { name: "Show relationships between facts" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Open the graph" })).toBeFocused();
+});
+
+test("the graph opens with no entity typed", async ({ page }) => {
+  await installApi(page);
+  await page.goto("/assistant");
+  await page.getByRole("button", { name: "Open the graph" }).click();
+  await expect(page).toHaveURL(/\/graph/);
 });
 
 test("a listed or cited row opens in the inspector under its whole writer identity", async ({ page }) => {
@@ -695,7 +673,7 @@ test("a listed or cited row opens in the inspector under its whole writer identi
   await expect.poll(() => gets.length).toBeGreaterThan(0);
   expect(gets.at(-1)).toMatchObject({ memory_key: key, agent: "claude-code", user_id: LONG_ID, session_id: "-" });
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Configure this project" }).click();
+  await page.getByRole("button", { name: "Draft improvements" }).click();
   const before = gets.length;
   await page
     .getByTestId("assistant-review")

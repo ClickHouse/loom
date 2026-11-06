@@ -1240,6 +1240,9 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
       case "/v1/facts.list":
         calls.facts.push(body);
         return json({ rows: [] });
+      case "/v1/namespace.inventory":
+        // The Assistant reads it on load: a small namespace with one user and one agent.
+        return json(inventoryFor(String(body.org ?? "dev"), ns));
       case "/v1/tracker.binding": {
         calls.qa.push({ op: "binding", ...body });
         // A tracker namespace binds to itself (server/tracker/app/binding.py): the
@@ -1273,6 +1276,39 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
     return json({ rows: [], entries: [], total: 0, today: 0, truncated: false });
   });
   return calls;
+}
+
+/** namespace.inventory as the server sends it, for a namespace with one user and one agent. */
+function inventoryFor(org: string, namespace: string) {
+  const plane = (name: string, count: number) => ({ plane: name, count, latest_at: null, complete: true, reason: "" });
+  const observed = (population: string, name: string, rows: number) => ({
+    population,
+    total: 1,
+    top: [{ name, rows }],
+    complete: true,
+    reason: "",
+  });
+  return {
+    scope: { org, namespace, read_scope: "namespace", user_id: null, session_id: null },
+    sections: [
+      plane("memories", 12),
+      plane("records", 0),
+      plane("documents", 2),
+      plane("runs", 0),
+      plane("integrations", 0),
+    ],
+    populations: [
+      { population: "members", total: 1, top: [], complete: true, reason: "" },
+      observed("agents", "claude-code", 12),
+      observed("authors", "human:o@example.com", 12),
+      observed("subjects", "ada", 12),
+    ],
+    capabilities: [
+      { name: "llm", enabled: false },
+      { name: "embedder", enabled: true },
+    ],
+    computed_at: "2026-11-01T10:00:00",
+  };
 }
 
 /** A fixture answers what a projecting server would send. When the request carries

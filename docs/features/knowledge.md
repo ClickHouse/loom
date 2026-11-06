@@ -688,7 +688,7 @@ versions search serves, what was extracted from them, and where their `knowledge
 jobs stand. It reads what is stored, never parses a document, never calls an extractor
 and writes nothing. It is in the [assistant
 toolset](../reference/mcp.md#the-assistant-toolset), and the dashboard's Assistant page
-shows it when Documents is the subject inspected. `sample_limit` (0–100, default 20)
+shows it under Inspect documents. `sample_limit` (0–100, default 20)
 bounds the listed documents and every finding's samples.
 
 - **`documents`**: live and deleted (`knowledge.delete`) documents by format (the row's

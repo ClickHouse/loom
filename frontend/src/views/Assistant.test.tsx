@@ -845,21 +845,29 @@ const switchNamespace = () =>
     useStore.setState({ identity: { org: "dev", namespace: "other", agent: "loom-ui" } });
   });
 
-describe("Assistant: starters and scope", () => {
-  it("explains itself, offers the starters and reads nothing on mount", async () => {
+const pinned = (claims: object) => {
+  const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
+  localStorage.setItem("loom_token_v1", `${b64({ alg: "HS256" })}.${b64({ sub: "ada", ...claims })}.sig`);
+};
+
+const PINNED_INVENTORY: NamespaceInventory = {
+  ...INVENTORY,
+  scope: { ...INVENTORY.scope, read_scope: "own_user", user_id: "ada", session_id: null },
+};
+
+describe("Assistant: overview", () => {
+  it("explains itself and shows the overview with no click; inspects and drafts nothing on load", async () => {
     const { container } = render(<Assistant />);
     expect(screen.getByRole("heading", { level: 1, name: "Assistant" })).toBeInTheDocument();
-    for (const name of [
-      "Show relationships between facts",
-      "What is in this project?",
-      "Analyze one user's memories",
-      "Who are the users in this project?",
-      "Configure this project",
-    ])
+    expect(screen.getByText(/Nothing on this page changes your data/)).toBeInTheDocument();
+    await screen.findByTestId("assistant-inventory");
+    expect(namespaceInventory).toHaveBeenCalledTimes(1);
+    expect(namespaceInventory).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, expect.anything());
+    for (const name of ["Inspect memories", "Inspect documents", "Open the graph", "Draft improvements"])
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
-    expect(screen.getByText(/No drafts yet/)).toBeInTheDocument();
-    expect(namespaceInventory).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: /Review changes/ })).toBeNull();
     expect(inspectMemories).not.toHaveBeenCalled();
+    expect(inspectKnowledge).not.toHaveBeenCalled();
     expect(tuneNamespace).not.toHaveBeenCalled();
     expect(await axeViolations(container)).toEqual([]);
   });
@@ -867,106 +875,124 @@ describe("Assistant: starters and scope", () => {
   it("offers no read to a caller whose role on the namespace is unknown", async () => {
     useStore.setState({ myNamespaces: [] });
     render(<Assistant />);
-    const starter = screen.getByRole("button", { name: "Configure this project" });
-    expect(starter).toHaveAttribute("aria-disabled", "true");
-    expect(starter).toHaveAccessibleDescription("Your role on this namespace is not known.");
-    await userEvent.click(starter);
+    const draft = screen.getByRole("button", { name: "Draft improvements" });
+    expect(draft).toHaveAttribute("aria-disabled", "true");
+    expect(draft).toHaveAccessibleDescription("Your role on this namespace is not known.");
+    await userEvent.click(draft);
     expect(tuneNamespace).not.toHaveBeenCalled();
+    expect(namespaceInventory).not.toHaveBeenCalled();
+    expect(screen.getAllByText("Your role on this namespace is not known.").length).toBeGreaterThan(0);
   });
-});
 
-describe("Assistant: relationships", () => {
-  it("opens the graph only from an entity", async () => {
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Show relationships between facts" }));
-    const open = screen.getByRole("button", { name: "Open the graph" });
-    expect(open).toHaveAccessibleDescription("Enter an entity to walk from.");
-    await userEvent.type(screen.getByLabelText("Entity"), "invoices");
-    expect(screen.getByRole("button", { name: "Open the graph" })).not.toHaveAttribute("aria-disabled");
-    await userEvent.click(screen.getByRole("button", { name: "Open the graph" }));
-    expect(useStore.getState().view).toBe("graph");
-  });
-});
-
-describe("Assistant: inventory", () => {
   it("shows what the namespace holds, with a section it could not count said so", async () => {
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "What is in this project?" }));
-    const table = await screen.findByRole("table", { name: "What this namespace holds" });
-    expect(within(table).getByText("42")).toBeInTheDocument();
-    expect(within(table).getByTestId("inventory-incomplete")).toHaveTextContent("read failed: TimeoutError");
+    await screen.findByTestId("assistant-inventory");
+    const held = screen.getByLabelText("What this namespace holds");
+    expect(held.querySelector('[data-plane="memories"]')).toHaveTextContent("Memories42");
+    expect(within(held).getByTestId("inventory-incomplete")).toHaveTextContent(
+      "Not counted: read failed: TimeoutError",
+    );
     expect(screen.getByText(/Model: not enabled/)).toBeInTheDocument();
-    expect(namespaceInventory).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, expect.anything());
   });
 
-  it("lists members apart from the identities observed on rows, and says when members are incomplete", async () => {
+  it("lists members apart from the users observed on rows, and says when members are incomplete", async () => {
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Who are the users in this project?" }));
     const list = await screen.findByTestId("assistant-populations");
-    const members = within(list)
-      .getAllByRole("listitem")
-      .find((li) => li.getAttribute("data-population") === "members");
-    expect(members).toHaveTextContent(/people holding an active grant/);
+    const items = within(list).getAllByRole("listitem");
+    const members = items.find((li) => li.getAttribute("data-population") === "members");
+    expect(members).toHaveTextContent(/people with access to this namespace/);
     expect(members).toHaveTextContent(
       "Not complete: shared with everyone, a group or an agent: those members are not counted",
     );
-    const subjects = within(list)
-      .getAllByRole("listitem")
-      .find((li) => li.getAttribute("data-population") === "subjects");
-    expect(subjects).toHaveTextContent("ada12");
+    // Users come first: they are what a viewer picks most.
+    expect(items[0]).toHaveAttribute("data-population", "subjects");
   });
 
-  it("says a population lists only its largest identities", async () => {
+  it("inspects a user picked in the overview, with no typing, and moves the focus to the answer", async () => {
+    render(<Assistant />);
+    await screen.findByTestId("assistant-populations");
+    await userEvent.click(screen.getByRole("button", { name: "ada 12" }));
+    expect(inspectMemories).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "user", "ada", expect.anything());
+    await screen.findByTestId("assistant-inspection");
+    expect(screen.getByRole("region", { name: "Memories" })).toHaveFocus();
+    expect(screen.getByLabelText("User id")).toHaveValue("ada");
+  });
+
+  it("inspects an agent picked in the overview", async () => {
+    render(<Assistant />);
+    await screen.findByTestId("assistant-populations");
+    await userEvent.click(screen.getByRole("button", { name: "claude-code 40" }));
+    expect(inspectMemories).toHaveBeenCalledWith(expect.anything(), "agent", "claude-code", expect.anything());
+    expect(screen.getByLabelText("Agent")).toHaveValue("claude-code");
+  });
+
+  it("lists authors without offering to inspect them", async () => {
+    render(<Assistant />);
+    const list = await screen.findByTestId("assistant-populations");
+    const authors = within(list)
+      .getAllByRole("listitem")
+      .find((li) => li.getAttribute("data-population") === "authors");
+    expect(authors).toHaveTextContent("human:o@example.com42");
+    expect(within(authors as HTMLElement).queryByRole("button")).toBeNull();
+  });
+
+  it("suggests the users and agents the overview found in the id field", async () => {
+    render(<Assistant />);
+    await screen.findByTestId("assistant-populations");
+    const field = screen.getByLabelText("User id");
+    expect(field).toHaveAttribute("list", "assistant-subject-suggestions");
+    const options = () => Array.from(document.querySelectorAll("#assistant-subject-suggestions option"));
+    expect(options().map((o) => o.getAttribute("value"))).toEqual(["ada"]);
+    await userEvent.click(screen.getByRole("button", { name: "Agent" }));
+    expect(options().map((o) => o.getAttribute("value"))).toEqual(["claude-code"]);
+    await userEvent.click(screen.getByRole("button", { name: "Session" }));
+    expect(screen.getByLabelText("Session id")).not.toHaveAttribute("list");
+  });
+
+  it("says a population lists only its largest identities, and that any other can be typed", async () => {
     namespaceInventory.mockResolvedValueOnce({
       ...INVENTORY,
       populations: INVENTORY.populations.map((p) => (p.population === "subjects" ? { ...p, total: 340 } : p)),
     });
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Who are the users in this project?" }));
     const list = await screen.findByTestId("assistant-populations");
     const subjects = within(list)
       .getAllByRole("listitem")
       .find((li) => li.getAttribute("data-population") === "subjects");
-    expect(subjects).toHaveTextContent("The 1 with the most rows are shown.");
+    expect(subjects).toHaveTextContent("The 1 with the most memories are shown; type any other in the field below.");
   });
 
   it("says the counts are bound to the user the token is pinned to", async () => {
-    namespaceInventory.mockResolvedValueOnce({
-      ...INVENTORY,
-      scope: { ...INVENTORY.scope, read_scope: "own_user", user_id: "ada", session_id: null },
-    });
+    namespaceInventory.mockResolvedValueOnce(PINNED_INVENTORY);
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Who are the users in this project?" }));
     expect(await screen.findByTestId("inventory-scope")).toHaveTextContent(
-      "Memories, runs and the agents, authors and subjects on rows are counted for user ada only, as your token reads; documents and members are the namespace's.",
+      "Memories, runs and the users, agents and authors are counted for user ada only, as your token reads; documents and members are the whole namespace's.",
     );
   });
 
-  it("offers no inspection or drafts once the inventory shows a token pinned to one user", async () => {
-    namespaceInventory.mockResolvedValueOnce({
-      ...INVENTORY,
-      scope: { ...INVENTORY.scope, read_scope: "own_user", user_id: "ada", session_id: null },
-    });
+  it("offers no inspection or drafts once the overview shows a token pinned to one user", async () => {
+    namespaceInventory.mockResolvedValueOnce(PINNED_INVENTORY);
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "What is in this project?" }));
     await screen.findByTestId("inventory-scope");
-    const configure = screen.getByRole("button", { name: "Configure this project" });
-    expect(configure).toHaveAccessibleDescription(/bound to one user or session/);
-    await userEvent.click(configure);
+    const draft = screen.getByRole("button", { name: "Draft improvements" });
+    expect(draft).toHaveAccessibleDescription(/bound to one user or session/);
+    await userEvent.click(draft);
+    const pick = screen.getByRole("button", { name: "ada 12" });
+    expect(pick).toHaveAccessibleDescription(/bound to one user or session/);
+    await userEvent.click(pick);
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     expect(tuneNamespace).not.toHaveBeenCalled();
     expect(inspectMemories).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "What is in this project?" })).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByRole("button", { name: "Refresh" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("offers no inspection or drafts to a token whose own claim pins it, before any read", async () => {
-    const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
-    localStorage.setItem("loom_token_v1", `${b64({ alg: "HS256" })}.${b64({ sub: "ada", read_user_id: "ada" })}.sig`);
+    pinned({ read_user_id: "ada" });
     try {
       render(<Assistant />);
-      const configure = screen.getByRole("button", { name: "Configure this project" });
-      expect(configure).toHaveAccessibleDescription(/bound to one user or session/);
-      await userEvent.click(configure);
+      const draft = screen.getByRole("button", { name: "Draft improvements" });
+      expect(draft).toHaveAccessibleDescription(/bound to one user or session/);
+      await userEvent.click(draft);
       await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
       expect(tuneNamespace).not.toHaveBeenCalled();
       expect(inspectMemories).not.toHaveBeenCalled();
@@ -978,42 +1004,37 @@ describe("Assistant: inventory", () => {
   it.each([
     ["own_session", { read_scope: "own_session", read_user_id: "ada" }],
     ["own_user without a pinned user", { read_scope: "own_user" }],
-  ])("offers no inventory to a token scoped %s, which this page cannot complete", async (_label, claims) => {
-    const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
-    localStorage.setItem("loom_token_v1", `${b64({ alg: "HS256" })}.${b64({ sub: "ada", ...claims })}.sig`);
+  ])("reads no overview for a token scoped %s, which this page cannot complete", async (_label, claims) => {
+    pinned(claims);
     try {
       render(<Assistant />);
-      for (const name of ["What is in this project?", "Who are the users in this project?"]) {
-        const starter = screen.getByRole("button", { name });
-        expect(starter).toHaveAccessibleDescription(
-          "Your token's read scope needs a user or session id this page does not send.",
-        );
-        await userEvent.click(starter);
-      }
+      const refresh = screen.getByRole("button", { name: "Refresh" });
+      expect(refresh).toHaveAccessibleDescription(
+        "Your token's read scope needs a user or session id this page does not send.",
+      );
+      await userEvent.click(refresh);
       expect(namespaceInventory).not.toHaveBeenCalled();
     } finally {
       localStorage.removeItem("loom_token_v1");
     }
   });
 
-  it("drops a pinned token's answer once the page is signed in again with a namespace token", async () => {
+  it("reads the overview again for a token signed in again with the namespace's scope", async () => {
     const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
     const token = (claims: object) => `${b64({ alg: "HS256" })}.${b64({ sub: "ada", ...claims })}.sig`;
     localStorage.setItem("loom_token_v1", token({ read_user_id: "ada" }));
-    namespaceInventory.mockResolvedValueOnce({
-      ...INVENTORY,
-      scope: { ...INVENTORY.scope, read_scope: "own_user", user_id: "ada", session_id: null },
-    });
+    namespaceInventory.mockResolvedValueOnce(PINNED_INVENTORY);
     try {
       render(<Assistant />);
-      await userEvent.click(screen.getByRole("button", { name: "What is in this project?" }));
       await screen.findByTestId("inventory-scope");
       localStorage.setItem("loom_token_v1", token({}));
       act(() => {
         useStore.setState({ whoami: { ...viewer } });
       });
       await waitFor(() => expect(screen.queryByTestId("inventory-scope")).toBeNull());
-      expect(screen.getByRole("button", { name: "Configure this project" })).not.toHaveAttribute("aria-disabled");
+      await screen.findByTestId("assistant-inventory");
+      expect(namespaceInventory).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("button", { name: "Draft improvements" })).not.toHaveAttribute("aria-disabled");
     } finally {
       localStorage.removeItem("loom_token_v1");
     }
@@ -1021,50 +1042,61 @@ describe("Assistant: inventory", () => {
 
   it("adds no scope note when the counts cover the namespace", async () => {
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "What is in this project?" }));
     await screen.findByTestId("assistant-inventory");
     expect(screen.queryByTestId("inventory-scope")).toBeNull();
   });
 
-  it("reads again on every starter click", async () => {
+  it("reads again on Refresh, keeping the last answer on screen", async () => {
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "What is in this project?" }));
     await screen.findByTestId("assistant-inventory");
-    await userEvent.click(screen.getByRole("button", { name: "Who are the users in this project?" }));
-    await screen.findByTestId("assistant-populations");
-    expect(namespaceInventory).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(screen.getByTestId("assistant-inventory")).toBeInTheDocument();
+    await waitFor(() => expect(namespaceInventory).toHaveBeenCalledTimes(2));
   });
 
-  it("says when the inventory cannot be read", async () => {
+  it("says when the overview cannot be read", async () => {
     namespaceInventory.mockRejectedValueOnce(new ApiError({ status: 500, code: "INTERNAL", message: "boom" }));
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "What is in this project?" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the inventory");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the overview");
   });
 
-  it("shows nothing of the old namespace's inventory on the first render after a switch", async () => {
+  it("shows nothing of the old namespace's overview on the first render after a switch", async () => {
+    namespaceInventory.mockImplementation(async () => INVENTORY);
     const { rerender } = render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "What is in this project?" }));
     await screen.findByTestId("assistant-inventory");
+    namespaceInventory.mockImplementationOnce(() => new Promise<NamespaceInventory>(() => {}));
     useStore.setState({ identity: { org: "dev", namespace: "other", agent: "loom-ui" } });
     rerender(<Assistant />);
     expect(screen.queryByTestId("assistant-inventory")).toBeNull();
   });
 
-  it("closes the inventory panel when the namespace changes", async () => {
+  it("reads the new namespace's overview when the namespace changes", async () => {
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "What is in this project?" }));
     await screen.findByTestId("assistant-inventory");
     switchNamespace();
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "What this namespace holds" })).toBeNull());
+    await waitFor(() =>
+      expect(namespaceInventory).toHaveBeenLastCalledWith({ org: "dev", namespace: "other" }, expect.anything()),
+    );
   });
 });
 
+describe("Assistant: relationships", () => {
+  it("opens the graph with no entity, on its own starting points", async () => {
+    render(<Assistant />);
+    await userEvent.click(screen.getByRole("button", { name: "Open the graph" }));
+    expect(useStore.getState().view).toBe("graph");
+  });
+
+  it("opens the graph from an entity typed in", async () => {
+    render(<Assistant />);
+    await userEvent.type(screen.getByLabelText("Start from (optional)"), "Invoices{Enter}");
+    expect(useStore.getState().view).toBe("graph");
+    expect(window.location.search).toContain("seed=invoices");
+  });
+});
 describe("Assistant: inspection", () => {
   it("inspects a user: the rows filed under the user, apart from the rest", async () => {
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Analyze one user's memories" }));
-    expect(screen.getByLabelText("User id")).toHaveFocus();
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     const result = await screen.findByTestId("assistant-inspection");
     expect(inspectMemories).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "user", "ada", expect.anything());
@@ -1090,13 +1122,13 @@ describe("Assistant: inspection", () => {
   });
 
   it.each([
-    ["Agent", "agent", "claude-code", "Written by this agent"],
-    ["Session", "session", "s-1", "Written in this session"],
-  ] as const)("inspects a %s with its own heading", async (label, subject, id, heading) => {
+    ["Agent", "Agent", "agent", "claude-code", "Written by this agent"],
+    ["Session", "Session id", "session", "s-1", "Written in this session"],
+  ] as const)("inspects a %s with its own heading", async (label, field, subject, id, heading) => {
     render(<Assistant />);
     await userEvent.click(screen.getByRole("button", { name: label }));
-    await userEvent.type(screen.getByLabelText(`${label} id`), id);
-    await userEvent.click(screen.getByRole("button", { name: "Inspect" }));
+    await userEvent.type(screen.getByLabelText(field), id);
+    await userEvent.click(screen.getByRole("button", { name: "Inspect memories" }));
     const result = await screen.findByTestId("assistant-inspection");
     expect(inspectMemories).toHaveBeenCalledWith(expect.anything(), subject, id, expect.anything());
     expect(within(result).getByRole("heading", { name: new RegExp(heading) })).toBeInTheDocument();
@@ -1237,7 +1269,7 @@ describe("Assistant: inspection", () => {
 
   it("does not inspect without an id", async () => {
     render(<Assistant />);
-    const inspect = screen.getByRole("button", { name: "Inspect" });
+    const inspect = screen.getByRole("button", { name: "Inspect memories" });
     expect(inspect).toHaveAttribute("aria-disabled", "true");
     await userEvent.click(inspect);
     await userEvent.type(screen.getByLabelText("User id"), "{Enter}");
@@ -1248,7 +1280,7 @@ describe("Assistant: inspection", () => {
     inspectMemories.mockRejectedValueOnce(new ApiError({ status: 500, code: "INTERNAL", message: "boom" }));
     render(<Assistant />);
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the inspection");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the memories");
   });
 
   it("drops the inspection when the namespace changes", async () => {
@@ -1263,7 +1295,7 @@ describe("Assistant: inspection", () => {
 describe("Assistant: review changes", () => {
   it("renders each draft with its diff, evidence and the call that would apply it, and never applies", async () => {
     const { container } = render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = await screen.findByTestId("assistant-review");
     const card = within(review).getByRole("listitem", { name: /Register a category for the tag/ });
     expect(within(card).getByText("Draft, not approved")).toBeInTheDocument();
@@ -1279,10 +1311,10 @@ describe("Assistant: review changes", () => {
     expect(within(card).getByTestId("affected-agents")).toHaveTextContent("claude-codeand 2 more");
     expect(within(card).getByText("namespace.register_category")).toBeInTheDocument();
     expect(within(card).getByTestId("proposal-args")).toHaveTextContent('"name": "billing"');
-    const apply = within(card).getByRole("button", { name: "Apply" });
-    expect(apply).toHaveAttribute("aria-disabled", "true");
-    expect(apply).toHaveAccessibleDescription(/A writer on this namespace sends namespace.register_category/);
-    await userEvent.click(apply);
+    expect(within(card).queryByRole("button", { name: "Apply" })).toBeNull();
+    expect(within(card).getByTestId("how-to-apply")).toHaveTextContent(
+      "How to apply: A writer on this namespace sends the request below.",
+    );
     expect(within(review).getByTestId("tune-skipped")).toHaveTextContent(
       "audit.telemetry_unavailable: window within the ledger lag",
     );
@@ -1304,7 +1336,7 @@ describe("Assistant: review changes", () => {
     const { chunking: _chunking, ...old } = TUNE;
     tuneNamespace.mockResolvedValueOnce({ ...old, proposals: TUNE.proposals.map(legacy) });
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = await screen.findByTestId("assistant-review");
     const card = within(review).getByRole("listitem", { name: /Register a category for the tag/ });
     expect(within(card).getByText("namespace.register_category")).toBeInTheDocument();
@@ -1315,7 +1347,7 @@ describe("Assistant: review changes", () => {
 
   it("shows a guide draft's revision and arguments, and says when the writers could not be read", async () => {
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = await screen.findByTestId("assistant-review");
     const card = within(review).getByRole("listitem", { name: /Name the key prefixes the guide leaves out/ });
     expect(within(card).getByText(/Current \(revision 2\)/)).toBeInTheDocument();
@@ -1327,7 +1359,7 @@ describe("Assistant: review changes", () => {
   it("captions a guide with no revision yet without a revision", async () => {
     tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [{ ...GUIDE, current: "", current_revision: 0 }] });
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByText("Current")).toBeInTheDocument();
     expect(within(review).queryByText(/revision 0/)).toBeNull();
@@ -1335,7 +1367,7 @@ describe("Assistant: review changes", () => {
 
   it("says that each writer sends the extraction instructions itself", async () => {
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = await screen.findByTestId("assistant-review");
     const card = within(review).getByRole("listitem", {
       name: /Send extraction instructions for the shapes the audit found/,
@@ -1347,16 +1379,14 @@ describe("Assistant: review changes", () => {
       within(card).getByText(/episodic_blobs · 5 supporting · at least 25 unflagged rows it must keep working for/),
     ).toBeInTheDocument();
     expect(within(card).getByTestId("proposal-args")).toHaveTextContent('"extraction_instructions"');
-    expect(within(card).getByRole("button", { name: "Apply" })).toHaveAccessibleDescription(
-      /no single call applies this/,
-    );
+    expect(within(card).getByTestId("how-to-apply")).toHaveTextContent(/No single request applies this/);
     expect(within(card).getByTestId("affected-agents")).toHaveTextContent("Affected agents:claude-code");
   });
 
   it("does not claim the evidence supports no change when a read failed", async () => {
     tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [], skipped: ["audit: TimeoutError"] });
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByRole("status")).toHaveTextContent(
       "No drafts. What was skipped, and why, is listed below.",
@@ -1368,7 +1398,7 @@ describe("Assistant: review changes", () => {
     const reason = "extraction: memory.set_from_messages writes no row here, so no rule is drafted for episodic_blobs";
     tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [], skipped: [reason] });
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByRole("status")).toHaveTextContent(
       "No drafts. What was skipped, and why, is listed below.",
@@ -1379,7 +1409,7 @@ describe("Assistant: review changes", () => {
   it("says the evidence supports no change when nothing was left out", async () => {
     tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [], skipped: [] });
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByRole("status")).toHaveTextContent("The evidence supports no change.");
   });
@@ -1391,7 +1421,7 @@ describe("Assistant: review changes", () => {
       skipped: ["category.billing.cited: TimeoutError"],
     });
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByRole("listitem", { name: /Register a category for the tag/ })).toBeInTheDocument();
     expect(within(review).getByTestId("tune-skipped")).toHaveTextContent(
@@ -1402,10 +1432,10 @@ describe("Assistant: review changes", () => {
 
   it("keeps the drafts on screen, marked busy, while they are drafted again", async () => {
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     await screen.findByTestId("assistant-review");
     tuneNamespace.mockImplementationOnce(() => new Promise<NamespaceTune>(() => {}));
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = screen.getByTestId("assistant-review");
     expect(review.parentElement).toHaveAttribute("aria-busy", "true");
     expect(within(review).getByText("Register a category for the tag `billing`")).toBeInTheDocument();
@@ -1414,21 +1444,23 @@ describe("Assistant: review changes", () => {
   it("says when the drafts cannot be read", async () => {
     tuneNamespace.mockRejectedValueOnce(new ApiError({ status: 500, code: "INTERNAL", message: "boom" }));
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the drafts");
   });
 
   it("is not left loading when the page comes back to a namespace it left mid-read", async () => {
     tuneNamespace.mockImplementationOnce(() => new Promise<NamespaceTune>(() => {}));
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     switchNamespace();
     act(() => {
       useStore.setState({ identity: { org: "dev", namespace: "team", agent: "loom-ui" } });
     });
-    await waitFor(() => expect(screen.getByText(/No drafts yet/)).toBeInTheDocument());
-    expect(screen.queryByText("Loading the drafts")).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Draft improvements" })).not.toHaveAttribute("aria-busy"),
+    );
+    expect(screen.queryByText("Drafting improvements")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     expect(await screen.findByTestId("assistant-review")).toBeInTheDocument();
   });
 
@@ -1436,25 +1468,22 @@ describe("Assistant: review changes", () => {
     let answer: (t: NamespaceTune) => void = () => {};
     tuneNamespace.mockImplementationOnce(() => new Promise<NamespaceTune>((r) => (answer = r)));
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     switchNamespace();
     await act(async () => answer(TUNE));
-    await waitFor(() => expect(screen.getByText(/No drafts yet/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Drafting improvements")).toBeNull());
     expect(screen.queryByTestId("assistant-review")).toBeNull();
   });
 });
 
 const pickDocuments = async () => {
-  await userEvent.click(screen.getByRole("button", { name: "Documents" }));
-  await userEvent.click(screen.getByRole("button", { name: "Inspect" }));
+  await userEvent.click(screen.getByRole("button", { name: "Inspect documents" }));
   return screen.findByTestId("assistant-documents");
 };
 
 describe("Assistant: documents", () => {
   it("inspects the namespace's documents with no id: formats, what search serves, decisions and the newest", async () => {
     const { container } = render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Documents" }));
-    expect(screen.queryByLabelText(/id$/)).toBeNull();
     const result = await pickDocuments();
     expect(inspectKnowledge).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, expect.anything());
     expect(inspectMemories).not.toHaveBeenCalled();
@@ -1885,8 +1914,7 @@ describe("Assistant: documents", () => {
     );
     try {
       render(<Assistant />);
-      await userEvent.click(screen.getByRole("button", { name: "Documents" }));
-      const inspect = screen.getByRole("button", { name: "Inspect" });
+      const inspect = screen.getByRole("button", { name: "Inspect documents" });
       expect(inspect).toHaveAccessibleDescription(
         "Your token's read scope needs a user or session id this page does not send.",
       );
@@ -1897,18 +1925,10 @@ describe("Assistant: documents", () => {
     }
   });
 
-  it("brings the id field back, focused, when a user's memories are asked for from Documents", async () => {
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Documents" }));
-    await userEvent.click(screen.getByRole("button", { name: "Analyze one user's memories" }));
-    expect(screen.getByLabelText("User id")).toHaveFocus();
-  });
-
   it("says when the documents cannot be read", async () => {
     inspectKnowledge.mockRejectedValueOnce(new ApiError({ status: 500, code: "INTERNAL", message: "boom" }));
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Documents" }));
-    await userEvent.click(screen.getByRole("button", { name: "Inspect" }));
+    await userEvent.click(screen.getByRole("button", { name: "Inspect documents" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the documents");
   });
 
@@ -2054,7 +2074,7 @@ describe("Assistant: document drafts", () => {
       skipped: [...TUNE.skipped, DECISIONS_SKIPPED],
     });
     const { container } = render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByTestId("tune-sample")).toHaveTextContent(
       "Document sample: 30 of 30 live documents re-chunked at the current values (cap 50",
@@ -2074,10 +2094,9 @@ describe("Assistant: document drafts", () => {
     expect(within(card).getByTestId("proposal-args")).toHaveTextContent('"name": "knowledge_chunk_size"');
     expect(within(card).getByTestId("proposal-also-args")).toHaveTextContent('"name": "knowledge_chunk_stride"');
     expect(within(card).getByText(/Applies to documents written after the change/)).toBeInTheDocument();
-    const apply = within(card).getByRole("button", { name: "Apply" });
-    expect(apply).toHaveAttribute("aria-disabled", "true");
-    expect(apply).toHaveAccessibleDescription(/A platform_admin sends POST \/v1\/admin\/settings.set/);
-    await userEvent.click(apply);
+    expect(within(card).getByTestId("how-to-apply")).toHaveTextContent(
+      "How to apply: A platform admin sends the admin request below.",
+    );
     expect(tuneNamespace).toHaveBeenCalledTimes(1);
     expect(within(review).queryByRole("table", { name: "The document sample at the current values" })).toBeNull();
     expect(await axeViolations(container)).toEqual([]);
@@ -2092,7 +2111,7 @@ describe("Assistant: document drafts", () => {
       skipped: [...TUNE.skipped, DECISIONS_SKIPPED],
     });
     const { container } = render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = await screen.findByTestId("assistant-review");
     const stats = within(review).getByRole("table", { name: "The document sample at the current values" });
     expect(within(stats).getByText("Sections cut by size").closest("tr")).toHaveTextContent("6 of 40");
@@ -2108,7 +2127,7 @@ describe("Assistant: document drafts", () => {
       skipped: [...TUNE.skipped, "chunking: TimeoutError", DECISIONS_SKIPPED],
     });
     render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Configure this project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).queryByTestId("tune-sample")).toBeNull();
     const card = within(review).getByRole("listitem", { name: /Route pdf to an extractor/ });
@@ -2121,8 +2140,8 @@ describe("Assistant: document drafts", () => {
     expect(within(card).getByRole("list", { name: /Documents cited for/ })).toHaveTextContent(
       "https://example.com/b.pdf",
     );
-    expect(within(card).getByRole("button", { name: "Apply" })).toHaveAccessibleDescription(
-      /A platform_admin sets LOOM_DOCUMENT_EXTRACTORS_JSON in the deployment; it is in force once each server and worker restarts/,
+    expect(within(card).getByTestId("how-to-apply")).toHaveTextContent(
+      "How to apply: A platform admin sets the variable below in the deployment; it takes effect once each server and worker restarts.",
     );
     expect(within(card).queryByTestId("proposal-also")).toBeNull();
   });
