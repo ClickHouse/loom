@@ -23,7 +23,6 @@ import { toast, toastError } from "../components/Toast";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { Loading } from "../components/ui/Loading";
 import { slugify } from "../lib/docFiles";
-import { ApiError } from "../lib/errors";
 import { fileVerdict, ingestFile, ingestStep } from "../lib/fileIngest";
 import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormats } from "./FileIngest";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
@@ -88,7 +87,7 @@ export function RepoDocAddDialog({
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setOver(false);
-    take(e.dataTransfer.files?.[0]);
+    if (busy === null) take(e.dataTransfer.files?.[0]); // not while a file is on its way
   };
 
   const saveFile = async (f: File): Promise<string[] | null> => {
@@ -135,7 +134,7 @@ export function RepoDocAddDialog({
       onOpenChange(false);
     } catch (e) {
       if (following.current?.signal.aborted) return; // closed: the job goes on on the server
-      setError(e instanceof Error && !(e instanceof ApiError) ? e.message : humanizeError(e));
+      setError(humanizeError(e)); // a job's reason passes through; a dropped connection is worded
     } finally {
       setBusy(null);
     }
@@ -167,7 +166,7 @@ export function RepoDocAddDialog({
             type="primary"
             htmlType="button"
             disabled={!ready}
-            loading={busy === "saving"}
+            loading={busy !== null}
             onClick={() => void save()}
           >
             Add document
@@ -239,12 +238,14 @@ export function RepoDocAddDialog({
       <TextField
         id="rdoc-title"
         label="Title"
+        disabled={busy !== null}
         value={title}
         placeholder="MergeTree merge scheduling — design note"
         onChange={setTitle}
       />
       <TextField
         id="rdoc-desc"
+        disabled={busy !== null}
         label="What agents should use it for (optional, one line)"
         value={description}
         placeholder="Read before touching merge selection or TTL"

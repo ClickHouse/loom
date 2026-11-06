@@ -265,6 +265,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
           {!replaceMode && (
             <TextField
               id="add-doc-source-uri"
+              disabled={busy !== null}
               label="Source URI (stable identifier the agent cites — a path, URL, or slug)"
               value={sourceUri}
               onChange={setSourceUri}
@@ -273,6 +274,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
           )}
           <TextField
             id="add-doc-title"
+            disabled={busy !== null}
             label="Title (optional — overrides filename in the Library list)"
             value={title}
             onChange={setTitle}
@@ -280,6 +282,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
           />
           <TextAreaField
             id="add-doc-description"
+            disabled={busy !== null}
             label="Description (optional — one-line summary; improves retrieval and shows in the Library list)"
             value={description}
             onChange={setDescription}
@@ -288,6 +291,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
           />
           <TextField
             id="add-doc-tags"
+            disabled={busy !== null}
             label="Tags (comma-separated, optional)"
             value={tagsInput}
             onChange={setTagsInput}

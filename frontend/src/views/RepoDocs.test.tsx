@@ -390,4 +390,23 @@ describe("RepoDocsList", () => {
       ingestClock.sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     }
   });
+
+  it("says a dropped connection may have committed, in file and paste mode alike", async () => {
+    const { dialog } = await addFile("on_call.md");
+    vi.mocked(uploadKnowledgeFile).mockRejectedValue(new TypeError("Failed to fetch"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent(/Lost connection to Loom mid-request/));
+
+    cleanup();
+    vi.mocked(addKnowledge).mockRejectedValue(new TypeError("Failed to fetch"));
+    mount(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Add a document" }));
+    const pasting = await screen.findByRole("dialog");
+    const user = userEvent.setup();
+    await user.click(within(pasting).getByRole("tab", { name: "Paste text" }));
+    await user.type(within(pasting).getByLabelText(/^Text/), "Step 1.");
+    await user.type(within(pasting).getByLabelText("Title"), "Runbook");
+    fireEvent.click(within(pasting).getByRole("button", { name: "Add document" }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent(/Lost connection to Loom mid-request/));
+  });
 });
