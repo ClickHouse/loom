@@ -49,22 +49,25 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
 1. On a branch from `main`, open a pull request that sets the version everywhere above, with the
    [release notes](#release-notes) section in its description. CI must pass, including
    `make schema-check` and the strict migration dry run.
-2. After it merges, tag the merge commit and push the tag:
+2. Before tagging, check that the latest scheduled `docker-smoke` run on `main` passed: it scans both
+   images as the release does, and a scheduled run's failure notifies only the last editor of its
+   schedule. A red scan means a pin in the `Dockerfile` needs moving first.
+3. After it merges, tag the merge commit and push the tag:
 
    ```bash
    git tag vX.Y.Z <merge commit>
    git push origin vX.Y.Z
    ```
 
-3. The tag push runs `.github/workflows/release.yml` (below), publishes the server and
+4. The tag push runs `.github/workflows/release.yml` (below), publishes the server and
    extractor images, and only then creates the GitHub Release. Check the images and release files.
-4. To publish the SDKs and the MCP Registry listing, run the same workflow manually on the tag:
+5. To publish the SDKs and the MCP Registry listing, run the same workflow manually on the tag:
 
    ```bash
    gh workflow run release.yml --ref vX.Y.Z
    ```
 
-5. Paste the pull request's release notes section into the GitHub Release, above the generated notes.
+6. Paste the pull request's release notes section into the GitHub Release, above the generated notes.
 
 A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release. Only the highest final version
 becomes the repository's Latest release (`releases/latest` serves the installer) and moves

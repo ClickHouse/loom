@@ -119,6 +119,7 @@ jobs:
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
       - name: Build the production image
+        id: server
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -128,6 +129,7 @@ jobs:
           cache-from: type=gha,scope=docker-smoke-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=docker-smoke-${{ matrix.arch }}
       - name: Build the extractor image
+        id: extractor
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -144,14 +146,10 @@ jobs:
           python3 scripts/gates/docker_quickstart_smoke.py --image loom:docker-smoke \
             --extractor-image loom-extractor:docker-smoke \
             --clickhouse-image "$CLICKHOUSE_IMAGE"
-      # The release refuses a critical CVE that has a fixed package. The weekly
-      # run and a dispatch fail on one, and the release procedure checks the
-      # latest weekly run before a tag. After the smoke, so a CVE never hides
-      # its result.
-      - name: Scan the server image as the release does
+      # The release refuses a fixed critical CVE; only a weekly or dispatched run fails on one here.
+      - name: Scan the server image with the release's scan settings
+        if: ${{ !cancelled() && steps.server.outcome == 'success' }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        # On a pull request or a push a finding, or a scanner that cannot run,
-        # marks the step and leaves the job green.
         continue-on-error: ${{ github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' }}
         env:
           TRIVY_PLATFORM: linux/${{ matrix.arch }}
@@ -160,10 +158,9 @@ jobs:
           severity: CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      - name: Scan the extractor image as the release does
+      - name: Scan the extractor image with the release's scan settings
+        if: ${{ !cancelled() && steps.extractor.outcome == 'success' }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        # On a pull request or a push a finding, or a scanner that cannot run,
-        # marks the step and leaves the job green.
         continue-on-error: ${{ github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' }}
         env:
           TRIVY_PLATFORM: linux/${{ matrix.arch }}
