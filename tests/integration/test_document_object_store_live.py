@@ -8,13 +8,14 @@ local S3-compatible store (`LOOM_TEST_S3_ENDPOINT`, skipped without it).
 - Namespace erasure deletes every object of the scope and its census counts
   none left; user erasure deletes the objects of the user's own originals and
   keeps another writer's.
-- `loom knowledge migrate-originals` moves the originals held in ClickHouse to
-  checked objects and switches their rows, refuses bytes that do not hash to
-  their sha or fill their size, keeps a row replaced or gone since the walk read
-  it, and is fenced by the erasure ledger: it does not start under an unfinished or
-  just finished erasure of the namespace or of any user of the org, reports an original an erasure kept while it was copied,
-  takes back a move a namespace erasure overtook, and leaves one a user erasure
-  overtook to that erasure's outcome, read from the moved object.
+- `loom knowledge migrate-originals` moves the originals held in ClickHouse that
+  the namespace still needs to checked objects and switches their rows, refuses
+  bytes that do not hash to their sha or fill their size, and keeps a row replaced
+  or gone since the walk read it. It is fenced by the erasure ledger: it does not
+  start under an unfinished or just finished erasure of the namespace or of any
+  user of the org, reports an original an erasure kept while it was copied, takes
+  back a move a namespace erasure overtook, and leaves one a user erasure overtook
+  to that erasure's outcome, read from the moved object.
 """
 
 from __future__ import annotations
@@ -240,6 +241,25 @@ async def test_the_upload_record_cleanup_statement_runs_on_clickhouse(s3: Any, c
     assert [str(r["sha"]) for r in rows] == [kept]
 
 
+async def _document(ch: Any, org: str, ns: str, sha: str, uri: str = "") -> None:
+    """A live document naming `sha` as its original: the namespace needs it."""
+    await ch.insert(
+        "loom.documents",
+        [
+            {
+                "org": org,
+                "namespace": ns,
+                "source_uri": uri or f"docs/{sha[:12]}.md",
+                "content": "",
+                "tags": [],
+                "version": 1,
+                "blob_path": sha,
+            }
+        ],
+        settings={"async_insert": 0},
+    )
+
+
 @pytest.mark.asyncio
 async def test_originals_in_clickhouse_move_to_checked_objects(
     s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
@@ -256,14 +276,20 @@ async def test_originals_in_clickhouse_move_to_checked_objects(
         [{"org": org, "namespace": ns, "sha256": bad, "data": b"other bytes", "size": 11}],
         settings={"async_insert": 0},
     )
+    for sha in (big, small, bad):
+        await _document(ch, org, ns, sha)
+    # One no document names: the sweep's, so it is not moved.
+    stray = await blobs.put(org, ns, b"nobody names this", ch=ch)
     monkeypatch.setattr(settings, "document_object_store", "s3")
 
     counted = await migrate_originals(org=org, dry_run=True)
     assert (counted.pending, counted.bytes, counted.moved) == (3, len(RAW) + 5 + 11, 0)
+    assert counted.unneeded == 1
     assert _keys(s3) == []
 
     result = await migrate_originals(org=org)
-    assert (result.moved, result.bytes, result.skipped) == (2, len(RAW) + 5, 0)
+    assert (result.moved, result.bytes, result.skipped, result.unneeded) == (2, len(RAW) + 5, 0, 1)
+    assert await blobs.locate(org, ns, stray, ch=ch) == blobs.Stored(17, "")
     assert len(result.errors) == 1 and bad in result.errors[0]
     for sha, raw in ((big, RAW), (small, b"small")):
         stored = await blobs.locate(org, ns, sha, ch=ch)
@@ -321,6 +347,7 @@ async def _held(ch: Any, org: str, ns: str, data: bytes, monkeypatch: pytest.Mon
     bucket store switched on."""
     monkeypatch.setattr(settings, "document_object_store", "clickhouse")
     sha = await blobs.put(org, ns, data, ch=ch)
+    await _document(ch, org, ns, sha)
     monkeypatch.setattr(settings, "document_object_store", "s3")
     (held,) = (await blobs.held_in_clickhouse(org, ns, "", 10, ch=ch)).held
     assert held.sha == sha
@@ -418,6 +445,19 @@ async def test_any_user_erasure_of_the_org_fences_the_move(
     assert (result.moved, len(result.errors)) == (0, 1)
     assert "user_id, in_progress" in result.errors[0]
     assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(held.size, "")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_erasure_fences_the_move_until_it_is_completed(
+    s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns = unique_org("objstore-failed"), "docs"
+    held = await _held(ch, org, ns, b"behind a failed erasure", monkeypatch)
+    await _erasure(ch, org, "namespace", ns, "failed")
+    # Running again does not help: the advice names the command that completes it.
+    with pytest.raises(blobs.ErasureOpen, match="loom erasure-re-verify --resume"):
+        await blobs.move_to_bucket(held, ch=ch)
+    assert _keys(s3) == []
 
 
 @pytest.mark.asyncio
@@ -638,6 +678,7 @@ async def test_bytes_that_do_not_fill_their_size_are_refused(
         [{"org": org, "namespace": ns, "sha256": sha, "data": b"eleven byte", "size": 12}],
         settings={"async_insert": 0},
     )
+    await _document(ch, org, ns, sha)
     result = await migrate_originals(org=org, namespace=ns)
     assert (result.moved, result.skipped, len(result.errors)) == (0, 0, 1)
     assert "size" in result.errors[0]

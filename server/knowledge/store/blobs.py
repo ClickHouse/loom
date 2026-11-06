@@ -229,6 +229,29 @@ async def held_in_clickhouse(
     return HeldPage(held, upper)
 
 
+async def needed(
+    org: str, namespace: str, shas: list[str], *, ch: _CHClient | None = None
+) -> set[str]:
+    """Of `shas`, the originals the namespace still needs: named by a live document (as
+    its original or its extraction artifact), or held by an unexpired upload or an open
+    ingestion. The rest are the sweep's (`unreferenced`). One read for a page of the
+    walk."""
+    ch = ch or _default_client()
+    if not shas:
+        return set()
+    with sequential_reads():
+        rows = await ch.query_all(
+            "SELECT sha FROM ("
+            " SELECT arrayJoin([blob_path, artifact_sha256]) AS sha FROM loom.documents FINAL"
+            f" WHERE {_NS} AND {LIVE_ORIGINAL_SQL}"
+            "  AND (blob_path IN {shas:Array(String)} OR artifact_sha256 IN {shas:Array(String)})"
+            f" UNION DISTINCT SELECT sha FROM ({HELD_SQL})"
+            ") WHERE sha IN {shas:Array(String)}",
+            params={"org": org, "ns": namespace, "shas": shas},
+        )
+    return {str(r["sha"]) for r in rows}
+
+
 class CorruptOriginal(Exception):
     """An original's bytes do not hash to its sha256 or do not fill its size, in
     ClickHouse or read back from the bucket: nothing is switched."""
@@ -363,6 +386,12 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     since = await _cutoff_ms(0, ch) // 1000
     fenced = await _erasures_since(held, since, ch)
     if fenced:
+        failed = next((e for e in fenced if e.status == "failed"), None)
+        if failed:
+            raise ErasureOpen(
+                f"{failed} covers it; complete it with loom erasure-re-verify --resume, "
+                "then run again"
+            )
         raise ErasureOpen(f"{fenced[0]} covers it; run again once it has finished")
     data = await read(held.org, held.namespace, held.sha, stored=Stored(held.size, ""), ch=ch)
     if data is None:
@@ -397,8 +426,13 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
             after = await locate(held.org, held.namespace, held.sha, ch=ch)
         if after is None or after.location:
             return False
+        users = [e for e in overtaken if e.scope_type == "user_id"]
+        if users:
+            raise ErasureOpen(
+                f"{users[0]} ran while it was copied and kept it; it stays in ClickHouse"
+            )
         if overtaken:
-            raise ErasureOpen(f"{overtaken[0]} ran while it was copied; it stays in ClickHouse")
+            return False  # a namespace's erasure, which deletes it
         raise objects.ObjectStoreError(
             "object store read failed (its new object was gone before its read-back)",
             operation="read",
@@ -423,28 +457,27 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
         ],
         settings={"async_insert": 0},
     )
+    return await _settle(held, since, loc, ch)
+
+
+async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) -> bool:
+    """After the switched row landed: an erasure registered as it landed decides. A read
+    that fails here leaves the switched row, reported (`SwitchedUnderErasure`)."""
     try:
-        return await _settle(held, since, loc, ch)
+        raced = await _erasures_since(held, since, ch)
+        if raced and not any(e.scope_type != "user_id" for e in raced):
+            await _await_erasures(held, since, ch)
+            taken = await objects.read(loc) is None
     except SwitchedUnderErasure:
         raise
-    # Any failure: the row is already switched, so what is left is reported, not lost.
-    except Exception as e:
+    except Exception as e:  # the row is switched: an unread ledger or object is reported, not lost
         raise SwitchedUnderErasure(
             f"switched to {loc.uri()}, but the check for an erasure that raced it failed ({e}); "
             "check that no erasure of its namespace or a user ran then"
         ) from e
-
-
-async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) -> bool:
-    """After the switched row landed: an erasure registered as it landed decides."""
-    raced = await _erasures_since(held, since, ch)
     if not raced:
         return True
-    if any(e.scope_type != "user_id" for e in raced):
-        await _unwrite(held, loc, ch)
-        return False
-    await _await_erasures(held, since, ch)
-    if await objects.read(loc) is None:
+    if any(e.scope_type != "user_id" for e in raced) or taken:
         await _unwrite(held, loc, ch)
         return False
     return True
@@ -457,7 +490,14 @@ async def _unwrite(held: Held, loc: objects.Location, ch: _CHClient) -> None:
         f"DELETE FROM {TABLE} WHERE {_KEY} AND location = {{loc:String}}",
         params={"org": held.org, "ns": held.namespace, "sha": held.sha, "loc": loc.uri()},
     )
-    await objects.delete(loc.bucket, [loc.key])
+    try:
+        await objects.delete(loc.bucket, [loc.key])
+    except objects.ObjectStoreError as e:
+        raise objects.ObjectStoreError(
+            f"the switched row was taken back, but deleting its object failed ({e}); the bucket "
+            "walk takes it",
+            operation="delete",
+        ) from e
 
 
 @dataclass(frozen=True)

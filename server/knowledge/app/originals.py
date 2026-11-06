@@ -24,6 +24,7 @@ _PAGE = 200  # not a setting: a page of a one-off operator walk
 class Migrated:
     moved: int = 0  # switched to an object in the bucket
     skipped: int = 0  # gone, replaced or erased since the walk read them
+    unneeded: int = 0  # nothing names or holds them: the sweep's, not moved
     pending: int = 0  # a dry run's originals still held in ClickHouse
     bytes: int = 0  # of the originals moved, or with a dry run of those held
     errors: list[str] = field(default_factory=list)
@@ -46,7 +47,11 @@ async def migrate_originals(
         after = ""
         while True:
             page = await blobs.held_in_clickhouse(org_, ns, after, _PAGE)
+            wanted = await blobs.needed(org_, ns, [h.sha for h in page.held])
             for held in page.held:
+                if held.sha not in wanted:
+                    out.unneeded += 1
+                    continue
                 await _one(held, dry_run, out)
             if not page.after:
                 break

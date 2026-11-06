@@ -42,7 +42,8 @@ def register_knowledge_cli(sub: Any) -> None:
     p_move = ksub.add_parser(
         "migrate-originals",
         help="Move document originals held in ClickHouse to LOOM_DOCUMENT_S3_BUCKET: each "
-        "one whose catalog row still holds its bytes is written to its own object with the "
+        "one whose catalog row still holds its bytes, and that a live document, upload or "
+        "ingestion still needs (the rest are the sweep's), is written to its own object with the "
         "store's SHA-256 check, read back and hash-verified, and its row then names the "
         "object, so every document with those bytes downloads from the bucket. The "
         "ClickHouse copy stays until loom.document_blobs merges its parts (OPTIMIZE TABLE "
@@ -114,11 +115,15 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
             org=args.org, namespace=args.namespace, dry_run=bool(args.dry_run)
         )
         if args.dry_run:
-            print(f"{result.pending} original(s), {result.bytes} bytes, held in ClickHouse")
+            print(
+                f"{result.pending} original(s), {result.bytes} bytes, held in ClickHouse; "
+                f"{result.unneeded} more no document names, left to the sweep"
+            )
             return 0
         print(
             f"{result.moved} original(s) moved to the bucket ({result.bytes} bytes), "
-            f"{result.skipped} gone, replaced or erased meanwhile, {len(result.errors)} not moved"
+            f"{result.skipped} gone, replaced or erased meanwhile, {result.unneeded} no "
+            f"document names (left to the sweep), {len(result.errors)} not moved"
         )
         if result.moved:
             print(
