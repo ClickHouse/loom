@@ -10,8 +10,8 @@
  */
 
 import type { OpInput, OpOutput } from "./client.js";
-import { LoomError, TimeoutError } from "./errors.js";
-import type { CallOptions, Transport } from "./transport.js";
+import { TimeoutError } from "./errors.js";
+import { type CallOptions, defaultSleep, type Transport } from "./transport.js";
 
 /** The states a `knowledge.ingest` job ends in; any other is still running. */
 export const INGEST_DONE: ReadonlySet<string> = new Set(["ready", "partial", "failed", "cancelled"]);
@@ -47,7 +47,10 @@ export interface WaitOptions {
 type IngestInput = OpInput<"knowledge.ingest">;
 type IngestStatus = OpOutput<"knowledge.ingest_status">;
 
-/** `ingestFile`'s input: `knowledge.ingest`'s fields with the file in place of `upload_id`. */
+/**
+ * `ingestFile`'s input: `knowledge.ingest`'s fields with the file in place of
+ * `upload_id`, and how to wait for the job.
+ */
 export type IngestFileInput = Omit<IngestInput, "upload_id" | "title"> & {
   data: FileData;
   filename: string;
@@ -56,7 +59,14 @@ export type IngestFileInput = Omit<IngestInput, "upload_id" | "title"> & {
   title?: string;
   /** Wait for the job to end (default) or return `knowledge.ingest`'s answer. */
   wait?: boolean;
-} & WaitOptions;
+  /** How long to wait for the job, default 600 s (each request's own timeout is `call.timeoutMs`). */
+  waitTimeoutMs?: number;
+  /** Between polls, default 1 s. */
+  pollMs?: number;
+  /** Options for the upload and ingest requests: their timeout, retry policy, request id. */
+  call?: CallOptions;
+  signal?: AbortSignal;
+};
 
 /** The `loom.knowledge` methods beside the generated ops. */
 export interface KnowledgeFiles {
@@ -79,15 +89,15 @@ export interface KnowledgeFiles {
 }
 
 /** The bytes, in an `ArrayBuffer` as `fetch` and `crypto.subtle` take them (a view of a shared buffer is copied). */
-async function bytesOf(data: FileData): Promise<Uint8Array<ArrayBuffer>> {
+/** The bytes; a view of a shared buffer is copied, as `fetch` and `crypto.subtle` take none. */
+async function bytesOf(data: FileData): Promise<Uint8Array> {
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
-  if (data instanceof Uint8Array)
-    return data.buffer instanceof ArrayBuffer ? (data as Uint8Array<ArrayBuffer>) : new Uint8Array(data);
+  if (data instanceof Uint8Array) return data.buffer instanceof ArrayBuffer ? data : new Uint8Array(data);
   return new Uint8Array(await data.arrayBuffer());
 }
 
-async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -97,25 +107,8 @@ function stem(filename: string): string {
   return dot > 0 ? name.slice(0, dot) : name;
 }
 
-const defaultSleep = (ms: number, signal?: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason ?? new LoomError("aborted"));
-      },
-      { once: true },
-    );
-  });
-
 /** The methods bound to a transport; `LoomClient` merges them into `loom.knowledge`. */
-export function knowledgeFiles(
-  transport: Transport,
-  now: () => number = () => Date.now(),
-  sleep: (ms: number, signal?: AbortSignal) => Promise<void> = defaultSleep,
-): KnowledgeFiles {
+export function knowledgeFiles(transport: Transport): KnowledgeFiles {
   const upload = async (
     scope: { org: string; namespace: string },
     data: FileData,
@@ -140,7 +133,7 @@ export function knowledgeFiles(
     opts: WaitOptions = {},
   ): Promise<IngestStatus> => {
     const { timeoutMs = 600_000, pollMs = 1_000, signal } = opts;
-    const deadline = now() + timeoutMs;
+    const deadline = Date.now() + timeoutMs;
     for (;;) {
       const status = await transport.post<IngestStatus>(
         "knowledge.ingest_status",
@@ -148,25 +141,27 @@ export function knowledgeFiles(
         { signal },
       );
       if (!status.found || INGEST_DONE.has(status.state ?? "")) return status;
-      if (now() >= deadline)
+      if (Date.now() >= deadline)
         throw new TimeoutError(
           `ingestion ${ingestionId} is still ${status.state} after ${timeoutMs} ms; knowledge.ingest_status follows it`,
           { op: "knowledge.ingest_status" },
         );
-      await sleep(pollMs, signal);
+      // Cut short by an abort; the next poll then throws the transport's "aborted by caller".
+      await defaultSleep(pollMs, signal);
     }
   };
 
   async function ingestFile(input: IngestFileInput): Promise<IngestStatus | OpOutput<"knowledge.ingest">> {
-    const { data, filename, contentType, wait = true, timeoutMs, pollMs, signal, ...fields } = input;
-    const up = await upload(fields, data, filename, { contentType, signal });
+    const { data, filename, contentType, wait = true, waitTimeoutMs, pollMs, call, signal, ...fields } = input;
+    const opts = { ...call, signal: signal ?? call?.signal };
+    const up = await upload(fields, data, filename, { ...opts, contentType });
     const job = await transport.post<OpOutput<"knowledge.ingest">>(
       "knowledge.ingest",
       { ...fields, title: fields.title ?? stem(filename), upload_id: up.upload_id },
-      { signal },
+      opts,
     );
     if (!wait) return job;
-    return waitForIngest(fields, job.ingestion_id, { timeoutMs, pollMs, signal });
+    return waitForIngest(fields, job.ingestion_id, { timeoutMs: waitTimeoutMs, pollMs, signal: opts.signal });
   }
 
   return { upload, waitForIngest, ingestFile: ingestFile as KnowledgeFiles["ingestFile"] };

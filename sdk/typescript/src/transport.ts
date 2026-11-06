@@ -134,7 +134,8 @@ export interface CallResult<T> {
   hintCode?: string;
 }
 
-function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+/** Sleep `ms`, or less when `signal` aborts (the caller's next send then throws). */
+export function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve) => {
     const done = () => {
       clearTimeout(timer);
@@ -258,7 +259,7 @@ export class Transport {
   async postBytes<T = unknown>(
     path: string,
     query: Record<string, string>,
-    data: Uint8Array<ArrayBuffer>,
+    data: Uint8Array,
     opts: CallOptions = {},
   ): Promise<T> {
     return (await this.send<T>("POST", path, data, opts, new URLSearchParams(query).toString())).data;
@@ -292,11 +293,7 @@ export class Transport {
     // Bytes go as they are; any other body is the op's JSON.
     const raw = body instanceof Uint8Array;
     if (raw) headers["Content-Type"] = "application/octet-stream";
-    const payload = isGet
-      ? undefined
-      : raw
-        ? (body as Uint8Array<ArrayBuffer>)
-        : JSON.stringify(this.withConsumer(body));
+    const payload = isGet ? undefined : raw ? body : JSON.stringify(this.withConsumer(body));
     const url = `${this.baseUrl}/v1/${op}${query ? `?${query}` : ""}`;
     const policy = resolveRetryPolicy(this.retry, opts.retry, `call ${op}`);
     const ctx: AttemptContext = {
@@ -376,7 +373,8 @@ export class Transport {
         res = await this.fetchImpl(ctx.url, {
           method: ctx.method,
           headers: ctx.headers,
-          body: ctx.payload,
+          // A byte array is a fetch body; TypeScript's lib types narrow it to ArrayBuffer-backed views.
+          body: ctx.payload as BodyInit | undefined,
           signal: ctrl.signal,
         });
       } catch (e) {
@@ -609,7 +607,7 @@ interface AttemptContext {
   method: "GET" | "POST";
   url: string;
   /** The JSON body, or a file's bytes; none on a GET. */
-  payload: string | Uint8Array<ArrayBuffer> | undefined;
+  payload: string | Uint8Array | undefined;
   headers: Record<string, string>;
   opts: CallOptions;
   policy: RetryPolicy;

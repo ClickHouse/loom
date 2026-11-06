@@ -14,9 +14,20 @@ interface Sent {
  * A scripted server: what each route was sent; an upload refused `refused`
  * times with a 429; jobs that end in `state` after `running` polls.
  */
-function server(opts: { state?: string; running?: number; refused?: number; ratelimitMaxWaitS?: number } = {}) {
+interface Script {
+  state?: string;
+  running?: number;
+  /** Uploads answered 429 before one is stored. */
+  refused?: number;
+  /** Uploads answered this status instead (once each, then stored). */
+  failUpload?: Array<number | "connect">;
+  ratelimitMaxWaitS?: number;
+}
+
+function server(opts: Script = {}) {
   const { state = "ready", running = 1 } = opts;
   let refused = opts.refused ?? 0;
+  const failUpload = [...(opts.failUpload ?? [])];
   const sent: Sent[] = [];
   const slept: number[] = [];
   const fetch = async (url: string, init: RequestInit) => {
@@ -26,6 +37,9 @@ function server(opts: { state?: string; running?: number; refused?: number; rate
     const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
       new Response(JSON.stringify(body), { status, headers });
     if (op === "knowledge.upload") {
+      const fail = failUpload.shift();
+      if (fail === "connect") throw new TypeError("fetch failed");
+      if (fail !== undefined) return json({ detail: { code: "INTERNAL" } }, fail);
       if (refused > 0) {
         refused--;
         return json({ detail: { code: "RATE_LIMITED" } }, 429, { "Retry-After": "2" });
@@ -107,13 +121,41 @@ describe("knowledge.upload", () => {
   });
 });
 
+describe("knowledge.upload retries", () => {
+  it("is sent once on a 503 (the server may have stored it), and again after a connection failure", async () => {
+    const answered = server({ failUpload: [503] });
+    await expect(answered.loom.knowledge.upload(scope, new Uint8Array([1]), "n.txt")).rejects.toMatchObject({
+      status: 503,
+    });
+    expect(answered.sent.length).toBe(1);
+
+    const unreached = server({ failUpload: ["connect"] });
+    const up = await unreached.loom.knowledge.upload(scope, new Uint8Array([1]), "n.txt");
+    expect(up.upload_id).toBe("up-1");
+    expect(unreached.sent.length).toBe(2);
+  });
+});
+
 describe("knowledge.waitForIngest", () => {
   it("polls until the job ends", async () => {
     const { loom, sent } = server({ state: "partial", running: 3 });
     const status = await loom.knowledge.waitForIngest(scope, "job-1", { pollMs: 0 });
     expect([status.state, status.revision]).toEqual(["partial", 2]);
     expect(sent.length).toBe(4);
-    expect(INGEST_DONE.has("cancelled")).toBe(true);
+  });
+
+  it("names the four states a job ends in", () => {
+    expect([...INGEST_DONE].sort()).toEqual(["cancelled", "failed", "partial", "ready"]);
+  });
+
+  it("stops at an abort, with the transport's aborted-by-caller error", async () => {
+    const { loom, sent } = server({ running: 1_000 });
+    const ctrl = new AbortController();
+    const wait = loom.knowledge.waitForIngest(scope, "job-1", { pollMs: 60_000, signal: ctrl.signal });
+    await new Promise((r) => setTimeout(r, 10));
+    ctrl.abort();
+    await expect(wait).rejects.toThrow(/knowledge.ingest_status: aborted by caller/);
+    expect(sent.length).toBe(1); // the 60 s sleep was cut short, not waited out
   });
 
   it("returns at once for a job not found", async () => {
@@ -167,9 +209,14 @@ describe("knowledge.ingestFile", () => {
       source_uri: "repo://a",
       title: "Orders",
       wait: false,
+      call: { requestId: "ingest-a" },
     });
     expect(job.ingestion_id).toBe("job-1");
     expect(body("knowledge.ingest")[0].title).toBe("Orders");
+    expect(body("knowledge.ingest")[0]).not.toHaveProperty("call");
     expect(sent.some((s) => s.url.pathname.endsWith("ingest_status"))).toBe(false);
+    // The call options reach the upload and the ingest.
+    const ids = sent.map((s) => (s.init.headers as Record<string, string>)["X-Request-Id"]);
+    expect(ids).toEqual(["ingest-a", "ingest-a"]);
   });
 });

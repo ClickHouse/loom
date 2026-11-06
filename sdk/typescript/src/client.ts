@@ -70,8 +70,10 @@ export class LoomClient {
     this.transport = opts instanceof Transport ? opts : new Transport(readEnv(opts));
     this.account = new AccountClient(this.transport);
     for (const group of new Set(OPS.map((o) => o.group))) {
+      const ops = this.group(group as Groups);
       Object.defineProperty(this, group, {
-        value: this.group(group as Groups),
+        // `loom.knowledge` also sends files (`files.ts`); `group("knowledge")` is the ops alone.
+        value: group === "knowledge" ? Object.assign(ops, knowledgeFiles(this.transport)) : ops,
         enumerable: false,
         writable: false,
       });
@@ -119,14 +121,13 @@ export class LoomClient {
     return OP_BY_NAME[name as OpName];
   }
 
-  /** A typed accessor for one group: `loom.group("memory").search(...)`. */
+  /** A typed accessor for one group's ops: `loom.group("memory").search(...)`. */
   group<G extends Groups>(name: G): GroupClient<G> {
     const target: Record<string, unknown> = {};
     for (const spec of OPS) {
       if (spec.group !== name) continue;
       target[spec.method] = (input: unknown, opts?: CallOptions) => this.transport.post(spec.name, input, opts);
     }
-    if (name === "knowledge") Object.assign(target, knowledgeFiles(this.transport));
     return target as GroupClient<G>;
   }
 }
