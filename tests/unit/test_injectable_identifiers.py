@@ -19,7 +19,7 @@ from server.memory.app.ask.identifiers import _injectable_identifiers as inj
             id="snake_case setting",
         ),
         pytest.param(
-            "the new test file 05059 for serialize_query_plan", "05059", id="zero-padded test id"
+            "the new test file 05059 for serialize_query_plan", "05059", id="five-digit test id"
         ),
         # Seven digits: past the salient-number path's five or six, so only the
         # zero-padded-id shape catches it.

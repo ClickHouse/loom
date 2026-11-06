@@ -42,16 +42,16 @@ def test_lemmatize_strips_the_suffixes_of_each_token(text: str, lemma: str) -> N
         # Children doesn't follow the -s rule; it passes through.
         pytest.param("children", "children", id="irregular word passes through"),
         # No suffix rule matches "the".
-        pytest.param("the", "the", id="short word unchanged"),
+        pytest.param("the", "the", id="no suffix rule matches"),
         # A rule's length guard: the -s rule needs more than three characters and the
         # -ed rule more than four, so a short word keeps its ending.
         pytest.param("its", "its", id="too short for the -s rule"),
-        pytest.param("bed", "bed", id="too short for the -ed rule"),
+        pytest.param("used", "used", id="too short for the -ed rule"),
         # Single-char tokens are filtered by the token regex (need >=2 chars).
         pytest.param("a", "", id="single char dropped"),
     ],
 )
-def test_lemmatize_leaves_or_drops_a_token_it_has_no_rule_for(text: str, lemma: str) -> None:
+def test_lemmatize_leaves_or_drops_a_token_no_rule_applies_to(text: str, lemma: str) -> None:
     assert lemmatize(text) == lemma
 
 
