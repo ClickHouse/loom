@@ -672,13 +672,13 @@ def test_a_stored_classify_endpoint_off_the_gateways_hosts_is_never_called(
     assert classify.classify_refusal("https://gateway.example:8443/c")  # stored, another port
 
     monkeypatch.setattr(ch, "get_client", lambda: _CH())
-    monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", LogOnce())
+    monkeypatch.setattr(classify, "_REFUSED_LOGGED", LogOnce())
     for _ in range(2):
         assert asyncio.run(classify.get_namespace_classify_config("acme", "ns")) == ("", "")
     warned = [r for r in caplog.records if "classify_endpoint is refused" in r.getMessage()]
     assert len(warned) == 1 and "10.0.0.5" in warned[0].getMessage()
     caplog.clear()
-    monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", _full_log_once())
+    monkeypatch.setattr(classify, "_REFUSED_LOGGED", _full_log_once())
     assert asyncio.run(classify.get_namespace_classify_config("acme", "new")) == ("", "")
     assert not caplog.records  # capped: still refused, not logged
     monkeypatch.setattr(settings, "inference_gateway_required", False)

@@ -125,3 +125,98 @@ def test_the_call_goes_to_the_vetted_address_and_reports_only_the_failures_kind(
     assert seen["extensions"] == {"sni_hostname": "classifier.example"}
     notes = degradations.current()
     assert notes == ["classify: caller_type_kept (ConnectionRefusedError)"], notes
+
+
+def test_a_public_looking_name_that_resolves_inward_is_never_posted_to(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The realistic attack: a name the admin controls resolves to a private address."""
+    posted: list[str] = []
+
+    class _NeverClient:
+        def __init__(self, **kw: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _NeverClient:
+            return self
+
+        async def __aexit__(self, *a: Any) -> None:
+            return None
+
+        async def post(self, url: str, **kw: Any) -> Any:
+            posted.append(url)
+            raise AssertionError("posted inward")
+
+    monkeypatch.setattr(
+        "server.core.hosts._resolve",
+        lambda host: ["10.1.2.3"] if host == "classifier.attacker.example" else [host],
+    )
+    monkeypatch.setattr(classify.httpx, "AsyncClient", _NeverClient)
+    label = asyncio.run(
+        classify.classify(
+            endpoint="https://classifier.attacker.example/c",
+            prompt_template="",
+            value="v",
+            valid_types=[],
+        )
+    )
+    assert label == "" and posted == []
+
+
+def test_a_listed_private_host_is_reached_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    class _Client:
+        def __init__(self, **kw: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *a: Any) -> None:
+            return None
+
+        async def post(self, url: str, **kw: Any) -> Any:
+            seen.update(url=url, headers=kw["headers"], extensions=kw["extensions"])
+            raise ConnectionRefusedError("down")
+
+    monkeypatch.setattr(settings, "memory_classify_private_hosts", "classifier.local")
+    monkeypatch.setattr("server.core.hosts._resolve", lambda host: ["10.0.0.9"])
+    monkeypatch.setattr(classify.httpx, "AsyncClient", _Client)
+    asyncio.run(
+        classify.classify(
+            endpoint="http://classifier.local:9000/c", prompt_template="", value="v", valid_types=[]
+        )
+    )
+    assert seen == {"url": "http://classifier.local:9000/c", "headers": {}, "extensions": {}}
+
+
+def test_a_lookup_that_never_answers_is_cut_by_the_calls_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    def _hangs(host: str) -> list[str]:
+        time.sleep(2)
+        return ["203.0.113.7"]
+
+    monkeypatch.setattr(settings, "memory_classify_timeout_s", 0.2)
+    monkeypatch.setattr("server.core.hosts._resolve", _hangs)
+    async def _timed() -> tuple[str, float]:
+        started = time.perf_counter()
+        label = await classify.classify(
+            endpoint="https://slow.example/c", prompt_template="", value="v", valid_types=[]
+        )
+        return label, time.perf_counter() - started
+
+    # timed inside the loop: the resolver's thread finishes on its own after the deadline
+    label, waited = asyncio.run(_timed())
+    assert label == "" and waited < 1.5
+
+
+def test_registration_refuses_plain_http_off_the_gateway_without_naming_the_gateway() -> None:
+    from server.memory.domain.classify_endpoints import check_classify_endpoint
+
+    with pytest.raises(ValueError) as e:
+        check_classify_endpoint("http://classifier.example/c")
+    assert "must be https" in str(e.value) and "gateway" not in str(e.value)

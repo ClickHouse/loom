@@ -2601,7 +2601,8 @@ class MemorySettings(BaseModel):
     memory_classify_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
     # Comma-separated hostnames (exact, any case) a classify_endpoint may name although
     # they resolve to a private or loopback address, reached over plain http too (a
-    # classifier beside Loom); "" = only https at public addresses.
+    # classifier beside Loom): any port and path of a listed host, so list only a host
+    # that serves nothing else; "" = only https at public addresses.
     memory_classify_private_hosts: str = ""
 
     def memory_classify_private_host_set(self) -> frozenset[str]:

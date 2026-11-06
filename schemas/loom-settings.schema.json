@@ -3688,7 +3688,7 @@
         "memory_classify_private_hosts": {
           "default": "",
           "type": "string",
-          "description": "Comma-separated hostnames (exact, any case) a classify_endpoint may name although they resolve to a private or loopback address, reached over plain http too (a classifier beside Loom); \"\" = only https at public addresses."
+          "description": "Comma-separated hostnames (exact, any case) a classify_endpoint may name although they resolve to a private or loopback address, reached over plain http too (a classifier beside Loom): any port and path of a listed host, so list only a host that serves nothing else; \"\" = only https at public addresses."
         },
         "memory_classify_timeout_s": {
           "default": 8.0,
