@@ -85,7 +85,7 @@ jobs:
         id: parse
         env:
           REF: ${{ github.ref }}
-          DRY_RUN: ${{ inputs.dry_run }}
+          DRY_RUN: ${{ inputs.dry_run == true }}
         run: |
           case "$REF" in
             refs/tags/v*) VERSION="${REF#refs/tags/v}" ;;
@@ -105,7 +105,7 @@ jobs:
           [[ "$VERSION" == *-* ]] && PRERELEASE=true
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
-          echo "Releasing v$VERSION (prerelease: $PRERELEASE, dry run: ${DRY_RUN:-false})"
+          echo "Releasing v$VERSION (prerelease: $PRERELEASE, dry run: $DRY_RUN)"
       # The server reports its version from server/__init__.py (= pyproject.toml);
       # a tag that disagrees would ship an image that names another release.
       # The mcp-registry job publishes server.json as committed, so it must agree too.
@@ -443,6 +443,7 @@ jobs:
             image: ghcr.io/clickhouse/loom
             file: Dockerfile
             cache: buildkit
+            smoke_cache: docker-smoke
             pin: image.digest
             # The repository's title and description, metadata-action's defaults.
             labels: ""
@@ -450,6 +451,7 @@ jobs:
             image: ghcr.io/clickhouse/loom-extractor
             file: extractor/Dockerfile
             cache: extractor
+            smoke_cache: docker-smoke-extractor
             pin: extractor.image.digest
             labels: |
               org.opencontainers.image.title=loom-extractor
@@ -504,7 +506,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: ${{ !inputs.dry_run && 'mode=max' || 'false' }}
           sbom: ${{ !inputs.dry_run }}
-          cache-from: type=gha,scope=${{ matrix.cache }}-${{ matrix.arch }}
+          # A tag run reads only its own ref's caches and the default branch's, so
+          # each release also starts from what docker-smoke built on main.
+          cache-from: |
+            type=gha,scope=${{ matrix.cache }}-${{ matrix.arch }}
+            type=gha,scope=${{ matrix.smoke_cache }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.cache }}-${{ matrix.arch }}
       # Fails the release on a critical CVE that has a fixed package.
       - name: Scan the image

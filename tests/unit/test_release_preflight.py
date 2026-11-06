@@ -237,6 +237,7 @@ def test_make_latest_fails_when_the_tags_cannot_be_listed(tmp_path: Path) -> Non
         text=True,
     )
     assert result.returncode != 0 and result.stdout == ""
+    assert "HTTP 502" in result.stderr  # the cause reaches the log
 
 
 def test_make_latest_reads_the_repositorys_tags(tmp_path: Path) -> None:

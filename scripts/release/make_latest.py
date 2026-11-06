@@ -21,24 +21,25 @@ import sys
 FINAL = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
 
 
-def is_latest(version: str, published: list[str]) -> bool:
+def is_latest(version: str, tags: list[str]) -> bool:
     mine = FINAL.fullmatch(version)
     if not mine:
         return False
-    finals = [m for tag in published if (m := FINAL.fullmatch(tag.strip()))]
+    finals = [m for tag in tags if (m := FINAL.fullmatch(tag.strip()))]
     newest = max((tuple(map(int, m.groups())) for m in finals), default=(0, 0, 0))
     return tuple(map(int, mine.groups())) >= newest
 
 
-def tags(repository: str) -> list[str]:
+def list_tags(repository: str) -> list[str]:
+    """The repository's v* tags; gh's error reaches the log on a failure."""
     out = subprocess.run(
         ["gh", "api", f"repos/{repository}/git/matching-refs/tags/v", "--paginate",
          "--jq", '.[].ref | ltrimstr("refs/tags/")'],
-        check=True, capture_output=True, text=True,
+        check=True, stdout=subprocess.PIPE, text=True,
     ).stdout  # fmt: skip
     return out.split()
 
 
 if __name__ == "__main__":
-    published = tags(os.environ["GITHUB_REPOSITORY"])
-    print("true" if is_latest(sys.argv[1], published) else "false")
+    tags = list_tags(os.environ["GITHUB_REPOSITORY"])
+    print("true" if is_latest(sys.argv[1], tags) else "false")
