@@ -148,12 +148,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "run":
         from bench.docparse.run import run
 
-        if args.artifacts and args.artifacts.is_dir() and any(args.artifacts.iterdir()):
-            ap.error(
-                f"{args.artifacts} is not empty: an artifact left there would be served as a parse"
-            )
-        if args.artifacts:
-            args.artifacts.mkdir(parents=True, exist_ok=True)
         only = set(filter(None, args.only.split(","))) or None
         run(args.corpus, args.out, args.extractor, args.python, only, args.artifacts)
     elif args.cmd == "downstream":

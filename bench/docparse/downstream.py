@@ -27,6 +27,7 @@ import json
 import re
 import threading
 import time
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ from bench.bootstrap import paired_bootstrap
 from bench.docparse.score import words
 
 FORMATS = ("pdf", "docx", "pptx")
+INGEST_DEADLINE_S = 1800  # one system's ingest of the corpus
 
 
 # ---- a normalized parse as an artifact, for a parser that writes only that
@@ -219,10 +221,12 @@ def ingest(
     namespace: str,
     corpus: Path,
     files: list[str],
-    refused: Any = lambda: 0,
+    refused: Callable[[], int],
 ) -> dict[str, str]:
-    """Upload and ingest each file (partial ones too), waiting for every job up
-    to half an hour: each file's final state, `timeout` for one still running."""
+    """Upload and ingest each file (partial ones too), waiting for every job:
+    each file's final state. A job still running at INGEST_DEADLINE_S, or a
+    token the stub refused (`refused()`), stops the run with every open job
+    cancelled: the stub would otherwise serve a later job's system's artifact."""
     jobs = {}
     for f in files:
         data = (corpus / f).read_bytes()
@@ -247,10 +251,8 @@ def ingest(
         )
         jobs[f] = job["ingestion_id"]
     states: dict[str, str] = {}
-    deadline = time.monotonic() + 1800
-    while len(states) < len(jobs) and time.monotonic() < deadline:
-        if refused():
-            raise SystemExit("the server sent the stub another token: --token is not its own")
+    deadline = time.monotonic() + INGEST_DEADLINE_S
+    while len(states) < len(jobs) and time.monotonic() < deadline and not refused():
         for f, jid in jobs.items():
             if f in states:
                 continue
@@ -262,7 +264,20 @@ def ingest(
             if st.get("state") in ("ready", "partial", "failed", "cancelled"):
                 states[f] = st["state"]
         time.sleep(1)
-    return {f: states.get(f, "timeout") for f in jobs}
+    why = (
+        "the server sent the stub another token: --token is not its own"
+        if refused()
+        else f"{len(jobs) - len(states)} ingests still running after {INGEST_DEADLINE_S} s"
+        if len(states) < len(jobs)
+        else ""
+    )
+    if why:
+        for f, jid in jobs.items():
+            if f not in states:
+                payload = {"org": org, "namespace": namespace, "ingestion_id": jid}
+                _post(client, "knowledge.ingest_cancel", payload)
+        raise SystemExit(why)
+    return states
 
 
 def queries(gold: list[dict]) -> list[dict]:
@@ -303,7 +318,7 @@ def queries(gold: list[dict]) -> list[dict]:
     return out
 
 
-def judge(q: dict, hits: list[dict], namespace: str = "") -> dict[str, Any]:
+def judge(q: dict, hits: list[dict], namespace: str) -> dict[str, Any]:
     """Where the answer is found, and cited, in the hits (1-based rank, 0 for
     not): a hit of the query's document in `namespace`, the system's own."""
     found = cited = 0
@@ -311,7 +326,7 @@ def judge(q: dict, hits: list[dict], namespace: str = "") -> dict[str, Any]:
     for rank, h in enumerate(hits, start=1):
         if h.get("source_uri") != f"docparse://{q['file']}":
             continue
-        if namespace and h.get("namespace") != namespace:
+        if h.get("namespace") != namespace:
             continue  # another system's copy of the document
         have = set(words(h.get("content", "")))
         if len(want & have) < 0.7 * len(want):
@@ -334,13 +349,13 @@ def search(
     namespace: str,
     qs: list[dict],
     k: int,
-    states: dict[str, str] | None = None,
+    states: dict[str, str],
 ) -> list[dict]:
     """Each query's judgement. A query of a file whose ingest this run did not
     finish (`states`) is not found: an earlier run's revision may still serve."""
     out = []
     for q in qs:
-        if states is not None and states.get(q["file"]) not in ("ready", "partial"):
+        if states.get(q["file"]) not in ("ready", "partial"):
             out.append({"found": 0, "cited": 0})
             continue
         # within its own document (the parse decides what chunks hold and cite) and
@@ -426,8 +441,6 @@ def run(
                 states[name] = ingest(
                     client, org, namespace, corpus, files, refused=lambda: stub.refused
                 )
-                if late := [f for f, st in states[name].items() if st == "timeout"]:
-                    raise SystemExit(f"{name}: {len(late)} ingests still running, {late[0]} first")
                 results[name] = search(client, org, namespace, qs, k, states[name])
     finally:
         stub.shutdown()

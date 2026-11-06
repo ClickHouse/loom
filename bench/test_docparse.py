@@ -607,24 +607,23 @@ def test_a_hit_is_found_by_its_words_and_cited_by_its_pages() -> None:
         "page": 2,
         "page_end": 2,
     }
+    ns = "docparse-mine"
     hit = {
         "source_uri": "docparse://a.pdf",
+        "namespace": ns,
         "content": "The ingest worker retries.",
         "locator": {"page_start": 2, "page_end": 2},
     }
-    assert judge(q, [hit]) == {"found": 1, "cited": 1}
+    assert judge(q, [hit], ns) == {"found": 1, "cited": 1}
     wide = {**hit, "locator": {"page_start": 1, "page_end": 5}}
     other = {**hit, "source_uri": "docparse://b.pdf"}
-    assert judge(q, [other, wide, hit]) == {"found": 2, "cited": 3}
+    assert judge(q, [other, wide, hit], ns) == {"found": 2, "cited": 3}
     row = {**q, "within": True, "page": 2, "page_end": 4}
-    assert judge(row, [{**hit, "locator": {"page_start": 3, "page_end": 4}}])["cited"] == 1
-    assert judge(row, [{**hit, "locator": {"page_start": 1, "page_end": 2}}])["cited"] == 0
+    assert judge(row, [{**hit, "locator": {"page_start": 3, "page_end": 4}}], ns)["cited"] == 1
+    assert judge(row, [{**hit, "locator": {"page_start": 1, "page_end": 2}}], ns)["cited"] == 0
     # another system's copy of the document, in its own namespace, is not this one's hit
     theirs = {**hit, "namespace": "docparse-other"}
-    assert judge(q, [theirs, {**hit, "namespace": "docparse-mine"}], "docparse-mine") == {
-        "found": 2,
-        "cited": 2,
-    }
+    assert judge(q, [theirs, hit], ns) == {"found": 2, "cited": 2}
 
 
 def test_decision_counts_come_from_where_extraction_grounds_its_quotes(
@@ -665,18 +664,14 @@ def test_decision_counts_come_from_where_extraction_grounds_its_quotes(
     assert dx.ground is ground  # put back
 
 
-def test_a_parse_that_fails_leaves_no_artifact_from_before(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_run_takes_no_artifacts_directory_that_holds_one_already(tmp_path: Path) -> None:
     from bench.docparse import run as R
 
     art = tmp_path / "art"
     art.mkdir()
-    stale = art / f"{_gold()[0]['file']}.json"
-    stale.write_text("{}")
-    monkeypatch.setattr(R, "_one", lambda *a: {"error": "boom", "wall_seconds": 0.0})
-    R.run(CORPUS, tmp_path / "out.jsonl", tmp_path, only={_gold()[0]["file"]}, artifacts=art)
-    assert not stale.exists()
+    (art / f"{_gold()[0]['file']}.json").write_text("{}")  # a parse that fails would leave it
+    with pytest.raises(SystemExit, match="is not empty"):
+        R.run(CORPUS, tmp_path / "out.jsonl", tmp_path, artifacts=art)
 
 
 def test_downstream_refuses_what_would_mix_or_stall_its_systems(
@@ -698,8 +693,10 @@ def test_downstream_refuses_what_would_mix_or_stall_its_systems(
     art = tmp_path / "art"
     art.mkdir()
     (art / "old.pdf.json").write_text("{}")
+    parses = tmp_path / "p.jsonl"
+    parses.write_text("")
     with pytest.raises(SystemExit):
-        main(["run", "--out", str(tmp_path / "p.jsonl"), "--artifacts", str(art)])
+        main(["artifacts", str(parses), "--out", str(art)])
     assert "is not empty" in capsys.readouterr().err
 
 
@@ -751,52 +748,51 @@ class _FakeLoom:
     """A Loom's ops as the harness calls them: each request recorded, each
     ingest job's state the one `state` gives."""
 
-    def __init__(self, state: str = "ready") -> None:
-        self.state, self.sent = state, []
+    def __init__(self, state: str = "ready", results: list[dict] | None = None) -> None:
+        self.state, self.sent, self.results = state, [], results or []
 
     def request(self, method: str, url: str, **kw: object) -> httpx.Response:
         self.sent.append((url, kw.get("json")))
-        body: dict = {"upload_id": "u", "ingestion_id": "j", "state": self.state, "results": []}
+        body: dict = {
+            "upload_id": "u",
+            "ingestion_id": "j",
+            "state": self.state,
+            "results": self.results,
+        }
         return httpx.Response(200, json=body, request=httpx.Request(method, "http://loom" + url))
 
 
 def test_search_stays_in_the_systems_namespace_and_scores_an_unfinished_file_zero() -> None:
     from bench.docparse.downstream import search
 
-    loom = _FakeLoom()
-    q = {"file": "a.pdf", "query": "q", "answer": ["a"], "page": 1, "page_end": 1}
-    out = search(
-        loom,
-        "o",
-        "docparse-new",
-        [q, {**q, "file": "b.pdf"}],
-        5,
-        {"a.pdf": "ready", "b.pdf": "failed"},
-    )  # type: ignore[arg-type]
-    assert out == [{"found": 0, "cited": 0}, {"found": 0, "cited": 0}]
+    hit = {
+        "source_uri": "docparse://a.pdf",
+        "namespace": "docparse-new",
+        "content": "the answer",
+        "locator": {"page_start": 1, "page_end": 1},
+    }
+    loom = _FakeLoom(results=[hit])
+    q = {"file": "a.pdf", "query": "q", "answer": ["the", "answer"], "page": 1, "page_end": 1}
+    states = {"a.pdf": "ready", "b.pdf": "failed"}
+    out = search(loom, "o", "docparse-new", [q, {**q, "file": "b.pdf"}], 5, states)
+    assert out == [{"found": 1, "cited": 1}, {"found": 0, "cited": 0}]
     ((url, payload),) = loom.sent  # b.pdf, failed this run, is not searched
     assert url == "/v1/knowledge.search" and payload["namespace_scope"] == "this"
     assert payload["uri_prefix"] == ["docparse://a.pdf"] and payload["namespace"] == "docparse-new"
 
 
-def test_ingest_stops_on_a_token_the_stub_refused(tmp_path: Path) -> None:
-    from bench.docparse.downstream import ingest
-
-    (tmp_path / "a.pdf").write_bytes(b"%PDF")
-    with pytest.raises(SystemExit, match="another token"):
-        ingest(_FakeLoom("running"), "o", "n", tmp_path, ["a.pdf"], refused=lambda: 1)  # type: ignore[arg-type]
-
-
-def test_a_file_still_ingesting_at_the_deadline_stops_the_run(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    ("refused", "deadline", "why"),
+    [(1, 60, "another token"), (0, 0, "still running")],
+)
+def test_ingest_stops_and_cancels_its_open_jobs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, refused: int, deadline: int, why: str
 ) -> None:
-    import socket
-
     from bench.docparse import downstream
 
-    monkeypatch.setattr(downstream, "ingest", lambda *a, **kw: {"a.pdf": "timeout"})
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    with pytest.raises(SystemExit, match="still running"):
-        downstream.run("http://127.0.0.1:1", "o", CORPUS, {"new": tmp_path}, port, "t" * 16)
+    monkeypatch.setattr(downstream, "INGEST_DEADLINE_S", deadline)
+    (tmp_path / "a.pdf").write_bytes(b"%PDF")
+    loom = _FakeLoom("running")
+    with pytest.raises(SystemExit, match=why):
+        downstream.ingest(loom, "o", "n", tmp_path, ["a.pdf"], refused=lambda: refused)
+    assert loom.sent[-1][0] == "/v1/knowledge.ingest_cancel"

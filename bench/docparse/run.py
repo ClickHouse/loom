@@ -82,16 +82,21 @@ def run(
     """Parse each corpus file with the extractor package in `extractor` (its
     `extractor/` directory) under `python`; with `artifacts`, each file's
     artifact is written there too, as `<file>.json`."""
+    if artifacts is not None:
+        # an artifact left there from another run would be served as this run's parse
+        if artifacts.is_dir() and any(artifacts.iterdir()):
+            raise SystemExit(
+                f"{artifacts} is not empty: an artifact left there would be served as a parse"
+            )
+        artifacts.mkdir(parents=True, exist_ok=True)
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(extractor)}
     gold = [json.loads(line) for line in (corpus / "gold.jsonl").read_text().splitlines()]
     with out.open("w") as f:
         for g in gold:
             if only and g["file"] not in only:
                 continue
-            art = artifacts / f"{g['file']}.json" if artifacts else None
-            if art is not None:
-                art.unlink(missing_ok=True)  # a parse that fails this time leaves none
-            res = _one(python, corpus / g["file"], env, str(art or ""))
+            art = str(artifacts / f"{g['file']}.json") if artifacts else ""
+            res = _one(python, corpus / g["file"], env, art)
             res["file"] = g["file"]
             f.write(json.dumps(res) + "\n")
             f.flush()
