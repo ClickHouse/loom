@@ -27,6 +27,8 @@ memory_type wins.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -69,21 +71,33 @@ async def classify(
         "valid_types": valid_types,
     }
     # Outside the fail-open: a refused call is an error, not a kept type.
-    headers = customer.headers(await customer.require())
+    who = await customer.require()
     try:
-        # The model client, never redirected (the URL is a namespace's): its hook refuses
-        # a host off the gateway, sends the identity headers only to the gateway's hosts,
-        # and reads a gateway's refusal of the call's identity (server/clients/_http.py).
-        resp = await _http.get_model_client().post(
-            endpoint, json=body, headers=headers, timeout=_timeout(), follow_redirects=False
-        )
+        if settings.gateway_required():
+            # The model client, never redirected (the URL is a namespace's): its hook refuses
+            # a host off the gateway, sends the identity headers only to the gateway's hosts,
+            # and reads a gateway's refusal of the call's identity (server/clients/_http.py).
+            resp = await _http.get_model_client().post(
+                endpoint,
+                json=body,
+                headers=customer.headers(who),
+                timeout=_timeout(),
+                follow_redirects=False,
+            )
+        else:
+            vetted = await _post_vetted(endpoint, body)
+            if vetted is None:
+                return ""
+            resp = vetted
         resp.raise_for_status()
         payload = resp.json()
     except customer.HOLDS:
         raise  # the gateway refused or held the call's identity: never "kept the caller's type"
     except Exception as e:  # noqa: BLE001 — a failed classifier keeps the caller's type
         log.warning("classify.call failed (%s); falling back to caller's type", e)
-        _degradations.note("classify", "caller_type_kept", e)
+        # Only the kind of failure: the namespace admin chose the URL, and the text of a
+        # failure (a refused port, a status line) would map what answers there.
+        _degradations.note("classify", "caller_type_kept", type(e).__name__)
         return ""
     if not isinstance(payload, dict):
         _degradations.note("classify", "caller_type_kept", "malformed payload")
@@ -102,6 +116,33 @@ async def classify(
         return ""
     _provider_health.record_success("classify")
     return candidate
+
+
+async def _post_vetted(endpoint: str, body: Mapping[str, object]) -> httpx.Response | None:
+    """POST to a classifier off the gateway: to the public address its host resolves
+    to (vetted here and connected to, so a rebinding name cannot move it), with no
+    redirect and no identity headers; None, noted, when the host is refused."""
+    from server.core import webhooks
+
+    private = settings.memory_classify_private_host_set()
+    schemes = ("https", "http") if private else ("https",)
+    refusal, url, host, server_name = await webhooks.pinned_target(
+        endpoint, schemes=schemes, private_hosts=private
+    )
+    if refusal or (
+        url.startswith("http:") and (urlsplit(endpoint).hostname or "").lower() not in private
+    ):
+        log.warning("classify: the endpoint's host is refused: %s", refusal or "plain http")
+        _degradations.note("classify", "caller_type_kept", "endpoint host refused")
+        return None
+    async with httpx.AsyncClient(follow_redirects=False, verify=webhooks.tls()) as client:
+        return await client.post(
+            url,
+            json=body,
+            headers={"Host": host} if host else {},
+            timeout=_timeout(),
+            extensions={"sni_hostname": server_name} if server_name else {},
+        )
 
 
 async def get_namespace_classify_config(

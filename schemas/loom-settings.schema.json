@@ -3685,6 +3685,11 @@
           "type": "integer",
           "description": "Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈ 400K chars; agent transcripts run ~190K chars a session at the median). Text past the cap is recorded in loom.memory_drops as chunk.split/truncated."
         },
+        "memory_classify_private_hosts": {
+          "default": "",
+          "type": "string",
+          "description": "Comma-separated hostnames (exact, any case) a classify_endpoint may name although they resolve to a private or loopback address, reached over plain http too (a classifier beside Loom); \"\" = only https at public addresses."
+        },
         "memory_classify_timeout_s": {
           "default": 8.0,
           "exclusiveMinimum": 0,

@@ -1183,6 +1183,12 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` are the operator's exceptions. A refusal does not
   name the address, a URL with a user name or password is refused, and logs name the
   host only.
+- **A namespace's classifier is held to the same rule.** Off the inference gateway, a
+  `classify_endpoint` must be https (`namespace.register` refuses another scheme with
+  422), and `memory.set(classify=true)` posts only to the public address its host was
+  vetted to, with no redirect and no gateway identity headers; a host
+  `LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS` names is the operator's exception. A failed call
+  is reported in `degraded` by its kind alone, so the answer maps nothing behind it.
 - **No slow receiver holds a worker.** One deadline per POST covers the name lookup, the
   connection and the status line (`LOOM_MEMORY_WEBHOOK_ACK_TIMEOUT_SECONDS` for memory
   webhooks, a fixed 10 s for task inbox notices), and the answer's body is never read.

@@ -3067,6 +3067,11 @@ settings:
   # past it the write keeps the caller's memory_type. [live]
   # memory_classify_timeout_s: 8.0
 
+  # Comma-separated hostnames (exact, any case) a classify_endpoint may name although
+  # they resolve to a private or loopback address, reached over plain http too (a
+  # classifier beside Loom); "" = only https at public addresses. [restart]
+  # memory_classify_private_hosts: ""
+
   # --- delete-version checks ---
 
   # Run the delete_version_check worker, which finishes the memory.delete_version checks

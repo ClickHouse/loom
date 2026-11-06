@@ -1,9 +1,12 @@
 """What a namespace's `classify_endpoint` may be.
 
-memory.set with `classify=True` posts the memory's value there, so while the
+memory.set with `classify=True` posts the memory's value there. While the
 gateway is required the endpoint must be an https URL with no explicit port at
 one of LOOM_INFERENCE_GATEWAY_HOSTS: a namespace admin can neither send content
-elsewhere nor reach another port or service of a host to probe it.
+elsewhere nor reach another port or service of a host to probe it. Otherwise it
+must be https (or a host LOOM_MEMORY_CLASSIFY_PRIVATE_HOSTS names), and the call
+reaches only a public address it vetted (`server.memory.app.classify`), so a
+namespace admin cannot aim the server at its own network.
 """
 
 from __future__ import annotations
@@ -17,8 +20,18 @@ from server.settings import settings
 
 
 def classify_refusal(url: str) -> str:
-    """Why the gateway refuses a classifier at `url`; "" when it may be called."""
-    if not url.strip() or not settings.gateway_required():
+    """Why a classifier at `url` is refused; "" when it may be called (a host off the
+    gateway's network is still vetted at the call)."""
+    if not url.strip():
+        return ""
+    if not settings.gateway_required():
+        try:
+            parsed = httpx.URL(url.strip())
+        except httpx.InvalidURL:
+            return "it is not a valid URL"
+        private = parsed.host.lower() in settings.memory_classify_private_host_set()
+        if parsed.scheme != "https" and not (private and parsed.scheme == "http"):
+            return "it must be https"
         return ""
     host = settings.off_gateway(url)
     if host:
@@ -33,10 +46,12 @@ def check_classify_endpoint(value: str | None) -> str | None:
     """The endpoint, or ValueError (a 422) when the gateway refuses it."""
     refusal = classify_refusal(value) if value else ""
     if refusal:
-        raise ValueError(
-            f"classify_endpoint: {refusal}, while {settings.gateway_required_by()} "
-            "sends memory content only to the gateway"
+        why = (
+            f", while {settings.gateway_required_by()} sends memory content only to the gateway"
+            if settings.gateway_required()
+            else ""
         )
+        raise ValueError(f"classify_endpoint: {refusal}{why}")
     return value
 
 

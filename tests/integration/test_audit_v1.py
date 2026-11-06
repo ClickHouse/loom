@@ -254,7 +254,7 @@ async def test_namespace_get_returns_audit_v1_fields(control_plane_url) -> None:
             "owner_email": me["subject"],
             # A rerank choice is a name, never a URL (a URL is a 422).
             "rerank_endpoint": "builtin:cohere",
-            "classify_endpoint": "http://localhost:9/c",
+            "classify_endpoint": "https://classifier.example/c",
             "tag_registry": [
                 {
                     "memory_type": "principle",
@@ -282,7 +282,7 @@ async def test_namespace_get_returns_audit_v1_fields(control_plane_url) -> None:
     body = r.json()
     assert body["found"] is True
     assert body["rerank_endpoint"] == "builtin:cohere"
-    assert body["classify_endpoint"] == "http://localhost:9/c"
+    assert body["classify_endpoint"] == "https://classifier.example/c"
     tag_registry = body["tag_registry"]
     assert len(tag_registry) == 1
     assert tag_registry[0]["memory_type"] == "principle"

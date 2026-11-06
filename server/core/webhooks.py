@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 
 
 @functools.cache
-def _tls() -> ssl.SSLContext:
+def tls() -> ssl.SSLContext:
     """One TLS context for every delivery, built on the first: building one reads
     the CA bundle. Each delivery still has its own client and connections."""
     return httpx.create_ssl_context()
@@ -174,7 +174,7 @@ async def post(
             extensions = {"sni_hostname": server_name} if server_name else {}
             async with (
                 httpx.AsyncClient(
-                    transport=transport, follow_redirects=False, verify=_tls()
+                    transport=transport, follow_redirects=False, verify=tls()
                 ) as client,
                 client.stream(
                     "POST",

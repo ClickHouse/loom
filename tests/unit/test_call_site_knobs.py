@@ -235,6 +235,23 @@ async def test_a_classify_endpoint_call_waits_its_setting(
     from server.memory.app import classify
 
     monkeypatch.setattr(settings, "memory_classify_timeout_s", 2.5)
+
+    async def _vetted(url: str, **kw: Any) -> tuple[str, str, str, str]:
+        return "", "https://203.0.113.7/v1", "classify.example", "classify.example"
+
+    class _Pinned(_RecordingClient):
+        def __init__(self, **kw: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Pinned:
+            return self
+
+        async def __aexit__(self, *a: Any) -> None:
+            return None
+
+    # Off the gateway the call goes to the address its host was vetted to, on its own client.
+    monkeypatch.setattr("server.core.webhooks.pinned_target", _vetted)
+    monkeypatch.setattr(classify.httpx, "AsyncClient", _Pinned)
     got = await classify.classify(
         endpoint="https://classify.example/v1", prompt_template="", value="v", valid_types=[]
     )

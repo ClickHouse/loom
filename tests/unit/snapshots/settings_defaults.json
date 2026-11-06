@@ -665,6 +665,7 @@
  "memory_calibration_namespace_ttl_s": 60.0,
  "memory_capture_structured_answers": true,
  "memory_chunks_max_per_call": 512,
+ "memory_classify_private_hosts": "",
  "memory_classify_timeout_s": 8.0,
  "memory_code_links_batch": 500,
  "memory_code_links_enabled": true,
