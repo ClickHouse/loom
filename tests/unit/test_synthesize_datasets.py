@@ -58,6 +58,9 @@ def test_a_reply_reads_as_a_plan_a_question_or_neither() -> None:
         ('{"plan": null}', '"plan" must be an object'),
         ('{"ambiguous": ""}', '"ambiguous" must be the question'),
         ('{"ambiguous": 5}', '"ambiguous" must be the question'),
+        ('{"ambiguous": "  "}', "a non-empty string"),
+        ('{"plan": {"limit": 5}, "ambiguous": true}', '"ambiguous" must be the question'),
+        ('{"plan": {"limit": 5}, "ambiguous": ["Which currency?"]}', '"ambiguous" must be'),
     ):
         assert why in ap.read_proposal(text).unreadable
     for both in (
@@ -269,7 +272,7 @@ def _dataset(state: str = "inferred") -> DatasetOut:
     )  # fmt: skip
 
 
-def _result() -> KnowledgeQueryOutput:
+def _result(plan: dict[str, Any] | None = None) -> KnowledgeQueryOutput:
     snap = QuerySnapshot(alias="o", source_uri="repo://orders.csv", dataset_id="ds_orders",
                          revision=1, snapshot_id="41", row_count=5, rejected_rows=0,
                          complete=True, schema_state="inferred")  # fmt: skip
@@ -277,7 +280,7 @@ def _result() -> KnowledgeQueryOutput:
         columns=[QueryResultColumn(name="total", type="number")],
         rows=[["120.8"]],
         complete=True,
-        receipt=QueryReceipt(snapshots=[snap], plan={"aggregates": []}, sql="SELECT 1", params={}),
+        receipt=QueryReceipt(snapshots=[snap], plan=plan or {}, sql="SELECT 1", params={}),
     )
 
 
@@ -302,7 +305,8 @@ class Stores:
             self.queries.append(input)
             if self.refuse:
                 raise ValidationError(self.refuse.pop(0))
-            return _result()
+            # The receipt's plan as the handler records it: every field, defaults too.
+            return _result(input.model_dump(exclude={"org", "namespace"}))
 
         monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)
         monkeypatch.setattr(kh, "handle_knowledge_dataset_get", _get)
@@ -340,6 +344,9 @@ async def test_a_plan_the_model_proposes_runs_on_the_callers_datasets_and_is_cit
     assert '"amount" (number)' in plan_prompt and "spare" not in plan_prompt  # stored columns only
     reduce_user = llm.calls[1][1]
     assert "CALCULATION [knowledge.query#1]" in reduce_user and "120.8" in reduce_user
+    # The plan that ran, less the fields left at their defaults.
+    ran = '{"aggregates":[{"fn":"sum","column":{"dataset":"o","column":"amount"},"name":"total"}]}'
+    assert f"PLAN: {ran}\n" in reduce_user
     # One calculation was run: a citation of a second is no citation.
     assert out.answer == "The total is 120.8 [knowledge.query#1]."
     assert (out.citations, out.unsupported_citations) == (

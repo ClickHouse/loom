@@ -81,7 +81,7 @@ async def handle_knowledge_synthesize(
             )
         return (getattr(res, "text", "") or "").strip()
 
-    notes = [_evidence(calculation, input.window_chars)] if calculation is not None else []
+    notes = [_evidence(input, calculation)] if calculation is not None else []
     notes += [n for n in await asyncio.gather(*[_map(w) for w in wins]) if n]
     answer, rounds = await _reduce(input, llm, notes, note_tokens)
     # Grounded before the cut, so removed citations take no room; a kept citation the
@@ -287,15 +287,20 @@ def _why(e: Exception) -> str:
     return str(e)
 
 
-def _evidence(c: SynthesizeCalculation, window_chars: int) -> str:
+def _evidence(input: KnowledgeSynthesizeInput, c: SynthesizeCalculation) -> str:
+    # The plan as it ran, less every field left at its default, so the note shows
+    # what was asked for and not a page of empty filters.
+    ran = KnowledgeQueryInput.model_validate(
+        {**c.receipt.plan, "org": input.org, "namespace": input.namespace}
+    ).model_dump(exclude={"org", "namespace", "datasets"}, exclude_defaults=True)
     return ap.evidence(
         1,
-        c.receipt.plan,
+        ran,
         [col.model_dump() for col in c.columns],
         c.rows,
         truncated=c.truncated,
         incomplete=c.incomplete,
-        max_chars=window_chars // 2,  # half a window: room for the documents' notes
+        max_chars=input.window_chars // 2,  # half a window: room for the documents' notes
     )
 
 

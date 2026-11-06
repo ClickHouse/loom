@@ -159,9 +159,10 @@ def read_proposal(text: str) -> Proposal:
     ask = obj.get("ambiguous")
     if isinstance(ask, str) and ask.strip():
         return Proposal(ask=ask.strip())
-    # A plan beside an empty `ambiguous` (`null`, `""`) is still the plan.
-    if "plan" not in obj:
-        return Proposal(unreadable='"ambiguous" must be the question to ask, as a string')
+    # Only an empty `ambiguous` (`null`, a blank string) leaves a plan beside it to
+    # run: any other value may be the model asking, so it is told back.
+    if not (ask is None or isinstance(ask, str)) or "plan" not in obj:
+        return Proposal(unreadable='"ambiguous" must be the question to ask, a non-empty string')
     plan = obj["plan"]
     if not isinstance(plan, dict):
         return Proposal(unreadable='"plan" must be an object of the fields listed')
