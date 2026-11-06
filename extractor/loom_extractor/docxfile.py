@@ -1,10 +1,10 @@
 """A DOCX file's body as blocks, read from its XML parts with the standard
 library: headings by their style (a `Heading N` or `Title` style, or an
-outline level on the paragraph or its style chain; the headings after a title
-sit one level under their own), list paragraphs (a
-numbered paragraph or a `List` style) as one list block per run, other
-paragraphs, tables (one block each, a row per line and its cells joined by
-` | `, `attrs.table` its shape), then footnotes and endnotes.
+outline level on the paragraph or its style chain; the headings after a
+title sit one level under their own), list paragraphs (a numbered paragraph
+or a `List` style) as one list block per run, other paragraphs, tables (one
+block each, a row per line and its cells joined by ` | `, `attrs.table` its
+shape), then footnotes and endnotes.
 
 Read as the document holds it: inserted text is kept, and a tracked deletion
 (its runs, rows and cells) and moved text at its old place left out, a content
@@ -161,13 +161,11 @@ def _table(tbl: Element) -> tuple[str, int, int]:
 
 
 class _Body:
-    def __init__(
-        self, levels: dict[str, int], titles: set[str] | None = None, shift: int = 0
-    ) -> None:
+    def __init__(self, levels: dict[str, int], titles: set[str]) -> None:
         self.acc = Blocks()
         self.levels = levels
-        self.titles = titles or set()
-        self.shift = shift  # 1 when the document has a title its headings sit under
+        self.titles = titles
+        self.shift = 0  # 1 once a title heading is read: the headings after it sit under it
         self.items: list[str] = []  # the open list's paragraphs
         self.units = 0  # paragraphs with text, and tables
         self.failed: list[Failure] = []
@@ -189,8 +187,10 @@ class _Body:
         style = _val(ppr, "w:pStyle")
         own = _val(ppr, "w:outlineLvl")
         depth = 0 if own == _BODY_TEXT else _OUTLINE.get(own) or self.levels.get(style, 0)
-        title = depth and style in self.titles
-        if depth and not title:
+        title = depth > 0 and style in self.titles
+        if title:
+            depth = 1  # a title is the document's top, whatever outline level it carries
+        elif depth:
             depth += self.shift
         if depth:
             self.close_list()
