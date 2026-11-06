@@ -181,10 +181,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.cmd == "artifacts":
         from bench.docparse.downstream import artifact_from_parse
+        from bench.docparse.run import empty_artifacts_dir
 
-        if args.out.is_dir() and any(args.out.iterdir()):
-            ap.error(f"{args.out} is not empty: an artifact left there would be served as a parse")
-        args.out.mkdir(parents=True, exist_ok=True)
+        empty_artifacts_dir(args.out)
         for line in args.parses.read_text().splitlines():
             parse = json.loads(line)
             artifact = artifact_from_parse(parse, parse["file"].rsplit(".", 1)[-1])

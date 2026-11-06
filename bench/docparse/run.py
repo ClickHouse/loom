@@ -83,12 +83,7 @@ def run(
     `extractor/` directory) under `python`; with `artifacts`, each file's
     artifact is written there too, as `<file>.json`."""
     if artifacts is not None:
-        # an artifact left there from another run would be served as this run's parse
-        if artifacts.is_dir() and any(artifacts.iterdir()):
-            raise SystemExit(
-                f"{artifacts} is not empty: an artifact left there would be served as a parse"
-            )
-        artifacts.mkdir(parents=True, exist_ok=True)
+        empty_artifacts_dir(artifacts)
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(extractor)}
     gold = [json.loads(line) for line in (corpus / "gold.jsonl").read_text().splitlines()]
     with out.open("w") as f:
@@ -106,6 +101,14 @@ def run(
                 res.get("complete"),
                 res.get("error", "")[:80],
             )
+
+
+def empty_artifacts_dir(path: Path) -> None:
+    """`path`, made when missing; SystemExit when it holds anything, as an
+    artifact left there from another run would be served as this run's parse."""
+    if path.is_dir() and any(path.iterdir()):
+        raise SystemExit(f"{path} is not empty: an artifact left there would be served as a parse")
+    path.mkdir(parents=True, exist_ok=True)
 
 
 def _one(python: str, path: Path, env: dict[str, str], artifact: str = "") -> dict:

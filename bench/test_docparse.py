@@ -664,6 +664,18 @@ def test_decision_counts_come_from_where_extraction_grounds_its_quotes(
     assert dx.ground is ground  # put back
 
 
+def test_artifacts_takes_no_directory_that_holds_one_already(tmp_path: Path) -> None:
+    from bench.docparse.__main__ import main
+
+    art = tmp_path / "art"
+    art.mkdir()
+    (art / "old.pdf.json").write_text("{}")
+    parses = tmp_path / "p.jsonl"
+    parses.write_text("")
+    with pytest.raises(SystemExit, match="is not empty"):
+        main(["artifacts", str(parses), "--out", str(art)])
+
+
 def test_run_takes_no_artifacts_directory_that_holds_one_already(tmp_path: Path) -> None:
     from bench.docparse import run as R
 
@@ -674,7 +686,7 @@ def test_run_takes_no_artifacts_directory_that_holds_one_already(tmp_path: Path)
         R.run(CORPUS, tmp_path / "out.jsonl", tmp_path, artifacts=art)
 
 
-def test_downstream_refuses_what_would_mix_or_stall_its_systems(
+def test_downstream_refuses_what_would_mix_its_systems(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     from bench.docparse.__main__ import main
@@ -690,14 +702,6 @@ def test_downstream_refuses_what_would_mix_or_stall_its_systems(
         with pytest.raises(SystemExit):
             main([*base, *argv])
         assert why in capsys.readouterr().err
-    art = tmp_path / "art"
-    art.mkdir()
-    (art / "old.pdf.json").write_text("{}")
-    parses = tmp_path / "p.jsonl"
-    parses.write_text("")
-    with pytest.raises(SystemExit):
-        main(["artifacts", str(parses), "--out", str(art)])
-    assert "is not empty" in capsys.readouterr().err
 
 
 def test_the_stub_serves_a_systems_artifact_to_the_token_alone(tmp_path: Path) -> None:
@@ -745,18 +749,26 @@ def test_the_stub_serves_a_systems_artifact_to_the_token_alone(tmp_path: Path) -
 
 
 class _FakeLoom:
-    """A Loom's ops as the harness calls them: each request recorded, each
-    ingest job's state the one `state` gives."""
+    """A Loom's ops as the harness calls them: each request recorded, a file's
+    ingest job named after it, and its state the one `states` gives it, else
+    `state`."""
 
-    def __init__(self, state: str = "ready", results: list[dict] | None = None) -> None:
+    def __init__(
+        self, state: str = "ready", results: list[dict] | None = None, states: dict | None = None
+    ) -> None:
         self.state, self.sent, self.results = state, [], results or []
+        self.states = states or {}
 
     def request(self, method: str, url: str, **kw: object) -> httpx.Response:
-        self.sent.append((url, kw.get("json")))
+        payload = kw.get("json") or {}
+        params = kw.get("params") or {}
+        assert isinstance(payload, dict) and isinstance(params, dict)
+        self.sent.append((url, payload or None))
+        job = payload.get("ingestion_id") or f"job-{payload.get('upload_id', '')}"
         body: dict = {
-            "upload_id": "u",
-            "ingestion_id": "j",
-            "state": self.state,
+            "upload_id": params.get("filename", ""),
+            "ingestion_id": job,
+            "state": self.states.get(job.removeprefix("job-"), self.state),
             "results": self.results,
         }
         return httpx.Response(200, json=body, request=httpx.Request(method, "http://loom" + url))
@@ -781,18 +793,23 @@ def test_search_stays_in_the_systems_namespace_and_scores_an_unfinished_file_zer
     assert payload["uri_prefix"] == ["docparse://a.pdf"] and payload["namespace"] == "docparse-new"
 
 
-@pytest.mark.parametrize(
-    ("refused", "deadline", "why"),
-    [(1, 60, "another token"), (0, 0, "still running")],
-)
-def test_ingest_stops_and_cancels_its_open_jobs(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, refused: int, deadline: int, why: str
+@pytest.mark.parametrize(("refused", "why"), [(True, "another token"), (False, "still running")])
+def test_ingest_stops_after_a_poll_and_cancels_only_its_open_jobs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, refused: bool, why: str
 ) -> None:
     from bench.docparse import downstream
 
-    monkeypatch.setattr(downstream, "INGEST_DEADLINE_S", deadline)
-    (tmp_path / "a.pdf").write_bytes(b"%PDF")
-    loom = _FakeLoom("running")
+    monkeypatch.setattr(downstream, "INGEST_DEADLINE_S", 0.2)
+    for f in ("a.pdf", "b.pdf"):
+        (tmp_path / f).write_bytes(b"%PDF")
+    loom = _FakeLoom(states={"a.pdf": "ready", "b.pdf": "processing"})
+    polls: list[int] = []  # the token is refused once a poll has seen a.pdf finish
+
+    def refusal() -> bool:
+        polls.append(1)
+        return refused and len(polls) > 1
+
     with pytest.raises(SystemExit, match=why):
-        downstream.ingest(loom, "o", "n", tmp_path, ["a.pdf"], refused=lambda: refused)
-    assert loom.sent[-1][0] == "/v1/knowledge.ingest_cancel"
+        downstream.ingest(loom, "o", "n", tmp_path, ["a.pdf", "b.pdf"], refused=refusal)
+    cancels = [p for url, p in loom.sent if url == "/v1/knowledge.ingest_cancel"]
+    assert cancels == [{"org": "o", "namespace": "n", "ingestion_id": "job-b.pdf"}]
