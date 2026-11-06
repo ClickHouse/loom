@@ -33,6 +33,9 @@ def key(s: str) -> str:
 
 
 NUMBERING = re.compile(r"^\s*(?:\d{1,2}(?:\.\d{1,2})*\.?|[a-z][.)])\s+", re.I)
+# a list item's enumerator ("1.", "2)", "a."), which the gold's items leave out;
+# not a number of the item's own text ("3.11 adds ...")
+ENUMERATOR = re.compile(r"^\s*(?:\d{1,3}|[a-z])[.)]\s+", re.I)
 
 
 def unnumbered(s: str) -> str:
@@ -41,15 +44,10 @@ def unnumbered(s: str) -> str:
     return NUMBERING.sub("", s, count=1)
 
 
-def _gold_text(b: dict) -> str:
-    """A gold block's text, an item's leading number left out as the parse's is."""
-    return unnumbered(b["text"]) if b["kind"] == "item" else b["text"]
-
-
 def gold_words(g: dict) -> Counter:
     c: Counter = Counter()
     for b in g["blocks"]:
-        c.update(words(_gold_text(b)))
+        c.update(words(b["text"]))
     for t in g["tables"]:
         for r in t["rows"]:
             for cell in r:
@@ -86,12 +84,12 @@ def text_scores(g: dict, p: dict) -> dict:
 
 def _stream(p: dict) -> list[str]:
     """The words of the parse's blocks in order, a table block's left to its
-    table and a list item's number left out, as the gold holds its items."""
+    table and a list item's enumerator left out, as the gold holds its items."""
     out: list[str] = []
     for b in p.get("blocks", []):
         if b["type"] == "list":
             for line in b["text"].split("\n"):
-                out.extend(words(unnumbered(line)))
+                out.extend(words(ENUMERATOR.sub("", line, count=1)))
         elif b["type"] != "table":
             out.extend(words(b["text"]))
     return out
@@ -108,7 +106,7 @@ def order_score(g: dict, p: dict) -> float | None:
     """The share of consecutive gold text units of five words or more
     (paragraphs, items, headings, code) that the parse holds in the same order."""
     units = [
-        words(_gold_text(b))
+        words(b["text"])
         for b in g["blocks"]
         if b["kind"] in ("paragraph", "item", "heading", "code")
     ]
