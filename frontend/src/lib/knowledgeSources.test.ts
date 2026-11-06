@@ -255,7 +255,7 @@ describe("toggleInclude", () => {
     expect(without).toEqual(["slides", "pdf", "pptx"]);
     expect(toggleInclude(without, "docs")).toEqual(all);
     expect(toggleInclude(["pptx"], "pdf")).toEqual(["pdf", "pptx"]);
-    expect(toggleInclude(all, "docx")).toEqual(["docs", "slides", "pdf", "pptx", "docx"]);
+    expect(toggleInclude(["docx"], "pdf")).toEqual(["pdf", "docx"]);
   });
 });
 

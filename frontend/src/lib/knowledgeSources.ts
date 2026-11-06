@@ -272,7 +272,7 @@ export function emptySourceForm(): SourceForm {
     name: "",
     kind: "gdrive",
     folders: "",
-    // Every kind but .docx, which a server of the previous release cannot sync.
+    // .docx is opt-in, as in the server's default include.
     include: INCLUDE_OPTIONS.map((o) => o.value).filter((v) => v !== "docx"),
     projects: "",
     pages: "",

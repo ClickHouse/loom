@@ -78,15 +78,15 @@ documents from. A source lives on the repository's trunk code namespace, the one
 documents live in, so whoever reads the repository sees where its documents come from,
 and only the namespace's admins change that. Four kinds are served: `gdrive`, a shared
 folder of docs, slides, decks, Word documents and PDFs, read with a service account the
-folders are shared to read-only, whose credential is the account's JSON key; `linear`, the
-documents of a project tracker's projects, read with a read-only API key of an account
-that sees the projects; `notion`, a page store's pages and databases, read with an
-integration that has read content access and that the pages and databases are shared
-with, whose credential is the integration's token; and `recording`, the transcripts of
-a meeting store's recordings ([recordings](#a-recording-source)). The
-`knowledge_source_sync` worker pulls each source's files into the repository's
-documents ([syncing](#syncing-a-source)); `list` says whether this deployment runs it
-(`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
+folders are shared to read-only, whose credential is the account's JSON key; `linear`,
+the documents of a project tracker's projects, read with a read-only API key of an
+account that sees the projects; `notion`, a page store's pages and databases, read with
+an integration that has read content access and that the pages and databases are shared
+with, whose credential is the integration's token; and `recording`, the transcripts of a
+meeting store's recordings ([recordings](#a-recording-source)). The
+`knowledge_source_sync` worker pulls each source's files into the repository's documents
+([syncing](#syncing-a-source)); `list` says whether this deployment runs it (`enabled`,
+`LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
 
 On the dashboard, an opened repository on the Repositories page shows its sources under
 Sources: each source's kind, last sync and counts, to anyone who reads the repository. A
@@ -114,12 +114,12 @@ changing the provider also clears the ids typed for the other one.
 
 A source's `config` holds ids and filters, never a host or a URL: `gdrive` takes
 `folder_ids` (1 to 20) and `include` (any of `docs`, `slides`, `pdf`, `pptx`, `docx`;
-all but `docx` by default); `linear` takes `project_ids` (1 to 20 project UUIDs); `notion` takes
-`page_ids` and `database_ids`, 1 to 20 ids in all, each 32 hex digits with or without
-dashes (stored dashed, lower case); `recording` takes `provider` (`meet` or `zoom`) and
-`ids` (1 to 20 meeting space ids for `meet`, numeric meeting ids for `zoom`). The
-store's API hosts are fixed in the server, so a registered source cannot point the
-server at another host. The credential is sealed at rest under its own purpose
+all but `docx` by default); `linear` takes `project_ids` (1 to 20 project UUIDs);
+`notion` takes `page_ids` and `database_ids`, 1 to 20 ids in all, each 32 hex digits
+with or without dashes (stored dashed, lower case); `recording` takes `provider` (`meet`
+or `zoom`) and `ids` (1 to 20 meeting space ids for `meet`, numeric meeting ids for
+`zoom`). The store's API hosts are fixed in the server, so a registered source cannot
+point the server at another host. The credential is sealed at rest under its own purpose
 (`loom secrets reseal` covers it), held in memory only for a probe, never returned by
 any op and never written to an audit row. `add` records the namespace, name, kind,
 config and `dry_run`; `rotate` the namespace and name; `remove` and `sync_now` their
