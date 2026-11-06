@@ -896,10 +896,10 @@ comparable across systems.
   and every file's scores), `bench/results/docparse_downstream.json` (the `downstream`
   harness's output: ingest states, the query set with each answer, each query's judgement,
   the paired report by category and by split, and the decision counts; its systems renamed
-  from the run's names and its report recomputed with the split groups). The baseline's time
-  for two held-out files regenerated after its run (typeset_1, scan_2) is from their earlier
-  versions, as its re-run shared the machine with other work; their quality scores are from
-  the re-run.
+  from the run's names, its queries given their split from `gold.jsonl`, and its report
+  recomputed with the split groups). The baseline's time for two held-out files regenerated
+  after its run (typeset_1, scan_2) is from their earlier versions, as its re-run shared the
+  machine with other work; their quality scores are from the re-run.
 - **Reproduce:** the parse scores from the committed parses, `PYTHONPATH=$PWD
 .venv/bin/python -m bench.docparse score
 text_layer=bench/results/docparse_parses/text_layer.jsonl
