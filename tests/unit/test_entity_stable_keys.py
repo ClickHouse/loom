@@ -9,6 +9,8 @@ no-op when the setting is off.
 
 from __future__ import annotations
 
+import pytest
+
 from server.memory.app.extract import ExtractedFact
 from server.memory.app.extract.keys import entity_stable_key, rewrite_fact_key
 
@@ -17,72 +19,109 @@ from server.memory.app.extract.keys import entity_stable_key, rewrite_fact_key
 # ---------------------------------------------------------------------------
 
 
-def test_pr_number_in_value_prefixes_key() -> None:
-    assert (
-        entity_stable_key("user_task_status", [], "PR 107585 is ready to merge")
-        == "pr107585_status"
-    )
-
-
-def test_pr_number_no_separator_prefixes_key() -> None:
-    assert entity_stable_key("user_task_status", ["pr107585"], "") == "pr107585_status"
-
-
-def test_bare_hash_ref_treated_as_pr() -> None:
-    assert entity_stable_key("user_task_status", [], "landed in #107585") == "pr107585_status"
-
-
-def test_issue_number_prefixes_with_issue() -> None:
-    assert entity_stable_key("user_task_status", [], "issue 4242 still open") == "issue4242_status"
-
-
-def test_handle_prefixes_key() -> None:
-    assert entity_stable_key("user_directive", [], "@tvega asked us to revert") == "tvega_directive"
-
-
-def test_handle_from_entities_list() -> None:
-    assert entity_stable_key("user_directive", ["@tvega"], "someone asked") == "tvega_directive"
-
-
-def test_test_keyword_id_prefixes_key() -> None:
-    assert (
-        entity_stable_key("user_fix", [], "test 04653 is flaky and needs a fix") == "test04653_fix"
-    )
-
-
-def test_bare_test_file_convention_prefixes_key() -> None:
-    assert entity_stable_key("user_status", [], "04653_stateless_query broke") == "test04653_status"
-
-
-def test_no_entity_leaves_key_unchanged() -> None:
-    # No PR/issue/test/handle anywhere -> concept key returned as-is.
-    assert (
-        entity_stable_key("user_task_status", ["deployment"], "the plan is set")
-        == "user_task_status"
-    )
-
-
-def test_lone_small_number_is_not_a_pr() -> None:
-    # High-precision: a bare number with no keyword/# is not an identifier.
-    assert entity_stable_key("user_task_status", [], "we shipped 3 features") == "user_task_status"
-
-
-def test_concept_suffix_strips_multiple_generic_prefixes() -> None:
-    # `user` and `task` are both generic leading tokens; both stripped.
-    assert (
-        entity_stable_key("user_task_deploy_blocker", [], "pr 900 blocks it")
-        == "pr900_deploy_blocker"
-    )
-
-
-def test_all_generic_key_is_not_stripped_to_empty() -> None:
-    # A key made entirely of generic tokens keeps its last segment.
-    assert entity_stable_key("user", [], "pr 900 note") == "pr900_user"
-
-
-def test_priority_pr_beats_handle() -> None:
-    # Both a PR number and an @handle present -> PR wins (more salient).
-    assert entity_stable_key("user_status", [], "@tvega opened PR 555") == "pr555_status"
+@pytest.mark.parametrize(
+    ("key", "entities", "value", "want"),
+    [
+        pytest.param(
+            "user_task_status",
+            [],
+            "PR 107585 is ready to merge",
+            "pr107585_status",
+            id="PR number in the value",
+        ),
+        pytest.param(
+            "user_task_status",
+            ["pr107585"],
+            "",
+            "pr107585_status",
+            id="PR number without a separator, from the entities",
+        ),
+        pytest.param(
+            "user_task_status",
+            [],
+            "landed in #107585",
+            "pr107585_status",
+            id="bare hash ref is a PR",
+        ),
+        pytest.param(
+            "user_task_status",
+            [],
+            "issue 4242 still open",
+            "issue4242_status",
+            id="issue number prefixes with issue",
+        ),
+        pytest.param(
+            "user_directive",
+            [],
+            "@tvega asked us to revert",
+            "tvega_directive",
+            id="handle in the value",
+        ),
+        pytest.param(
+            "user_directive",
+            ["@tvega"],
+            "someone asked",
+            "tvega_directive",
+            id="handle from the entities",
+        ),
+        pytest.param(
+            "user_fix",
+            [],
+            "test 04653 is flaky and needs a fix",
+            "test04653_fix",
+            id="test keyword and id",
+        ),
+        pytest.param(
+            "user_status",
+            [],
+            "04653_stateless_query broke",
+            "test04653_status",
+            id="bare test file convention",
+        ),
+        # No PR, issue, test or handle anywhere: the concept key is returned as is.
+        pytest.param(
+            "user_task_status",
+            ["deployment"],
+            "the plan is set",
+            "user_task_status",
+            id="no entity leaves the key",
+        ),
+        # High precision: a bare number with no keyword or # is not an identifier.
+        pytest.param(
+            "user_task_status",
+            [],
+            "we shipped 3 features",
+            "user_task_status",
+            id="lone small number is not a PR",
+        ),
+        # `user` and `task` are both generic leading tokens; both are stripped.
+        pytest.param(
+            "user_task_deploy_blocker",
+            [],
+            "pr 900 blocks it",
+            "pr900_deploy_blocker",
+            id="several generic prefixes stripped",
+        ),
+        # A key made entirely of generic tokens keeps its last segment.
+        pytest.param("user", [], "pr 900 note", "pr900_user", id="all-generic key not emptied"),
+        # A PR number and an @handle: the PR wins, as the more salient.
+        pytest.param(
+            "user_status", [], "@tvega opened PR 555", "pr555_status", id="PR beats handle"
+        ),
+        # `foo@bar` is an email, not a handle: no rewrite.
+        pytest.param(
+            "user_task_status",
+            [],
+            "email me at foo@bar.com",
+            "user_task_status",
+            id="email local part is not a handle",
+        ),
+    ],
+)
+def test_entity_stable_key_prefixes_the_salient_entity(
+    key: str, entities: list[str], value: str, want: str
+) -> None:
+    assert entity_stable_key(key, entities, value) == want
 
 
 def test_cap_respected() -> None:
@@ -90,13 +129,6 @@ def test_cap_respected() -> None:
     out = entity_stable_key(long_concept, [], "pr 107585 update")
     assert len(out) <= 64
     assert out.startswith("pr107585_")
-
-
-def test_handle_ignores_email_local_part() -> None:
-    # `foo@bar` is an email, not a handle -> no rewrite.
-    assert (
-        entity_stable_key("user_task_status", [], "email me at foo@bar.com") == "user_task_status"
-    )
 
 
 def test_tags_source_is_scanned() -> None:
