@@ -123,6 +123,16 @@ describe("LibraryPassages", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/Lost connection to Loom/));
   });
 
+  it("marks the hits on screen busy while a new search runs", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValueOnce([HIT]);
+    const { user } = await openAndFind("events");
+    const list = await screen.findByRole("list", { name: "Passages found" });
+    expect(list).not.toHaveAttribute("aria-busy");
+    vi.mocked(searchKnowledge).mockReturnValueOnce(new Promise(() => {}));
+    await user.click(screen.getByRole("button", { name: "Find" }));
+    expect(screen.getByRole("list", { name: "Passages found" })).toHaveAttribute("aria-busy", "true");
+  });
+
   it("drops a search still running when the panel goes", async () => {
     let signal: AbortSignal | undefined;
     vi.mocked(searchKnowledge).mockImplementation((_id, _q, _k, opts) => {

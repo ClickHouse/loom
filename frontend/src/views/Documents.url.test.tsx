@@ -299,6 +299,13 @@ describe("Find a passage in the Library", () => {
     act(() => docOne.focus());
     fireEvent.keyDown(docOne, { key: "ArrowDown" });
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Preview Runbook" }));
+    // j and k answer from anywhere, so only the list focus was last in may take them.
+    act(() => hitOne.focus());
+    fireEvent.keyDown(hitOne, { key: "j" });
+    expect(document.activeElement).toBe(hitTwo);
+    act(() => docOne.focus());
+    fireEvent.keyDown(docOne, { key: "j" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Preview Runbook" }));
   });
 
   it("another namespace folds the passages, and a list that failed to load shows none", async () => {

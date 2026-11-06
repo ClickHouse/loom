@@ -187,6 +187,9 @@ describe("truncate", () => {
   it("cuts between characters, not inside an emoji", () => {
     expect(truncate("ab😀cd", 4)).toBe("ab😀…");
     expect(truncate("😀😀😀", 3)).toBe("😀😀😀");
+    expect(truncate("ab🇺🇸cd", 4)).toBe("ab🇺🇸…");
+    expect(truncate("ab👍🏽cd", 4)).toBe("ab👍🏽…");
+    expect(truncate("ab👩‍💻cd", 4)).toBe("ab👩‍💻…");
   });
 
   it("cuts to max characters including the ellipsis", () => {

@@ -25,7 +25,6 @@ import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
 import { roleOnNamespace } from "../lib/namespaceRole";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError } from "../components/Toast";
-import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { ListRow, Loading, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
@@ -39,6 +38,7 @@ import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
+import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
 import { EmptyState } from "../components/EmptyState";
@@ -258,8 +258,9 @@ export function Documents() {
     if (shownScope.current !== scope) {
       shownScope.current = scope;
       setRows(null);
-      // The last place's failure is not this one's.
+      // The last place's failure is not this one's, nor its earlier load on another visit.
       setLoadError(null);
+      setListedScope("");
     }
     setNextCursor(null);
     const tags = JSON.parse(serverTags) as string[];
@@ -533,6 +534,7 @@ export function Documents() {
     setAddOpen(false);
     setReplaceEntry(null);
     setEditEntry(null);
+    setPassagesOpen(false);
   }, [place]);
 
   // The first screen mounts with the page, the rest of the rows in a transition after the
@@ -608,12 +610,9 @@ export function Documents() {
     [listNav],
   );
   const passagesBox = useRef<HTMLDivElement | null>(null);
-  // Finding a passage: once the place's list has loaded and holds a document, and through a
-  // later failed read (it searches the whole namespace). A new place folds it.
-  // The rows on screen must be this place's too: back at a place after another's failed
-  // read, the failed rows still show for a render.
-  const canFindPassages = rows !== null && !emptyLibrary && listedScope === place && rowsScope === place;
-  useEffect(() => setPassagesOpen(false), [identity.org, identity.namespace]);
+  // Finding a passage: once the place's list has loaded on this visit and holds a document,
+  // and through a later failed read (it searches the whole namespace). A new place folds it.
+  const canFindPassages = rows !== null && !emptyLibrary && listedScope === place;
   const passagesToggle = (className: string) => (
     <Button
       type="empty"

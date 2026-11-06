@@ -137,18 +137,24 @@ export function sentenceCase(s: string): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
-/** The first `max` characters of `s`, the ellipsis included, cut by code point so an
- *  emoji at the cut is not split in half. */
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** The first `max` characters of `s`, the ellipsis included, cut between the characters a
+ *  reader sees, so an emoji, a flag or an accented letter at the cut stays whole. */
 export function truncate(s: string, max: number): string {
   if (!s || s.length <= max) return s;
-  const points = Array.from(s);
-  if (points.length <= max) return s;
-  return (
-    points
-      .slice(0, max - 1)
-      .join("")
-      .trimEnd() + "…"
-  );
+  const kept: string[] = [];
+  for (const { segment } of graphemes.segment(s)) {
+    if (kept.length === max)
+      return (
+        kept
+          .slice(0, max - 1)
+          .join("")
+          .trimEnd() + "…"
+      );
+    kept.push(segment);
+  }
+  return s;
 }
 
 /** A bounded preview of a value for a card: the first `max` characters of the string, or
