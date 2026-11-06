@@ -53,7 +53,7 @@ def unnumbered(s: str) -> str:
 
 def probe_words(text: str) -> list[str]:
     """A gold block's words as it is looked for in the parse's (`text_words`):
-    without its leading number ("1.1" too) or an enumerator (`text_words`)."""
+    without its leading number ("1.1" too) or an enumerator."""
     return text_words(unnumbered(text))
 
 
