@@ -27,18 +27,19 @@ function span(one: string, many: string, start?: number, end?: number): string {
  *  "" for a hit with no locator (text a caller extracted). */
 export function formatLocator(format: string, locator: Locator | null | undefined): string {
   if (!locator) return "";
-  const slides = format === "pptx";
-  const parts = [
-    locator.key_path ? `key ${locator.key_path}` : "",
-    slides
+  // A locator places a passage one way (an extractor sets a key, pages or a sheet's rows,
+  // with lines beside a key); the first that applies is the most useful.
+  if (locator.key_path) return `key ${locator.key_path}`;
+  const pages =
+    format === "pptx"
       ? span("slide", "slides", locator.page_start, locator.page_end)
-      : span("page", "pages", locator.page_start, locator.page_end),
-    [locator.sheet ?? "", span("row", "rows", locator.row_start, locator.row_end)].filter(Boolean).join(", "),
-  ].filter(Boolean);
-  // Lines only where nothing else places it: a key path, a page or a row says more.
-  const lines = span("line", "lines", locator.line_start, locator.line_end);
-  if (!parts.length && lines) parts.push(lines);
-  return parts.join(" · ");
+      : span("page", "pages", locator.page_start, locator.page_end);
+  if (pages) return pages;
+  const rows = [locator.sheet ?? "", span("row", "rows", locator.row_start, locator.row_end)]
+    .filter(Boolean)
+    .join(", ");
+  if (rows) return rows;
+  return span("line", "lines", locator.line_start, locator.line_end);
 }
 
 /** The passage's citation: the revision it was read from and where it sits in it. */
