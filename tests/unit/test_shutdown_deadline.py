@@ -100,7 +100,7 @@ async def test_a_stalled_instance_stop_write_still_leaves_time_for_the_cleanup(
 
 
 _EXIT = """
-import asyncio, atexit, sys, time
+import asyncio, sys, time
 from unittest.mock import AsyncMock
 from server.insights.app import provider_barrier as barrier
 
@@ -122,10 +122,9 @@ time.sleep(0.3)  # the second beat is now stuck
 barrier.drain_task_sets = AsyncMock(return_value=True)
 barrier._server_side_settled = AsyncMock(return_value=True)
 barrier.record_participant = AsyncMock()
-started = time.monotonic()
-# atexit handlers run after the interpreter joins its non-daemon threads, so
-# this is the time from retiring to the process's exit, imports left out.
-atexit.register(lambda: print(f"{time.monotonic() - started:.2f}"))
+# The parent measures from here to the process's exit, imports left out
+# (CLOCK_MONOTONIC is one clock for every process on the host).
+print(time.monotonic(), flush=True)
 assert asyncio.run(barrier.retire_process())
 """
 
@@ -139,4 +138,5 @@ def test_the_process_exits_without_waiting_on_a_stuck_heartbeat() -> None:
         timeout=60,
     )
     assert done.returncode == 0, done.stderr[-2000:]
-    assert float(done.stdout.split()[-1]) < 5, "exit waited on the heartbeat thread"
+    retiring = float(done.stdout.split()[-1])
+    assert time.monotonic() - retiring < 5, "exit waited on the heartbeat thread"

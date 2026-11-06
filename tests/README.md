@@ -25,7 +25,7 @@ Marks must be registered (`strict_markers`). An unknown mark fails collection.
 
 ## Rules every test keeps
 
-- **Order-independent and parallel-safe.** The unit job runs under pytest-randomly with a printed seed, one pytest-xdist worker per core. To reproduce a failure, run `pytest tests/unit -p randomly --randomly-seed=<seed>`, with and without `-n auto`. A test writes only under `tmp_path` and listens only on port 0, since another test runs beside it.
+- **Order-independent and parallel-safe.** The unit job runs under pytest-randomly with a printed seed, one pytest-xdist worker per core. The seed fixes the order, but xdist hands tests to workers as they free up, so a run without `-n` (`pytest tests/unit -p randomly --randomly-seed=<seed>`) is the one that repeats an order exactly; a failure that needs a particular neighbour shows with `-p no:randomly` and the two test ids in order. A test writes only under `tmp_path` and listens only on port 0, since another test runs beside it.
 - **Collection is deterministic.** Every xdist worker collects the suite and must get the same test ids, so a parametrize id never comes from `uuid4()`, the clock or a random draw.
 - **State goes back as it was found.** `tests/unit/conftest.py` holds autouse guards. Each one resets its state and fails the test that leaked it:
   - settings fields: use the `settings_override` fixture or `monkeypatch.setattr(settings, ...)`;

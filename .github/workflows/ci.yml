@@ -150,9 +150,9 @@ jobs:
           clickhouse local --query "SELECT version()"
       # Random order (pytest-randomly) over one worker per core (pytest-xdist):
       # a test that depends on the one before it fails here rather than on a
-      # peer's laptop. The seed is printed first thing; reproduce a failure
-      # locally with `pytest tests/unit -p randomly --randomly-seed=<seed>`.
-      # The slowest tests are listed at the end, for the next one to speed up.
+      # peer's laptop. The seed is printed first thing; without `-n`,
+      # `pytest tests/unit -p randomly --randomly-seed=<seed>` repeats the order
+      # (tests/README.md). `--durations=30` lists the slowest tests at the end of the log.
       - name: pytest unit + coverage (random order)
         run: |
           SEED="${{ github.run_id }}${{ github.run_attempt }}"

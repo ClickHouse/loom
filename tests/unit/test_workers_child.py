@@ -268,6 +268,9 @@ def test_the_child_dies_with_its_parent(tmp_path) -> None:
         deadline = time.monotonic() + 30
         while not (pid_file.exists() and pid_file.read_text()) and time.monotonic() < deadline:
             time.sleep(0.05)
+        assert pid_file.exists() and pid_file.read_text(), (
+            "the grandchild never set its death signal"
+        )
         pid = int(pid_file.read_text())
         proc.kill()
         proc.wait()
