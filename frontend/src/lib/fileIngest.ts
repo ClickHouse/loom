@@ -49,10 +49,12 @@ export function fileVerdict(
     formats.formats.find((f) => media !== "" && f.media_types.includes(media)) ??
     formats.formats.find((f) => f.format === formats.default_format);
   if (!entry) return { format: formats.default_format, available: null, refusal: "" };
+  // Unknown (null) is no refusal: the extractor could not be asked just now, and an
+  // ingest sent waits for it.
   return {
     format: entry.format,
     available: entry.available,
-    refusal: entry.available ? "" : `No extractor on this deployment reads ${entry.format} files.`,
+    refusal: entry.available === false ? `No extractor on this deployment reads ${entry.format} files.` : "",
   };
 }
 

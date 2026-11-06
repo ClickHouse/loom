@@ -199,12 +199,12 @@ export async function addKnowledge(
 }
 
 /** One format `knowledge.formats` lists: the names that select it, and whether a
- *  configured extractor reads it. */
+ *  configured extractor reads it (null while the server could not ask it). */
 export interface KnowledgeFormat {
   format: string;
   extensions: string[];
   media_types: string[];
-  available: boolean;
+  available: boolean | null;
 }
 
 export interface KnowledgeFormats {

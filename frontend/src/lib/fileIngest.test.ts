@@ -19,6 +19,7 @@ const FORMATS: KnowledgeFormats = {
     { format: "markdown", extensions: ["markdown", "md"], media_types: ["text/markdown"], available: true },
     { format: "pdf", extensions: ["pdf"], media_types: ["application/pdf"], available: true },
     { format: "pptx", extensions: ["pptx"], media_types: [], available: false },
+    { format: "xlsx", extensions: ["xlsx"], media_types: [], available: null },
     { format: "text", extensions: ["txt"], media_types: ["text/plain"], available: true },
   ],
   max_upload_bytes: 1000,
@@ -41,6 +42,10 @@ describe("fileVerdict", () => {
     const deck = fileVerdict(file("deck.pptx"), FORMATS);
     expect([deck.format, deck.available]).toEqual(["pptx", false]);
     expect(deck.refusal).toMatch(/No extractor on this deployment reads pptx/);
+  });
+
+  it("refuses nothing whose extractor the server could not ask just now", () => {
+    expect(fileVerdict(file("orders.xlsx"), FORMATS)).toEqual({ format: "xlsx", available: null, refusal: "" });
   });
 
   it("says nothing it does not know when the server did not list its formats", () => {

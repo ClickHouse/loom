@@ -55,7 +55,13 @@ export function PickedFile({ file, verdict }: { file: File; verdict: FileVerdict
         <Badge
           size="sm"
           state={verdict.available === false ? "danger" : verdict.available ? "success" : "neutral"}
-          text={verdict.available === false ? `${verdict.format}: not read here` : verdict.format}
+          text={
+            verdict.available === false
+              ? `${verdict.format}: not read here`
+              : verdict.available === null
+                ? `${verdict.format}: extractor not answering`
+                : verdict.format
+          }
         />
       )}
     </div>
