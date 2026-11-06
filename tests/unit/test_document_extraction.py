@@ -986,11 +986,13 @@ def test_a_heading_line_with_a_long_run_of_blanks_is_read_whole() -> None:
 
 
 def _within(seconds: float, fn: Any) -> None:
-    """`fn` runs in under `seconds`: a loose bound, set so that a pattern or loop
-    that turned quadratic on these inputs would take minutes, not milliseconds."""
-    start = time.perf_counter()
+    """`fn` runs in under `seconds` of this process's CPU time: a loose bound, set so
+    that a pattern or loop that turned quadratic on these inputs would take minutes,
+    not milliseconds. CPU time, not wall time, so a test running beside it on the
+    same core does not count against the bound."""
+    start = time.process_time()
     fn()
-    assert time.perf_counter() - start < seconds
+    assert time.process_time() - start < seconds
 
 
 def test_hostile_markdown_lines_parse_in_bounded_time() -> None:

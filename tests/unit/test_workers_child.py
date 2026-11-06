@@ -11,12 +11,12 @@ import subprocess
 import sys
 import threading
 import time
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from server.workers import child
+from tests.unit.test_cli_child_stop import _read_pid
 
 # A stand-in child: writes the first deadline it reads to a file, then waits
 # for SIGTERM.
@@ -249,11 +249,6 @@ def test_the_child_exits_by_itself_past_the_deadline() -> None:
     started = time.monotonic()
     rc = subprocess.run([sys.executable, "-c", code], timeout=20).returncode
     assert rc == 1 and time.monotonic() - started < 15
-
-
-def _read_pid(path: Path) -> int:
-    text = path.read_text().strip() if path.exists() else ""
-    return int(text) if text else 0
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG is Linux")

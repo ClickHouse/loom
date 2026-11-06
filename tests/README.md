@@ -27,8 +27,8 @@ Marks must be registered (`strict_markers`). An unknown mark fails collection.
 
 - **Order-independent and parallel-safe.** The unit job runs under pytest-randomly with a printed seed, one pytest-xdist worker per core. A test writes only under `tmp_path` and listens only on port 0, since another test runs beside it. To reproduce a failure:
   - the seed's order: `pytest tests/unit -p randomly --randomly-seed=<seed>`, without `-n`. The seed fixes the order, but xdist hands tests to workers as they free up, so only a run without `-n` repeats it exactly;
-  - a neighbour that breaks it: `pytest -p no:randomly <earlier ids> <failing id>`. The CI log does not say which tests shared the failing test's worker; the earlier ids are the ones before the failing test in `pytest tests/unit -p randomly --randomly-seed=<seed> --collect-only -q`. Start with those from its own file, and halve them until one is left;
-  - two tests colliding while they run at once: `pytest -n 2 -p no:randomly <id> <id>`.
+  - a neighbour that breaks it: `pytest -p randomly --randomly-seed=<seed> --randomly-dont-reorganize <earlier ids> <failing id>`, which runs the ids in the order given with the same per-test random seeds as CI. The CI log does not say which tests shared the failing test's worker; the earlier ids are the ones before the failing test in `pytest tests/unit -p randomly --randomly-seed=<seed> --collect-only -q`. Start with those from its own file, and halve them until one is left;
+  - two tests colliding while they run at once: the same with `-n 2` and the two ids.
 - **Collection is deterministic.** Every xdist worker collects the suite and must get the same test ids, so a parametrize id never comes from `uuid4()`, the clock or a random draw.
 - **State goes back as it was found.** `tests/unit/conftest.py` holds autouse guards. Each one resets its state and fails the test that leaked it:
   - settings fields: use the `settings_override` fixture or `monkeypatch.setattr(settings, ...)`;
