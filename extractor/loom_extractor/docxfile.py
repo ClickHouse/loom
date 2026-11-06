@@ -27,7 +27,7 @@ from xml.etree.ElementTree import Element
 from loom_extractor.artifact import Artifact, Blocks, Coverage, Failure, Locator
 from loom_extractor.ooxml import Package, PartError, q
 
-PARSER_VERSION = "2"  # parts past a package-wide bound fail
+PARSER_VERSION = "3"  # a document's headings sit under its Title paragraph
 _MAIN = "word/document.xml"
 _MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
 _PICT = q("w:pict")
@@ -52,10 +52,11 @@ def _val(el: Element | None, tag: str) -> str:
     return child.get(q("w:val"), "") if child is not None else ""
 
 
-def _heading_levels(pkg: Package) -> dict[str, int]:
-    """Each paragraph style id that makes a heading, and its depth."""
+def _heading_levels(pkg: Package) -> tuple[dict[str, int], set[str]]:
+    """Each paragraph style id that makes a heading, and its depth, and the ids
+    of the `Title` styles."""
     if not pkg.has("word/styles.xml"):
-        return {}
+        return {}, set()
     styles: dict[str, tuple[str, str, str]] = {}  # id: (name, outline level, based on)
     for s in pkg.xml("word/styles.xml").iter(q("w:style")):
         if s.get(q("w:type")) == "paragraph":
@@ -65,6 +66,7 @@ def _heading_levels(pkg: Package) -> dict[str, int]:
                 _val(s, "w:basedOn"),
             )
     levels = {}
+    titles = {sid for sid, (name, _, _) in styles.items() if name == "title"}
     for sid, (name, own, _) in styles.items():
         m = _HEADING_NAME.fullmatch(name)
         if own == _BODY_TEXT:
@@ -83,7 +85,7 @@ def _heading_levels(pkg: Package) -> dict[str, int]:
                     levels[sid] = _OUTLINE[lvl]
                     break
                 cur, hops = styles[cur][2], hops + 1
-    return levels
+    return levels, titles
 
 
 def _text(el: Element) -> str:
@@ -158,9 +160,13 @@ def _table(tbl: Element) -> tuple[str, int, int]:
 
 
 class _Body:
-    def __init__(self, levels: dict[str, int]) -> None:
+    def __init__(
+        self, levels: dict[str, int], titles: set[str] | None = None, shift: int = 0
+    ) -> None:
         self.acc = Blocks()
         self.levels = levels
+        self.titles = titles or set()
+        self.shift = shift  # 1 when the document has a title its headings sit under
         self.items: list[str] = []  # the open list's paragraphs
         self.units = 0  # paragraphs with text, and tables
         self.failed: list[Failure] = []
@@ -182,6 +188,8 @@ class _Body:
         style = _val(ppr, "w:pStyle")
         own = _val(ppr, "w:outlineLvl")
         depth = 0 if own == _BODY_TEXT else _OUTLINE.get(own) or self.levels.get(style, 0)
+        if depth and style not in self.titles:
+            depth += self.shift
         if depth:
             self.close_list()
             self.acc.heading(depth, " ".join(text.split()), _NO_LOC)
@@ -238,10 +246,14 @@ def extract_docx(data: bytes) -> Artifact:
     pkg = Package(data)
     body = pkg.xml(_MAIN).find(q("w:body"))
     try:
-        levels, styles_failed = _heading_levels(pkg), None
+        (levels, titles), styles_failed = _heading_levels(pkg), None
     except PartError as e:  # the headings a style makes are lost, not the text
-        levels, styles_failed = {}, Failure("styles", str(e))
-    reader = _Body(levels)
+        levels, titles, styles_failed = {}, set(), Failure("styles", str(e))
+    # A document whose title is a Title paragraph puts its headings under it.
+    titled = body is not None and any(
+        _val(p.find(q("w:pPr")), "w:pStyle") in titles for p in body.iter(q("w:p"))
+    )
+    reader = _Body(levels, titles, 1 if titled else 0)
     if styles_failed:
         reader.failed.append(styles_failed)
     if body is not None:

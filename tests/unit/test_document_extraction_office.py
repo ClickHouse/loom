@@ -51,6 +51,7 @@ def _docx(body: str, *, footnotes: str = "") -> bytes:
         f"<w:styles {_W}>"
         '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/></w:style>'
         '<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/></w:style>'
         '<w:style w:type="paragraph" w:styleId="Rubric"><w:name w:val="Rubric"/>'
         '<w:basedOn w:val="Chapter"/></w:style>'
         '<w:style w:type="paragraph" w:styleId="Chapter"><w:name w:val="Chapter"/>'
@@ -64,6 +65,25 @@ def _docx(body: str, *, footnotes: str = "") -> bytes:
     if footnotes:
         parts["word/footnotes.xml"] = f"<w:footnotes {_W}>{footnotes}</w:footnotes>"
     return _zip(parts)
+
+
+def test_a_docx_title_paragraph_holds_the_headings_under_it() -> None:
+    body = (
+        _wp("Storage design", "Title")
+        + _wp("Goals", "Heading1")
+        + _wp("Limits", "Heading2")
+        + _wp("Text")
+    )
+    a = extract(_docx(body), "t.docx")
+    assert [(b.depth, b.text) for b in a.blocks if b.type == "heading"] == [
+        (1, "Storage design"),
+        (2, "Goals"),
+        (3, "Limits"),
+    ]
+    assert a.blocks[-1].section_path == ("Storage design", "Goals", "Limits")
+    # without a title paragraph the headings keep their own levels
+    b = extract(_docx(_wp("Goals", "Heading1") + _wp("Limits", "Heading2")), "u.docx")
+    assert [b.depth for b in b.blocks] == [1, 2]
 
 
 def _texts(a: Artifact) -> list[tuple[str, str, tuple[str, ...]]]:
