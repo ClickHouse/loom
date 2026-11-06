@@ -611,7 +611,7 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
     org, ns, held, landed = await _raced(
         ch, s3, monkeypatch, "objstore-race-slow", [("user_id", "alice")]
     )
-    monkeypatch.setattr(blobs, "ERASURE_WAIT_S", 0.2)
+    monkeypatch.setattr(blobs, "_ERASURE_WAIT_S", 0.2)
     with pytest.raises(blobs.SwitchedUnderErasure, match="user_id, in_progress"):
         await blobs.move_to_bucket(held, ch=ch)
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
@@ -660,7 +660,7 @@ async def test_a_failed_erasure_as_the_row_lands_is_waited_for_like_any(
     monkeypatch.setattr(ch, "insert", insert_then_failed)
     # The recovery worker retries a failed erasure, so it is waited for: past the wait, the
     # switched row is left to it, named.
-    monkeypatch.setattr(blobs, "ERASURE_WAIT_S", 0.3)
+    monkeypatch.setattr(blobs, "_ERASURE_WAIT_S", 0.3)
     with pytest.raises(blobs.SwitchedUnderErasure, match="user_id, failed"):
         await blobs.move_to_bucket(held, ch=ch)
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
@@ -766,7 +766,8 @@ async def test_the_walk_pages_a_namespace_by_key(
     # Merged, the moved key is one row, and the walk still finds the rest.
     await ch.execute("OPTIMIZE TABLE loom.document_blobs FINAL")
     merged, after = [], ""
-    while page := await blobs.held_in_clickhouse(org, ns, after, 2, ch=ch):
+    while True:
+        page = await blobs.held_in_clickhouse(org, ns, after, 2, ch=ch)
         if not page.after:
             break
         merged += [h.sha for h in page.held]

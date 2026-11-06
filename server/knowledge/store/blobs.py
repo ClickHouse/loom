@@ -273,7 +273,7 @@ class SwitchedUnderErasure(Exception):
 _CLOCK_MARGIN_S = 60  # not a setting: a bound on clock skew, answered conservatively
 # How long a move waits for an erasure that started while it moved, and how often it
 # reads the ledger meanwhile.
-ERASURE_WAIT_S = 600  # not a setting: a one-off operator command's patience
+_ERASURE_WAIT_S = 600  # not a setting: a one-off operator command's patience
 _ERASURE_POLL_S = 1.0  # not a setting: a one-off operator command's poll cadence
 
 # The erasures of an org that had not finished by a moment: open, failed, or completed
@@ -347,8 +347,8 @@ async def _erasures_since(org: str, namespace: str, since_s: int, ch: _CHClient)
 
 async def _await_erasures(held: Held, since_s: int, ch: _CHClient) -> None:
     """Wait until every erasure covering the original that had not finished at
-    `since_s` has completed; `SwitchedUnderErasure` after ERASURE_WAIT_S."""
-    deadline = time.monotonic() + ERASURE_WAIT_S
+    `since_s` has completed; `SwitchedUnderErasure` after _ERASURE_WAIT_S."""
+    deadline = time.monotonic() + _ERASURE_WAIT_S
     while True:
         raced = await _erasures_since(held.org, held.namespace, since_s, ch)
         open_ = [e for e in raced if not e.done]
@@ -358,7 +358,7 @@ async def _await_erasures(held: Held, since_s: int, ch: _CHClient) -> None:
         if time.monotonic() >= deadline:
             raise SwitchedUnderErasure(
                 f"{open_[0]} started as its row was switched and has not finished within "
-                f"{ERASURE_WAIT_S} s; the switched row and its object are left to it"
+                f"{_ERASURE_WAIT_S} s; the switched row and its object are left to it"
             )
         await asyncio.sleep(_ERASURE_POLL_S)
 
@@ -373,9 +373,7 @@ async def fence(org: str, namespace: str, *, ch: _CHClient | None = None) -> str
     return _fence_advice(fenced, "covers it") if fenced else ""
 
 
-async def move_to_bucket(
-    held: Held, refusal: str | None = None, *, ch: _CHClient | None = None
-) -> bool:
+async def move_to_bucket(held: Held, *, fenced: bool = False, ch: _CHClient | None = None) -> bool:
     """Copy one original from its ClickHouse row to a new object in the bucket and
     switch its catalog row to that object; every document naming the sha reads from
     the bucket from then on. False when there is nothing to move: the row went (an
@@ -409,15 +407,15 @@ async def move_to_bucket(
       user's erasure deletes every object under an original's prefix when it takes the
       original, the move's included, so the move waits for it to finish and deletes its
       row when its object is gone; when the object is still there the erasure kept the
-      original and the switch stands. One that does not finish in ERASURE_WAIT_S, or a
+      original and the switch stands. One that does not finish in _ERASURE_WAIT_S, or a
       check that fails, leaves the switched row to it (`SwitchedUnderErasure`).
     - An erasure registered after the row landed reads that row.
     """
     ch = ch or _default_client()
-    if refusal is None:
+    if not fenced:
         refusal = await fence(held.org, held.namespace, ch=ch)
-    if refusal:
-        raise ErasureOpen(refusal)
+        if refusal:
+            raise ErasureOpen(refusal)
     # This move's own start: an erasure that finished before it cannot race its copy, and
     # one still running then, or finished within the margin, is caught after the copy.
     since = await _cutoff_ms(0, ch) // 1000
@@ -458,7 +456,7 @@ async def move_to_bucket(
             # Still held here: the erasure has not reached it yet, or kept it (a user's
             # erasure keeps one another writer still needs). Reported, not counted as gone.
             raise ErasureOpen(
-                _fence_advice(overtaken, "started while it was copied, and it stays in ClickHouse")
+                _fence_advice(overtaken, "overlapped its copy, and it stays in ClickHouse")
             )
         raise objects.ObjectStoreError(
             "object store read failed (its new object was gone before its read-back)",

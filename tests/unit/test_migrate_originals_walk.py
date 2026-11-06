@@ -41,7 +41,7 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
         fences.append(1)
         return ""
 
-    async def move(held: blobs.Held, refusal: str | None = None) -> bool:
+    async def move(held: blobs.Held, *, fenced: bool = False) -> bool:
         out = outcomes[held.sha]
         if isinstance(out, Exception):
             raise out
@@ -80,8 +80,8 @@ async def test_an_erasure_holding_one_back_refuses_the_rest_of_the_namespace_onc
         # The second read sees the erasure that held the first original back.
         return "erasure e1 (namespace, in_progress) covers it" if len(reads) > 1 else ""
 
-    async def move(held: blobs.Held, refusal: str | None = None) -> bool:
-        if held is page[0] or refusal:
+    async def move(held: blobs.Held, *, fenced: bool = False) -> bool:
+        if held is page[0]:
             raise blobs.ErasureOpen(
                 "erasure e1 (namespace, in_progress) started while it was copied"
             )

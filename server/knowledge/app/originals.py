@@ -1,8 +1,9 @@
 """Moving document originals from ClickHouse to the bucket (`loom knowledge
-migrate-originals`): each original whose latest catalog row still holds its bytes
-is copied to an object, hash-verified and switched (`blobs.move_to_bucket`). A
-run is idempotent and resumable: what it switched is no longer walked, and a run
-stopped part way leaves every original readable from wherever its row says."""
+migrate-originals`): each original whose latest catalog row still holds its bytes,
+and that the namespace still needs (`blobs.needed`; the rest are the sweep's), is
+copied to an object, hash-verified and switched (`blobs.move_to_bucket`). A run is
+idempotent and resumable: what it switched is no longer walked, and a run stopped
+part way leaves every original readable from wherever its row says."""
 
 from __future__ import annotations
 
@@ -39,11 +40,13 @@ class Migrated:
 async def migrate_originals(
     *, org: str = "", namespace: str = "", dry_run: bool = False
 ) -> Migrated:
-    """Move every original held in ClickHouse (of `org`, or of its `namespace`) to
-    the bucket; with `dry_run`, count them. An original that fails (bytes that do
-    not hash to their sha or fill their size, an erasure of its scope not yet
-    finished, a bucket that refuses) is reported and left where it is; the walk
-    goes on with the next. A ClickHouse error stops the run: the next run goes on."""
+    """Move every original held in ClickHouse that its namespace still needs (of
+    `org`, or of its `namespace`) to the bucket, counting the others as left to the
+    sweep; with `dry_run`, count them. An original that fails (bytes that do not hash
+    to their sha or fill their size, a bucket that refuses) is reported and left where
+    it is, and the walk goes on with the next. One an erasure held back makes the walk
+    read the namespace's fence again: an erasure holding it refuses the rest of the
+    namespace in one line. A ClickHouse error stops the run: the next run goes on."""
     set_query_tag("cli:knowledge-migrate-originals")
     out = Migrated()
     for org_, ns in await _scopes(org, namespace):
@@ -57,7 +60,7 @@ async def migrate_originals(
                 if held.sha not in wanted:
                     out.unneeded += 1
                     continue
-                if not await _one(held, refusal, dry_run, out):
+                if not await _one(held, dry_run, out):
                     refusal = await blobs.fence(org_, ns)
                     if refusal:
                         break
@@ -84,14 +87,14 @@ async def _scopes(org: str, namespace: str) -> list[tuple[str, str]]:
         after = page[-1]
 
 
-async def _one(held: blobs.Held, refusal: str | None, dry_run: bool, out: Migrated) -> bool:
+async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
     """Count one original. False when an erasure held it back or raced its switch."""
     if dry_run:
         out.pending += 1
         out.bytes += held.size
         return True
     try:
-        if await blobs.move_to_bucket(held, refusal):
+        if await blobs.move_to_bucket(held, fenced=True):
             out.moved += 1
             out.bytes += held.size
         else:
