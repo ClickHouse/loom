@@ -15,10 +15,12 @@ import re2
 from server.core.errors import ValidationError
 
 
-def compile_caller_regex(pattern: str, *, case_sensitive: bool = True) -> Any:
-    """The compiled RE2 pattern, or ValidationError (422) naming what RE2 refused."""
+def compile_caller_regex(pattern: str, *, case_sensitive: bool = True, dot_nl: bool = False) -> Any:
+    """The compiled RE2 pattern, or ValidationError (422) naming what RE2 refused.
+    `dot_nl` lets `.` match a newline, as ClickHouse's `match()` compiles."""
     options = re2.Options()
     options.case_sensitive = case_sensitive
+    options.dot_nl = dot_nl
     options.log_errors = False
     try:
         return re2.compile(pattern, options)

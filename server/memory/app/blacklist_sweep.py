@@ -12,9 +12,9 @@ reaches a sweep (no blacklist op is in NARROW_SAFE_OPS).
 
 Matching is the SQL twin of `server.memory.app.blacklist_guard._matches`: `position(value,
 pattern) > 0` for a substring pattern (case-sensitive, like the in-process
-check) and `match(value, pattern)` for a regex. ClickHouse regexes are RE2;
-a Python-only construct (look-behind) matches nothing here and is reported
-as such rather than guessed at.
+check) and `match(value, pattern)` for a regex. Both run RE2, and the write path
+compiles with `.` matching a newline as ClickHouse does, so a sweep tombstones the
+rows a write of the same value would be refused for.
 """
 
 from __future__ import annotations

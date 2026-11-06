@@ -91,7 +91,11 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}\b"),
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),  # Slack
     _PRIVATE_KEY_BLOCK,
-    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),  # JWT
+    # JWT. It starts where a run of its characters starts: from `\b`, every `eyJ` after a
+    # `-` inside one long run was a start that scanned to the run's end (quadratic).
+    re.compile(
+        r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+    ),
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),  # Google API key
     # `password=…`, `api_key: …`, `secret := …`, `access_token = …` followed by a token-shaped
     # value of 8+ characters; a space, quote, comma or semicolon ends it.

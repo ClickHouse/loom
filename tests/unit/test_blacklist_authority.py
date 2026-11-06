@@ -10,6 +10,8 @@ matrix, the no-fall-through rule, and the regex bounds. CH-free.
 from __future__ import annotations
 
 import asyncio
+import time
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -20,7 +22,7 @@ from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
 from server.core.errors import AuthInsufficientError
 from server.memory.api.models_blacklist import BlacklistAddInput, BlacklistRemoveInput
-from server.memory.app.blacklist_guard import REGEX_MAX_LENGTH, validate_regex
+from server.memory.app.blacklist_guard import REGEX_MAX_LENGTH, compile_regex, validate_regex
 from server.operations.base import Role
 
 ORG = "acme"
@@ -436,30 +438,47 @@ def test_ordinary_regexes_are_accepted(pattern: str) -> None:
     assert validate_regex(pattern) is None
 
 
+def _search_seconds(compiled: Any, text: str) -> float:
+    """The fastest of three searches, so one stall on a busy runner does not count."""
+    times = []
+    for _ in range(3):
+        started = time.perf_counter()
+        compiled.search(text)
+        times.append(time.perf_counter() - started)
+    return min(times)
+
+
 @pytest.mark.parametrize(
     "pattern",
     ["(a+)+$", "(a*)*b", "(.*)*x", "(?:x+)*y", "(a|aa)+$", "(a|a)*c", r"q?(\d|\d)*z"],
 )
 def test_a_backtracking_shape_runs_in_linear_time(pattern: str) -> None:
     """Every regex runs on RE2, so a shape that backtracks exponentially in
-    Python's engine matches a long hostile value at once: no shape check or
-    probe to slip past (`q?(\\d|\\d)*z` passed both)."""
-    import time
-
-    from server.core.caller_regex import compile_caller_regex
-
+    Python's engine searches a hostile value in time linear in it: no shape check
+    or probe to slip past (`q?(\\d|\\d)*z` passed both)."""
     assert validate_regex(pattern) is None
-    compiled = compile_caller_regex(pattern)
-    started = time.perf_counter()
-    for text in ("a" * 50_000 + "!", "1" * 50_000, "x" * 50_000):
-        compiled.search(text)
-    assert time.perf_counter() - started < 0.5
+    compiled = compile_regex(pattern)
+    for unit in ("a", "1", "x"):
+        n = 20_000
+        # From n to 4n a linear search takes about 4 times as long, an exponential one forever.
+        assert (
+            _search_seconds(compiled, unit * 4 * n + "!")
+            < 8 * _search_seconds(compiled, unit * n + "!") + 0.01
+        )
 
 
-@pytest.mark.parametrize("pattern", [r"(a)\1", r"foo(?=bar)", r"(?<!x)y"])
+@pytest.mark.parametrize("pattern", [r"(a)\1", r"foo(?=bar)", r"(?<!x)y", r"end\Z"])
 def test_a_regex_re2_cannot_run_is_refused(pattern: str) -> None:
     reason = validate_regex(pattern)
     assert reason is not None and "RE2" in reason
+
+
+def test_a_regex_whose_program_outgrows_the_cap_is_refused() -> None:
+    """A counted class keeps RE2's DFA from caching, so each character costs a step
+    per instruction: the program is capped."""
+    reason = validate_regex("a[ab]{400}c")
+    assert reason is not None and "RE2 instructions" in reason
+    assert validate_regex("x" * REGEX_MAX_LENGTH) is None  # a long literal stays under it
 
 
 def test_length_and_syntax_bounds() -> None:
@@ -487,6 +506,10 @@ def test_substring_patterns_are_not_regex_validated(repo: _Repo) -> None:
     set_current_auth(_auth("WRITER"))
     out = asyncio.run(h.handle_blacklist_add(_add("namespace", pattern="(a+)+$")))
     assert out.pattern_id and repo.inserted[0]["pattern_type"] == "substring"
+
+
+async def _loaded() -> None:
+    return None
 
 
 def test_cache_refresh_drops_a_stored_regex_re2_cannot_run(monkeypatch) -> None:
@@ -522,3 +545,8 @@ def test_cache_refresh_drops_a_stored_regex_re2_cannot_run(monkeypatch) -> None:
     monkeypatch.setattr(bl, "get_client", lambda: _CH())
     asyncio.run(bl._refresh_cache())
     assert [p.pattern_id for p in bl._cache] == ["ok"]
+    # the kept pattern refuses on RE2, through the write path's lookup
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    hit = asyncio.run(bl.find_match(org="o", namespace="n", value='"my ssn is 123"'))
+    assert hit is not None and hit.pattern_id == "ok"
+    assert asyncio.run(bl.find_match(org="o", namespace="n", value='"assn"')) is None

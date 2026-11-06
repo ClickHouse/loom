@@ -288,8 +288,9 @@ honour "never remember my home address" inside the conversation. A token bounded
 user (`read_scope` `own_user` / `own_session`) gets `AUTH_INSUFFICIENT` on every
 `blacklist.*` op: a pattern refuses every user's writes in the namespace.
 
-A regex is at most 256 characters and is RE2 syntax (no backreferences or lookaround).
-It runs on RE2, in time linear in the value, on writes and in the sweep alike.
+A regex is at most 256 characters, is RE2 syntax (no backreferences or lookaround, `\z`
+rather than `\Z`) and compiles to at most 300 RE2 instructions. It runs on RE2, in time
+linear in the value, on writes (off the event loop) and in the sweep alike.
 
 | Operation          | Role   | Does                                                                              |
 | ------------------ | ------ | --------------------------------------------------------------------------------- |
@@ -301,8 +302,7 @@ It runs on RE2, in time linear in the value, on writes and in the sweep alike.
 **Sweeping existing rows.** `sweep=true` tombstones matching live rows, up to 5,000 per
 call; `swept_truncated=true` means call `blacklist.sweep(pattern_id)` again. Each sweep
 leaves one `loom.memory_drops` row, so `loom drops` shows what it removed. The sweep runs
-in ClickHouse with RE2: a construct only Python supports (look-behind) matches nothing
-there and is reported.
+in ClickHouse with RE2, the engine the write path uses.
 
 ```bash
 curl -sX POST http://localhost:7777/v1/blacklist.add \

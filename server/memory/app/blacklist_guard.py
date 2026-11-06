@@ -10,6 +10,7 @@ scope first, so a namespace pattern beats an org pattern beats a global one.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -29,19 +30,34 @@ log = logging.getLogger(__name__)
 
 # A regex pattern runs on every write the scope covers (for a global pattern,
 # every tenant's), so it runs on RE2: time linear in the value whatever the
-# pattern, and the engine the sweep's ClickHouse `match()` uses, so a pattern
-# refuses on write exactly the rows the sweep tombstones.
+# pattern, and the engine the sweep's ClickHouse `match()` uses (with `.`
+# matching a newline, as there). RE2's cost per character still grows with the
+# compiled program (a counted class like `[ab]{400}` keeps its DFA from caching
+# and it falls back to simulating every state), so the program is capped, and
+# the match runs off the event loop: RE2 releases the GIL while it searches.
 REGEX_MAX_LENGTH = 256
+REGEX_MAX_PROGRAM = 300
+
+
+def compile_regex(pattern: str) -> Any:
+    """The RE2 pattern a regex row runs as, or ValidationError naming why it is
+    refused: over `REGEX_MAX_LENGTH`, not a regex RE2 can run (no backreferences
+    or lookaround), or a program over `REGEX_MAX_PROGRAM`."""
+    if len(pattern) > REGEX_MAX_LENGTH:
+        raise ValidationError(f"regex longer than {REGEX_MAX_LENGTH} characters ({len(pattern)})")
+    compiled = compile_caller_regex(pattern, dot_nl=True)
+    if compiled.programsize > REGEX_MAX_PROGRAM:
+        raise ValidationError(
+            f"regex compiles to {compiled.programsize} RE2 instructions (at most "
+            f"{REGEX_MAX_PROGRAM}); a counted repeat such as {{400}} is the usual cause"
+        )
+    return compiled
 
 
 def validate_regex(pattern: str) -> str | None:
-    """Reason the pattern is refused, or None when it may be stored: over
-    `REGEX_MAX_LENGTH`, or not a regex RE2 can run (RE2 has no
-    backreferences or lookaround)."""
-    if len(pattern) > REGEX_MAX_LENGTH:
-        return f"regex longer than {REGEX_MAX_LENGTH} characters ({len(pattern)})"
+    """Reason the pattern is refused (`compile_regex`), or None when it may be stored."""
     try:
-        compile_caller_regex(pattern)
+        compile_regex(pattern)
     except ValidationError as e:
         return str(e)
     return None
@@ -129,15 +145,13 @@ async def _refresh_cache() -> None:
             # A row written past add-time validation is dropped from the hot
             # path rather than run on every write; the refusal is logged so
             # the operator can remove it.
-            reason = validate_regex(r["pattern"])
-            if reason is not None:
+            try:
+                compiled = compile_regex(r["pattern"])
+            except ValidationError as e:
                 log.warning(
-                    "blacklist: dropping regex pattern %s from the cache: %s",
-                    r["pattern_id"],
-                    reason,
+                    "blacklist: dropping regex pattern %s from the cache: %s", r["pattern_id"], e
                 )
                 continue
-            compiled = compile_caller_regex(r["pattern"])
         new_cache.append(
             BlacklistPattern(
                 pattern_id=str(r["pattern_id"]),
@@ -185,12 +199,15 @@ async def find_match(
 ) -> BlacklistPattern | None:
     """Return the first applicable + matching pattern, or None."""
     await _ensure_loaded()
-    for p in _cache:
-        if not _applies_to(p, org, namespace):
-            continue
-        if _matches(p, value):
-            return p
-    return None
+    applicable = [p for p in _cache if _applies_to(p, org, namespace)]
+    if not any(p.pattern_type == "regex" for p in applicable):
+        return _first_match(applicable, value)
+    # RE2 releases the GIL: a long value under many patterns holds a thread, not the loop.
+    return await asyncio.to_thread(_first_match, applicable, value)
+
+
+def _first_match(patterns: list[BlacklistPattern], value: str) -> BlacklistPattern | None:
+    return next((p for p in patterns if _matches(p, value)), None)
 
 
 # Refusals per pattern since its last hit-count write, and when that was.

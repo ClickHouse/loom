@@ -748,6 +748,11 @@ def _read_long_runs(n: int) -> None:
     assert detect_sensitivity("PIN for" + " " * n + "x") == ""
     assert detect_sensitivity("PIN for the" + " " * n + "door") == ""
     assert detect_sensitivity("GB82WEST12345698765432 " * (n // 10)) == "medium"
+    # a run of local-part or token characters with no `@` / `.` is scanned once, not once
+    # per word boundary inside it (the email and JWT shapes)
+    assert detect_sensitivity("a-" * (n // 2)) == ""
+    assert detect_sensitivity("a@" + "b." * (n // 2)) == ""
+    assert detect_sensitivity("eyJ-" * (n // 4)) == ""
 
 
 def _read_escaped_quotes(n: int) -> None:
@@ -1004,14 +1009,8 @@ def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -
     }
 
 
-@pytest.mark.parametrize("text", ["a-" * 100_000, "a." * 100_000, "a@" + "b." * 100_000])
-def test_detection_is_linear_in_a_long_value(text: str) -> None:
-    """Detection runs on the event loop on every write: a 200 KB value with no
-    complete email cost the unbounded email pattern tens of seconds."""
-    started = time.perf_counter()
-    detect_sensitivity(text)
-    assert time.perf_counter() - started < 1.0
-
-
-def test_an_email_is_still_medium() -> None:
+def test_an_email_and_a_jwt_still_read_as_before() -> None:
     assert detect_sensitivity("write to bob.smith+loom@mail.example.com today") == "medium"
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJib2IifQ.c2lnbmF0dXJlLXZhbHVl"
+    assert detect_sensitivity(f"token {jwt}") == "high"
+    assert detect_sensitivity(f"Authorization: Bearer {jwt}") == "high"
