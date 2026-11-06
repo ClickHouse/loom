@@ -468,3 +468,32 @@ def test_a_borderless_run_past_its_line_bound_is_read_whole_in_two_tables() -> N
         v for t in a.tables for v in [c.name for c in t.columns] + [x for r in t.rows for x in r]
     }
     assert {f"key{i}" for i in range(300)} <= cells and len(a.tables) == 2
+
+
+def test_furniture_close_to_a_borderless_table_stays_out_of_its_rows_and_its_header_in() -> None:
+    pages = []
+    n = 0
+    for p in range(3):
+        # a running header 22 points over the table's header, which sits 20 points
+        # over rows 12 apart (half again their spacing would be 18), and a page
+        # number 18 points under the last row, under the last column
+        page = text_at(72, 762, "Annual report", size=8) + text_at(400, 762, "Section 3", size=8)
+        y = 740
+        page += (
+            text_at(72, y, "Node", size=10)
+            + text_at(220, y, "State", size=10)
+            + text_at(360, y, "Uptime", size=10)
+        )
+        y -= 20
+        while y > 60:
+            page += text_at(72, y, f"node-{n}", size=10) + text_at(220, y, "running", size=10)
+            page += text_at(360, y, f"{n % 9}d", size=10)
+            n += 1
+            y -= 12
+        page += text_at(362, y + 12 - 18, f"{p + 1}", size=10)
+        pages.append(page)
+    a = extract(laid_out_pdf(pages), "f.pdf")
+    (t,) = a.tables
+    assert [c.name for c in t.columns] == ["Node", "State", "Uptime"]
+    assert len(t.rows) == n and all(r[2] == f"{k % 9}d" for k, r in enumerate(t.rows))
+    assert {f["text"] for f in a.attrs["furniture"]} == {"Annual report Section 3", "1"}

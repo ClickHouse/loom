@@ -585,9 +585,9 @@ def _lay_out(
 def _lay_out_page(r: _Page, found: list[layout._Rule], candidates: set[int], spacing: Any) -> None:
     gx = layout.gutter(r.lines, r.width)
     lines = layout.split_columns(r.lines, gx) if gx is not None else r.lines
-    # A furniture candidate holds a letter (a row of numbers is none): in a
-    # ruled table's box it is a cell, and at a borderless table's end it is a
-    # row unless it sits apart from the table (a running header).
+    # A furniture candidate (a running header or footer with a letter, a page
+    # number; a row of numbers is none): in a ruled table's box it is a cell,
+    # and at a borderless table's end a row only when it reads as one.
     maybe = {
         i for i, ln in enumerate(lines) if ln.spans and all(id(s) in candidates for s in ln.spans)
     }

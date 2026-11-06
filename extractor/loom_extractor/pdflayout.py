@@ -4,15 +4,16 @@ each run of text it shows and the lines and boxes the page draws.
 A page is read as lines (runs on one baseline), each cut into segments at a gap
 wider than its font size. From them, in this order:
 
-- page furniture: a line at the top or bottom of the page whose text, digits
-  aside, recurs there on other pages, or a page number on its own; it is left
-  out of the text and named in the artifact (`attrs.furniture`);
 - columns: a gutter that most lines leave empty, with text on both sides, makes
   the page read as its left column, then its right, between full-width lines;
 - ruled tables: a grid of horizontal and vertical lines that meet, its cells
   the text inside each box;
 - borderless tables: a run of lines cut into segments that sit in the same
   bands of the page, a line with text in the first band opening a row;
+- page furniture: a line no table holds, at the top or bottom of the page,
+  whose text (with a letter), digits aside, recurs there on other pages, or a
+  page number on its own; it is left out of the text and named in the
+  artifact (`attrs.furniture`);
 - the rest as paragraphs (lines on one style, split at a gap wider than the
   document's line spacing), list items (a bullet or a number first) and code
   (a monospaced font), and headings: a short paragraph set larger than the
@@ -635,9 +636,8 @@ def shape(text: str) -> str:
 def furniture(pages: list[tuple[list[Line], float]]) -> dict[int, set[int]]:
     """Per page, the indexes of its lines that may be page furniture: a header
     or footer line with a letter whose shape (digits aside) recurs in that zone
-    on other pages, or a page number alone in it. A line a ruled table holds,
-    or a borderless one it sits next to, is not, which the caller decides once
-    it has found the tables."""
+    on other pages, or a page number alone in it. A line a table holds as a row
+    is not, which the caller decides once it has found the tables."""
     zone: list[list[tuple[int, str]]] = []
     for lines, height in pages:
         cand = [(i, ln) for i, ln in enumerate(lines) if ln.y < 0.1 * height or ln.y > 0.9 * height]
@@ -855,10 +855,10 @@ def borderless_tables(
 ) -> list[TableBox]:
     """Runs of lines whose segments sit in the same two or more bands of the
     page: a line with text in the first band opens a row, one without adds to
-    the row above it. A line of `edges` (a furniture candidate) at either end of
-    a run that sits apart from it, its gap to the run half again its rows'
-    spacing, is left out of the run: a running header above a table is no row,
-    while a table's own header repeated at the top of each page is one."""
+    the row above it. A line of `edges` (a furniture candidate: a running
+    header, a footer, a page number) at either end of a run stays in it only
+    when it fills every band (a table's own header, repeated at the top of each
+    page), or opens a row at the run's own row spacing; else it is no row."""
     edges = edges or set()
     out: list[TableBox] = []
     i = 0
@@ -874,16 +874,17 @@ def borderless_tables(
                 break
             run.append(j)
             j += 1
-        run = _apart(lines, run, edges)
-        # trim to the lines that fit the bands of the multi-segment lines
+        # the bands from the multi-segment lines, a furniture candidate's aside
         multis = [k for k in run if _multi(lines[k], width)]
+        inner = [k for k in multis if k not in edges] or multis
         if len(multis) < 2:
             i += 1
             continue
-        bands = _bands([seg_box(s) for k in multis for s in lines[k].segments])
+        bands = _bands([seg_box(s) for k in inner for s in lines[k].segments])
         if len(bands) < 2:
             i += 1
             continue
+        run = _edges_kept(lines, run, edges, bands)
         rows: list[dict[int, list[str]]] = []
         used: list[int] = []
         for k in run:
@@ -922,16 +923,37 @@ def borderless_tables(
     return out
 
 
-def _apart(lines: list[Line], run: list[int], edges: set[int]) -> list[int]:
-    """`run` without the `edges` lines at its ends that sit apart from it."""
+def _placed(line: Line, bands: list[tuple[float, float]]) -> set[int] | None:
+    """The bands `line`'s segments sit in, one each, or None when one does not."""
+    hit: set[int] = set()
+    for seg in line.segments:
+        a, b = seg_box(seg)
+        n = [k for k, (p, q) in enumerate(bands) if a < q - 0.5 and b > p + 0.5]
+        if len(n) != 1 or n[0] in hit:
+            return None
+        hit.add(n[0])
+    return hit
+
+
+def _edges_kept(
+    lines: list[Line], run: list[int], edges: set[int], bands: list[tuple[float, float]]
+) -> list[int]:
+    """`run` without the `edges` lines at its ends that are no rows of it: one
+    stays when it fills every band, or opens a row (text in the first band) no
+    further from the run than its row spacing and a half."""
     if len(run) < 3:
         return run
     gaps = sorted(lines[b].y - lines[a].y for a, b in zip(run, run[1:], strict=False))
     spacing = gaps[len(gaps) // 2]
-    while len(run) >= 3 and run[0] in edges and lines[run[1]].y - lines[run[0]].y > 1.5 * spacing:
+
+    def row(k: int, gap: float) -> bool:
+        hit = _placed(lines[k], bands)
+        return hit is not None and (len(hit) == len(bands) or (0 in hit and gap <= 1.5 * spacing))
+
+    while len(run) >= 3 and run[0] in edges and not row(run[0], lines[run[1]].y - lines[run[0]].y):
         run = run[1:]
     while (
-        len(run) >= 3 and run[-1] in edges and lines[run[-1]].y - lines[run[-2]].y > 1.5 * spacing
+        len(run) >= 3 and run[-1] in edges and not row(run[-1], lines[run[-1]].y - lines[run[-2]].y)
     ):
         run = run[:-1]
     return run
