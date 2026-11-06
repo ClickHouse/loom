@@ -383,14 +383,14 @@ async def test_missing_bytes_are_corrupt_only_under_the_row_the_walk_read(
 async def test_the_walk_follows_each_page_to_the_namespaces_last(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    page = [_held(i) for i in range(4)]
+    page = [_held(i) for i in range(3)]
     reads: list[str] = []
 
     async def held_in_clickhouse(org: str, ns: str, after: str, limit: int) -> blobs.HeldPage:
+        # As the store answers: a full page carries a cursor, a short one ends the walk.
         reads.append(after)
-        if after == "":
-            return blobs.HeldPage(page[:2], page[1].sha)
-        return blobs.HeldPage(page[2:], "")  # a short page: no page follows
+        rows = [h for h in page if h.sha > after][:limit]
+        return blobs.HeldPage(rows, rows[-1].sha if len(rows) == limit else "")
 
     async def needed(org: str, ns: str, shas: list[str]) -> set[str]:
         return set(shas)
@@ -405,6 +405,7 @@ async def test_the_walk_follows_each_page_to_the_namespaces_last(
     monkeypatch.setattr(blobs, "needed", needed)
     monkeypatch.setattr(originals, "fence", fence)
     monkeypatch.setattr(originals, "move_to_bucket", move)
+    monkeypatch.setattr(originals, "_PAGE", 2)
     result = await originals.migrate_originals(org="acme", namespace="docs")
-    assert result.moved == 4
+    assert result.moved == 3
     assert reads == ["", page[1].sha]
