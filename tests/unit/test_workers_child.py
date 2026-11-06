@@ -4,6 +4,7 @@ deadline from its parent and is gone by that deadline plus the drain time."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import signal
 import subprocess
@@ -252,23 +253,26 @@ def test_the_child_exits_by_itself_past_the_deadline() -> None:
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG is Linux")
 def test_the_child_dies_with_its_parent(tmp_path) -> None:
     pid_file = tmp_path / "pid"
+    # The grandchild writes its pid once its death signal is set, so the parent
+    # is killed only after that, however slowly the imports run.
     grandchild = (
-        "from server.workers import child; import time; child.die_with_parent(); time.sleep(60)"
+        "from server.workers import child; import os, time; child.die_with_parent(); "
+        f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); time.sleep(60)"
     )
     parent = (
         "import subprocess, sys, time\n"
-        f"p = subprocess.Popen([sys.executable, '-c', {grandchild!r}])\n"
-        f"open({str(pid_file)!r}, 'w').write(str(p.pid))\n"
+        f"subprocess.Popen([sys.executable, '-c', {grandchild!r}])\n"
         "time.sleep(60)\n"
     )
-    proc = subprocess.Popen([sys.executable, "-c", parent])
+    # Its own process group, so the cleanup below reaches a grandchild that never
+    # got as far as setting its death signal.
+    proc = subprocess.Popen([sys.executable, "-c", parent], start_new_session=True)
     try:
-        for _ in range(200):
-            if pid_file.exists() and pid_file.read_text():
-                break
+        deadline = time.monotonic() + 30
+        while not pid_file.exists() or not pid_file.read_text().strip():
+            assert time.monotonic() < deadline, "the grandchild never set its death signal"
             time.sleep(0.05)
         pid = int(pid_file.read_text())
-        time.sleep(1.0)  # the grandchild has set its death signal
         proc.kill()
         proc.wait()
         for _ in range(100):
@@ -277,11 +281,11 @@ def test_the_child_dies_with_its_parent(tmp_path) -> None:
             except ProcessLookupError:
                 return
             time.sleep(0.05)
-        os.kill(pid, signal.SIGKILL)
         pytest.fail("the child outlived its parent")
     finally:
-        if proc.poll() is None:
-            proc.kill()
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
 
 
 def test_child_env_runs_the_workers_without_a_lease() -> None:

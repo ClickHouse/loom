@@ -22,7 +22,9 @@ from server.operations.registry import ALL_OPERATIONS
 from server.transport._common import _CALLER_REQUEST_ID, request_id_from
 
 
-@pytest.mark.parametrize("given", ["dbg-0001", "rid_7.retry", "a" * 64, str(uuid.uuid4())])
+@pytest.mark.parametrize(
+    "given", ["dbg-0001", "rid_7.retry", "a" * 64, "a09a91b4-3492-4ab2-afa3-4be022d4dde6"]
+)
 def test_a_short_token_is_used_as_sent(given: str) -> None:
     assert request_id_from(given) == given
 

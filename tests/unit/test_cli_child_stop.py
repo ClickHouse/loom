@@ -62,6 +62,9 @@ async def test_a_cancelled_wait_stops_the_child_and_its_children(trap: str, tmp_
         start_new_session=True,
     )
     task = asyncio.create_task(wait_or_stop(proc, grace_s=0.3))
+    # The wait must be running when it is cancelled: a task cancelled before its
+    # first step never enters `wait_or_stop`, and the pid file can already exist.
+    await asyncio.sleep(0)
     grandchild = await _wait_for_file(pidfile)
     task.cancel()
     try:

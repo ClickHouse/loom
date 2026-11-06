@@ -986,11 +986,11 @@ def test_a_heading_line_with_a_long_run_of_blanks_is_read_whole() -> None:
 
 
 def _within(seconds: float, fn: Any) -> None:
-    """`fn` runs in under `seconds`: a loose bound, set so that a pattern or loop
-    that turned quadratic on these inputs would take minutes, not milliseconds."""
-    start = time.perf_counter()
+    """`fn` uses under `seconds` of this process's CPU time, so a test running beside it
+    does not count; a loop that turned quadratic on these inputs would take minutes."""
+    start = time.process_time()
     fn()
-    assert time.perf_counter() - start < seconds
+    assert time.process_time() - start < seconds
 
 
 def test_hostile_markdown_lines_parse_in_bounded_time() -> None:
@@ -1424,9 +1424,9 @@ def test_the_wide_integer_check_is_linear_in_a_deep_table_of_long_keys() -> None
     def seconds(doc: dict[str, object]) -> float:
         best = float("inf")
         for _ in range(3):
-            start = time.perf_counter()
+            start = time.process_time()
             _wide_integer(doc)
-            best = min(best, time.perf_counter() - start)
+            best = min(best, time.process_time() - start)
         return best
 
     small, large = deep(5_000), deep(20_000)
