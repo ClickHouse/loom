@@ -1,0 +1,35 @@
+{
+ "previous": {
+  "docs": 12,
+  "claims": 66,
+  "kept": 65,
+  "quotes": 124,
+  "in_gold": 124,
+  "errors": 0,
+  "unread": 0,
+  "quote_match": 0.9848484848484849,
+  "in_gold_rate": 1.0
+ },
+ "new": {
+  "docs": 12,
+  "claims": 84,
+  "kept": 84,
+  "quotes": 147,
+  "in_gold": 147,
+  "errors": 0,
+  "unread": 0,
+  "quote_match": 1.0,
+  "in_gold_rate": 1.0
+ },
+ "baseline": {
+  "docs": 12,
+  "claims": 62,
+  "kept": 61,
+  "quotes": 104,
+  "in_gold": 101,
+  "errors": 0,
+  "unread": 0,
+  "quote_match": 0.9838709677419355,
+  "in_gold_rate": 0.9711538461538461
+ }
+}
