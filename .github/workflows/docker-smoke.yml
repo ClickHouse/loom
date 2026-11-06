@@ -137,26 +137,6 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           cache-from: type=gha,scope=docker-smoke-extractor-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=docker-smoke-extractor-${{ matrix.arch }}
-      # The release refuses a critical CVE that has a fixed package. A pull
-      # request or a push sees the report; the weekly run and a dispatch fail on it.
-      - name: Scan the server image as the release does
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        env:
-          TRIVY_PLATFORM: linux/${{ matrix.arch }}
-        with:
-          image-ref: loom:docker-smoke
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
-      - name: Scan the extractor image as the release does
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        env:
-          TRIVY_PLATFORM: linux/${{ matrix.arch }}
-        with:
-          image-ref: loom-extractor:docker-smoke
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
       - name: Fresh installer, compiler indexing and dashboard provider recovery
         env:
           CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
@@ -164,6 +144,34 @@ jobs:
           python3 scripts/gates/docker_quickstart_smoke.py --image loom:docker-smoke \
             --extractor-image loom-extractor:docker-smoke \
             --clickhouse-image "$CLICKHOUSE_IMAGE"
+      # The release refuses a critical CVE that has a fixed package. The weekly
+      # run and a dispatch fail on one, and the release procedure checks the
+      # latest weekly run before a tag. After the smoke, so a CVE never hides
+      # its result.
+      - name: Scan the server image as the release does
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        # On a pull request or a push a finding, or a scanner that cannot run,
+        # marks the step and leaves the job green.
+        continue-on-error: ${{ github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' }}
+        env:
+          TRIVY_PLATFORM: linux/${{ matrix.arch }}
+        with:
+          image-ref: loom:docker-smoke
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan the extractor image as the release does
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        # On a pull request or a push a finding, or a scanner that cannot run,
+        # marks the step and leaves the job green.
+        continue-on-error: ${{ github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' }}
+        env:
+          TRIVY_PLATFORM: linux/${{ matrix.arch }}
+        with:
+          image-ref: loom-extractor:docker-smoke
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
 
   sandbox-profile:
     # Where the shipped AppArmor profile first runs: the colours' security
