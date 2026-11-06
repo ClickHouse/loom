@@ -4,6 +4,7 @@ aligned columns, headings from type, columns, page furniture and turned pages.""
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from io import BytesIO
 
 import pytest
@@ -497,3 +498,71 @@ def test_furniture_close_to_a_borderless_table_stays_out_of_its_rows_and_its_hea
     assert [c.name for c in t.columns] == ["Node", "State", "Uptime"]
     assert len(t.rows) == n and all(r[2] == f"{k % 9}d" for k, r in enumerate(t.rows))
     assert {f["text"] for f in a.attrs["furniture"]} == {"Annual report Section 3", "1"}
+
+
+def _node_table_pages(last: Callable[[int, float], bytes]) -> tuple[bytes, int]:
+    """Three pages of a borderless table, its header repeated at the top of each
+    and its rows 12 points apart down to y=90, with `last(page, y of the last
+    row)` under them; and the number of rows."""
+    pages = []
+    n = 0
+    for p in range(3):
+        page = (
+            text_at(72, 752, "Node", size=10)
+            + text_at(220, 752, "State", size=10)
+            + text_at(360, 752, "Uptime", size=10)
+        )
+        y = 738.0
+        while y > 86:
+            page += text_at(72, y, f"node-{n}", size=10) + text_at(220, y, "running", size=10)
+            page += text_at(360, y, f"{n % 9}d", size=10)
+            n += 1
+            y -= 12
+        pages.append(page + last(p, y + 12))
+    return laid_out_pdf(pages), n
+
+
+def test_a_page_number_under_a_borderless_tables_first_column_is_no_row() -> None:
+    # 18 points under the last row: within half again the row spacing
+    data, n = _node_table_pages(lambda p, y: text_at(72, y - 18, f"{p + 1}", size=10))
+    a = extract(data, "p.pdf")
+    (t,) = a.tables
+    assert len(t.rows) == n and t.rows[-1][0] == f"node-{n - 1}"
+    assert {f["text"] for f in a.attrs["furniture"]} == {"1"}
+
+
+@pytest.mark.parametrize(("gap", "kept"), [(12, True), (20, False)])
+def test_a_recurring_line_under_a_borderless_table_is_its_row_only_within_its_row_spacing(
+    gap: float, kept: bool
+) -> None:
+    # a subtotal with an empty last cell, in the bottom tenth of each page
+    data, n = _node_table_pages(
+        lambda p, y: (
+            text_at(72, y - gap, "Subtotal", size=10) + text_at(220, y - gap, "30", size=10)
+        )
+    )
+    a = extract(data, "s.pdf")
+    (t,) = a.tables
+    subtotals = [r for r in t.rows if r[0] == "Subtotal"]
+    assert len(subtotals) == (3 if kept else 0) and len(t.rows) == n + len(subtotals)
+    assert ("furniture" not in a.attrs) is kept
+
+
+def test_a_repeated_header_over_a_column_of_row_names_stays_the_tables_header() -> None:
+    pages = []
+    n = 0
+    for _ in range(3):
+        # the header's first cell is empty, in the page's top tenth
+        page = text_at(150, 760, "Q1") + text_at(250, 760, "Q2") + text_at(350, 760, "Q3")
+        y = 760
+        while y > 100:
+            y -= 14
+            page += text_at(72, y, f"Region {n}") + text_at(150, y, f"{n}")
+            page += text_at(250, y, f"{2 * n}") + text_at(350, y, f"{3 * n}")
+            n += 1
+        pages.append(page)
+    a = extract(laid_out_pdf(pages), "q.pdf")
+    (t,) = a.tables
+    assert [c.name for c in t.columns][1:] == ["Q1", "Q2", "Q3"]
+    assert len(t.rows) == n and t.rows[0][0] == "Region 0"
+    assert "furniture" not in a.attrs

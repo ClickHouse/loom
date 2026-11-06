@@ -857,8 +857,7 @@ def borderless_tables(
     page: a line with text in the first band opens a row, one without adds to
     the row above it. A line of `edges` (a furniture candidate: a running
     header, a footer, a page number) at either end of a run stays in it only
-    when it fills every band (a table's own header, repeated at the top of each
-    page), or opens a row at the run's own row spacing; else it is no row."""
+    when it reads as a row of it (`_edges_kept`); else it is no row."""
     edges = edges or set()
     out: list[TableBox] = []
     i = 0
@@ -888,16 +887,8 @@ def borderless_tables(
         rows: list[dict[int, list[str]]] = []
         used: list[int] = []
         for k in run:
-            placed: dict[int, str] = {}
-            ok = True
-            for seg in lines[k].segments:
-                a, b = seg_box(seg)
-                hit = [n for n, (p, q) in enumerate(bands) if a < q - 0.5 and b > p + 0.5]
-                if len(hit) != 1 or hit[0] in placed:
-                    ok = False
-                    break
-                placed[hit[0]] = seg_text(seg)
-            if not ok:
+            placed = _placed(lines[k], bands)
+            if placed is None:
                 break
             if 0 in placed or not rows:
                 rows.append({n: [t] for n, t in placed.items()})
@@ -923,37 +914,52 @@ def borderless_tables(
     return out
 
 
-def _placed(line: Line, bands: list[tuple[float, float]]) -> set[int] | None:
-    """The bands `line`'s segments sit in, one each, or None when one does not."""
-    hit: set[int] = set()
+def _placed(line: Line, bands: list[tuple[float, float]]) -> dict[int, str] | None:
+    """`line`'s segment texts by the band each sits in, or None when a segment
+    sits in no band, in two, or in one another segment holds."""
+    placed: dict[int, str] = {}
     for seg in line.segments:
         a, b = seg_box(seg)
         n = [k for k, (p, q) in enumerate(bands) if a < q - 0.5 and b > p + 0.5]
-        if len(n) != 1 or n[0] in hit:
+        if len(n) != 1 or n[0] in placed:
             return None
-        hit.add(n[0])
-    return hit
+        placed[n[0]] = seg_text(seg)
+    return placed
 
 
 def _edges_kept(
     lines: list[Line], run: list[int], edges: set[int], bands: list[tuple[float, float]]
 ) -> list[int]:
-    """`run` without the `edges` lines at its ends that are no rows of it: one
-    stays when it fills every band, or opens a row (text in the first band) no
-    further from the run than its row spacing and a half."""
+    """`run` without the `edges` lines at its ends that are no rows of it. One
+    stays when it fills every band, or, at the top, every band but the first (a
+    header over a column of row names); a page number alone never does; any
+    other stays when it opens a row (text in the first band) within half again
+    the run's row spacing of it."""
     if len(run) < 3:
         return run
     gaps = sorted(lines[b].y - lines[a].y for a, b in zip(run, run[1:], strict=False))
     spacing = gaps[len(gaps) // 2]
 
-    def row(k: int, gap: float) -> bool:
-        hit = _placed(lines[k], bands)
-        return hit is not None and (len(hit) == len(bands) or (0 in hit and gap <= 1.5 * spacing))
+    def row(k: int, gap: float, top: bool) -> bool:
+        placed = _placed(lines[k], bands)
+        if placed is None:
+            return False
+        if len(placed) == len(bands) or (top and set(placed) == set(range(1, len(bands)))):
+            return True
+        if _PAGE_NUMBER.match(lines[k].text.strip()):
+            return False
+        return 0 in placed and gap <= 1.5 * spacing
 
-    while len(run) >= 3 and run[0] in edges and not row(run[0], lines[run[1]].y - lines[run[0]].y):
+    while (
+        len(run) >= 3
+        and run[0] in edges
+        and not row(run[0], lines[run[1]].y - lines[run[0]].y, top=True)
+    ):
         run = run[1:]
     while (
-        len(run) >= 3 and run[-1] in edges and not row(run[-1], lines[run[-1]].y - lines[run[-2]].y)
+        len(run) >= 3
+        and run[-1] in edges
+        and not row(run[-1], lines[run[-1]].y - lines[run[-2]].y, top=False)
     ):
         run = run[:-1]
     return run
