@@ -71,12 +71,6 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     target: "es2020",
-    // pdfjs (~1.2 MB worker) and mammoth (~500 KB) are already split
-    // into their own chunks via dynamic `import()` from the upload
-    // dialog — they only load when the user actually picks a binary
-    // file. Bump the warning so the build output isn't drowned by
-    // alarms about chunks that are deliberately fat-and-lazy.
-    chunkSizeWarningLimit: 1500,
     // Views split by React.lazy in App.tsx.
     rollupOptions: {
       output: {

@@ -24,6 +24,10 @@ vi.mock("../api", async (importOriginal) => {
     getKnowledge: vi.fn(),
     addKnowledge: vi.fn(),
     downloadKnowledge: vi.fn(),
+    knowledgeFormats: vi.fn(async () => null),
+    uploadKnowledgeFile: vi.fn(),
+    ingestKnowledge: vi.fn(),
+    knowledgeIngestStatus: vi.fn(),
   };
 });
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
@@ -33,8 +37,21 @@ vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast: vi.fn(),
 }));
-import { ToastViewport } from "../components/Toast";
-import { addKnowledge, deleteKnowledge, downloadKnowledge, getKnowledge, knowledgeReads, listKnowledge } from "../api";
+import { toast, ToastViewport } from "../components/Toast";
+import { ingestClock } from "../lib/fileIngest";
+import {
+  type KnowledgeUpload,
+  addKnowledge,
+  deleteKnowledge,
+  downloadKnowledge,
+  getKnowledge,
+  ingestKnowledge,
+  knowledgeFormats,
+  knowledgeIngestStatus,
+  knowledgeReads,
+  listKnowledge,
+  uploadKnowledgeFile,
+} from "../api";
 
 const DOC = {
   source_uri: "repo-doc://Acme/kj/on-call-runbook",
@@ -67,10 +84,58 @@ describe("the pure part", () => {
   });
 });
 
+function repoStatus(state: string, more: Record<string, unknown> = {}) {
+  return {
+    found: true,
+    ingestion_id: "job-1",
+    source_uri: "repo-doc://Acme/kj/on-call",
+    state,
+    stage: "",
+    error_code: "",
+    error_message: "",
+    format: "markdown",
+    coverage: null,
+    warnings: [],
+    chunks: 2,
+    revision: 1,
+    ...more,
+  };
+}
+
+async function addFile(name: string) {
+  vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null });
+  vi.mocked(uploadKnowledgeFile).mockResolvedValue({
+    upload_id: "up-1",
+    sha256: "",
+    size: 9,
+    filename: name,
+    format: "markdown",
+    expires_at: "",
+  });
+  vi.mocked(ingestKnowledge).mockResolvedValue({ ingestion_id: "job-1", state: "pending", source_uri: "x" });
+  mount(true);
+  fireEvent.click(await screen.findByRole("button", { name: "Add a document" }));
+  const dialog = await screen.findByRole("dialog");
+  const user = userEvent.setup();
+  await user.upload(within(dialog).getByLabelText("Choose a file"), new File(["# R"], name));
+  return { dialog, user };
+}
+
 describe("RepoDocsList", () => {
   beforeEach(() => {
-    for (const f of [listKnowledge, deleteKnowledge, knowledgeReads, getKnowledge, addKnowledge, downloadKnowledge])
+    for (const f of [
+      listKnowledge,
+      deleteKnowledge,
+      knowledgeReads,
+      getKnowledge,
+      addKnowledge,
+      downloadKnowledge,
+      uploadKnowledgeFile,
+      ingestKnowledge,
+      knowledgeIngestStatus,
+    ])
       vi.mocked(f).mockReset();
+    vi.mocked(toast).mockClear();
     vi.mocked(knowledgeReads).mockResolvedValue({
       window_days: 7,
       reads: [{ source_uri: DOC.source_uri, reads: 5, agents: 2, last_read_at: "" }],
@@ -215,5 +280,161 @@ describe("RepoDocsList", () => {
         upsert: false,
       },
     ]);
+  });
+
+  it("a writer adds a file as its bytes, ingested under an address made from its name", async () => {
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(repoStatus("ready"));
+    const { dialog } = await addFile("on_call.md");
+    expect(within(dialog).getByLabelText("Title")).toHaveValue("on call");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    await waitFor(() => expect(knowledgeIngestStatus).toHaveBeenCalled());
+    expect(vi.mocked(uploadKnowledgeFile).mock.calls[0][1].name).toBe("on_call.md");
+    expect(vi.mocked(ingestKnowledge).mock.calls[0]).toEqual([
+      { org: "dev", namespace: "code-kj" },
+      {
+        source_uri: "repo-doc://Acme/kj/on-call",
+        title: "on call",
+        description: "",
+        allow_partial: false,
+        expected_revision: 0,
+        upload_id: "up-1",
+      },
+    ]);
+    expect(addKnowledge).not.toHaveBeenCalled();
+  });
+
+  it("a file whose address another document took past the first page is refused, not published over it", async () => {
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(
+      repoStatus("failed", {
+        error_code: "revision_conflict",
+        error_message: "another revision of the source is live",
+      }),
+    );
+    const { dialog } = await addFile("runbook.md");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        "runbook.md: Failed (revision_conflict): another revision of the source is live",
+      ),
+    );
+    expect(vi.mocked(ingestKnowledge).mock.calls[0][1].expected_revision).toBe(0);
+  });
+
+  it("freezes a pending upload's fields and ignores a dropped file, and holds through the ingest call", async () => {
+    let landed: (u: KnowledgeUpload) => void = () => {};
+    const { dialog, user } = await addFile("on_call.md");
+    vi.mocked(uploadKnowledgeFile).mockImplementation(() => new Promise((r) => (landed = r)));
+    vi.mocked(ingestKnowledge).mockImplementation(() => new Promise(() => {}));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    expect(await screen.findByText("Uploading…")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Title")).toBeDisabled();
+    const zone = screen.getByText("on_call.md").closest("div[class*='border-dashed']") as HTMLElement;
+    fireEvent.drop(zone, { dataTransfer: { files: [new File(["x"], "other.md")] } });
+    expect(screen.queryByText("other.md")).toBeNull(); // the file on its way stays the one named
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    landed({ upload_id: "up-1", sha256: "", size: 3, filename: "on_call.md", format: "markdown", expires_at: "" });
+    expect(await screen.findByText("Queuing…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("says a partial file publish is partial, naming what it lost", async () => {
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(
+      repoStatus("partial", { coverage: { lost: ["formula_values"] } }),
+    );
+    const { dialog } = await addFile("on_call.md");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    await waitFor(() =>
+      expect(vi.mocked(toast).mock.calls.at(-1)).toEqual([
+        "Added on call, partial: part of the file could not be read (lost: formula_values)",
+        "info",
+      ]),
+    );
+  });
+
+  it("closing while it follows says the job goes on and stops the polls", async () => {
+    const prior = ingestClock.sleep;
+    let release = () => {};
+    ingestClock.sleep = () => new Promise<void>((r) => (release = r));
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(repoStatus("processing", { stage: "parse" }));
+    try {
+      const { dialog, user } = await addFile("on_call.md");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+      expect(await within(dialog).findByText("Extracting…")).toBeInTheDocument();
+      const polls = vi.mocked(knowledgeIngestStatus).mock.calls.length;
+      // The footer's Close and the dialog's own close both close it the same way.
+      await user.click(screen.getAllByRole("button", { name: "Close" })[0]);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toMatch(/on call goes on extracting/);
+      release();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(vi.mocked(knowledgeIngestStatus).mock.calls.length).toBe(polls);
+    } finally {
+      ingestClock.sleep = prior;
+    }
+  });
+
+  it("says a dropped connection may have committed, in file and paste mode alike", async () => {
+    const { dialog } = await addFile("on_call.md");
+    vi.mocked(uploadKnowledgeFile).mockRejectedValue(new TypeError("Failed to fetch"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent(/Lost connection to Loom mid-request/));
+
+    cleanup();
+    vi.mocked(addKnowledge).mockRejectedValue(new TypeError("Failed to fetch"));
+    mount(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Add a document" }));
+    const pasting = await screen.findByRole("dialog");
+    const user = userEvent.setup();
+    await user.click(within(pasting).getByRole("tab", { name: "Paste text" }));
+    await user.type(within(pasting).getByLabelText(/^Text/), "Step 1.");
+    await user.type(within(pasting).getByLabelText("Title"), "Runbook");
+    fireEvent.click(within(pasting).getByRole("button", { name: "Add document" }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent(/Lost connection to Loom mid-request/));
+  });
+
+  it("cancels a pending upload: the dialog closes, and nothing is ingested once the bytes land", async () => {
+    let landed: (u: KnowledgeUpload) => void = () => {};
+    const { dialog, user } = await addFile("on_call.md");
+    vi.mocked(uploadKnowledgeFile).mockImplementation(() => new Promise((r) => (landed = r)));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    expect(await screen.findByText("Uploading…")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    landed({ upload_id: "up-1", sha256: "", size: 3, filename: "on_call.md", format: "markdown", expires_at: "" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(ingestKnowledge).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("says a queued file goes on when its polls keep failing, and closes", async () => {
+    vi.mocked(knowledgeIngestStatus).mockRejectedValue(new TypeError("Failed to fetch"));
+    const prior = ingestClock.sleep;
+    ingestClock.sleep = async () => {};
+    try {
+      const { dialog } = await addFile("on_call.md");
+      const lists = vi.mocked(listKnowledge).mock.calls.length;
+      fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toMatch(/on call goes on extracting/);
+      expect(ingestKnowledge).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(listKnowledge).mock.calls.length).toBe(lists); // nothing published: no reload
+    } finally {
+      ingestClock.sleep = prior;
+    }
+  });
+
+  it("refuses a file whose format no extractor here reads, before anything is sent", async () => {
+    vi.mocked(knowledgeFormats).mockResolvedValueOnce({
+      formats: [{ format: "pptx", extensions: ["pptx"], media_types: [], available: false }],
+      max_upload_bytes: 1_000_000,
+      refused_extensions: ["doc", "ppt", "xls"],
+      default_format: "text",
+    });
+    const { dialog } = await addFile("deck.pptx");
+    expect(await screen.findByText(/No extractor on this deployment reads pptx/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Add document" })).toBeDisabled();
+    expect(uploadKnowledgeFile).not.toHaveBeenCalled();
   });
 });

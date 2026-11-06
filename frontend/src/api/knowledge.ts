@@ -1,7 +1,7 @@
 // The API client is split by plane behind the `api.ts` barrel, so a view's client rides
 // in that view's chunk and the shell evaluates only the functions it calls. Importers
 // still import from `api.ts`.
-import { getResponse, post } from "../api";
+import { getResponse, post, postFile } from "../api";
 import type { Identity, RequestOpts } from "../api";
 import { ApiError } from "../lib/errors";
 
@@ -181,12 +181,6 @@ export async function addKnowledge(
     description?: string;
     tags?: string[];
     upsert?: boolean;
-    /** Base64 of the original uploaded file. When supplied, the server
-     *  preserves it so the user can download exactly what they
-     *  uploaded later. Omit for paste-as-text uploads. */
-    original_bytes_b64?: string;
-    original_filename?: string;
-    blob_content_type?: string;
   },
 ): Promise<KnowledgeAddResponse> {
   const body: Record<string, unknown> = {
@@ -198,15 +192,131 @@ export async function addKnowledge(
     description: opts.description || "",
     tags: opts.tags || [],
   };
-  if (opts.original_bytes_b64) {
-    body["original_bytes_b64"] = opts.original_bytes_b64;
-    body["original_filename"] = opts.original_filename || "";
-    body["blob_content_type"] = opts.blob_content_type || "";
-  }
   // knowledge.upsert replaces existing chunks for the same source_uri;
   // knowledge.add is add-only and 409s on duplicates. Default to upsert.
   const path = opts.upsert === false ? "/v1/knowledge.add" : "/v1/knowledge.upsert";
   return post<KnowledgeAddResponse>(path, body);
+}
+
+/** One format `knowledge.formats` lists: the names that select it, and whether a
+ *  configured extractor reads it (null while the server could not ask it). */
+export interface KnowledgeFormat {
+  format: string;
+  extensions: string[];
+  media_types: string[];
+  available: boolean | null;
+}
+
+export interface KnowledgeFormats {
+  formats: KnowledgeFormat[];
+  max_upload_bytes: number;
+  refused_extensions: string[];
+  /** The format of a file whose name and type select none. */
+  default_format: string;
+}
+
+/** The formats this deployment's extractors read; null from a server that predates the
+ *  op (a 404), whose answer the page then does not guess. */
+export async function knowledgeFormats(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: RequestOpts = {},
+): Promise<KnowledgeFormats | null> {
+  try {
+    return await post<KnowledgeFormats>("/v1/knowledge.formats", { org: id.org, namespace: id.namespace }, opts.signal);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  }
+}
+
+export interface KnowledgeUpload {
+  upload_id: string;
+  sha256: string;
+  size: number;
+  filename: string;
+  format: string;
+  expires_at: string;
+}
+
+/** Store a file's bytes for `knowledge.ingest`; the server parses nothing here. */
+export async function uploadKnowledgeFile(
+  id: Pick<Identity, "org" | "namespace">,
+  file: File,
+  signal?: AbortSignal,
+): Promise<KnowledgeUpload> {
+  const q = new URLSearchParams({
+    org: id.org,
+    namespace: id.namespace,
+    filename: file.name,
+    content_type: file.type,
+  });
+  return postFile<KnowledgeUpload>(`/v1/knowledge.upload?${q}`, file, signal);
+}
+
+export interface KnowledgeIngestJob {
+  ingestion_id: string;
+  state: string;
+  source_uri: string;
+}
+
+/** What `knowledge.ingest` publishes an upload as. */
+export interface KnowledgeIngestFields {
+  source_uri: string;
+  title?: string;
+  description?: string;
+  tags?: string[];
+  allow_partial?: boolean;
+  /** Publish only over this revision (0: only when none is live, else `revision_conflict`);
+   *  unset publishes over any. */
+  expected_revision?: number;
+}
+
+/** Have the server's extractor parse an upload and publish it as `source_uri`'s next revision. */
+export async function ingestKnowledge(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: KnowledgeIngestFields & { upload_id: string },
+): Promise<KnowledgeIngestJob> {
+  return post<KnowledgeIngestJob>("/v1/knowledge.ingest", {
+    org: id.org,
+    namespace: id.namespace,
+    upload_id: opts.upload_id,
+    source_uri: opts.source_uri,
+    title: opts.title || "",
+    description: opts.description || "",
+    tags: opts.tags || [],
+    allow_partial: !!opts.allow_partial,
+    ...(opts.expected_revision === undefined ? {} : { expected_revision: opts.expected_revision }),
+  });
+}
+
+export interface KnowledgeIngestStatus {
+  found: boolean;
+  ingestion_id: string;
+  source_uri: string;
+  /** pending, processing, ready, partial, failed or cancelled. */
+  state: string;
+  /** parse, embed or publish while processing. */
+  stage: string;
+  error_code: string;
+  error_message: string;
+  format: string;
+  /** How much of the file made it into the document (`lost`: capabilities it could not serve). */
+  coverage: { unit?: string; total?: number; extracted?: number; failed?: unknown[]; lost?: string[] } | null;
+  warnings: string[];
+  chunks: number;
+  revision: number;
+}
+
+export async function knowledgeIngestStatus(
+  id: Pick<Identity, "org" | "namespace">,
+  ingestionId: string,
+  opts: RequestOpts = {},
+): Promise<KnowledgeIngestStatus> {
+  return post<KnowledgeIngestStatus>(
+    "/v1/knowledge.ingest_status",
+    { org: id.org, namespace: id.namespace, ingestion_id: ingestionId },
+    opts.signal,
+  );
 }
 
 /** How the Library shows an original file. An uploaded file is

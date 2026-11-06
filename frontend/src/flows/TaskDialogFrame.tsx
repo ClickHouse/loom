@@ -58,10 +58,10 @@ export function ErrorNote({ children }: { children: ReactNode }) {
   return <Alert role="alert" state="danger" text={children} />;
 }
 
-export function CancelButton({ label = "Cancel" }: { label?: string }) {
+export function CancelButton({ label = "Cancel", disabled = false }: { label?: string; disabled?: boolean }) {
   return (
     <RadixDialog.Close asChild>
-      <Button type="secondary" htmlType="button">
+      <Button type="secondary" htmlType="button" disabled={disabled}>
         {label}
       </Button>
     </RadixDialog.Close>

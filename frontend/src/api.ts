@@ -335,13 +335,15 @@ async function send(
     err.sessionEnded = true;
     throw err;
   }
+  // A file goes as its bytes (`knowledge.upload`); any other body is the op's JSON.
+  const raw = body instanceof Blob;
   const r = await fetch(
     path,
     method === "POST"
       ? {
           method,
-          headers: { "Content-Type": "application/json", ...authHeader() },
-          body: JSON.stringify(asDashboardCall(path, body)),
+          headers: { "Content-Type": raw ? "application/octet-stream" : "application/json", ...authHeader() },
+          body: raw ? body : JSON.stringify(asDashboardCall(path, body)),
           signal: boundedSignal(signal),
         }
       : { method, headers: authHeader(), signal: boundedSignal(signal) },
@@ -367,6 +369,12 @@ async function send(
 
 export async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   return (await request("POST", path, body, signal)).json();
+}
+
+/** POST a file's bytes as the body (`/v1/knowledge.upload?...`), parsed as JSON. Pass a
+ *  `signal` for a large file: without one the call is bounded like any other. */
+export async function postFile<T>(path: string, file: Blob, signal?: AbortSignal): Promise<T> {
+  return (await request("POST", path, file, signal)).json();
 }
 
 /** A GET read on the shared request path, parsed as JSON. */
