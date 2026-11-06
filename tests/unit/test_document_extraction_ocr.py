@@ -69,7 +69,8 @@ def test_ocr_words_land_where_the_picture_is_drawn(engine: FakeEngine) -> None:
     # image's top left (pixel 0, 0) is at (100, 192) from the shown page's top
     reader = PdfReader(BytesIO(laid_out_pdf([b"q 400 0 0 400 100 200 cm /Im1 Do Q"], image=GRAY)))
     page = reader.pages[0]
-    _, pictures = layout.drawing(page, reader, lambda x, y: (x, y))
+    _, pictures, whole = layout.drawing(page, reader, lambda x, y: (x, y))
+    assert whole
     (pic,) = pictures
     assert pic.box == pytest.approx((100, 192, 500, 592))
     words, _, w, h = engine.read(b"", 0)
@@ -564,3 +565,18 @@ def test_the_real_engine_finds_no_rule_in_a_dark_band_between_its_letters() -> N
         rows.append(bytes(row))
     _, rules, _, _ = eng.read(ocr.pnm(1800, 900, 1, 8, b"".join(rows)), 6.0)
     assert [(r.y0, r.y1) for r in rules] == [(419, 422)]
+
+
+def test_a_text_page_whose_pictures_are_not_all_collected_is_partial(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(layout, "_MAX_DRAWN", 2)
+    icons = b"".join(b"q 10 0 0 10 %d 300 cm /Im%d Do Q\n" % (20 + 11 * n, n + 1) for n in range(2))
+    shot = b"q 400 0 0 300 100 300 cm /Im3 Do Q\n"  # a screenshot past the cap
+    text = text_at(72, 740, "A page of text, two icons and a screenshot.")
+    a = extract(laid_out_pdf([text + icons + shot], image=[GRAY] * 3), "c.pdf")
+    assert not a.coverage.complete and engine.seen == []
+    assert a.coverage.failed[0].reason == (
+        "OCR did not read all of its pictures:"
+        " it draws more than its drawing is read for, so a picture may be unread"
+    )

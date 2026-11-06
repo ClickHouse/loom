@@ -444,10 +444,11 @@ class Picture:
 
 def drawing(
     page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn
-) -> tuple[list[_Rule], list[Picture]]:
+) -> tuple[list[_Rule], list[Picture], bool]:
     """The horizontal and vertical lines the page draws (stroked lines and thin
-    filled boxes) and the images it draws, as shown and turned as its text is;
-    no rules past their bound, nothing past the operators' bound."""
+    filled boxes), the images it draws, as shown and turned as its text is, and
+    whether every image was collected: no rules past their bound, nothing past
+    the operators' bound, no image past `_MAX_DRAWN`."""
     shown, _, _ = _display(page)
 
     def to(x: float, y: float) -> tuple[float, float]:
@@ -456,6 +457,7 @@ def drawing(
     found: list[_Rule] = []
     pictures: list[Picture] = []  # each image once, where it is first drawn
     collected: set[object] = set()
+    cut = [False]  # an image past the cap
     budget = [_MAX_OPERATIONS]
 
     def add(ax: float, ay: float, bx: float, by: float) -> None:
@@ -531,7 +533,9 @@ def drawing(
                     # an image drawn again (a tiled logo) is collected once
                     ref = getattr(form, "indirect_reference", None)
                     key = (ref.idnum, ref.generation) if ref is not None else id(form)
-                    if key not in collected and len(pictures) < _MAX_DRAWN:
+                    if key not in collected and len(pictures) >= _MAX_DRAWN:
+                        cut[0] = True
+                    elif key not in collected:
                         collected.add(key)
                         pictures.append(
                             Picture(form, list(ctm), (min(xs), min(ys), max(xs), max(ys)))
@@ -546,7 +550,9 @@ def drawing(
     if contents is not None:
         walk(contents, page.get("/Resources"), [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 0)
     # Past either bound a grid may be half read: no rules rather than a wrong table.
-    return (found if len(found) <= _MAX_RULES and budget[0] > 0 else []), pictures
+    # past the image cap or the operators' bound, what the page shows is not all collected
+    whole = budget[0] > 0 and not cut[0]
+    return (found if len(found) <= _MAX_RULES and budget[0] > 0 else []), pictures, whole
 
 
 def _pixel_to_page(

@@ -279,19 +279,21 @@ separate program decodes, is not read, and says so. An image is at most 40 M pix
 under 200 pixels an inch is scaled to about 300 first. The image is read in gray, and Tesseract sets its own threshold;
 one mostly dark (light text on a dark screen) is read turned light. Before the words are read, the strokes longer than
 half an inch across or a third of an inch down (a ruled table's grid; a letter in type past about 36 points loses its
-stem with them, and a dark region thicker than a tenth of an inch, such as a heading's background, is no stroke, nor are
-the gaps between the light letters it holds) are painted out of the image, and are the page's rules for its ruled
-tables, as Tesseract reads a ruled table's cells as a picture; a word beside such a rule loses a stroke left on its edge
-(`[Owner`, `rota-8|`), a word of vertical bars alone is dropped (a grid line too light to be found), and other words are
-read as they are (`timeout = 30`, `__init__`). Each word lands on the page where the image is drawn, at the point size
-Tesseract reads from its line's x-height (headings come from it, at a step of 8% rather than 12%, as OCR reads whole
-points), so the layout reading above makes paragraphs, headings and tables of a scanned page, and its blocks are marked
-`attrs.ocr`. A file reads at most `LOOM_EXTRACTOR_OCR_MAX_IMAGES` images (30), each image once however many times pages
-or slides show it, at most 50 a page that need it, and an image's recognition at most 20 seconds; a page whose image is
-past either, or that OCR cannot read, is partial (or, with no text of its own, a failed unit) naming why. The artifact
-lists the pages read with OCR (`attrs.ocr_pages`; a deck's `attrs.ocr_slides`), and `parser_version` names Tesseract's
-version when it read one. The OCR engine adds about 44 MB to the image (12.5 MB compressed). OCR reads what an image
-shows as text, not a chart's or a diagram's structure.
+stem with them, and a dark region thicker than a tenth of an inch, such as a heading's background, is no stroke, nor is
+a stroke beside it within as much (a rule touching a dark header row) or the gaps between the light letters it holds)
+are painted out of the image, and are the page's rules for its ruled tables, as Tesseract reads a ruled table's cells as
+a picture; a word beside such a rule loses a stroke left on its edge (`[Owner`, `rota-8|`), a word of vertical bars
+alone is dropped (a grid line too light to be found), and other words are read as they are (`timeout = 30`, `__init__`).
+Each word lands on the page where the image is drawn, at the point size Tesseract reads from its line's x-height
+(headings come from it, at a step of 8% rather than 12%, as OCR reads whole points), so the layout reading above makes
+paragraphs, headings and tables of a scanned page, and its blocks are marked `attrs.ocr`. A file reads at most
+`LOOM_EXTRACTOR_OCR_MAX_IMAGES` images (30), each image once however many times pages or slides show it, at most 50 on
+one page among the pictures it reads with OCR, and an image's recognition at most 20 seconds (an image shown at over 600
+pixels an inch is scaled to 300 first); a page whose image is past any of these, or whose drawing is too large to
+collect every picture from, or that OCR cannot read, is partial (or, with no text of its own, a failed unit) naming why.
+The artifact lists the pages read with OCR (`attrs.ocr_pages`; a deck's `attrs.ocr_slides`), and `parser_version` names
+Tesseract's version when it read one. The OCR engine adds about 44 MB to the image (12.5 MB compressed). OCR reads what
+an image shows as text, not a chart's or a diagram's structure.
 
 **DOCX and PPTX.** Both are zips of XML parts, read with the standard library: no third-party XML or image library runs
 on a hostile file. A part must be stored or deflated (the methods OOXML writes) and declare at most 256 MiB

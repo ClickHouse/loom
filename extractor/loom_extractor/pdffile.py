@@ -224,11 +224,11 @@ def _read_layout(
     found, read.other, read.width, read.page_height, turn = layout.spans(page, read.dropped)
     drawn = True
     try:
-        rules, pictures = layout.drawing(page, reader, turn)
+        rules, pictures, whole = layout.drawing(page, reader, turn)
     except MemoryError:
         raise
     except Exception:  # noqa: BLE001 — unreadable drawing costs the ruled tables and pictures, not the text
-        rules, pictures, drawn = [], [], False
+        rules, pictures, drawn, whole = [], [], False, True
     texted = bool(read.text.strip())
     area = read.width * read.page_height
     problems = []
@@ -238,6 +238,8 @@ def _read_layout(
         for p in pictures
         if not texted or (p.area >= ocr.PICTURE_SHARE * area and not _filled(found, p))
     ]
+    if not whole:
+        problems.append("it draws more than its drawing is read for, so a picture may be unread")
     if len(targets) > layout.MAX_PICTURES:
         problems.append(f"it shows more than {layout.MAX_PICTURES} pictures OCR would read")
         targets = targets[: layout.MAX_PICTURES]
@@ -254,7 +256,7 @@ def _read_layout(
         )
     for picture in targets:
         ref = getattr(picture.image, "indirect_reference", None)
-        if ref is None:  # an image is a stream, so an indirect object; this one is neither
+        if ref is None:  # an image is a stream, which a file holds only as an indirect object
             problems.append("its image is not an object of the file")
             continue
         try:

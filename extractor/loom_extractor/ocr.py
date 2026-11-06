@@ -30,6 +30,7 @@ _DEADLINE_S = 20  # one image's recognition; past it the image is not read
 PICTURE_SHARE = 0.2
 NOT_RUN = "a picture covers a fifth of it or more: its text needs OCR, which is not run"
 _MIN_DPI = 200.0
+_MAX_DPI = 600.0  # past it an image is scaled down: no finer detail helps, and it costs
 _TARGET_DPI = 300.0
 _MAX_SCALE = 3.0
 _RIL_TEXTLINE = 2
@@ -189,25 +190,24 @@ class Engine:
                 scale = min(_MAX_SCALE, _TARGET_DPI / (w / shown_inches))
                 if w * h * scale * scale > MAX_PIXELS:
                     scale = (MAX_PIXELS / (w * h)) ** 0.5
-            if scale > 1.05 and (scaled := lp.pixScale(pix, scale, scale)):
+            elif shown_inches > 0 and w / shown_inches > _MAX_DPI:
+                scale = _TARGET_DPI / (w / shown_inches)
+            if abs(scale - 1) > 0.05 and (scaled := lp.pixScale(pix, scale, scale)):
                 held.append(scaled)
                 pix = scaled
                 w, h = lp.pixGetWidth(pix), lp.pixGetHeight(pix)
-            dpi = w / shown_inches if shown_inches > 0 else _TARGET_DPI
+            dpi = min(_MAX_DPI, w / shown_inches) if shown_inches > 0 else _TARGET_DPI
             gray = lp.pixConvertTo8(pix, 0)
             if not gray:
                 raise ValueError("its image could not be turned to gray")
             held.append(gray)
             # where the strokes are, in black and white; not what OCR reads
-            mono = lp.pixConvertTo1(gray, 160)
-            if not mono:
-                raise ValueError("its image could not be turned to black and white")
-            held.append(mono)
+            mono = self._mono(gray, held)
             dark = ctypes.c_int()
             lp.pixCountPixels(mono, ctypes.byref(dark), None)
             if dark.value > 0.5 * w * h:  # light text on dark: read as dark on light
                 lp.pixInvert(gray, gray)
-                lp.pixInvert(mono, mono)
+                mono = self._mono(gray, held)
             rules = self._unrule(gray, mono, dpi, w, h, held)
             self._t.TessBaseAPISetImage2(self._api, gray)
             self._t.TessBaseAPISetSourceResolution(
@@ -230,6 +230,13 @@ class Engine:
             for one in held:
                 self._destroy(one)
 
+    def _mono(self, gray: int, held: list[int]) -> int:
+        mono = self._l.pixConvertTo1(gray, 160)
+        if not mono:
+            raise ValueError("its image could not be turned to black and white")
+        held.append(mono)
+        return int(mono)
+
     def _unrule(
         self, gray: int, mono: int, dpi: float, w: int, h: int, held: list[int]
     ) -> list[Box]:
@@ -243,13 +250,11 @@ class Engine:
         # A dark region thicker than `thin` both ways (a heading's band, a dark
         # panel), widened by as much: no stroke in or beside it is a rule, as the
         # gaps between its light letters would read as strokes.
-        near = None
         bands = lp.pixOpenBrick(None, mono, thin, thin)
-        if bands:
-            held.append(bands)
-            near = lp.pixDilateBrick(None, bands, 2 * thin + 1, 2 * thin + 1)
-            if near:
-                held.append(near)
+        near = lp.pixDilateBrick(None, bands, 2 * thin + 1, 2 * thin + 1) if bands else None
+        if not near:  # read whole, a band's light letters would be painted out with it
+            raise ValueError("its image's dark regions could not be found")
+        held += [bands, near]
         rules: list[Box] = []
         across, down = min(w, max(8, round(0.5 * dpi))), min(h, max(8, round(0.35 * dpi)))
         for hsize, vsize in ((across, 1), (1, down)):
@@ -257,12 +262,11 @@ class Engine:
             if not lines:
                 continue
             held.append(lines)
-            if near:
-                strokes = lp.pixSubtract(None, lines, near)
-                if not strokes:
-                    continue
-                held.append(strokes)
-                lines = strokes
+            strokes = lp.pixSubtract(None, lines, near)
+            if not strokes:
+                continue
+            held.append(strokes)
+            lines = strokes
             rules += self._boxes(lines)
             # a stroke's edges, a pixel or two either side, go with it, or OCR
             # reads what is left of them as quotes and colons
