@@ -159,6 +159,23 @@ def test_a_list_items_number_is_no_extra_word() -> None:
     g = {"blocks": [{"kind": "paragraph", "text": text, "page": 1}], "tables": []}
     p = {"blocks": [{**block, "type": "paragraph", "text": text}], "tables": []}
     assert S.lost_blocks(g, p) == 0 and S.text_scores(g, p)["text_recall"] == 1.0
+    # and is found on its page with the numbers dropped
+    plain = "Steps to take now:\nDrain the queue\nRestart it"
+    p = {"blocks": [{**block, "text": plain}], "tables": []}
+    assert S.locator_scores({**g, "format": "pdf"}, p)["locator_acc"] == 1.0
+    # a "1.1" heading without its number still holds its place in the reading order
+    heads = ["1.1 Storage layout for the cluster", "1.2 Read path through the cache"]
+    g = {
+        "blocks": [{"kind": "heading", "level": 2, "text": t, "page": 1} for t in heads]
+        + [{"kind": "paragraph", "text": "The cache serves the hot keys first.", "page": 1}],
+        "tables": [],
+    }
+    p = {
+        "blocks": [{**block, "type": "heading", "text": t.split(" ", 1)[1]} for t in heads]
+        + [{**block, "type": "paragraph", "text": "The cache serves the hot keys first."}],
+        "tables": [],
+    }
+    assert S.order_score(g, p) == 1.0
     # a numbered heading, written without its number or with it, as a heading or a paragraph
     g = {"blocks": [{"kind": "heading", "level": 1, "text": "2. Goals", "page": 1}], "tables": []}
     for kind, text in [("heading", "Goals"), ("paragraph", "2. Goals"), ("heading", "2. Goals")]:

@@ -52,6 +52,12 @@ def unnumbered(s: str) -> str:
     return NUMBERING.sub("", s, count=1)
 
 
+def probe_words(text: str) -> list[str]:
+    """A gold block's words as it is looked for in the parse's (`text_words`):
+    without its leading number ("1.1" too) or a line's enumerator."""
+    return text_words(unnumbered(text))
+
+
 def gold_words(g: dict) -> Counter:
     c: Counter = Counter()
     for b in g["blocks"]:
@@ -111,7 +117,7 @@ def order_score(g: dict, p: dict) -> float | None:
     """The share of consecutive gold text units of five words or more
     (paragraphs, items, headings, code) that the parse holds in the same order."""
     units = [
-        text_words(b["text"])
+        probe_words(b["text"])
         for b in g["blocks"]
         if b["kind"] in ("paragraph", "item", "heading", "code")
     ]
@@ -243,12 +249,13 @@ def locator_scores(g: dict, p: dict) -> dict:
     if g["format"] == "docx":
         return {}
     blocks = [b for b in p.get("blocks", []) if b["type"] != "table"]
-    texts = [f" {key(b['text'])} " for b in blocks]  # spaced, so a probe matches whole words
+    # spaced, so a probe matches whole words
+    texts = [f" {' '.join(text_words(b['text']))} " for b in blocks]
     ok = n = 0
     note_ok = note_n = 0
     last = 0
     for gb in g["blocks"]:
-        probe = " ".join(words(unnumbered(gb["text"]))[:6])
+        probe = " ".join(probe_words(gb["text"])[:6])
         if not gb.get("page") or not probe:
             continue
         n += 1
@@ -306,7 +313,7 @@ def lost_blocks(g: dict, p: dict) -> int:
     pairs = set(zip(tokens, tokens[1:], strict=False))
     n = 0
     for b in g["blocks"]:
-        w = text_words(unnumbered(b["text"]))  # as the stream holds it
+        w = probe_words(b["text"])
         if len(w) < 2 or f" {' '.join(w[:5])} " in stream:
             continue
         # held out of order (a code block's lines shuffled) is not lost: most of its word pairs are there
