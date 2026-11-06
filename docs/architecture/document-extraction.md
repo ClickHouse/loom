@@ -264,14 +264,14 @@ read, and such a page is a failed unit that says so (a page with text whose inli
 text not filling it, is partial, as is a page with no text whose inline image sits beside pictures OCR reads; an inline
 image under a point wide is none). A page with text whose drawing or layout cannot be read, or that names an image
 object the file does not hold or draws a form nested inside four others (deeper than the reader walks), is partial when
-it may draw a picture, and a page with no text in that state is a failed unit, never the file. A page with text that
-draws a picture covering a fifth of the page or more (a screenshot, a whiteboard photo) has its picture read with OCR,
-each of its lines a paragraph block of its own after the page's text (`attrs.ocr`), never a table or a heading, or,
-without OCR, is not complete: the page is read, and a failed unit says the picture's text needs OCR. A picture the
-page's own text already fills a tenth of (a scan's text layer, drawn over its image) is not read again. A page pypdf
-cannot read is a failed unit, not the file; a failed page's outline headings still open their sections. A character a
-font's map gives no Unicode character (a lone surrogate) is read as U+FFFD, with a warning naming its page. A PDF that
-opens only with a password is `unsupported_format`.
+it may draw a picture, and a page with no text in that state is a failed unit, never the file. An image a page holds in
+its resources and never draws is none. A page with text that draws a picture covering a fifth of the page or more (a
+screenshot, a whiteboard photo) has its picture read with OCR, each of its lines a paragraph block of its own after the
+page's text (`attrs.ocr`), never a table or a heading, or, without OCR, is not complete: the page is read, and a failed
+unit says the picture's text needs OCR. A picture the page's own text already fills a tenth of (a scan's text layer,
+drawn over its image) is not read again. A page pypdf cannot read is a failed unit, not the file; a failed page's
+outline headings still open their sections. A character a font's map gives no Unicode character (a lone surrogate) is
+read as U+FFFD, with a warning naming its page. A PDF that opens only with a password is `unsupported_format`.
 
 **OCR.** The extractor image installs Tesseract's and Leptonica's libraries and Tesseract's English model
 (`LOOM_EXTRACTOR_OCR_LANGUAGES` names others the image holds; the service refuses to start when one is missing, and says

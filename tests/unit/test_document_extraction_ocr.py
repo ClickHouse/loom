@@ -14,12 +14,9 @@ from pypdf import PdfReader
 
 from loom_extractor import extract, ocr, pdffile
 from loom_extractor import pdflayout as layout
-from tests.fixtures.office_files import laid_out_pdf, rule, text_at
+from tests.fixtures.office_files import GRAY_IMAGE, laid_out_pdf, rule, text_at
 
-GRAY = (
-    b"/Width 4 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 8 >>\nstream\n"
-    + bytes(8)
-)
+GRAY = GRAY_IMAGE  # a 4 by 2 black image
 
 
 @dataclass
@@ -535,9 +532,9 @@ def test_an_image_page_names_why_its_image_was_not_read(
     assert a.coverage.failed[0].reason == (
         "no text layer: its image is drawn inline, which OCR does not read"
     )
-    # an image the page holds and never draws
+    # an image the page holds and never draws shows nothing: the page is complete
     b = extract(laid_out_pdf([b"q Q"], image=GRAY), "n.pdf")
-    assert b.coverage.failed[0].reason == "no text layer, and no image it draws is one OCR finds"
+    assert b.coverage.complete
 
     def broken(*args: object) -> None:
         raise KeyError("/XObject")
@@ -821,7 +818,30 @@ def test_a_picture_nested_past_the_form_depth_is_never_complete(
     chain = tuple(b"/Ch%d Do" % n for n in range(2, 6)) + (b"q 400 0 0 300 100 300 cm /Im1 Do Q",)
     text = text_at(72, 740, "A page of text over nested forms.") if texted else b""
     a = extract(laid_out_pdf([text + b"/Ch1 Do"], chain=chain), "n.pdf")
-    assert not a.coverage.complete and engine.seen == []
+    reason = "not every picture it draws could be collected, so one may be unread"
+    assert engine.seen == [] and [f.reason for f in a.coverage.failed] == [
+        f"OCR did not read all of its pictures: {reason}"
+        if texted
+        else f"no text layer, and OCR read none of its images: {reason}"
+    ]
+
+
+def test_an_image_in_the_deepest_form_walked_is_read(engine: FakeEngine) -> None:
+    # page -> Ch1 -> Ch2 -> Ch3 -> Ch4 draws Im1: four forms deep, as deep as the walk goes
+    chain = tuple(b"/Ch%d Do" % n for n in range(2, 5)) + (b"q 400 0 0 400 100 200 cm /Im1 Do Q",)
+    a = extract(laid_out_pdf([b"/Ch1 Do"], chain=chain), "d.pdf")
+    assert a.coverage.complete and len(engine.seen) == 1
+
+
+def test_a_drawing_read_whole_with_no_picture_needs_no_resource_search(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # resources that seem to hold an image (shared forms past the depth) nothing draws
+    monkeypatch.setattr(
+        pdffile, "_has_image", lambda *a, **kw: False if kw.get("inline_only") else True
+    )
+    a = extract(laid_out_pdf([b"0 0 m 100 100 l S"]), "v.pdf")
+    assert a.coverage.complete
 
 
 def test_a_text_page_whose_layout_fails_beside_an_image_is_partial(

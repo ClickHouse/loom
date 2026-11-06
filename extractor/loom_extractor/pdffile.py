@@ -85,10 +85,6 @@ def _outline(reader: pypdf.PdfReader) -> dict[int, list[tuple[int, str]]]:
     return out
 
 
-# How deep form XObjects are searched for an image (a scan is often one image
-# inside a form).
-
-
 def _draws_inline_image(contents: Any, reader: pypdf.PdfReader) -> bool:
     """Whether a content stream draws an image inline (`BI ... ID ... EI`, as some
     scanners write a page): its operators are read, no image is decoded."""
@@ -264,7 +260,10 @@ def _read_layout(
         else _has_image(page, reader, inline_only=True)
     )
     # a page of only sub-point pictures has nothing to fail, unless it draws an image inline
-    if not texted and not targets and (draws_inline or (not pictures and _has_image(page, reader))):
+    # A drawing read whole has seen every image the page draws: the resources are
+    # searched only when it was not (an image they hold and nothing draws is none).
+    unseen = (drew is None or not drew.whole) and not pictures and _has_image(page, reader)
+    if not texted and not targets and (draws_inline or unseen):
         read.failure = (
             _NEEDS_OCR
             if ocr.engine() is None
