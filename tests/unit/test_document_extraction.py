@@ -49,7 +49,7 @@ def _lines(name: str, loc: Locator) -> str:
 
 def _zip(*names: str) -> bytes:
     """The same bytes in every process: an entry written by name alone carries the
-    current time, and these bytes reach parametrize lists every xdist worker collects."""
+    current time, which would reach the id of a parametrize row that names none."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for n in names:
