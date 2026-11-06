@@ -29,12 +29,18 @@ import { hasPlatformAdminClaim } from "../lib/role";
 import { TokensSection } from "./Tokens";
 import { ModelsSettings } from "./ModelsSettings";
 import { WebhooksSection } from "./WebhooksSection";
+import { StructureTab } from "./StructureTab";
 
 /** The URL carries the open settings tab
  *  (`?tab=memory`). */
-const SETTINGS_TABS = ["tokens", "memory", "models"] as const;
+const SETTINGS_TABS = ["tokens", "memory", "structure", "models"] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number];
-const TAB_LABELS: Record<SettingsTab, string> = { tokens: "Tokens", memory: "Memory", models: "Models & keys" };
+const TAB_LABELS: Record<SettingsTab, string> = {
+  tokens: "Tokens",
+  memory: "Memory",
+  structure: "Structure",
+  models: "Models & keys",
+};
 
 function isSettingsTab(v: string | null): v is SettingsTab {
   return SETTINGS_TABS.some((t) => t === v);
@@ -61,6 +67,8 @@ export function Setup() {
   const setView = useStore((s) => s.setView);
   const whoami = useStore((s) => s.whoami);
   const canManageModels = isAuthDisabled() || hasPlatformAdminClaim(whoami);
+  // The Structure tab reads four lists on open, all VIEWER.
+  const showStructure = canCall("memory_schema.list", useNamespaceRole(identity.namespace), whoami);
   const subject = whoami?.subject ?? "";
   // list_mine was fetched once at boot (App.tsx) — reuse it, never re-read.
   const mine = useStore((s) => s.myNamespaces);
@@ -223,6 +231,11 @@ export function Setup() {
           <TabTrigger value="memory" icon="light-bulb">
             {TAB_LABELS.memory}
           </TabTrigger>
+          {showStructure && (
+            <TabTrigger value="structure" icon="table">
+              {TAB_LABELS.structure}
+            </TabTrigger>
+          )}
           {canManageModels && (
             <TabTrigger value="models" icon="gear">
               {TAB_LABELS.models}
@@ -240,6 +253,9 @@ export function Setup() {
         </Tabs.Content>
         <Tabs.Content value="memory">
           <MemoryTab />
+        </Tabs.Content>
+        <Tabs.Content value="structure">
+          {showStructure ? <StructureTab /> : <p>Structure needs a role on this namespace.</p>}
         </Tabs.Content>
         <Tabs.Content value="models">
           {canManageModels ? <ModelsSettings /> : <p>Model settings require a platform administrator.</p>}

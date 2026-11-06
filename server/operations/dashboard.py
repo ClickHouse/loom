@@ -232,20 +232,6 @@ DASHBOARD_PENDING: frozenset[str] = frozenset(
         # health and maintenance
         "code.calibrate",
         "code.reindex",
-        # schemas, ontology and typed records
-        "memory.record.conflicts",
-        "memory.record.history",
-        "memory.record.query",
-        "memory_schema.approve",
-        "memory_schema.list",
-        "memory_schema.register",
-        "namespace.list_categories",
-        "namespace.list_ontology",
-        "namespace.register_category",
-        "namespace.register_ontology",
-        "profile_schema.clear",
-        "profile_schema.get",
-        "profile_schema.set",
         # pages of their own
         "conversation.delete",
         "conversation.update",
