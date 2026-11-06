@@ -35,7 +35,8 @@ or the embedder.
   use `tmp_path` and port 0. The seed fixes the order, but xdist hands tests to workers
   as they free up, so only a run without `-n` repeats an order exactly:
   `pytest tests/unit -p randomly --randomly-seed=<seed>`. A failure that needs a
-  particular neighbour shows with `-p no:randomly` and the two test ids in order.
+  particular neighbour shows with `-p no:randomly` and the two test ids in order, and a
+  collision between two tests running at once with the two ids under `-n 2`.
 - **Async tests sleep with `await asyncio.sleep(...)`**, never `time.sleep`.
 - **Wall-clock dates.** A fixture with a fixed date that a staleness check compares to
   `now()` passes until the date ages past the threshold. Pin the clock through the code's

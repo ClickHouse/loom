@@ -4,6 +4,7 @@ deadline from its parent and is gone by that deadline plus the drain time."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import signal
 import subprocess
@@ -263,7 +264,9 @@ def test_the_child_dies_with_its_parent(tmp_path) -> None:
         f"subprocess.Popen([sys.executable, '-c', {grandchild!r}])\n"
         "time.sleep(60)\n"
     )
-    proc = subprocess.Popen([sys.executable, "-c", parent])
+    # Its own process group, so the cleanup below reaches a grandchild that never
+    # got as far as setting its death signal.
+    proc = subprocess.Popen([sys.executable, "-c", parent], start_new_session=True)
     try:
         deadline = time.monotonic() + 30
         while not (pid_file.exists() and pid_file.read_text()) and time.monotonic() < deadline:
@@ -283,8 +286,9 @@ def test_the_child_dies_with_its_parent(tmp_path) -> None:
         os.kill(pid, signal.SIGKILL)
         pytest.fail("the child outlived its parent")
     finally:
-        if proc.poll() is None:
-            proc.kill()
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
 
 
 def test_child_env_runs_the_workers_without_a_lease() -> None:
