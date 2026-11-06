@@ -160,11 +160,18 @@ def test_a_list_items_number_is_no_extra_word() -> None:
     p = {"blocks": [{**block, "type": "paragraph", "text": text}], "tables": []}
     assert S.lost_blocks(g, p) == 0 and S.text_scores(g, p)["text_recall"] == 1.0
     assert S.locator_scores({**g, "format": "pdf"}, p)["locator_acc"] == 1.0
+    # nor when the parse runs it onto one line, its enumerators kept
+    p = {"blocks": [{**block, "text": " ".join(text.split("\n"))}], "tables": []}
+    s = S.score_file({**g, "format": "pdf"}, {**p, "complete": True})
+    assert s["lost_blocks"] == 0 and s["silent_loss"] == 0 and s["locator_acc"] == 1.0
     # and is found on its page with the numbers dropped
     plain = "Steps to take now:\nDrain the queue\nRestart it"
     p = {"blocks": [{**block, "text": plain}], "tables": []}
     assert S.locator_scores({**g, "format": "pdf"}, p)["locator_acc"] == 1.0
-    # a numbered heading, written without its number or with it, as a heading or a paragraph
+
+
+def test_a_numbered_heading_counts_its_words_the_same_however_it_is_written() -> None:
+    block = {"page_start": 1, "page_end": 1, "level": 0, "notes": False}
     g = {"blocks": [{"kind": "heading", "level": 1, "text": "2. Goals", "page": 1}], "tables": []}
     for kind, text in [("heading", "Goals"), ("paragraph", "2. Goals"), ("heading", "2. Goals")]:
         p = {"blocks": [{**block, "type": kind, "text": text}], "tables": []}

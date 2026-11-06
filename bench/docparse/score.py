@@ -33,17 +33,17 @@ def key(s: str) -> str:
 
 
 NUMBERING = re.compile(r"^\s*(?:\d{1,2}(?:\.\d{1,2})*\.?|[a-z][.)])\s+", re.I)
-# a line's enumerator ("1.", "2)", "a."), which a list item's gold leaves out
-# and a parse may keep on an item or a heading; not a number of the text's own
-# ("3.11 adds ...")
-ENUMERATOR = re.compile(r"^\s*(?:\d{1,3}|[a-z])[.)]\s+", re.I)
+# an enumerator ("1.", "2)", "a."), which a list item's gold leaves out and a
+# parse may keep, on a line of its own or with the list run onto one line; not
+# a number of the text's own ("3.11 adds ...")
+ENUMERATOR = re.compile(r"(?:^|(?<=\s))(?:\d{1,3}|[a-z])[.)](?=\s)", re.I)
 
 
 def text_words(text: str) -> list[str]:
-    """`text`'s words, each line's enumerator left out: on the gold's side and
-    the parse's alike, so a list, or a heading numbered "2.", counts the same
+    """`text`'s words, its enumerators left out: on the gold's side and the
+    parse's alike, so a list, or a heading numbered "2.", counts the same
     however it is written (a "1.1" stays)."""
-    return [w for line in text.split("\n") for w in words(ENUMERATOR.sub("", line, count=1))]
+    return words(ENUMERATOR.sub(" ", text))
 
 
 def unnumbered(s: str) -> str:
@@ -245,9 +245,8 @@ def locator_scores(g: dict, p: dict) -> dict:
     cited right when that block's pages hold its page and span no more pages
     than it does: one block over every page cites nothing. A table is cited
     right when a parse table with its header starts on its first page and
-    spans no more pages than it does. Words are compared as `probe_words` and
-    `text_words` hold them, so a list the parse runs onto one line keeps an
-    enumerator inside it and is not found by its opening words."""
+    spans no more pages than it does. The gold block's words are
+    `probe_words`, the parse's `text_words`."""
     if g["format"] == "docx":
         return {}
     blocks = [b for b in p.get("blocks", []) if b["type"] != "table"]
