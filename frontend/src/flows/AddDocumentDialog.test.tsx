@@ -20,6 +20,7 @@ vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast: vi.fn(),
 }));
+import { toast } from "../components/Toast";
 import {
   addKnowledge,
   ingestKnowledge,
@@ -28,7 +29,10 @@ import {
   knowledgeIngestStatus,
   uploadKnowledgeFile,
 } from "../api";
+import { ingestClock } from "../lib/fileIngest";
 import { AddDocumentDialog } from "./AddDocumentDialog";
+
+const realSleep = ingestClock.sleep;
 
 const identity = { org: "o", namespace: "n" };
 
@@ -50,9 +54,9 @@ function status(state: string, more: Partial<KnowledgeIngestStatus> = {}): Knowl
   };
 }
 
-function mount(onAdded = vi.fn()) {
-  render(<AddDocumentDialog open onOpenChange={vi.fn()} identity={identity} onAdded={onAdded} />);
-  return { dialog: screen.getByRole("dialog"), onAdded };
+function mount(onAdded = vi.fn(), onOpenChange = vi.fn()) {
+  render(<AddDocumentDialog open onOpenChange={onOpenChange} identity={identity} onAdded={onAdded} />);
+  return { dialog: screen.getByRole("dialog"), onAdded, onOpenChange };
 }
 
 async function pick(name: string, type = "") {
@@ -63,6 +67,7 @@ async function pick(name: string, type = "") {
 
 describe("AddDocumentDialog", () => {
   beforeEach(() => {
+    ingestClock.sleep = async () => {}; // follow a job without waiting out its polls
     vi.mocked(knowledgeFormats).mockResolvedValue({
       formats: [
         { format: "pdf", extensions: ["pdf"], media_types: ["application/pdf"], available: true },
@@ -86,6 +91,7 @@ describe("AddDocumentDialog", () => {
   afterEach(() => {
     cleanup();
     vi.resetAllMocks();
+    ingestClock.sleep = realSleep;
   });
 
   it("badges the file, uploads its bytes, ingests and follows the job until it publishes", async () => {
@@ -99,7 +105,7 @@ describe("AddDocumentDialog", () => {
     // The browser reads nothing: no extracted text is offered for review.
     expect(within(dialog).queryByLabelText(/^Content/)).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Upload" }));
-    await waitFor(() => expect(onAdded).toHaveBeenCalled(), { timeout: 4000 });
+    await waitFor(() => expect(onAdded).toHaveBeenCalled());
     const [id, sent] = vi.mocked(uploadKnowledgeFile).mock.calls[0];
     expect([id, sent.name]).toEqual([identity, "spec.pdf"]);
     expect(vi.mocked(ingestKnowledge).mock.calls[0][1]).toMatchObject({
@@ -131,6 +137,40 @@ describe("AddDocumentDialog", () => {
     await user.click(within(dialog).getByRole("button", { name: "Upload" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("spec.pdf: the content is not a PDF");
     expect(within(dialog).getByRole("status")).toHaveTextContent("Failed (format_mismatch)");
+    expect(onAdded).not.toHaveBeenCalled();
+  });
+
+  it("says a partial publish is partial", async () => {
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("partial", { coverage: { lost: ["formula_values"] } }));
+    const { dialog, onAdded } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await waitFor(() => expect(onAdded).toHaveBeenCalled());
+    expect(vi.mocked(toast).mock.calls.at(-1)).toEqual([
+      "Added spec.pdf: revision 1, partial: part of the file could not be read (lost: formula_values)",
+      "info",
+    ]);
+  });
+
+  it("can close while following: the job goes on, and no poll follows it", async () => {
+    // Each pause waits until the test releases it.
+    let release = () => {};
+    ingestClock.sleep = () => new Promise<void>((r) => (release = r));
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("processing", { stage: "embed" }));
+    const { dialog, onAdded, onOpenChange } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    expect(await within(dialog).findByRole("status")).toHaveTextContent("Embedding…");
+    // The footer's Close and the modal's own close both close it the same way.
+    await user.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toMatch(/spec\.pdf goes on extracting/);
+    const polls = vi.mocked(knowledgeIngestStatus).mock.calls.length;
+    release(); // the pause ends after the close: the loop sees the abort and polls no more
+    await new Promise((r) => setTimeout(r, 20));
+    expect(vi.mocked(knowledgeIngestStatus).mock.calls.length).toBe(polls);
     expect(onAdded).not.toHaveBeenCalled();
   });
 

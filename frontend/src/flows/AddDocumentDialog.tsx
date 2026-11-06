@@ -9,16 +9,8 @@ import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { humanizeError } from "../lib/format";
-import { ingestFile } from "../lib/fileIngest";
-import {
-  AllowPartial,
-  IngestProgress,
-  PickedFile,
-  acceptFor,
-  readableFormats,
-  useKnowledgeFormats,
-  useVerdict,
-} from "./FileIngest";
+import { fileVerdict, ingestFile } from "../lib/fileIngest";
+import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormats } from "./FileIngest";
 
 interface Props {
   open: boolean;
@@ -67,7 +59,9 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
   const fileRef = useRef<HTMLInputElement | null>(null);
   const following = useRef<AbortController | null>(null);
   const formats = useKnowledgeFormats(identity, open);
-  const verdict = useVerdict(file, formats);
+  const verdict = file ? fileVerdict(file, formats) : null;
+  // Leaving the page stops the following, as closing does; the job goes on on the server.
+  useEffect(() => () => following.current?.abort(), []);
 
   // When opening in Replace mode, hydrate the form with the existing
   // document's metadata so the user only has to pick the new file.
@@ -144,7 +138,16 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
         { signal: ctrl.signal },
       );
       if (status.state === "ready" || status.state === "partial") {
-        finish(`${replaceMode ? "Replaced" : "Added"} ${sourceUri.trim()}: revision ${status.revision}`);
+        const what = `${replaceMode ? "Replaced" : "Added"} ${sourceUri.trim()}: revision ${status.revision}`;
+        if (status.state === "partial") {
+          const lost = status.coverage?.lost?.length ? ` (lost: ${status.coverage.lost.join(", ")})` : "";
+          toast(`${what}, partial: part of the file could not be read${lost}`, "info");
+          onAdded();
+          reset();
+          onOpenChange(false);
+          return;
+        }
+        finish(what);
         return;
       }
       setError(
@@ -189,7 +192,10 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
   const close = (v: boolean) => {
     if ((busy === "upload" || busy === "save") && !v) return;
     if (!v && busy === "follow")
-      toast(`${sourceUri.trim()} goes on extracting; the Library shows it when it publishes`, "info");
+      toast(
+        `${sourceUri.trim()} goes on extracting; it is in the Library once it publishes and the list is reloaded`,
+        "info",
+      );
     if (!v) reset();
     onOpenChange(v);
   };
@@ -225,7 +231,6 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
                 aria-label="Choose a file to upload"
                 ref={fileRef}
                 type="file"
-                accept={acceptFor(formats)}
                 className="hidden"
                 onChange={(e) => onPickFile(e.target.files?.[0] || null)}
               />

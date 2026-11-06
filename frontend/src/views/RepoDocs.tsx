@@ -216,8 +216,9 @@ export function RepoDocsList({
             onOpenChange={(v) => {
               if (!v) setAdding(false);
             }}
-            onAdded={(title) => {
-              toast(`Added ${title}`, "ok");
+            onAdded={(title, partial) => {
+              if (partial) toast(`Added ${title}, partial: part of the file could not be read`, "info");
+              else toast(`Added ${title}`, "ok");
               setNonce((n) => n + 1);
             }}
           />

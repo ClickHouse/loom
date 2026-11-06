@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { downloadKnowledge, fetchKnowledgePreview, listKnowledge, PREVIEW_TEXT_BYTES, previewKind } from "./knowledge";
+import {
+  downloadKnowledge,
+  fetchKnowledgePreview,
+  ingestKnowledge,
+  knowledgeFormats,
+  listKnowledge,
+  PREVIEW_TEXT_BYTES,
+  previewKind,
+  uploadKnowledgeFile,
+} from "./knowledge";
 import { ApiError } from "../lib/errors";
 
 // knowledge.download is a GET the browser then saves; it rides the shared request path,
@@ -216,5 +225,39 @@ describe("listKnowledge", () => {
     const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
     expect(bodies[0].uri_prefix).toEqual(["docs/late.md"]);
     expect(bodies[1]).not.toHaveProperty("uri_prefix");
+  });
+});
+
+describe("uploading a file", () => {
+  it("sends the file's bytes as they are, its name and type in the query, no consumer added", async () => {
+    const fetchMock = stubFetch(201, '{"upload_id":"up-1","format":"pdf"}');
+    const file = new File([new Uint8Array([0x25, 0x50, 0x00, 0xff])], "Q3 spec.pdf", { type: "application/pdf" });
+    const up = await uploadKnowledgeFile(id, file);
+    expect(up.upload_id).toBe("up-1");
+    const [url, init] = fetchMock.mock.calls[0];
+    const u = new URL(url, "http://loom.test");
+    expect(u.pathname).toBe("/v1/knowledge.upload");
+    expect(Object.fromEntries(u.searchParams)).toEqual({
+      org: "dev",
+      namespace: "team",
+      filename: "Q3 spec.pdf",
+      content_type: "application/pdf",
+    });
+    expect(init?.body).toBe(file);
+    expect((init?.headers as Record<string, string>)["Content-Type"]).toBe("application/octet-stream");
+  });
+
+  it("names expected_revision on the ingest only when it is set", async () => {
+    const fetchMock = stubFetch(200, '{"ingestion_id":"job-1","state":"pending","source_uri":"a"}');
+    await ingestKnowledge(id, { upload_id: "up-1", source_uri: "a" });
+    await ingestKnowledge(id, { upload_id: "up-1", source_uri: "a", expected_revision: 0 });
+    const [first, second] = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+    expect(first).not.toHaveProperty("expected_revision");
+    expect(second.expected_revision).toBe(0);
+  });
+
+  it("reads a server that predates knowledge.formats as listing nothing", async () => {
+    stubFetch(404, '{"detail":{"code":"NOT_FOUND"}}');
+    await expect(knowledgeFormats(id)).resolves.toBeNull();
   });
 });

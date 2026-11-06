@@ -259,7 +259,7 @@ describe("RepoDocsList", () => {
     mount(true);
     fireEvent.click(await screen.findByRole("button", { name: "Add a document" }));
     const dialog = await screen.findByRole("dialog");
-    const user = userEvent.setup({ applyAccept: false });
+    const user = userEvent.setup();
     await user.upload(within(dialog).getByLabelText("Choose a file"), new File(["# On call"], "on_call.md"));
     expect(within(dialog).getByLabelText("Title")).toHaveValue("on call");
     fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
@@ -272,9 +272,45 @@ describe("RepoDocsList", () => {
         title: "on call",
         description: "",
         allow_partial: false,
+        expected_revision: 0,
         upload_id: "up-1",
       },
     ]);
     expect(addKnowledge).not.toHaveBeenCalled();
+  });
+
+  it("a file whose address another document took past the first page is refused, not published over it", async () => {
+    vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null });
+    vi.mocked(uploadKnowledgeFile).mockResolvedValue({
+      upload_id: "up-1",
+      sha256: "",
+      size: 9,
+      filename: "runbook.md",
+      format: "markdown",
+      expires_at: "",
+    });
+    vi.mocked(ingestKnowledge).mockResolvedValue({ ingestion_id: "job-1", state: "pending", source_uri: "x" });
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue({
+      found: true,
+      ingestion_id: "job-1",
+      source_uri: "repo-doc://Acme/kj/runbook",
+      state: "failed",
+      stage: "",
+      error_code: "revision_conflict",
+      error_message: "another revision of the source is live",
+      format: "markdown",
+      coverage: null,
+      warnings: [],
+      chunks: 0,
+      revision: 0,
+    });
+    mount(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Add a document" }));
+    const dialog = await screen.findByRole("dialog");
+    const user = userEvent.setup();
+    await user.upload(within(dialog).getByLabelText("Choose a file"), new File(["# R"], "runbook.md"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    expect(await within(dialog).findByText(/another revision of the source is live/)).toBeInTheDocument();
+    expect(vi.mocked(ingestKnowledge).mock.calls[0][1].expected_revision).toBe(0);
   });
 });

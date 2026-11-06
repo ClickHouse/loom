@@ -101,8 +101,43 @@ describe("ingestFile", () => {
       sleep: async () => {},
     });
     expect(out.state).toBe("ready");
-    expect(steps).toEqual(["Uploading…", "Extracting…", "Ready: revision 1, 1 chunks"]);
+    expect(steps).toEqual(["Uploading…", "Extracting…", "Ready: revision 1, 1 chunk"]);
     expect(vi.mocked(uploadKnowledgeFile).mock.calls[0].slice(0, 2)).toEqual([id, f]);
     expect(vi.mocked(ingestKnowledge).mock.calls[0]).toEqual([id, { source_uri: "a", tags: ["x"], upload_id: "up-1" }]);
+  });
+
+  it("stops following at an abort, the job left to the server", async () => {
+    vi.mocked(uploadKnowledgeFile).mockResolvedValue({
+      upload_id: "up-1",
+      sha256: "",
+      size: 1,
+      filename: "a.md",
+      format: "markdown",
+      expires_at: "",
+    });
+    vi.mocked(ingestKnowledge).mockResolvedValue({ ingestion_id: "job-1", state: "pending", source_uri: "a" });
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue({
+      found: true,
+      ingestion_id: "job-1",
+      source_uri: "a",
+      state: "processing",
+      stage: "parse",
+      error_code: "",
+      error_message: "",
+      format: "markdown",
+      coverage: null,
+      warnings: [],
+      chunks: 0,
+      revision: 0,
+    });
+    const ctrl = new AbortController();
+    const run = ingestFile({ org: "o", namespace: "n" }, new File(["a"], "a.md"), { source_uri: "a" }, () => {}, {
+      signal: ctrl.signal,
+      sleep: async () => ctrl.abort(),
+    });
+    await expect(run).rejects.toThrow();
+    expect(knowledgeIngestStatus).toHaveBeenCalledTimes(1);
+    // Each poll keeps the default request bound: no signal of its own.
+    expect(vi.mocked(knowledgeIngestStatus).mock.calls[0]).toEqual([{ org: "o", namespace: "n" }, "job-1"]);
   });
 });

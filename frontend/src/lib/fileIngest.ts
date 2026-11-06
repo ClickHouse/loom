@@ -72,9 +72,9 @@ export function ingestStep(
     case "processing":
       return status.stage === "embed" ? "Embedding…" : status.stage === "publish" ? "Publishing…" : "Extracting…";
     case "ready":
-      return `Ready: revision ${status.revision}, ${status.chunks} chunks`;
+      return `Ready: revision ${status.revision}, ${chunks(status.chunks)}`;
     case "partial":
-      return `Published part of it: revision ${status.revision}, ${status.chunks} chunks`;
+      return `Published part of it: revision ${status.revision}, ${chunks(status.chunks)}`;
     case "cancelled":
       return "Cancelled";
     case "failed":
@@ -84,18 +84,30 @@ export function ingestStep(
   }
 }
 
+function chunks(n: number): string {
+  return `${n} chunk${n === 1 ? "" : "s"}`;
+}
+
+/** The pause between polls; tests replace it to follow a job without waiting. */
+export const ingestClock = {
+  sleep: (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
 export interface IngestFields {
   source_uri: string;
   title?: string;
   description?: string;
   tags?: string[];
   allow_partial?: boolean;
+  /** Publish only over this revision; 0: only when no document is live (else `revision_conflict`). */
+  expected_revision?: number;
 }
 
 /**
  * Upload `file`, ingest it and follow the job until it ends, calling `onStep` with each
- * line to show. Answers the job's last status. `signal` stops the upload and the polls;
- * the job itself goes on on the server.
+ * line to show. Answers the job's last status. `signal` stops the upload (which it alone
+ * bounds, so a large file is not cut off) and the following; each poll keeps the
+ * default request bound. The job itself goes on on the server.
  */
 export async function ingestFile(
   id: Pick<Identity, "org" | "namespace">,
@@ -104,12 +116,14 @@ export async function ingestFile(
   onStep: (line: string, status?: KnowledgeIngestStatus) => void,
   opts: { signal?: AbortSignal; pollMs?: number; sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<KnowledgeIngestStatus> {
-  const { signal, pollMs = 1000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = opts;
+  const { signal, pollMs = 1000, sleep = ingestClock.sleep } = opts;
   onStep("Uploading…");
   const up = await uploadKnowledgeFile(id, file, signal);
   const job = await ingestKnowledge(id, { ...fields, upload_id: up.upload_id });
   for (;;) {
-    const status = await knowledgeIngestStatus(id, job.ingestion_id, { signal });
+    signal?.throwIfAborted();
+    const status = await knowledgeIngestStatus(id, job.ingestion_id);
+    signal?.throwIfAborted();
     onStep(ingestStep(status), status);
     if (!status.found || INGEST_DONE.has(status.state)) return status;
     await sleep(pollMs);

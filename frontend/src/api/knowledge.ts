@@ -269,6 +269,8 @@ export async function ingestKnowledge(
     description?: string;
     tags?: string[];
     allow_partial?: boolean;
+    /** Publish only over this revision (0: only when none is live); unset publishes over any. */
+    expected_revision?: number;
   },
 ): Promise<KnowledgeIngestJob> {
   return post<KnowledgeIngestJob>("/v1/knowledge.ingest", {
@@ -280,6 +282,7 @@ export async function ingestKnowledge(
     description: opts.description || "",
     tags: opts.tags || [],
     allow_partial: !!opts.allow_partial,
+    ...(opts.expected_revision === undefined ? {} : { expected_revision: opts.expected_revision }),
   });
 }
 

@@ -9,7 +9,7 @@ import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { type Identity, type KnowledgeFormats, knowledgeFormats } from "../api";
 import { formatBytesShort } from "../lib/format";
-import { type FileVerdict, fileVerdict } from "../lib/fileIngest";
+import type { FileVerdict } from "../lib/fileIngest";
 
 /** The deployment's formats, read when `open` turns true; null until read, or from a
  *  server that predates `knowledge.formats`. */
@@ -25,13 +25,6 @@ export function useKnowledgeFormats(id: Pick<Identity, "org" | "namespace">, ope
     return () => ctrl.abort();
   }, [open, org, namespace]);
   return formats;
-}
-
-/** The file input's `accept`: every extension the deployment's extractors read. */
-export function acceptFor(formats: KnowledgeFormats | null): string | undefined {
-  if (!formats) return undefined;
-  const exts = formats.formats.filter((f) => f.available).flatMap((f) => f.extensions);
-  return exts.length ? exts.map((e) => `.${e}`).join(",") : undefined;
 }
 
 /** The formats a person can pick, in words: "PDF, Markdown, …" (the available ones). */
@@ -66,11 +59,6 @@ export function PickedFile({ file, verdict }: { file: File; verdict: FileVerdict
       )}
     </div>
   );
-}
-
-/** The verdict for a picked file, against the formats read so far. */
-export function useVerdict(file: File | null, formats: KnowledgeFormats | null): FileVerdict | null {
-  return file ? fileVerdict(file, formats) : null;
 }
 
 /** "Publish what could be read" for a file part of which may not extract. */

@@ -23,16 +23,8 @@ import { toastError } from "../components/Toast";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { Loading } from "../components/ui/Loading";
 import { slugify } from "../lib/docFiles";
-import { ingestFile } from "../lib/fileIngest";
-import {
-  AllowPartial,
-  IngestProgress,
-  PickedFile,
-  acceptFor,
-  readableFormats,
-  useKnowledgeFormats,
-  useVerdict,
-} from "./FileIngest";
+import { fileVerdict, ingestFile } from "../lib/fileIngest";
+import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormats } from "./FileIngest";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 
 /** `repo-doc://Org/repo/<slug>`, suffixed `-2`, `-3`… past the URIs taken. */
@@ -59,7 +51,8 @@ export function RepoDocAddDialog({
   namespace: string;
   repo: string;
   takenUris: string[];
-  onAdded: (title: string) => void;
+  /** `partial`: the file published with part of it lost. */
+  onAdded: (title: string, partial?: boolean) => void;
 }) {
   const [mode, setMode] = useState<"file" | "paste">("file");
   const [file, setFile] = useState<File | null>(null);
@@ -73,7 +66,10 @@ export function RepoDocAddDialog({
   const [over, setOver] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const formats = useKnowledgeFormats({ org, namespace }, open);
-  const verdict = useVerdict(file, formats);
+  const verdict = file ? fileVerdict(file, formats) : null;
+  // Closing (the card unmounts the dialog) stops the upload and the following.
+  const following = useRef<AbortController | null>(null);
+  useEffect(() => () => following.current?.abort(), []);
   const taken = new Set(takenUris);
   const uri = title.trim() ? repoDocUri(repo, title, taken) : "";
   const ready = !!title.trim() && busy === null && (mode === "file" ? !!file && !verdict?.refusal : !!pasted.trim());
@@ -98,13 +94,22 @@ export function RepoDocAddDialog({
     setError(null);
     try {
       if (mode === "file" && file) {
+        const ctrl = new AbortController();
+        following.current = ctrl;
+        // expected_revision 0: an address taken by a document past the list's first page
+        // fails `revision_conflict` instead of becoming that document's next revision.
         const status = await ingestFile(
           { org, namespace },
           file,
-          { source_uri: uri, title: title.trim(), description: description.trim(), allow_partial: allowPartial },
+          {
+            source_uri: uri,
+            title: title.trim(),
+            description: description.trim(),
+            allow_partial: allowPartial,
+            expected_revision: 0,
+          },
           setStep,
-          // Its own signal: a large file over a slow link is not cut off at the default request bound.
-          { signal: new AbortController().signal },
+          { signal: ctrl.signal },
         );
         if (status.state !== "ready" && status.state !== "partial") {
           setError(
@@ -112,6 +117,9 @@ export function RepoDocAddDialog({
           );
           return;
         }
+        onAdded(title.trim(), status.state === "partial");
+        onOpenChange(false);
+        return;
       } else {
         await addKnowledge(
           { org, namespace },
@@ -121,6 +129,7 @@ export function RepoDocAddDialog({
       onAdded(title.trim());
       onOpenChange(false);
     } catch (e) {
+      if (following.current?.signal.aborted) return; // closed: the job goes on on the server
       setError(humanizeError(e));
     } finally {
       setBusy(null);
@@ -190,7 +199,6 @@ export function RepoDocAddDialog({
               type="file"
               className="sr-only"
               aria-label="Choose a file"
-              accept={acceptFor(formats)}
               onChange={(e) => take(e.target.files?.[0])}
               tabIndex={-1}
             />
