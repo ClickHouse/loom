@@ -909,6 +909,18 @@ configured. `knowledge.update_metadata` with `reindex=true` refuses an ingested 
 (the title, description and section breadcrumb both search legs read) is filled as for
 `knowledge.add`.
 
+The Python SDK runs the two steps: `agent.knowledge.upload(data, filename)` sends the bytes
+with their `sha256`, `agent.knowledge.ingest(upload_id, source_uri=...)` starts the job,
+and `agent.knowledge.wait_for_ingest(ingestion_id)` polls `knowledge.ingest_status` until
+the job ends (a `TimeoutError` after `timeout_s`, 600 by default, with the job still
+running). `agent.knowledge.ingest_file(path)` does all three for a local file, named
+`file://<absolute path>` unless `source_uri` says otherwise:
+
+```python
+status = await agent.knowledge.ingest_file("specs/q3.pdf", tags=["rfc"], allow_partial=True)
+print(status["state"], status["revision"], status["coverage"])
+```
+
 ## Datasets
 
 An ingested CSV, XLSX or Parquet file's tables are also typed **datasets**: each sheet (a
@@ -1026,32 +1038,36 @@ a lifecycle rule expires their noncurrent versions ([backup and recovery](../ope
 
 ## Getting files in: the ingest CLI
 
-`knowledge.add` and `knowledge.upsert` take text: a caller sends the text it extracted.
-A folder registered as a [document source](#document-sources) is pulled by the server
-instead, with PDFs and `.pptx` files parsed by an extractor service. For a one-off push
-of a local file, an `s3://` object or an `https://` page, `dev/loom_ingest.py` parses on
-the client and posts the text:
+For a one-off push of a local file, an `s3://` object or an `https://` page,
+`dev/loom_ingest.py` uploads the bytes as they are and ingests them
+([ingesting files](#ingesting-files)), so the server's extractor parses them and the CLI
+parses nothing. A folder registered as a [document source](#document-sources) is pulled
+by the server instead.
 
 ```bash
 make ingest FILE=docs/runbook.md TAGS=ops,runbooks      # wraps dev/loom_ingest.py
 python dev/loom_ingest.py --namespace project-x --title "Q3 spec" spec.pdf
-python dev/loom_ingest.py --upsert --source-uri 'github://acme/spec.md' spec.md
+python dev/loom_ingest.py --source-uri 'github://acme/spec.md' spec.md
+python dev/loom_ingest.py --no-wait --allow-partial scans.pdf   # print the job id and return
 python dev/loom_ingest.py s3://acme-docs/runbooks/      # every object under the prefix
 python dev/loom_ingest.py https://example.com/page.html --dry-run
 ```
 
-| Source                                     | Handling                                                                                                     |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| Markdown, text, JSON, CSV, YAML, RST, logs | Read as UTF-8, no parsing.                                                                                   |
-| PDF                                        | Text extracted with `pypdf` (install it); the PDF outline becomes Markdown headings, so chunking follows it. |
-| `s3://bucket/key` or `s3://bucket/prefix/` | One object, or one ingest per object under the prefix (boto3 credential chain).                              |
-| `https://…`                                | Fetched with a 30 s timeout and a 10 MB cap; HTML, PDF, Markdown or text.                                    |
+| Source                                     | Handling                                                                                                             |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| A local path                               | Uploaded under its file name, which names the format.                                                                |
+| `s3://bucket/key` or `s3://bucket/prefix/` | One object, or one ingest per object under the prefix (boto3 credential chain, the `ingest` extra).                  |
+| `https://…`                                | Fetched with a 30 s timeout and a 10 MB cap; a path with no extension names the format by the response's media type. |
 
 It reads the token from `--token`, `LOOM_API_KEY`, `~/.loom/config.json` or `~/.loom/token`, the
 server from `--base-url` or `LOOM_BASE_URL`, and defaults `--namespace` to the token's first
-namespace, `--title` to the file name and `--source-uri` to `file://<absolute path>`.
-`--upsert` calls `knowledge.upsert` instead of `add`. Images, video, Parquet and Iceberg
-are out of scope. `loom demo` ingests `AGENTS.md` and asks a question of it, which is
+namespace, `--title` to the file name less its extension and `--source-uri` to `file://<absolute path>`.
+Each ingest publishes the source's next revision. The CLI waits for each job (`--timeout`,
+600 seconds) and prints its revision, chunks, format and warnings, or its `error_code`
+when it failed; `--no-wait` prints the job's id instead. `--format` names a format the file
+name does not, `--allow-partial` publishes an extraction that lost part of the file, and
+`--dry-run` prints what it would upload. A format no configured extractor serves fails
+`format_unavailable`. `loom demo` ingests `AGENTS.md` and asks a question of it, which is
 the shortest check that the knowledge plane works on a fresh stack.
 
 ## Example

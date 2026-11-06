@@ -1,10 +1,11 @@
 """`loom demo` — the first five minutes: ingest this repo's own memory file
 and ask it a question.
 
-  1. ingest `AGENTS.md` (or `--file`) into the knowledge plane exactly the
-     way `make ingest FILE=… TAGS=…` does — `dev/loom_ingest.py`'s parse step
-     and request body, posted to `knowledge.upsert` so a re-run replaces the
-     chunks instead of 409-ing on the duplicate;
+  1. ingest `AGENTS.md` (or `--file`) into the knowledge plane as
+     `make ingest FILE=… TAGS=…` does: the file's bytes go to
+     `/v1/knowledge.upload`, `knowledge.ingest` has the server's extractor parse
+     them, and the demo polls `knowledge.ingest_status` until the job ends; a
+     re-run publishes the document's next revision;
   2. ask: `knowledge.synthesize` over that one document — the op that
      synthesizes over knowledge (`memory.ask` reads the memory plane; its
      `source="chunk"` hits are memory chunks, not documents). When
@@ -19,25 +20,26 @@ and ask it a question.
 Talks to `--base-url` (default http://localhost:7777) with the token from
 `LOOM_API_KEY`, then `~/.loom/config.json`, then `~/.loom/token`, else none
 (the stock single-user stack needs none). Every HTTP call goes through
-`_get_json` / `_post_json` so the unit tests swap them
+`_get_json` / `_post_json` / `_post_bytes` so the unit tests swap them
 (`tests/unit/test_cli_demo.py`).
 """
 
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import sys
+import time
 from pathlib import Path
-from types import ModuleType
 from typing import Any
+from urllib.parse import urlencode
 
 from server.cli._client import (
     DEFAULT_BASE_URL,
     default_base_url,
     get_json,
     jwt_claims,
+    post_bytes,
     post_op,
     refused_for_agent,
     resolve_token,
@@ -48,6 +50,10 @@ DEFAULT_FILE = "AGENTS.md"
 DEFAULT_QUESTION = "What is the identity tuple on every row?"
 DEFAULT_TAGS = "loom,project-memory"
 TOP_K = 3
+# How long the demo waits for its ingest job, which a worker runs.
+INGEST_WAIT_S = 120  # not a setting: the demo's own patience
+# The states an ingest job ends in.
+_INGEST_DONE = ("ready", "partial", "failed", "cancelled")
 REAL_LLM_HINT = (
     "synthesis needs a real LLM: set LOOM_LLM_PROVIDER=openai and OPENAI_API_KEY "
     "(the OpenAI block in .env.example), then `loom up --rebuild`"
@@ -60,6 +66,9 @@ REAL_LLM_HINT = (
 # The tests replace these module names with a scripted server.
 _get_json = get_json
 _post_json = post_op
+_post_bytes = post_bytes
+_sleep = time.sleep
+_monotonic = time.monotonic
 
 
 def _explain_http(op: str, status: int, body: dict[str, Any], base_url: str) -> str:
@@ -93,57 +102,69 @@ def resolve_identity(args: argparse.Namespace, token: str) -> tuple[str, str]:
     return org, namespace
 
 
-# ---- 1. ingest (the `make ingest` code path) ---------------------------------------
-
-
-def load_loom_ingest(explicit_root: str | None = None) -> ModuleType | None:
-    """Import `dev/loom_ingest.py` by path: from `--root`, the checkout the
-    `server` package lives in, or the cwd (the image runs the CLI from /app,
-    where `COPY dev ./dev` put it). `dev/` is not a package, so this is a
-    file import rather than `from dev import loom_ingest`."""
-    roots: list[Path] = []
-    if explicit_root:
-        roots.append(Path(explicit_root))
-    roots += [REPO_ROOT, Path.cwd()]
-    for root in roots:
-        candidate = root / "dev" / "loom_ingest.py"
-        if candidate.is_file():
-            spec = importlib.util.spec_from_file_location("loom_ingest_for_demo", candidate)
-            if spec is None or spec.loader is None:
-                continue
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            return module
-    return None
+# ---- 1. ingest (upload, knowledge.ingest, poll) ----------------------------------
 
 
 def ingest_file(
-    *,
-    base_url: str,
-    token: str,
-    org: str,
-    namespace: str,
-    path: Path,
-    tags: str,
-    ingest_mod: ModuleType,
+    *, base_url: str, token: str, org: str, namespace: str, path: Path, tags: str
 ) -> tuple[str, dict[str, Any], str]:
-    """Parse + upsert one file the way `dev/loom_ingest.py` does. Returns
-    (source_uri, response body, error) — error is '' on success."""
-    content = ingest_mod._extract_text(path)
-    source_uri = f"file://{path}"
-    body = ingest_mod.knowledge_body(
-        local_path=path,
-        source_uri=source_uri,
-        content=content,
-        org=org,
-        namespace=namespace,
-        title=path.stem,
-        tags=[t.strip() for t in tags.split(",") if t.strip()],
+    """Upload one file, ingest it and wait for the job, as `dev/loom_ingest.py`
+    does. Returns (source_uri, the job's last status, error) — error is '' once
+    the job published."""
+    source_uri = f"file://{path.resolve()}"
+    params = {"org": org, "namespace": namespace, "filename": path.name}
+    status, up = _post_bytes(
+        f"{base_url}/v1/knowledge.upload?{urlencode(params)}", path.read_bytes(), token
     )
-    status, out = _post_json(base_url, "knowledge.upsert", body, token)
+    if status != 201:
+        return source_uri, up, _explain_http("knowledge.upload", status, up, base_url)
+    body = {
+        "org": org,
+        "namespace": namespace,
+        "upload_id": up.get("upload_id", ""),
+        "source_uri": source_uri,
+        "title": path.stem,
+        "tags": [t.strip() for t in tags.split(",") if t.strip()],
+        "metadata": {"ingested_from": source_uri},
+    }
+    status, job = _post_json(base_url, "knowledge.ingest", body, token)
     if status != 200:
-        return source_uri, out, _explain_http("knowledge.upsert", status, out, base_url)
-    return source_uri, out, ""
+        return source_uri, job, _explain_http("knowledge.ingest", status, job, base_url)
+    ask = {"org": org, "namespace": namespace, "ingestion_id": job.get("ingestion_id", "")}
+    deadline = _monotonic() + INGEST_WAIT_S
+    while True:
+        status, state = _post_json(base_url, "knowledge.ingest_status", ask, token)
+        if status != 200:
+            return (
+                source_uri,
+                state,
+                _explain_http("knowledge.ingest_status", status, state, base_url),
+            )
+        done = not state.get("found") or state.get("state") in _INGEST_DONE
+        if done or _monotonic() >= deadline:
+            return source_uri, state, _job_error(state, ask["ingestion_id"])
+        _sleep(1.0)
+
+
+def _job_error(state: dict[str, Any], ingestion_id: str) -> str:
+    """'' for a job that published; else what happened and what to do."""
+    now = str(state.get("state") or "")
+    if now in ("ready", "partial"):
+        return ""
+    if not state.get("found"):
+        return f"knowledge.ingest_status: no job {ingestion_id} in this namespace."
+    if now not in _INGEST_DONE:
+        return (
+            f"knowledge.ingest: the job is still {now or 'unknown'} after {INGEST_WAIT_S}s — a "
+            f"worker runs it (LOOM_BACKGROUND_WORKERS); knowledge.ingest_status {ingestion_id} "
+            "follows it."
+        )
+    code = str(state.get("error_code") or "")
+    why = f"knowledge.ingest: the job {now}" + (f" ({code})" if code else "")
+    why += f": {state.get('error_message')}" if state.get("error_message") else ""
+    if code == "format_unavailable":
+        why += " — no extractor serves this format; `loom up` starts the reference extractor."
+    return why
 
 
 # ---- 2./3. ask + evidence -----------------------------------------------------------
@@ -209,7 +230,8 @@ def _add_demo_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--file",
         default=None,
-        help=f"Document to ingest (default: {DEFAULT_FILE} at the checkout root).",
+        help=f"Document to ingest (default: {DEFAULT_FILE} in the cwd, "
+        "then the package's checkout).",
     )
     p.add_argument(
         "--question",
@@ -239,8 +261,7 @@ def _add_demo_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--root",
         default=None,
-        help="Checkout root holding AGENTS.md and dev/loom_ingest.py "
-        "(default: the package's checkout, then the cwd).",
+        help="Checkout root holding AGENTS.md (default: the cwd, then the package's checkout).",
     )
     p.add_argument(
         "--search-only",
@@ -249,12 +270,10 @@ def _add_demo_flags(p: argparse.ArgumentParser) -> None:
     )
 
 
-def _resolve_file(args: argparse.Namespace, ingest_root: Path | None) -> Path | None:
+def _resolve_file(args: argparse.Namespace) -> Path | None:
     if args.file:
         return Path(args.file).expanduser()
-    roots = [Path(args.root)] if args.root else [Path.cwd()]
-    if not args.root and ingest_root is not None:
-        roots.append(ingest_root)
+    roots = [Path(args.root)] if args.root else [Path.cwd(), REPO_ROOT]
     for root in roots:
         if (root / DEFAULT_FILE).is_file():
             return root / DEFAULT_FILE
@@ -281,21 +300,12 @@ def _cmd_demo(args: argparse.Namespace) -> int:
         return 1
     fake_llm = bool(health.get("fake_llm"))
 
-    ingest_mod = load_loom_ingest(args.root)
-    if ingest_mod is None:
-        print(
-            "✗ dev/loom_ingest.py not found — run `loom demo` from the loom checkout or pass "
-            "--root <checkout>.",
-            file=sys.stderr,
-        )
-        return 2
-    ingest_root = Path(ingest_mod.__file__).resolve().parents[1] if ingest_mod.__file__ else None
-    path = _resolve_file(args, ingest_root)
+    path = _resolve_file(args)
     if path is None or not path.is_file():
         wanted = args.file or DEFAULT_FILE
         print(
-            f"✗ not a file: {wanted} — pass --file path/to/doc.md (any Markdown, text or PDF "
-            "you want to ask about).",
+            f"✗ not a file: {wanted} — pass --file path/to/doc.md (any file the server's "
+            "extractor reads: Markdown, text, PDF, ...) or run `loom demo` from the loom checkout.",
             file=sys.stderr,
         )
         return 2
@@ -312,14 +322,14 @@ def _cmd_demo(args: argparse.Namespace) -> int:
         namespace=namespace,
         path=path,
         tags=args.tags,
-        ingest_mod=ingest_mod,
     )
     if err:
         print(f"✗ {err}", file=sys.stderr)
         return 1
     print(
-        f"✓ ingested {path.name} → doc_id={out.get('doc_id', '?')} "
-        f"chunks={out.get('chunks_created', '?')} (knowledge.upsert, tags={args.tags})"
+        f"✓ ingested {path.name} → revision={out.get('revision', '?')} "
+        f"chunks={out.get('chunks', '?')} format={out.get('format', '?')} "
+        f"state={out.get('state', '?')} (knowledge.ingest, tags={args.tags})"
     )
 
     hits, err = search_evidence(

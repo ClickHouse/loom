@@ -1,10 +1,16 @@
 """Knowledge client. Surface: add / search / upsert / get / list / delete +
-bulk_add / bulk_delete (batch ops) + dedup_list / dedup_resolve (admin)."""
+bulk_add / bulk_delete (batch ops) + dedup_list / dedup_resolve (admin) +
+upload / ingest / ingest_status / ingest_cancel / wait_for_ingest / ingest_file
+(a file's bytes, extracted by the server's extractor service)."""
 
 from __future__ import annotations
 
+import asyncio
 import builtins
+import hashlib
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -38,6 +44,10 @@ def _hit(payload: dict[str, Any]) -> SearchHit:
         section_path=tuple(str(x) for x in (payload.get("section_path") or ())),
         section=str(payload.get("section") or ""),
     )
+
+
+# The states a knowledge.ingest job ends in; any other is still running.
+INGEST_DONE = frozenset({"ready", "partial", "failed", "cancelled"})
 
 
 class KnowledgeClient:
@@ -220,6 +230,105 @@ class KnowledgeClient:
             "include_children": include_children,
         }
         return await self._agent.transport.post("/v1/knowledge.outline", payload)
+
+    async def upload(self, data: bytes, filename: str, *, content_type: str = "") -> dict[str, Any]:
+        """Store a file's bytes for `ingest`, checked against their sha256 on the
+        server. The format comes from `filename` (else `content_type`). Returns
+        `{"upload_id", "namespace", "sha256", "size", "filename", "format",
+        "expires_at"}`."""
+        params = {
+            **self._scope(),
+            "filename": filename,
+            "content_type": content_type,
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+        return await self._agent.transport.request_json(
+            "POST", "/v1/knowledge.upload", params=params, content=data
+        )
+
+    async def ingest(
+        self,
+        upload_id: str,
+        *,
+        source_uri: str,
+        title: str = "",
+        description: str = "",
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        expected_revision: int | None = None,
+        allow_partial: bool = False,
+        options: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Extract an uploaded file and publish it as the next revision of
+        `source_uri`, as a job: returns `{"ingestion_id", "state", "source_uri",
+        "namespace"}`; `ingest_status` or `wait_for_ingest` follow it. `options`
+        holds `format`, `encoding` or `sql_dialect` when the file cannot say."""
+        payload: dict[str, Any] = self._scope()
+        payload.update(
+            {
+                "upload_id": upload_id,
+                "source_uri": source_uri,
+                "title": title,
+                "description": description,
+                "tags": tags or [],
+                "metadata": metadata or {},
+                "expected_revision": expected_revision,
+                "allow_partial": allow_partial,
+                "options": options or {},
+            }
+        )
+        return await self._agent.transport.post("/v1/knowledge.ingest", payload)
+
+    async def ingest_status(self, ingestion_id: str) -> dict[str, Any]:
+        """A job's state, stage, coverage, failure and published revision."""
+        payload = {**self._scope(), "ingestion_id": ingestion_id}
+        return await self._agent.transport.post("/v1/knowledge.ingest_status", payload)
+
+    async def ingest_cancel(self, ingestion_id: str) -> dict[str, Any]:
+        """Stop a job before it publishes; a published revision stays published."""
+        payload = {**self._scope(), "ingestion_id": ingestion_id}
+        return await self._agent.transport.post("/v1/knowledge.ingest_cancel", payload)
+
+    async def wait_for_ingest(
+        self, ingestion_id: str, *, timeout_s: float = 600.0, poll_s: float = 1.0
+    ) -> dict[str, Any]:
+        """`ingest_status` once the job ends (ready, partial, failed or cancelled).
+        Raises TimeoutError, the job still running, after `timeout_s`."""
+        deadline = time.monotonic() + timeout_s
+        while True:
+            status = await self.ingest_status(ingestion_id)
+            if not status.get("found") or status.get("state") in INGEST_DONE:
+                return status
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"ingestion {ingestion_id} is still {status.get('state')} "
+                    f"after {timeout_s:g}s; knowledge.ingest_status follows it"
+                )
+            await asyncio.sleep(poll_s)
+
+    async def ingest_file(
+        self,
+        path: str | Path,
+        *,
+        source_uri: str = "",
+        wait: bool = True,
+        timeout_s: float = 600.0,
+        **ingest_args: Any,
+    ) -> dict[str, Any]:
+        """Upload a local file and ingest it, named as the ingest CLI names it:
+        `source_uri` defaults to its `file://` path and `title` to its name less
+        the extension. With `wait`, returns the job's final `ingest_status`;
+        without, the `ingest` answer. `ingest_args` are `ingest`'s keywords."""
+        file = Path(path)
+        # Read off the event loop: a large file must not stall the agent's other calls.
+        data = await asyncio.to_thread(file.read_bytes)
+        source_uri = source_uri or f"file://{await asyncio.to_thread(file.resolve)}"
+        ingest_args.setdefault("title", file.stem)
+        up = await self.upload(data, file.name)
+        job = await self.ingest(up["upload_id"], source_uri=source_uri, **ingest_args)
+        if not wait:
+            return job
+        return await self.wait_for_ingest(job["ingestion_id"], timeout_s=timeout_s)
 
     async def download(self, source_uri: str) -> bytes:
         """The document as uploaded, or its stored text as Markdown when no

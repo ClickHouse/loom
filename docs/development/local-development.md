@@ -40,7 +40,7 @@ pip install -e ".[dev,code]"
 | `dev`            | test, lint and type tools, the lemmatizer                                                   |
 | `code`           | tree-sitter grammars and numpy for the code index and its tests (CI installs `.[dev,code]`) |
 | `local-embedder` | the CPU embedder                                                                            |
-| `ingest`         | the PDF, HTML and S3 readers of `dev/loom_ingest.py`                                        |
+| `ingest`         | the S3 client `dev/loom_ingest.py` fetches an `s3://` source with                           |
 
 ## A local ClickHouse
 

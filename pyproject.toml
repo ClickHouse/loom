@@ -92,14 +92,11 @@ dev = [
   "ruff==0.16.9",
   "build>=1.0",
 ]
-# Operator CLI extras — needed only by `dev/loom_ingest.py` for
-# PDF text extraction and S3-source fetching. Not server deps. Users
-# who don't ingest PDFs or pull from S3 don't need either; the CLI
-# lazy-imports them with an actionable error message when missing.
+# Operator CLI extra — needed only by `dev/loom_ingest.py` to fetch an S3
+# source. Not a server dep; the CLI lazy-imports it with an actionable error
+# message when missing. It parses nothing: the server's extractor does.
 ingest = [
-  "pypdf>=4.0",
-  "boto3>=1.36",      # the document bucket client's checksum options; see `aws`
-  "trafilatura>=2.0",
+  "boto3>=1.36", # the document bucket client's checksum options; see `aws`
 ]
 # The reference extractor's parsers (extractor/loom_extractor/), for its tests in this
 # environment. The server never imports them; the service installs extractor/pyproject.toml.

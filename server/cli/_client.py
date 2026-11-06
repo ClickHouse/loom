@@ -219,6 +219,14 @@ def post_json(
     return _send(req, timeout)
 
 
+def post_bytes(
+    url: str, data: bytes, token: str, timeout: float = 90.0
+) -> tuple[int, dict[str, Any]]:
+    """POST `data` as the raw body (`knowledge.upload`, which takes a file's bytes)."""
+    headers = {**_headers(token), "Content-Type": "application/octet-stream"}
+    return _send(urllib.request.Request(url, data=data, method="POST", headers=headers), timeout)
+
+
 def post_op(
     base_url: str, op: str, body: dict[str, Any], token: str, timeout: float = 90.0
 ) -> tuple[int, dict[str, Any]]:

@@ -2527,6 +2527,30 @@
           "source_uri",
           "include_superseded"
         ],
+        "ingest": [
+          "upload_id",
+          "source_uri",
+          "title",
+          "description",
+          "tags",
+          "metadata",
+          "expected_revision",
+          "allow_partial",
+          "options"
+        ],
+        "ingest_cancel": [
+          "ingestion_id"
+        ],
+        "ingest_file": [
+          "path",
+          "source_uri",
+          "wait",
+          "timeout_s",
+          "ingest_args"
+        ],
+        "ingest_status": [
+          "ingestion_id"
+        ],
         "list": [
           "tags",
           "tags_every",
@@ -2555,12 +2579,22 @@
           "max_answer_chars",
           "max_windows"
         ],
+        "upload": [
+          "data",
+          "filename",
+          "content_type"
+        ],
         "upsert": [
           "content",
           "source_uri",
           "title",
           "tags",
           "metadata"
+        ],
+        "wait_for_ingest": [
+          "ingestion_id",
+          "timeout_s",
+          "poll_s"
         ]
       }
     },

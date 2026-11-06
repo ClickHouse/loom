@@ -237,6 +237,12 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "plugin_hook",
     ),
+    "knowledge.ingest": (
+        "sdk_method",
+        "sdk_example",
+    ),
+    "knowledge.ingest_cancel": ("sdk_method",),
+    "knowledge.ingest_status": ("sdk_method",),
     "knowledge.inspect": ("plugin_hook",),
     "knowledge.list": (
         "sdk_method",
@@ -262,7 +268,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "knowledge.update_metadata": ("plugin_hook",),
     "knowledge.upsert": (
         "sdk_method",
-        "sdk_example",
         "plugin_hook",
     ),
     "learnings.list": (
