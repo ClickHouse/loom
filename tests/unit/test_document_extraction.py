@@ -988,10 +988,18 @@ def test_a_heading_line_with_a_long_run_of_blanks_is_read_whole() -> None:
 
 def _within(seconds: float, fn: Any) -> None:
     """`fn` uses under `seconds` of this process's CPU time, so a test running beside it
-    does not count; a loop that turned quadratic on these inputs would take minutes."""
-    start = time.process_time()
-    fn()
-    assert time.process_time() - start < seconds
+    does not count; a loop that turned quadratic on these inputs would take minutes.
+    The tracer is off while `fn` runs, so a coverage run times the parser, not itself:
+    every caller runs extractor code, which the unit job's coverage does not measure."""
+    previous = sys.gettrace()
+    sys.settrace(None)
+    try:
+        start = time.process_time()
+        fn()
+        spent = time.process_time() - start
+    finally:
+        sys.settrace(previous)
+    assert spent < seconds
 
 
 def test_hostile_markdown_lines_parse_in_bounded_time() -> None:
