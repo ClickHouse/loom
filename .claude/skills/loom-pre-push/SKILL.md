@@ -26,7 +26,7 @@ make typecheck              # mypy --strict on the SDK + the server ratchet
 make test-unit              # tests/unit (random order in CI) + bench
 ```
 
-Run them in the worktree's `.venv`, on CI's Python (3.12), with `LOOM_ENV_FILE=` so a local `.env` does not change what a snapshot or generator renders. CI also runs `pytest -p randomly`; an order-dependent failure reproduces with `pytest -p randomly --randomly-seed=<seed>`, the seed CI prints.
+Run them in the worktree's `.venv`, on CI's Python (3.12), with `LOOM_ENV_FILE=` so a local `.env` does not change what a snapshot or generator renders. CI runs `pytest -n auto -p randomly`; reproduce a failure as [`tests/README.md`](../../../tests/README.md) describes.
 
 ## 3. By path
 

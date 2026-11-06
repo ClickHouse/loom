@@ -152,12 +152,14 @@ jobs:
       # a test that depends on the one before it fails here rather than on a
       # peer's laptop. The seed is printed first thing; without `-n`,
       # `pytest tests/unit -p randomly --randomly-seed=<seed>` repeats the order
-      # (tests/README.md). `--durations=30` lists the slowest tests at the end of the log.
+      # (tests/README.md). `-v` prints each result as `[gwN] ... <test id>`, so a
+      # worker's sequence before a failure can be read from the log. `--durations=30`
+      # lists the slowest tests at the end of the log.
       - name: pytest unit + coverage (random order)
         run: |
           SEED="${{ github.run_id }}${{ github.run_attempt }}"
           echo "pytest-randomly seed: $SEED"
-          pytest tests/unit -q -n auto -p randomly --randomly-seed="$SEED" --durations=30 \
+          pytest tests/unit -v -n auto -p randomly --randomly-seed="$SEED" --durations=30 \
             --cov=server --cov=sdk/python/loom --cov-branch \
             --cov-report=term-missing --cov-report=xml \
             --cov-report=json:coverage.json \
