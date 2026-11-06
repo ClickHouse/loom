@@ -42,7 +42,7 @@ Loom keeps a few elements of its own, on Click UI tokens:
 - `Chip` (Click UI has no filter chip), `EmptyState` and `Skeleton` (none in Click UI).
 - `Panel`: Click UI's card look with a header slot and a scrolling body, which Click UI's `Panel` container does not have.
 - The memory inspector drawer: a Radix dialog sheet, because Click UI's `Flyout` collapses to a hover strip on narrow screens and takes no ref.
-- Disclosure toggles: a native button, or a Click UI `Button` in a toolbar or form row, with `aria-expanded` and a Click UI chevron, because Click UI's `Collapsible` sets no `aria-expanded`.
+- Disclosure toggles: a native button or a Click UI `empty` `Button`, with `aria-expanded` and a Click UI chevron, because Click UI's `Collapsible` sets no `aria-expanded`.
 - Triggers that show an avatar or a namespace name: native buttons on tokens; Click UI's `empty` button is link text.
 - Date and date-time fields (the graph's "Valid as of", a task's due time): native `date` and `datetime-local` inputs drawn with Click UI's field tokens, because Click UI's `DatePicker` takes no `name` or `id` for a label and has no time.
 - The tracker source's repository list: a native input inside a field-styled box that turns each entry into a removable tag, because Click UI has no tag input.
