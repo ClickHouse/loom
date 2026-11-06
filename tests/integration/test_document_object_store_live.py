@@ -374,7 +374,7 @@ async def test_a_row_replaced_since_the_walk_is_kept(
     sha = await blobs.put(org, ns, b"raced", ch=ch)
     monkeypatch.setattr(settings, "document_object_store", "s3")
     page = await blobs.held_in_clickhouse(org, ns, "", 10, ch=ch)
-    assert page.after == sha
+    assert page.after == ""  # one row, under the limit: the namespace's last page
     (held,) = page.held
     assert (held.org, held.namespace, held.sha, held.size) == (org, ns, sha, 5)
     assert held.version_ms > 0
@@ -969,22 +969,23 @@ async def test_the_walk_pages_a_namespace_by_key(
     found, after, pages = [], "", 0
     while True:
         page = await blobs.held_in_clickhouse(org, ns, after, 2, ch=ch)
+        found += [h.sha for h in page.held]
+        pages += 1
         if not page.after:
             break
         assert page.after > after
-        found += [h.sha for h in page.held]
-        after, pages = page.after, pages + 1
+        after = page.after
     assert found == shas[1:] and pages >= 3
     last = await blobs.held_in_clickhouse(org, ns, shas[3], 2, ch=ch)
-    assert ([h.sha for h in last.held], last.after) == (shas[4:], shas[4])
+    assert ([h.sha for h in last.held], last.after) == (shas[4:], "")
     # Merged, the moved key is one row, and the walk still finds the rest.
     await ch.execute("OPTIMIZE TABLE loom.document_blobs FINAL")
     merged, after = [], ""
     while True:
         page = await blobs.held_in_clickhouse(org, ns, after, 2, ch=ch)
+        merged += [h.sha for h in page.held]
         if not page.after:
             break
-        merged += [h.sha for h in page.held]
         after = page.after
     assert merged == shas[1:]
     assert await blobs.held_in_clickhouse(org, ns, shas[4], 2, ch=ch) == blobs.HeldPage([], "")

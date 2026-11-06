@@ -224,7 +224,7 @@ class Held:
 @dataclass(frozen=True)
 class HeldPage:
     held: list[Held]  # of the page's keys, those whose latest row is the ClickHouse store's
-    after: str  # the sha the next page starts after; '' past the namespace's last key
+    after: str  # the sha the next page starts after; '' when it reached the namespace's last key
 
 
 async def held_in_clickhouse(
@@ -260,7 +260,8 @@ async def held_in_clickhouse(
         params={**scope, "upper": upper},
     )
     held = [Held(org, namespace, str(r["sha"]), int(r["size"]), int(r["version_ms"])) for r in rows]
-    return HeldPage(held, upper)
+    # A short page reached the namespace's last key: no page follows.
+    return HeldPage(held, upper if int(last["n"]) == limit else "")
 
 
 async def needed(
