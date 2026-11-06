@@ -97,13 +97,17 @@ def _search(repo: _Repo, embedder: _Embedder | None) -> Any:
         )
 
 
-def test_lexical_and_vector_legs_run_side_by_side() -> None:
-    # The first search in a process imports the tracing modules on the event loop,
-    # which can hold the vector chain back a whole sleep. An untimed search pays that
-    # first; emptying the corpus-stats cache it filled keeps the timed lexical chain
-    # at stats then lexical.
+def _warm_up() -> None:
+    """Pay the first search's one-off cost before a timed one. The first search in a
+    process imports the tracing modules on the event loop, which can hold the vector
+    chain back a whole sleep; emptying the corpus-stats cache this search filled keeps
+    the timed lexical chain at stats then lexical."""
     _search(_Repo(), _Embedder())
     corpus_stats.reset_for_tests()
+
+
+def test_lexical_and_vector_legs_run_side_by_side() -> None:
+    _warm_up()
     repo, emb = _Repo(delay=_SLEEP), _Embedder(delay=_SLEEP)
     t0 = time.perf_counter()
     res = _search(repo, emb)
@@ -191,6 +195,7 @@ def _search_identifier(repo: _Repo, embedder: _Embedder | None) -> Any:
 def test_the_fuzzy_symbol_vote_runs_beside_the_legs() -> None:
     """The vote needs the query alone, so its scan
     starts with the legs instead of after the slowest one has returned."""
+    _warm_up()
     repo, emb = _FuzzyRepo(delay=_SLEEP), _Embedder(delay=_SLEEP)
     t0 = time.perf_counter()
     res = _search_identifier(repo, emb)
