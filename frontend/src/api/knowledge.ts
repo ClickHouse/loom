@@ -260,18 +260,21 @@ export interface KnowledgeIngestJob {
 }
 
 /** Have the server's extractor parse an upload and publish it as `source_uri`'s next revision. */
+/** What `knowledge.ingest` publishes an upload as. */
+export interface KnowledgeIngestFields {
+  source_uri: string;
+  title?: string;
+  description?: string;
+  tags?: string[];
+  allow_partial?: boolean;
+  /** Publish only over this revision (0: only when none is live, else `revision_conflict`);
+   *  unset publishes over any. */
+  expected_revision?: number;
+}
+
 export async function ingestKnowledge(
   id: Pick<Identity, "org" | "namespace">,
-  opts: {
-    upload_id: string;
-    source_uri: string;
-    title?: string;
-    description?: string;
-    tags?: string[];
-    allow_partial?: boolean;
-    /** Publish only over this revision (0: only when none is live); unset publishes over any. */
-    expected_revision?: number;
-  },
+  opts: KnowledgeIngestFields & { upload_id: string },
 ): Promise<KnowledgeIngestJob> {
   return post<KnowledgeIngestJob>("/v1/knowledge.ingest", {
     org: id.org,

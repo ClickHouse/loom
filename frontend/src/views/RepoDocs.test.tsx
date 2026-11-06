@@ -46,6 +46,7 @@ import {
   downloadKnowledge,
   getKnowledge,
   ingestKnowledge,
+  knowledgeFormats,
   knowledgeIngestStatus,
   knowledgeReads,
   listKnowledge,
@@ -422,5 +423,18 @@ describe("RepoDocsList", () => {
     } finally {
       ingestClock.sleep = prior;
     }
+  });
+
+  it("refuses a file whose format no extractor here reads, before anything is sent", async () => {
+    vi.mocked(knowledgeFormats).mockResolvedValueOnce({
+      formats: [{ format: "pptx", extensions: ["pptx"], media_types: [], available: false }],
+      max_upload_bytes: 1_000_000,
+      refused_extensions: ["doc", "ppt", "xls"],
+      default_format: "text",
+    });
+    const { dialog } = await addFile("deck.pptx");
+    expect(await screen.findByText(/No extractor on this deployment reads pptx/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Add document" })).toBeDisabled();
+    expect(uploadKnowledgeFile).not.toHaveBeenCalled();
   });
 });

@@ -9,6 +9,7 @@ import {
   type Identity,
   type KnowledgeFormat,
   type KnowledgeFormats,
+  type KnowledgeIngestFields,
   type KnowledgeIngestStatus,
   knowledgeIngestStatus,
   uploadKnowledgeFile,
@@ -37,6 +38,8 @@ export function fileVerdict(
   if (!formats) return { format: "", available: null, refusal: "" };
   if (formats.refused_extensions.includes(ext))
     return { format: "", available: false, refusal: `.${ext} files are not read; save it as .${ext}x and pick that.` };
+  // The upload refuses an empty body too.
+  if (file.size === 0) return { format: "", available: false, refusal: `${file.name} is empty.` };
   if (file.size > formats.max_upload_bytes)
     return {
       format: "",
@@ -110,16 +113,6 @@ export const ingestClock = {
   sleep: (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
-export interface IngestFields {
-  source_uri: string;
-  title?: string;
-  description?: string;
-  tags?: string[];
-  allow_partial?: boolean;
-  /** Publish only over this revision; 0: only when no document is live (else `revision_conflict`). */
-  expected_revision?: number;
-}
-
 /** Where a file is: its bytes on their way (cancellable: nothing is queued yet), the
  *  ingest call (held: it may queue the job), or its job being followed. */
 export type IngestPhase = "upload" | "queue" | "follow";
@@ -133,7 +126,7 @@ export type IngestPhase = "upload" | "queue" | "follow";
 export async function ingestFile(
   id: Pick<Identity, "org" | "namespace">,
   file: File,
-  fields: IngestFields,
+  fields: KnowledgeIngestFields,
   onStep: (line: string, phase: IngestPhase) => void,
   opts: { signal?: AbortSignal } = {},
 ): Promise<KnowledgeIngestStatus> {

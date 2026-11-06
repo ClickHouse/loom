@@ -55,8 +55,16 @@ function status(state: string, more: Partial<KnowledgeIngestStatus> = {}): Knowl
   };
 }
 
-function mount(onAdded = vi.fn(), onOpenChange = vi.fn()) {
-  render(<AddDocumentDialog open onOpenChange={onOpenChange} identity={identity} onAdded={onAdded} />);
+function mount(onAdded = vi.fn(), onOpenChange = vi.fn(), replaceMode?: { sourceUri: string; title?: string }) {
+  render(
+    <AddDocumentDialog
+      open
+      onOpenChange={onOpenChange}
+      identity={identity}
+      onAdded={onAdded}
+      replaceMode={replaceMode}
+    />,
+  );
   return { dialog: screen.getByRole("dialog"), onAdded, onOpenChange };
 }
 
@@ -221,6 +229,31 @@ describe("AddDocumentDialog", () => {
     ]);
     expect(onAdded).not.toHaveBeenCalled(); // nothing has published yet
     expect(ingestKnowledge).toHaveBeenCalledTimes(1);
+  });
+
+  it("in replace mode publishes the file as the document's next revision, under its locked address", async () => {
+    vi.mocked(knowledgeIngestStatus).mockResolvedValueOnce(status("ready", { revision: 4 }));
+    const { dialog, onAdded } = mount(vi.fn(), vi.fn(), { sourceUri: "kb://spec", title: "Spec" });
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec-v2.pdf");
+    expect(within(dialog).queryByLabelText(/^Source URI/)).toBeNull(); // locked
+    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(onAdded).toHaveBeenCalled());
+    expect(vi.mocked(ingestKnowledge).mock.calls[0][1]).toMatchObject({ source_uri: "kb://spec", title: "Spec" });
+    expect(vi.mocked(toast).mock.calls.at(-1)).toEqual(["Replaced kb://spec: revision 4", "ok"]);
+  });
+
+  it("in replace mode says the new revision shows when it stops following", async () => {
+    vi.mocked(knowledgeIngestStatus).mockRejectedValue(new TypeError("Failed to fetch"));
+    const { dialog, onOpenChange } = mount(vi.fn(), vi.fn(), { sourceUri: "kb://spec", title: "Spec" });
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec-v2.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(vi.mocked(toast).mock.calls.at(-1)).toEqual([
+      "kb://spec goes on extracting; its new revision shows once it publishes and the list is reloaded",
+      "info",
+    ]);
   });
 
   it("writes pasted text as text", async () => {

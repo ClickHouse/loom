@@ -41,6 +41,7 @@ describe("fileVerdict", () => {
   it("refuses a legacy Office name, a file over the limit and a format no extractor reads", () => {
     expect(fileVerdict(file("old.doc"), FORMATS).refusal).toMatch(/save it as \.docx/);
     expect(fileVerdict(file("big.pdf", "", 5000), FORMATS).refusal).toMatch(/takes files up to/);
+    expect(fileVerdict(file("blank.md", "", 0), FORMATS).refusal).toBe("blank.md is empty.");
     const deck = fileVerdict(file("deck.pptx"), FORMATS);
     expect([deck.format, deck.available]).toEqual(["pptx", false]);
     expect(deck.refusal).toMatch(/No extractor on this deployment reads pptx/);
