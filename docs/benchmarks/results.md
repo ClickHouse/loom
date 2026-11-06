@@ -842,12 +842,11 @@ MB without (OCR adds 44 MB unpacked); the baseline's image is 3.46 GB
 (`bench/results/docparse_images.json`, `docker image ls` on each build).
 
 **Downstream.** Each system's artifacts are ingested into a running Loom through a stub
-extractor (the fake n-gram embedder and the fake LLM provider,
-`docparse_models_downstream.json`: the provider is held fake so that only the parse
-varies, which makes this a ranking of parses, not a measurement of Loom's retrieval under a
-real embedder), and up to three paragraphs and two table rows of every
-file in both splits (212 queries) go to `knowledge.search` within their own document and
-system's namespace. Found: a top-5 hit holds 70% of the answer's words; cited: that hit's
+extractor, and up to three paragraphs and two table rows of every file in both splits (212
+queries) go to `knowledge.search` within their own document and system's namespace. The
+embedder and the LLM provider are fakes, the same for every system
+(`docparse_models_downstream.json`), so the table ranks parses; it does not measure Loom's
+retrieval under a real embedder. Found: a top-5 hit holds 70% of the answer's words; cited: that hit's
 locator holds the answer's page. Ingests that failed score zero: the text layer's four scans
 (no text without OCR). The whiteboard photo, whose ingest failed for the text layer and the
 baseline, holds no query. The text layer and layout and OCR are served their extractor's own
@@ -899,25 +898,23 @@ comparable across systems.
   harness's output: ingest states, the query set with each answer, each query's judgement,
   the paired report by category and by split, and the decision counts; its systems renamed
   from the run's names, its queries given their split from `gold.jsonl`, and its report
-  recomputed with the split groups). The baseline's time for two held-out files regenerated
-  after its run (typeset_1, scan_2) is from their earlier versions, as its re-run shared the
-  machine with other work; their quality scores are from the re-run.
-- **Reproduce:** the parse scores from the committed parses, `PYTHONPATH=$PWD
-.venv/bin/python -m bench.docparse score
-text_layer=bench/results/docparse_parses/text_layer.jsonl
-layout_ocr=bench/results/docparse_parses/layout_ocr.jsonl
-baseline=bench/results/docparse_parses/baseline.jsonl --split heldout --json out.json`;
-  the reference extractor's parses with `run --out layout_ocr.jsonl --artifacts
-art/layout_ocr`, inside the extractor image for OCR (a tree whose PDF, DOCX and PPTX
-  parsers are at versions 1, 2 and 2 gives the text layer's); the baseline's column is
-  re-scored from its committed parses, not regenerated here; the baseline's artifacts,
-  `PYTHONPATH=$PWD .venv/bin/python -m bench.docparse artifacts
-bench/results/docparse_parses/baseline.jsonl --out art/baseline`; downstream,
-  `PYTHONPATH=$PWD .venv/bin/python -m bench.docparse downstream text_layer=art/text_layer
-layout_ocr=art/layout_ocr baseline=art/baseline --base-url <loom> --token <the stub's
-token> --out downstream.json`, and with `--decisions 12` and the server's settings for a
-  real LLM for the decision counts, against a Loom whose document extractor is the stub
-  (`python -m bench.docparse --help`).
+  recomputed with the split groups). The baseline's seconds for typeset_1 and scan_2 time
+  an earlier rendering of those files; their quality scores are of the committed files.
+
+**Reproduce.** The parse scores are re-scored from the committed parses (the baseline's
+column is not regenerated here). The reference extractor's parses run inside the extractor
+image for OCR, and the text layer's from a tree whose PDF, DOCX and PPTX parsers are at
+versions 1, 2 and 2. Downstream runs against a Loom whose document extractor is the stub;
+the decision counts add `--decisions 12` and the server's settings for a real LLM
+(`python -m bench.docparse --help`):
+
+```bash
+PYTHONPATH=$PWD .venv/bin/python -m bench.docparse score text_layer=bench/results/docparse_parses/text_layer.jsonl layout_ocr=bench/results/docparse_parses/layout_ocr.jsonl baseline=bench/results/docparse_parses/baseline.jsonl --split heldout --json out.json
+PYTHONPATH=$PWD .venv/bin/python -m bench.docparse run --out layout_ocr.jsonl --artifacts art/layout_ocr
+PYTHONPATH=$PWD .venv/bin/python -m bench.docparse run --extractor <text-layer tree>/extractor --out text_layer.jsonl --artifacts art/text_layer
+PYTHONPATH=$PWD .venv/bin/python -m bench.docparse artifacts bench/results/docparse_parses/baseline.jsonl --out art/baseline
+PYTHONPATH=$PWD .venv/bin/python -m bench.docparse downstream text_layer=art/text_layer layout_ocr=art/layout_ocr baseline=art/baseline --base-url <loom> --token <the stub's token> --out downstream.json
+```
 
 ## Reference computations
 
