@@ -136,7 +136,7 @@ onboard:
 test: test-integration
 
 test-unit:
-	$(PYTHON) -m pytest tests/unit -q
+	$(PYTHON) -m pytest tests/unit -q -n auto
 	$(PYTHON) -m pytest bench -q
 
 test-integration:
@@ -150,7 +150,7 @@ test-mixed-version:
 
 # Unit suite + coverage (mirrors the CI `unit` job). Fails under the floor.
 test-unit-cov:
-	$(PYTHON) -m pytest tests/unit -q \
+	$(PYTHON) -m pytest tests/unit -q -n auto \
 		--cov=server --cov=sdk/python/loom \
 		--cov-report=term-missing --cov-report=xml \
 		--cov-fail-under=40

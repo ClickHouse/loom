@@ -29,9 +29,11 @@ or the embedder.
 
 - **No ClickHouse.** A unit test stubs the client; anything that needs real SQL
   semantics belongs in the integration or analyzer suite.
-- **Random order.** CI runs `pytest tests/unit -p randomly --randomly-seed=<seed>` and
-  prints the seed first. A test must not depend on the one before it; reproduce a failure
-  with the printed seed.
+- **Random order, in parallel.** CI runs `pytest tests/unit -n auto -p randomly
+  --randomly-seed=<seed>`, one worker process per core, and prints the seed first. A test
+  must not depend on the one before it, and must not share a file, port or directory with
+  a test running beside it: use `tmp_path` and port 0. Reproduce a failure with the
+  printed seed, with and without `-n auto`.
 - **Async tests sleep with `await asyncio.sleep(...)`**, never `time.sleep`.
 - **Wall-clock dates.** A fixture with a fixed date that a staleness check compares to
   `now()` passes until the date ages past the threshold. Pin the clock through the code's
@@ -171,7 +173,7 @@ workflow grants its jobs read-only repository access (`permissions: contents: re
 | Job                    | Runs                                                                                                                                                                                                                                                                             |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lint`                 | `ruff check`, `ruff format --check`, the `--check` of `sdk_py_gen.py`, `sdk_py_client_gen.py`, `agent_plugin_sync.py`, `settings_reference.py`, `docs_reference.py` and `op_reach_census.py`, `mypy --strict` on the SDK, the mypy ratchet, the function-length and secret gates |
-| `unit`                 | `pytest tests/unit` in random order with coverage (floor 40%), then `pytest bench`                                                                                                                                                                                               |
+| `unit`                 | `pytest tests/unit` in random order on every core with coverage (floor 40%), then `pytest bench`                                                                                                                                                                                               |
 | `schema-check`         | a fresh ClickHouse (`dev/ci_start_clickhouse.sh`), every migration, the strict dry run, `make schema-check`                                                                                                                                                                      |
 | `ts-typecheck`         | the dashboard build (`tsc -b` + Vite) and its bundle budget (`npm run budget`)                                                                                                                                                                                                   |
 | `format`               | Biome, Prettier, Taplo and shfmt checks at pinned versions                                                                                                                                                                                                                       |

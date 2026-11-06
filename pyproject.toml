@@ -85,6 +85,8 @@ dev = [
   # Unit tests run in a random order; a failing order is
   # reproduced with the seed CI prints: `pytest -p randomly --randomly-seed=N`.
   "pytest-randomly>=3.15",
+  # The unit job spreads the suite over the runner's cores (`-n auto`).
+  "pytest-xdist>=3.6",
   # The ratchets count mypy errors and ruff findings per file; a new release
   # moves those counts with no code change, so both are pinned.
   "mypy==2.3.1",

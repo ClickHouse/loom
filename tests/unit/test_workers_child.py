@@ -252,23 +252,23 @@ def test_the_child_exits_by_itself_past_the_deadline() -> None:
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG is Linux")
 def test_the_child_dies_with_its_parent(tmp_path) -> None:
     pid_file = tmp_path / "pid"
+    # The grandchild writes its pid once its death signal is set, so the parent
+    # is killed only after that, however slowly the imports run.
     grandchild = (
-        "from server.workers import child; import time; child.die_with_parent(); time.sleep(60)"
+        "from server.workers import child; import os, time; child.die_with_parent(); "
+        f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); time.sleep(60)"
     )
     parent = (
         "import subprocess, sys, time\n"
-        f"p = subprocess.Popen([sys.executable, '-c', {grandchild!r}])\n"
-        f"open({str(pid_file)!r}, 'w').write(str(p.pid))\n"
+        f"subprocess.Popen([sys.executable, '-c', {grandchild!r}])\n"
         "time.sleep(60)\n"
     )
     proc = subprocess.Popen([sys.executable, "-c", parent])
     try:
-        for _ in range(200):
-            if pid_file.exists() and pid_file.read_text():
-                break
+        deadline = time.monotonic() + 30
+        while not (pid_file.exists() and pid_file.read_text()) and time.monotonic() < deadline:
             time.sleep(0.05)
         pid = int(pid_file.read_text())
-        time.sleep(1.0)  # the grandchild has set its death signal
         proc.kill()
         proc.wait()
         for _ in range(100):

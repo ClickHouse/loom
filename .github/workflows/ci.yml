@@ -148,15 +148,16 @@ jobs:
           docker rm "$id" >/dev/null
           sudo ln -sf clickhouse /usr/local/bin/clickhouse-format
           clickhouse local --query "SELECT version()"
-      # Random order (pytest-randomly): a test that depends on
-      # the one before it fails here rather than on a peer's laptop. The seed
-      # is printed first thing; reproduce a failure locally with
-      # `pytest tests/unit -p randomly --randomly-seed=<seed>`.
+      # Random order (pytest-randomly) over one worker per core (pytest-xdist):
+      # a test that depends on the one before it fails here rather than on a
+      # peer's laptop. The seed is printed first thing; reproduce a failure
+      # locally with `pytest tests/unit -p randomly --randomly-seed=<seed>`.
+      # The slowest tests are listed at the end, for the next one to speed up.
       - name: pytest unit + coverage (random order)
         run: |
           SEED="${{ github.run_id }}${{ github.run_attempt }}"
           echo "pytest-randomly seed: $SEED"
-          pytest tests/unit -q -p randomly --randomly-seed="$SEED" \
+          pytest tests/unit -q -n auto -p randomly --randomly-seed="$SEED" --durations=30 \
             --cov=server --cov=sdk/python/loom --cov-branch \
             --cov-report=term-missing --cov-report=xml \
             --cov-report=json:coverage.json \
