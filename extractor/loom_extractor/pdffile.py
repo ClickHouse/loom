@@ -87,7 +87,6 @@ def _outline(reader: pypdf.PdfReader) -> dict[int, list[tuple[int, str]]]:
 
 # How deep form XObjects are searched for an image (a scan is often one image
 # inside a form).
-_MAX_FORM_DEPTH = 4  # not a setting: a bound on hostile input
 
 
 def _draws_inline_image(contents: Any, reader: pypdf.PdfReader) -> bool:
@@ -125,8 +124,10 @@ def _has_image(
         # An indirect object by its number; a direct one (no number) is its own.
         idnum = getattr(ref, "idnum", None)
         key = ("ref", idnum) if idnum is not None else ("obj", id(x))
-        if x.get("/Subtype") != "/Form" or depth >= _MAX_FORM_DEPTH or key in seen:
+        if x.get("/Subtype") != "/Form" or key in seen:
             continue
+        if depth >= layout.MAX_FORM_DEPTH:  # a form nested too deep to search: it may draw one
+            return True
         seen.add(key)
         if _has_image(x, reader, depth + 1, seen, inline_only):
             return True

@@ -813,18 +813,15 @@ def test_a_text_page_whose_image_is_dangling_is_partial(engine: FakeEngine) -> N
     ]
 
 
-def test_a_picture_nested_past_the_form_depth_leaves_a_text_page_partial(
-    engine: FakeEngine,
+@pytest.mark.parametrize("texted", [True, False])
+def test_a_picture_nested_past_the_form_depth_is_never_complete(
+    engine: FakeEngine, texted: bool
 ) -> None:
-    forms = tuple(b"/Fm%d Do" % (n + 1) for n in range(1, 5)) + (
-        b"q 400 0 0 300 100 300 cm /Im1 Do Q",
-    )
-    text = text_at(72, 740, "A page of text over nested forms.")
-    a = extract(laid_out_pdf([text + b"/Fm1 Do"], image=GRAY, forms=forms), "n.pdf")
-    assert [f.reason for f in a.coverage.failed] == [
-        "OCR did not read all of its pictures:"
-        " not every picture it draws could be collected, so one may be unread"
-    ]
+    # page -> Ch1 -> ... -> Ch5 draws Im1, each form holding the next in its own resources
+    chain = tuple(b"/Ch%d Do" % n for n in range(2, 6)) + (b"q 400 0 0 300 100 300 cm /Im1 Do Q",)
+    text = text_at(72, 740, "A page of text over nested forms.") if texted else b""
+    a = extract(laid_out_pdf([text + b"/Ch1 Do"], chain=chain), "n.pdf")
+    assert not a.coverage.complete and engine.seen == []
 
 
 def test_a_text_page_whose_layout_fails_beside_an_image_is_partial(
