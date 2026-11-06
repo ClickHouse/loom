@@ -370,10 +370,8 @@ async def migrate_originals(
     # The caller's, when given: what a run stopped by an error gathered is still its own.
     out = out if out is not None else Migrated()
     for org_, ns in await _scopes(org, namespace):
-        # One read of the ledger for the namespace; again after any original not switched
-        # cleanly (gone or replaced, held back, or switched but unconfirmed).
-        # A dry run reads the fence and checks the keys too (both read ClickHouse alone), so
-        # it sizes only what a run would move.
+        # One fence read per namespace, again after any original not switched cleanly; a
+        # dry run checks the fence and the keys too, so it counts only what a run would move.
         refusal = await fence(org_, ns)
         if not refusal:
             try:
