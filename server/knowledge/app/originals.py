@@ -178,7 +178,7 @@ async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bo
     # This move's own start: an erasure that finished before it cannot race its copy, and
     # one still running then, or finished within the margin, is caught after the copy.
     since = await blobs.ch_now_s(ch=ch)
-    # Before any read: a key too long for the bucket walk's cursor refuses the move (the
+    # Before the original is read: a key too long for the bucket walk's cursor refuses the move (the
     # walk refuses such a namespace whole; this guards a direct call).
     loc = objects.new_location(held.org, held.namespace, held.sha)
     data = await blobs.read(
@@ -343,7 +343,8 @@ async def migrate_originals(
         # One read of the ledger for the namespace; again after any original not switched
         # cleanly (gone or replaced, held back, or switched but unconfirmed).
         refusal = None if dry_run else await fence(org_, ns)
-        if not dry_run and not refusal:
+        # A dry run makes this check too: it reads no bucket, and sizes only what moves.
+        if not refusal:
             try:
                 objects.new_location(org_, ns, "0" * 64)
             except ValidationError as e:

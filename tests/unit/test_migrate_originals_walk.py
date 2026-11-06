@@ -1,7 +1,8 @@
-"""How `migrate_originals` counts each original of a page: one nothing needs is left
-to the sweep, a refused one (an object key too long included) is an error and the walk
-goes on, and one switched but unconfirmed is listed apart. No ClickHouse: the store
-calls are stubbed."""
+"""How `migrate_originals` counts each original of a page and each namespace: one nothing
+needs is left to the sweep, a refused original is an error and the walk goes on, one
+switched but unconfirmed is listed apart, and a namespace an erasure holds, or whose
+object keys would be too long, is refused once (in a dry run too). No ClickHouse: the
+store calls are stubbed."""
 
 from __future__ import annotations
 
@@ -209,3 +210,17 @@ async def test_a_refused_cleanup_delete_leaves_the_object_to_the_bucket_walk(
     monkeypatch.setattr(objects, "new_location", lambda *a: objects.Location("bucket", "k"))
     # The row was replaced: the move does not stand, whatever its cleanup met.
     assert await originals.move_to_bucket(held) is False
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_refuses_a_namespace_whose_keys_would_be_too_long(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def held_in_clickhouse(*a: object) -> blobs.HeldPage:
+        raise AssertionError("no original of it is counted")
+
+    monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
+    result = await originals.migrate_originals(org="acme", namespace="n" * 600, dry_run=True)
+    assert result.pending == 0
+    (line,) = result.refused
+    assert "too long" in line

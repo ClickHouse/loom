@@ -110,8 +110,11 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
             counted = await migrate_originals(org=args.org, namespace=args.namespace, dry_run=True)
             print(
                 f"{counted.pending} original(s), {counted.bytes} bytes, held in ClickHouse; "
-                f"{counted.unneeded} more nothing needs now, left to the sweep"
+                f"{counted.unneeded} more nothing needs now, left to the sweep; "
+                f"{len(counted.refused)} namespace(s) a run would refuse"
             )
+            for line in counted.refused:
+                print(f"refused: {line}", file=sys.stderr)
             return 0
         object_store.require_client()
         result = Migrated()
