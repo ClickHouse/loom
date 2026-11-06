@@ -96,6 +96,16 @@ def test_a_docx_title_paragraph_holds_the_headings_under_it() -> None:
         "p.docx",
     )
     assert [b.depth for b in before.blocks] == [1, 1, 2]
+    # a second title is the top again, and the headings after it sit under it
+    parts = (
+        _wp("Part one", "Title")
+        + _wp("Goals", "Heading1")
+        + _wp("Part two", "Title")
+        + _wp("Scope", "Heading1")
+    )
+    two = extract(_docx(parts + _wp("Text")), "w.docx")
+    assert [b.depth for b in two.blocks if b.type == "heading"] == [1, 2, 1, 2]
+    assert two.blocks[-1].section_path == ("Part two", "Scope")
     # without a title heading (none, one with no text, one set to body text) the
     # headings keep their own levels
     body_text = '<w:outlineLvl w:val="9"/>'

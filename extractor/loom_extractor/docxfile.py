@@ -1,10 +1,10 @@
 """A DOCX file's body as blocks, read from its XML parts with the standard
 library: headings by their style (a `Heading N` or `Title` style, or an
-outline level on the paragraph or its style chain; the headings after a
-title sit one level under their own), list paragraphs (a numbered paragraph
-or a `List` style) as one list block per run, other paragraphs, tables (one
-block each, a row per line and its cells joined by ` | `, `attrs.table` its
-shape), then footnotes and endnotes.
+outline level on the paragraph or its style chain; the other headings after
+a title sit one level under their own), list paragraphs (a numbered
+paragraph or a `List` style) as one list block per run, other paragraphs,
+tables (one block each, a row per line and its cells joined by ` | `,
+`attrs.table` its shape), then footnotes and endnotes.
 
 Read as the document holds it: inserted text is kept, and a tracked deletion
 (its runs, rows and cells) and moved text at its old place left out, a content

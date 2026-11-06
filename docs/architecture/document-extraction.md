@@ -228,19 +228,20 @@ cannot be read (damaged, over the bound, not XML, in an encoding the XML parser 
 to: a slide, a slide's notes, the styles, the footnotes; the document part itself fails the file as `corrupt`. A DOCX
 heading is a paragraph of a `Heading N` or `Title` style, or one with an outline level of its own or along its style's
 `basedOn` chain, the nearest one set deciding (level 9, body text, is no heading whatever the style); once a `Title`
-paragraph is read as a heading, it is depth 1 (whatever outline level it carries) and every heading after it one level
-under its own (`Heading 1` at depth 2), so the sections sit under the title; a numbered paragraph or a `List` style is a
-list item, and a run of them is one list block. Inserted text is read, and a tracked deletion (its runs, rows and cells)
-and moved text at its old place are not; a content control's or a custom XML element's text is read in place, in the
-body, a table's rows and its cells, and an alternate-content choice once. Headers, footers and comments are not the body
-and are not read; footnotes and endnotes follow the body (`attrs.note`). An embedded document (`altChunk`) is a failed
-unit, as is a document of pictures (in its body or its tables) and no text. A PPTX deck is read in its slide order (the
-presentation's slide list, not the parts' names): a slide's title is a heading its other blocks sit under, each text
-shape (grouped ones in place, and a shape in alternate content through its first choice) is a block, and the speaker
-notes are a block marked `attrs.notes`; a hidden slide (`show` false) is read and marked `attrs.hidden`. A slide whose
-pictures, charts, diagrams or embedded objects carry all it shows, with no text, is a failed unit. So is a slide id
-whose relationship names no slide part, and a slide nested deeper than the reader walks. A table, in either format, is
-one block, a row per line with its cells joined by a pipe, and `attrs.table` its `rows` and `columns`.
+paragraph is read as a heading, it is depth 1 (whatever outline level it carries) and every other heading after it one
+level under its own (a later title is depth 1 again) (`Heading 1` at depth 2), so the sections sit under the title; a
+numbered paragraph or a `List` style is a list item, and a run of them is one list block. Inserted text is read, and a
+tracked deletion (its runs, rows and cells) and moved text at its old place are not; a content control's or a custom XML
+element's text is read in place, in the body, a table's rows and its cells, and an alternate-content choice once.
+Headers, footers and comments are not the body and are not read; footnotes and endnotes follow the body (`attrs.note`).
+An embedded document (`altChunk`) is a failed unit, as is a document of pictures (in its body or its tables) and no
+text. A PPTX deck is read in its slide order (the presentation's slide list, not the parts' names): a slide's title is a
+heading its other blocks sit under, each text shape (grouped ones in place, and a shape in alternate content through its
+first choice) is a block, and the speaker notes are a block marked `attrs.notes`; a hidden slide (`show` false) is read
+and marked `attrs.hidden`. A slide whose pictures, charts, diagrams or embedded objects carry all it shows, with no
+text, is a failed unit. So is a slide id whose relationship names no slide part, and a slide nested deeper than the
+reader walks. A table, in either format, is one block, a row per line with its cells joined by a pipe, and `attrs.table`
+its `rows` and `columns`.
 
 **Tables (CSV, XLSX, Parquet).** A tabular source is `tables` in the artifact: each a header (the first row with a
 value; a Parquet file's schema), its columns typed by every value they hold (`string`, `number`, `bool`, `date`,
