@@ -47,8 +47,9 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
 ## Cutting the release
 
 1. Check that the latest scheduled run of `.github/workflows/docker-smoke.yml` on `main` passed
-   (`gh run list -R ClickHouse/loom --workflow docker-smoke.yml --event schedule --branch main -L 1`,
-   or `gh workflow run docker-smoke.yml -R ClickHouse/loom --ref main` for a fresh one). It scans both
+   (`gh run list -R ClickHouse/loom --workflow docker-smoke.yml --event schedule --branch main -L 1`),
+   or start a fresh one with `gh workflow run docker-smoke.yml -R ClickHouse/loom --ref main` and read
+   it with `--event workflow_dispatch` in place of `--event schedule`. It scans both
    images as the release does, and a scheduled run's failure notifies only the last editor of its
    schedule. A red scan names the package: move the pin that brings it in (a `Dockerfile` `ARG` or
    base-image digest, or a lock file) on `main` first.

@@ -146,6 +146,14 @@ jobs:
           python3 scripts/gates/docker_quickstart_smoke.py --image loom:docker-smoke \
             --extractor-image loom-extractor:docker-smoke \
             --clickhouse-image "$CLICKHOUSE_IMAGE"
+      # Trivy copies a loaded image out of the daemon into /tmp; the amd64 runner
+      # has no room for the server image beside the hosted toolchains it carries.
+      - name: Make room for the image scans
+        if: ${{ !cancelled() && (steps.server.outcome == 'success' || steps.extractor.outcome == 'success') }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker buildx prune -af >/dev/null
+          df -h /
       # The release refuses a fixed critical CVE; only a weekly or dispatched run fails on one here.
       - name: Scan the server image with the release's scan settings
         if: ${{ !cancelled() && steps.server.outcome == 'success' }}
