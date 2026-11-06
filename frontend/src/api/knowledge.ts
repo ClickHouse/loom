@@ -4,6 +4,7 @@
 import { getResponse, post, postFile } from "../api";
 import type { Identity, RequestOpts } from "../api";
 import { ApiError } from "../lib/errors";
+import type { Locator } from "../lib/locator";
 
 // ===== Knowledge =====
 
@@ -196,6 +197,35 @@ export async function addKnowledge(
   // knowledge.add is add-only and 409s on duplicates. Default to upsert.
   const path = opts.upsert === false ? "/v1/knowledge.add" : "/v1/knowledge.upsert";
   return post<KnowledgeAddResponse>(path, body);
+}
+
+/** A passage `knowledge.search` found: its document, where it sits (`locator`, read for
+ *  its `format`), the revision it was read from, and the text. */
+export interface KnowledgeHit {
+  source_uri: string;
+  chunk_idx: number;
+  content: string;
+  section: string;
+  score: number;
+  revision: number;
+  format: string;
+  block_type: string;
+  locator: Locator | null;
+  keys_matched: string[];
+}
+
+/** The namespace's passages that answer `query`, best first (`knowledge.search`). */
+export async function searchKnowledge(
+  id: Pick<Identity, "org" | "namespace">,
+  query: string,
+  opts: RequestOpts & { topK?: number } = {},
+): Promise<KnowledgeHit[]> {
+  const r = await post<{ results: KnowledgeHit[] }>(
+    "/v1/knowledge.search",
+    { org: id.org, namespace: id.namespace, query, top_k: opts.topK ?? 10, namespace_scope: "this" },
+    opts.signal,
+  );
+  return r.results ?? [];
 }
 
 /** One format `knowledge.formats` lists: the names that select it, and whether a

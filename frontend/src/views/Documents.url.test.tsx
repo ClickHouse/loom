@@ -1,6 +1,6 @@
 // The open document is the Library's URL: a preview writes `?doc=` into the entry (no new
 // entry), closing drops it, and a `?doc=` link opens the preview on arrival.
-import { act, cleanup, fireEvent, render, screen } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, within } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { Documents } from "./Documents";
@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   listKnowledge: vi.fn(),
   getKnowledge: vi.fn(),
   fetchKnowledgePreview: vi.fn(),
+  searchKnowledge: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 const toastError = vi.hoisted(() => vi.fn());
@@ -206,5 +207,39 @@ describe("Library keeps the open document in its URL", () => {
     await settle();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(location.search).toBe("?namespace=team");
+  });
+
+  it("a passage found inside the documents opens its document, cited by revision and place", async () => {
+    history.replaceState(null, "", "/library");
+    api.searchKnowledge.mockResolvedValue([
+      {
+        source_uri: "docs/handbook.md",
+        chunk_idx: 2,
+        content: "Escalate to the on-call lead.",
+        section: "On call",
+        score: 1,
+        revision: 2,
+        format: "markdown",
+        block_type: "paragraph",
+        locator: { line_start: 12, line_end: 18 },
+        keys_matched: [],
+      },
+    ]);
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /Find a passage/ }));
+    fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "who to escalate to" } });
+    fireEvent.click(screen.getByRole("button", { name: "Find" }));
+    await settle();
+    expect(api.searchKnowledge.mock.calls[0].slice(0, 2)).toEqual([
+      { org: "acme", namespace: "team" },
+      "who to escalate to",
+    ]);
+    const list = screen.getByRole("list", { name: "Passages found" });
+    expect(list).toHaveTextContent("revision 2, lines 12–18");
+    fireEvent.click(within(list).getByRole("button"));
+    await settle();
+    expect(new URLSearchParams(location.search).get("doc")).toBe("docs/handbook.md");
+    expect(api.getKnowledge).toHaveBeenCalled();
   });
 });

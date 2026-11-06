@@ -25,6 +25,7 @@ import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
 import { roleOnNamespace } from "../lib/namespaceRole";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError } from "../components/Toast";
+import { LibraryPassages } from "./LibraryPassages";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { ListRow, Loading, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
@@ -433,6 +434,27 @@ export function Documents() {
     }
   };
 
+  // A passage's document: from the rows loaded, else read on its own (a hit past the
+  // first page); one the namespace no longer holds says so.
+  const openPassage = (uri: string) => {
+    const target = rows?.find((r) => r.source_uri === uri);
+    if (target) {
+      void handlers.current.onOpen(target);
+      return;
+    }
+    linkRead.current?.abort(); // as a link's open: a newer open wins
+    const ac = new AbortController();
+    linkRead.current = ac;
+    void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
+      .then((found) => {
+        if (ac.signal.aborted) return;
+        if (found) void handlers.current.onOpen(found);
+        else toast(`${uri} is no longer in this library`, "info");
+      })
+      .catch((e) => {
+        if (!ac.signal.aborted) toastError("Open failed", e);
+      });
+  };
   // Bumped by each open and by leaving the place: what an older open reads arrives too late.
   const openSeq = useRef(0);
   const onOpen = async (r: KnowledgeEntry) => {
@@ -841,6 +863,11 @@ export function Documents() {
       </ListToolbar>
       {/* A phone's toolbar has room for the search only; the sort sits under it. */}
       <div className="-mt-1 mb-3 flex justify-end sm:hidden">{sortSelect("w-40")}</div>
+
+      {/* Inside the documents: a passage, cited by revision and place, opens its document. */}
+      {rows && rows.length > 0 && (
+        <LibraryPassages identity={{ org: identity.org, namespace: identity.namespace }} onOpen={openPassage} />
+      )}
 
       {/* Mounted while open, not on every render. */}
       {addOpen && (
