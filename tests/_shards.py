@@ -90,8 +90,7 @@ class Split:
     def __init__(self, k: int, n: int, args: list[Path]) -> None:
         files = test_files(args)
         sources = {_name(f): f.read_text(encoding="utf-8", errors="replace") for f in files}
-        # Without the weights file every file weighs its count of test functions.
-        recorded = json.loads(WEIGHTS.read_text()) if WEIGHTS.exists() else {}
+        recorded = json.loads(WEIGHTS.read_text())
         part = assign(weigh(sources, recorded), n)
         self.walked = set(part)
         self.kept = {name for name, p in part.items() if p == k}

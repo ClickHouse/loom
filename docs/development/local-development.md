@@ -127,7 +127,7 @@ Every target below exists in the [`Makefile`](../../Makefile).
 | `make typecheck`                                 | the mypy ratchet (`mypy-gate`) and `mypy --strict` on the Python SDK                                                                    |
 | `make test-unit`                                 | `pytest tests/unit` and `pytest bench`                                                                                                  |
 | `make test` / `test-integration`                 | `pytest tests/integration` (needs a server and ClickHouse)                                                                              |
-| `make test-unit-cov`                             | the unit suite with the coverage floor CI enforces                                                                                      |
+| `make test-unit-cov`                             | the unit suite with branch coverage, the 40% floor and the per-module floors CI enforces                                                |
 | `make ingest FILE=… [TAGS=…]`                    | load a file into the knowledge plane with `dev/loom_ingest.py`                                                                          |
 | `make init` / `make onboard NAMESPACE=… AGENT=…` | provision a service account and `.env` for an agent / plus raised limits and a smoke test                                               |
 | `make bench OP=… C=… D=…`                        | concurrent load against one op (`scripts/ops/benchmark.py`)                                                                             |
