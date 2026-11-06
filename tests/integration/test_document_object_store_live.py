@@ -423,7 +423,7 @@ async def test_an_original_a_user_erasure_started_on_during_the_copy_is_reported
 
     async def put_then_erasure(*a: Any, **kw: Any) -> None:
         await put(*a, **kw)
-        # Alice's erasure, which keeps an original another writer's document needs.
+        # Alice's erasure registers during the copy and has not reached the original yet.
         await _erasure(ch, org, "user_id", "alice", "in_progress")
 
     monkeypatch.setattr(object_store, "put", put_then_erasure)

@@ -107,8 +107,11 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
         out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
         return False
     except blobs.SwitchedUnderErasure as e:
-        out.moved += 1
-        out.bytes += held.size
+        if e.moved:
+            out.moved += 1
+            out.bytes += held.size
+        else:
+            out.skipped += 1  # the erasure took it; only its take-back is left
         out.left_to_erasure.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
         return False
     except (

@@ -119,3 +119,30 @@ async def test_a_namespace_the_fence_refuses_is_reported_once_and_not_walked(
         "acme/docs: erasure e9 (user_id, failed) covers it; complete it first; its originals are "
         "left in ClickHouse"
     ]
+
+
+@pytest.mark.asyncio
+async def test_an_erased_original_whose_take_back_failed_is_not_counted_moved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = [_held(0)]
+
+    async def held_in_clickhouse(org: str, ns: str, after: str, limit: int) -> blobs.HeldPage:
+        return blobs.HeldPage(page, "") if after == "" else blobs.HeldPage([], "")
+
+    async def needed(org: str, ns: str, shas: list[str]) -> set[str]:
+        return set(shas)
+
+    async def fence(org: str, ns: str) -> str:
+        return ""
+
+    async def move(held: blobs.Held) -> bool:
+        raise blobs.SwitchedUnderErasure("switched as an erasure took it, but ...", moved=False)
+
+    monkeypatch.setattr(blobs, "held_in_clickhouse", held_in_clickhouse)
+    monkeypatch.setattr(blobs, "needed", needed)
+    monkeypatch.setattr(blobs, "fence", fence)
+    monkeypatch.setattr(blobs, "move_to_bucket", move)
+    result = await originals.migrate_originals(org="acme", namespace="docs")
+    assert (result.moved, result.bytes, result.skipped) == (0, 0, 1)
+    assert len(result.left_to_erasure) == 1

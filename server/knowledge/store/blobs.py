@@ -269,9 +269,14 @@ class ErasureOpen(Exception):
 
 
 class SwitchedUnderErasure(Exception):
-    """The original was switched to the bucket as an erasure of one of its users
-    started, and that erasure has not finished: what it decides for the original
-    holds for the switched row too. The message names it."""
+    """A switch that could not be confirmed: an erasure that started as the row landed
+    has not finished, or a check or write around the switch failed. The message says
+    what to check. `moved` is False when an erasure took the original and only taking
+    the switch back failed."""
+
+    def __init__(self, message: str, *, moved: bool = True) -> None:
+        super().__init__(message)
+        self.moved = moved
 
 
 # How far an erasure's own timestamps (the server's clock, whole seconds) may sit
@@ -298,6 +303,20 @@ class _Erasure:
     id: str
     scope_type: str
     status: str
+    scope_value: str = ""
+
+    def deletes_namespace(self, namespace: str) -> bool:
+        """Whether this erasure deletes every original of `namespace` for certain: its
+        namespace's, or a list that names it. A scope it cannot read is not taken for
+        one (it fences a move, but a take-back on it would be a guess)."""
+        if self.scope_type == "namespace":
+            return self.scope_value == namespace
+        if self.scope_type == "namespace_list":
+            try:
+                return namespace in parse_namespace_list(self.scope_value)
+            except ValueError:
+                return False
+        return False
 
     @property
     def done(self) -> bool:
@@ -345,7 +364,7 @@ async def _erasures_since(org: str, namespace: str, since_s: int, ch: _CHClient)
             _ERASURES_SINCE, params={"org": org, "since": since_s, "margin": _CLOCK_MARGIN_S}
         )
     return [
-        _Erasure(str(r["erasure_id"]), str(r["scope_type"]), str(r["state"]))
+        _Erasure(str(r["erasure_id"]), str(r["scope_type"]), str(r["state"]), str(r["scope_value"]))
         for r in rows
         if _covers(str(r["scope_type"]), str(r["scope_value"]), namespace)
     ]
@@ -470,20 +489,26 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
             f"object store write took longer than {DOCUMENT_UPLOAD_BUDGET_S} s before its row",
             operation="write",
         )
-    await ch.insert(
-        TABLE,
-        [
-            {
-                "org": held.org,
-                "namespace": held.namespace,
-                "sha256": held.sha,
-                "size": held.size,
-                "data": b"",
-                "location": loc.uri(),
-            }
-        ],
-        settings={"async_insert": 0},
-    )
+    try:
+        await ch.insert(
+            TABLE,
+            [
+                {
+                    "org": held.org,
+                    "namespace": held.namespace,
+                    "sha256": held.sha,
+                    "size": held.size,
+                    "data": b"",
+                    "location": loc.uri(),
+                }
+            ],
+            settings={"async_insert": 0},
+        )
+    except Exception as e:  # the row may have landed: a failed insert is reported, not lost
+        raise SwitchedUnderErasure(
+            f"writing the row switching it to {loc.uri()} failed ({e}); check whether that row "
+            "landed, and if it did, that no erasure of its namespace or a user ran then"
+        ) from e
     return await _settle(held, since, loc, ch)
 
 
@@ -494,7 +519,9 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
     fails here leaves the switched row, reported (`SwitchedUnderErasure`)."""
     try:
         raced = await _erasures_since(held.org, held.namespace, since, ch)
-        namespace_raced = any(e.scope_type != "user_id" for e in raced)
+        # Taken back at once only for an erasure that certainly deletes the namespace's
+        # originals; any other is waited for and decided by the moved object.
+        namespace_raced = any(e.deletes_namespace(held.namespace) for e in raced)
         taken = False
         if raced and not namespace_raced:
             await _await_erasures(held, since, ch)
@@ -517,7 +544,8 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
     except Exception as e:  # the row is switched: a failed take-back is reported, not lost
         raise SwitchedUnderErasure(
             f"switched to {loc.uri()} as an erasure took it, but deleting that row failed ({e}); "
-            f"delete the loom.document_blobs row of this original whose location is {loc.uri()}"
+            f"delete the loom.document_blobs row of this original whose location is {loc.uri()}",
+            moved=False,
         ) from e
     return False
 

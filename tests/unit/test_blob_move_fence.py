@@ -49,3 +49,14 @@ def test_the_advice_names_the_erasure_that_holds_the_move_longest() -> None:
         "erasure e1 (user_id, completed), which finished just now, overlapped its copy, and "
         "it stays in ClickHouse; run again in a minute"
     )
+
+
+def test_only_an_erasure_that_certainly_deletes_the_namespace_takes_a_move_back() -> None:
+    assert _Erasure("e", "namespace", "in_progress", "docs").deletes_namespace("docs")
+    assert _Erasure("e", "namespace_list", "in_progress", '["docs"]').deletes_namespace("docs")
+    assert not _Erasure("e", "namespace", "in_progress", "other").deletes_namespace("docs")
+    # Fenced on, but not taken for one: a list it cannot read, a user's, a scope it does
+    # not know.
+    assert not _Erasure("e", "namespace_list", "in_progress", "not json").deletes_namespace("docs")
+    assert not _Erasure("e", "user_id", "in_progress", "alice").deletes_namespace("docs")
+    assert not _Erasure("e", "org", "in_progress", "acme").deletes_namespace("docs")
