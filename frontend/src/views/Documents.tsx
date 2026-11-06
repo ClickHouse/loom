@@ -622,6 +622,10 @@ export function Documents() {
   // through a later filtered or failed read (it searches the whole namespace). A new place
   // folds it.
   const canFindPassages = rows !== null && !emptyLibrary && listedScope === place;
+  // Taken away (the library emptied), the panel comes back folded once a document does.
+  useEffect(() => {
+    if (!canFindPassages) setPassagesOpen(false);
+  }, [canFindPassages]);
   const passagesToggle = (className: string) => (
     <Button
       type="empty"

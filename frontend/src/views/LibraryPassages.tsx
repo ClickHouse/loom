@@ -132,7 +132,9 @@ export function LibraryPassages({
       : hits.length === 0
         ? "No passage answers that."
         : !asked.done
-          ? `The best ${hits.length} passage${hits.length === 1 ? "" : "s"}`
+          ? hits.length === 1
+            ? "The best passage"
+            : `The best ${hits.length} passages`
           : `${hits.length} passage${hits.length === 1 ? "" : "s"}`;
 
   // Built once per answer, not per keystroke in the field above it.

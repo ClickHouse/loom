@@ -363,6 +363,15 @@ describe("Find a passage in the Library", () => {
     fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "" } });
     await waitFor(() => expect(screen.queryByLabelText("Passage to find")).toBeNull());
     expect(screen.queryByRole("button", { name: "Find a passage" })).toBeNull();
+    // A document again: the toggle comes back folded, not open.
+    api.listKnowledge.mockResolvedValue({ rows: ROWS, next_cursor: null });
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:x" } });
+    await waitFor(() =>
+      expect(api.listKnowledge).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ tags: ["x"] })),
+    );
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Find a passage" }).length).toBeGreaterThan(0));
+    expect(screen.getAllByRole("button", { name: "Find a passage" })[0]).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Passage to find")).toBeNull();
   });
 
   it("an empty library offers no passage search, even with a tag filter typed", async () => {

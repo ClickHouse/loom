@@ -107,6 +107,12 @@ describe("LibraryPassages", () => {
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 10 passages"));
   });
 
+  it("says the best passage, not the best 1 passage, for a single hit", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValue([HIT]);
+    await openAndFind("events");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^The best passage$/));
+  });
+
   it("shows more, ten at a time, for the query searched, until a read adds none", async () => {
     const page = (n: number) => Array.from({ length: n }, (_, i) => ({ ...HIT, chunk_idx: i }));
     // Six for ten: sections folded, more may be left.
