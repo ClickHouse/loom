@@ -227,9 +227,11 @@ bomb stops there. A part that declares a DOCTYPE (in any encoding) is refused, s
 cannot be read (damaged, over the bound, not XML, in an encoding the XML parser does not read) fails the unit it belongs
 to: a slide, a slide's notes, the styles, the footnotes; the document part itself fails the file as `corrupt`. A DOCX
 heading is a paragraph of a `Heading N` or `Title` style, or one with an outline level of its own or along its style's
-`basedOn` chain, the nearest one set deciding (level 9, body text, is no heading whatever the style); a numbered
-paragraph or a `List` style is a list item, and a run of them is one list block. Inserted text is read, and a tracked
-deletion (its runs, rows and cells) and moved text at its old place are not; a content control's or a custom XML
+`basedOn` chain, the nearest one set deciding (level 9, body text, is no heading whatever the style); once a `Title`
+paragraph is read as a heading, it is depth 1 (whatever outline level it carries) and every other heading after it one
+level under its own (`Heading 1` at depth 2), so the sections sit under the title, and a later title is depth 1 again; a
+numbered paragraph or a `List` style is a list item, and a run of them is one list block. Inserted text is read, and a
+tracked deletion (its runs, rows and cells) and moved text at its old place are not; a content control's or a custom XML
 element's text is read in place, in the body, a table's rows and its cells, and an alternate-content choice once.
 Headers, footers and comments are not the body and are not read; footnotes and endnotes follow the body (`attrs.note`).
 An embedded document (`altChunk`) is a failed unit, as is a document of pictures (in its body or its tables) and no

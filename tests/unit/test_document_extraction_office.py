@@ -51,6 +51,7 @@ def _docx(body: str, *, footnotes: str = "") -> bytes:
         f"<w:styles {_W}>"
         '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/></w:style>'
         '<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/></w:style>'
         '<w:style w:type="paragraph" w:styleId="Rubric"><w:name w:val="Rubric"/>'
         '<w:basedOn w:val="Chapter"/></w:style>'
         '<w:style w:type="paragraph" w:styleId="Chapter"><w:name w:val="Chapter"/>'
@@ -64,6 +65,55 @@ def _docx(body: str, *, footnotes: str = "") -> bytes:
     if footnotes:
         parts["word/footnotes.xml"] = f"<w:footnotes {_W}>{footnotes}</w:footnotes>"
     return _zip(parts)
+
+
+def test_a_docx_title_paragraph_holds_the_headings_under_it() -> None:
+    body = (
+        _wp("Storage design", "Title")
+        + _wp("Goals", "Heading1")
+        + _wp("Limits", "Heading2")
+        + _wp("Text")
+    )
+    a = extract(_docx(body), "t.docx")
+    assert [(b.depth, b.text) for b in a.blocks if b.type == "heading"] == [
+        (1, "Storage design"),
+        (2, "Goals"),
+        (3, "Limits"),
+    ]
+    assert a.blocks[-1].section_path == ("Storage design", "Goals", "Limits")
+    # an outline level of its own goes under the title too
+    outlined = extract(
+        _docx(_wp("Plan", "Title") + _wp("X", extra='<w:outlineLvl w:val="0"/>')), "o.docx"
+    )
+    assert [b.depth for b in outlined.blocks] == [1, 2]
+    # a title paragraph with an outline level of its own is still the top
+    level = '<w:outlineLvl w:val="1"/>'
+    leveled = extract(_docx(_wp("Plan", "Title", level) + _wp("Goals", "Heading1")), "l.docx")
+    assert [b.depth for b in leveled.blocks] == [1, 2]
+    # a heading before the title keeps its level; the ones after go under the title
+    before = extract(
+        _docx(_wp("Preface", "Heading1") + _wp("Plan", "Title") + _wp("Goals", "Heading1")),
+        "p.docx",
+    )
+    assert [b.depth for b in before.blocks] == [1, 1, 2]
+    # a second title is the top again, and the headings after it sit under it
+    parts = (
+        _wp("Part one", "Title")
+        + _wp("Goals", "Heading1")
+        + _wp("Part two", "Title")
+        + _wp("Scope", "Heading1")
+    )
+    two = extract(_docx(parts + _wp("Text")), "w.docx")
+    assert [b.depth for b in two.blocks if b.type == "heading"] == [1, 2, 1, 2]
+    assert two.blocks[-1].section_path == ("Part two", "Scope")
+    # without a title heading (none, one with no text, one set to body text) the
+    # headings keep their own levels
+    body_text = '<w:outlineLvl w:val="9"/>'
+    for prefix in ("", _wp("", "Title"), _wp("Plan", "Title", body_text)):
+        untitled = extract(
+            _docx(prefix + _wp("Goals", "Heading1") + _wp("Limits", "Heading2")), "u.docx"
+        )
+        assert [b.depth for b in untitled.blocks if b.type == "heading"] == [1, 2]
 
 
 def _texts(a: Artifact) -> list[tuple[str, str, tuple[str, ...]]]:
