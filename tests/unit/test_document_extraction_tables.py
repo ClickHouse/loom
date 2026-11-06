@@ -209,7 +209,7 @@ def test_an_xlsx_header_merged_with_no_value_takes_the_names_under_it() -> None:
     assert [n for n, _ in _columns(a)] == ["Region", "H1", "H2"]
 
 
-def test_a_long_xlsx_header_over_two_rows_is_cut_and_held_once() -> None:
+def test_a_long_xlsx_header_over_two_rows_is_cut_counted_and_bounded_per_column() -> None:
     long = "x" * 1_000_000
     under = {2: [cell(f"{_col(i)}2", "h", t="inlineStr") for i in range(200)]}
     rows = {1: [cell("A1", 0, t="s")], **under, 3: [cell("A3", 1)]}
@@ -222,11 +222,8 @@ def test_a_long_xlsx_header_over_two_rows_is_cut_and_held_once() -> None:
     assert table.header_rows == 2 and all(len(c.name) <= 500 for c in table.columns)
     assert table.columns[0].name == "x" * 500
     # A joined name holds no more of a cell than a name reads, whatever the cell's size.
-    from loom_extractor.tabular import Cell
-    from loom_extractor.xlsxfile import _named_over
-
-    joined = _named_over(Cell(long, "string"), Cell("h", "string"))
-    assert len(joined.text) < 2_000 and joined.text.endswith(" / h")
+    joined = xlsxfile._named_over(tabular.Cell(long, "string"), tabular.Cell("h", "string"))
+    assert joined.text == "x" * tabular.NAME_READ_CHARS + " / h"
     assert [f.unit for f in a.coverage.failed] == ["S header"]
 
 

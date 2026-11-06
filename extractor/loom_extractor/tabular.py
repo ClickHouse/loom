@@ -49,6 +49,9 @@ MAX_HELD_BYTES = 256 * 1024 * 1024  # not a setting: the held cells' text, four 
 # stay under the server's default chunk cap (docs/architecture/document-extraction.md).
 MAX_TEXT_CHARS = 12_000_000  # not a setting: what a source indexes
 CHUNK_FLOOR = 760  # not a setting: at most the server's default chunk stride
+# What of a header cell its name is read from: more than a name holds, so text cut
+# off is still seen, and never all of a cell that may hold a megabyte.
+NAME_READ_CHARS = 2 * MAX_COLUMN_CHARS + 1  # not a setting: a bound on hostile input
 _NON_SPACE = re.compile(r"\S")
 # A suffixed column name's stem: room for the longest suffix, ` (16384)`.
 _STEM_CHARS = MAX_COLUMN_CHARS - len(f" ({MAX_COLUMNS})")
@@ -159,8 +162,8 @@ def _names(header: list[Cell], width: int, first: int = 0) -> tuple[list[str], i
         hit = read.get(id(cell))
         if hit is None:
             # Cut before the spaces are folded: a header cell may hold a megabyte.
-            folded = " ".join(cell.text[: 2 * MAX_COLUMN_CHARS + 1].split())
-            tail = _NON_SPACE.search(cell.text, 2 * MAX_COLUMN_CHARS + 1) is not None
+            folded = " ".join(cell.text[:NAME_READ_CHARS].split())
+            tail = _NON_SPACE.search(cell.text, NAME_READ_CHARS) is not None
             hit = read[id(cell)] = folded, tail
         folded, tail = hit
         base = folded[:MAX_COLUMN_CHARS] or f"column {first + i + 1}"  # as the source counts

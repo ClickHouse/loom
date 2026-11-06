@@ -376,12 +376,14 @@ A formula reads as its cached value; one with none reads empty, and the artifact
 megabyte, inline or shared, and one past column 16,384, is left out and counted, as is a cell written twice at one
 position (its earlier value lost). A merged range's first value fills each of its cells, so a header merged over columns
 names each; a header over two rows, a range merged across columns of the first grouping the text cells of the second
-under it (`2025` over `H1` and `H2`), names each column from both (`2025 / H1`), and `header_rows` is 2. A merged range
-fills no row past the last one held, and a merge that would add rows past those a table holds stops there and is a
-failed unit. A row or cell that names no position takes the one after the one before it. A hidden sheet is read and
-marked `attrs.hidden`, and a damaged sheet, or one whose root is no worksheet (another namespace), fails alone; shared
-strings or styles that cannot be read to their end keep what was read, and the artifact loses `shared_strings` or
-`number_formats`.
+under it (`2025` over `H1` and `H2`), names each column from both (`2025 / H1`; one with nothing above takes the second
+row's name), and `header_rows` is 2. Any other cell in that second row, text or not, that is not merged down from the
+first makes it data. A title merged over the whole first row meets the rule too, and heads every name (`Sales 2025 /
+Region`). A merged range fills no row past the last one held, and a merge that would add rows past those a table holds
+stops there and is a failed unit. A row or cell that names no position takes the one after the one before it. A hidden
+sheet is read and marked `attrs.hidden`, and a damaged sheet, or one whose root is no worksheet (another namespace),
+fails alone; shared strings or styles that cannot be read to their end keep what was read, and the artifact loses
+`shared_strings` or `number_formats`.
 
 **Parquet.** pyarrow reads the file from the bytes in memory, with no file system, no threads and its system memory
 pool: its columns from the schema (the first 16,384, kept by position since a name may repeat; the rest are a failed

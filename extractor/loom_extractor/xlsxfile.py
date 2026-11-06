@@ -11,8 +11,10 @@ reads empty, and the artifact loses `formula_values`. A merged range takes its
 first cell's value in every cell, so a header merged over columns names each of
 them, as far as the artifact's budget of cells allows; a range merged across
 columns of the header row over text cells in the row under it makes a header of
-both rows (`2025 / H1`). A row or cell that names no position (`r`) takes the
-one after the row or cell before it.
+both rows (`2025 / H1`), as long as no other cell of that row is its own: one
+that is makes the row data, and a title merged over the whole header row heads
+every name. A row or cell that names no position (`r`) takes the one after the
+row or cell before it.
 
 The rows are blocks too, cited by sheet and rows (`tabular`).
 
@@ -27,7 +29,6 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 
 from loom_extractor.artifact import (
-    MAX_COLUMN_CHARS,
     MAX_COLUMNS,
     MAX_SECTION_CHARS,
     Artifact,
@@ -42,6 +43,7 @@ from loom_extractor.ooxml import Cut, Exhausted, Package, PartError, q
 from loom_extractor.tabular import (
     EMPTY,
     MAX_ROWS,
+    NAME_READ_CHARS,
     Budget,
     Cell,
     Rows,
@@ -462,8 +464,8 @@ class _Reader:
         )
         if grouped:
             header = [
-                _named_over(cell, under.get(col, EMPTY))
-                for cell, col in zip(header, range(left, right + 1), strict=True)
+                _named_over(above.get(col, EMPTY), under.get(col, EMPTY))
+                for col in range(left, right + 1)
             ]
         out = Rows(
             header,
@@ -645,12 +647,6 @@ class _SheetStream:
         return over or bool(self.past.more) or len(self.grid) > MAX_ROWS or self.budget.cut
 
 
-# What of a header cell a joined name keeps: more than a column's name holds, so a
-# name cut from it is still counted as cut, and never a cell's megabyte for each of
-# the many columns one cell spans.
-_JOINED_CHARS = 2 * MAX_COLUMN_CHARS + 1  # not a setting: a bound on hostile input
-
-
 def _named_over(above: Cell, below: Cell) -> Cell:
     """A column's name from a header over two rows: the first row's cell, the
     second's under it joined after ` / `; one merged down both rows (the same
@@ -660,7 +656,8 @@ def _named_over(above: Cell, below: Cell) -> Cell:
         return above
     if above.kind == "empty":
         return below
-    return Cell(f"{above.text[:_JOINED_CHARS]} / {below.text[:_JOINED_CHARS]}", "string")
+    # What a name reads of each, not a cell's megabyte for each column it spans.
+    return Cell(f"{above.text[:NAME_READ_CHARS]} / {below.text[:NAME_READ_CHARS]}", "string")
 
 
 def _spread(
