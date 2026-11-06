@@ -106,9 +106,13 @@ export interface IngestFields {
   expected_revision?: number;
 }
 
+/** Where a file is: its bytes on their way (cancellable: nothing is queued yet), the
+ *  ingest call (held: it may queue the job), or its job being followed. */
+export type IngestPhase = "upload" | "queue" | "follow";
+
 /**
  * Upload `file`, ingest it and follow the job until it ends, calling `onStep` with each
- * line to show. Answers the job's last status. `signal` stops the upload (which it alone
+ * line to show and the phase it is in. Answers the job's last status. `signal` stops the upload (which it alone
  * bounds, so a large file is not cut off) and the following; each poll keeps the
  * default request bound. The job itself goes on on the server.
  */
@@ -116,18 +120,20 @@ export async function ingestFile(
   id: Pick<Identity, "org" | "namespace">,
   file: File,
   fields: IngestFields,
-  onStep: (line: string, status?: KnowledgeIngestStatus) => void,
+  onStep: (line: string, phase: IngestPhase, status?: KnowledgeIngestStatus) => void,
   opts: { signal?: AbortSignal } = {},
 ): Promise<KnowledgeIngestStatus> {
   const { signal } = opts;
-  onStep("Uploading…");
+  onStep("Uploading…", "upload");
   const up = await uploadKnowledgeFile(id, file, signal);
+  signal?.throwIfAborted(); // cancelled while the bytes went: nothing is queued
+  onStep("Queuing…", "queue");
   const job = await ingestKnowledge(id, { ...fields, upload_id: up.upload_id });
   for (;;) {
     signal?.throwIfAborted();
     const status = await knowledgeIngestStatus(id, job.ingestion_id);
     signal?.throwIfAborted();
-    onStep(ingestStep(status), status);
+    onStep(ingestStep(status), "follow", status);
     if (!status.found || INGEST_DONE.has(status.state)) return status;
     await ingestClock.sleep(POLL_MS);
   }

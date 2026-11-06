@@ -105,7 +105,7 @@ describe("ingestFile", () => {
     ingestClock.sleep = async () => {};
     const out = await ingestFile(id, f, { source_uri: "a", tags: ["x"] }, (line) => steps.push(line));
     expect(out.state).toBe("ready");
-    expect(steps).toEqual(["Uploading…", "Extracting…", "Ready: revision 1, 1 chunk"]);
+    expect(steps).toEqual(["Uploading…", "Queuing…", "Extracting…", "Ready: revision 1, 1 chunk"]);
     expect(vi.mocked(uploadKnowledgeFile).mock.calls[0].slice(0, 2)).toEqual([id, f]);
     expect(vi.mocked(ingestKnowledge).mock.calls[0]).toEqual([id, { source_uri: "a", tags: ["x"], upload_id: "up-1" }]);
   });

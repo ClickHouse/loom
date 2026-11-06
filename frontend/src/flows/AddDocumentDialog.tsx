@@ -9,7 +9,7 @@ import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { humanizeError } from "../lib/format";
-import { fileVerdict, ingestFile, ingestStep } from "../lib/fileIngest";
+import { fileVerdict, type IngestPhase, ingestFile, ingestStep } from "../lib/fileIngest";
 import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormats } from "./FileIngest";
 
 interface Props {
@@ -51,9 +51,9 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
   const [content, setContent] = useState("");
   const [tagsInput, setTagsInput] = useState("");
   const [allowPartial, setAllowPartial] = useState(false);
-  // "upload" holds the dialog open (closing would cancel the bytes); "follow" does not:
-  // the job goes on on the server whether the dialog watches it or not.
-  const [busy, setBusy] = useState<"upload" | "follow" | "save" | null>(null);
+  // "upload" can be cancelled (nothing is queued yet); "queue" and "save" hold the dialog
+  // open (the call may have taken effect); "follow" closes, the job going on on the server.
+  const [busy, setBusy] = useState<IngestPhase | "save" | null>(null);
   const [step, setStep] = useState("");
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -131,9 +131,9 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
           tags: tags(),
           allow_partial: allowPartial,
         },
-        (line, s) => {
+        (line, phase) => {
           setStep(line);
-          if (s) setBusy("follow");
+          setBusy(phase);
         },
         { signal: ctrl.signal },
       );
@@ -186,7 +186,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
   // Closing mid-upload would cancel the bytes and read as a failure; once the job is
   // queued it goes on without the dialog, and the Library shows it when it publishes.
   const close = (v: boolean) => {
-    if ((busy === "upload" || busy === "save") && !v) return;
+    if ((busy === "queue" || busy === "save") && !v) return;
     if (!v && busy === "follow")
       toast(
         `${sourceUri.trim()} goes on extracting; it is in the Library once it publishes and the list is reloaded`,
@@ -196,7 +196,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
     onOpenChange(v);
   };
   const holdWhileBusy = (e: Event) => {
-    if (busy === "upload" || busy === "save") e.preventDefault();
+    if (busy === "queue" || busy === "save") e.preventDefault();
   };
   const readable = readableFormats(formats);
 
@@ -217,7 +217,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
         }}
       >
         <div className="space-y-4">
-          <Tabs value={mode} onValueChange={(v) => setMode(v === "paste" ? "paste" : "file")}>
+          <Tabs value={mode} onValueChange={(v) => busy === null && setMode(v === "paste" ? "paste" : "file")}>
             <Tabs.TriggersList aria-label="How to add it">
               <TabTrigger value="file">Upload a file</TabTrigger>
               <TabTrigger value="paste">Paste text</TabTrigger>
@@ -246,11 +246,12 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
                 ingest publishes.
               </p>
               {verdict?.refusal && <Alert role="alert" state="danger" text={verdict.refusal} />}
-              <AllowPartial checked={allowPartial} onChange={setAllowPartial} />
+              <AllowPartial checked={allowPartial} onChange={setAllowPartial} disabled={busy !== null} />
             </Tabs.Content>
             <Tabs.Content value="paste" className="pt-4">
               <TextAreaField
                 id="add-doc-content"
+                disabled={busy !== null}
                 label="Content"
                 value={content}
                 onChange={setContent}
@@ -304,7 +305,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
           <Button
             type="secondary"
             htmlType="button"
-            disabled={busy === "upload" || busy === "save"}
+            disabled={busy === "queue" || busy === "save"}
             onClick={() => close(false)}
           >
             {busy === "follow" ? "Close" : "Cancel"}

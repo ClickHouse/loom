@@ -40,6 +40,7 @@ vi.mock("../components/Toast", async (importOriginal) => ({
 import { toast, ToastViewport } from "../components/Toast";
 import { ingestClock } from "../lib/fileIngest";
 import {
+  type KnowledgeUpload,
   addKnowledge,
   deleteKnowledge,
   downloadKnowledge,
@@ -270,35 +271,8 @@ describe("RepoDocsList", () => {
   });
 
   it("a writer adds a file as its bytes, ingested under an address made from its name", async () => {
-    vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null });
-    vi.mocked(uploadKnowledgeFile).mockResolvedValue({
-      upload_id: "up-1",
-      sha256: "",
-      size: 9,
-      filename: "on_call.md",
-      format: "markdown",
-      expires_at: "",
-    });
-    vi.mocked(ingestKnowledge).mockResolvedValue({ ingestion_id: "job-1", state: "pending", source_uri: "x" });
-    vi.mocked(knowledgeIngestStatus).mockResolvedValue({
-      found: true,
-      ingestion_id: "job-1",
-      source_uri: "repo-doc://Acme/kj/on-call",
-      state: "ready",
-      stage: "",
-      error_code: "",
-      error_message: "",
-      format: "markdown",
-      coverage: null,
-      warnings: [],
-      chunks: 2,
-      revision: 1,
-    });
-    mount(true);
-    fireEvent.click(await screen.findByRole("button", { name: "Add a document" }));
-    const dialog = await screen.findByRole("dialog");
-    const user = userEvent.setup();
-    await user.upload(within(dialog).getByLabelText("Choose a file"), new File(["# On call"], "on_call.md"));
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(repoStatus("ready"));
+    const { dialog } = await addFile("on_call.md");
     expect(within(dialog).getByLabelText("Title")).toHaveValue("on call");
     fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
     await waitFor(() => expect(knowledgeIngestStatus).toHaveBeenCalled());
@@ -318,35 +292,13 @@ describe("RepoDocsList", () => {
   });
 
   it("a file whose address another document took past the first page is refused, not published over it", async () => {
-    vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null });
-    vi.mocked(uploadKnowledgeFile).mockResolvedValue({
-      upload_id: "up-1",
-      sha256: "",
-      size: 9,
-      filename: "runbook.md",
-      format: "markdown",
-      expires_at: "",
-    });
-    vi.mocked(ingestKnowledge).mockResolvedValue({ ingestion_id: "job-1", state: "pending", source_uri: "x" });
-    vi.mocked(knowledgeIngestStatus).mockResolvedValue({
-      found: true,
-      ingestion_id: "job-1",
-      source_uri: "repo-doc://Acme/kj/runbook",
-      state: "failed",
-      stage: "",
-      error_code: "revision_conflict",
-      error_message: "another revision of the source is live",
-      format: "markdown",
-      coverage: null,
-      warnings: [],
-      chunks: 0,
-      revision: 0,
-    });
-    mount(true);
-    fireEvent.click(await screen.findByRole("button", { name: "Add a document" }));
-    const dialog = await screen.findByRole("dialog");
-    const user = userEvent.setup();
-    await user.upload(within(dialog).getByLabelText("Choose a file"), new File(["# R"], "runbook.md"));
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(
+      repoStatus("failed", {
+        error_code: "revision_conflict",
+        error_message: "another revision of the source is live",
+      }),
+    );
+    const { dialog } = await addFile("runbook.md");
     fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
     await waitFor(() =>
       expect(screen.getByRole("dialog")).toHaveTextContent(
@@ -354,6 +306,25 @@ describe("RepoDocsList", () => {
       ),
     );
     expect(vi.mocked(ingestKnowledge).mock.calls[0][1].expected_revision).toBe(0);
+  });
+
+  it("can cancel a pending upload, its fields frozen and a dropped file ignored, and holds through the ingest call", async () => {
+    let landed: (u: KnowledgeUpload) => void = () => {};
+    const { dialog, user } = await addFile("on_call.md");
+    vi.mocked(uploadKnowledgeFile).mockImplementation(() => new Promise((r) => (landed = r)));
+    vi.mocked(ingestKnowledge).mockImplementation(() => new Promise(() => {}));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    expect(await screen.findByText("Uploading…")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Title")).toBeDisabled();
+    const zone = screen.getByText("on_call.md").closest("div[class*='border-dashed']") as HTMLElement;
+    fireEvent.drop(zone, { dataTransfer: { files: [new File(["x"], "other.md")] } });
+    expect(screen.queryByText("other.md")).toBeNull(); // the file on its way stays the one named
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    landed({ upload_id: "up-1", sha256: "", size: 3, filename: "on_call.md", format: "markdown", expires_at: "" });
+    expect(await screen.findByText("Queuing…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("says a partial file publish is partial, naming what it lost", async () => {

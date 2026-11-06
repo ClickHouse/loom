@@ -62,11 +62,20 @@ export function PickedFile({ file, verdict }: { file: File; verdict: FileVerdict
 }
 
 /** "Publish what could be read" for a file part of which may not extract. */
-export function AllowPartial({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+export function AllowPartial({
+  checked,
+  onChange,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
     <Checkbox
       label="Publish what could be read if part of the file cannot be (marked partial)"
       checked={checked}
+      disabled={disabled}
       onCheckedChange={(c) => onChange(c === true)}
     />
   );

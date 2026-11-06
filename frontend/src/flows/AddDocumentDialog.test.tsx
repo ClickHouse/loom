@@ -22,6 +22,7 @@ vi.mock("../components/Toast", async (importOriginal) => ({
 }));
 import { toast } from "../components/Toast";
 import {
+  type KnowledgeUpload,
   addKnowledge,
   ingestKnowledge,
   type KnowledgeIngestStatus,
@@ -174,6 +175,37 @@ describe("AddDocumentDialog", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(vi.mocked(knowledgeIngestStatus).mock.calls.length).toBe(polls);
     expect(onAdded).not.toHaveBeenCalled();
+  });
+
+  it("can cancel a pending upload, which queues nothing, and holds through the ingest call", async () => {
+    let landed: (u: KnowledgeUpload) => void = () => {};
+    vi.mocked(uploadKnowledgeFile).mockImplementation(() => new Promise((r) => (landed = r)));
+    const { dialog, onOpenChange } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    expect(await within(dialog).findByText("Uploading…")).toBeInTheDocument();
+    // The address and options are frozen with the file on its way.
+    expect(within(dialog).getByLabelText(/^Source URI/)).toBeDisabled();
+    expect(within(dialog).getByLabelText(/^Title/)).toBeDisabled();
+    expect(within(dialog).getByRole("checkbox")).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    landed({ upload_id: "up-1", sha256: "", size: 8, filename: "spec.pdf", format: "pdf", expires_at: "" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(ingestKnowledge).not.toHaveBeenCalled();
+  });
+
+  it("holds the dialog while the ingest call may queue the job", async () => {
+    vi.mocked(ingestKnowledge).mockImplementation(() => new Promise(() => {}));
+    const { dialog, onOpenChange } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    expect(await within(dialog).findByText("Queuing…")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
   it("writes pasted text as text", async () => {

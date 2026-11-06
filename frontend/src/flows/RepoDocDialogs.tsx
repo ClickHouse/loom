@@ -23,7 +23,7 @@ import { toast, toastError } from "../components/Toast";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { Loading } from "../components/ui/Loading";
 import { slugify } from "../lib/docFiles";
-import { fileVerdict, ingestFile, ingestStep } from "../lib/fileIngest";
+import { fileVerdict, type IngestPhase, ingestFile, ingestStep } from "../lib/fileIngest";
 import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormats } from "./FileIngest";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 
@@ -60,9 +60,9 @@ export function RepoDocAddDialog({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [allowPartial, setAllowPartial] = useState(false);
-  // "upload" holds the dialog open (closing would cancel the bytes or the ingest call);
-  // "follow" does not: the job goes on on the server whether the dialog watches it or not.
-  const [busy, setBusy] = useState<"saving" | "upload" | "follow" | null>(null);
+  // "upload" can be cancelled (nothing is queued yet); "queue" and "saving" hold the dialog
+  // open (the call may have taken effect); "follow" closes, the job going on on the server.
+  const [busy, setBusy] = useState<IngestPhase | "saving" | null>(null);
   const [step, setStep] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState(false);
@@ -106,9 +106,9 @@ export function RepoDocAddDialog({
         allow_partial: allowPartial,
         expected_revision: 0,
       },
-      (line, s) => {
+      (line, phase) => {
         setStep(line);
-        if (s) setBusy("follow");
+        setBusy(phase);
       },
       { signal: ctrl.signal },
     );
@@ -143,7 +143,7 @@ export function RepoDocAddDialog({
   // Closing mid-upload would cancel the bytes or the ingest call: held. Once the job is
   // queued it goes on without the dialog, and the card says so.
   const close = (v: boolean) => {
-    if (!v && (busy === "upload" || busy === "saving")) return;
+    if (!v && (busy === "queue" || busy === "saving")) return;
     if (!v && busy === "follow")
       toast(`${title.trim()} goes on extracting; it is listed once it publishes and the list is reloaded`, "info");
     onOpenChange(v);
@@ -160,7 +160,7 @@ export function RepoDocAddDialog({
         <>
           <CancelButton
             label={busy === "follow" ? "Close" : "Cancel"}
-            disabled={busy === "upload" || busy === "saving"}
+            disabled={busy === "queue" || busy === "saving"}
           />
           <Button
             type="primary"
@@ -174,7 +174,7 @@ export function RepoDocAddDialog({
         </>
       }
     >
-      <Tabs value={mode} onValueChange={(v) => setMode(v === "paste" ? "paste" : "file")}>
+      <Tabs value={mode} onValueChange={(v) => busy === null && setMode(v === "paste" ? "paste" : "file")}>
         <Tabs.TriggersList aria-label="How to add it">
           <TabTrigger value="file">Upload a file</TabTrigger>
           <TabTrigger value="paste">Paste text</TabTrigger>
@@ -221,12 +221,13 @@ export function RepoDocAddDialog({
           </div>
           <div className="mt-3 space-y-2">
             {verdict?.refusal && <ErrorNote>{verdict.refusal}</ErrorNote>}
-            <AllowPartial checked={allowPartial} onChange={setAllowPartial} />
+            <AllowPartial checked={allowPartial} onChange={setAllowPartial} disabled={busy !== null} />
           </div>
         </Tabs.Content>
         <Tabs.Content value="paste" className="pt-4">
           <TextAreaField
             id="rdoc-text"
+            disabled={busy !== null}
             label="Text (Markdown is fine)"
             className="font-mono"
             rows={8}
