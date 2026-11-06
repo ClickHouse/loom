@@ -148,7 +148,10 @@ def test_release_gate_installs_browser_dependencies_before_running_provider_flow
     runners = {i["arch"]: i["runner"] for i in matrix["include"] if "runner" in i}
     assert runners == {"amd64": "ubuntu-latest", "arm64": "ubuntu-24.04-arm"}
     # Tagged together after both scans, so a version never names one image alone.
-    assert "docker-tag" in job["needs"] and workflow["jobs"]["docker-tag"]["needs"] == ["docker"]
+    assert "docker-tag" in job["needs"] and workflow["jobs"]["docker-tag"]["needs"] == [
+        "version",
+        "docker",
+    ]
     assert "docker-tag" in workflow["jobs"]["github-release"]["needs"]
     assert steps[browser]["working-directory"] == "frontend"
     assert "npm ci" in steps[browser]["run"]
@@ -210,12 +213,28 @@ def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> 
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "CALLS": str(tmp_path / "calls"),
         "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+        "LATEST": "false",
     }
 
     def run() -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["bash", "-e", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True
         )
+
+    # Only the highest final version takes `:latest`, on both images.
+    assert run().returncode == 0
+    assert ":latest" not in (tmp_path / "calls").read_text()
+    (tmp_path / "calls").unlink()
+    env["LATEST"] = "true"
+    assert run().returncode == 0
+    latest = [c for c in (tmp_path / "calls").read_text().splitlines() if " create " in c]
+    assert "-t ghcr.io/clickhouse/loom:latest ghcr.io/clickhouse/loom@" in latest[0]
+    assert (
+        "-t ghcr.io/clickhouse/loom-extractor:latest ghcr.io/clickhouse/loom-extractor@"
+        in latest[1]
+    )
+    (tmp_path / "calls").unlink()
+    env["LATEST"] = "false"
 
     assert run().returncode == 0
     calls = (tmp_path / "calls").read_text().splitlines()

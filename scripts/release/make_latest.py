@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Print `true` when a release should be the repository's Latest, else `false`.
 
-    gh api repos/OWNER/REPO/releases --paginate --jq '.[] | select(.draft | not) | .tag_name' \
-        | python3 scripts/release/make_latest.py 1.2.3
+    gh api repos/OWNER/REPO/git/matching-refs/tags/v --paginate \
+        --jq '.[].ref | ltrimstr("refs/tags/")' | python3 scripts/release/make_latest.py 1.2.3
 
-GitHub's `releases/latest` serves the installer, so only the highest final
-version is Latest: a patch to an older line released after a newer minor, or a
-prerelease, leaves Latest where it is. The published tags come on stdin; the
-other prereleases among them never count.
+GitHub's `releases/latest` serves the installer and `:latest` the image, so only
+the highest final version takes them: a patch to an older line, or a
+prerelease, leaves Latest where it is. The repository's tags come on stdin:
+a tag exists from its push on, before its release run publishes anything, so
+two releases running at once agree. Prerelease tags never count.
 """
 
 from __future__ import annotations

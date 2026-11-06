@@ -84,8 +84,8 @@ def test_a_public_repository_with_both_packages_ready_passes(tmp_path: Path) -> 
 
 
 def test_each_missing_prerequisite_names_its_fix_and_fails_a_release(tmp_path: Path) -> None:
-    """Today's state: a private repository, an org package this repository
-    cannot write, and two private packages."""
+    """A private repository, an org package this repository cannot write, and
+    two private packages."""
     result = _preflight(
         tmp_path, "strict", private="true", writable="clickhouse/loom-extractor", public=""
     )
@@ -168,24 +168,34 @@ def test_only_the_highest_final_version_becomes_latest(
     assert is_latest(version, published) is latest
 
 
-def test_the_image_and_the_release_take_latest_from_one_answer() -> None:
+def test_the_image_and_the_release_ask_for_latest_when_they_apply_it() -> None:
+    """Asked in the job that applies it, so a re-run after a newer tag shipped
+    does not take Latest back, and of the tags, which exist from the push on."""
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
-    assert jobs["version"]["outputs"]["latest"] == "${{ steps.latest.outputs.latest }}"
+    for name in ("docker-tag", "github-release"):
+        (answer,) = [s for s in jobs[name]["steps"] if s.get("id") == "latest"]
+        assert answer["shell"] == "bash", name  # pipefail: a failed listing fails the step
+        assert "git/matching-refs/tags/v" in answer["run"], name
+        assert "make_latest.py" in answer["run"], name
     (meta,) = [s for s in jobs["docker"]["steps"] if s.get("id") == "meta"]
-    assert (
-        "type=raw,value=latest,enable=${{ needs.version.outputs.latest == 'true' }}"
-        in (meta["with"]["tags"])
-    )
+    # metadata-action would otherwise add `:latest` to any final version itself.
+    assert meta["with"]["flavor"] == "latest=false"
+    assert "latest" not in meta["with"]["tags"]
+    (tag,) = [s for s in jobs["docker-tag"]["steps"] if s.get("name") == "Tag the scanned images"]
+    assert tag["env"]["LATEST"] == "${{ steps.latest.outputs.latest }}"
     (publish,) = [
         s for s in jobs["github-release"]["steps"] if "action-gh-release" in s.get("uses", "")
     ]
-    assert publish["with"]["make_latest"] == "${{ needs.version.outputs.latest }}"
+    assert publish["with"]["make_latest"] == "${{ steps.latest.outputs.latest }}"
+    assert "latest" not in jobs["version"].get("outputs", {})
 
 
 def test_a_dry_run_publishes_nothing() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     for name in ("docker-tag", "github-release", "pypi", "npm", "mcp-registry"):
         assert "!inputs.dry_run" in jobs[name]["if"], name
+    # A release stops at the first failing image; a dry run reports them all.
+    assert jobs["docker"]["strategy"]["fail-fast"] == "${{ !inputs.dry_run }}"
     (login,) = [s for s in jobs["docker"]["steps"] if s.get("name") == "Log in to ghcr.io"]
     assert login["if"] == "${{ !inputs.dry_run }}"
     (build,) = [s for s in jobs["docker"]["steps"] if s.get("id") == "build"]
