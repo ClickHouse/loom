@@ -334,17 +334,16 @@ schema. These rules keep that safe. The operator procedure is in
     run by N emits the key and finds it stated. No gate holds the rollout: the cost is
     that churn while N-1 serves, and after a rollback until the document is mined by N.
 31. **A new shared-folder file kind** (`docx` in a `gdrive` source's `include`): N
-    accepts the kind and writes it, since a config without `include`, and the
-    dashboard's form, take every kind. N-1 refuses to add a config that names it
-    (`BAD_CONFIG`); its `check` and `rotate` of such a source answer a server error,
-    since its probe maps every stored kind to a media type it does not have; and an N-1
-    sync worker that takes such a source's turn fails it the same way before any
-    request, so the turn is recorded `failed`, retires nothing, and the next turn by N
-    syncs the source. A source stored before N keeps its explicit `include` and never
-    lists `docx` (no op edits a config; [syncing a source](../features/knowledge.md#syncing-a-source)
-    says how to take `.docx` files in). No gate holds the rollout: the cost is a failed
-    status and a refused `check` or `rotate` while N-1 serves, and it ends once no N-1
-    replica serves.
+    accepts the kind and writes it only when a caller names it; a config without
+    `include`, and the dashboard's form, take the four kinds N-1 knows. N-1 has no
+    `docx` in its file-kind table, so it refuses to add a config that names it
+    (`BAD_CONFIG`), its `check` and `rotate` of such a source answer a server error, and
+    its sync worker fails such a source's turn before any request: the source's state
+    shows status `failed`, error `KeyError`, nothing is retired, and the next turn by N
+    syncs it. No gate holds the rollout: the cost falls only on sources whose config
+    names `docx`, and it ends once no N-1 replica serves. After a rollback it stays for
+    those sources, every file kind of them unsynced, until each is removed with its
+    documents and added again without `docx`. N+1 may take `docx` by default.
 
 ## What checks them
 

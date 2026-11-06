@@ -272,7 +272,8 @@ export function emptySourceForm(): SourceForm {
     name: "",
     kind: "gdrive",
     folders: "",
-    include: INCLUDE_OPTIONS.map((o) => o.value),
+    // Every kind but .docx, which a server of the previous release cannot sync.
+    include: INCLUDE_OPTIONS.map((o) => o.value).filter((v) => v !== "docx"),
     projects: "",
     pages: "",
     databases: "",

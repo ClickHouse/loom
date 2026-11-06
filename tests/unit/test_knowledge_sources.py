@@ -144,10 +144,7 @@ def test_add_probes_then_stores_the_credential_sealed(fake: _Store) -> None:
     out = asyncio.run(app.handle_knowledge_source_add(_add(name=" Design-Decks ")))
     assert not out.dry_run and out.name == "design-decks"
     assert out.probe.documents == 3 and out.probe.sample == ["Deck"]
-    assert out.config == {
-        "folder_ids": [FOLDER],
-        "include": ["docs", "slides", "pdf", "pptx", "docx"],
-    }
+    assert out.config == {"folder_ids": [FOLDER], "include": ["docs", "slides", "pdf", "pptx"]}
     src = fake.rows[(ORG, NS, "design-decks")]
     assert src.kind == "gdrive" and src.active and src.config == out.config
     assert SECRET not in src.credential_enc
@@ -236,6 +233,13 @@ def test_a_failed_probe_stores_nothing(
     monkeypatch.setattr(source_probes, "probe", _fail)
     assert _code(app.handle_knowledge_source_add(_add())) == code
     assert fake.rows == {}
+
+
+def test_a_folder_takes_word_documents_only_when_its_config_names_them(fake: _Store) -> None:
+    config = {"folder_ids": [FOLDER], "include": ["docx", "pdf"]}
+    out = asyncio.run(app.handle_knowledge_source_add(_add(config=config)))
+    assert out.config["include"] == ["pdf", "docx"]
+    assert fake.probes[-1][1]["include"] == ["pdf", "docx"]  # type: ignore[attr-defined]
 
 
 def test_list_and_inspect_return_config_and_sync_never_the_credential(

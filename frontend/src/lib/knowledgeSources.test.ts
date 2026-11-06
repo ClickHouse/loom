@@ -92,7 +92,7 @@ describe("the add form", () => {
       namespace: "code-x",
       name: "design-docs",
       kind: "gdrive",
-      config: { folder_ids: [FOLDER], include: ["docs", "slides", "pdf", "pptx", "docx"] },
+      config: { folder_ids: [FOLDER], include: ["docs", "slides", "pdf", "pptx"] },
       credential: "{}",
       dry_run: true,
     });
@@ -241,7 +241,7 @@ describe("the add form's other kinds", () => {
     const f = { ...named, folders: FOLDER, projects: PROJECT };
     expect(sourceAddBody("o", "x", f, true).config).toEqual({
       folder_ids: [FOLDER],
-      include: ["docs", "slides", "pdf", "pptx", "docx"],
+      include: ["docs", "slides", "pdf", "pptx"],
     });
     expect(sourceAddBody("o", "x", { ...f, kind: "linear" }, true).config).toEqual({ project_ids: [PROJECT] });
     expect(sourceFormFingerprint(f)).not.toBe(sourceFormFingerprint({ ...f, kind: "linear" }));
@@ -252,9 +252,10 @@ describe("toggleInclude", () => {
   it("keeps the options' order, so unticking and ticking again gives the same list", () => {
     const all = emptySourceForm().include;
     const without = toggleInclude(all, "docs");
-    expect(without).toEqual(["slides", "pdf", "pptx", "docx"]);
+    expect(without).toEqual(["slides", "pdf", "pptx"]);
     expect(toggleInclude(without, "docs")).toEqual(all);
     expect(toggleInclude(["pptx"], "pdf")).toEqual(["pdf", "pptx"]);
+    expect(toggleInclude(all, "docx")).toEqual(["docs", "slides", "pdf", "pptx", "docx"]);
   });
 });
 

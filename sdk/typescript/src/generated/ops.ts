@@ -3936,7 +3936,7 @@ export interface KnowledgeSourceAddInput {
   name: string;
   /** The source kind: `gdrive` (a shared folder), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording` (a m */
   kind: string;
-  /** The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all)}; linear: {projec */
+  /** The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all but docx)}; linear */
   config: Record<string, unknown>;
   /** The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an acc */
   credential: string;

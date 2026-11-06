@@ -476,7 +476,7 @@ Register a document source on a repository's trunk code namespace: a kind, the i
 | `namespace` | `str` | required | The repository's trunk code namespace. |
 | `name` | `str` | required | Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. |
 | `kind` | `str` | required | The source kind: `gdrive` (a shared folder), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording` (a meeting store's transcripts). |
-| `config` | `dict[str, Any]` | required | The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all)}; linear: {project_ids: [1-20 project ids, UUIDs]}; notion: {page_ids: [...], database_ids… |
+| `config` | `dict[str, Any]` | required | The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all but docx)}; linear: {project_ids: [1-20 project ids, UUIDs]}; notion: {page_ids: [...]… |
 | `credential` | `str` | required | The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an account that sees the projects; notion: an integration token with read content… |
 | `dry_run` | `bool` | `False` | Probe and write nothing. |
 

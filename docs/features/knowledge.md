@@ -114,7 +114,7 @@ changing the provider also clears the ids typed for the other one.
 
 A source's `config` holds ids and filters, never a host or a URL: `gdrive` takes
 `folder_ids` (1 to 20) and `include` (any of `docs`, `slides`, `pdf`, `pptx`, `docx`;
-all by default); `linear` takes `project_ids` (1 to 20 project UUIDs); `notion` takes
+all but `docx` by default); `linear` takes `project_ids` (1 to 20 project UUIDs); `notion` takes
 `page_ids` and `database_ids`, 1 to 20 ids in all, each 32 hex digits with or without
 dashes (stored dashed, lower case); `recording` takes `provider` (`meet` or `zoom`) and
 `ids` (1 to 20 meeting space ids for `meet`, numeric meeting ids for `zoom`). The
@@ -179,11 +179,11 @@ are gone; one whose documents were kept refuses it with `SOURCE_DOCUMENTS_KEPT` 
 they are deleted (`knowledge.delete`). A removed source with no documents frees its
 name at once.
 
-No op changes a stored source's `config`. A `gdrive` source keeps the `include` it was
-added with, so one added before `docx` was a kind never lists `.docx` files. To take
-them in: `remove` it with `delete_documents`, wait for the sync worker to retire its
-documents (`add` answers `SOURCE_DELETE_PENDING` until then), and add it again. Every
-document of the source is then written, embedded and mined for decisions again.
+No op changes a stored source's `config`: a `gdrive` source lists only the kinds its
+stored `include` names. To change them, `remove` it with `delete_documents`, wait for the
+sync worker to retire its documents (`add` answers `SOURCE_DELETE_PENDING` until then),
+and add it again; every document of the source is then written, embedded and mined for
+decisions again.
 
 | Code                    | When                                                                                                                                                                                                                         |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
