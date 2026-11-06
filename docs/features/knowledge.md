@@ -1145,6 +1145,6 @@ curl -s localhost:7777/v1/knowledge.search -H "Authorization: Bearer $LOOM_API_K
 - [Search and ask](./memory/search-and-ask.md) — how `memory.ask` cites documents.
 - [Retention and erasure](./memory/retention-and-erasure.md) — what erasure removes.
 - [The dashboard](./dashboard.md) — the Library page lists, uploads and downloads
-  documents.
+  documents, and finds a passage inside them, cited by revision and place.
 - [Memory architecture](../architecture/memory-architecture.md) — the chunk and
   document tables from the inside.

@@ -131,7 +131,7 @@ export function LibraryPassages({
       ? ""
       : hits.length === 0
         ? "No passage answers that."
-        : more
+        : !asked.done
           ? `The best ${hits.length} passage${hits.length === 1 ? "" : "s"}`
           : `${hits.length} passage${hits.length === 1 ? "" : "s"}`;
 
@@ -225,13 +225,13 @@ export function LibraryPassages({
           {count}
         </p>
         {shown && list}
-        {shown && more && (
+        {more && hits && (
           <BusyButton
             type="secondary"
             htmlType="button"
             busy={busy}
             onClick={() => {
-              markShown((hits ?? []).map((h) => hitKey(h)));
+              markShown(hits.map(hitKey));
               void search(asked.query, Math.min(asked.topK + TOP_K, MAX_TOP_K));
             }}
           >

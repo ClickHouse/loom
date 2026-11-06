@@ -131,6 +131,22 @@ describe("LibraryPassages", () => {
     await waitFor(() => expect(document.activeElement).toBe(rows[13]));
   });
 
+  it("stops at the hundred the op lists, still saying they are the best, not all", async () => {
+    const page = (n: number) => Array.from({ length: n }, (_, i) => ({ ...HIT, chunk_idx: i }));
+    vi.mocked(searchKnowledge).mockResolvedValueOnce(page(10));
+    for (let k = 20; k <= 100; k += 10) vi.mocked(searchKnowledge).mockResolvedValueOnce(page(k));
+    const { user } = await openAndFind("events");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The best 10 passages"));
+    for (let k = 20; k <= 100; k += 10) {
+      await user.click(screen.getByRole("button", { name: "Show more" }));
+      await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(`The best ${k} passages`));
+    }
+    expect(vi.mocked(searchKnowledge).mock.calls.at(-1)?.[2]).toBe(100);
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+    const rows = within(screen.getByRole("list", { name: "Passages found" })).getAllByRole("button");
+    await waitFor(() => expect(document.activeElement).toBe(rows[90]));
+  });
+
   it("keeps the hits on screen when Show more fails", async () => {
     const page = Array.from({ length: 10 }, (_, i) => ({ ...HIT, chunk_idx: i }));
     vi.mocked(searchKnowledge).mockResolvedValueOnce(page).mockRejectedValueOnce(new TypeError("Failed to fetch"));
