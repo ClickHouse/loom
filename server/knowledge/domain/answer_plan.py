@@ -186,11 +186,7 @@ def evidence(
     it may not cover first (no cut loses a warning), then the plan that ran (so the
     answer can tell what was counted; cut to a third of the room), the result's
     columns and as many of its first rows as fit."""
-    ran = json.dumps(
-        {k: v for k, v in plan.items() if k != "datasets" and v not in (None, [], {})},
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
+    ran = json.dumps(plan, separators=(",", ":"), ensure_ascii=False)
     lines = [
         # A null, such as the max of no rows, reads apart from an empty string.
         " | ".join("NULL" if v is None else cut(_cell(v), MAX_EVIDENCE_CELL) for v in r)

@@ -127,17 +127,14 @@ def test_the_prompt_lists_a_wide_schema_only_to_its_bound_each_name_whole() -> N
 def test_evidence_shows_the_plan_the_result_and_what_it_may_not_cover() -> None:
     cols = [{"name": "team", "type": "string"}, {"name": "n", "type": "number"}]
     rows = [[f"t{i}", i] for i in range(ap.MAX_EVIDENCE_ROWS + 5)]
-    plan = {
-        "where": [{"column": {"dataset": "o", "column": "team"}, "op": "ne", "value": "x"}],
-        "datasets": [{"dataset_id": "ds"}],
-        "joins": [],
-    }
+    # The plan as the handler hands it over: its datasets and defaults left out.
+    plan = {"where": [{"column": {"dataset": "o", "column": "team"}, "op": "ne", "value": "x"}]}
     text = ap.evidence(
         1, plan, cols, rows, truncated=False, incomplete=["o: 2 rows were rejected"],
         max_chars=100_000,
     )  # fmt: skip
     assert text.startswith("CALCULATION [knowledge.query#1]")
-    # What ran, so the answer can tell what was counted (no datasets, no empty fields).
+    # What ran, so the answer can tell what was counted.
     assert (
         'PLAN: {"where":[{"column":{"dataset":"o","column":"team"},"op":"ne","value":"x"}]}' in text
     )
