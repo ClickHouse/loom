@@ -1026,7 +1026,9 @@ run. For each original it checks the row's bytes against their size and sha256, 
 them to a new object with the store's SHA-256 check, reads the object back and hashes it,
 and then writes the catalog row naming the object. That row switches every document with
 those bytes at once. The ClickHouse copy stays until `loom.document_blobs` merges the two
-rows; `OPTIMIZE TABLE loom.document_blobs FINAL` drops it at once.
+rows; `OPTIMIZE TABLE loom.document_blobs FINAL` drops it at once. From then on a
+ClickHouse backup holds no bytes of the moved originals: back the bucket up on its own
+([backup and recovery](../operations/backup-and-recovery.md)).
 
 A move is fenced by the erasure ledger. An erasure covers an original when it is its
 namespace's or any user's of the org: a user's erasure finds that user's originals through

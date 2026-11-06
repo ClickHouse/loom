@@ -617,23 +617,6 @@ async def test_a_user_erasure_as_the_row_lands_decides_by_the_moved_object(
     stored = await blobs.locate(org, ns, held.sha, ch=ch)
     assert stored is not None and stored.location == landed[0]
 
-    # It took the row but not the object (its replica had no bucket set): the object, named
-    # by nothing, goes too.
-    org, ns, held, landed = await _raced(
-        ch, s3, monkeypatch, "objstore-race-rowonly", [("user_id", "alice")]
-    )
-
-    async def row_only() -> None:
-        await ch.execute(
-            "DELETE FROM loom.document_blobs WHERE org = {org:String} AND namespace = {ns:String}",
-            params={"org": org, "ns": ns},
-        )
-
-    finishing = asyncio.create_task(_finish_erasures(ch, org, 0.3, row_only))
-    assert await blobs.move_to_bucket(held, ch=ch) is False
-    await finishing
-    assert not _keys(s3, object_store.namespace_prefix(org, ns))
-
     # One that does not finish in time leaves the switched row to it, named.
     org, ns, held, landed = await _raced(
         ch, s3, monkeypatch, "objstore-race-slow", [("user_id", "alice")]

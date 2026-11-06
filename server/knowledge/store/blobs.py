@@ -372,13 +372,13 @@ async def _erasures_since(org: str, namespace: str, since_s: int, ch: _CHClient)
     ]
 
 
-async def _await_erasures(held: Held, since_s: int, ch: _CHClient) -> None:
-    """Wait until every erasure covering the original that had not finished at
-    `since_s` has completed; `SwitchUnconfirmed` after _ERASURE_WAIT_S."""
+async def _await_erasures(held: Held, since_s: int, ids: set[str], ch: _CHClient) -> None:
+    """Wait until the erasures `ids` (those that raced the switch) have completed;
+    `SwitchUnconfirmed` after _ERASURE_WAIT_S. One registered later reads the row."""
     deadline = time.monotonic() + _ERASURE_WAIT_S
     while True:
         raced = await _erasures_since(held.org, held.namespace, since_s, ch)
-        open_ = [e for e in raced if not e.done]
+        open_ = [e for e in raced if e.id in ids and not e.done]
         if not open_:
             return
         # A failed one is waited for too: the recovery worker retries it.
@@ -413,7 +413,8 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     DOCUMENT_UPLOAD_BUDGET_S of the write: past `document_blob_min_age_seconds` the
     bucket walk may take an object no row names. An object no row will name (a row gone
     or replaced meanwhile, an erasure that overtook the copy, a write past the budget)
-    is deleted at once; one a crash leaves is the bucket walk's once it is old enough.
+    is deleted at once; one a crash or a failed bucket call leaves is the bucket walk's
+    once it is old enough.
     The new row is a later version of the same key: the ClickHouse row's bytes stay
     until the table merges the two. The upload records are keyed by the sha and stay
     as they are.
@@ -455,7 +456,11 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     async with objects.transfer() as lease:
         started = time.monotonic()  # as an upload's: from the write, not the slot's wait
         await objects.put(loc, data, held.sha, lease)
-    back = await objects.read(loc)
+    try:
+        back = await objects.read(loc)
+    except objects.ObjectStoreError:
+        await objects.delete(loc.bucket, [loc.key])  # no row names it yet
+        raise
     if back is not None and hashlib.sha256(back).hexdigest() != held.sha:
         await objects.delete(loc.bucket, [loc.key])
         raise CorruptOriginal("bytes read back from the bucket do not hash to its sha256")
@@ -521,8 +526,7 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
     - none: the switch stands;
     - a namespace's: the move is taken back at once;
     - a user's: once it has finished, the move is taken back if the erasure took the
-      moved object, its object deleted if the erasure took the row alone, and it stands
-      if both are still there.
+      moved object, and stands if it kept it.
 
     A read or delete that fails here leaves the switched row, reported
     (`SwitchUnconfirmed`)."""
@@ -538,16 +542,11 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
         # originals; any other is waited for and decided by the moved object.
         taken = any(e.deletes_namespace(held.namespace) for e in raced)
         if not taken:
-            await _await_erasures(held, since, ch)
+            await _await_erasures(held, since, {e.id for e in raced}, ch)
             # Listed, not read: whether it is there is all that decides.
             taken = not await objects.count_under(loc.bucket, loc.key)
         if not taken:
-            if await _row_names(held, loc, ch):
-                return True  # the erasure kept the original
-            # It took the row but not the object (a replica without the bucket set
-            # deletes rows only): the object holds bytes nothing names. It goes now.
-            await objects.delete(loc.bucket, [loc.key])
-            return False
+            return True  # the erasure kept the original
     except SwitchUnconfirmed:
         raise
     except Exception as e:  # the row is switched: an unread ledger or object is reported, not lost
@@ -564,16 +563,6 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
             moved=False,
         ) from e
     return False
-
-
-async def _row_names(held: Held, loc: objects.Location, ch: _CHClient) -> bool:
-    """Whether a row of the original still names the move's object."""
-    with sequential_reads():
-        row = await ch.query_one(
-            f"SELECT count() AS n FROM {TABLE} WHERE {_KEY} AND location = {{loc:String}}",
-            params={"org": held.org, "ns": held.namespace, "sha": held.sha, "loc": loc.uri()},
-        )
-    return bool(row and int(row["n"]))
 
 
 async def _unwrite(held: Held, loc: objects.Location, ch: _CHClient) -> None:

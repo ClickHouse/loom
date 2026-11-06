@@ -17,7 +17,7 @@ from server.knowledge.store import blobs
 
 log = logging.getLogger(__name__)
 
-# Keys read per page of a namespace's walk, and namespaces per page of their listing;
+# Rows read per page of a namespace's walk, and namespaces per page of their listing;
 # each original is moved one at a time.
 _PAGE = 200  # not a setting: a page of a one-off operator walk
 
@@ -110,11 +110,10 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> bool:
         out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
         return False
     except blobs.SwitchUnconfirmed as e:
+        # Listed as unconfirmed; counted as moved only when the switch stands.
         if e.moved:
             out.moved += 1
             out.bytes += held.size
-        else:
-            out.skipped += 1  # the erasure took it; only its take-back is left
         out.unconfirmed.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
         return False
     except (

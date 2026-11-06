@@ -144,5 +144,5 @@ async def test_an_erased_original_whose_take_back_failed_is_not_counted_moved(
     monkeypatch.setattr(blobs, "fence", fence)
     monkeypatch.setattr(blobs, "move_to_bucket", move)
     result = await originals.migrate_originals(org="acme", namespace="docs")
-    assert (result.moved, result.bytes, result.skipped) == (0, 0, 1)
+    assert (result.moved, result.bytes, result.skipped) == (0, 0, 0)
     assert len(result.unconfirmed) == 1
