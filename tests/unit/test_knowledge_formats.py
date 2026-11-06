@@ -148,3 +148,15 @@ async def test_a_service_read_since_its_failed_listing_counts_again(
     hosts.apps["sqlx"] = _declaring(["sql"])
     await extractors.capabilities("http://sqlx")
     assert (await extractors.available_formats(timeout_s=0.2))["sql"] == "http://sqlx"
+
+
+async def test_a_fresh_read_wins_over_a_mark_a_slower_read_left(
+    hosts: _Hosts, settings_override: Any
+) -> None:
+    # A listing's hung read times out after an ingest's read of the same service cached
+    # its capabilities: the mark it then leaves does not hide what is cached.
+    hosts.apps["sqlx"] = _declaring(["sql"])
+    settings_override(document_extractors_json=json.dumps({"sql": "http://sqlx"}))
+    await extractors.capabilities("http://sqlx")
+    extractors._unreadable["http://sqlx"] = time.monotonic() + 60
+    assert (await extractors.available_formats(timeout_s=0.2))["sql"] == "http://sqlx"

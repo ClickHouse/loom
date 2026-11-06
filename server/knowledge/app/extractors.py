@@ -228,6 +228,10 @@ async def _formats_within(url: str, timeout_s: float) -> frozenset[str] | None:
 async def _declared_within(url: str, timeout_s: float) -> frozenset[str]:
     """`_formats_within` for a listing: nothing for a service not read, which is not
     read again for a minute."""
+    # A fresh read (an ingest's) wins over a mark a slower read left after it.
+    hit = _declared.get(url)
+    if hit is not None and hit[0] > time.monotonic():
+        return hit[1].formats
     if _unreadable.get(url, 0.0) > time.monotonic():
         return frozenset()
     formats = await _formats_within(url, timeout_s)

@@ -857,11 +857,6 @@ class KnowledgeIngestCancelOutput(BaseModel):
     cancelled: bool = False
 
 
-# ============================================================
-# knowledge.dataset_get / knowledge.dataset_approve
-# ============================================================
-
-
 class KnowledgeFormatsInput(BaseModel):
     """The document formats this deployment reads, as `knowledge.ingest` sends
     them to its extractors, and the upload's limits."""
@@ -892,6 +887,11 @@ class KnowledgeFormatsOutput(BaseModel):
     refused_extensions: list[str] = Field(default_factory=list)
     # The format of a file whose name and media type name none.
     default_format: str = ""
+
+
+# ============================================================
+# knowledge.dataset_get / knowledge.dataset_approve
+# ============================================================
 
 
 class DatasetColumnOut(BaseModel):
