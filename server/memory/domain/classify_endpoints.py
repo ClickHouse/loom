@@ -18,20 +18,31 @@ import httpx
 from pydantic import AfterValidator
 
 from server.settings import settings
+from server.settings.catalog import url_host
+
+
+def via_gateway(url: str) -> bool:
+    """Whether a classifier at `url` is called as a model call, through the gateway:
+    while the gateway is required, or at one of its listed hosts."""
+    return settings.gateway_required() or url_host(url.strip()) in settings.gateway_hosts()
 
 
 def classify_refusal(url: str) -> str:
     """Why a classifier at `url` is refused; "" when it may be called (a host off the
     gateway's network is still vetted at the call)."""
-    if not url.strip():
+    url = url.strip()
+    if not url:
         return ""
-    if not settings.gateway_required():
+    if not via_gateway(url):
         # Parsed as the call parses it (`webhooks.pinned_target`), so both read one host.
         try:
-            parts = urlsplit(url.strip())
+            parts = urlsplit(url)
             host = (parts.hostname or "").lower()
+            parts.port  # noqa: B018 — an invalid port raises here, as at the call
         except ValueError:
             return "it is not a valid URL"
+        if not host:
+            return "it names no host"
         private = host in settings.memory_classify_private_host_set()
         if parts.scheme != "https" and not (private and parts.scheme == "http"):
             return "it must be https"
@@ -39,7 +50,7 @@ def classify_refusal(url: str) -> str:
     host = settings.off_gateway(url)
     if host:
         return f"{host} is not in LOOM_INFERENCE_GATEWAY_HOSTS"
-    parsed = httpx.URL(url.strip())  # off_gateway parsed it already
+    parsed = httpx.URL(url)  # off_gateway parsed it already
     if parsed.scheme != "https" or parsed.port is not None:
         return "it must be https at the default port"
     return ""
@@ -55,7 +66,7 @@ def check_classify_endpoint(value: str | None) -> str | None:
             else ""
         )
         raise ValueError(f"classify_endpoint: {refusal}{why}")
-    return value
+    return value.strip() if value else value  # stored as the call reads it
 
 
 ClassifyEndpoint = Annotated[str | None, AfterValidator(check_classify_endpoint)]

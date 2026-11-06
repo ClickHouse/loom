@@ -292,3 +292,61 @@ def test_a_plain_answer_through_httpx_is_read(
         lambda **kw: real(transport=httpx.MockTransport(_answer), follow_redirects=False),
     )
     assert _classify("https://classifier.example/c") == "decision"
+
+
+@pytest.mark.parametrize("url", ["https:///c", "https://", "https://classifier.example:99999/c"])
+def test_an_endpoint_the_call_could_never_reach_is_refused_at_registration(url: str) -> None:
+    assert classify_refusal(url) != ""
+
+
+def test_registration_stores_the_endpoint_as_the_call_reads_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "memory_classify_private_hosts", "classifier.local")
+    assert check_classify_endpoint(" http://classifier.local:9000/c ") == (
+        "http://classifier.local:9000/c"
+    )
+
+
+def test_a_listed_gateway_host_is_called_as_a_model_call_though_not_required(
+    monkeypatch: pytest.MonkeyPatch, client: type[_Client]
+) -> None:
+    """With gateway hosts listed but the gateway not required, a classifier on one of
+    them still goes through the model client, with its identity headers, as before."""
+    from server.clients import _http
+
+    posted: list[str] = []
+
+    class _ModelClient:
+        async def post(self, url: str, **kw: Any) -> Any:
+            posted.append(url)
+            raise ConnectionRefusedError("down")
+
+    from server.llm import customer
+
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
+    monkeypatch.setattr(_http, "get_model_client", lambda: _ModelClient())
+    monkeypatch.setattr(customer, "headers", lambda who: {})
+    assert _classify("https://gateway.example/classify") == ""
+    assert posted == ["https://gateway.example/classify"] and client.seen == []
+
+
+def test_a_redirect_is_not_followed(monkeypatch: pytest.MonkeyPatch, vetted: None) -> None:
+    import httpx
+
+    asked: list[str] = []
+
+    def _answer(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(302, headers={"location": "http://127.0.0.1:8123/"})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        classify.httpx,
+        "AsyncClient",
+        lambda **kw: real(transport=httpx.MockTransport(_answer), **kw),
+    )
+    degradations.begin()
+    assert _classify("https://classifier.example/c") == ""
+    assert asked == ["https://203.0.113.7/c"]
+    assert degradations.current() == ["classify: caller_type_kept (HTTPStatusError)"]

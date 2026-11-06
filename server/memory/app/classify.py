@@ -39,7 +39,7 @@ from server.clients import _http
 from server.core import webhooks
 from server.llm import customer
 from server.memory.app.log_once import LogOnce
-from server.memory.domain.classify_endpoints import classify_refusal
+from server.memory.domain.classify_endpoints import classify_refusal, via_gateway
 from server.observability import degradations as _degradations
 from server.observability import provider_health as _provider_health
 from server.settings import settings
@@ -66,6 +66,7 @@ async def classify(
     when the response's memory_type isn't in valid_types (when
     valid_types is non-empty).
     """
+    endpoint = endpoint.strip()
     if not endpoint or classify_refusal(endpoint):
         # Refused (see classify_refusal): no call; the caller's type stays.
         return ""
@@ -77,7 +78,7 @@ async def classify(
     # Outside the fail-open: a refused call is an error, not a kept type.
     who = await customer.require()
     try:
-        if settings.gateway_required():
+        if via_gateway(endpoint):
             # The model client, never redirected (the URL is a namespace's): its hook refuses
             # a host off the gateway, sends the identity headers only to the gateway's hosts,
             # and reads a gateway's refusal of the call's identity (server/clients/_http.py).
