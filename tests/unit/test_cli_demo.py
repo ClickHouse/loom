@@ -91,7 +91,8 @@ class FakeServer:
             return 200, {"ingestion_id": "job-1", "state": "pending"}
         if op == "knowledge.ingest_status":
             self.polls += 1
-            return 200, {"found": True, "state": "processing"} if self.polls == 1 else self.job
+            running = {"state": "processing"} if self.polls == 1 else self.job
+            return 200, {"found": True, **running}
         if op == "knowledge.search":
             return 200, {"results": HITS, "embedding_model": "fake-ngram-1024"}
         if op == "knowledge.synthesize":
@@ -266,6 +267,13 @@ def test_demo_failed_job_names_its_code_and_the_extractor(repo: Path, serve, cap
     assert "knowledge.search" not in [op for op, _, _ in fake.posts]
 
 
+def test_demo_job_the_server_cannot_find_stops_at_once(repo: Path, serve, capsys) -> None:
+    fake = serve(fake_llm=True, job={"found": False, "state": ""})
+    assert demo._cmd_demo(_args()) == 1
+    assert fake.polls == 2  # no waiting out the deadline for a job that is not there
+    assert "no job job-1 in this namespace" in capsys.readouterr().err
+
+
 def test_demo_job_that_never_ends_names_the_worker(
     repo: Path, serve, capsys, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -326,7 +334,7 @@ def test_identity_from_token_claims_then_defaults(repo: Path, serve) -> None:
     assert demo.jwt_claims("not-a-jwt") == {}
 
 
-# ---- wiring + the shared ingest body ----------------------------------------------------------
+# ---- wiring + the HTTP seams -------------------------------------------------------------------
 
 
 def test_loom_demo_is_registered_on_the_cli(monkeypatch: pytest.MonkeyPatch) -> None:

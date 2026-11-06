@@ -101,7 +101,7 @@ def resolve_identity(args: argparse.Namespace, token: str) -> tuple[str, str]:
     return org, namespace
 
 
-# ---- 1. ingest (the `make ingest` code path) ---------------------------------------
+# ---- 1. ingest (upload, knowledge.ingest, poll) ----------------------------------
 
 
 def ingest_file(
@@ -138,7 +138,8 @@ def ingest_file(
                 state,
                 _explain_http("knowledge.ingest_status", status, state, base_url),
             )
-        if state.get("state") in _INGEST_DONE or time.monotonic() >= deadline:
+        done = not state.get("found") or state.get("state") in _INGEST_DONE
+        if done or time.monotonic() >= deadline:
             return source_uri, state, _job_error(state, ask["ingestion_id"])
         _sleep(1.0)
 
@@ -148,6 +149,8 @@ def _job_error(state: dict[str, Any], ingestion_id: str) -> str:
     now = str(state.get("state") or "")
     if now in ("ready", "partial"):
         return ""
+    if not state.get("found"):
+        return f"knowledge.ingest_status: no job {ingestion_id} in this namespace."
     if now not in _INGEST_DONE:
         return (
             f"knowledge.ingest: the job is still {now or 'unknown'} after {INGEST_WAIT_S}s — a "

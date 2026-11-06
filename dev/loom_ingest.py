@@ -146,7 +146,8 @@ def _parse_s3_uri(uri: str) -> tuple[str, str]:
 
 def _is_s3_prefix(uri: str) -> bool:
     """A prefix is anything ending with `/` or with no extension on the
-    final segment. Single objects always have a file extension."""
+    final segment: a key with no extension is listed as a prefix, and the
+    objects found are named by their stored media type."""
     if uri.endswith("/"):
         return True
     last_segment = uri.rsplit("/", 1)[-1]

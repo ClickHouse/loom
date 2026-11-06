@@ -6,8 +6,8 @@ published as a revision the SDK and the CLI report.
 - `ingest_file` publishes a Markdown file, and `wait_for_ingest` returns the job once
   it is ready, with the revision `knowledge.get` serves.
 - The CLI ingests a file and waits for it, printing the revision it published; a second
-- `loom demo` uploads its file, waits for the job and finds the passage it asked about.
   run publishes the next revision; `--no-wait` prints the job and returns.
+- `loom demo` uploads its file, waits for the job and finds the passage it asked about.
 """
 
 from __future__ import annotations
