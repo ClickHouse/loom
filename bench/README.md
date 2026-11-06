@@ -281,8 +281,9 @@ Access patterns where vector-only memory falls down.
 - **`docparse/`** — how well the reference extractor reads the documents Loom ingests
   (design docs, specs, runbooks and decks as PDF, DOCX and PPTX, scanned pages among
   them): text, reading order, headings, tables, locators and silent loss against the gold
-  labels of a committed corpus, split into dev and held-out, offline
-  (`python -m bench.docparse --help`).
+  labels of a committed corpus, split into dev and held-out, offline; and, against a
+  running Loom, what each parse does for `knowledge.search` citations and decision
+  extraction (`python -m bench.docparse --help`).
 
 ## Tracker
 

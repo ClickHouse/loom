@@ -25,6 +25,22 @@ difference of each from the first with a 95% bootstrap interval:
   complete that lost one (or a page's text, or a tenth of the words); must be 0;
 - seconds and peak memory per file.
 
+`downstream` asks what a parse does for Loom: each system's artifacts (`run
+--artifacts DIR` writes the reference extractor's; `artifacts PARSES.jsonl
+--out DIR` makes them from another parser's normalized parses) are ingested
+into its own namespace of a running Loom through a stub extractor the harness
+serves, and the same queries go to `knowledge.search` (recall at 1 and 5, the
+hit cited by its page); with `--decisions N`, N documents are mined by
+decision extraction in a dry run (the share of claims whose quotes are in the
+parsed text, and of those quotes in the gold text). The server's document
+extractor must be the stub (`LOOM_DOCUMENT_EXTRACTOR_URL=http://127.0.0.1:7882`,
+its token in `LOOM_DOCUMENT_EXTRACTOR_TOKEN`), and `--decisions` runs in this
+process with the server's settings and a real LLM (`downstream.py` says which):
+
+    PYTHONPATH=$PWD .venv/bin/python -m bench.docparse run --out new.jsonl --artifacts art/new
+    PYTHONPATH=$PWD .venv/bin/python -m bench.docparse downstream before=art/old after=art/new \\
+        --base-url http://127.0.0.1:7880 --out downstream.json
+
 The split (`dev`, `heldout`, `all`) is in the gold: a parser change is tuned on
 `dev` and ships only when `heldout` does not get worse.
 
@@ -52,6 +68,8 @@ The PEP pages are `https://peps.python.org/pep-0NNN/` saved as `pepNNN.html`
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -76,6 +94,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     r.add_argument("--only", default="", help="comma-separated file names")
     r.add_argument("--corpus", type=Path, default=CORPUS)
+    r.add_argument(
+        "--artifacts", type=Path, help="also write each file's artifact here, as <file>.json"
+    )
     s = sub.add_parser("score", help="score parses against the gold labels")
     s.add_argument(
         "parses", nargs="+", help="NAME=PARSES.jsonl, the first the one the others are paired with"
@@ -83,6 +104,37 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--split", choices=["dev", "heldout", "all"], default="all")
     s.add_argument("--json", type=Path)
     s.add_argument("--corpus", type=Path, default=CORPUS)
+    d = sub.add_parser(
+        "downstream", help="ingest each system's artifacts into a running Loom and search them"
+    )
+    d.add_argument(
+        "artifacts",
+        nargs="+",
+        help="NAME=DIR of <file>.json artifacts, the first the one the others are paired with",
+    )
+    d.add_argument(
+        "--base-url", required=True, help="a Loom whose document extractor is the stub's URL"
+    )
+    d.add_argument("--org", default="docparse")
+    d.add_argument("--stub-port", type=int, default=7882)
+    d.add_argument(
+        "--token",
+        default=os.environ.get("LOOM_DOCUMENT_EXTRACTOR_TOKEN", ""),
+        help="the token the server sends",
+    )
+    d.add_argument(
+        "--decisions",
+        type=int,
+        default=0,
+        help="mine this many documents (needs a real LLM; see downstream.py)",
+    )
+    d.add_argument("--out", type=Path, required=True)
+    d.add_argument("--corpus", type=Path, default=CORPUS)
+    c = sub.add_parser(
+        "artifacts", help="turn a parser's normalized parses into artifacts the stub serves"
+    )
+    c.add_argument("parses", type=Path)
+    c.add_argument("--out", type=Path, required=True)
     b = sub.add_parser("build", help="regenerate the corpus and its gold labels")
     b.add_argument("--src", type=Path, required=True, help="the directory holding pepNNN.html")
     b.add_argument(
@@ -95,13 +147,39 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "run":
         from bench.docparse.run import run
 
-        run(
+        if args.artifacts:
+            args.artifacts.mkdir(parents=True, exist_ok=True)
+        only = set(filter(None, args.only.split(","))) or None
+        run(args.corpus, args.out, args.extractor, args.python, only, args.artifacts)
+    elif args.cmd == "downstream":
+        from bench.docparse import downstream
+
+        if bad := [p for p in args.artifacts if "=" not in p]:
+            ap.error(f"artifacts are NAME=DIR, not {bad[0]}")
+        systems = {p.split("=", 1)[0]: Path(p.split("=", 1)[1]) for p in args.artifacts}
+        out = downstream.run(
+            args.base_url,
+            args.org,
             args.corpus,
-            args.out,
-            args.extractor,
-            args.python,
-            set(filter(None, args.only.split(","))) or None,
+            systems,
+            args.stub_port,
+            args.token,
+            decide=args.decisions,
         )
+        args.out.write_text(json.dumps(out, indent=1))
+        print(
+            json.dumps(
+                {"search": out["report"]["ALL"], "decisions": out.get("decisions", {})}, indent=1
+            )
+        )
+    elif args.cmd == "artifacts":
+        from bench.docparse.downstream import artifact_from_parse
+
+        args.out.mkdir(parents=True, exist_ok=True)
+        for line in args.parses.read_text().splitlines():
+            parse = json.loads(line)
+            artifact = artifact_from_parse(parse, parse["file"].rsplit(".", 1)[-1])
+            (args.out / f"{parse['file']}.json").write_text(json.dumps(artifact))
     elif args.cmd == "score":
         from bench.docparse.score import score
 

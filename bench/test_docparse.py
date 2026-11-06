@@ -527,3 +527,133 @@ def test_a_build_the_container_sees_empties_its_directory_markers_last(
         assert [p.name for p in out.iterdir()] == ["_work"] and list(d.work.iterdir()) == []
     order = [n for n in removed if not n.startswith("mount-")]
     assert order.index("gold.jsonl") > max(order.index("a.pdf"), order.index("z.pdf"))
+
+
+def test_a_normalized_parse_becomes_an_artifact_the_server_accepts() -> None:
+    from bench.docparse.downstream import artifact_from_parse
+    from server.knowledge.domain.extract import parse_artifact
+
+    for g in _gold():
+        a = artifact_from_parse(_perfect(g), g["format"])
+        read = parse_artifact(json.dumps(a).encode(), fmt=g["format"], max_bytes=1 << 26)
+        assert len(read.blocks) == len([b for b in g["blocks"] if b["text"].strip()]), g["file"]
+        assert len(read.tables) == len([t for t in g["tables"] if len(t["rows"]) >= 2]), g["file"]
+    broken = artifact_from_parse({"complete": False, "blocks": [], "tables": []}, "pdf")
+    assert not parse_artifact(
+        json.dumps(broken).encode(), fmt="pdf", max_bytes=1 << 20
+    ).coverage.complete
+    block = {"page_start": 1, "page_end": 1, "notes": False}
+    parse = {
+        "complete": False,
+        "failed": [{"unit": "page 2", "reason": "its text needs OCR"}],
+        "blocks": [
+            {**block, "type": "heading", "text": "Design", "level": 1},
+            {**block, "type": "heading", "text": "Storage", "level": 2},
+            {**block, "type": "paragraph", "text": "Rows are kept by tenant.", "level": 0},
+        ],
+        "tables": [],
+    }
+    read = parse_artifact(
+        json.dumps(artifact_from_parse(parse, "pdf")).encode(), fmt="pdf", max_bytes=1 << 20
+    )
+    assert read.blocks[-1].section_path == ("Design", "Storage")
+    assert [(f.unit, f.reason) for f in read.coverage.failed] == [("page 2", "its text needs OCR")]
+
+
+def test_the_queries_are_paragraphs_and_table_rows_with_their_pages() -> None:
+    from bench.docparse.downstream import queries
+
+    qs = queries(_gold())
+    assert {q["kind"] for q in qs} == {"paragraph", "table row"}
+    for q in qs:
+        assert (
+            len(q["query"].split()) >= 2
+            and q["answer"]
+            and q["file"].endswith((".pdf", ".docx", ".pptx"))
+        )
+        assert q.get("within", False) == (q["kind"] == "table row")
+        if q["file"].endswith(".pdf"):
+            assert q["page"] >= 1 and q["page_end"] >= q["page"], q
+    assert (
+        max(
+            sum(1 for q in qs if q["file"] == f and q["kind"] == "paragraph")
+            for f in {q["file"] for q in qs}
+        )
+        == 3
+    )
+
+
+def test_the_report_pairs_each_system_with_the_first() -> None:
+    from bench.docparse.downstream import report
+
+    qs = [{"file": f"f{i}.pdf", "category": "c"} for i in range(6)]
+    results = {
+        "a": [{"found": 1, "cited": 0}] * 6,
+        "b": [{"found": 1, "cited": 1}] * 6,
+    }
+    out = report(["a", "b"], qs, results, 5)
+    assert out["ALL"]["cited@1"]["a"] == 0.0 and out["ALL"]["cited@1"]["b"] == 1.0
+    mean, lb, ub = out["ALL"]["cited@1"]["b-a"]
+    assert mean == 1.0 and lb == ub == 1.0 and out["c"]["n"] == 6
+
+
+def test_a_hit_is_found_by_its_words_and_cited_by_its_pages() -> None:
+    from bench.docparse.downstream import judge
+
+    q = {
+        "file": "a.pdf",
+        "answer": ["the", "ingest", "worker", "retries"],
+        "page": 2,
+        "page_end": 2,
+    }
+    hit = {
+        "source_uri": "docparse://a.pdf",
+        "content": "The ingest worker retries.",
+        "locator": {"page_start": 2, "page_end": 2},
+    }
+    assert judge(q, [hit]) == {"found": 1, "cited": 1}
+    wide = {**hit, "locator": {"page_start": 1, "page_end": 5}}
+    other = {**hit, "source_uri": "docparse://b.pdf"}
+    assert judge(q, [other, wide, hit]) == {"found": 2, "cited": 3}
+    row = {**q, "within": True, "page": 2, "page_end": 4}
+    assert judge(row, [{**hit, "locator": {"page_start": 3, "page_end": 4}}])["cited"] == 1
+    assert judge(row, [{**hit, "locator": {"page_start": 1, "page_end": 2}}])["cited"] == 0
+
+
+def test_the_stub_serves_a_systems_artifact_to_the_token_alone(tmp_path: Path) -> None:
+    import socket
+    import threading
+
+    import httpx
+
+    from bench.docparse.downstream import _Stub
+
+    (tmp_path / "a.pdf.json").write_text('{"schema_version": 1}')
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    stub = _Stub(port, "t" * 16, {"one": tmp_path})
+    stub.system = "one"
+    threading.Thread(target=stub.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{port}"
+        auth = {"authorization": "Bearer " + "t" * 16}
+        caps = httpx.get(f"{base}/v1/capabilities", headers=auth).json()
+        assert {f["format"] for f in caps["formats"]} == {"pdf", "docx", "pptx"}
+        assert httpx.post(
+            f"{base}/v1/extract?format=pdf&name=a.pdf", headers=auth, content=b"%PDF"
+        ).json() == {"schema_version": 1}
+        assert (
+            httpx.post(
+                f"{base}/v1/extract?format=pdf&name=b.pdf", headers=auth, content=b""
+            ).status_code
+            == 422
+        )
+        assert httpx.get(f"{base}/v1/capabilities").status_code == 401
+        outside = httpx.post(
+            f"{base}/v1/extract?format=pdf&name=../a.pdf", headers=auth, content=b""
+        )
+        assert outside.status_code == 422  # a corpus file's name, never a path
+    finally:
+        stub.shutdown()
+        stub.server_close()
