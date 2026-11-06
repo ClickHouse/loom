@@ -23,11 +23,11 @@ import { PageContainer } from "../layout/PageContainer";
 import { canCall } from "../lib/canCall";
 import { displayAgent } from "../lib/format";
 import { openGraphAt } from "../lib/graphLink";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { useStore } from "../lib/state";
 import { DocumentInspection } from "./assistant/DocumentInspection";
 import { Inspection } from "./assistant/Inspection";
-import { InventoryPopulations, InventoryScopeNote, InventorySections } from "./assistant/Inventory";
+import { InventoryPopulations, InventoryScopeNote, InventorySections, POPULATION_OF } from "./assistant/Inventory";
 import { ReviewChanges } from "./assistant/ReviewChanges";
 import { tokenReadScope } from "./assistant/tokenScope";
 import { useScopedRead } from "./assistant/useScopedRead";
@@ -39,16 +39,22 @@ import { useScopedRead } from "./assistant/useScopedRead";
  * read is deterministic (no model) and read-only; a draft is never applied here.
  */
 
-const SUBJECTS: Array<{ value: InspectSubject; label: string; field: string; empty: string }> = [
-  { value: "user", label: "User", field: "User id", empty: "Pick a user above or type an id." },
-  { value: "agent", label: "Agent", field: "Agent", empty: "Pick an agent above or type its name." },
-  { value: "session", label: "Session", field: "Session id", empty: "Type a session id." },
-];
+// What the id field is called for each subject, and what its button says while it is empty,
+// with suggestions above it and without.
+const SUBJECT_COPY: Record<InspectSubject, { label: string; field: string; pick: string; type: string }> = {
+  user: { label: "User", field: "User id", pick: "Pick a user above or type an id.", type: "Type a user id." },
+  agent: { label: "Agent", field: "Agent", pick: "Pick an agent above or type its name.", type: "Type an agent name." },
+  session: { label: "Session", field: "Session id", pick: "Type a session id.", type: "Type a session id." },
+};
+const SUBJECTS = (Object.keys(SUBJECT_COPY) as InspectSubject[]).map((value) => ({
+  value,
+  label: SUBJECT_COPY[value].label,
+}));
 
 export function Assistant() {
   const identity = useStore((s) => s.identity);
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(identity?.namespace ?? "");
+  const { role, loading: roleLoading } = useNamespaceRoleRead(identity?.namespace ?? "");
   // The answers belong to the namespace and to the token's read scope: a token signed in
   // again with another scope (the page stays mounted) drops what the old one read.
   const tokenScope = tokenReadScope(storedToken());
@@ -81,15 +87,17 @@ export function Assistant() {
       : incomplete && scoped
         ? "Your token's read scope needs a user or session id this page does not send."
         : narrowed && !scoped
-          ? "Your token is bound to one user or session. Sign in with a token for the whole namespace to use this."
+          ? "Your token is bound to one user or session; inspecting memories and drafting need a token for the whole namespace."
           : null;
   };
   const overviewGate = gate("namespace.inventory");
   const memoryGate = gate("memory.inspect");
   const documentsGate = gate("knowledge.inspect");
   const tuneGate = gate("namespace.tune");
-  const current = SUBJECTS.find((s) => s.value === subject) ?? SUBJECTS[0];
-  const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : current.empty);
+  const copy = SUBJECT_COPY[subject];
+  const population = POPULATION_OF[subject];
+  const suggestions = inventory.data?.populations.find((p) => p.population === population)?.top ?? [];
+  const inspectBlocked = memoryGate ?? (subjectId.trim() ? null : suggestions.length ? copy.pick : copy.type);
 
   const org = identity?.org ?? "";
   const namespace = identity?.namespace ?? "";
@@ -116,11 +124,6 @@ export function Assistant() {
     });
     inspectionPanel.current?.focus();
   };
-  const suggestions =
-    subject === "session"
-      ? []
-      : (inventory.data?.populations.find((p) => p.population === (subject === "user" ? "subjects" : "agents"))?.top ??
-        []);
 
   return (
     <PageContainer>
@@ -148,7 +151,9 @@ export function Assistant() {
             </GatedButton>
           }
         />
-        {overviewGate ? (
+        {overviewGate && roleLoading ? (
+          <Loading layout="inline" label="Loading the overview" />
+        ) : overviewGate ? (
           <p className="text-sm text-text-muted">{overviewGate}</p>
         ) : (
           <>
@@ -156,8 +161,11 @@ export function Assistant() {
             {inventory.data && (
               <div aria-busy={inventory.busy || undefined} className="space-y-4">
                 <InventoryScopeNote inventory={inventory.data} />
-                <InventorySections inventory={inventory.data} />
-                <div>
+                <section aria-labelledby="assistant-holds">
+                  <SectionHeading id="assistant-holds" level={3} label="What this namespace holds" />
+                  <InventorySections inventory={inventory.data} />
+                </section>
+                <section aria-labelledby="assistant-people">
                   <SectionHeading
                     id="assistant-people"
                     level={3}
@@ -165,7 +173,7 @@ export function Assistant() {
                     hint="Pick a user or agent to see what it remembers."
                   />
                   <InventoryPopulations inventory={inventory.data} onPick={pick} pickBlocked={memoryGate} />
-                </div>
+                </section>
                 <ReadAt time={inventory.data.computed_at} />
               </div>
             )}
@@ -194,7 +202,7 @@ export function Assistant() {
                 agents the overview found and still takes any other id. */}
             <TextField
               id="assistant-subject-id"
-              label={current.field}
+              label={copy.field}
               placeholder={suggestions.length ? "Pick or type" : undefined}
               list={suggestions.length ? "assistant-subject-suggestions" : undefined}
               autoComplete="off"
@@ -302,30 +310,27 @@ export function Assistant() {
         </p>
         <GatedButton
           reason={tuneGate}
-          type="primary"
+          type="secondary"
           busy={tune.busy}
           onClick={() => tune.run((signal) => tuneNamespace(where, { signal }))}
         >
           Draft improvements
         </GatedButton>
-        {(tune.data || tune.error) && (
-          <div className="mt-4">
+        <div className="mt-3">
+          <ReadState read={tune} label="the drafts" />
+        </div>
+        {tune.data && (
+          <div className="mt-4" aria-busy={tune.busy || undefined}>
             <SectionHeading
               id="assistant-review-heading"
               level={3}
               label="Review changes"
-              count={tune.data?.proposals.length}
+              count={tune.data.proposals.length}
             />
-            <ReadState read={tune} label="the drafts" />
-            {tune.data && (
-              <div aria-busy={tune.busy || undefined}>
-                <ReviewChanges tune={tune.data} />
-                <ReadAt time={tune.data.computed_at} />
-              </div>
-            )}
+            <ReviewChanges tune={tune.data} />
+            <ReadAt time={tune.data.computed_at} />
           </div>
         )}
-        {tune.busy && !tune.data && <Loading layout="inline" label="Drafting improvements" />}
       </Panel>
     </PageContainer>
   );

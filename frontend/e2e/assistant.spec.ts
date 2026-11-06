@@ -2,10 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
 import { installApi } from "./fixtures";
 
-// The Assistant page reads only its overview on load, so the route-wide axe and layout runs
-// see no inspection, documents or drafts. This spec draws every panel it has, with the server's full-length text and a
-// long subject id, and checks it at desktop and phone width: no horizontal scroll, no axe
-// violation.
+// The Assistant page reads only its overview on load, so the route-wide axe and layout
+// runs see no inspection, documents or drafts. This spec draws every panel it has, with the
+// server's full-length text and a long subject id, and checks it at desktop and phone
+// width: no horizontal scroll, no axe violation.
 
 const LONG_ID = `user-${"x".repeat(200)}`;
 const OWN_USER =
@@ -648,6 +648,7 @@ test("the graph opens with no entity typed", async ({ page }) => {
   await page.goto("/assistant");
   await page.getByRole("button", { name: "Open the graph" }).click();
   await expect(page).toHaveURL(/\/graph/);
+  expect(page.url()).not.toContain("seed=");
 });
 
 test("a listed or cited row opens in the inspector under its whole writer identity", async ({ page }) => {

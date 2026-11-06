@@ -18,7 +18,7 @@ const PLANE_LABEL: Record<InventoryPlane, string> = {
 export function InventorySections({ inventory }: { inventory: NamespaceInventory }) {
   return (
     <div data-testid="assistant-inventory">
-      <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2" aria-label="What this namespace holds">
+      <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         {inventory.sections.map((s) => (
           <div key={s.plane} className="rounded-md border border-border px-3 py-2 min-w-0" data-plane={s.plane}>
             <dt className="text-xs text-text-muted">{PLANE_LABEL[s.plane] ?? s.plane}</dt>
@@ -46,10 +46,11 @@ export function InventorySections({ inventory }: { inventory: NamespaceInventory
   );
 }
 
-// The observed populations a person can inspect, and the subject each one is.
-const PICKABLE: Partial<Record<InventoryPopulation["population"], InspectSubject>> = {
-  subjects: "user",
-  agents: "agent",
+// The population the overview lists for each subject; sessions are not listed.
+export const POPULATION_OF: Record<InspectSubject, InventoryPopulation["population"] | null> = {
+  user: "subjects",
+  agent: "agents",
+  session: null,
 };
 
 const POPULATION_LABEL: Record<InventoryPopulation["population"], { title: string; what: string }> = {
@@ -80,7 +81,7 @@ export function InventoryPopulations({
     <ul className="space-y-3" data-testid="assistant-populations">
       {populations.map((p) => {
         const label = POPULATION_LABEL[p.population] ?? { title: p.population, what: "" };
-        const subject = PICKABLE[p.population];
+        const subject = (Object.keys(POPULATION_OF) as InspectSubject[]).find((s) => POPULATION_OF[s] === p.population);
         return (
           <li key={p.population} data-population={p.population}>
             <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
@@ -106,11 +107,14 @@ export function InventoryPopulations({
                           htmlType="button"
                           onClick={() => onPick(subject, who.name)}
                           data-testid={`pick-${subject}`}
+                          title={who.name}
                         >
                           <span className="truncate max-w-[24ch]">
                             {subject === "agent" ? displayAgent(who.name) : who.name}
                           </span>{" "}
-                          <span className="ml-1.5 text-text-muted tabular">{fmtInt(who.rows)}</span>
+                          <span className="ml-1.5 text-text-muted tabular">
+                            {fmtInt(who.rows)} <span className="sr-only">memories</span>
+                          </span>
                         </Button>
                       </Unavailable>
                     ) : (

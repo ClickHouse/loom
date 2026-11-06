@@ -76,10 +76,17 @@ export function resetNamespaceRoleCache(): void {
 }
 
 export function useNamespaceRole(namespace: string | undefined): NamespaceRole | null {
+  return useNamespaceRoleRead(namespace).role;
+}
+
+/** The role, and whether list_mine is still being read for it: a null role while `loading`
+ *  is not known yet, rather than known to be missing. */
+export function useNamespaceRoleRead(namespace: string | undefined): { role: NamespaceRole | null; loading: boolean } {
   const whoami = useStore((s) => s.whoami);
   const org = useStore((s) => s.identity?.org);
   const stored = useStore((s) => s.myNamespaces);
-  const [fetched, setFetched] = useState<MyNamespaceEntry[] | null>(null);
+  // The rows list_mine answered for `org`; null rows when the read failed.
+  const [fetched, setFetched] = useState<{ org: string; rows: MyNamespaceEntry[] | null } | null>(null);
   // list_mine is only needed when the claim alone doesn't settle the role
   // and the store doesn't already hold the rows.
   const needsFetch = !!whoami && !hasAdminClaim(whoami) && stored === null;
@@ -87,13 +94,17 @@ export function useNamespaceRole(namespace: string | undefined): NamespaceRole |
     if (!org || !needsFetch) return;
     let cancelled = false;
     fetchMine(org).then((rows) => {
-      if (!cancelled) setFetched(rows);
+      if (!cancelled) setFetched({ org, rows });
     });
     return () => {
       cancelled = true;
     };
   }, [org, needsFetch, namespace]);
-  return roleOnNamespace(whoami, stored ?? fetched, namespace ?? "");
+  const answered = fetched !== null && fetched.org === org;
+  return {
+    role: roleOnNamespace(whoami, stored ?? (answered ? fetched.rows : null), namespace ?? ""),
+    loading: needsFetch && !answered,
+  };
 }
 
 /** Whether the caller may write the namespace's guide: a known writer or admin, never a

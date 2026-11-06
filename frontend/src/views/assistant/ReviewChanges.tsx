@@ -86,9 +86,7 @@ function howToApply(p: TuneProposal): string {
   if (a.via === "environment")
     return `${who} sets the variable below in the deployment; it takes effect once each server and worker restarts.`;
   if (a.via === "admin_route") return `${who} sends the admin request below.`;
-  return a.args_complete
-    ? `${who} on this namespace sends the request below.`
-    : "No single request applies this: each writer adds the arguments below to its own requests.";
+  return a.args_complete ? `${who} on this namespace sends the request below.` : "No single request applies this.";
 }
 
 /** What the line above a write's arguments says they are. */

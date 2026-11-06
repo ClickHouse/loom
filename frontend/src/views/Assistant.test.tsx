@@ -16,6 +16,7 @@ import type {
   TuneProposal,
   WhoAmI,
 } from "../api";
+import { listMine } from "../api";
 import { ApiError } from "../lib/errors";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
@@ -26,9 +27,9 @@ import { Assistant } from "./Assistant";
 // number holds exactly: the page never prints it.
 const NS_VERSION = Number("1762156800123456789");
 
-// The Assistant page reads only on a click, through four read-only ops, and never
-// applies a draft: it renders what namespace.inventory, memory.inspect, knowledge.inspect
-// and namespace.tune answer, with what they could not read said so. The fixtures are the
+// The Assistant page reads namespace.inventory on load and memory.inspect, knowledge.inspect
+// and namespace.tune on a click, all read-only, and never applies a draft: it renders what
+// they answer, with what they could not read said so. The fixtures are the
 // shapes the server sends.
 
 const INVENTORY: NamespaceInventory = {
@@ -884,10 +885,34 @@ describe("Assistant: overview", () => {
     expect(screen.getAllByText("Your role on this namespace is not known.").length).toBeGreaterThan(0);
   });
 
+  it("reads the overview once the role is known, showing a loader rather than a refusal while it loads", async () => {
+    useStore.setState({ myNamespaces: null });
+    let answer: (rows: MyNamespaceEntry[]) => void = () => {};
+    vi.mocked(listMine).mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    render(<Assistant />);
+    expect(await screen.findByText("Loading the overview")).toBeInTheDocument();
+    const overview = screen.getByRole("region", { name: "Overview" });
+    expect(within(overview).queryByText("Your role on this namespace is not known.", { selector: "p" })).toBeNull();
+    expect(namespaceInventory).not.toHaveBeenCalled();
+    await act(async () => answer([row("team", "viewer")]));
+    await screen.findByTestId("assistant-inventory");
+    expect(namespaceInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it("says to type an id when the overview lists nobody", async () => {
+    namespaceInventory.mockResolvedValueOnce({
+      ...INVENTORY,
+      populations: INVENTORY.populations.map((p) => ({ ...p, total: 0, top: [] })),
+    });
+    render(<Assistant />);
+    await screen.findByTestId("assistant-populations");
+    expect(screen.getByRole("button", { name: "Inspect memories" })).toHaveAccessibleDescription("Type a user id.");
+  });
+
   it("shows what the namespace holds, with a section it could not count said so", async () => {
     render(<Assistant />);
     await screen.findByTestId("assistant-inventory");
-    const held = screen.getByLabelText("What this namespace holds");
+    const held = screen.getByRole("region", { name: "What this namespace holds" });
     expect(held.querySelector('[data-plane="memories"]')).toHaveTextContent("Memories42");
     expect(within(held).getByTestId("inventory-incomplete")).toHaveTextContent(
       "Not counted: read failed: TimeoutError",
@@ -911,7 +936,7 @@ describe("Assistant: overview", () => {
   it("inspects a user picked in the overview, with no typing, and moves the focus to the answer", async () => {
     render(<Assistant />);
     await screen.findByTestId("assistant-populations");
-    await userEvent.click(screen.getByRole("button", { name: "ada 12" }));
+    await userEvent.click(screen.getByRole("button", { name: "ada 12 memories" }));
     expect(inspectMemories).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "user", "ada", expect.anything());
     await screen.findByTestId("assistant-inspection");
     expect(screen.getByRole("region", { name: "Memories" })).toHaveFocus();
@@ -921,8 +946,10 @@ describe("Assistant: overview", () => {
   it("inspects an agent picked in the overview", async () => {
     render(<Assistant />);
     await screen.findByTestId("assistant-populations");
-    await userEvent.click(screen.getByRole("button", { name: "claude-code 40" }));
+    await userEvent.click(screen.getByRole("button", { name: "claude-code 40 memories" }));
     expect(inspectMemories).toHaveBeenCalledWith(expect.anything(), "agent", "claude-code", expect.anything());
+    await screen.findByTestId("assistant-inspection");
+    expect(screen.getByRole("region", { name: "Memories" })).toHaveFocus();
     expect(screen.getByLabelText("Agent")).toHaveValue("claude-code");
   });
 
@@ -977,7 +1004,7 @@ describe("Assistant: overview", () => {
     const draft = screen.getByRole("button", { name: "Draft improvements" });
     expect(draft).toHaveAccessibleDescription(/bound to one user or session/);
     await userEvent.click(draft);
-    const pick = screen.getByRole("button", { name: "ada 12" });
+    const pick = screen.getByRole("button", { name: "ada 12 memories" });
     expect(pick).toHaveAccessibleDescription(/bound to one user or session/);
     await userEvent.click(pick);
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
@@ -1094,6 +1121,7 @@ describe("Assistant: relationships", () => {
     expect(window.location.search).toContain("seed=invoices");
   });
 });
+
 describe("Assistant: inspection", () => {
   it("inspects a user: the rows filed under the user, apart from the rest", async () => {
     render(<Assistant />);
@@ -1446,6 +1474,8 @@ describe("Assistant: review changes", () => {
     render(<Assistant />);
     await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the drafts");
+    expect(screen.queryByRole("heading", { name: /Review changes/ })).toBeNull();
+    expect(screen.queryByTestId("assistant-review")).toBeNull();
   });
 
   it("is not left loading when the page comes back to a namespace it left mid-read", async () => {
@@ -1459,7 +1489,7 @@ describe("Assistant: review changes", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Draft improvements" })).not.toHaveAttribute("aria-busy"),
     );
-    expect(screen.queryByText("Drafting improvements")).toBeNull();
+    expect(screen.queryByText("Loading the drafts")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     expect(await screen.findByTestId("assistant-review")).toBeInTheDocument();
   });
@@ -1471,7 +1501,7 @@ describe("Assistant: review changes", () => {
     await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
     switchNamespace();
     await act(async () => answer(TUNE));
-    await waitFor(() => expect(screen.queryByText("Drafting improvements")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("Loading the drafts")).toBeNull());
     expect(screen.queryByTestId("assistant-review")).toBeNull();
   });
 });
