@@ -45,11 +45,15 @@ def register_knowledge_cli(sub: Any) -> None:
         "one whose catalog row still holds its bytes is written to its own object with the "
         "store's SHA-256 check, read back and hash-verified, and its row then names the "
         "object, so every document with those bytes downloads from the bucket. The "
-        "ClickHouse copy goes when loom.document_blobs merges its parts. Needs "
-        "LOOM_DOCUMENT_OBJECT_STORE=s3, so no new original lands in ClickHouse behind the "
-        "walk. Idempotent: run it again to go on after a stop. Exits 1 when an original "
-        "was not moved (bytes that do not hash to their sha256, a bucket that refused); "
-        "it stays where it was.",
+        "ClickHouse copy stays until loom.document_blobs merges its parts (OPTIMIZE TABLE "
+        "loom.document_blobs FINAL drops it now). Needs LOOM_DOCUMENT_OBJECT_STORE=s3, set "
+        "on every replica first so no new original lands in ClickHouse behind the walk. "
+        "An original an unfinished erasure covers (its namespace or an uploader) is not "
+        "moved; a move an erasure overtakes is taken back, or named to run that erasure "
+        "again. Idempotent: run it "
+        "again to go on after a stop. Exits 1 when an original was not moved (bytes that "
+        "do not hash to their sha256 or fill their size, an erasure not yet finished, a "
+        "bucket that refused); it stays where it was.",
     )
     p_move.add_argument("--org", default="", help="Only this org's originals")
     p_move.add_argument("--namespace", default="", help="Only this namespace of --org")
@@ -109,12 +113,17 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
             org=args.org, namespace=args.namespace, dry_run=bool(args.dry_run)
         )
         if args.dry_run:
-            print(f"{result.pending} original(s), {result.bytes_moved} bytes, held in ClickHouse")
+            print(f"{result.pending} original(s), {result.bytes} bytes, held in ClickHouse")
             return 0
         print(
-            f"{result.moved} original(s) moved to the bucket ({result.bytes_moved} bytes), "
-            f"{result.skipped} gone or replaced meanwhile, {len(result.errors)} not moved"
+            f"{result.moved} original(s) moved to the bucket ({result.bytes} bytes), "
+            f"{result.skipped} gone, replaced or erased meanwhile, {len(result.errors)} not moved"
         )
+        if result.moved:
+            print(
+                "the ClickHouse copies stay until loom.document_blobs merges their parts; "
+                "OPTIMIZE TABLE loom.document_blobs FINAL drops them now"
+            )
         for line in result.errors:
             print(f"error: {line}", file=sys.stderr)
         return 1 if result.errors else 0

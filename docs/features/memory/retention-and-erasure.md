@@ -166,7 +166,11 @@ flowchart TD
   an object while no bucket is configured, or one outside the configured bucket and
   prefix, fails the step rather than leaving the bytes. On either store, a user erasure
   deletes the rows in as few mutations as its originals fit in (each binds as many as one
-  ClickHouse parameter carries).
+  ClickHouse parameter carries). Moving originals from ClickHouse to the bucket
+  (`loom knowledge migrate-originals`) is fenced by this ledger: it does not move an
+  original an unfinished erasure covers, and it takes back, or names for another run of the
+  erasure, a move an erasure overtook
+  ([where originals are stored](../knowledge.md#where-originals-are-stored)).
 - **Org-wide caches.** `loom.idempotency` (replayed responses) and `loom.embedding_cache`
   (query vectors, never their text) carry the org but no namespace or end user, so an
   erasure at either scope deletes all of the org's rows in both tables. The cost is cache

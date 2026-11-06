@@ -15,16 +15,17 @@ from server.knowledge.store import blobs
 
 log = logging.getLogger(__name__)
 
-# Originals read per page of the walk; each is moved one at a time.
+# Keys read per page of a namespace's walk, and namespaces per page of their listing;
+# each original is moved one at a time.
 _PAGE = 200  # not a setting: a page of a one-off operator walk
 
 
 @dataclass
 class Migrated:
     moved: int = 0  # switched to an object in the bucket
-    bytes_moved: int = 0
-    skipped: int = 0  # gone or replaced since the walk read them
+    skipped: int = 0  # gone, replaced or erased since the walk read them
     pending: int = 0  # a dry run's originals still held in ClickHouse
+    bytes: int = 0  # of the originals moved, or with a dry run of those held
     errors: list[str] = field(default_factory=list)
 
 
@@ -33,30 +34,48 @@ async def migrate_originals(
 ) -> Migrated:
     """Move every original held in ClickHouse (of `org`, or of its `namespace`) to
     the bucket; with `dry_run`, count them. An original that fails (bytes that do
-    not hash to their sha, a bucket that refuses) is reported and left where it
-    is; the walk goes on with the next."""
+    not hash to their sha or fill their size, an erasure of its scope not yet
+    finished, a bucket that refuses) is reported and left where it is; the walk
+    goes on with the next."""
     set_query_tag("cli:knowledge-migrate-originals")
     out = Migrated()
-    after = ("", "", "")
+    for org_, ns in await _scopes(org, namespace):
+        after = ""
+        while True:
+            page = await blobs.held_in_clickhouse(org_, ns, after, _PAGE)
+            for held in page.held:
+                await _one(held, dry_run, out)
+            if not page.after:
+                break
+            after = page.after
+    return out
+
+
+async def _scopes(org: str, namespace: str) -> list[tuple[str, str]]:
+    """The (org, namespace) pairs to walk: the one named, or each holding originals."""
+    if org and namespace:
+        return [(org, namespace)]
+    pairs: list[tuple[str, str]] = []
+    after = ("", "")
     while True:
-        page = await blobs.held_in_clickhouse(after, _PAGE, org=org, namespace=namespace)
-        for held in page:
-            if dry_run:
-                out.pending += 1
-                out.bytes_moved += held.size
-                continue
-            try:
-                if await blobs.move_to_bucket(held):
-                    out.moved += 1
-                    out.bytes_moved += held.size
-                else:
-                    out.skipped += 1
-            except (blobs.CorruptOriginal, objects.ObjectStoreError) as e:
-                log.warning(
-                    "originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e
-                )
-                out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
+        page = await blobs.namespaces(after, _PAGE, org=org)
+        pairs += page
         if len(page) < _PAGE:
-            return out
-        last = page[-1]
-        after = (last.org, last.namespace, last.sha)
+            return pairs
+        after = page[-1]
+
+
+async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> None:
+    if dry_run:
+        out.pending += 1
+        out.bytes += held.size
+        return
+    try:
+        if await blobs.move_to_bucket(held):
+            out.moved += 1
+            out.bytes += held.size
+        else:
+            out.skipped += 1
+    except (blobs.CorruptOriginal, blobs.ErasureOpen, objects.ObjectStoreError) as e:
+        log.warning("originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e)
+        out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")

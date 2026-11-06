@@ -22,7 +22,9 @@ once it is older than the same age.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -43,7 +45,8 @@ log = logging.getLogger(__name__)
 
 TABLE = "loom.document_blobs"
 UPLOADS = "loom.blob_uploads"
-_KEY = "org = {org:String} AND namespace = {ns:String} AND sha256 = {sha:String}"
+_NS = "org = {org:String} AND namespace = {ns:String}"
+_KEY = f"{_NS} AND sha256 = {{sha:String}}"
 _IN_KEYS = "(org, namespace, sha256) IN {keys:Array(Tuple(String, String, String))}"
 
 # Rows written before a cutoff read from the ClickHouse clock and bound: a replicated
@@ -185,76 +188,210 @@ class Held:
     size: int
 
 
+@dataclass(frozen=True)
+class HeldPage:
+    held: list[Held]  # of the page's keys, those whose latest row is the ClickHouse store's
+    after: str  # the sha the next page starts after; '' past the namespace's last key
+
+
 async def held_in_clickhouse(
-    after: tuple[str, str, str],
-    limit: int,
-    *,
-    org: str = "",
-    namespace: str = "",
-    ch: _CHClient | None = None,
-) -> list[Held]:
-    """Up to `limit` originals, in key order after `after` (org, namespace, sha256),
-    whose latest row is the ClickHouse store's: those a move to the bucket has left.
-    `org`, and `namespace` with it, narrow the walk. Reads no data."""
+    org: str, namespace: str, after: str, limit: int, *, ch: _CHClient | None = None
+) -> HeldPage:
+    """One page of the namespace's originals: the keys of the next `limit` rows after
+    the sha `after` (a key with versions not yet merged takes a row for each), and of
+    them those whose latest row holds its bytes in ClickHouse, the ones a move to the
+    bucket has left. Each page ends past `after`, so a walk always moves on. Reads no
+    data.
+
+    The page's last key is read first, in key order on one thread, so a page reads
+    about its own rows however many the namespace holds (an aggregate over the rest of
+    the namespace with a LIMIT reads all of it); the held ones are then aggregated
+    within that key range."""
     ch = ch or _default_client()
-    where = "(org, namespace, sha256) > ({a_org:String}, {a_ns:String}, {a_sha:String})"
-    params: dict[str, object] = {
-        "a_org": after[0],
-        "a_ns": after[1],
-        "a_sha": after[2],
-        "lim": int(limit),
-    }
-    if org:
-        where += " AND org = {org:String}"
-        params["org"] = org
-    if namespace:
-        where += " AND namespace = {ns:String}"
-        params["ns"] = namespace
-    rows = await ch.query_all(
-        f"SELECT org, namespace, toString(sha256) AS sha, argMax(size, created_at) AS size "
-        f"FROM {TABLE} WHERE {where} GROUP BY org, namespace, sha256 "
-        "HAVING argMax(location, created_at) = '' "
-        "ORDER BY org, namespace, sha256 LIMIT {lim:UInt32}",
-        params=params,
+    scope = {"org": org, "ns": namespace, "after": after}
+    last = await ch.query_one(
+        f"SELECT toString(max(sha256)) AS last FROM ("
+        f"SELECT sha256 FROM {TABLE} WHERE {_NS} AND sha256 > {{after:String}} "
+        "ORDER BY sha256 LIMIT {lim:UInt32}) "
+        "SETTINGS max_threads = 1",
+        params={**scope, "lim": int(limit)},
     )
-    return [Held(str(r["org"]), str(r["namespace"]), str(r["sha"]), int(r["size"])) for r in rows]
+    upper = str(last["last"]) if last else ""
+    if not upper or upper <= after:
+        return HeldPage([], "")
+    rows = await ch.query_all(
+        f"SELECT toString(sha256) AS sha, argMax(size, created_at) AS size FROM {TABLE} "
+        f"WHERE {_NS} AND sha256 > {{after:String}} AND sha256 <= {{upper:String}} "
+        "GROUP BY sha256 HAVING argMax(location, created_at) = '' ORDER BY sha256",
+        params={**scope, "upper": upper},
+    )
+    held = [Held(org, namespace, str(r["sha"]), int(r["size"])) for r in rows]
+    return HeldPage(held, upper)
 
 
 class CorruptOriginal(Exception):
-    """An original's bytes do not hash to its sha256, in ClickHouse or read back
-    from the bucket: nothing is switched."""
+    """An original's bytes do not hash to its sha256 or do not fill its size, in
+    ClickHouse or read back from the bucket: nothing is switched."""
+
+
+class ErasureOpen(Exception):
+    """An erasure that covers the original has not finished, or one of its uploaders'
+    erasures started as its row was switched: the message says which and what to do."""
+
+
+# How far an erasure's own timestamps (the server's clock, whole seconds) may sit
+# from the ClickHouse clock a move reads, and still count as overlapping it.
+_CLOCK_MARGIN_S = 60  # not a setting: a bound on clock skew, answered conservatively
+# How long a move waits for an erasure that started while it moved, and how often it
+# reads the ledger meanwhile.
+ERASURE_WAIT_S = 600  # not a setting: a one-off operator command's patience
+_ERASURE_POLL_S = 1.0
+
+# The erasures of an org that had not finished by a moment: open, failed, or completed
+# after it.
+_ERASURES_SINCE = """
+SELECT toString(id) AS id, scope_type, scope_value, toString(status) AS status
+FROM loom.erasure_requests FINAL
+WHERE org = {org:String}
+  AND (status != 'completed'
+       OR completed_at >= fromUnixTimestamp({since:Int64}) - INTERVAL {margin:UInt32} SECOND)
+"""
+
+
+@dataclass(frozen=True)
+class _Erasure:
+    id: str
+    scope_type: str
+    done: bool
+
+
+async def _clock_s(ch: _CHClient) -> int:
+    row = await ch.query_one("SELECT toUnixTimestamp(now()) AS at")
+    if row is None:
+        raise RuntimeError("SELECT without FROM returned no row")
+    return int(row["at"])
+
+
+async def _uploaders(held: Held, ch: _CHClient) -> set[str]:
+    with sequential_reads():
+        rows = await ch.query_all(
+            f"SELECT DISTINCT user_id FROM {UPLOADS} WHERE {_KEY}",
+            params={"org": held.org, "ns": held.namespace, "sha": held.sha},
+        )
+    return {str(r["user_id"]) for r in rows}
+
+
+def _covers(scope_type: str, scope_value: str, namespace: str, uploaders: set[str]) -> bool:
+    """Whether an erasure of this scope erases an original of `namespace` uploaded by
+    `uploaders`: its namespace, a list naming it, or one of its uploaders."""
+    if scope_type == "namespace":
+        return scope_value == namespace
+    if scope_type == "namespace_list":
+        try:
+            parsed = json.loads(scope_value)
+        except json.JSONDecodeError:
+            return True  # unreadable: answered as covering
+        names = parsed.get("namespaces") if isinstance(parsed, dict) else parsed
+        return not isinstance(names, list) or namespace in names
+    if scope_type == "user_id":
+        return scope_value in uploaders
+    return True
+
+
+async def _erasures_since(
+    held: Held, since_s: int, uploaders: set[str], ch: _CHClient
+) -> list[_Erasure]:
+    """The erasures that cover the original and had not finished at `since_s`."""
+    with sequential_reads():
+        rows = await ch.query_all(
+            _ERASURES_SINCE, params={"org": held.org, "since": since_s, "margin": _CLOCK_MARGIN_S}
+        )
+    return [
+        _Erasure(str(r["id"]), str(r["scope_type"]), str(r["status"]) == "completed")
+        for r in rows
+        if _covers(str(r["scope_type"]), str(r["scope_value"]), held.namespace, uploaders)
+    ]
+
+
+async def _await_erasures(held: Held, since_s: int, uploaders: set[str], ch: _CHClient) -> None:
+    """Wait until every erasure covering the original that had not finished at
+    `since_s` has completed; `ErasureOpen` after ERASURE_WAIT_S."""
+    deadline = time.monotonic() + ERASURE_WAIT_S
+    while True:
+        open_ = [e for e in await _erasures_since(held, since_s, uploaders, ch) if not e.done]
+        if not open_:
+            return
+        if time.monotonic() >= deadline:
+            raise ErasureOpen(
+                f"{held.org}/{held.namespace}/{held.sha}: an erasure that started while it "
+                f"moved has not finished within {ERASURE_WAIT_S} s; its row and object are "
+                "left for that erasure"
+            )
+        await asyncio.sleep(_ERASURE_POLL_S)
 
 
 async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     """Copy one original from its ClickHouse row to a new object in the bucket and
     switch its catalog row to that object; every document naming the sha reads
     from the bucket from then on. False when there is nothing to move: the row went
-    (an erasure, the sweep) or was replaced since the walk read it.
+    (an erasure, the sweep) or was replaced since the walk read it, or an erasure
+    deleted the original while it moved.
 
-    The bytes are checked against the sha256 before the write, by the store as it
-    writes them, and again as read back from the bucket. The object is written
-    before the row naming it, as an upload's is; one no row comes to name (a check
-    that failed, a row that went meanwhile) is the bucket walk's once it is old
-    enough. The new row is a later version of the same key, so the ClickHouse row's
-    bytes go when the table's parts merge. The upload records are keyed by the sha
-    and stay as they are."""
+    The bytes are checked against the size and sha256 before the write, by the
+    store as it writes them, and again as read back from the bucket. The object is
+    written before the row naming it, as an upload's is; one no row comes to name (a
+    check that failed, a row that went meanwhile) is the bucket walk's once it is
+    old enough. The new row is a later version of the same key: the ClickHouse
+    row's bytes stay until the table merges the two. The upload records are keyed
+    by the sha and stay as they are.
+
+    A move copies bytes an erasure may be deleting, so it is fenced by the erasure
+    ledger, read with sequential consistency. An erasure covers the original when it
+    names its namespace or one of its uploaders (`loom.blob_uploads`).
+
+    - The move does not start while a covering erasure is unfinished (`ErasureOpen`).
+    - One registered while the object was written and read back ends the move before
+      its row: it deletes its own object, which no row names, and the original stays
+      as the erasure leaves it.
+    - One registered between that check and the row landing (the time of one insert)
+      may have deleted the original's rows first. For a namespace's erasure, which
+      deletes every original of the namespace, the move waits for it to finish and
+      deletes its row and object. A user's erasure keeps an original another writer
+      still needs, and its outcome cannot be read back once the two rows have merged,
+      so the switched row stays and `ErasureOpen` names the original: run that
+      erasure again. An erasure registered after the row landed reads it.
+    """
     ch = ch or _default_client()
+    key = f"{held.org}/{held.namespace}/{held.sha}"
+    since = await _clock_s(ch)
+    uploaders = await _uploaders(held, ch)
+    if any(not e.done for e in await _erasures_since(held, since, uploaders, ch)):
+        raise ErasureOpen(f"{key}: an erasure that covers it has not finished")
     data = await read(held.org, held.namespace, held.sha, stored=Stored(held.size, ""), ch=ch)
     if data is None:
+        with sequential_reads():
+            now = await locate(held.org, held.namespace, held.sha, ch=ch)
+        if now is not None and not now.location:
+            raise CorruptOriginal(f"{key}: bytes in ClickHouse do not fill its size")
         return False
     if hashlib.sha256(data).hexdigest() != held.sha:
-        raise CorruptOriginal(f"{held.org}/{held.namespace}/{held.sha}: bytes in ClickHouse")
+        raise CorruptOriginal(f"{key}: bytes in ClickHouse do not hash to its sha256")
     loc = objects.new_location(held.org, held.namespace, held.sha)
     async with objects.transfer() as lease:
         await objects.put(loc, data, held.sha, lease)
     back = await objects.read(loc)
-    if back is None or hashlib.sha256(back).hexdigest() != held.sha:
-        raise CorruptOriginal(f"{held.org}/{held.namespace}/{held.sha}: bytes read back")
+    if back is None:  # deleted under it: an erasure of the prefix
+        return False
+    if hashlib.sha256(back).hexdigest() != held.sha:
+        raise CorruptOriginal(f"{key}: bytes read back from the bucket do not hash to its sha256")
     # The latest row read again just before the switch: an erasure or a re-upload
     # since the walk keeps what it left.
     with sequential_reads():
         now = await locate(held.org, held.namespace, held.sha, ch=ch)
     if now is None or now.location:
+        return False
+    if await _erasures_since(held, since, uploaders, ch):
+        await objects.delete(loc.bucket, [loc.key])
         return False
     await ch.insert(
         TABLE,
@@ -270,7 +407,27 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
         ],
         settings={"async_insert": 0},
     )
-    return True
+    raced = await _erasures_since(held, since, uploaders, ch)
+    if not raced:
+        return True
+    if any(e.scope_type == "user_id" for e in raced):
+        raise ErasureOpen(
+            f"{key}: an erasure of one of its uploaders started as its row was switched to "
+            f"{loc.uri()}; run that erasure again"
+        )
+    await _await_erasures(held, since, uploaders, ch)
+    await _unwrite(held, loc, ch)
+    return False
+
+
+async def _unwrite(held: Held, loc: objects.Location, ch: _CHClient) -> None:
+    """Delete the row a move wrote and its object: the row by the location only it
+    names, then the object."""
+    await ch.execute(
+        f"DELETE FROM {TABLE} WHERE {_KEY} AND location = {{loc:String}}",
+        params={"org": held.org, "ns": held.namespace, "sha": held.sha, "loc": loc.uri()},
+    )
+    await objects.delete(loc.bucket, [loc.key])
 
 
 @dataclass(frozen=True)
@@ -373,16 +530,18 @@ async def _locations(where: str, params: dict[str, object], ch: _CHClient) -> se
 
 
 async def namespaces(
-    after: tuple[str, str], limit: int, *, ch: _CHClient | None = None
+    after: tuple[str, str], limit: int, *, org: str = "", ch: _CHClient | None = None
 ) -> list[tuple[str, str]]:
     """Up to `limit` (org, namespace) pairs holding originals, in key order after
-    `after`: the sweep walks them one namespace at a time."""
+    `after`, of `org` alone when named: the sweep and the move to the bucket walk
+    them one namespace at a time."""
     ch = ch or _default_client()
     rows = await ch.query_all(
         f"SELECT DISTINCT org, namespace FROM {TABLE} "
         "WHERE (org, namespace) > ({org:String}, {ns:String}) "
-        "ORDER BY org, namespace LIMIT {lim:UInt32}",
-        params={"org": after[0], "ns": after[1], "lim": int(limit)},
+        + ("AND org = {only:String} " if org else "")
+        + "ORDER BY org, namespace LIMIT {lim:UInt32}",
+        params={"org": after[0], "ns": after[1], "only": org, "lim": int(limit)},
     )
     return [(str(r["org"]), str(r["namespace"])) for r in rows]
 
