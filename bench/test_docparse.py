@@ -134,8 +134,11 @@ def test_a_list_items_number_is_no_extra_word() -> None:
     }
     block = {"type": "list", "page_start": 1, "page_end": 1, "level": 0, "notes": False}
     one = {"blocks": [{**block, "text": "1. Alpha beta\n2. Gamma"}], "tables": []}
-    each = {"blocks": [{**block, "text": "1. Alpha beta"}, {**block, "text": "2. Gamma"}]}
-    for p in (one, {**each, "tables": []}):
+    each = {
+        "blocks": [{**block, "text": "1. Alpha beta"}, {**block, "text": "2. Gamma"}],
+        "tables": [],
+    }
+    for p in (one, each):
         assert S.text_scores(g, p) == {"text_recall": 1.0, "text_precision": 1.0}
 
 
