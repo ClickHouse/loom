@@ -486,8 +486,10 @@ def test_a_slide_with_a_chart_beside_a_picture_ocr_read_is_not_complete(
 
 
 def _one_slide(shapes: str, parts: dict[str, str] | None = None, size: bool = True) -> bytes:
-    """A deck of one slide of `shapes` showing image `img`, the slide's layout and
-    master from `parts`, and a slide size of 12192000 x 6858000 EMU unless not `size`."""
+    """A deck of one slide of `shapes` showing image `img`, with a slide size of
+    12192000 x 6858000 EMU unless not `size`. `parts` adds parts to the deck or
+    replaces them, the slide's own relationships included; the slide names a layout
+    when it is given."""
     from tests.unit.test_document_extraction_office import _P, _rels, _slide, _zip
 
     rels = [("img", "image", "../media/image1.png")]

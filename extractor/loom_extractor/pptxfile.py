@@ -327,7 +327,7 @@ def extract_pptx(data: bytes) -> Artifact:
             except (PartError, RecursionError) as e:  # the slide is still read; its notes are not
                 failed.append(Failure(f"slide {number} notes", str(e)))
                 incomplete.add(number)
-            # its layout or master: its pictures are not read
+            # a layout or master that cannot be read: the slide's pictures are not read
             try:
                 pictured, seen, unread = _picture_texts(pkg, rels, slide, size, images, holders)
             except (PartError, RecursionError) as e:
