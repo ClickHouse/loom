@@ -68,17 +68,23 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
   the [configuration reference](../reference/configuration.md)), and skip without one.
   `tests/integration/test_knowledge_inspect_ingest.py` also asserts, through
   `knowledge.inspect`, that the server has one configured, so give the server the same
-  settings. CI starts the reference extractor before the servers (`.github/workflows/ci.yml`;
-  [running it](../../extractor/README.md)).
+  settings. CI starts the reference extractor before each part's server
+  (`.github/workflows/ci.yml`; [running it](../../extractor/README.md)).
 - CI sets `LOOM_LATENCY_BUDGET_MULTIPLIER=10`: shared runners are noisy enough that the
   default per-op budgets fire violations.
 - Tests that depend on self-signup skip in CI, which has no `LOOM_SELF_SIGNUP=open`; prefer
   minted tokens.
 - **Tiers.** `tests/integration/conftest.py` registers four markers a quick local pass can
-  deselect (`-m "not slow and not destructive"`); CI runs the whole directory. `slow`
-  spends wall clock on purpose (lease lapses, retry exhaustion), `destructive` stops
-  merges, runs `OPTIMIZE` or deletes whole scopes, `provider` needs a real embedder or LLM
-  and skips on the fakes, `recovery` drives a failure and the path back from it.
+  deselect (`-m "not slow and not destructive"`); CI runs the whole directory, in parts
+  (below). `slow` spends wall clock on purpose (lease lapses, retry exhaustion),
+  `destructive` stops merges, runs `OPTIMIZE` or deletes whole scopes, `provider` needs a
+  real embedder or LLM and skips on the fakes, `recovery` drives a failure and the path
+  back from it.
+- **Parts.** `LOOM_TEST_SHARD=k/n` runs the k-th of n parts of the collected tests. A part
+  holds whole files, dealt by test count (`tests/_shards.py`), so a module fixture is
+  built in one part only. CI splits the suite into four parts, each on its own stack, beside
+  the isolation gates part; a failure in part k reproduces with
+  `LOOM_TEST_SHARD=k/4 make test-integration`.
 - **Failure diagnostics.** A failing test's report carries its last 25 Loom requests
   (method, URL, status, `X-Request-Id`, latency) with JWTs, bearer tokens and secrets
   redacted, so the matching server log line can be found by request id.
@@ -179,7 +185,7 @@ workflow grants its jobs read-only repository access (`permissions: contents: re
 | `plugin-node-launcher` | the `bin/loom-node` launcher tests on macOS and Windows (Git Bash)                                                                                                                                                                                                               |
 | `frontend-vitest`      | vitest (unit, component, axe), in parts on separate runners                                                                                                                                                                                                                      |
 | `frontend-e2e`         | Playwright, in parts on separate runners                                                                                                                                                                                                                                         |
-| `integration`          | ClickHouse, migrations, a booted server (fake providers, workers off), `pytest tests/integration`, then `pytest tests/analyzer`                                                                                                                                                  |
+| `integration`          | parts, each with its own ClickHouse, migrations and booted server (fake providers, workers off): the numbered parts split `pytest tests/integration` (`LOOM_TEST_SHARD`), the isolation gates part the provider staging tests, the auth-on gates and `pytest tests/analyzer`     |
 | `sdk-typescript`       | `sdk_ts_gen.py --check`, `npm run check` (lint, types, version, README examples, tests), `npm run check:dist`                                                                                                                                                                    |
 | `sdk-python-package`   | builds the SDK wheel with uv, installs it into a clean venv and runs `scripts/gates/sdk_wheel_smoke.py`                                                                                                                                                                          |
 
