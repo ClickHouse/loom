@@ -253,8 +253,9 @@ export class Transport {
   /**
    * POST raw bytes to `{baseUrl}/v1/{path}` with `query` as its parameters
    * (`knowledge.upload`, which takes a file's bytes as the body). The server
-   * keeps no Idempotency-Key for it, so it is retried only on an answer that
-   * proves it never ran, and a 429 is paced as an op's is.
+   * keeps no Idempotency-Key for it, so it is retried after a connection failure
+   * and on an answer only when that proves it never ran (a second upload a retry
+   * leaves expires unused), and a 429 is paced as an op's is.
    */
   async postBytes<T = unknown>(
     path: string,

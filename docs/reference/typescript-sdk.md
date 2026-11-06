@@ -137,7 +137,9 @@ const same = await loom.memory.search({ org, namespace, query: "deploy window" }
 - `upload(scope, data, filename)` posts the bytes (`Uint8Array`, `ArrayBuffer` or a `Blob`
   such as a browser `File`) to `/v1/knowledge.upload` with their sha256 (none where Web
   Crypto is missing, as on a browser page served over plain http). It is paced on a
-  429 as an op is, and retried only on an answer that proves the server never ran it.
+  429 as an op is, retried after a connection failure, and on an answer only when it
+  proves the server never ran it (a retry after a connection that dropped once the file
+  was stored leaves a second upload, which expires unused).
 - `waitForIngest(scope, ingestionId)` polls `knowledge.ingest_status` until the job ends: a
   `TimeoutError` after `timeoutMs` (600 s by default), at once for a job not found, and an
   abort through `signal` stops it. It polls on real timers, not a `Transport`'s injected
