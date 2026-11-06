@@ -296,6 +296,7 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
         lambda org, ns: SimpleNamespace(repo="Acme/widgets"),
     )
     NAMESPACES["tracker-kj"] = _Ns(repos=("Acme/kj",))
+    wired.update({QA, DESK, "tracker-kj"})  # the maintainer reads each tracker it links
     try:
         out = await adm.handle_code_repo_set_source(
             CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[DESK, QA])
@@ -319,6 +320,13 @@ async def test_set_source_writes_the_ordered_list(wired, monkeypatch) -> None:
                 CodeRepoSetSourceInput(
                     org=ORG, namespace=CODE, tracker_namespaces=[QA, "tracker-gone"]
                 )
+            )
+        # A tracker the maintainer cannot read is refused as a missing one: linking it would
+        # open it to every reader of the repository.
+        wired.discard(DESK)
+        with pytest.raises(ValidationError, match="register its source first"):
+            await adm.handle_code_repo_set_source(
+                CodeRepoSetSourceInput(org=ORG, namespace=CODE, tracker_namespaces=[DESK])
             )
     finally:
         NAMESPACES.pop("tracker-kj", None)

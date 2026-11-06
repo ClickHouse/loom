@@ -236,6 +236,19 @@ def test_a_one_entry_list_is_authorized_before_it_runs(monkeypatch: pytest.Monke
     try:
         with pytest.raises(AuthInsufficientError, match="code-secret"):
             asyncio.run(h.handle_code_search(_inp(namespaces=["code-secret"])))
+
+        # the namespace the caller reads is searched, as the plain single search
+        class _Stop(Exception):
+            pass
+
+        def _stop(org: str, ns: str) -> tuple[str, str]:
+            if ns == "code-default" and org == "acme":
+                raise _Stop(ns)
+            return org, ns
+
+        monkeypatch.setattr(h, "resolve_code_identity", _stop)
+        with pytest.raises(_Stop, match="code-default"):
+            asyncio.run(h.handle_code_search(_inp(namespaces=["code-default"])))
     finally:
         set_current_auth(None)
 

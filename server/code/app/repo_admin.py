@@ -656,7 +656,11 @@ async def handle_code_repo_set_source(input: Any) -> Any:
 
 
 async def _tracker_or_refuse(org: str, qa: str) -> Any:
-    """The tracker namespace `qa` names, or NOT_A_TRACKER_NAMESPACE."""
+    """The tracker namespace `qa` names, or NOT_A_TRACKER_NAMESPACE, also when the
+    caller cannot read it: a bound tracker is read by whoever reads the repository,
+    so binding one widens its readers, and an unreadable name answers as a missing one."""
+    from server.auth.authz import row_in_scope
+    from server.operations.base import Role
     from server.tracker.domain.namespaces import tracker_namespace
 
     if tracker_namespace(org, qa) is None:
@@ -667,7 +671,7 @@ async def _tracker_or_refuse(org: str, qa: str) -> Any:
 
         await registry_sources.refresh_db_sources(force=True)
     target = tracker_namespace(org, qa)
-    if target is None:
+    if target is None or not await row_in_scope(org, qa, Role.VIEWER):
         raise ValidationError(
             f"{qa} is not a tracker namespace of {org} — register its source first "
             "(tracker.source.add)",

@@ -183,6 +183,11 @@ async def test_a_binding_rereads_the_registry_before_refusing(monkeypatch) -> No
     monkeypatch.setattr("server.code.store.index.CodeRepo", lambda: _Repo())
     monkeypatch.setattr(binding, "refresh_overrides", _noop)
     monkeypatch.setattr(h, "current_caller", lambda: ("alice", ORG))
+
+    async def _readable(org, ns, role=None, *, hides_answer=True):
+        return True
+
+    monkeypatch.setattr("server.auth.authz.row_in_scope", _readable)
     binding.reset_overrides_for_tests()
     out = await h.handle_code_repo_set_source(
         SimpleNamespace(org=ORG, namespace="code-kj", tracker_namespaces=["tracker-kj"])

@@ -1,46 +1,81 @@
-"""Every input field that names a namespace or org besides `org` / `namespace`
-is authorized by its handler.
+"""Every input field that names a namespace, org or inbox besides `org` /
+`namespace` is authorized by its handler.
 
 The transport gate checks the request's `org` and `namespace` only. A field
-naming another namespace (`namespaces`, `to_namespace`, `extra_namespaces`, ...)
-reaches the handler unchecked, so each one is declared here with the check its
-handler runs; a new such field fails this test until it is declared. A
-one-entry list counts too: `code.search` ran a one-entry `namespaces` as the
-search's namespace without authorizing it.
+naming another one (`namespaces`, `to_namespace`, `inbox`, ...) reaches the
+handler unchecked, so each is declared here with the function that checks it;
+a new such field fails this test until it is declared, and the function must
+exist. A one-entry list counts too: `code.search` ran a one-entry `namespaces`
+as the search's namespace without authorizing it.
+
+Out of this pattern: names that resolve to a namespace indirectly (`code.repos`'
+`repo` / `repos`, filtered by readability) and `namespace_scope` (the `all_mine`
+fan-out, which `server/auth/fanout.py` filters through the gate).
 """
 
 from __future__ import annotations
 
+import importlib
 import re
+
+import pytest
 
 from server.operations.registry import ALL_OPERATIONS
 
-# A field naming a namespace, an org or an inbox other than the gated pair.
-_SCOPE_FIELD = re.compile(r"(^|_)namespaces?$|(^|_)org$|_inbox$")
+_SCOPE_FIELD = re.compile(r"(^|_)namespaces?$|(^|_)orgs?$|(^|_)inbox(es)?$")
 
-# (op, field) -> where the handler authorizes it.
+_FANOUT = "server.code.app.search_fanout.authorize"
+# checked in the handler itself: ADMIN on both ends to promote; read the source,
+# write the target to copy
+_PROMOTE = "server.memory.app.copy_ops.handle_memory_cross_promote"
+_COPY = "server.memory.app.copy_ops.handle_memory_copy_to"
+_READABLE_INBOX = "server.tasks.app.common._load_readable_inbox"
+
+# (op, field) -> the function that authorizes the field's value.
 AUTHORIZED: dict[tuple[str, str], str] = {
-    ("code.search", "namespaces"): "search_fanout.authorize, a one-entry list included",
-    ("code.symbol", "namespaces"): "presence.py: search_fanout.authorize",
-    ("code.grep", "namespaces"): "presence.py: search_fanout.authorize",
-    ("code.symbol", "lesson_namespaces"): "code_plane_reads.lesson_namespaces: readable only",
-    ("code.verify_citations", "base_namespace"): "citations._readable_namespaces",
-    ("knowledge.search", "namespaces"): "knowledge_search: each namespace row_in_scope",
-    ("memory.for_file", "extra_namespaces"): "for_file: row_in_scope per namespace",
-    ("memory.cross_promote", "from_namespace"): "copy_ops: row_in_scope ADMIN on both ends",
-    ("memory.cross_promote", "to_namespace"): "copy_ops: row_in_scope ADMIN on both ends",
-    ("memory.cross_promote", "from_org"): "copy_ops: row_in_scope(from_org, ...)",
-    ("memory.copy_to", "from_namespace"): "copy_ops: row_in_scope ADMIN on both ends",
-    ("memory.copy_to", "to_namespace"): "copy_ops: row_in_scope ADMIN on both ends",
-    ("memory.copy_to", "from_org"): "copy_ops: row_in_scope(from_org, ...)",
-    ("procedure.fork", "from_namespace"): "procedure_evolve._assert_can_read_namespace",
-    ("procedure.fork", "from_org"): "procedure_evolve._assert_can_read_namespace",
-    ("tracker.duplicate_check", "namespaces"): "dupcheck: authorized_tracker_namespaces",
-    ("tracker.test_signal", "code_namespace"): "test_signal._code_namespace_authorized",
-    ("tracker.source.add", "namespaces"): "sources: the namespaces the source creates",
-    ("code.repo.set_source", "tracker_namespaces"): "repo_admin._tracker_or_refuse",
-    ("namespace.restore", "target_namespace"): "namespace_snapshot: account_change claim",
-    ("task.reassign", "to_inbox"): "transitions: _require_poster on the destination",
+    ("code.search", "namespaces"): _FANOUT,
+    ("code.symbol", "namespaces"): _FANOUT,
+    ("code.grep", "namespaces"): _FANOUT,
+    ("code.symbol", "lesson_namespaces"): "server.memory.app.code_plane_reads.lesson_namespaces",
+    ("code.verify_citations", "base_namespace"): "server.code.app.citations._readable_namespaces",
+    ("knowledge.search", "namespaces"): "server.knowledge.app.knowledge_search._named_namespaces",
+    ("memory.for_file", "extra_namespaces"): "server.memory.app.for_file._readable_extras",
+    ("memory.cross_promote", "from_namespace"): _PROMOTE,
+    ("memory.cross_promote", "to_namespace"): _PROMOTE,
+    ("memory.cross_promote", "from_org"): _PROMOTE,
+    ("memory.copy_to", "from_namespace"): _COPY,
+    ("memory.copy_to", "to_namespace"): _COPY,
+    ("memory.copy_to", "from_org"): _COPY,
+    ("procedure.fork", "from_namespace"): (
+        "server.memory.app.procedure_evolve._assert_can_read_namespace"
+    ),
+    ("procedure.fork", "from_org"): "server.memory.app.procedure_evolve._assert_can_read_namespace",
+    ("tracker.duplicate_check", "namespaces"): (
+        "server.tracker.app.dupcheck_fanout.readable_tracker_namespaces"
+    ),
+    ("tracker.test_signal", "code_namespace"): (
+        "server.tracker.app.test_signal._code_namespace_authorized"
+    ),
+    # names the namespaces the source creates; a taken one is refused
+    ("tracker.source.add", "namespaces"): "server.tracker.app.sources._namespace_taken",
+    ("code.repo.set_source", "tracker_namespaces"): "server.code.app.repo_admin._tracker_or_refuse",
+    (
+        "namespace.restore",
+        "target_namespace",
+    ): "server.identity.app.namespace.require_admin_of_existing",
+    ("task.reassign", "to_inbox"): "server.tasks.app.trust._require_poster",
+    ("task.create", "inbox"): "server.tasks.app.trust._require_poster",
+    ("task.pull", "inbox"): _READABLE_INBOX,
+    ("task.list", "inbox"): _READABLE_INBOX,
+    ("task.counts", "inbox"): _READABLE_INBOX,
+    ("task.updates", "inbox"): _READABLE_INBOX,
+    ("inbox.policy_set", "inbox"): _READABLE_INBOX,
+    ("inbox.policy_list", "inbox"): _READABLE_INBOX,
+    ("inbox.principals", "inbox"): "server.tasks.app.common._require_admin_side",
+    # registers the inbox in the gated namespace; a name owned elsewhere is a conflict
+    ("inbox.register", "inbox"): "server.tasks.app.inboxes.handle_inbox_register",
+    ("code.coverage.watch", "inbox"): "server.code.app.coverage_watch._authorize",
+    ("code.coverage.unwatch", "inbox"): "server.code.app.coverage_watch._authorize",
 }
 
 
@@ -57,9 +92,16 @@ def test_every_second_scope_field_is_declared_with_its_check() -> None:
     undeclared = sorted(_scope_fields() - AUTHORIZED.keys())
     assert not undeclared, (
         f"{undeclared}: the gate checks only `org` and `namespace`; authorize these "
-        "in the handler (row_in_scope, search_fanout.authorize) and declare it here"
+        "in the handler (row_in_scope, search_fanout.authorize) and declare the check here"
     )
 
 
 def test_no_declaration_outlives_its_field() -> None:
-    assert not sorted(AUTHORIZED.keys() - _scope_fields())
+    stale = sorted(AUTHORIZED.keys() - _scope_fields())
+    assert not stale, f"{stale}: these fields are gone; drop their declarations"
+
+
+@pytest.mark.parametrize("ref", sorted(set(AUTHORIZED.values())))
+def test_each_declared_check_exists(ref: str) -> None:
+    module, name = ref.rsplit(".", 1)
+    assert callable(getattr(importlib.import_module(module), name, None)), ref
