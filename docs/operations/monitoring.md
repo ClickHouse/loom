@@ -340,6 +340,7 @@ times the namespace size), keyed by operation class. Over the limit, the respons
 | `memory.read`      | exact-key reads: `memory.get`, `memory.bulk_get`, `memory.history`, `working_memory.get`, … | 300 / 50 per second             |
 | `knowledge.search` | `knowledge.search`                                                                          | 20 / 3 per second               |
 | `knowledge.query`  | `knowledge.query`                                                                           | 20 / 3 per second               |
+| `knowledge.read`   | the other read-only `knowledge.*` operations: `knowledge.get`, `knowledge.list`, …          | 50 / 10 per second              |
 | `knowledge.add`    | every other `knowledge.*` operation                                                         | 10 / 2 per second               |
 | `code`             | `code.*` (except `code.outcome`, which draws from `memory`)                                 | 60 / 10 per second              |
 | `default`          | everything else                                                                             | 50 / 10 per second              |

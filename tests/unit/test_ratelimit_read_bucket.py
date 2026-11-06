@@ -170,3 +170,28 @@ def test_knowledge_query_draws_from_its_own_read_bucket() -> None:
     so a few queries would refuse the namespace's next write."""
     assert op_class_for("knowledge.query") == "knowledge.query"
     assert DEFAULT_LIMITS["knowledge.query"] == DEFAULT_LIMITS["knowledge.search"]
+
+
+def test_knowledge_reads_draw_from_their_own_bucket() -> None:
+    """Every read-only knowledge op but search and query (their own buckets) draws on
+    knowledge.read, and every other knowledge op stays in knowledge.add: a new read the set
+    does not name fails here, not in production as a read that spends the write bucket."""
+    for op in ALL_OPERATIONS:
+        if not op.name.startswith("knowledge.") or op.name in (
+            "knowledge.search",
+            "knowledge.query",
+        ):
+            continue
+        want = "knowledge.read" if op.read_only else "knowledge.add"
+        assert op_class_for(op.name) == want, op.name
+    assert DEFAULT_LIMITS["knowledge.read"] == DEFAULT_LIMITS["default"]
+
+
+def test_a_knowledge_read_burst_leaves_the_add_bucket_full() -> None:
+    """Twenty list and status reads in one instant are all admitted, and knowledge.add
+    still has its whole burst of 10 afterwards."""
+    clk = FakeClock()
+    lim = Limiter(clock=clk)
+    reads = ("knowledge.list", "knowledge.ingest_status", "knowledge.source.list")
+    assert all(lim.check("ns", reads[i % 3]).allowed for i in range(20))
+    assert sum(1 for _ in range(12) if lim.check("ns", "knowledge.add").allowed) == 10

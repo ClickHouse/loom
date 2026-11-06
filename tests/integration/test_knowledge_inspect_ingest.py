@@ -132,12 +132,16 @@ async def test_backlog_a_missing_extractor_and_missing_access_are_kept_apart(
 
     org, ns = unique_org("kinspect-ingest"), f"ki-ingest-{uuid.uuid4().hex[:6]}"
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
-        # No configured extractor takes parquet: the job fails for the deployment.
+        # No extractor is configured where the jobs run (the reference extractor reads
+        # parquet): each fails for the deployment.
         pq, pq_job = await _ingest(c, org, ns, b"plain words, not a parquet file", "report.parquet")
-        assert (await _work(pq_job, c, org, ns))["error_code"] == "format_unavailable"
         # The same failure, then a text write of the source: the write replaced the job.
         fixed, fixed_job = await _ingest(c, org, ns, b"also not a parquet file", "fixed.parquet")
-        assert (await _work(fixed_job, c, org, ns))["error_code"] == "format_unavailable"
+        with monkeypatch.context() as m:
+            m.setattr(settings, "document_extractor_url", "")
+            m.setattr(settings, "document_extractors_json", "{}")
+            assert (await _work(pq_job, c, org, ns))["error_code"] == "format_unavailable"
+            assert (await _work(fixed_job, c, org, ns))["error_code"] == "format_unavailable"
         await asyncio.sleep(1.1)  # the document row's ingested_at counts seconds
         await _op(c, "knowledge.add", org=org, namespace=ns, source_uri=fixed, content="Fixed.")
 
