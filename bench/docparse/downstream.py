@@ -226,7 +226,7 @@ def ingest(
     """Upload and ingest each file (partial ones too), waiting for every job:
     each file's final state. A job still running at INGEST_DEADLINE_S, or a
     token the stub refused (`refused()`), stops the run with every open job
-    cancelled: the stub would otherwise serve a later job's system's artifact."""
+    cancelled: the stub would otherwise serve it the next system's artifact."""
     jobs = {}
     for f in files:
         data = (corpus / f).read_bytes()
@@ -264,20 +264,17 @@ def ingest(
             if st.get("state") in ("ready", "partial", "failed", "cancelled"):
                 states[f] = st["state"]
         time.sleep(1)
-    why = (
-        "the server sent the stub another token: --token is not its own"
-        if refused()
-        else f"{len(jobs) - len(states)} ingests still running after {INGEST_DEADLINE_S} s"
-        if len(states) < len(jobs)
-        else ""
-    )
-    if why:
-        for f, jid in jobs.items():
-            if f not in states:
-                payload = {"org": org, "namespace": namespace, "ingestion_id": jid}
-                _post(client, "knowledge.ingest_cancel", payload)
-        raise SystemExit(why)
-    return states
+    if refused():
+        why = "the server sent the stub another token: --token is not its own"
+    elif len(states) < len(jobs):
+        why = f"{len(jobs) - len(states)} ingests still running after {INGEST_DEADLINE_S} s"
+    else:
+        return states
+    for f, jid in jobs.items():
+        if f not in states:
+            payload = {"org": org, "namespace": namespace, "ingestion_id": jid}
+            _post(client, "knowledge.ingest_cancel", payload)
+    raise SystemExit(why)
 
 
 def queries(gold: list[dict]) -> list[dict]:

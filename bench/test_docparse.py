@@ -793,13 +793,17 @@ def test_search_stays_in_the_systems_namespace_and_scores_an_unfinished_file_zer
     assert payload["uri_prefix"] == ["docparse://a.pdf"] and payload["namespace"] == "docparse-new"
 
 
-@pytest.mark.parametrize(("refused", "why"), [(True, "another token"), (False, "still running")])
+# the refusal keeps the whole deadline: only the refusal can end its loop in time
+@pytest.mark.parametrize(
+    ("refused", "deadline", "why"),
+    [(True, 1800, "another token"), (False, 0.2, "still running")],
+)
 def test_ingest_stops_after_a_poll_and_cancels_only_its_open_jobs(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, refused: bool, why: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, refused: bool, deadline: float, why: str
 ) -> None:
     from bench.docparse import downstream
 
-    monkeypatch.setattr(downstream, "INGEST_DEADLINE_S", 0.2)
+    monkeypatch.setattr(downstream, "INGEST_DEADLINE_S", deadline)
     for f in ("a.pdf", "b.pdf"):
         (tmp_path / f).write_bytes(b"%PDF")
     loom = _FakeLoom(states={"a.pdf": "ready", "b.pdf": "processing"})
