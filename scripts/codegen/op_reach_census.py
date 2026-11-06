@@ -66,10 +66,8 @@ _QUOTED = re.compile(r"""["']([a-z_]+(?:\.[a-z_]+){1,2})["']""")
 # A dashboard call site: the path as a string literal (`post("/v1/<op>", …)`), outside
 # a comment. A bare op name there is an audit label, not a call.
 _DASHBOARD_CALL = re.compile(r"""["'`]/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b""")
-# Comments, without parsing strings: a line that starts as one (`//`, `/*`, a
-# JSDoc `*`), a JSX `{/* … */}`, and a `//` after `;`, `,`, `{` or `(` on its line.
-# Two shapes still read as code: a block comment's line that does not start with
-# `*`, and a `//` after any other character.
+# TS comments by line shape, not by parsing strings; a block comment line not starting
+# with `*`, and a `//` after other characters, still read as code.
 _TS_COMMENT = re.compile(
     r"^[ \t]*(?://|/\*|\*)[^\n]*|\{/\*[\s\S]*?\*/\}|(?<=[;,{(])[ \t]*//[^\n]*", re.MULTILINE
 )
@@ -80,7 +78,7 @@ def _files(root: Path, rel: str, suffixes: tuple[str, ...]) -> list[Path]:
     base = root / rel
     if not base.exists():
         return []
-    # Excluded directories (`tests`, the dashboard's `src/test` helpers) are
+    # Excluded directories (`tests`, `test`, `__pycache__`, in every scanned tree) are
     # matched below `base` only: a checkout that itself sits under a `tests`
     # directory still scans every file. A test kept beside its source (the
     # dashboard's `*.test.tsx`) is skipped by its name.
@@ -246,7 +244,7 @@ def dashboard_violations(ops: list[Operation]) -> list[str]:
     """Every op is on the dashboard or says why not, and nothing says why not
     for an op the dashboard calls (`server.operations.dashboard`)."""
     out: list[str] = []
-    names = {op.name for op in ALL_OPERATIONS}
+    names = {op.name for op in ops}
     for op in ops:
         on = "dashboard" in op.reach
         skipped = op.name in NOT_IN_DASHBOARD

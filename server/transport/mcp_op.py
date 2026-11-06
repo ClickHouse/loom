@@ -146,9 +146,8 @@ _INSTEAD: dict[str, str] = {
     # An owner-only op names the person, never a route: naming the SDK/HTTP
     # op sends a model probing env vars and token files for a way around it.
     "memory.unlock": (
-        "only the user can unlock a memory: ask them to use the memory's Lock "
-        "control in the dashboard, leave the key as it is and say it is locked. Don't look "
-        "for another route, token or credential to unlock it yourself"
+        "only the user can unlock a memory: ask them to, leave the key as it is and say it "
+        "is locked. Don't look for another route, token or credential to unlock it yourself"
     ),
     "memory.search": "call loom_search (memory, profile, knowledge and conversations in one call)",
     "knowledge.search": "call loom_search",
@@ -160,9 +159,10 @@ _INSTEAD: dict[str, str] = {
         "memory.set_from_messages returned"
     ),
     "memory.search_trace": (
-        "ask the user to open the dashboard's Recall lab, which explains each ranking"
+        "call loom_search with explain=true; each memory hit carries its ranking terms"
     ),
-    # Ops a client program calls, not a person: nothing for the user to do either.
+    # Ops a client program calls, not a person: the agent's nearest op, or nothing to call.
+    "ui.vitals": "the dashboard posts its own paint timings; nothing to call",
     "memory.outcome": (
         "call memory.outcome_run (loom_op) to record whether the memories a run recalled helped"
     ),
@@ -178,19 +178,26 @@ _NEEDS_THE_USER = (
     "this needs the user: ask them to do it in the dashboard. Don't look for another "
     "route, token or credential to do it yourself"
 )
+# For an op the dashboard does not call (server/operations/dashboard.py).
+_NEEDS_AN_OPERATOR = (
+    "this needs the user or an operator, outside this chat. Don't look for another "
+    "route, token or credential to do it yourself"
+)
 
 
 def hidden_refusal(name: str) -> dict[str, Any] | None:
     """The refusal for an op that exists but is kept off MCP: why, and what
     to call instead. None when `name` is not a hidden op."""
-    from server.operations.registry import ALL_OPERATIONS
+    from server.operations.registry import OPERATIONS_BY_NAME
 
-    if name not in _MCP_HIDDEN_OPS or not any(op.name == name for op in ALL_OPERATIONS):
+    op = OPERATIONS_BY_NAME.get(name)
+    if op is None or name not in _MCP_HIDDEN_OPS:
         return None
+    default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
     return {
         "error": f"{name} exists but is kept for the user and operators, not agents",
         "code": "OP_NOT_ON_MCP",
-        "instead": _INSTEAD.get(name, _NEEDS_THE_USER),
+        "instead": _INSTEAD.get(name, default),
     }
 
 

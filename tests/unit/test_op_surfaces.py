@@ -2,13 +2,13 @@
 why not in code: HTTP serves the whole registry; MCP reaches every op its
 hidden roster does not keep for people; the two generated SDKs carry every op
 (`test_sdk_parity.py`); the dashboard calls every op a person needs, and
-`server/operations/dashboard.py` names the rest with a reason. The dashboard
-rule is also part of the census's `--check` (`test_op_reach_census.py`); here
-it reads as the rule it is."""
+`server/operations/dashboard.py` names the rest with a reason. That last rule
+is the census's `--check` (`test_op_reach_census.py`); here it is tested case by
+case."""
 
 from __future__ import annotations
 
-from pathlib import Path
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -26,9 +26,9 @@ from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import mcp_op, mcp_tools
 from server.transport.http import build_router
 
-# The most DASHBOARD_PENDING may hold. A control that lands drops its op from
-# both; an op that leaves for NOT_IN_DASHBOARD instead is a reviewer's question.
-PENDING_AT_MOST = frozenset(
+# DASHBOARD_PENDING as it stands: a control that lands drops its op from both,
+# and nothing joins either.
+PENDING_PINNED = frozenset(
     {
         "blacklist.sweep",
         "calibration.get",
@@ -144,10 +144,6 @@ def test_mcp_reaches_every_op_it_does_not_keep_for_people(monkeypatch: pytest.Mo
         )
 
 
-def test_every_op_is_on_the_dashboard_or_says_why_not():
-    assert census.dashboard_violations(ALL_OPERATIONS) == []
-
-
 def _op(name: str, *reach: str) -> SimpleNamespace:
     return SimpleNamespace(name=name, reach=frozenset(reach))
 
@@ -211,47 +207,23 @@ def test_an_op_kept_off_mcp_is_never_an_agent_step():
 
 
 def test_a_refusal_that_sends_the_user_to_the_dashboard_names_a_control():
-    """A hidden op with no alternative of its own tells the agent to ask the user to do
-    it in the dashboard: the dashboard calls it, or its control is pending."""
-    for name in _MCP_HIDDEN_OPS - set(mcp_op._INSTEAD):
-        op = OPERATIONS_BY_NAME[name]
-        assert "dashboard" in op.reach or name in DASHBOARD_PENDING, name
+    """A hidden op's refusal names the dashboard only when the dashboard calls it."""
+    for name in _MCP_HIDDEN_OPS:
+        refusal = mcp_op.hidden_refusal(name)
+        if refusal and "dashboard" in refusal["instead"]:
+            assert "dashboard" in OPERATIONS_BY_NAME[name].reach, name
+
+
+def test_an_op_a_reason_names_is_on_the_dashboard():
+    """A reason that says the dashboard does it through another op names one it calls."""
+    for name, reason in NOT_IN_DASHBOARD.items():
+        for other in re.findall(r"[a-z_]+(?:\.[a-z_]+)+", reason):
+            if other in OPERATIONS_BY_NAME:
+                assert "dashboard" in OPERATIONS_BY_NAME[other].reach, (name, other)
 
 
 def test_the_pending_set_only_shrinks():
-    joined = sorted(DASHBOARD_PENDING - PENDING_AT_MOST)
+    joined = sorted(DASHBOARD_PENDING - PENDING_PINNED)
     assert not joined, f"{joined}: a new op a person needs ships with its dashboard control"
-
-
-def test_a_dashboard_call_site_is_a_quoted_path(tmp_path: Path):
-    """A quoted `/v1/<op>` posts the op; a bare op name (an audit label, a
-    comment) and the test helpers do not."""
-    src = tmp_path / "frontend" / "src"
-    (src / "test").mkdir(parents=True)
-    (src / "api.ts").write_text(
-        'post("/v1/memory.pin", body);\n'
-        "post(`/v1/memory.unpin`, body);\n"
-        '// see "/v1/memory.lock"\n'
-        "/** POST the bytes (`/v1/memory.touch?...`) */\n"
-        'fetch("https://host/v1/x", {}); // `/v1/memory.reject`\n'
-        'const hint = "**/generated/**, third_party/**";\n'
-        'post("/v1/memory.redact", body);\n'
-        '{/* the drawer posts\n   post("/v1/memory.unlock") */}\n'
-        'const LABEL = "memory.redact";\n'
-    )
-    (src / "test" / "stub.ts").write_text('post("/v1/memory.touch", {});\n')
-    (src / "Page.test.tsx").write_text('post("/v1/memory.unlock", {});\n')
-    derived = census.derive_static_reach(tmp_path)
-    assert derived == {
-        "memory.pin": ("dashboard",),
-        "memory.unpin": ("dashboard",),
-        "memory.redact": ("dashboard",),
-    }
-
-
-def test_the_census_sources_add_no_reach(tmp_path: Path):
-    """The scan reads `scripts/`, the census's own home: its comments name no op."""
-    source = Path(census.__file__)
-    (tmp_path / "scripts" / "codegen").mkdir(parents=True)
-    (tmp_path / "scripts" / "codegen" / source.name).write_text(source.read_text())
-    assert census.derive_static_reach(tmp_path) == {}
+    left = sorted(PENDING_PINNED - DASHBOARD_PENDING)
+    assert not left, f"{left} left DASHBOARD_PENDING: drop them from PENDING_PINNED too"

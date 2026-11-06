@@ -89,8 +89,8 @@ def test_mcp_reach_derives_from_the_tier_frozensets():
 
 
 def test_manifest_matches_the_tree():
-    """SDK methods, examples/dev/scripts and integrations are scanned at test
-    time; the committed table must equal the scan (regenerate with
+    """SDK methods, examples/dev/scripts, integrations and dashboard call sites
+    are scanned at test time; the committed table must equal the scan (regenerate with
     scripts/codegen/op_reach_census.py --write-manifest)."""
     derived = derive_static_reach(REPO_ROOT)
     assert derived == STATIC_REACH, {
@@ -130,6 +130,40 @@ def test_a_test_beside_its_source_is_not_reach(tmp_path):
     derived = derive_static_reach(tmp_path)
     assert derived.get("memory.pin") == ("dashboard",)
     assert "memory.unpin" not in derived
+
+
+def test_a_dashboard_call_site_is_a_quoted_path(tmp_path):
+    """A quoted `/v1/<op>` posts the op; a bare op name (an audit label, a
+    comment) and the test helpers do not."""
+    src = tmp_path / "frontend" / "src"
+    (src / "test").mkdir(parents=True)
+    (src / "api.ts").write_text(
+        'post("/v1/memory.pin", body);\n'
+        "post(`/v1/memory.unpin`, body);\n"
+        '// see "/v1/memory.lock"\n'
+        "/** POST the bytes (`/v1/memory.touch?...`) */\n"
+        'fetch("https://host/v1/x", {}); // `/v1/memory.reject`\n'
+        'const hint = "**/generated/**, third_party/**";\n'
+        'post("/v1/memory.redact", body);\n'
+        '{/* the drawer posts\n   post("/v1/memory.unlock") */}\n'
+        'const LABEL = "memory.redact";\n'
+    )
+    (src / "test" / "stub.ts").write_text('post("/v1/memory.touch", {});\n')
+    (src / "Page.test.tsx").write_text('post("/v1/memory.unlock", {});\n')
+    derived = derive_static_reach(tmp_path)
+    assert derived == {
+        "memory.pin": ("dashboard",),
+        "memory.unpin": ("dashboard",),
+        "memory.redact": ("dashboard",),
+    }
+
+
+def test_the_census_sources_add_no_reach(tmp_path):
+    """The scan reads `scripts/`, the census's own home: its comments name no op."""
+    source = REPO_ROOT / "scripts" / "codegen" / "op_reach_census.py"
+    (tmp_path / "scripts" / "codegen").mkdir(parents=True)
+    (tmp_path / "scripts" / "codegen" / source.name).write_text(source.read_text())
+    assert derive_static_reach(tmp_path) == {}
 
 
 def test_manifest_finds_the_known_reach_paths():
