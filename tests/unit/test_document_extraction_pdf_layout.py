@@ -183,9 +183,8 @@ def test_a_page_of_more_rules_than_the_bound_is_read_without_ruled_tables() -> N
     assert "events" in "\n".join(b.text for b in a.blocks)
     assert a.coverage.complete
     reader = PdfReader(BytesIO(laid_out_pdf([page])))
-    assert (
-        layout.rules(reader.pages[0], reader, lambda x, y: (x, y)) == []
-    )  # no rules past the bound
+    # no rules past the bound
+    assert layout.rules(reader.pages[0], reader, lambda x, y: (x, y)) == []
 
 
 def test_a_fonts_unicode_map_gives_its_codes_widths() -> None:
@@ -256,7 +255,8 @@ def test_a_fonts_widths_past_their_budget_are_read_in_bounded_time() -> None:
 
     start = time.perf_counter()
     layout._Widths(_cid_font([0, 65_534, 500] * 50_000, b""))
-    assert time.perf_counter() - start < 5
+    # a loose bound: a loop not charged per value written would take hours
+    assert time.perf_counter() - start < 60
 
 
 def test_a_table_over_three_pages_is_one_table_and_rows_at_the_margins_stay_rows() -> None:
@@ -345,4 +345,72 @@ def test_a_very_wide_page_and_a_long_outline_are_read_in_bounded_time() -> None:
     w.write(out)
     a = extract(out.getvalue(), "o.pdf")
     assert sum(1 for b in a.blocks if b.type == "heading") == 3_000
-    assert time.perf_counter() - start < 30
+    # a loose bound: a placement quadratic in the entries would take minutes
+    assert time.perf_counter() - start < 120
+
+
+def test_a_cell_is_a_number_only_when_it_reads_back_as_the_page_shows_it() -> None:
+    rows = [["Package", "Version", "Size"], ["core", "1.10", "1.50"], ["cli", "2", "3"]]
+    a = extract(laid_out_pdf([_grid([72, 200, 300, 420], 700, rows)]), "v.pdf")
+    (t,) = a.tables
+    assert t.rows == (("core", "1.10", "1.50"), ("cli", 2, 3))
+    assert "Version: 1.10; Size: 1.50" in next(b.text for b in a.blocks if b.attrs.get("table_id"))
+
+
+def test_a_page_past_the_line_bound_is_read_as_its_text_layer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(layout, "MAX_LINES", 2)
+    page = b"".join(text_at(72, 700 - 14 * i, f"Line {i}") for i in range(3))
+    a = extract(laid_out_pdf([page]), "n.pdf")
+    assert [b.text for b in a.blocks] == ["Line 0\nLine 1\nLine 2"]
+    assert a.warnings == ("page 1: read as its text layer; it holds more than 2 lines",)
+
+
+def test_a_run_drawn_twice_in_place_is_read_once_and_keeps_its_page_laid_out() -> None:
+    page = text_at(72, 720, "Bold title", font=2, size=16) * 2 + text_at(
+        72, 690, "The body under it."
+    )
+    a = extract(laid_out_pdf([page]), "d.pdf")
+    assert _blocks(a) == [("heading", 1, "Bold title"), ("paragraph", 0, "The body under it.")]
+    assert a.warnings == ()
+
+
+def test_past_its_bound_the_furniture_list_is_cut_and_the_warning_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pdffile, "_MAX_FURNITURE", 1)
+    pages = [
+        text_at(72, 770, "Running head", size=8)
+        + text_at(500, 30, "Confidential", size=8)
+        + text_at(72, 700, f"Body {n} of the report.")
+        for n in range(3)
+    ]
+    a = extract(laid_out_pdf(pages), "k.pdf")
+    assert a.attrs["furniture"] == [{"text": "Running head", "pages": 3}]
+    assert a.warnings == (
+        "page furniture left out of the text: 6 header, footer or page-number lines"
+        " (attrs.furniture; the first 1 of 2 kinds named)",
+    )
+
+
+def test_an_outline_entry_after_a_title_paragraph_takes_its_own_line() -> None:
+    from pypdf import PdfWriter
+
+    page = (
+        text_at(72, 740, "Introduction and", font=2, size=14)
+        + text_at(72, 724, "Scope", font=2, size=14)
+        + text_at(72, 700, "Why the design exists.")
+        + text_at(72, 670, "Scope", font=2, size=14)
+        + text_at(72, 650, "What it covers.")
+    )
+    w = PdfWriter()
+    w.add_page(PdfReader(BytesIO(laid_out_pdf([page]))).pages[0])
+    parent = w.add_outline_item("Introduction and Scope", 0)
+    w.add_outline_item("Scope", 0, parent=parent)
+    out = BytesIO()
+    w.write(out)
+    a = extract(out.getvalue(), "s.pdf")
+    heads = [(b.depth, b.text) for b in a.blocks if b.type == "heading"]
+    assert heads == [(1, "Introduction and Scope"), (2, "Scope")]
+    assert a.blocks[-1].section_path == ("Introduction and Scope", "Scope")

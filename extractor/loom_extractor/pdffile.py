@@ -199,7 +199,7 @@ class _Page:
 def _read_layout(
     page: pypdf.PageObject, reader: pypdf.PdfReader, read: _Page
 ) -> list[layout._Rule]:
-    found, read.other, read.width, read.page_height, turn = layout.spans(page)
+    found, read.other, read.width, read.page_height, turn = layout.spans(page, read.dropped)
     read.lines = layout.lines_of(found, layout.text_words(read.text), read.dropped)
     try:
         return layout.rules(page, reader, turn)
@@ -266,7 +266,9 @@ def _place_outline(read: _Page, shift: int) -> None:
     finds none is a heading of its own after the last one placed (the page's
     start, before any). Linear in the page's lines, as the text layer's is."""
     els = read.elements or []
-    where: dict[str, list[int]] = defaultdict(list)  # each text: the slots that hold it, in order
+    # each text: the slots that hold it, in order
+    where: dict[str, list[int]] = defaultdict(list)
+    ends: dict[int, int] = {}  # a paragraph's whole slot: its last line's
     slots = 0  # a slot per element (a paragraph whole) and per line, in reading order
     for e in els:
         if e.kind == "table" or e.title:
@@ -274,21 +276,22 @@ def _place_outline(read: _Page, shift: int) -> None:
             continue
         if len(e.lines) > 1:
             where[_key(e.text)].append(slots)
+            ends[slots] = slots + len(e.lines)  # its last line's slot
             slots += 1
         for ln in e.lines:
             where[_key(ln.text)].append(slots)
             slots += 1
     hit: dict[int, int] = {}  # a slot an entry takes: its depth
-    after: dict[int, list[tuple[int, str]]] = defaultdict(
-        list
-    )  # entries after a slot (-1: before any)
+    # entries after a slot (-1: before any)
+    after: dict[int, list[tuple[int, str]]] = defaultdict(list)
     last = -1
     for depth, title in read.headings:
         found = where.get(_key(title), [])
         k = bisect.bisect_right(found, last)
         if k < len(found):
-            last = found[k]
-            hit[last] = depth
+            hit[found[k]] = depth
+            # a paragraph that is a title is passed whole: no later entry takes its lines
+            last = ends.get(found[k], found[k])
         else:
             after[last].append((depth, title))
 
@@ -469,9 +472,8 @@ def extract_pdf(data: bytes) -> Artifact:
     for read in reads:
         if read.failure:
             failed.append(Failure(f"page {read.number}", read.failure))
-            _page(
-                acc, "", read.number, read.headings, shift
-            )  # its headings still open their sections
+            # its headings still open their sections
+            _page(acc, "", read.number, read.headings, shift)
         elif read.elements is None:
             _page(acc, read.text, read.number, read.headings, shift)
         else:
@@ -479,12 +481,12 @@ def extract_pdf(data: bytes) -> Artifact:
     attrs: dict[str, Any] = {"pages": len(pages)}
     # Furniture by its shape (digits aside): a running footer is one entry,
     # its first text and the pages it is on.
-    furniture: dict[str, list[Any]] = {}
+    furniture: dict[str, tuple[str, set[int]]] = {}  # a shape: its first text and its pages
     for read in reads:
         for t in read.furniture:
-            furniture.setdefault(layout.shape(t), [_unicode(t)[0], 0])[1] += 1
+            furniture.setdefault(layout.shape(t), (_unicode(t)[0], set()))[1].add(read.number)
     if furniture:
-        kinds = list(furniture.values())
+        kinds = [(t, len(pages)) for t, pages in furniture.values()]
         attrs["furniture"] = [{"text": t, "pages": n} for t, n in kinds[:_MAX_FURNITURE]]
         cut = (
             f"; the first {_MAX_FURNITURE} of {len(kinds)} kinds named"
@@ -492,8 +494,8 @@ def extract_pdf(data: bytes) -> Artifact:
             else ""
         )
         warnings.append(
-            f"page furniture left out of the text: {sum(n for _, n in kinds)} header, footer"
-            f" or page-number lines (attrs.furniture{cut})"
+            f"page furniture left out of the text: {sum(len(r.furniture) for r in reads)} header,"
+            f" footer or page-number lines (attrs.furniture{cut})"
         )
     try:
         title = reader.metadata.title if reader.metadata else None
@@ -583,15 +585,17 @@ def _lay_out(
 def _lay_out_page(r: _Page, found: list[layout._Rule], candidates: set[int], spacing: Any) -> None:
     gx = layout.gutter(r.lines, r.width)
     lines = layout.split_columns(r.lines, gx) if gx is not None else r.lines
+    # A furniture candidate holds a letter (a row of numbers is none): it may
+    # sit in a ruled table's box, which makes it a cell, but never opens or
+    # joins a borderless one.
+    maybe = {
+        i for i, ln in enumerate(lines) if ln.spans and all(id(s) in candidates for s in ln.spans)
+    }
     tables = layout.ruled_tables(lines, found)
     held = set().union(*(t.lines for t in tables)) if tables else set()
-    tables += layout.borderless_tables(lines, held, r.width)
+    tables += layout.borderless_tables(lines, held | maybe, r.width)
     held = set().union(*(t.lines for t in tables)) if tables else set()
-    furniture = {
-        i
-        for i, ln in enumerate(lines)
-        if i not in held and ln.spans and all(id(s) in candidates for s in ln.spans)
-    }
+    furniture = maybe - held
     r.furniture = [lines[i].text for i in sorted(furniture)]
     index: dict[int, int] = {}  # a line's place among the lines kept
     kept: list[layout.Line] = []

@@ -228,7 +228,7 @@ after the page's own (`attrs.orientation`). Then, in order:
 - a run of lines cut into segments that sit in two or more bands of the page is a borderless table: a line with text in
   the first band opens a row, one without adds to the cells of the row above (a wrapped cell); a list marker set apart
   from its item's text (`•`, `1.`, a symbol font's bullet) is no column;
-- page furniture, a line no table holds, in the top or bottom tenth of a page, that holds a letter and whose text,
+- page furniture, a line no ruled table holds (it never opens or joins a borderless one), in the top or bottom tenth of a page, that holds a letter and whose text,
   digits aside, recurs there on at least two pages and two fifths of them, or a page number alone, is left out of the
   blocks; the artifact names each kind (one entry for a footer whose page number changes) with its first text and the
   pages it is on (`attrs.furniture`, the first 200 kinds) and warns that it did;
@@ -455,22 +455,21 @@ dataset, whatever the files' shapes, so no upload creates a table:
   so (`past_capacity`). The key is `(org, namespace, dataset_id, snapshot_id, row_id)`.
 
 A column takes the extractor's type; a `mixed` one is held as text. A row with a cell error, or a value its column's
-type cannot hold, is rejected whole and counted, the first 20 with their reason, so a dataset's values are all typed:
-a number of 10^29 or more (after rounding to nine places) in an `n` slot, one a double cannot hold in an `f` slot, an
-instant outside 1900-2299 (what `DateTime64` holds; a time zone is turned to UTC). A dataset is `complete` only when
-the extraction kept every value of its table: none of its rows, merges, values or cells is a failed unit, no shared
-string was lost, and the artifact lost none of the capabilities a value depends on (formula values, shared strings,
-number formats).
-The schema asks for an answer (`needs_clarification`) for a mixed column, a generated name (an empty header cell), a
-repeated name (an extractor other than the reference one may send one; the dataset names it `<name> (2)`, as the
-reference extractor does, since a column is addressed by its name), a header whose every name reads as a number or a
+type cannot hold, is rejected whole and counted, the first 20 with their reason, so a dataset's values are all typed: a
+number of 10^29 or more (after rounding to nine places) in an `n` slot, one a double cannot hold in an `f` slot, an
+instant outside 1900-2299 (what `DateTime64` holds; a time zone is turned to UTC). A dataset is `complete` only when the
+extraction kept every value of its table: none of its rows, merges, values or cells is a failed unit, no shared string
+was lost, and the artifact lost none of the capabilities a value depends on (formula values, shared strings, number
+formats). The schema asks for an answer (`needs_clarification`) for a mixed column, a generated name (an empty header
+cell), a repeated name (an extractor other than the reference one may send one; the dataset names it `<name> (2)`, as
+the reference extractor does, since a column is addressed by its name), a header whose every name reads as a number or a
 date (the first row may be data; not asked of a table whose names are no row of its source, `header_rows` 0, as a
 Parquet file's schema), and the columns no slot holds (one answer for each type, naming the first of them). The answers
 about single columns stop at 100; past them, a column's `inferred` type says the rest. Inference runs off the event
 loop, since a table may be 16,384 columns wide. A dataset's id is the same in every revision of its source: a sheet by
-its name, a CSV or Parquet file's table and a PDF's tables by their ids (a PDF's in the order its pages hold them, so
-a table added before another gives the later one a new dataset), and a sheet an extractor split into more than one table by its name
-and the table's id.
+its name, a CSV or Parquet file's table and a PDF's tables by their ids (a PDF's in the order its pages hold them, so a
+table added before another gives the later one a new dataset), and a sheet an extractor split into more than one table
+by its name and the table's id.
 
 The ingest job writes each dataset after the chunks and before the source's claim: an empty catalog row, so a run that
 stops midway finds the rows it wrote, its rows in batches of 5,000 under a new snapshot (typed off the event loop, the

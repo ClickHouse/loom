@@ -50,6 +50,7 @@ _MAX_FORM_DEPTH = 4  # how deep form XObjects are walked for rules
 _MAX_CMAP_BYTES = 1 << 20  # a ToUnicode map read for widths
 _MAX_CMAP_CODES = 65_536  # the codes a map's ranges are read for, and a font's widths
 MAX_LINES = 5_000  # a page with more lines is read as its text layer
+_MAX_TABLE_LINES = 200  # the lines one borderless run holds: no page sets more rows legibly
 
 # The standard fonts' widths of ASCII 32-126 (Adobe's metrics), for a font that
 # names one and carries none of its own.
@@ -162,6 +163,8 @@ class _Widths:
     def __init__(self, font: Any) -> None:
         self.map: dict[str, float] = {}
         self.default = 500.0
+        self.bold = False
+        self.mono = False
         if font is None:
             return
         name = str(font.get("/BaseFont", "")).lstrip("/").split("+")[-1]
@@ -171,9 +174,6 @@ class _Widths:
             self._read(font, name)
         except Exception:  # noqa: BLE001 — a damaged font dictionary costs exact widths, not text
             self.map = {}
-
-    bold = False
-    mono = False
 
     def _read(self, font: Any, name: str) -> None:
         codes = _to_unicode(font)
@@ -211,9 +211,8 @@ class _Widths:
             self.default = (
                 float(missing) if missing else (sum(nonzero) / len(nonzero) if nonzero else 500.0)
             )
-            if (
-                not codes
-            ):  # a simple font's codes are its characters' (WinAnsi and Standard agree on ASCII)
+            # a simple font's codes are its characters' (WinAnsi and Standard agree on ASCII)
+            if not codes:
                 codes = {c: chr(c) for c in widths if 32 <= c < 256}
         else:
             low = name.lower()
@@ -304,7 +303,9 @@ _TURNS: dict[int, Callable[[float, float], Turn]] = {
 }
 
 
-def spans(page: pypdf.PageObject) -> tuple[list[Span], list[Span], float, float, Turn]:
+def spans(
+    page: pypdf.PageObject, dropped: list[Span] | None = None
+) -> tuple[list[Span], list[Span], float, float, Turn]:
     """The page's runs of text, turned so that the direction most of its text
     runs in reads left to right: those runs, the others (text in another
     direction, in place), the turned page's width and height, and the turn
@@ -334,6 +335,11 @@ def spans(page: pypdf.PageObject) -> tuple[list[Span], list[Span], float, float,
         last[0] = here
         if same and raw and raw[-1][5] == here:
             run = raw[-1]
+            if body.strip() and run[4].strip() == body.strip():
+                # the same text at the same place again: drawn twice (a faked bold), read once
+                if dropped is not None:
+                    dropped.append(Span(0, 0, 0, fsize, fw.bold, fw.mono, body.strip()))
+                return
             adv = fw.of(body) / 1000 * fsize * sx
             run[1] = (run[1][0] + ux * adv, run[1][1] + uy * adv)
             run[4] += body
@@ -395,7 +401,7 @@ def spans(page: pypdf.PageObject) -> tuple[list[Span], list[Span], float, float,
     other = [
         Span(ln.x0, ln.x1, ln.y, ln.size, ln.bold, ln.mono, ln.text)
         for d in sorted(others)
-        for ln in lines_of(others[d])
+        for ln in lines_of(others[d], dropped=dropped)
     ]
     return out, other, width, height, turn
 
@@ -792,10 +798,17 @@ def grids(found: list[_Rule]) -> list[tuple[list[float], list[float]]]:
 
 def ruled_tables(lines: list[Line], found: list[_Rule]) -> list[TableBox]:
     out: list[TableBox] = []
+    by_y = sorted(range(len(lines)), key=lambda i: lines[i].y)
+    ys_sorted = [lines[i].y for i in by_y]
     for xs, ys in grids(found):
         cells: dict[tuple[int, int], list[Span]] = defaultdict(list)
         held: set[int] = set()
-        for i, ln in enumerate(lines):
+        # only the lines within the grid's height
+        span = by_y[
+            bisect.bisect_left(ys_sorted, ys[0] - 1) : bisect.bisect_right(ys_sorted, ys[-1] + 1)
+        ]
+        for i in sorted(span):
+            ln = lines[i]
             top = ln.y - 0.6 * ln.size
             if not (ys[0] - 1 <= top and ln.y <= ys[-1] + 1):
                 continue
@@ -847,7 +860,7 @@ def borderless_tables(lines: list[Line], skip: set[int], width: float) -> list[T
             continue
         run = [i]
         j = i + 1
-        while j < len(lines) and j not in skip:
+        while j < len(lines) and j not in skip and len(run) < _MAX_TABLE_LINES:
             gap = lines[j].y - lines[run[-1]].y
             if gap > 2.6 * lines[j].size or gap <= 0:
                 break
