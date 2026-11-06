@@ -166,20 +166,22 @@ async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bo
 
     True when the switch stands. False when there is nothing to move or the move did
     not stand: the row went or was replaced since the walk read it, or an erasure took
-    the original while it moved; no object of its is left named by nothing.
+    the original while it moved; its object is deleted, or left to the bucket walk when
+    the bucket refuses the delete.
     `CorruptOriginal`: the bytes do not fill their size or hash to their sha256, in
     ClickHouse or read back. `ErasureOpen`: an erasure that overlapped the copy, the
     original still held in ClickHouse. `SwitchUnconfirmed`: the row switched (or may
     have) but could not be confirmed against an erasure. `ObjectStoreError`: the bucket
-    refused, or the copy outlasted DOCUMENT_UPLOAD_BUDGET_S.
+    refused, the new object was gone before its read-back, or the copy outlasted
+    DOCUMENT_UPLOAD_BUDGET_S.
 
     `ch` is the client for the knowledge plane's own reads and writes; the erasure ledger
     is read through the erasure plane, on its client."""
     # This move's own start: an erasure that finished before it cannot race its copy, and
     # one still running then, or finished within the margin, is caught after the copy.
     since = await blobs.ch_now_s(ch=ch)
-    # Before the original is read: a key too long for the bucket walk's cursor refuses the move (the
-    # walk refuses such a namespace whole; this guards a direct call).
+    # Before the original is read: a key too long for the bucket walk's cursor refuses the
+    # move. The walk refuses such a namespace whole; this guards a direct call.
     loc = objects.new_location(held.org, held.namespace, held.sha)
     data = await blobs.read(
         held.org, held.namespace, held.sha, stored=blobs.Stored(held.size, ""), ch=ch
