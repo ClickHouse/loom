@@ -48,12 +48,13 @@ def _lines(name: str, loc: Locator) -> str:
 
 
 def _zip(*names: str) -> bytes:
-    """The same bytes in every process: an entry written by name alone carries the
-    current time, which would reach the id of a parametrize row that names none."""
+    """Entries dated 1980-01-01 by ZipInfo, so the bytes match in every process; an entry
+    written by name alone carries the current time. The rows built from these carry
+    names as ids: escaped zip bytes are unreadable in a failure."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for n in names:
-            z.writestr(zipfile.ZipInfo(n), "<x/>")  # ZipInfo dates every entry 1980-01-01
+            z.writestr(zipfile.ZipInfo(n), "<x/>")
     return buf.getvalue()
 
 
@@ -64,7 +65,6 @@ def _zip(*names: str) -> bytes:
     ("data", "name", "fmt"),
     [
         (b"%PDF-1.7\n...", "report.bin", "pdf"),
-        # Named: an id of escaped zip bytes is unreadable in a failure.
         pytest.param(_zip("[Content_Types].xml", "word/document.xml"), "a.docx", "docx", id="docx"),
         pytest.param(_zip("ppt/presentation.xml"), "deck", "pptx", id="pptx"),
         pytest.param(_zip("xl/workbook.xml"), "book.xlsx", "xlsx", id="xlsx"),
