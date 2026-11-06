@@ -140,7 +140,7 @@ def test_the_weights_are_seconds_per_file_from_junit_reports(tmp_path: Path) -> 
     assert _shards.record([report]) == {"tests/unit/test_test_shards.py": 3.75}
 
 
-def _collect(*args: str, shard: str | None) -> list[str]:
+def _collect(*args: str, shard: str | None, deselect_free: bool = False) -> list[str]:
     env = {k: v for k, v in os.environ.items() if k != "LOOM_TEST_SHARD"}
     if shard:
         env["LOOM_TEST_SHARD"] = shard
@@ -163,7 +163,9 @@ def _collect(*args: str, shard: str | None) -> list[str]:
         text=True,
         timeout=120,
     )
-    assert done.returncode == 0, done.stdout[-2000:] + done.stderr[-2000:]
+    # 5: the part holds no test of these paths.
+    assert done.returncode in (0, 5), done.stdout[-2000:] + done.stderr[-2000:]
+    assert "deselected" not in done.stdout or not deselect_free, done.stdout[-500:]
     return [line for line in done.stdout.splitlines() if "::" in line]
 
 
@@ -179,3 +181,12 @@ def test_files_and_node_ids_named_on_the_command_line_run_in_one_part_each() -> 
     parts = [_collect(*args, shard=f"{k}/2") for k in (1, 2)]
     assert sorted(parts[0] + parts[1]) == sorted(whole)
     assert parts[0] and parts[1]
+
+
+def test_a_directory_argument_skips_the_other_parts_files_before_collecting_them() -> None:
+    """Under a directory, `pytest_ignore_collect` keeps another part's files from being
+    imported at all: nothing is collected only to be deselected."""
+    whole = _collect("tests/analyzer", shard=None)
+    parts = [_collect("tests/analyzer", shard=f"{k}/2", deselect_free=True) for k in (1, 2)]
+    assert sorted(parts[0] + parts[1]) == sorted(whole)
+    assert sorted(len(p) for p in parts) == [0, len(whole)]

@@ -79,7 +79,7 @@ def test_files(paths: list[Path]) -> list[Path]:
                 p.startswith(".") for p in found.relative_to(path).parts
             ):
                 continue
-            if found.name.startswith("test_") or found.name.endswith("_test.py"):
+            if _is_test_module(found):
                 out.add(found.resolve())
     return sorted(out)
 
@@ -97,11 +97,7 @@ class Split:
         self.first = k == 1
 
     def ignores(self, path: Path) -> bool:
-        if path.suffix != ".py" or not (
-            path.name.startswith("test_") or path.name.endswith("_test.py")
-        ):
-            return False
-        return not self.keeps(_name(path.resolve()))
+        return _is_test_module(path) and not self.keeps(_name(path.resolve()))
 
     def keeps(self, name: str) -> bool:
         if name not in self.walked:
@@ -144,10 +140,17 @@ def deselect(config: pytest.Config, items: list[pytest.Item]) -> None:
     kept: list[pytest.Item] = []
     dropped: list[pytest.Item] = []
     for item in items:
-        (kept if split.keeps(_name(Path(str(item.path)).resolve())) else dropped).append(item)
+        (kept if split.keeps(_name(item.path.resolve())) else dropped).append(item)
     if dropped:
         config.hook.pytest_deselected(items=dropped)
         items[:] = kept
+
+
+def _is_test_module(path: Path) -> bool:
+    """pytest's default `python_files`: `test_*.py` and `*_test.py`."""
+    return path.suffix == ".py" and (
+        path.name.startswith("test_") or path.name.endswith("_test.py")
+    )
 
 
 def _name(path: Path) -> str:

@@ -16,6 +16,7 @@ import server.auth.fanout as fanout_mod
 import server.identity.app.namespace_kinds as nk
 from server.memory.app.loom_search import fanout as loom_search_fanout
 from server.transport import lean_results
+from tests.unit.clock_fake import ManualClock
 
 ORG = "clickhouse"
 MINE = [
@@ -109,11 +110,12 @@ def test_a_failed_read_after_the_ttl_serves_the_last_snapshot(
     import server.core.ch as ch
 
     directory = _Directory()
+    clock = ManualClock(t=1000.0)
     monkeypatch.setattr(ch, "get_client", lambda: directory)
     monkeypatch.setattr(nk, "_cache", {})
+    monkeypatch.setattr(nk.time, "monotonic", clock.monotonic)
     assert asyncio.run(nk.kind_map(ORG)) == KINDS
-    real = nk.time.monotonic
-    monkeypatch.setattr(nk.time, "monotonic", lambda: real() + nk._TTL_S + 1)  # the TTL ran out
+    clock.advance(nk._TTL_S + 1)
     directory.fail = True
     assert asyncio.run(nk.kind_map(ORG)) == KINDS
 

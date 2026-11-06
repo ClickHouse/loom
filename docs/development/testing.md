@@ -85,11 +85,10 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
   part holds whole files, so a module fixture is built in one part only. Files are dealt
   by the seconds `tests/shard_weights.json` records for each, and a file it does not list
   by its count of test functions times the recorded seconds per test function, or one
-  second each when nothing is recorded, as for every integration file (`tests/_shards.py`). CI splits
-  the suite into four parts, each on its own stack, beside the isolation gates part; a
-  failure in part k reproduces with `LOOM_TEST_SHARD=k/4 make test-integration`. The
-  `unit-coverage` job uploads a `shard-weights` artifact with its run's unit times; commit
-  it as `tests/shard_weights.json` when the unit parts drift apart.
+  second each when nothing is recorded, as for every integration file
+  (`tests/_shards.py`). CI splits the suite into four parts, each on its own stack, beside
+  the isolation gates part; a failure in part k reproduces with
+  `LOOM_TEST_SHARD=k/4 make test-integration`.
 - **Failure diagnostics.** A failing test's report carries its last 25 Loom requests
   (method, URL, status, `X-Request-Id`, latency) with JWTs, bearer tokens and secrets
   redacted, so the matching server log line can be found by request id.
@@ -183,7 +182,7 @@ workflow grants its jobs read-only repository access (`permissions: contents: re
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lint`                 | `ruff check`, `ruff format --check`, the `--check` of `sdk_py_gen.py`, `sdk_py_client_gen.py`, `agent_plugin_sync.py`, `settings_reference.py`, `docs_reference.py` and `op_reach_census.py`, `mypy --strict` on the SDK, the mypy ratchet, the function-length and secret gates |
 | `unit`                 | `pytest tests/unit` in six parts (`LOOM_TEST_SHARD`), each on its own runner, in random order on every core with coverage                                                                                                                                                        |
-| `unit-coverage`        | the parts' coverage combined (floor 40%) and the per-module floors, then `pytest bench`                                                                                                                                                                                          |
+| `unit-coverage`        | the parts' coverage combined (floor 40%) and the per-module floors, then `pytest bench`; its `shard-weights` artifact is the run's seconds per unit file, to commit as `tests/shard_weights.json` when the parts drift apart                                                     |
 | `schema-check`         | a fresh ClickHouse (`dev/ci_start_clickhouse.sh`), every migration, the strict dry run, `make schema-check`                                                                                                                                                                      |
 | `ts-typecheck`         | the dashboard build (`tsc -b` + Vite) and its bundle budget (`npm run budget`)                                                                                                                                                                                                   |
 | `format`               | Biome, Prettier, Taplo and shfmt checks at pinned versions                                                                                                                                                                                                                       |
