@@ -298,6 +298,10 @@ def test_a_bucket_with_no_key_is_listed_as_a_prefix(
     monkeypatch.setattr(loom_ingest, "_s3_client", lambda: _FakeS3Client(objects={}))
     assert loom_ingest.main(["s3://bucket", *_ID]) == 1
     assert "no objects found under s3://bucket" in capsys.readouterr().err
+    # A dot in the bucket's name does not make it an object.
+    assert loom_ingest._is_s3_prefix("s3://acme.docs")
+    assert loom_ingest.main(["s3://acme.docs", *_ID]) == 1
+    assert "no objects found under s3://acme.docs" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("flag", [["--source-uri", "github://x"], ["--title", "T"]])

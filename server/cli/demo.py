@@ -110,7 +110,7 @@ def ingest_file(
     """Upload one file, ingest it and wait for the job, as `dev/loom_ingest.py`
     does. Returns (source_uri, the job's last status, error) — error is '' once
     the job published."""
-    source_uri = f"file://{path}"
+    source_uri = f"file://{path.resolve()}"
     params = {"org": org, "namespace": namespace, "filename": path.name}
     status, up = _post_bytes(
         f"{base_url}/v1/knowledge.upload?{urlencode(params)}", path.read_bytes(), token

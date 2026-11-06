@@ -148,10 +148,9 @@ def _is_s3_prefix(uri: str) -> bool:
     """A prefix is anything ending with `/` or with no extension on the
     final segment: a key with no extension is listed as a prefix, and the
     objects found are named by their stored media type."""
-    if uri.endswith("/"):
-        return True
-    last_segment = uri.rsplit("/", 1)[-1]
-    return "." not in last_segment
+    _, key = _parse_s3_uri(uri)
+    # No key at all (`s3://acme.docs`) is the whole bucket, a dot in its name or not.
+    return not key or key.endswith("/") or "." not in key.rsplit("/", 1)[-1]
 
 
 def _s3_client():
@@ -210,7 +209,7 @@ class _File:
 def _fetch_s3_object(uri: str) -> _File:
     """One object's bytes and its stored media type, which names the format of
     a key with no extension."""
-    bucket, key = _parse_s3_uri(uri)  # a URI with no key is a prefix (_plan)
+    bucket, key = _parse_s3_uri(uri)  # a URI with no key is a prefix (`_is_s3_prefix`)
     obj = _s3_client().get_object(Bucket=bucket, Key=key)
     return _File(obj["Body"].read(), key.rsplit("/", 1)[-1], obj.get("ContentType") or "", uri)
 

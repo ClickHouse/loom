@@ -251,6 +251,17 @@ def test_demo_missing_file_is_actionable(repo: Path, serve, capsys) -> None:
     assert fake.posts == [] and fake.uploads == []  # nothing was ingested
 
 
+def test_demo_names_a_relative_file_by_its_absolute_path(repo: Path, serve) -> None:
+    (repo / "docs").mkdir()
+    (repo / "docs" / "runbook.md").write_text("# Runbook")
+    fake = serve(fake_llm=True)
+    assert demo._cmd_demo(_args(file="docs/runbook.md")) == 0
+    # The same document `make ingest FILE=docs/runbook.md` names: one file, one source.
+    want = f"file://{(repo / 'docs' / 'runbook.md').resolve()}"
+    assert fake.posts[0][1]["source_uri"] == want
+    assert fake.posts[0][1]["metadata"] == {"ingested_from": want}
+
+
 def test_demo_no_agents_md_under_root_is_actionable(repo: Path, serve, capsys) -> None:
     (repo / "AGENTS.md").unlink()
     serve(fake_llm=True)
