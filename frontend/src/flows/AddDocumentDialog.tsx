@@ -9,7 +9,7 @@ import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { humanizeError } from "../lib/format";
-import { fileVerdict, ingestFile } from "../lib/fileIngest";
+import { fileVerdict, ingestFile, ingestStep } from "../lib/fileIngest";
 import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormats } from "./FileIngest";
 
 interface Props {
@@ -108,8 +108,8 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
   const canSubmit =
     sourceUri.trim() !== "" && busy === null && (mode === "file" ? !!file && !verdict?.refusal : content.trim() !== "");
 
-  const finish = (msg: string) => {
-    toast(msg, "ok");
+  const finish = (msg: string, level: "ok" | "info" = "ok") => {
+    toast(msg, level);
     onAdded();
     reset();
     onOpenChange(false);
@@ -139,20 +139,16 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
       );
       if (status.state === "ready" || status.state === "partial") {
         const what = `${replaceMode ? "Replaced" : "Added"} ${sourceUri.trim()}: revision ${status.revision}`;
-        if (status.state === "partial") {
+        if (status.state === "ready") finish(what);
+        else {
           const lost = status.coverage?.lost?.length ? ` (lost: ${status.coverage.lost.join(", ")})` : "";
-          toast(`${what}, partial: part of the file could not be read${lost}`, "info");
-          onAdded();
-          reset();
-          onOpenChange(false);
-          return;
+          finish(`${what}, partial: part of the file could not be read${lost}`, "info");
         }
-        finish(what);
         return;
       }
-      setError(
-        status.found ? `${file.name}: ${status.error_message || status.state}` : "The ingest job was not found.",
-      );
+      // The reason once, in the alert: the status line would repeat it.
+      setStep("");
+      setError(status.found ? `${file.name}: ${ingestStep(status)}` : "The ingest job was not found.");
     } catch (e) {
       if (ctrl.signal.aborted) return; // closed while following: the job goes on
       setError(humanizeError(e));

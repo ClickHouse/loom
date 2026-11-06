@@ -19,11 +19,12 @@ import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { addKnowledge, downloadKnowledge, getKnowledge, textDownloadName, type KnowledgeEntry } from "../api";
 import { humanizeError, relativeTime } from "../lib/format";
-import { toastError } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { Loading } from "../components/ui/Loading";
 import { slugify } from "../lib/docFiles";
-import { fileVerdict, ingestFile } from "../lib/fileIngest";
+import { ApiError } from "../lib/errors";
+import { fileVerdict, ingestFile, ingestStep } from "../lib/fileIngest";
 import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormats } from "./FileIngest";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 
@@ -51,8 +52,8 @@ export function RepoDocAddDialog({
   namespace: string;
   repo: string;
   takenUris: string[];
-  /** `partial`: the file published with part of it lost. */
-  onAdded: (title: string, partial?: boolean) => void;
+  /** `lost`: what a file published as partial lost ([] for nothing named); null when whole. */
+  onAdded: (title: string, lost: string[] | null) => void;
 }) {
   const [mode, setMode] = useState<"file" | "paste">("file");
   const [file, setFile] = useState<File | null>(null);
@@ -60,7 +61,9 @@ export function RepoDocAddDialog({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [allowPartial, setAllowPartial] = useState(false);
-  const [busy, setBusy] = useState<"saving" | null>(null);
+  // "upload" holds the dialog open (closing would cancel the bytes or the ingest call);
+  // "follow" does not: the job goes on on the server whether the dialog watches it or not.
+  const [busy, setBusy] = useState<"saving" | "upload" | "follow" | null>(null);
   const [step, setStep] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState(false);
@@ -88,64 +91,78 @@ export function RepoDocAddDialog({
     take(e.dataTransfer.files?.[0]);
   };
 
+  const saveFile = async (f: File): Promise<string[] | null> => {
+    const ctrl = new AbortController();
+    following.current = ctrl;
+    setBusy("upload");
+    // expected_revision 0: an address taken by a document past the list's first page
+    // fails `revision_conflict` instead of becoming that document's next revision.
+    const status = await ingestFile(
+      { org, namespace },
+      f,
+      {
+        source_uri: uri,
+        title: title.trim(),
+        description: description.trim(),
+        allow_partial: allowPartial,
+        expected_revision: 0,
+      },
+      (line, s) => {
+        setStep(line);
+        if (s) setBusy("follow");
+      },
+      { signal: ctrl.signal },
+    );
+    if (status.state === "ready") return null;
+    if (status.state === "partial") return status.coverage?.lost ?? [];
+    setStep("");
+    throw new Error(status.found ? `${f.name}: ${ingestStep(status)}` : "The ingest job was not found.");
+  };
+
   const save = async () => {
     if (!ready) return;
     setBusy("saving");
     setError(null);
     try {
-      if (mode === "file" && file) {
-        const ctrl = new AbortController();
-        following.current = ctrl;
-        // expected_revision 0: an address taken by a document past the list's first page
-        // fails `revision_conflict` instead of becoming that document's next revision.
-        const status = await ingestFile(
-          { org, namespace },
-          file,
-          {
-            source_uri: uri,
-            title: title.trim(),
-            description: description.trim(),
-            allow_partial: allowPartial,
-            expected_revision: 0,
-          },
-          setStep,
-          { signal: ctrl.signal },
-        );
-        if (status.state !== "ready" && status.state !== "partial") {
-          setError(
-            status.found ? `${file.name}: ${status.error_message || status.state}` : "The ingest job was not found.",
-          );
-          return;
-        }
-        onAdded(title.trim(), status.state === "partial");
-        onOpenChange(false);
-        return;
-      } else {
+      let lost: string[] | null = null;
+      if (mode === "file" && file) lost = await saveFile(file);
+      else
         await addKnowledge(
           { org, namespace },
           { source_uri: uri, content: pasted, title: title.trim(), description: description.trim(), upsert: false },
         );
-      }
-      onAdded(title.trim());
+      onAdded(title.trim(), lost);
       onOpenChange(false);
     } catch (e) {
       if (following.current?.signal.aborted) return; // closed: the job goes on on the server
-      setError(humanizeError(e));
+      setError(e instanceof Error && !(e instanceof ApiError) ? e.message : humanizeError(e));
     } finally {
       setBusy(null);
     }
   };
 
+  // Closing mid-upload would cancel the bytes or the ingest call: held. Once the job is
+  // queued it goes on without the dialog, and the card says so.
+  const close = (v: boolean) => {
+    if (!v && (busy === "upload" || busy === "saving")) return;
+    if (!v && busy === "follow")
+      toast(`${title.trim()} goes on extracting; it is listed once it publishes and the list is reloaded`, "info");
+    onOpenChange(v);
+  };
+
   return (
     <DialogFrame
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={close}
       width={600}
       title={`Add a document to ${repo}`}
       description="A design note, runbook or spec agents should read before changing this code. Readers of the repository can read it; it stays as private as the repository."
       footer={
         <>
-          <CancelButton />
+          <CancelButton
+            label={busy === "follow" ? "Close" : "Cancel"}
+            disabled={busy === "upload" || busy === "saving"}
+          />
           <Button
             type="primary"
             htmlType="button"

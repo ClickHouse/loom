@@ -48,7 +48,7 @@ export function fileVerdict(
     formats.formats.find((f) => f.extensions.includes(ext)) ??
     formats.formats.find((f) => media !== "" && f.media_types.includes(media)) ??
     formats.formats.find((f) => f.format === formats.default_format);
-  if (!entry) return { format: formats.default_format, available: null, refusal: "" };
+  if (!entry) return { format: "", available: null, refusal: "" }; // a listing without its default format
   // Unknown (null) is no refusal: the extractor could not be asked just now, and an
   // ingest sent waits for it.
   return {
@@ -88,6 +88,9 @@ function chunks(n: number): string {
   return `${n} chunk${n === 1 ? "" : "s"}`;
 }
 
+// Between two polls of a job.
+const POLL_MS = 1000;
+
 /** The pause between polls; tests replace it to follow a job without waiting. */
 export const ingestClock = {
   sleep: (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -114,9 +117,9 @@ export async function ingestFile(
   file: File,
   fields: IngestFields,
   onStep: (line: string, status?: KnowledgeIngestStatus) => void,
-  opts: { signal?: AbortSignal; pollMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+  opts: { signal?: AbortSignal } = {},
 ): Promise<KnowledgeIngestStatus> {
-  const { signal, pollMs = 1000, sleep = ingestClock.sleep } = opts;
+  const { signal } = opts;
   onStep("Uploading…");
   const up = await uploadKnowledgeFile(id, file, signal);
   const job = await ingestKnowledge(id, { ...fields, upload_id: up.upload_id });
@@ -126,6 +129,6 @@ export async function ingestFile(
     signal?.throwIfAborted();
     onStep(ingestStep(status), status);
     if (!status.found || INGEST_DONE.has(status.state)) return status;
-    await sleep(pollMs);
+    await ingestClock.sleep(POLL_MS);
   }
 }

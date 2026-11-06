@@ -135,8 +135,10 @@ describe("AddDocumentDialog", () => {
     await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
     const user = await pick("spec.pdf");
     await user.click(within(dialog).getByRole("button", { name: "Upload" }));
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("spec.pdf: the content is not a PDF");
-    expect(within(dialog).getByRole("status")).toHaveTextContent("Failed (format_mismatch)");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "spec.pdf: Failed (format_mismatch): the content is not a PDF",
+    );
+    expect(within(dialog).queryByRole("status")).toBeNull(); // said once, in the alert
     expect(onAdded).not.toHaveBeenCalled();
   });
 

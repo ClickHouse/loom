@@ -12,7 +12,9 @@ vi.mock("../api", async (importOriginal) => ({
   knowledgeIngestStatus: vi.fn(),
 }));
 import { ingestKnowledge, type KnowledgeFormats, knowledgeIngestStatus, uploadKnowledgeFile } from "../api";
-import { fileVerdict, ingestFile, ingestStep } from "./fileIngest";
+import { fileVerdict, ingestClock, ingestFile, ingestStep } from "./fileIngest";
+
+const realSleep = ingestClock.sleep;
 
 const FORMATS: KnowledgeFormats = {
   formats: [
@@ -77,7 +79,10 @@ describe("ingestStep", () => {
 });
 
 describe("ingestFile", () => {
-  afterEach(() => vi.resetAllMocks());
+  afterEach(() => {
+    vi.resetAllMocks();
+    ingestClock.sleep = realSleep;
+  });
 
   it("uploads the file, ingests it and polls until the job ends, saying each step", async () => {
     vi.mocked(uploadKnowledgeFile).mockResolvedValue({
@@ -97,9 +102,8 @@ describe("ingestFile", () => {
     const steps: string[] = [];
     const f = new File(["# a"], "a.md", { type: "text/markdown" });
     const id = { org: "o", namespace: "n" };
-    const out = await ingestFile(id, f, { source_uri: "a", tags: ["x"] }, (line) => steps.push(line), {
-      sleep: async () => {},
-    });
+    ingestClock.sleep = async () => {};
+    const out = await ingestFile(id, f, { source_uri: "a", tags: ["x"] }, (line) => steps.push(line));
     expect(out.state).toBe("ready");
     expect(steps).toEqual(["Uploading…", "Extracting…", "Ready: revision 1, 1 chunk"]);
     expect(vi.mocked(uploadKnowledgeFile).mock.calls[0].slice(0, 2)).toEqual([id, f]);
@@ -131,9 +135,9 @@ describe("ingestFile", () => {
       revision: 0,
     });
     const ctrl = new AbortController();
+    ingestClock.sleep = async () => ctrl.abort();
     const run = ingestFile({ org: "o", namespace: "n" }, new File(["a"], "a.md"), { source_uri: "a" }, () => {}, {
       signal: ctrl.signal,
-      sleep: async () => ctrl.abort(),
     });
     await expect(run).rejects.toThrow();
     expect(knowledgeIngestStatus).toHaveBeenCalledTimes(1);

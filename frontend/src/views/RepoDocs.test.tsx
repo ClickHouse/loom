@@ -37,7 +37,8 @@ vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast: vi.fn(),
 }));
-import { ToastViewport } from "../components/Toast";
+import { toast, ToastViewport } from "../components/Toast";
+import { ingestClock } from "../lib/fileIngest";
 import {
   addKnowledge,
   deleteKnowledge,
@@ -80,6 +81,43 @@ describe("the pure part", () => {
     expect(repoDocUri("Acme/kj", "Design", taken)).toBe("repo-doc://Acme/kj/design");
   });
 });
+
+function repoStatus(state: string, more: Record<string, unknown> = {}) {
+  return {
+    found: true,
+    ingestion_id: "job-1",
+    source_uri: "repo-doc://Acme/kj/on-call",
+    state,
+    stage: "",
+    error_code: "",
+    error_message: "",
+    format: "markdown",
+    coverage: null,
+    warnings: [],
+    chunks: 2,
+    revision: 1,
+    ...more,
+  };
+}
+
+async function addFile(name: string) {
+  vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null });
+  vi.mocked(uploadKnowledgeFile).mockResolvedValue({
+    upload_id: "up-1",
+    sha256: "",
+    size: 9,
+    filename: name,
+    format: "markdown",
+    expires_at: "",
+  });
+  vi.mocked(ingestKnowledge).mockResolvedValue({ ingestion_id: "job-1", state: "pending", source_uri: "x" });
+  mount(true);
+  fireEvent.click(await screen.findByRole("button", { name: "Add a document" }));
+  const dialog = await screen.findByRole("dialog");
+  const user = userEvent.setup();
+  await user.upload(within(dialog).getByLabelText("Choose a file"), new File(["# R"], name));
+  return { dialog, user };
+}
 
 describe("RepoDocsList", () => {
   beforeEach(() => {
@@ -310,7 +348,46 @@ describe("RepoDocsList", () => {
     const user = userEvent.setup();
     await user.upload(within(dialog).getByLabelText("Choose a file"), new File(["# R"], "runbook.md"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
-    expect(await within(dialog).findByText(/another revision of the source is live/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        "runbook.md: Failed (revision_conflict): another revision of the source is live",
+      ),
+    );
     expect(vi.mocked(ingestKnowledge).mock.calls[0][1].expected_revision).toBe(0);
+  });
+
+  it("says a partial file publish is partial, naming what it lost", async () => {
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(
+      repoStatus("partial", { coverage: { lost: ["formula_values"] } }),
+    );
+    const { dialog } = await addFile("on_call.md");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    await waitFor(() =>
+      expect(vi.mocked(toast).mock.calls.at(-1)).toEqual([
+        "Added on call, partial: part of the file could not be read (lost: formula_values)",
+        "info",
+      ]),
+    );
+  });
+
+  it("holds the dialog through the upload; closing while it follows says the job goes on", async () => {
+    let release = () => {};
+    ingestClock.sleep = () => new Promise<void>((r) => (release = r));
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(repoStatus("processing", { stage: "parse" }));
+    try {
+      const { dialog, user } = await addFile("on_call.md");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+      expect(await within(dialog).findByText("Extracting…")).toBeInTheDocument();
+      const polls = vi.mocked(knowledgeIngestStatus).mock.calls.length;
+      // The footer's Close and the dialog's own close both close it the same way.
+      await user.click(screen.getAllByRole("button", { name: "Close" })[0]);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toMatch(/on call goes on extracting/);
+      release();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(vi.mocked(knowledgeIngestStatus).mock.calls.length).toBe(polls);
+    } finally {
+      ingestClock.sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    }
   });
 });
