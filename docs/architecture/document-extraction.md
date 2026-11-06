@@ -332,9 +332,10 @@ its placeholder's in the slide's layout (by index, then by type) and then its ma
 slide's, and a deck that names no slide size has the default 10 by 7.5 inches. A slide whose pictures, charts, diagrams
 or embedded objects carry all it shows, with no text, is a failed unit, unless OCR read its pictures; one whose only
 text is what OCR read is a failed unit too when it holds a chart, diagram or embedded object. So is a slide id whose
-relationship names no slide part, a slide nested deeper than the reader walks, and a slide whose picture sits in a
-placeholder of a layout or master that cannot be read (its text is still read). A table, in either format, is one block,
-a row per line with its cells joined by a pipe, and `attrs.table` its `rows` and `columns`.
+relationship names no slide part, a slide nested deeper than the reader walks, and a slide whose relationships cannot be
+read, or whose picture takes its size from a placeholder of a layout or master that cannot be read (its text is still
+read). A table, in either format, is one block, a row per line with its cells joined by a pipe, and `attrs.table` its
+`rows` and `columns`.
 
 **Tables (CSV, XLSX, Parquet).** A tabular source is `tables` in the artifact: each a header (the first row with a
 value; a Parquet file's schema), its columns typed by every value they hold (`string`, `number`, `bool`, `date`,

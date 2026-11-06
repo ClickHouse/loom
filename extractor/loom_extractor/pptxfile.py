@@ -136,8 +136,9 @@ class _Slide:
                         self.shapes.append((text, {"table": {"rows": rows, "columns": columns}}))
 
 
-def _notes(pkg: Package, slide_part: str) -> str:
-    for kind, target in pkg.rels(slide_part).values():
+def _notes(pkg: Package, rels: dict[str, tuple[str, str]]) -> str:
+    """The speaker notes of the slide whose relationships are `rels`."""
+    for kind, target in rels.values():
         if kind == "notesSlide":
             tree = pkg.xml(target).find(f"{q('p:cSld')}/{q('p:spTree')}")
             if tree is None:
@@ -237,7 +238,7 @@ def _placeholder_extent(ph: Element, layout: _Entries, master: _Entries) -> tupl
 
 def _picture_texts(
     pkg: Package,
-    part: str,
+    rels: dict[str, tuple[str, str]],
     slide: _Slide,
     size: tuple[int, int],
     images: ocr.Images,
@@ -249,7 +250,6 @@ def _picture_texts(
     if not slide.pictures:
         return [], 0, ""
     width, height = size
-    rels = pkg.rels(part)
     layout = next((t for k, t in rels.values() if k == "slideLayout"), None)
     placed = any(isinstance(e, Element) for _, e in slide.pictures)
     held = holders.placeholders(layout) if layout is not None and placed else ([], [])
@@ -313,19 +313,25 @@ def extract_pptx(data: bytes) -> Artifact:
             failed.append(Failure(f"slide {number}", str(e) or type(e).__name__))
             incomplete.add(number)
             continue
-        try:
-            notes = _notes(pkg, part)
-        except (PartError, RecursionError) as e:  # the slide is still read; its notes are not
-            failed.append(Failure(f"slide {number} notes", str(e)))
-            incomplete.add(number)
-            notes = ""
         # `show` is an XML boolean.
         hidden = {"hidden": True} if root.get("show") in ("0", "false") else {}
-        # the slide's relationships, layout or master: its pictures are not read
+        notes = ""
+        pictured: list[str] = []
         try:
-            pictured, seen, unread = _picture_texts(pkg, part, slide, size, images, holders)
-        except (PartError, RecursionError) as e:
-            pictured, seen, unread = [], 0, f"its pictures could not be read: {e}"
+            rels = pkg.rels(part)
+        except (PartError, RecursionError) as e:  # the slide's text is still read
+            seen, unread = 0, f"its relationships could not be read: {e}"
+        else:
+            try:
+                notes = _notes(pkg, rels)
+            except (PartError, RecursionError) as e:  # the slide is still read; its notes are not
+                failed.append(Failure(f"slide {number} notes", str(e)))
+                incomplete.add(number)
+            # its layout or master: its pictures are not read
+            try:
+                pictured, seen, unread = _picture_texts(pkg, rels, slide, size, images, holders)
+            except (PartError, RecursionError) as e:
+                pictured, seen, unread = [], 0, f"its pictures could not be read: {e}"
         if unread:
             failed.append(Failure(f"slide {number}", unread))
             incomplete.add(number)

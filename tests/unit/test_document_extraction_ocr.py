@@ -672,12 +672,29 @@ def test_layouts_and_their_master_are_read_once_however_many_pictures_sit_in_the
     if broken:
         assert [f.unit for f in a.coverage.failed] == [f"slide {n}" for n in (1, 2, 3, 4)]
         assert all("its pictures could not be read" in f.reason for f in a.coverage.failed)
+        assert [b.text for b in a.blocks] == ["Architecture"] * 4
     else:
         assert a.coverage.complete
     for n in (1, 2):
         assert reads.count(f"ppt/slideLayouts/slideLayout{n}.xml") == 1
         assert reads.count(f"ppt/slideLayouts/_rels/slideLayout{n}.xml.rels") == 1
     assert reads.count("ppt/slideMasters/slideMaster1.xml") == 1
+
+
+def test_a_slide_whose_relationships_cannot_be_read_keeps_its_text_and_fails_once(
+    engine: FakeEngine,
+) -> None:
+    from tests.unit.test_document_extraction_office import _sp
+
+    large = '<p:spPr><a:xfrm><a:ext cx="9000000" cy="4500000"/></a:xfrm></p:spPr>'
+    deck = _one_slide(
+        _sp("Architecture", "title") + _pic(large),
+        {"ppt/slides/_rels/slide1.xml.rels": "not xml"},
+    )
+    a = extract(deck, "r.pptx")
+    assert [b.text for b in a.blocks] == ["Architecture"] and engine.seen == []
+    assert [f.unit for f in a.coverage.failed] == ["slide 1"]
+    assert a.coverage.failed[0].reason.startswith("its relationships could not be read")
 
 
 def test_a_grouped_picture_is_sized_on_its_slide_and_a_deck_with_no_size_has_the_default(
