@@ -7,9 +7,10 @@ the read ops resolve to `memory.read`, the
 write / list / search ops stay in `memory`, the registry stays totally
 covered, and a read burst leaves the write bucket full — pinned with the
 injected clock of `test_ratelimit_clock.py` so no wall time is involved.
-Knowledge reads get the same split: `knowledge.query` has its own bucket, the
-other read-only knowledge ops but `knowledge.inspect` (a whole-namespace report)
-draw on `knowledge.read`, and a burst of them leaves `knowledge.add` full.
+Knowledge reads get the same split: `knowledge.search` and `knowledge.query` have
+their own buckets, the other read-only knowledge ops but `knowledge.inspect` (a
+whole-namespace report) draw on `knowledge.read`, and a burst of them leaves
+`knowledge.add` full.
 """
 
 from __future__ import annotations
