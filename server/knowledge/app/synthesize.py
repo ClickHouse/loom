@@ -60,11 +60,13 @@ async def handle_knowledge_synthesize(
     model = str(getattr(llm, "model", "") or synth_model or "")
     # One calculation an answer: the plan for the task, cited `[knowledge.query#1]`.
     calculation: SynthesizeCalculation | None = None
+    notes: list[str] = []
     if input.datasets:
         done = await _calculate(input, llm, model)
         if isinstance(done, KnowledgeSynthesizeOutput):
             return done
-        calculation = done
+        calculation, note = done
+        notes.append(note)
     # Read after the calculation, so one that abstains reads no document.
     chunks, docs = await _corpus_chunks(input)
     if not chunks and calculation is None:
@@ -81,7 +83,6 @@ async def handle_knowledge_synthesize(
             )
         return (getattr(res, "text", "") or "").strip()
 
-    notes = [_evidence(input, calculation)] if calculation is not None else []
     notes += [n for n in await asyncio.gather(*[_map(w) for w in wins]) if n]
     answer, rounds = await _reduce(input, llm, notes, note_tokens)
     # Grounded before the cut, so removed citations take no room; a kept citation the
@@ -204,11 +205,12 @@ async def _schemas(
 
 async def _calculate(
     input: KnowledgeSynthesizeInput, llm: Any, model: str
-) -> SynthesizeCalculation | KnowledgeSynthesizeOutput:
+) -> tuple[SynthesizeCalculation, str] | KnowledgeSynthesizeOutput:
     """One plan the model proposes from the task and the datasets' schemas, run
-    by knowledge.query, which checks it against them; a refused plan is proposed
-    again once, with why. Or the abstention: the schema needs an answer, the
-    model would need to ask first, or no plan it proposed held."""
+    by knowledge.query, which checks it against them, with its note for the
+    reduce; a refused plan is proposed again once, with why. Or the abstention:
+    the schema needs an answer, the model would need to ask first, or no plan
+    it proposed held."""
     schemas = await _schemas(input)
     if isinstance(schemas, KnowledgeSynthesizeOutput):
         return schemas
@@ -239,7 +241,10 @@ async def _calculate(
         except (pydantic.ValidationError, ValidationError) as e:
             refused = _why(e)
             continue
-        return SynthesizeCalculation(citation=f"{ap.CALCULATION_SOURCE}#1", **out.model_dump())
+        calculation = SynthesizeCalculation(
+            citation=f"{ap.CALCULATION_SOURCE}#1", **out.model_dump()
+        )
+        return calculation, _evidence(input, query, calculation)
     return _abstain("invalid_plan", ap.cut(refused, ap.MAX_REASON_CHARS), model)
 
 
@@ -287,15 +292,14 @@ def _why(e: Exception) -> str:
     return str(e)
 
 
-def _evidence(input: KnowledgeSynthesizeInput, c: SynthesizeCalculation) -> str:
-    # The plan as it ran, less every field left at its default, so the note shows
-    # what was asked for and not a page of empty filters.
-    ran = KnowledgeQueryInput.model_validate(
-        {**c.receipt.plan, "org": input.org, "namespace": input.namespace}
-    ).model_dump(exclude={"org", "namespace", "datasets"}, exclude_defaults=True)
+def _evidence(
+    input: KnowledgeSynthesizeInput, query: KnowledgeQueryInput, c: SynthesizeCalculation
+) -> str:
     return ap.evidence(
         1,
-        ran,
+        # The plan less every field left at its default: what was asked for, not a
+        # page of empty filters.
+        query.model_dump(exclude={"org", "namespace", "datasets"}, exclude_defaults=True),
         [col.model_dump() for col in c.columns],
         c.rows,
         truncated=c.truncated,

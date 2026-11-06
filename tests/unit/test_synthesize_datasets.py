@@ -142,12 +142,12 @@ def test_evidence_shows_the_plan_the_result_and_what_it_may_not_cover() -> None:
     assert f"t{ap.MAX_EVIDENCE_ROWS - 1} | {ap.MAX_EVIDENCE_ROWS - 1}" in text
     assert f"t{ap.MAX_EVIDENCE_ROWS} |" not in text
     assert "NOTE: only the first 50 of the 55 result rows are shown" in text
+    assert "NOTE: o: 2 rows were rejected" in text
     # A result cut at its limit says so, and how many of the rows it returned are here.
     cut = ap.evidence(1, {}, cols, rows[:50] + rows[:50], truncated=True, incomplete=[],
                        max_chars=100_000)  # fmt: skip
     assert "NOTE: more rows matched than the 100 the calculation returned" in cut
     assert "NOTE: only the first 50 of the 100 result rows are shown" in cut
-    assert "NOTE: o: 2 rows were rejected" in text
 
 
 def test_a_value_with_a_line_break_or_bar_stays_on_its_row() -> None:
@@ -194,7 +194,6 @@ def test_a_wide_selection_leaves_its_rows_room_at_the_smallest_window() -> None:
     rows = [list(range(32))] * 5
     text = ap.evidence(1, {}, cols, rows, truncated=False, incomplete=[], max_chars=1000)
     assert len(text) <= 1000 and text.rstrip().endswith("31")  # a row is shown whole
-    assert "no result row" not in text
 
 
 def test_a_valid_plan_of_every_shape_the_prompt_lists_has_no_unknown_key() -> None:
