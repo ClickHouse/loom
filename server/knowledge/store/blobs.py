@@ -321,13 +321,15 @@ def _fence_advice(erasures: list[_Erasure], what: str) -> str:
     else an unfinished one, else one that finished just now), and what to do."""
     failed = [e for e in erasures if e.status == "failed"]
     if failed:
+        # The recovery worker retries it; one past its attempts needs a re-verify.
         return (
-            f"{failed[0]} {what}; complete it with loom erasure-re-verify --resume, then run again"
+            f"{failed[0]} {what}; run again once the recovery worker has completed it, or "
+            "complete it with loom erasure-re-verify --resume"
         )
     open_ = [e for e in erasures if not e.done]
     if open_:
         return f"{open_[0]} {what}; run again once it has finished"
-    return f"{erasures[0]} {what} and finished just now; run again in a minute"
+    return f"{erasures[0]}, which finished just now, {what}; run again in a minute"
 
 
 async def _erasures_since(org: str, namespace: str, since_s: int, ch: _CHClient) -> list[_Erasure]:
@@ -352,13 +354,7 @@ async def _await_erasures(held: Held, since_s: int, ch: _CHClient) -> None:
         open_ = [e for e in raced if not e.done]
         if not open_:
             return
-        # A failed erasure finishes only through a re-verify: waiting gains nothing.
-        if any(e.status == "failed" for e in open_):
-            raise SwitchedUnderErasure(
-                _fence_advice(
-                    open_, "started as its row was switched; the switched row is left to it"
-                )
-            )
+        # A failed one is waited for too: the recovery worker retries it.
         if time.monotonic() >= deadline:
             raise SwitchedUnderErasure(
                 f"{open_[0]} started as its row was switched and has not finished within "
@@ -367,25 +363,18 @@ async def _await_erasures(held: Held, since_s: int, ch: _CHClient) -> None:
         await asyncio.sleep(_ERASURE_POLL_S)
 
 
-@dataclass(frozen=True)
-class Fence:
-    """A namespace's erasure fence as one read of the ledger sees it: the refusal that
-    holds every original of it, if any. Coverage depends on the namespace alone, so one
-    read serves a walk until an erasure holds an original back."""
-
-    refusal: str = ""
-
-
-async def fence(org: str, namespace: str, *, ch: _CHClient | None = None) -> Fence:
-    """The namespace's fence now: the refusal names the erasure that holds it longest."""
+async def fence(org: str, namespace: str, *, ch: _CHClient | None = None) -> str:
+    """The refusal that holds every original of the namespace back now, naming the
+    erasure that holds it longest; '' when none does. Coverage depends on the namespace
+    alone, so one read serves a walk until an erasure holds an original back."""
     ch = ch or _default_client()
     since = await _cutoff_ms(0, ch) // 1000
     fenced = await _erasures_since(org, namespace, since, ch)
-    return Fence(_fence_advice(fenced, "covers it") if fenced else "")
+    return _fence_advice(fenced, "covers it") if fenced else ""
 
 
 async def move_to_bucket(
-    held: Held, fenced: Fence | None = None, *, ch: _CHClient | None = None
+    held: Held, refusal: str | None = None, *, ch: _CHClient | None = None
 ) -> bool:
     """Copy one original from its ClickHouse row to a new object in the bucket and
     switch its catalog row to that object; every document naming the sha reads from
@@ -425,9 +414,10 @@ async def move_to_bucket(
     - An erasure registered after the row landed reads that row.
     """
     ch = ch or _default_client()
-    fenced = fenced or await fence(held.org, held.namespace, ch=ch)
-    if fenced.refusal:
-        raise ErasureOpen(fenced.refusal)
+    if refusal is None:
+        refusal = await fence(held.org, held.namespace, ch=ch)
+    if refusal:
+        raise ErasureOpen(refusal)
     # This move's own start: an erasure that finished before it cannot race its copy, and
     # one still running then, or finished within the margin, is caught after the copy.
     since = await _cutoff_ms(0, ch) // 1000

@@ -38,10 +38,14 @@ def test_the_advice_names_the_erasure_that_holds_the_move_longest() -> None:
     running = _Erasure("e2", "namespace", "in_progress")
     failed = _Erasure("e3", "user_id", "failed")
     advice = _fence_advice([done, running], "covers it")
-    assert advice.startswith("erasure e2 (namespace, in_progress) covers it")
-    assert advice.endswith("run again once it has finished")
-    assert "loom erasure-re-verify --resume" in _fence_advice([done, running, failed], "covers it")
-    # Only one that finished just now: a minute's wait, not "once it has finished".
-    assert _fence_advice([done], "started while it was copied").endswith(
-        "started while it was copied and finished just now; run again in a minute"
+    assert advice == "erasure e2 (namespace, in_progress) covers it; run again once it has finished"
+    # A failed one: the recovery worker retries it, and past its attempts a re-verify.
+    assert _fence_advice([done, running, failed], "covers it") == (
+        "erasure e3 (user_id, failed) covers it; run again once the recovery worker has "
+        "completed it, or complete it with loom erasure-re-verify --resume"
+    )
+    # Only one that finished just now: a minute's wait, said where it reads right.
+    assert _fence_advice([done], "started while it was copied, and it stays in ClickHouse") == (
+        "erasure e1 (user_id, completed), which finished just now, started while it was "
+        "copied, and it stays in ClickHouse; run again in a minute"
     )

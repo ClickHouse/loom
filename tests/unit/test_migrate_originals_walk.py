@@ -37,11 +37,11 @@ async def test_each_original_lands_in_its_own_count(monkeypatch: pytest.MonkeyPa
 
     fences: list[int] = []
 
-    async def fence(org: str, ns: str) -> blobs.Fence:
+    async def fence(org: str, ns: str) -> str:
         fences.append(1)
-        return blobs.Fence()
+        return ""
 
-    async def move(held: blobs.Held, fenced: blobs.Fence | None = None) -> bool:
+    async def move(held: blobs.Held, refusal: str | None = None) -> bool:
         out = outcomes[held.sha]
         if isinstance(out, Exception):
             raise out
@@ -75,15 +75,13 @@ async def test_an_erasure_holding_one_back_refuses_the_rest_of_the_namespace_onc
     async def needed(org: str, ns: str, shas: list[str]) -> set[str]:
         return set(shas)
 
-    async def fence(org: str, ns: str) -> blobs.Fence:
+    async def fence(org: str, ns: str) -> str:
         reads.append("fence")
         # The second read sees the erasure that held the first original back.
-        return blobs.Fence(
-            "erasure e1 (namespace, in_progress) covers it" if len(reads) > 1 else ""
-        )
+        return "erasure e1 (namespace, in_progress) covers it" if len(reads) > 1 else ""
 
-    async def move(held: blobs.Held, fenced: blobs.Fence | None = None) -> bool:
-        if held is page[0] or (fenced and fenced.refusal):
+    async def move(held: blobs.Held, refusal: str | None = None) -> bool:
+        if held is page[0] or refusal:
             raise blobs.ErasureOpen(
                 "erasure e1 (namespace, in_progress) started while it was copied"
             )
@@ -109,8 +107,8 @@ async def test_an_erasure_holding_one_back_refuses_the_rest_of_the_namespace_onc
 async def test_a_namespace_the_fence_refuses_is_reported_once_and_not_walked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fence(org: str, ns: str) -> blobs.Fence:
-        return blobs.Fence("erasure e9 (user_id, failed) covers it; complete it first")
+    async def fence(org: str, ns: str) -> str:
+        return "erasure e9 (user_id, failed) covers it; complete it first"
 
     async def held_in_clickhouse(*a: object) -> blobs.HeldPage:
         raise AssertionError("a refused namespace is not walked")

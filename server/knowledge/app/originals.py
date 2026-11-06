@@ -48,27 +48,25 @@ async def migrate_originals(
     out = Migrated()
     for org_, ns in await _scopes(org, namespace):
         # One read of the ledger for the namespace; again after an erasure held one back.
-        fenced = None if dry_run else await blobs.fence(org_, ns)
+        refusal = None if dry_run else await blobs.fence(org_, ns)
         after = ""
-        while not (fenced and fenced.refusal):
+        while not refusal:
             page = await blobs.held_in_clickhouse(org_, ns, after, _PAGE)
             wanted = await blobs.needed(org_, ns, [h.sha for h in page.held])
             for held in page.held:
                 if held.sha not in wanted:
                     out.unneeded += 1
                     continue
-                if not await _one(held, fenced, dry_run, out):
-                    fenced = await blobs.fence(org_, ns)
-                    if fenced.refusal:
+                if not await _one(held, refusal, dry_run, out):
+                    refusal = await blobs.fence(org_, ns)
+                    if refusal:
                         break
             if not page.after:
                 break
             after = page.after
-        if fenced and fenced.refusal:
+        if refusal:
             # The rest of the namespace is refused alike: once, not once per original.
-            out.errors.append(
-                f"{org_}/{ns}: {fenced.refusal}; its originals are left in ClickHouse"
-            )
+            out.errors.append(f"{org_}/{ns}: {refusal}; its originals are left in ClickHouse")
     return out
 
 
@@ -86,14 +84,14 @@ async def _scopes(org: str, namespace: str) -> list[tuple[str, str]]:
         after = page[-1]
 
 
-async def _one(held: blobs.Held, fenced: blobs.Fence | None, dry_run: bool, out: Migrated) -> bool:
+async def _one(held: blobs.Held, refusal: str | None, dry_run: bool, out: Migrated) -> bool:
     """Count one original. False when an erasure held it back or raced its switch."""
     if dry_run:
         out.pending += 1
         out.bytes += held.size
         return True
     try:
-        if await blobs.move_to_bucket(held, fenced):
+        if await blobs.move_to_bucket(held, refusal):
             out.moved += 1
             out.bytes += held.size
         else:

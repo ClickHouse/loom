@@ -455,7 +455,7 @@ async def test_a_failed_erasure_fences_the_move_until_it_is_completed(
     held = await _held(ch, org, ns, b"behind a failed erasure", monkeypatch)
     await _erasure(ch, org, "namespace", ns, "failed")
     # Running again does not help: the advice names the command that completes it.
-    with pytest.raises(blobs.ErasureOpen, match="loom erasure-re-verify --resume"):
+    with pytest.raises(blobs.ErasureOpen, match="recovery worker"):
         await blobs.move_to_bucket(held, ch=ch)
     assert _keys(s3) == []
 
@@ -482,7 +482,9 @@ async def test_an_erasure_that_just_finished_fences_the_move(
         ],
         settings={"async_insert": 0},
     )
-    with pytest.raises(blobs.ErasureOpen, match="finished just now; run again in a minute"):
+    with pytest.raises(
+        blobs.ErasureOpen, match="which finished just now, covers it; run again in a minute"
+    ):
         await blobs.move_to_bucket(held, ch=ch)
     assert _keys(s3) == []
 
@@ -643,7 +645,7 @@ async def test_a_move_whose_original_stopped_being_needed_is_left_to_the_sweep(
 
 
 @pytest.mark.asyncio
-async def test_a_failed_erasure_as_the_row_lands_is_not_waited_out(
+async def test_a_failed_erasure_as_the_row_lands_is_waited_for_like_any(
     s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     org, ns, held, landed = await _raced(ch, s3, monkeypatch, "objstore-race-failed", [])
@@ -656,11 +658,13 @@ async def test_a_failed_erasure_as_the_row_lands_is_not_waited_out(
         return out
 
     monkeypatch.setattr(ch, "insert", insert_then_failed)
-    monkeypatch.setattr(blobs, "ERASURE_WAIT_S", 60)
-    started = asyncio.get_running_loop().time()
-    with pytest.raises(blobs.SwitchedUnderErasure, match="loom erasure-re-verify --resume"):
+    # The recovery worker retries a failed erasure, so it is waited for: past the wait, the
+    # switched row is left to it, named.
+    monkeypatch.setattr(blobs, "ERASURE_WAIT_S", 0.3)
+    with pytest.raises(blobs.SwitchedUnderErasure, match="user_id, failed"):
         await blobs.move_to_bucket(held, ch=ch)
-    assert asyncio.get_running_loop().time() - started < 10
+    stored = await blobs.locate(org, ns, held.sha, ch=ch)
+    assert stored is not None and stored.location == landed[0]
 
 
 @pytest.mark.asyncio

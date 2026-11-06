@@ -1031,10 +1031,11 @@ rows; `OPTIMIZE TABLE loom.document_blobs FINAL` drops it at once.
 A move is fenced by the erasure ledger. An erasure covers an original when it is its
 namespace's or any user's of the org: a user's erasure finds that user's originals through
 their upload records and documents, which any write can add to, so the move does not guess
-whose an original is. A move does not start while the ledger holds a covering erasure that
-is unfinished or finished within the last minute; run the command again once it has
-finished. A failed erasure holds it until `loom erasure-re-verify --resume` completes that
-erasure.
+whose an original is. A namespace is not started while the ledger holds a covering erasure
+that is unfinished or finished within the last minute, and an erasure registered later
+ends each move it catches after that move's copy (below); run the command again once it
+has finished. A failed erasure counts as unfinished: the erasure recovery worker retries
+it, and one past its attempts finishes through `loom erasure-re-verify --resume`.
 
 One registered while the object was written ends the move before its row, and the move
 deletes its own object, which no row names. While the original is still held in ClickHouse
@@ -1044,9 +1045,9 @@ the row lands may have deleted the original first. A namespace's erasure deletes
 original of its namespace, so the move deletes its row and object at once. A user's
 erasure deletes every object of an original it takes, so the move waits for it to finish
 and deletes its row when its object is gone; when the object is still there, the erasure
-kept the original and the switch stands. One that has not finished after 600 seconds, or
-that has failed (it waits for a re-verify), or a check that fails after the switch, is
-named, and the switched row is left to it.
+kept the original and the switch stands. One that has not finished after 600 seconds (a
+failed one is waited for too), or a check that fails after the switch, is named, and the
+switched row is left to it.
 
 The row is written only within the time an upload has to write its object, counted from
 the write as an upload's is and well inside `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`, after
