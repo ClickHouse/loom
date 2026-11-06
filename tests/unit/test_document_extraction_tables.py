@@ -295,7 +295,7 @@ def test_an_xlsx_merge_whose_last_cell_holds_a_value_still_groups() -> None:
     # A hidden cell's value kept under a merge: the range is spread all the same.
     a = extract(workbook([("S", sheet(rows, merges=("A1:C1",)))]), "s.xlsx")
     assert a.tables[0].header_rows == 2
-    assert [n for n, _ in _columns(a)][:2] == ["2025 / H1", "2025 / H2"]
+    assert [n for n, _ in _columns(a)] == ["2025 / H1", "2025 / H2", "x / H3"]
 
 
 @pytest.mark.parametrize("merge", ["A1:B1", "A1:ZZZ1"], ids=["narrow", "past the last column"])
@@ -331,6 +331,26 @@ def test_a_second_xlsx_header_row_counts_against_the_rows_a_table_holds(
     assert "S rows 5-" in [f.unit for f in a.coverage.failed]
 
 
+def test_a_pair_of_merged_xlsx_header_cells_shares_one_joined_name() -> None:
+    # One cell merged over three columns, over another merged over the same three.
+    above = dict.fromkeys(range(3), tabular.Cell("2025", "string"))
+    under = dict.fromkeys(range(3), tabular.Cell("All", "string"))
+    header, cut = xlsxfile._joined_header(above, under, 0, 2)
+    assert [c.text for c in header] == ["2025 / All"] * 3 and not cut
+    assert header[0] is header[1] is header[2]
+
+
+def test_an_xlsx_range_merged_down_rows_groups_no_header() -> None:
+    rows = {
+        1: [cell("A1", "Region", t="inlineStr"), cell("C1", "x", t="inlineStr")],
+        2: [cell("A2", "H1", t="inlineStr"), cell("B2", "H2", t="inlineStr")],
+        3: [cell("A3", 1), cell("B3", 2)],
+    }
+    # Merged across and down: it names its columns, and the row under it is no group's.
+    a = extract(workbook([("S", sheet(rows, merges=("A1:B2",)))]), "s.xlsx")
+    assert a.tables[0].header_rows == 1
+
+
 def test_the_columns_a_header_rows_merges_cover_are_found_in_one_pass() -> None:
     assert xlsxfile._covered([(1, 3), (2, 2), (6, 9)], 0, 7) == [
         False,
@@ -361,7 +381,7 @@ def test_a_text_row_under_merges_over_every_column_it_fills_reads_as_names() -> 
     }
     a = extract(workbook([("S", sheet(rows, merges=("A1:B1", "C1:D1")))]), "s.xlsx")
     # Nothing tells such a row from names under the groups: it reads as the second
-    # header row, as the docs say; a dataset's schema approval names the columns.
+    # header row, as the docs say, and the columns keep those names.
     assert [n for n, _ in _columns(a)] == [
         "Name / Alice",
         "Name / Smith",

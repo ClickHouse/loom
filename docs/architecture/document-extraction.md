@@ -382,11 +382,11 @@ second row, text or not, that is not merged down from the first makes it data. A
 groups nothing; numbers or dates under a range (`2024 | 2025` written as numbers) read as data too. A title merged over
 the whole first row meets the rule too, and heads every name (`Sales 2025 / Region`). So does a first row of data that
 is all text under merges covering every column it fills (`Name` over `Alice | Smith`): nothing tells it from names under
-the groups, so it is read as the second header row, and a dataset's schema approval renames its columns. A merged range
-fills no row past the last one held, and a merge that would add rows past those a table holds stops there and is a
-failed unit. A row or cell that names no position takes the one after the one before it. A hidden sheet is read and
-marked `attrs.hidden`, and a damaged sheet, or one whose root is no worksheet (another namespace), fails alone; shared
-strings or styles that cannot be read to their end keep what was read, and the artifact loses `shared_strings` or
+the groups, so it is read as the second header row, and the columns keep those names until the sheet is changed. A
+merged range fills no row past the last one held, and a merge that would add rows past those a table holds stops there
+and is a failed unit. A row or cell that names no position takes the one after the one before it. A hidden sheet is read
+and marked `attrs.hidden`, and a damaged sheet, or one whose root is no worksheet (another namespace), fails alone;
+shared strings or styles that cannot be read to their end keep what was read, and the artifact loses `shared_strings` or
 `number_formats`.
 
 **Parquet.** pyarrow reads the file from the bytes in memory, with no file system, no threads and its system memory

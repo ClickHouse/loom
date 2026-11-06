@@ -456,7 +456,8 @@ class _Reader:
         # that row holds text under the range and, elsewhere, nothing or only cells
         # merged down from the first row; a row of anything else is data.
         above, under = sheet.grid[top], sheet.grid.get(top + 1, {})
-        # A range the cell budget left unspread names only its first column: no group.
+        # A range across the header row alone groups the row under it (one merged down
+        # rows names a column, no group); one the cell budget left unspread groups nothing.
         spans = [
             (c, r)
             for t, c, b, r in sheet.merges
@@ -470,25 +471,7 @@ class _Reader:
         )
         cut: set[int] = set()
         if grouped:
-            names: dict[int, tuple[str, bool]] = {}
-
-            def named(cell: Cell) -> tuple[str, bool]:
-                # A merged cell spans many columns and may hold a megabyte: read once.
-                if id(cell) not in names:
-                    names[id(cell)] = read_name(cell)
-                return names[id(cell)]
-
-            # A pair of cells spanning many columns shares one joined name, read once.
-            pairs: dict[tuple[int, int], tuple[Cell, bool]] = {}
-            joined = []
-            for col in range(left, right + 1):
-                pair = above.get(col, EMPTY), under.get(col, EMPTY)
-                ids = id(pair[0]), id(pair[1])
-                if ids not in pairs:
-                    pairs[ids] = _named_over(*pair, named)
-                joined.append(pairs[ids])
-            header = [cell for cell, _ in joined]
-            cut = {i for i, (_, was_cut) in enumerate(joined) if was_cut}
+            header, cut = _joined_header(above, under, left, right)
         out = Rows(
             header,
             header_row=top,
@@ -685,6 +668,31 @@ def _covered(spans: list[tuple[int, int]], left: int, right: int) -> list[bool]:
         depth += n
         out.append(depth > 0)
     return out
+
+
+def _joined_header(
+    above: dict[int, Cell], under: dict[int, Cell], left: int, right: int
+) -> tuple[list[Cell], set[int]]:
+    """A header over two rows, one name per column from `left` to `right`, and the
+    columns whose names were cut. A merged cell spans many columns and may hold a
+    megabyte: each cell is read once, and a pair of cells over many columns shares
+    one joined name, which the names read once too."""
+    names: dict[int, tuple[str, bool]] = {}
+
+    def named(cell: Cell) -> tuple[str, bool]:
+        if id(cell) not in names:
+            names[id(cell)] = read_name(cell)
+        return names[id(cell)]
+
+    pairs: dict[tuple[int, int], tuple[Cell, bool]] = {}
+    joined = []
+    for col in range(left, right + 1):
+        pair = above.get(col, EMPTY), under.get(col, EMPTY)
+        ids = id(pair[0]), id(pair[1])
+        if ids not in pairs:
+            pairs[ids] = _named_over(*pair, named)
+        joined.append(pairs[ids])
+    return [cell for cell, _ in joined], {i for i, (_, cut) in enumerate(joined) if cut}
 
 
 def _named_over(
