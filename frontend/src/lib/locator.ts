@@ -36,8 +36,9 @@ export function formatLocator(format: string, locator: Locator | null | undefine
     [locator.sheet ?? "", span("row", "rows", locator.row_start, locator.row_end)].filter(Boolean).join(", "),
   ].filter(Boolean);
   // Lines only where nothing else places it: a key path, a page or a row says more.
-  if (!parts.length) parts.push(span("line", "lines", locator.line_start, locator.line_end));
-  return parts.filter(Boolean).join(" · ");
+  const lines = span("line", "lines", locator.line_start, locator.line_end);
+  if (!parts.length && lines) parts.push(lines);
+  return parts.join(" · ");
 }
 
 /** The passage's citation: the revision it was read from and where it sits in it. */

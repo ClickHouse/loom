@@ -27,6 +27,15 @@ function excerpt(text: string): string {
   return truncate(text.replace(/\s+/g, " ").trim(), EXCERPT_CHARS);
 }
 
+/** The status line: what the hits on screen are. While more may be behind them (a read
+ *  that asked for more has not come back with none new), they are the best so far. */
+function countText(hits: KnowledgeHit[] | null, done: boolean): string {
+  if (hits === null) return "";
+  if (hits.length === 0) return "No passage answers that.";
+  if (!done) return hits.length === 1 ? "The best passage" : `The best ${hits.length} passages`;
+  return `${hits.length} passage${hits.length === 1 ? "" : "s"}`;
+}
+
 /** A hit's name among the others: its document and its chunk. */
 function hitKey(h: KnowledgeHit): string {
   return `${h.source_uri}#${h.chunk_idx}`;
@@ -131,16 +140,7 @@ export function LibraryPassages({
       ]),
     fallback: () => fieldEl.current,
   });
-  const count =
-    hits === null
-      ? ""
-      : hits.length === 0
-        ? "No passage answers that."
-        : !asked.done
-          ? hits.length === 1
-            ? "The best passage"
-            : `The best ${hits.length} passages`
-          : `${hits.length} passage${hits.length === 1 ? "" : "s"}`;
+  const count = countText(hits, asked.done);
 
   // Built once per answer, not per keystroke in the field above it.
   const list = useMemo(
