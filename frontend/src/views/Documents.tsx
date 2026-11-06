@@ -370,7 +370,7 @@ export function Documents() {
     fallback: () => searchRef.current,
   });
 
-  // The read behind a `?doc=` link past the loaded rows. It ends with the page, with its
+  // The read behind a `?doc=` link's or a passage's open past the loaded rows. It ends with the page, with its
   // namespace, and when the reader opens or closes a document themselves: its answer then
   // opens nothing.
   const linkRead = useRef<AbortController | null>(null);
@@ -490,8 +490,8 @@ export function Documents() {
         if (!ac.signal.aborted) toastError("Open failed", e);
       });
   };
-  // The deep-link effect and the rows call the latest render's handlers without re-firing
-  // on them or rendering every row again.
+  // The deep-link effect, the rows and the passage panel call the latest render's handlers
+  // without re-firing on them or rendering every row again.
   const handlers = useRef({ onOpen, onDownload, onDelete, openByUri });
   handlers.current = { onOpen, onDownload, onDelete, openByUri };
   // Stable, so the passage list is not built again on each render of the page.

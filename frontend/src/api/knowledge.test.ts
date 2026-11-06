@@ -7,6 +7,7 @@ import {
   listKnowledge,
   PREVIEW_TEXT_BYTES,
   previewKind,
+  searchKnowledge,
   uploadKnowledgeFile,
 } from "./knowledge";
 import { ApiError } from "../lib/errors";
@@ -259,5 +260,24 @@ describe("uploading a file", () => {
   it("reads a server that predates knowledge.formats as listing nothing", async () => {
     stubFetch(404, '{"detail":{"code":"NOT_FOUND"}}');
     await expect(knowledgeFormats(id)).resolves.toBeNull();
+  });
+});
+
+describe("searchKnowledge", () => {
+  it("searches the namespace shown alone, for the hits asked, and answers its results", async () => {
+    const hit = { source_uri: "docs/a.md", chunk_idx: 0, content: "x", section: "", score: 1 };
+    const fetchMock = stubFetch(200, JSON.stringify({ results: [hit] }));
+    const found = await searchKnowledge({ org: "acme", namespace: "team" }, "retention", 20);
+    expect(found).toEqual([hit]);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toMatch(/\/v1\/knowledge\.search$/);
+    // "this", not the op's default: another namespace's hit would open nothing here.
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      org: "acme",
+      namespace: "team",
+      query: "retention",
+      top_k: 20,
+      namespace_scope: "this",
+    });
   });
 });

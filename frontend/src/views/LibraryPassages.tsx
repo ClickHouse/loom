@@ -72,7 +72,6 @@ export function LibraryPassages({
   const searching = useRef<AbortController | null>(null);
   // A search still running when the panel goes (another place) is dropped.
   useEffect(() => () => searching.current?.abort(), []);
-  // A failed search keeps the hits it would have replaced (a failed Show more, say).
   const shown = !!hits?.length;
   const rowNav = useRowNav({ enabled: navEnabled && shown });
   const listEl = useRef<HTMLOListElement | null>(null);
@@ -105,6 +104,7 @@ export function LibraryPassages({
         setAsked({ query: q, topK, done: topK > TOP_K && !added });
       }
     } catch (e) {
+      // The hits it would have replaced stay (a failed Show more, say).
       if (!ctrl.signal.aborted) setError(humanizeError(e));
     } finally {
       if (!ctrl.signal.aborted) setBusy(false);
