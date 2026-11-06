@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 
 from server.core import object_store as objects
-from server.core.ch import sequential_reads, set_query_tag
+from server.core.ch import set_query_tag
 from server.core.errors import ValidationError
 from server.core.repo_base import _CHClient
 from server.erasure.app import ledger_reads
@@ -171,7 +171,8 @@ async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bo
     `CorruptOriginal`: the bytes do not fill their size or hash to their sha256, in
     ClickHouse or read back. `ErasureOpen`: an erasure that overlapped the copy, the
     original still held in ClickHouse. `SwitchUnconfirmed`: the row switched (or may
-    have) but could not be confirmed against an erasure. `ObjectStoreError`: the bucket
+    have) but could not be confirmed, against an erasure or against a later write that
+    may outrank it. `ObjectStoreError`: the bucket
     refused, the new object was gone before its read-back, or the copy outlasted
     DOCUMENT_UPLOAD_BUDGET_S. `ValidationError`: its object key would be too long (the
     walk refuses such a namespace before calling this).
@@ -188,8 +189,7 @@ async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bo
         held.org, held.namespace, held.sha, stored=blobs.Stored(held.size, ""), ch=ch
     )
     if data is None:
-        with sequential_reads():
-            now = await blobs.locate(held.org, held.namespace, held.sha, ch=ch)
+        now = await blobs.latest(held, ch=ch)
         if now is not None and not now.location:
             raise CorruptOriginal("bytes in ClickHouse do not fill its size")
         return False
@@ -216,8 +216,7 @@ async def move_to_bucket(held: blobs.Held, *, ch: _CHClient | None = None) -> bo
         # No row names the object yet. The original is the erasure's: gone, or kept,
         # and then still held here.
         await _drop(loc)
-        with sequential_reads():
-            after = await blobs.locate(held.org, held.namespace, held.sha, ch=ch)
+        after = await blobs.latest(held, ch=ch)
         if after is None or after.location:
             return False
         if overtaken:
