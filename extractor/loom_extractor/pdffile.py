@@ -117,6 +117,8 @@ def _has_image(
     for ref in xobjects.get_object().values():
         x = ref.get_object()
         if not hasattr(x, "get"):  # an entry that names no object: it may have been an image
+            if inline_only:
+                continue
             return True
         if x.get("/Subtype") == "/Image" and not inline_only:
             return True

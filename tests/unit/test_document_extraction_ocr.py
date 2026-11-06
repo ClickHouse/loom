@@ -791,7 +791,13 @@ def _dangling(pdf: bytes) -> bytes:
 def test_a_scan_whose_image_is_dangling_fails_its_page_not_the_file(engine: FakeEngine) -> None:
     pages = [b"q 400 0 0 400 100 200 cm /Im1 Do Q", text_at(72, 740, "A second page of text.")]
     a = extract(_dangling(laid_out_pdf(pages, image=GRAY)), "d.pdf")
-    assert [f.unit for f in a.coverage.failed] == ["page 1"]
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        (
+            "page 1",
+            "no text layer, and OCR read none of its images:"
+            " not every picture it draws could be collected, so one may be unread",
+        )
+    ]
     assert [b.text for b in a.blocks] == ["A second page of text."]
 
 
@@ -801,4 +807,53 @@ def test_a_text_page_whose_image_is_dangling_is_partial(engine: FakeEngine) -> N
         _dangling(laid_out_pdf([text + b"q 400 0 0 300 100 300 cm /Im1 Do Q"], image=GRAY)), "t.pdf"
     )
     assert [b.text for b in a.blocks] == ["A page of text and a screenshot."]
-    assert not a.coverage.complete and len(a.coverage.failed) == 1
+    assert [f.reason for f in a.coverage.failed] == [
+        "OCR did not read all of its pictures:"
+        " not every picture it draws could be collected, so one may be unread"
+    ]
+
+
+def test_a_picture_nested_past_the_form_depth_leaves_a_text_page_partial(
+    engine: FakeEngine,
+) -> None:
+    forms = tuple(b"/Fm%d Do" % (n + 1) for n in range(1, 5)) + (
+        b"q 400 0 0 300 100 300 cm /Im1 Do Q",
+    )
+    text = text_at(72, 740, "A page of text over nested forms.")
+    a = extract(laid_out_pdf([text + b"/Fm1 Do"], image=GRAY, forms=forms), "n.pdf")
+    assert [f.reason for f in a.coverage.failed] == [
+        "OCR did not read all of its pictures:"
+        " not every picture it draws could be collected, so one may be unread"
+    ]
+
+
+def test_a_text_page_whose_layout_fails_beside_an_image_is_partial(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fails(*args: object) -> None:
+        raise RuntimeError("layout")
+
+    monkeypatch.setattr(pdffile, "_read_layout", fails)
+    text = text_at(72, 740, "A page of text and a screenshot.")
+    a = extract(laid_out_pdf([text + b"q 400 0 0 300 100 300 cm /Im1 Do Q"], image=GRAY), "l.pdf")
+    assert [b.text for b in a.blocks] == ["A page of text and a screenshot."]
+    assert [f.reason for f in a.coverage.failed] == [
+        "its layout could not be read, so a picture on it may be unread: RuntimeError"
+    ]
+
+
+def test_a_page_whose_image_check_fails_too_fails_alone(
+    engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fails(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("broken")
+
+    monkeypatch.setattr(pdffile, "_read_layout", fails)
+    monkeypatch.setattr(pdffile, "_has_image", fails)
+    pages = [b"q 400 0 0 400 100 200 cm /Im1 Do Q", text_at(72, 740, "A second page of text.")]
+    a = extract(laid_out_pdf(pages, image=GRAY), "f.pdf")
+    assert [(f.unit, f.reason) for f in a.coverage.failed] == [
+        ("page 1", "no text layer, and its layout could not be read: RuntimeError"),
+        ("page 2", "its layout could not be read, so a picture on it may be unread: RuntimeError"),
+    ]
+    assert [b.text for b in a.blocks] == ["A second page of text."]

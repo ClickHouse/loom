@@ -50,7 +50,7 @@ _MAX_OPERATIONS = 400_000  # the drawing operators a page's rules are read from
 MAX_PICTURES = 50  # the images OCR reads on one page
 _MAX_INLINE = 50  # the largest inline images a page's drawing keeps
 _MAX_DRAWN = 1_000  # the distinct images a page's drawing is collected for
-_MAX_FORM_DEPTH = 4  # how deep form XObjects are walked for rules
+_MAX_FORM_DEPTH = 4  # how deep form XObjects are walked for rules and pictures
 _MAX_CMAP_BYTES = 1 << 20  # a ToUnicode map read for widths
 _MAX_CMAP_CODES = 65_536  # the codes a map's ranges are read for, and a font's widths
 MAX_LINES = 5_000  # a page with more lines is read as its text layer
@@ -460,9 +460,9 @@ class Drawing:
 def drawing(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> Drawing:
     """The horizontal and vertical lines the page draws (stroked lines and thin
     filled boxes), the images it draws, as shown and turned as its text is, and
-    whether every image was collected (not when the operators' bound or
-    `_MAX_DRAWN` was reached). Past the rules' bound or the operators' there
-    are no rules."""
+    whether every image was collected (not when the operators' bound,
+    `_MAX_DRAWN` or `_MAX_FORM_DEPTH` was reached, or a drawn name resolved to
+    no object). Past the rules' bound or the operators' there are no rules."""
     shown, _, _ = _display(page)
 
     def to(x: float, y: float) -> tuple[float, float]:
@@ -471,7 +471,7 @@ def drawing(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> Draw
     found: list[_Rule] = []
     pictures: list[Picture] = []  # each image once, where it is first drawn
     collected: set[object] = set()
-    cut = [False]  # an image past the cap
+    cut = [False]  # a picture not collected: past a bound, or a name of no object
     largest_inline: list[Picture] = []  # the largest images drawn inline
     budget = [_MAX_OPERATIONS]
 
@@ -543,10 +543,11 @@ def drawing(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> Draw
                     Picture(None, list(ctm), (min(xs), min(ys), max(xs), max(ys)))
                 )
                 if len(largest_inline) > _MAX_INLINE:  # the smallest goes: only size matters
-                    del largest_inline[
-                        min(range(len(largest_inline)), key=lambda i: largest_inline[i].area)
-                    ]
-            elif op == b"Do" and operands and depth < _MAX_FORM_DEPTH and resources is not None:
+                    largest_inline.remove(min(largest_inline, key=lambda p: p.area))
+            elif op == b"Do" and operands and resources is not None:
+                if depth >= _MAX_FORM_DEPTH:  # nested too deep to walk: it may draw a picture
+                    cut[0] = True
+                    continue
                 xobjects = resources.get_object().get("/XObject")
                 if not xobjects:
                     continue
@@ -570,7 +571,7 @@ def drawing(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> Draw
                             Picture(form, list(ctm), (min(xs), min(ys), max(xs), max(ys)))
                         )
                     continue
-                if form is None or form.get("/Subtype") != "/Form":
+                if form.get("/Subtype") != "/Form":
                     continue
                 matrix = [float(v) for v in form.get("/Matrix", [1, 0, 0, 1, 0, 0])]
                 walk(form, form.get("/Resources") or resources, _mul(matrix, ctm), depth + 1)
@@ -579,7 +580,8 @@ def drawing(page: pypdf.PageObject, reader: pypdf.PdfReader, turn: Turn) -> Draw
     if contents is not None:
         walk(contents, page.get("/Resources"), [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 0)
     # Past the rules' or the operators' bound a grid may be half read: no rules. Past
-    # the operators' bound or the image cap, the pictures are not all collected.
+    # the operators' bound, the image cap or the form depth, or with a name of no
+    # object, the pictures are not all collected.
     return Drawing(
         found if len(found) <= _MAX_RULES and budget[0] > 0 else [],
         pictures,
