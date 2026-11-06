@@ -226,17 +226,29 @@ def test_a_child_that_dies_leaving_undecodable_bytes_is_an_error_and_the_run_goe
 
 
 @pytest.mark.parametrize(
-    ("code", "stdout", "error"),
+    ("code", "stdout", "stderr", "error"),
     [
-        (0, b"100\n", "no parse (exit 0)"),  # a library's stray JSON line, no object
-        (1, b'{"blocks": []}\n', "no parse (exit 1)"),  # an object, but the child failed after it
+        (0, b"100\n", b"", "no parse (exit 0)"),  # a library's stray JSON line, no object
+        (
+            1,
+            b'{"blocks": []}\n',
+            b"",
+            "no parse (exit 1)",
+        ),  # an object, but the child failed after it
+        (1, b"", b"Traceback: boom\n", "no parse (exit 1): Traceback: boom"),
+        (1, b"", b"\n", "no parse (exit 1)"),  # stderr of only a newline is none
     ],
 )
 def test_a_child_whose_last_line_is_no_parse_is_that_files_error(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, code: int, stdout: bytes, error: str
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    code: int,
+    stdout: bytes,
+    stderr: bytes,
+    error: str,
 ) -> None:
     def ran(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.CompletedProcess(cmd, code, stdout=stdout, stderr=b"")
+        return subprocess.CompletedProcess(cmd, code, stdout=stdout, stderr=stderr)
 
     monkeypatch.setattr(subprocess, "run", ran)
     out = tmp_path / "p.jsonl"
