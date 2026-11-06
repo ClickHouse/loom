@@ -7,59 +7,52 @@ materially affect memory.search recall."""
 
 from __future__ import annotations
 
+import pytest
+
 from server.memory.domain.lemmatize import lemma_tokens, lemmatize
 
 
-def test_plural_to_singular() -> None:
-    assert lemmatize("deploys") == "deploy"
-    assert lemmatize("dogs") == "dog"
+@pytest.mark.parametrize(
+    ("text", "lemma"),
+    [
+        pytest.param("deploys", "deploy", id="plural to singular"),
+        pytest.param("dogs", "dog", id="plural to singular, short stem"),
+        pytest.param("deploying", "deploy", id="gerund to stem"),
+        pytest.param("deployed", "deploy", id="past tense to stem"),
+        pytest.param("queries", "query", id="ies to y"),
+        pytest.param("strategies", "strategy", id="ies to y, long stem"),
+        pytest.param("happier", "happy", id="ier to y"),
+        pytest.param("Deploys", "deploy", id="case insensitive"),
+        pytest.param("DEPLOYING", "deploy", id="case insensitive, all caps"),
+        # The tokenizer drops punctuation but joins the tokens with spaces, so
+        # substring search still works.
+        pytest.param("Deploys, Tuesdays.", "deploy tuesday", id="punctuation passes as spaces"),
+        # Intentional imperfection: "plan" and "plann" both overlap on the "plan"
+        # prefix that BM25 and substring matchers use.
+        pytest.param("planned", "plann", id="double letter kept"),
+    ],
+)
+def test_lemmatize_strips_the_suffixes_of_each_token(text: str, lemma: str) -> None:
+    assert lemmatize(text) == lemma
 
 
-def test_gerund_to_stem() -> None:
-    assert lemmatize("deploying") == "deploy"
-
-
-def test_past_tense_to_stem() -> None:
-    assert lemmatize("deployed") == "deploy"
-
-
-def test_ies_to_y() -> None:
-    assert lemmatize("queries") == "query"
-    assert lemmatize("strategies") == "strategy"
-
-
-def test_ier_to_y() -> None:
-    assert lemmatize("happier") == "happy"
-
-
-def test_case_insensitive() -> None:
-    assert lemmatize("Deploys") == "deploy"
-    assert lemmatize("DEPLOYING") == "deploy"
-
-
-def test_punctuation_passes_through_as_spaces() -> None:
-    # Tokenizer doesn't preserve punctuation but should still join
-    # tokens with spaces so substring search works.
-    assert lemmatize("Deploys, Tuesdays.") == "deploy tuesday"
-
-
-def test_irregular_words_pass_through() -> None:
-    # Children doesn't follow the -s rule; we accept passing through.
-    assert lemmatize("children") == "children"
-
-
-def test_short_words_unchanged() -> None:
-    # 3-char words skip suffix-strip ("the" doesn't become "th").
-    assert lemmatize("the") == "the"
-    # Single-char tokens are filtered by the token regex (need >=2 chars).
-    assert lemmatize("a") == ""
-
-
-def test_double_letters_intentional_imperfection() -> None:
-    """planned → plann (we accept the noise; "plan" + "plann" both
-    overlap on the "plan" prefix that BM25/substring matchers use)."""
-    # This documents the intentional behavior; not changing it.
-    assert lemmatize("planned") == "plann"
+@pytest.mark.parametrize(
+    ("text", "lemma"),
+    [
+        # Children doesn't follow the -s rule; it passes through.
+        pytest.param("children", "children", id="irregular word passes through"),
+        # No suffix rule matches "the".
+        pytest.param("the", "the", id="no suffix rule matches"),
+        # A rule's length guard: the -s rule needs more than three characters and the
+        # -ed rule more than four, so a short word keeps its ending.
+        pytest.param("its", "its", id="too short for the -s rule"),
+        pytest.param("used", "used", id="too short for the -ed rule"),
+        # Single-char tokens are filtered by the token regex (need >=2 chars).
+        pytest.param("a", "", id="single char dropped"),
+    ],
+)
+def test_lemmatize_leaves_or_drops_a_token_no_rule_applies_to(text: str, lemma: str) -> None:
+    assert lemmatize(text) == lemma
 
 
 def test_lemma_tokens_dedups() -> None:
@@ -73,6 +66,6 @@ def test_lemma_tokens_filters_too_short() -> None:
     assert "a" not in lemma_tokens("a deploy")
 
 
-def test_empty_input() -> None:
+def test_empty_input_lemmatizes_to_nothing() -> None:
     assert lemmatize("") == ""
     assert lemma_tokens("") == []
