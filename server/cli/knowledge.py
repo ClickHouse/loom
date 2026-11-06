@@ -117,13 +117,13 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
         if args.dry_run:
             print(
                 f"{result.pending} original(s), {result.bytes} bytes, held in ClickHouse; "
-                f"{result.unneeded} more no document names, left to the sweep"
+                f"{result.unneeded} more nothing needs now, left to the sweep"
             )
             return 0
         print(
             f"{result.moved} original(s) moved to the bucket ({result.bytes} bytes), "
-            f"{result.skipped} gone, replaced or erased meanwhile, {result.unneeded} no "
-            f"document names (left to the sweep), {len(result.errors)} not moved"
+            f"{result.skipped} gone, replaced or erased meanwhile, {result.unneeded} nothing "
+            f"needs now (left to the sweep), {len(result.errors)} not moved"
         )
         if result.moved:
             print(
@@ -133,7 +133,7 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
         for line in result.errors:
             print(f"error: {line}", file=sys.stderr)
         for line in result.left_to_erasure:
-            print(f"switched, left to an unfinished erasure: {line}", file=sys.stderr)
+            print(f"switched, unconfirmed: {line}", file=sys.stderr)
         return 1 if result.errors or result.left_to_erasure else 0
 
     return run_connected(_run)

@@ -411,7 +411,7 @@ async def test_an_erasure_during_the_copy_ends_the_move_before_its_row(
 
 
 @pytest.mark.asyncio
-async def test_an_original_an_erasure_kept_during_the_copy_is_reported(
+async def test_an_original_a_user_erasure_started_on_during_the_copy_is_reported(
     s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     org, ns = unique_org("objstore-kept"), "docs"
@@ -482,7 +482,7 @@ async def test_an_erasure_that_just_finished_fences_the_move(
         ],
         settings={"async_insert": 0},
     )
-    with pytest.raises(blobs.ErasureOpen, match="run again once it has finished"):
+    with pytest.raises(blobs.ErasureOpen, match="finished just now; run again in a minute"):
         await blobs.move_to_bucket(held, ch=ch)
     assert _keys(s3) == []
 

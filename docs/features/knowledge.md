@@ -1018,9 +1018,11 @@ bucket (`--org`, and `--namespace` with it, narrow it; `--dry-run` counts them a
 bytes). It refuses to run unless `LOOM_DOCUMENT_OBJECT_STORE=s3`; set that on every
 replica first, so no new original lands in ClickHouse behind it, and only once every
 replica runs a build that reads bucket rows. It walks one namespace at a time in key
-order, and moves only the originals the namespace still needs: those a live document names,
-or an unexpired upload or an open ingestion holds. The rest are the `document_blob_gc`
-sweep's to delete, and the command counts them as left to it. For each original it checks the row's bytes against their size and sha256, writes
+order, and moves only the originals the namespace needs now: those a live document names,
+or an unexpired upload or an open ingestion holds. The rest are counted as left to the
+`document_blob_gc` sweep, which deletes each once it is older than
+`LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`; one that is needed again by then moves on a later
+run. For each original it checks the row's bytes against their size and sha256, writes
 them to a new object with the store's SHA-256 check, reads the object back and hashes it,
 and then writes the catalog row naming the object. That row switches every document with
 those bytes at once. The ClickHouse copy stays until `loom.document_blobs` merges the two
@@ -1032,29 +1034,30 @@ their upload records and documents, which any write can add to, so the move does
 whose an original is. A move does not start while the ledger holds a covering erasure that
 is unfinished or finished within the last minute; run the command again once it has
 finished. A failed erasure holds it until `loom erasure-re-verify --resume` completes that
-erasure. One registered while the object was written ends the
-move before its row: the move deletes its own object, which no row names, and an original
-that erasure kept (a user's erasure keeps one another writer still needs) is reported; one
-a namespace's erasure is deleting counts as erased. One
-registered as the row lands may have deleted the original first. A namespace's erasure
-deletes every original of its namespace, so the move deletes its row and object at once. A
-user's erasure deletes every object of an original it takes, so the move waits for it to
-finish and deletes its row when its object is gone; when the object is still there, the
-erasure kept the original and the switch stands. One that has not finished after 600
-seconds, or a check that fails after the switch, is named, and the switched row is left to
-it.
+erasure.
+
+One registered while the object was written ends the move before its row, and the move
+deletes its own object, which no row names. A namespace's erasure deletes the original,
+which counts as erased; under a user's, the original stays in ClickHouse and is reported,
+to move on a later run if that erasure keeps it. One registered as the row lands may have
+deleted the original first. A namespace's erasure deletes every original of its namespace,
+so the move deletes its row and object at once. A user's erasure deletes every object of
+an original it takes, so the move waits for it to finish and deletes its row when its
+object is gone; when the object is still there, the erasure kept the original and the
+switch stands. One that has not finished after 600 seconds, or a check that fails after
+the switch, is named, and the switched row is left to it.
 
 The row is written only within the time an upload has to write its object, well inside
 `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`, after which the bucket walk may take an object no
 row names; a copy that takes longer deletes its object and is reported.
 
 An original whose bytes do not hash to their sha256 or fill their size, one an erasure
-held back or kept, or one the bucket refused or was too slow for is reported and stays
-where it was. The command exits 1 for those, and for a switched original left to an
-unfinished erasure. An original uploaded again or deleted while the command ran keeps
-what that write left, and the move deletes the object it wrote. An object a crash leaves
-is the sweep's, as an upload's is. The command is idempotent: run it again after a stop
-or a failure.
+held back, one whose object key would be too long, or one the bucket refused or was too
+slow for is reported and stays where it was. The command exits 1 for those, and for a
+switched original it could not confirm. An original uploaded again or deleted while the
+command ran keeps what that write left, and the move deletes the object it wrote. An
+object a crash leaves is the sweep's, as an upload's is. The command is idempotent: run it
+again after a stop or a failure.
 
 The server's credentials need `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and
 `s3:ListBucket` on the bucket and prefix. Without `s3:ListBucket`, S3 answers a read of a

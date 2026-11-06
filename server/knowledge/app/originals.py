@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from server.core import object_store as objects
 from server.core.ch import set_query_tag
+from server.core.errors import ValidationError
 from server.knowledge.store import blobs
 
 log = logging.getLogger(__name__)
@@ -24,7 +25,9 @@ _PAGE = 200  # not a setting: a page of a one-off operator walk
 class Migrated:
     moved: int = 0  # switched to an object in the bucket
     skipped: int = 0  # gone, replaced or erased since the walk read them
-    unneeded: int = 0  # nothing names or holds them: the sweep's, not moved
+    # Nothing needs them now (no live document, unexpired upload or open ingestion): not
+    # moved, and the sweep's once older than document_blob_min_age_seconds.
+    unneeded: int = 0
     pending: int = 0  # a dry run's originals still held in ClickHouse
     bytes: int = 0  # of the originals moved, or with a dry run of those held
     errors: list[str] = field(default_factory=list)
@@ -88,6 +91,11 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> None:
         out.moved += 1
         out.bytes += held.size
         out.left_to_erasure.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")
-    except (blobs.CorruptOriginal, blobs.ErasureOpen, objects.ObjectStoreError) as e:
+    except (
+        blobs.CorruptOriginal,
+        blobs.ErasureOpen,
+        objects.ObjectStoreError,
+        ValidationError,  # its object key would be too long for the bucket
+    ) as e:
         log.warning("originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e)
         out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")

@@ -371,7 +371,8 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
       unfinished or finished within `_CLOCK_MARGIN_S` (`ErasureOpen`).
     - One registered while the object was written and read back ends the move before
       its row: it deletes its own object, and an original that erasure kept (a user's
-      erasure keeps one another writer still needs) is reported (`ErasureOpen`).
+      erasure keeps one another writer still needs) stays held and is reported
+      (`ErasureOpen`).
     - One registered between that check and the row landing, the time of one insert,
       may have deleted the original's rows first. A namespace's erasure deletes every
       original of its namespace, so the move deletes its row and object at once. A
@@ -392,6 +393,8 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
                 f"{failed} covers it; complete it with loom erasure-re-verify --resume, "
                 "then run again"
             )
+        if fenced[0].done:
+            raise ErasureOpen(f"{fenced[0]} covers it and finished just now; run again in a minute")
         raise ErasureOpen(f"{fenced[0]} covers it; run again once it has finished")
     data = await read(held.org, held.namespace, held.sha, stored=Stored(held.size, ""), ch=ch)
     if data is None:
@@ -429,7 +432,8 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
         users = [e for e in overtaken if e.scope_type == "user_id"]
         if users:
             raise ErasureOpen(
-                f"{users[0]} ran while it was copied and kept it; it stays in ClickHouse"
+                f"{users[0]} started while it was copied; it stays in ClickHouse; run again "
+                "once that erasure has finished"
             )
         if overtaken:
             return False  # a namespace's erasure, which deletes it
@@ -461,11 +465,15 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
 
 
 async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) -> bool:
-    """After the switched row landed: an erasure registered as it landed decides. A read
-    that fails here leaves the switched row, reported (`SwitchedUnderErasure`)."""
+    """After the switched row landed: an erasure registered as it landed decides. No race:
+    the switch stands. A namespace's erasure: the move is taken back. A user's: once it
+    has finished, the move is taken back if the erasure took the moved object. A read that
+    fails here leaves the switched row, reported (`SwitchedUnderErasure`)."""
     try:
         raced = await _erasures_since(held, since, ch)
-        if raced and not any(e.scope_type != "user_id" for e in raced):
+        namespace_raced = any(e.scope_type != "user_id" for e in raced)
+        taken = False
+        if raced and not namespace_raced:
             await _await_erasures(held, since, ch)
             taken = await objects.read(loc) is None
     except SwitchedUnderErasure:
@@ -475,9 +483,7 @@ async def _settle(held: Held, since: int, loc: objects.Location, ch: _CHClient) 
             f"switched to {loc.uri()}, but the check for an erasure that raced it failed ({e}); "
             "check that no erasure of its namespace or a user ran then"
         ) from e
-    if not raced:
-        return True
-    if any(e.scope_type != "user_id" for e in raced) or taken:
+    if namespace_raced or taken:
         await _unwrite(held, loc, ch)
         return False
     return True
