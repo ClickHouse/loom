@@ -596,7 +596,8 @@ def _build(out: Path, src: Path) -> None:
     d = prepare(out, src)
     src = src.resolve()
     gold_all: list[dict] = []
-    scanned: dict[str, str] = {}  # a scan: the file it is a scan of
+    # an export or a scan: the file whose text it holds, whose split it takes
+    derived: dict[str, str] = {}
 
     def add(
         name: str,
@@ -685,6 +686,7 @@ def _build(out: Path, src: Path) -> None:
             pdf = soffice_pdf(d, d.work / f"office_export_{k}.docx", d.work)
             pdf.rename(d.out / f"office_export_{k}.pdf")
             add(f"office_export_{k}.pdf", "pdf_export", "pdf", gold_doc(sp), origin="synthetic")
+            derived[f"office_export_{k}.pdf"] = f"office_{k}.docx"
     # Typeset PDFs: no outline, headings by font, two columns, borderless, running furniture
     for k, kw in enumerate(
         [
@@ -733,6 +735,7 @@ def _build(out: Path, src: Path) -> None:
             pdf.rename(d.out / f"deck_export_{k}.pdf")
             g = gold_deck(sp, notes=False)
             add(f"deck_export_{k}.pdf", "pdf_slides", "pdf", g, origin="synthetic")
+            derived[f"deck_export_{k}.pdf"] = f"deck_{k}.pptx"
     for k in range(3):
         sp = S.deck(next(seeds), slides=6, notes=False, image=k == 2)
         for i, s in enumerate(sp["elements"]):
@@ -762,7 +765,7 @@ def _build(out: Path, src: Path) -> None:
             origin=f"synthetic, a scan of {source}",
             ocr=True,
         )
-        scanned[f"scan_{k}.pdf"] = source
+        derived[f"scan_{k}.pdf"] = source
     labels = ["ingest api", "event queue", "merge workers"]
     whiteboard(labels, d.work / "wb.png", 99)
     Image.open(d.work / "wb.png").convert("RGB").save(
@@ -781,8 +784,8 @@ def _build(out: Path, src: Path) -> None:
         ocr=True,
     )
 
-    # dev / held-out: alternate within each category, in file order; a scan
-    # takes its source's split, so held-out text is never tuned on
+    # dev / held-out: alternate within each category, in file order; an export
+    # or a scan takes its source's split, so held-out text is never tuned on
     seen: dict[str, int] = {}
     for g in gold_all:
         n = seen.get(g["category"], 0)
@@ -790,8 +793,11 @@ def _build(out: Path, src: Path) -> None:
         g["split"] = "dev" if n % 2 == 0 else "heldout"
     split = {g["file"]: g["split"] for g in gold_all}
     for g in gold_all:
-        if g["file"] in scanned:
-            g["split"] = split[scanned[g["file"]]]
+        root = g["file"]
+        while root in derived:  # a scan of an export: the export's source
+            root = derived[root]
+        if root != g["file"]:
+            g["split"] = split[root]
         elif g["file"] == "whiteboard.pdf":
             g["split"] = "heldout"
     with open(d.out / "gold.jsonl", "w") as f:

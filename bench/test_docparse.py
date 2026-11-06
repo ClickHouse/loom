@@ -54,6 +54,24 @@ def test_every_gold_file_is_in_the_corpus_and_split() -> None:
         assert {g["split"] for g in gold if g["category"] == c} == {"dev", "heldout"}, c
 
 
+def test_a_file_built_from_anothers_text_shares_its_split() -> None:
+    split = {g["file"]: g["split"] for g in _gold()}
+    pairs = [
+        (f, f.replace("_export_", "_").replace(".pdf", ext))
+        for f in split
+        for ext in (".docx", ".pptx")
+        if "_export_" in f and f.replace("_export_", "_").replace(".pdf", ext) in split
+    ]
+    pairs += [
+        (g["file"], g["source"].removeprefix("synthetic, a scan of "))
+        for g in _gold()
+        if g["source"].startswith("synthetic, a scan of ")
+    ]
+    assert len(pairs) == 4 + 3 + 4  # office and deck exports, scans
+    for derived, source in pairs:
+        assert split[derived] == split[source], derived
+
+
 def test_a_perfect_parse_scores_full_marks_and_loses_nothing() -> None:
     for g in _gold():
         s = S.score_file(g, _perfect(g))
@@ -237,6 +255,7 @@ def test_a_child_that_dies_leaving_undecodable_bytes_is_an_error_and_the_run_goe
         ),  # an object, but the child failed after it
         (1, b"", b"Traceback: boom\n", "no parse (exit 1): Traceback: boom"),
         (1, b"", b"\n", "no parse (exit 1)"),  # stderr of only a newline is none
+        (1, b"", b"boom" + b" " * 500, "no parse (exit 1): boom"),
     ],
 )
 def test_a_child_whose_last_line_is_no_parse_is_that_files_error(

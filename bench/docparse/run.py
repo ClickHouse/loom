@@ -89,7 +89,7 @@ def run(
             f.flush()
             print(
                 g["file"],
-                f"{res.get('seconds', -1):.2f}s",
+                f"{res['wall_seconds']:.2f}s",
                 res.get("complete"),
                 res.get("error", "")[:80],
             )
@@ -116,7 +116,7 @@ def _one(python: str, path: Path, env: dict[str, str]) -> dict:
         except (json.JSONDecodeError, IndexError):
             pass
     if not isinstance(res, dict):
-        tail = p.stderr.decode(errors="replace")[-400:].strip()
+        tail = p.stderr.decode(errors="replace").strip()[-400:]
         res = {"error": f"no parse (exit {p.returncode})" + (f": {tail}" if tail else "")}
     res["wall_seconds"] = time.perf_counter() - t0
     return res

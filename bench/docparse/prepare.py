@@ -96,7 +96,10 @@ def prepare(out: Path, src: Path) -> Dirs:
     # what says this is a corpus goes last, so a build stopped here can run again
     markers = {d.out / "gold.jsonl", d.work}
     for p in sorted(d.out.iterdir(), key=lambda p: p in markers):
-        shutil.rmtree(p) if p.is_dir() else p.unlink()
+        if p.is_dir():
+            shutil.rmtree(p)
+        else:
+            p.unlink()
     d.work.mkdir()
     return d
 
