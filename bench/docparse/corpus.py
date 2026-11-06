@@ -14,8 +14,6 @@ import random
 import shutil
 import subprocess
 import sys
-import uuid
-from dataclasses import dataclass
 from pathlib import Path
 
 from docx import Document
@@ -44,27 +42,10 @@ from reportlab.platypus import (
 )
 
 from bench.docparse import specs as S
-from bench.docparse.score import words
+from bench.docparse.prepare import CONTAINER, PEPS, _Dirs, docker, prepare
 
-
-@dataclass(frozen=True)
-class _Dirs:
-    """The corpus directory (mounted at /c in the tools container) and its scratch."""
-
-    out: Path
-    work: Path
-
-    def in_container(self, path: Path) -> str:
-        """`path`, under the corpus directory, as the container sees it."""
-        return f"/c/{path.relative_to(self.out)}"
-
-
-CONTAINER = "docparse-tools-run"
 HAND = "/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf"
-
-
-def docker(*cmd: str) -> None:
-    subprocess.run(["docker", "exec", CONTAINER, *cmd], check=True, capture_output=True)
+from bench.docparse.score import words
 
 
 def chromium_pdf(d: _Dirs, html_path: Path, pdf_path: Path) -> None:
@@ -609,33 +590,8 @@ def landscape_table_pdf(d: _Dirs, spec: dict, path: Path) -> None:
 
 
 def build(out: Path, src: Path) -> None:
-    d = _Dirs(out.resolve(), out.resolve() / "_work")
+    d = prepare(out, src)
     src = src.resolve()
-    d.out.mkdir(parents=True, exist_ok=True)
-    left = {p.name for p in d.out.iterdir()}
-    if (
-        left and "gold.jsonl" not in left and left != {"_work"}
-    ):  # an interrupted build leaves _work alone
-        raise SystemExit(
-            f"{d.out} holds files and no gold.jsonl: build writes only into a corpus directory"
-        )
-    # The container's /c must be this directory: a file of a fresh name, written
-    # here, is looked for there before anything here is removed.
-    d.work.mkdir(exist_ok=True)
-    marker = d.work / f"mount-{uuid.uuid4().hex}"
-    marker.touch()
-    try:
-        docker("test", "-f", d.in_container(marker))
-    except subprocess.CalledProcessError as e:
-        reason = e.stderr.decode(errors="replace").strip() or f"its /c is not {d.out}"
-        raise SystemExit(
-            f"the tools container {CONTAINER} cannot be used ({reason}): mount {d.out} at /c"
-        ) from None
-    finally:
-        marker.unlink()
-    for p in d.out.iterdir():
-        if p != d.work:
-            shutil.rmtree(p) if p.is_dir() else p.unlink()
     gold_all: list[dict] = []
     scanned: dict[str, str] = {}  # a scan: the file it is a scan of
 
@@ -702,8 +658,7 @@ def build(out: Path, src: Path) -> None:
         chromium_pdf(d, h, d.out / f"web_twocol_{k}.pdf")
         add(f"web_twocol_{k}.pdf", "pdf_two_column", "pdf", gold_doc(sp), origin="synthetic")
     # Public-domain PEPs, printed from their HTML
-    peps = [(518, 40), (621, 45), (668, 45), (723, 40), (735, 40), (691, 40)]
-    for n, cut in peps:
+    for n, cut in PEPS:
         sp = S.pep(src / f"pep{n}.html", cut)
         h = d.work / f"pep{n}.html"
         h.write_text(html_doc(sp, footer=n % 2 == 1))

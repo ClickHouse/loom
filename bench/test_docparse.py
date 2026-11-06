@@ -241,20 +241,40 @@ def test_a_heading_is_cited_whether_the_parse_keeps_its_number_or_not() -> None:
     assert S.locator_scores(g, p)["locator_acc"] == 1.0
 
 
-def test_a_build_the_container_cannot_see_removes_nothing_and_can_run_again(
+def test_a_build_the_container_cannot_see_removes_nothing_and_a_stopped_one_can_run_again(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    pytest.importorskip("reportlab")
-    from bench.docparse import corpus as C
+    from bench.docparse import prepare as C
 
     def unseen(*cmd: str) -> None:
         raise subprocess.CalledProcessError(1, cmd, stderr=b"")
 
     monkeypatch.setattr(C, "docker", unseen)
-    (tmp_path / "gold.jsonl").write_text("{}\n")
-    (tmp_path / "keep.pdf").write_bytes(b"%PDF")
-    for _ in range(2):  # refused twice: the first refusal left nothing that stops the second
-        with pytest.raises(SystemExit, match="cannot be used"):
-            C.build(tmp_path, tmp_path)
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["_work", "gold.jsonl", "keep.pdf"]
-    assert list((tmp_path / "_work").iterdir()) == []
+    src = tmp_path / "src"
+    src.mkdir()
+    for n, _ in C.PEPS:
+        (src / f"pep{n}.html").write_text("")
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "gold.jsonl").write_text("{}\n")
+    (corpus / "keep.pdf").write_bytes(b"%PDF")
+    empty = tmp_path / "empty"
+    # a build stopped midway: its rendered files and _work, no gold.jsonl yet
+    stopped = tmp_path / "stopped"
+    (stopped / "_work").mkdir(parents=True)
+    (stopped / "web_doc_0.pdf").write_bytes(b"%PDF")
+    for out in (corpus, empty, stopped):
+        before = sorted(p.name for p in out.iterdir()) if out.exists() else []
+        for _ in range(2):  # refused at the mount twice: nothing it left stops a second try
+            with pytest.raises(SystemExit, match="cannot be used"):
+                C.prepare(out, src)
+        assert sorted(p.name for p in out.iterdir() if p.name != "_work") == [
+            n for n in before if n != "_work"
+        ]
+    with pytest.raises(SystemExit, match="lacks pep518.html"):  # checked before anything is removed
+        C.prepare(corpus, tmp_path / "nowhere")
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "notes.txt").write_text("x")
+    with pytest.raises(SystemExit, match="no gold.jsonl"):
+        C.prepare(other, src)
