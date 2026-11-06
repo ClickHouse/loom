@@ -222,17 +222,26 @@ def test_a_child_that_dies_leaving_undecodable_bytes_is_an_error_and_the_run_goe
     R.run(CORPUS, out, tmp_path, only={"web_doc_0.pdf", "deck_0.pptx"})
     lines = [json.loads(line) for line in out.read_text().splitlines()]
     assert [line["file"] for line in lines] == ["web_doc_0.pdf", "deck_0.pptx"]
-    assert all(
-        line["error"].startswith("no output (exit -11): Segmentation fault") for line in lines
-    )
-    # a last line that is JSON but no object (a library's stray `100`) is no parse either
+    assert all(line["error"] == "no parse (exit -11): Segmentation fault �" for line in lines)
 
-    def stray(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.CompletedProcess(cmd, 0, stdout=b"100\n", stderr=b"")
 
-    monkeypatch.setattr(subprocess, "run", stray)
+@pytest.mark.parametrize(
+    ("code", "stdout", "error"),
+    [
+        (0, b"100\n", "no parse (exit 0)"),  # a library's stray JSON line, no object
+        (1, b'{"blocks": []}\n', "no parse (exit 1)"),  # an object, but the child failed after it
+    ],
+)
+def test_a_child_whose_last_line_is_no_parse_is_that_files_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, code: int, stdout: bytes, error: str
+) -> None:
+    def ran(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(cmd, code, stdout=stdout, stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", ran)
+    out = tmp_path / "p.jsonl"
     R.run(CORPUS, out, tmp_path, only={"web_doc_0.pdf"})
-    assert json.loads(out.read_text())["error"].startswith("no output (exit 0)")
+    assert json.loads(out.read_text())["error"] == error
 
 
 def test_a_parse_past_its_time_is_an_error_and_the_run_goes_on(

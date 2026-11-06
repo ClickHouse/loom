@@ -114,10 +114,9 @@ def _one(python: str, path: Path, env: dict[str, str]) -> dict:
         try:
             res = json.loads(p.stdout.decode(errors="replace").strip().splitlines()[-1])
         except (json.JSONDecodeError, IndexError):
-            res = None
+            pass
     if not isinstance(res, dict):
-        res = {
-            "error": f"no output (exit {p.returncode}): " + p.stderr.decode(errors="replace")[-400:]
-        }
+        tail = p.stderr.decode(errors="replace")[-400:]
+        res = {"error": f"no parse (exit {p.returncode})" + (f": {tail}" if tail else "")}
     res["wall_seconds"] = time.perf_counter() - t0
     return res
