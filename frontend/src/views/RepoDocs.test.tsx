@@ -405,4 +405,19 @@ describe("RepoDocsList", () => {
     expect(ingestKnowledge).not.toHaveBeenCalled();
     expect(toast).not.toHaveBeenCalled();
   });
+
+  it("says a queued file goes on when its polls keep failing, and closes", async () => {
+    vi.mocked(knowledgeIngestStatus).mockRejectedValue(new TypeError("Failed to fetch"));
+    const prior = ingestClock.sleep;
+    ingestClock.sleep = async () => {};
+    try {
+      const { dialog } = await addFile("on_call.md");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toMatch(/on call goes on extracting/);
+      expect(ingestKnowledge).toHaveBeenCalledTimes(1);
+    } finally {
+      ingestClock.sleep = prior;
+    }
+  });
 });

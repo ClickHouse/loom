@@ -12,7 +12,7 @@ vi.mock("../api", async (importOriginal) => ({
   knowledgeIngestStatus: vi.fn(),
 }));
 import { ingestKnowledge, type KnowledgeFormats, knowledgeIngestStatus, uploadKnowledgeFile } from "../api";
-import { fileVerdict, ingestClock, ingestFile, ingestStep } from "./fileIngest";
+import { FollowLost, fileVerdict, ingestClock, ingestFile, ingestStep } from "./fileIngest";
 
 const realSleep = ingestClock.sleep;
 
@@ -143,5 +143,44 @@ describe("ingestFile", () => {
     expect(knowledgeIngestStatus).toHaveBeenCalledTimes(1);
     // Each poll keeps the default request bound: no signal of its own.
     expect(vi.mocked(knowledgeIngestStatus).mock.calls[0]).toEqual([{ org: "o", namespace: "n" }, "job-1"]);
+  });
+
+  it("tries a failed poll again, and after three in a row says it lost the queued job", async () => {
+    vi.mocked(uploadKnowledgeFile).mockResolvedValue({
+      upload_id: "up-1",
+      sha256: "",
+      size: 1,
+      filename: "a.md",
+      format: "markdown",
+      expires_at: "",
+    });
+    vi.mocked(ingestKnowledge).mockResolvedValue({ ingestion_id: "job-1", state: "pending", source_uri: "a" });
+    const ready = {
+      found: true,
+      ingestion_id: "job-1",
+      source_uri: "a",
+      state: "ready",
+      stage: "",
+      error_code: "",
+      error_message: "",
+      format: "markdown",
+      coverage: null,
+      warnings: [],
+      chunks: 1,
+      revision: 1,
+    };
+    ingestClock.sleep = async () => {};
+    const f = new File(["a"], "a.md");
+    vi.mocked(knowledgeIngestStatus)
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(ready);
+    await expect(ingestFile({ org: "o", namespace: "n" }, f, { source_uri: "a" }, () => {})).resolves.toMatchObject({
+      state: "ready",
+    });
+    vi.mocked(knowledgeIngestStatus).mockReset().mockRejectedValue(new TypeError("Failed to fetch"));
+    const lost = ingestFile({ org: "o", namespace: "n" }, f, { source_uri: "a" }, () => {});
+    await expect(lost).rejects.toBeInstanceOf(FollowLost);
+    await expect(lost).rejects.toMatchObject({ ingestionId: "job-1" });
+    expect(knowledgeIngestStatus).toHaveBeenCalledTimes(3);
   });
 });

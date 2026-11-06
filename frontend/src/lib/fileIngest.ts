@@ -15,7 +15,7 @@ import {
 } from "../api";
 
 /** The states an ingest job ends in. */
-export const INGEST_DONE = new Set(["ready", "partial", "failed", "cancelled"]);
+const INGEST_DONE = new Set(["ready", "partial", "failed", "cancelled"]);
 
 /** What the deployment will do with a picked file, before it is sent. */
 export interface FileVerdict {
@@ -90,6 +90,20 @@ function chunks(n: number): string {
 
 // Between two polls of a job.
 const POLL_MS = 1000;
+// Polls in a row that may fail before the page stops following a queued job.
+const POLL_MISSES = 3;
+
+/** A queued job the page could no longer follow: it goes on on the server, so a dialog
+ *  says so rather than offering to send the file again. */
+export class FollowLost extends Error {
+  constructor(
+    readonly ingestionId: string,
+    cause: unknown,
+  ) {
+    super(`lost track of ingestion ${ingestionId}`, { cause });
+    this.name = "FollowLost";
+  }
+}
 
 /** The pause between polls; tests replace it to follow a job without waiting. */
 export const ingestClock = {
@@ -120,7 +134,7 @@ export async function ingestFile(
   id: Pick<Identity, "org" | "namespace">,
   file: File,
   fields: IngestFields,
-  onStep: (line: string, phase: IngestPhase, status?: KnowledgeIngestStatus) => void,
+  onStep: (line: string, phase: IngestPhase) => void,
   opts: { signal?: AbortSignal } = {},
 ): Promise<KnowledgeIngestStatus> {
   const { signal } = opts;
@@ -129,11 +143,22 @@ export async function ingestFile(
   signal?.throwIfAborted(); // cancelled while the bytes went: nothing is queued
   onStep("Queuing…", "queue");
   const job = await ingestKnowledge(id, { ...fields, upload_id: up.upload_id });
+  let missed = 0;
   for (;;) {
     signal?.throwIfAborted();
-    const status = await knowledgeIngestStatus(id, job.ingestion_id);
+    let status: KnowledgeIngestStatus;
+    try {
+      status = await knowledgeIngestStatus(id, job.ingestion_id);
+      missed = 0;
+    } catch (e) {
+      // A poll that fails (a replica restarting, a rate limit, a dropped connection) is
+      // tried again; the job is queued and goes on whatever the page hears of it.
+      if (++missed >= POLL_MISSES) throw new FollowLost(job.ingestion_id, e);
+      await ingestClock.sleep(POLL_MS);
+      continue;
+    }
     signal?.throwIfAborted();
-    onStep(ingestStep(status), "follow", status);
+    onStep(ingestStep(status), "follow");
     if (!status.found || INGEST_DONE.has(status.state)) return status;
     await ingestClock.sleep(POLL_MS);
   }

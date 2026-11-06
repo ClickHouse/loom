@@ -208,6 +208,21 @@ describe("AddDocumentDialog", () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
+  it("says a queued job goes on when its polls keep failing, and sends nothing again", async () => {
+    vi.mocked(knowledgeIngestStatus).mockRejectedValue(new TypeError("Failed to fetch"));
+    const { dialog, onAdded, onOpenChange } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(vi.mocked(toast).mock.calls.at(-1)).toEqual([
+      "spec.pdf goes on extracting; it is in the Library once it publishes",
+      "info",
+    ]);
+    expect(onAdded).toHaveBeenCalled(); // the list reloads
+    expect(ingestKnowledge).toHaveBeenCalledTimes(1);
+  });
+
   it("writes pasted text as text", async () => {
     vi.mocked(addKnowledge).mockResolvedValue({
       doc_id: "d",

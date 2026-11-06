@@ -9,7 +9,7 @@ import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { humanizeError } from "../lib/format";
-import { fileVerdict, type IngestPhase, ingestFile, ingestStep } from "../lib/fileIngest";
+import { FollowLost, fileVerdict, type IngestPhase, ingestFile, ingestStep } from "../lib/fileIngest";
 import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormats } from "./FileIngest";
 
 interface Props {
@@ -151,6 +151,11 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
       setError(status.found ? `${file.name}: ${ingestStep(status)}` : "The ingest job was not found.");
     } catch (e) {
       if (ctrl.signal.aborted) return; // closed while following: the job goes on
+      if (e instanceof FollowLost) {
+        // Queued, but no longer heard of: say it goes on rather than offer to send it again.
+        finish(`${sourceUri.trim()} goes on extracting; it is in the Library once it publishes`, "info");
+        return;
+      }
       setError(humanizeError(e));
     }
     setBusy(null);

@@ -23,7 +23,7 @@ import { toast, toastError } from "../components/Toast";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { Loading } from "../components/ui/Loading";
 import { slugify } from "../lib/docFiles";
-import { fileVerdict, type IngestPhase, ingestFile, ingestStep } from "../lib/fileIngest";
+import { FollowLost, fileVerdict, type IngestPhase, ingestFile, ingestStep } from "../lib/fileIngest";
 import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormats } from "./FileIngest";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 
@@ -134,6 +134,12 @@ export function RepoDocAddDialog({
       onOpenChange(false);
     } catch (e) {
       if (following.current?.signal.aborted) return; // closed: the job goes on on the server
+      if (e instanceof FollowLost) {
+        // Queued, but no longer heard of: say it goes on rather than offer to send it again.
+        toast(`${title.trim()} goes on extracting; it is listed once it publishes and the list is reloaded`, "info");
+        onOpenChange(false);
+        return;
+      }
       setError(humanizeError(e)); // a job's reason passes through; a dropped connection is worded
     } finally {
       setBusy(null);
