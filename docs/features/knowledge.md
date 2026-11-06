@@ -1061,7 +1061,7 @@ python dev/loom_ingest.py https://example.com/page.html --dry-run
 
 It reads the token from `--token`, `LOOM_API_KEY`, `~/.loom/config.json` or `~/.loom/token`, the
 server from `--base-url` or `LOOM_BASE_URL`, and defaults `--namespace` to the token's first
-namespace, `--title` to the file name and `--source-uri` to `file://<absolute path>`.
+namespace, `--title` to the file name less its extension and `--source-uri` to `file://<absolute path>`.
 Each ingest publishes the source's next revision. The CLI waits for each job (`--timeout`,
 600 seconds) and prints its revision, chunks, format and warnings, or its `error_code`
 when it failed; `--no-wait` prints the job's id instead. `--format` names a format the file

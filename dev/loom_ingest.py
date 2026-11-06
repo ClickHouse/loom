@@ -23,7 +23,7 @@ or $LOOM_API_KEY. S3 source uses the standard boto3 credential chain
 (env vars, ~/.aws/credentials, IAM role).
 
 Usage:
-  loom-ingest path/to/CLAUDE.md                     # tags=[], title=filename
+  loom-ingest path/to/CLAUDE.md                     # tags=[], title=CLAUDE
   loom-ingest --tags coding,team-policy doc.pdf
   loom-ingest --namespace project-x --title "Q3 spec" spec.md
   loom-ingest --source-uri 'github://x/spec.md' --tags rfc spec.md
@@ -77,7 +77,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     p.add_argument("--org", help="Org. Default: derived from JWT claim 'org'")
     p.add_argument("--namespace", help="Namespace. Default: first claim 'namespaces' entry")
-    p.add_argument("--title", help="Document title (default: filename)")
+    p.add_argument("--title", help="Document title (default: the file name less its extension)")
     p.add_argument("--tags", default="", help="Comma-separated tag list (default: none)")
     p.add_argument("--source-uri", help="Source identifier (default: file://<absolute-path>)")
     p.add_argument(
