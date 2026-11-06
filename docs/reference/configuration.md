@@ -1644,9 +1644,9 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_BUDGET_VIOLATION_AUDIT_INTERVAL_S` | `float` | `60.0` |  | At most one `budget.violated` audit row per op per this many seconds (the row carries `suppressed_since_last`). 0 = a row per violation. |
 | `LOOM_BUDGET_VIOLATION_AUDIT_BURST` | `int` | `5` |  | Violations per window that still write their own row before the rest are folded into the next: a short burst stays visible, a storm costs at most this many inserts a minute per (op, org, namespace). |
 | `LOOM_PUBLIC_BASE_URL` | `str` | `''` |  | The address the server hands to clients — the Setup page's config block, `claude mcp add`, a bot's claim_url, OAuth metadata. Empty = the request's own Host and scheme, which only a loopback bind may rely on: a non-loopback bind_host refuses to start without it. |
-| `LOOM_BIND_HOST` | `str` | `'127.0.0.1'` |  | The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks for the dev secret, auth-off and public_base_url. |
+| `LOOM_BIND_HOST` | `str` | `'127.0.0.1'` |  | The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks: public_base_url set, and no auth-off, MCP open mode, dev secret or weak root key. |
 | `LOOM_TRUSTED_PROXIES` | `str` | `'127.0.0.1'` |  | Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto headers uvicorn applies; any other peer's are ignored. "*" trusts all. Required behind a load balancer: at the default every client counts as the balancer's address for the sign-in and sign-up limits. |
-| `LOOM_ALLOW_INSECURE` | `bool` | `False` |  | True lets a non-loopback bind start with the dev signing secret or with auth off. Only for a port that is not actually reachable by others. |
+| `LOOM_ALLOW_INSECURE` | `bool` | `False` |  | True lets a non-loopback bind start with auth off, MCP open mode, the dev signing secret or a weak root key. Only for a port others cannot reach. |
 
 ### Outbound HTTP
 

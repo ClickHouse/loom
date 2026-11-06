@@ -39,7 +39,7 @@
         "allow_insecure": {
           "default": false,
           "type": "boolean",
-          "description": "True lets a non-loopback bind start with the dev signing secret or with auth off. Only for a port that is not actually reachable by others."
+          "description": "True lets a non-loopback bind start with auth off, MCP open mode, the dev signing secret or a weak root key. Only for a port others cannot reach."
         },
         "anthropic_base_url": {
           "default": "https://api.anthropic.com",
@@ -119,7 +119,7 @@
         "bind_host": {
           "default": "127.0.0.1",
           "type": "string",
-          "description": "The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks for the dev secret, auth-off and public_base_url."
+          "description": "The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks: public_base_url set, and no auth-off, MCP open mode, dev secret or weak root key."
         },
         "blacklist_cache_ttl_seconds": {
           "default": 300,

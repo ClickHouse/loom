@@ -29,6 +29,8 @@ def _bind(**over: object) -> None:
         "auth_required": True,
         "dev_secret": False,
         "allow_insecure": False,
+        "mcp_open": False,
+        "weak_secret": False,
     }
     kw.update(over)
     require_safe_bind(**kw)  # type: ignore[arg-type]
@@ -58,23 +60,76 @@ def test_mcp_open_on_a_reachable_bind_is_refused() -> None:
     _bind(bind_host="127.0.0.1", mcp_open=True)
 
 
-def test_a_short_root_secret_on_a_reachable_bind_is_refused() -> None:
-    with pytest.raises(InsecureBindRefused, match="shorter than 32 bytes"):
-        _bind(short_secret=True)
-    _bind(short_secret=True, allow_insecure=True)
+def test_a_weak_root_key_on_a_reachable_bind_is_refused() -> None:
+    with pytest.raises(InsecureBindRefused, match="shorter than 32 bytes or an RSA key"):
+        _bind(weak_secret=True)
+    _bind(weak_secret=True, allow_insecure=True)
+
+
+def _rsa_pem(bits: int) -> str:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=bits)
+    return key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
 
 
 @pytest.mark.parametrize(
-    ("secret", "short"),
-    [("a" * 31, True), ("a" * 32, False), ("é" * 16, False)],
+    ("secret", "weak"),
+    [
+        ("a" * 31, True),
+        ("a" * 32, False),
+        ("é" * 16, False),  # 16 characters, 32 bytes
+        ("é" * 15 + "a", True),  # 31 bytes
+        (_rsa_pem(1024), True),  # its modulus is public in the JWKS
+        (_rsa_pem(2048), False),
+    ],
+    ids=["hmac-31", "hmac-32", "multibyte-32", "multibyte-31", "rsa-1024", "rsa-2048"],
 )
-def test_a_short_root_secret_is_one_under_32_bytes(
-    monkeypatch: pytest.MonkeyPatch, secret: str, short: bool
+def test_a_weak_root_key_is_an_hmac_secret_under_32_bytes_or_rsa_under_2048_bits(
+    monkeypatch: pytest.MonkeyPatch, secret: str, weak: bool
 ) -> None:
-    from server import main
+    from server.auth import keyring
 
     monkeypatch.setattr(settings, "jwt_secret", secret)
-    assert main._short_hmac_root() is short
+    assert keyring.root_is_weak() is weak
+
+
+@pytest.mark.parametrize(
+    ("over", "refusal"),
+    [
+        ({"mcp_auth_mode": "open"}, "LOOM_MCP_AUTH_MODE=open"),
+        ({"jwt_secret": "a" * 31}, "shorter than 32 bytes"),
+    ],
+)
+def test_startup_on_a_reachable_bind_refuses_mcp_open_and_a_weak_root_key(
+    monkeypatch: pytest.MonkeyPatch, over: dict[str, str], refusal: str
+) -> None:
+    """The server's own startup passes both checks their inputs: the refusal comes
+    before it connects to anything."""
+    from server import main
+
+    monkeypatch.setenv("LOOM_INSTANCE_LABEL", "test")
+    monkeypatch.setattr(settings, "bind_host", "0.0.0.0")
+    monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
+    monkeypatch.setattr(settings, "allow_insecure", False)
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "identity_provider", "gateway")
+    monkeypatch.setattr(settings, "mcp_auth_mode", "required")
+    monkeypatch.setattr(settings, "jwt_secret", "s" * 48)
+    for name, value in over.items():
+        monkeypatch.setattr(settings, name, value)
+
+    async def start() -> None:
+        async with main.lifespan(main.app):
+            pass
+
+    with pytest.raises(InsecureBindRefused, match=refusal):
+        asyncio.run(start())
 
 
 def test_the_dev_stack_publishes_clickhouse_on_loopback_only() -> None:

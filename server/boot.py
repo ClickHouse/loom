@@ -84,14 +84,15 @@ def require_safe_bind(
     auth_required: bool,
     dev_secret: bool,
     allow_insecure: bool,
-    mcp_open: bool = False,
-    short_secret: bool = False,
+    mcp_open: bool,
+    weak_secret: bool,
 ) -> None:
     """Refuse to start on a non-loopback LOOM_BIND_HOST without
     LOOM_PUBLIC_BASE_URL (generated URLs would otherwise echo a request's Host),
     or, unless LOOM_ALLOW_INSECURE=1, with auth off, MCP open (`mcp_open`: every
-    tool runs with no principal), the dev signing secret, or an HMAC root secret
-    shorter than 32 bytes (`short_secret`: one token lets it be guessed offline).
+    tool runs with no principal), the dev signing secret, or a weak root key
+    (`weak_secret`: an HMAC secret under 32 bytes or an RSA key under 2048 bits,
+    either recoverable offline).
     A loopback bind is not checked."""
     from server.auth.public_url import is_loopback_host
 
@@ -123,11 +124,12 @@ def require_safe_bind(
             "which anyone can mint accepted tokens with. Set a private LOOM_JWT_SECRET, bind "
             "127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
         )
-    if short_secret:
+    if weak_secret:
         raise InsecureBindRefused(
-            f"refusing to start: {where} and LOOM_JWT_SECRET is shorter than 32 bytes, so "
-            "one token lets it be guessed offline. Set 32 or more random bytes, bind "
-            "127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
+            f"refusing to start: {where} and LOOM_JWT_SECRET is an HMAC secret shorter than "
+            "32 bytes or an RSA key under 2048 bits, which can be recovered offline. Set 32 "
+            "or more random bytes or a 2048-bit key, bind 127.0.0.1, or set "
+            "LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
         )
 
 

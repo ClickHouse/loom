@@ -115,6 +115,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         auth_required=settings.auth_actually_required(),
         dev_secret=settings.jwt_secret_is_dev_default(),
     )
+    from server.auth.keyring import root_is_weak
     from server.auth.scim_routes import require_scim_settings
 
     require_scim_settings(
@@ -127,7 +128,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         dev_secret=settings.jwt_secret_is_dev_default(),
         allow_insecure=settings.allow_insecure,
         mcp_open=settings.mcp_auth_mode == "open",
-        short_secret=_short_hmac_root(),
+        weak_secret=root_is_weak(),
     )
 
     from server.core.object_store import require_client
@@ -533,10 +534,3 @@ async def list_operations() -> list[dict[str, object]]:
 from server.identity.app import dashboard_routes as _dashboard  # noqa: E402
 
 _dashboard.attach(app)
-
-
-def _short_hmac_root() -> bool:
-    """An HMAC root secret (not a PEM key) of fewer than 32 bytes."""
-    from server.auth.keyring import root_is_hmac_key
-
-    return root_is_hmac_key() and len(str(settings.jwt_secret).encode()) < 32
