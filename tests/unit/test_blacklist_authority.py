@@ -666,7 +666,7 @@ def test_the_cache_keeps_a_scopes_oldest_regexes_within_its_program(monkeypatch)
 
 
 def test_a_value_past_the_regex_work_budget_is_refused(monkeypatch) -> None:
-    """Characters x instructions bound what one write's regexes scan; a value past it
+    """Bytes x instructions bound what one write's regexes scan; a value past it
     is refused, as a matched pattern is, without running them."""
     import server.memory.app.blacklist_guard as bl
 
@@ -705,3 +705,22 @@ def test_regexes_match_across_newlines_on_the_matcher_threads(monkeypatch) -> No
     hit = asyncio.run(bl.find_match(org=ORG, namespace=NS, value="secret\ncode"))
     assert hit is not None and hit.pattern_id == "r"
     assert ran_on and all(name.startswith("loom-blacklist") for name in ran_on)
+
+
+def test_a_value_too_long_to_check_is_refused_saying_so(monkeypatch) -> None:
+    """The write path's 422 for a value over the regex budget says it is too long,
+    names no pattern, and says the same under a token narrowed to one user."""
+    import server.memory.app.blacklist_guard as bl
+
+    monkeypatch.setattr(bl, "_ensure_loaded", _loaded)
+    monkeypatch.setattr(bl, "REGEX_WORK_BUDGET", 1_000)
+    monkeypatch.setattr(bl, "_cache", [_pattern("r", "namespace", "x+", "regex")])
+    for narrowed in (False, True):
+        monkeypatch.setattr(
+            "server.identity.app.request_scope.request_narrowed", lambda n=narrowed: n
+        )
+        with pytest.raises(HTTPException) as ei:
+            asyncio.run(bl.enforce_on_insert(org=ORG, namespace=NS, value="y" * 5_000))
+        detail = ei.value.detail
+        assert detail["code"] == "BLACKLISTED" and "too long" in detail["message"]
+        assert detail.get("pattern_id", "") == ""

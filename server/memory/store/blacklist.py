@@ -123,15 +123,15 @@ async def tombstone_pattern(
 
 
 async def active_patterns(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
-    """Every non-tombstoned pattern, oldest first (the cache orders them by
-    scope precedence)."""
+    """Every non-tombstoned pattern, oldest first, ties by id, so every replica reads
+    them in one order (the cache orders them by scope precedence)."""
     ch = ch or _default_client()
     return await ch.query_all(
         """
         SELECT pattern_id, org, namespace, pattern, pattern_type, scope, reason
         FROM loom.blacklist FINAL
         WHERE tombstoned_at IS NULL
-        ORDER BY created_at ASC
+        ORDER BY created_at ASC, pattern_id ASC
         """,
     )
 

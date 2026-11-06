@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 # A regex runs on every write its scope covers, on RE2: linear in the value. Its cost
 # per character still grows with the program (a counted class such as `[ab]{400}`
-# defeats RE2's DFA cache), so the program and the count per scope are capped.
+# defeats RE2's DFA cache), so a pattern's program and a scope's total program are capped.
 REGEX_MAX_LENGTH = 256
 REGEX_MAX_PROGRAM = 300  # not a setting: the bound that keeps a pattern cheap per character
 # RE2 instructions the regexes of one scope may hold together: checked at add, and again
@@ -242,9 +242,7 @@ def _first_match(
     return next((p for p in patterns if _matches(p, text if p.compiled else value)), None)
 
 
-def _over_budget(
-    org: str, namespace: str, scope: str, size: int, program: int
-) -> BlacklistPattern:
+def _over_budget(org: str, namespace: str, scope: str, size: int, program: int) -> BlacklistPattern:
     """The refusal of a value too long for the regexes its scopes hold to check;
     `scope` is the widest that holds one."""
     return BlacklistPattern(
@@ -326,7 +324,11 @@ async def enforce_on_insert(
     from server.identity.app.request_scope import request_narrowed
 
     # Under a narrowed token the pattern may be another user's: its id and reason are theirs.
-    if request_narrowed():
+    if not hit.pattern_id:  # no pattern matched: the value is too long to check
+        detail = {"code": "BLACKLISTED", "message": hit.reason, "scope": hit.scope}
+        if not request_narrowed():
+            detail |= {"pattern_id": "", "reason": hit.reason}
+    elif request_narrowed():
         detail = {
             "code": "BLACKLISTED",
             "message": f"value matches a blacklist pattern (scope={hit.scope})",

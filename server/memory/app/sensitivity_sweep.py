@@ -157,7 +157,8 @@ def coarse_shape_re(shapes: set[str]) -> str:
 
 # A probe shape reported beside the detector's levels, so a dry run says how many
 # e-mail-shaped rows it found.
-_PROBE_EMAIL = r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}"  # bounded: linear
+# The detector's email shape, bounded as it is (linear), so the two count alike.
+_PROBE_EMAIL = r"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}\b"
 
 
 @dataclass
