@@ -11,8 +11,11 @@ local S3-compatible store (`LOOM_TEST_S3_ENDPOINT`, skipped without it).
 - `loom knowledge migrate-originals` moves the originals held in ClickHouse to
   checked objects and switches their rows, refuses bytes that do not hash to
   their sha or fill their size, keeps a row replaced or gone since the walk read
-  it, does not start under an unfinished erasure of the scope, and takes back
-  what it wrote when an erasure ran while it moved.
+  it, and is fenced by the erasure ledger: it does not start under an unfinished
+  erasure of the namespace or of an uploader (one known from their upload record
+  or their document), reports an original an erasure kept while it was copied,
+  takes back a move a namespace erasure overtook, and names a user erasure that
+  started as the row was switched to run again.
 """
 
 from __future__ import annotations
@@ -371,12 +374,67 @@ async def test_an_erasure_during_the_copy_ends_the_move_before_its_row(
     async def put_then_erasure(*a: Any, **kw: Any) -> None:
         await put(*a, **kw)
         await _erasure(ch, org, "namespace", ns, "in_progress")
+        await blobs.delete(org, ns, [held.sha], ch=ch)  # the erasure's step
 
     monkeypatch.setattr(object_store, "put", put_then_erasure)
     assert await blobs.move_to_bucket(held, ch=ch) is False
-    # No row named the object, so the move deleted it; the row is the erasure's.
-    assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(held.size, "")
+    # No row named the object, so the move deleted it; the original is gone.
+    assert await blobs.locate(org, ns, held.sha, ch=ch) is None
     assert _keys(s3) == []
+
+
+@pytest.mark.asyncio
+async def test_an_original_an_erasure_kept_during_the_copy_is_reported(
+    s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns = unique_org("objstore-kept"), "docs"
+    monkeypatch.setattr(settings, "document_object_store", "clickhouse")
+    sha = await blobs.put(org, ns, b"kept for another writer", uploader="alice", ch=ch)
+    monkeypatch.setattr(settings, "document_object_store", "s3")
+    (held,) = (await blobs.held_in_clickhouse(org, ns, "", 10, ch=ch)).held
+    put = object_store.put
+
+    async def put_then_erasure(*a: Any, **kw: Any) -> None:
+        await put(*a, **kw)
+        # Alice's erasure, which keeps an original another writer's document needs.
+        await _erasure(ch, org, "user_id", "alice", "in_progress")
+
+    monkeypatch.setattr(object_store, "put", put_then_erasure)
+    with pytest.raises(blobs.ErasureOpen, match="stays in ClickHouse"):
+        await blobs.move_to_bucket(held, ch=ch)
+    assert await blobs.locate(org, ns, sha, ch=ch) == blobs.Stored(held.size, "")
+    assert _keys(s3) == []
+
+
+@pytest.mark.asyncio
+async def test_an_author_known_only_from_their_document_fences_the_move(
+    s3: Any, ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns = unique_org("objstore-author"), "docs"
+    held = await _held(ch, org, ns, b"older than upload records", monkeypatch)
+    # No upload record: the writer of a document naming it is its author.
+    await ch.insert(
+        "loom.documents",
+        [
+            {
+                "org": org,
+                "namespace": ns,
+                "source_uri": "docs/old.md",
+                "content": "",
+                "tags": [],
+                "version": 1,
+                "user_id": "bob",
+                "blob_path": held.sha,
+            }
+        ],
+        settings={"async_insert": 0},
+    )
+    await _erasure(ch, org, "user_id", "carol", "in_progress")  # another user's
+    await _erasure(ch, org, "user_id", "bob", "in_progress")
+    result = await migrate_originals(org=org)
+    assert (result.moved, len(result.errors)) == (0, 1)
+    assert "user_id, in_progress" in result.errors[0]
+    assert await blobs.locate(org, ns, held.sha, ch=ch) == blobs.Stored(held.size, "")
 
 
 @pytest.mark.asyncio
@@ -403,7 +461,7 @@ async def test_an_erasure_as_the_row_lands_is_waited_out(
 
     # A user's erasure: the switched row stays, and the original is named to erase again.
     landed_scope = ("user_id", "alice")
-    with pytest.raises(blobs.ErasureOpen, match="run that erasure again"):
+    with pytest.raises(blobs.SwitchedUnderErasure, match="run that erasure again"):
         await blobs.move_to_bucket(held, ch=ch)
     stored = await blobs.locate(org, ns, sha, ch=ch)
     assert stored is not None and stored.location == landed[0]
@@ -430,7 +488,10 @@ async def test_an_erasure_as_the_row_lands_is_waited_out(
     finishing = asyncio.create_task(finish_later())
     assert await blobs.move_to_bucket(held2, ch=ch) is False
     await finishing
-    assert await blobs.locate(org2, ns, held2.sha, ch=ch) == blobs.Stored(held2.size, "")
+    # Its row and object are gone. The ClickHouse version is the erasure's: still there
+    # here, where the erasure is only a ledger row, unless the table merged it away.
+    stored = await blobs.locate(org2, ns, held2.sha, ch=ch)
+    assert stored is None or stored.location == ""
     assert not _keys(s3, object_store.namespace_prefix(org2, ns))
 
 
@@ -449,9 +510,8 @@ async def test_a_row_gone_before_the_switch_is_not_switched(
     monkeypatch.setattr(object_store, "put", put_then_delete)
     assert await blobs.move_to_bucket(held, ch=ch) is False
     assert await blobs.locate(org, ns, held.sha, ch=ch) is None
-    # The object no row names is the bucket walk's.
-    (key,) = _keys(s3)
-    assert key.startswith(object_store.original_prefix(org, ns, held.sha))
+    # No row names the object, nor will: the move deleted it.
+    assert _keys(s3) == []
 
 
 @pytest.mark.asyncio
@@ -513,4 +573,13 @@ async def test_the_walk_pages_a_namespace_by_key(
     assert found == shas[1:] and pages >= 3
     last = await blobs.held_in_clickhouse(org, ns, shas[3], 2, ch=ch)
     assert ([h.sha for h in last.held], last.after) == (shas[4:], shas[4])
+    # Merged, the moved key is one row, and the walk still finds the rest.
+    await ch.execute("OPTIMIZE TABLE loom.document_blobs FINAL")
+    merged, after = [], ""
+    while page := await blobs.held_in_clickhouse(org, ns, after, 2, ch=ch):
+        if not page.after:
+            break
+        merged += [h.sha for h in page.held]
+        after = page.after
+    assert merged == shas[1:]
     assert await blobs.held_in_clickhouse(org, ns, shas[4], 2, ch=ch) == blobs.HeldPage([], "")

@@ -27,6 +27,8 @@ class Migrated:
     pending: int = 0  # a dry run's originals still held in ClickHouse
     bytes: int = 0  # of the originals moved, or with a dry run of those held
     errors: list[str] = field(default_factory=list)
+    # Switched as an erasure of an uploader started: that erasure is to run again.
+    rerun: list[str] = field(default_factory=list)
 
 
 async def migrate_originals(
@@ -76,6 +78,10 @@ async def _one(held: blobs.Held, dry_run: bool, out: Migrated) -> None:
             out.bytes += held.size
         else:
             out.skipped += 1
+    except blobs.SwitchedUnderErasure as e:
+        out.moved += 1
+        out.bytes += held.size
+        out.rerun.append(str(e))
     except (blobs.CorruptOriginal, blobs.ErasureOpen, objects.ObjectStoreError) as e:
         log.warning("originals: %s/%s/%s not moved: %s", held.org, held.namespace, held.sha, e)
         out.errors.append(f"{held.org}/{held.namespace}/{held.sha}: {e}")

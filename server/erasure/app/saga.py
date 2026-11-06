@@ -27,7 +27,6 @@ from server.erasure.api.erasure import (
     ErasureRequestOutput,
     _ErasureStepResult,
     parse_external_flag,
-    parse_namespace_list,
     parse_purge_flag,
 )
 from server.erasure.app import backends as erasure_backends
@@ -38,6 +37,7 @@ from server.erasure.app.saga_steps import (
     ErasureStepError,
     _step_verify_residue,
 )
+from server.erasure.domain.scopes import parse_namespace_list
 from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store import mutations as erasure_mutations

@@ -10,7 +10,8 @@ from typing import Any
 
 import pytest
 
-from server.erasure.api.erasure import ErasureRequestInput, parse_namespace_list, parse_purge_flag
+from server.erasure.api.erasure import ErasureRequestInput, parse_purge_flag
+from server.erasure.domain.scopes import parse_namespace_list
 from server.erasure.store import census as erasure_census
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store import steps_graph as graph_steps

@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -37,6 +36,7 @@ from server.core import object_store as objects
 from server.core.ch import sequential_reads
 from server.core.ch_params import chunks
 from server.core.repo_base import _CHClient, _default_client
+from server.erasure.domain.scopes import parse_namespace_list
 from server.knowledge.store.documents import LIVE_ORIGINAL_SQL
 from server.knowledge.store.ingestions import HELD_SQL
 from server.settings import DOCUMENT_UPLOAD_BUDGET_S, settings
@@ -210,15 +210,15 @@ async def held_in_clickhouse(
     ch = ch or _default_client()
     scope = {"org": org, "ns": namespace, "after": after}
     last = await ch.query_one(
-        f"SELECT toString(max(sha256)) AS last FROM ("
+        f"SELECT count() AS n, toString(max(sha256)) AS last FROM ("
         f"SELECT sha256 FROM {TABLE} WHERE {_NS} AND sha256 > {{after:String}} "
         "ORDER BY sha256 LIMIT {lim:UInt32}) "
         "SETTINGS max_threads = 1",
         params={**scope, "lim": int(limit)},
     )
-    upper = str(last["last"]) if last else ""
-    if not upper or upper <= after:
+    if not last or not int(last["n"]):
         return HeldPage([], "")
+    upper = str(last["last"])
     rows = await ch.query_all(
         f"SELECT toString(sha256) AS sha, argMax(size, created_at) AS size FROM {TABLE} "
         f"WHERE {_NS} AND sha256 > {{after:String}} AND sha256 <= {{upper:String}} "
@@ -235,8 +235,13 @@ class CorruptOriginal(Exception):
 
 
 class ErasureOpen(Exception):
-    """An erasure that covers the original has not finished, or one of its uploaders'
-    erasures started as its row was switched: the message says which and what to do."""
+    """An erasure that covers the original has not finished, or ran while it was
+    copied and kept it: it stays in ClickHouse. The message names the erasure."""
+
+
+class SwitchedUnderErasure(Exception):
+    """The original was switched to the bucket as an erasure of one of its uploaders
+    started: that erasure is to run again. The message names it."""
 
 
 # How far an erasure's own timestamps (the server's clock, whole seconds) may sit
@@ -262,7 +267,14 @@ WHERE org = {org:String}
 class _Erasure:
     id: str
     scope_type: str
-    done: bool
+    status: str
+
+    @property
+    def done(self) -> bool:
+        return self.status == "completed"
+
+    def __str__(self) -> str:
+        return f"erasure {self.id} ({self.scope_type}, {self.status})"
 
 
 async def _clock_s(ch: _CHClient) -> int:
@@ -273,12 +285,20 @@ async def _clock_s(ch: _CHClient) -> int:
 
 
 async def _uploaders(held: Held, ch: _CHClient) -> set[str]:
+    """The users a user erasure finds the original by, as it finds them
+    (`_USERS_OWN_ORIGINALS` in `server/erasure/store/steps_memory.py`): its upload
+    records, and the writers of every document version that names it as its original
+    or its extraction artifact, replaced ones included (an original written before
+    upload records were kept has only those)."""
     with sequential_reads():
         rows = await ch.query_all(
-            f"SELECT DISTINCT user_id FROM {UPLOADS} WHERE {_KEY}",
+            f"SELECT user_id FROM {UPLOADS} WHERE {_KEY}"
+            " UNION DISTINCT SELECT user_id FROM loom.documents"
+            " WHERE org = {org:String} AND namespace = {ns:String}"
+            " AND (blob_path = {sha:String} OR artifact_sha256 = {sha:String})",
             params={"org": held.org, "ns": held.namespace, "sha": held.sha},
         )
-    return {str(r["user_id"]) for r in rows}
+    return {str(r["user_id"]) for r in rows} - {"", "-"}
 
 
 def _covers(scope_type: str, scope_value: str, namespace: str, uploaders: set[str]) -> bool:
@@ -288,11 +308,9 @@ def _covers(scope_type: str, scope_value: str, namespace: str, uploaders: set[st
         return scope_value == namespace
     if scope_type == "namespace_list":
         try:
-            parsed = json.loads(scope_value)
-        except json.JSONDecodeError:
+            return namespace in parse_namespace_list(scope_value)
+        except ValueError:
             return True  # unreadable: answered as covering
-        names = parsed.get("namespaces") if isinstance(parsed, dict) else parsed
-        return not isinstance(names, list) or namespace in names
     if scope_type == "user_id":
         return scope_value in uploaders
     return True
@@ -307,7 +325,7 @@ async def _erasures_since(
             _ERASURES_SINCE, params={"org": held.org, "since": since_s, "margin": _CLOCK_MARGIN_S}
         )
     return [
-        _Erasure(str(r["id"]), str(r["scope_type"]), str(r["status"]) == "completed")
+        _Erasure(str(r["id"]), str(r["scope_type"]), str(r["status"]))
         for r in rows
         if _covers(str(r["scope_type"]), str(r["scope_value"]), held.namespace, uploaders)
     ]
@@ -323,9 +341,9 @@ async def _await_erasures(held: Held, since_s: int, uploaders: set[str], ch: _CH
             return
         if time.monotonic() >= deadline:
             raise ErasureOpen(
-                f"{held.org}/{held.namespace}/{held.sha}: an erasure that started while it "
-                f"moved has not finished within {ERASURE_WAIT_S} s; its row and object are "
-                "left for that erasure"
+                f"{held.org}/{held.namespace}/{held.sha}: {open_[0]}, which started as its row "
+                f"was switched, has not finished within {ERASURE_WAIT_S} s; its row and object "
+                "are left for that erasure"
             )
         await asyncio.sleep(_ERASURE_POLL_S)
 
@@ -339,11 +357,12 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
 
     The bytes are checked against the size and sha256 before the write, by the
     store as it writes them, and again as read back from the bucket. The object is
-    written before the row naming it, as an upload's is; one no row comes to name (a
-    check that failed, a row that went meanwhile) is the bucket walk's once it is
-    old enough. The new row is a later version of the same key: the ClickHouse
-    row's bytes stay until the table merges the two. The upload records are keyed
-    by the sha and stay as they are.
+    written before the row naming it, as an upload's is. One no row will name (a row
+    gone or replaced meanwhile, an erasure that overtook the copy) is deleted at once;
+    one a failed check or a crash leaves is the bucket walk's once it is old enough.
+    The new row is a later version of the same key: the ClickHouse row's bytes stay
+    until the table merges the two. The upload records are keyed by the sha and stay
+    as they are.
 
     A move copies bytes an erasure may be deleting, so it is fenced by the erasure
     ledger, read with sequential consistency. An erasure covers the original when it
@@ -365,8 +384,9 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     key = f"{held.org}/{held.namespace}/{held.sha}"
     since = await _clock_s(ch)
     uploaders = await _uploaders(held, ch)
-    if any(not e.done for e in await _erasures_since(held, since, uploaders, ch)):
-        raise ErasureOpen(f"{key}: an erasure that covers it has not finished")
+    open_ = [e for e in await _erasures_since(held, since, uploaders, ch) if not e.done]
+    if open_:
+        raise ErasureOpen(f"{key}: {open_[0]} covers it and has not finished")
     data = await read(held.org, held.namespace, held.sha, stored=Stored(held.size, ""), ch=ch)
     if data is None:
         with sequential_reads():
@@ -389,9 +409,20 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     with sequential_reads():
         now = await locate(held.org, held.namespace, held.sha, ch=ch)
     if now is None or now.location:
-        return False
-    if await _erasures_since(held, since, uploaders, ch):
+        # Gone or replaced: no row names this object, nor will.
         await objects.delete(loc.bucket, [loc.key])
+        return False
+    overtaken = await _erasures_since(held, since, uploaders, ch)
+    if overtaken:
+        # No row names the object yet. The original is the erasure's: gone, or kept
+        # (a user's erasure keeps one another writer needs), and then still held here.
+        await objects.delete(loc.bucket, [loc.key])
+        with sequential_reads():
+            after = await locate(held.org, held.namespace, held.sha, ch=ch)
+        if after is not None and not after.location:
+            raise ErasureOpen(
+                f"{key}: {overtaken[0]} ran while it was copied; it stays in ClickHouse"
+            )
         return False
     await ch.insert(
         TABLE,
@@ -410,10 +441,10 @@ async def move_to_bucket(held: Held, *, ch: _CHClient | None = None) -> bool:
     raced = await _erasures_since(held, since, uploaders, ch)
     if not raced:
         return True
-    if any(e.scope_type == "user_id" for e in raced):
-        raise ErasureOpen(
-            f"{key}: an erasure of one of its uploaders started as its row was switched to "
-            f"{loc.uri()}; run that erasure again"
+    users = [e for e in raced if e.scope_type == "user_id"]
+    if users:
+        raise SwitchedUnderErasure(
+            f"{key}: switched to {loc.uri()} as {users[0]} started; run that erasure again"
         )
     await _await_erasures(held, since, uploaders, ch)
     await _unwrite(held, loc, ch)

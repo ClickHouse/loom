@@ -1025,19 +1025,22 @@ those bytes at once. The ClickHouse copy stays until `loom.document_blobs` merge
 rows; `OPTIMIZE TABLE loom.document_blobs FINAL` drops it at once.
 
 A move is fenced by the erasure ledger. An erasure covers an original when it names its
-namespace or one of its uploaders. A move does not start while a covering erasure is
-unfinished, and one registered while the object was written ends the move before its
-row: the move deletes its own object, which no row names. A namespace's erasure
-registered as the row lands is waited out, and the move then deletes its row and object.
-A user's erasure registered as the row lands may have kept the original for another
-writer, so the switched row stays and the command names the original: run that erasure
-again.
+namespace or one of its uploaders, known from their upload record or from a document of
+theirs that names the original. A move does not start while a covering erasure is
+unfinished (or failed and not yet resumed). One registered while the object was written
+ends the move before its row: the move deletes its own object, which no row names, and an
+original that erasure kept (a user's erasure keeps one another writer still needs) is
+reported. A namespace's erasure registered as the row lands is waited out, and the move
+then deletes its row and object. A user's erasure registered as the row lands may have
+kept the original for another writer, so the switched row stays and the command names
+that erasure to run again.
 
 An original whose bytes do not hash to their sha256 or fill their size, one an erasure
-held back, or one the bucket refused is reported and stays where it was, and the command
-exits 1. An original uploaded again while the command ran keeps what that upload left. An
-object no row came to name is the sweep's, as an upload's is. The command is idempotent:
-run it again after a stop or a failure.
+held back, or one the bucket refused is reported and stays where it was. The command
+exits 1 for those, and for an erasure it names to run again. An original uploaded again
+or deleted while the command ran keeps what that write left, and the move deletes the
+object it wrote. An object a crash or a failed check leaves is the sweep's, as an upload's
+is. The command is idempotent: run it again after a stop or a failure.
 
 The server's credentials need `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and
 `s3:ListBucket` on the bucket and prefix. Without `s3:ListBucket`, S3 answers a read of a
