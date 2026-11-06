@@ -140,8 +140,8 @@ export function RepoDocAddDialog({
     }
   };
 
-  // Closing mid-upload would cancel the bytes or the ingest call: held. Once the job is
-  // queued it goes on without the dialog, and the card says so.
+  // Closing during the upload cancels it (nothing is queued yet); the ingest call and a
+  // text save hold the dialog; once the job is followed it goes on, and the card says so.
   const close = (v: boolean) => {
     if (!v && (busy === "queue" || busy === "saving")) return;
     if (!v && busy === "follow")
@@ -186,7 +186,7 @@ export function RepoDocAddDialog({
           <div
             onDragOver={(e) => {
               e.preventDefault();
-              setOver(true);
+              if (busy === null) setOver(true); // no target while a file is on its way
             }}
             onDragLeave={() => setOver(false)}
             onDrop={onDrop}

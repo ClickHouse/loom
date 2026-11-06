@@ -122,8 +122,19 @@ async function addFile(name: string) {
 
 describe("RepoDocsList", () => {
   beforeEach(() => {
-    for (const f of [listKnowledge, deleteKnowledge, knowledgeReads, getKnowledge, addKnowledge, downloadKnowledge])
+    for (const f of [
+      listKnowledge,
+      deleteKnowledge,
+      knowledgeReads,
+      getKnowledge,
+      addKnowledge,
+      downloadKnowledge,
+      uploadKnowledgeFile,
+      ingestKnowledge,
+      knowledgeIngestStatus,
+    ])
       vi.mocked(f).mockReset();
+    vi.mocked(toast).mockClear();
     vi.mocked(knowledgeReads).mockResolvedValue({
       window_days: 7,
       reads: [{ source_uri: DOC.source_uri, reads: 5, agents: 2, last_read_at: "" }],
@@ -308,7 +319,7 @@ describe("RepoDocsList", () => {
     expect(vi.mocked(ingestKnowledge).mock.calls[0][1].expected_revision).toBe(0);
   });
 
-  it("can cancel a pending upload, its fields frozen and a dropped file ignored, and holds through the ingest call", async () => {
+  it("freezes a pending upload's fields and ignores a dropped file, and holds through the ingest call", async () => {
     let landed: (u: KnowledgeUpload) => void = () => {};
     const { dialog, user } = await addFile("on_call.md");
     vi.mocked(uploadKnowledgeFile).mockImplementation(() => new Promise((r) => (landed = r)));
@@ -341,7 +352,7 @@ describe("RepoDocsList", () => {
     );
   });
 
-  it("holds the dialog through the upload; closing while it follows says the job goes on", async () => {
+  it("closing while it follows says the job goes on and stops the polls", async () => {
     let release = () => {};
     ingestClock.sleep = () => new Promise<void>((r) => (release = r));
     vi.mocked(knowledgeIngestStatus).mockResolvedValue(repoStatus("processing", { stage: "parse" }));
@@ -379,5 +390,19 @@ describe("RepoDocsList", () => {
     await user.type(within(pasting).getByLabelText("Title"), "Runbook");
     fireEvent.click(within(pasting).getByRole("button", { name: "Add document" }));
     await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent(/Lost connection to Loom mid-request/));
+  });
+
+  it("cancels a pending upload: the dialog closes, and nothing is ingested once the bytes land", async () => {
+    let landed: (u: KnowledgeUpload) => void = () => {};
+    const { dialog, user } = await addFile("on_call.md");
+    vi.mocked(uploadKnowledgeFile).mockImplementation(() => new Promise((r) => (landed = r)));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    expect(await screen.findByText("Uploading…")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    landed({ upload_id: "up-1", sha256: "", size: 3, filename: "on_call.md", format: "markdown", expires_at: "" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(ingestKnowledge).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
   });
 });

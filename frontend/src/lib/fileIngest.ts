@@ -112,9 +112,9 @@ export type IngestPhase = "upload" | "queue" | "follow";
 
 /**
  * Upload `file`, ingest it and follow the job until it ends, calling `onStep` with each
- * line to show and the phase it is in. Answers the job's last status. `signal` stops the upload (which it alone
- * bounds, so a large file is not cut off) and the following; each poll keeps the
- * default request bound. The job itself goes on on the server.
+ * line to show and the phase it is in. Answers the job's last status. `signal` stops
+ * the upload (which it alone bounds, so a large file is not cut off) and the following;
+ * each poll keeps the default request bound. The job itself goes on on the server.
  */
 export async function ingestFile(
   id: Pick<Identity, "org" | "namespace">,

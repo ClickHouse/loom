@@ -183,8 +183,8 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
     await (mode === "file" ? submitFile() : submitText());
   };
 
-  // Closing mid-upload would cancel the bytes and read as a failure; once the job is
-  // queued it goes on without the dialog, and the Library shows it when it publishes.
+  // Closing during the upload cancels it (nothing is queued yet); the ingest call and a
+  // text save hold the dialog; once the job is followed it goes on without the dialog.
   const close = (v: boolean) => {
     if ((busy === "queue" || busy === "save") && !v) return;
     if (!v && busy === "follow")

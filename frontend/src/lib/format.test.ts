@@ -57,6 +57,17 @@ describe("humanizeError", () => {
   // An ApiError maps by code, then status, then the server's message — and the raw
   // response body never reaches the screen.
   describe("ApiError", () => {
+    it("words the upload's refusals, for when the format list could not check the file first", () => {
+      expect(
+        humanizeError(
+          new ApiError({ status: 413, code: "PAYLOAD_TOO_LARGE", message: "the file is over 26214400 bytes" }),
+        ),
+      ).toBe("Too large: the file is over 26214400 bytes");
+      expect(
+        humanizeError(new ApiError({ status: 415, code: "UNSUPPORTED_FILE", message: ".doc files are not supported" })),
+      ).toBe("This file type is not read: .doc files are not supported");
+    });
+
     it("maps the server code first", () => {
       expect(
         humanizeError(
