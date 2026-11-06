@@ -48,13 +48,10 @@ def _lines(name: str, loc: Locator) -> str:
 
 
 def _zip(*names: str) -> bytes:
-    """A zip of `names`, byte for byte the same in every process: these bytes are
-    parametrize ids, which every xdist worker must collect identically, and an entry
-    written by name alone carries the current time."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for n in names:
-            z.writestr(zipfile.ZipInfo(n, date_time=(1980, 1, 1, 0, 0, 0)), "<x/>")
+            z.writestr(n, "<x/>")
     return buf.getvalue()
 
 
@@ -65,9 +62,11 @@ def _zip(*names: str) -> bytes:
     ("data", "name", "fmt"),
     [
         (b"%PDF-1.7\n...", "report.bin", "pdf"),
-        (_zip("[Content_Types].xml", "word/document.xml"), "a.docx", "docx"),
-        (_zip("ppt/presentation.xml"), "deck", "pptx"),
-        (_zip("xl/workbook.xml"), "book.xlsx", "xlsx"),
+        # Named: a zip's bytes carry the time it was written, and an id must be the
+        # same in every xdist worker.
+        pytest.param(_zip("[Content_Types].xml", "word/document.xml"), "a.docx", "docx", id="docx"),
+        pytest.param(_zip("ppt/presentation.xml"), "deck", "pptx", id="pptx"),
+        pytest.param(_zip("xl/workbook.xml"), "book.xlsx", "xlsx", id="xlsx"),
         (b"PAR1....PAR1", "t.parquet", "parquet"),
         (b"SELECT 1;", "q.sql", "sql"),
         (b"a = 1", "c.toml", "toml"),
@@ -88,7 +87,7 @@ def test_detect_format_reads_content_before_the_name(data: bytes, name: str, fmt
         (b"just text", "report.pdf", "", "format_mismatch"),
         (b"%PDF-1.4", "report.docx", "", "format_mismatch"),
         (b"%PDF-1.4", "x", "sql", "format_mismatch"),
-        (_zip("data.txt"), "a.zip", "", "unsupported_format"),
+        pytest.param(_zip("data.txt"), "a.zip", "", "unsupported_format", id="plain zip"),
         (b"PK\x03\x04broken", "a.docx", "", "corrupt"),
         (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1rest", "old.bin", "", "unsupported_format"),
         (b"anything", "old.xls", "", "unsupported_format"),
