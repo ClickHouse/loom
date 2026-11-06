@@ -896,7 +896,6 @@ export function Documents() {
       {canFindPassages && passagesOpen && (
         <div ref={passagesBox}>
           <LibraryPassages
-            key={`${identity.org}/${identity.namespace}`}
             identity={{ org: identity.org, namespace: identity.namespace }}
             navEnabled={!dialogOpen && keysIn === "passages"}
             onHitsShown={setPassagesShown}

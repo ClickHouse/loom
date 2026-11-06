@@ -138,8 +138,15 @@ export function LibraryPassages({
                     <button
                       type="button"
                       data-row-open=""
-                      // Named by its document and citation; the excerpt is its description.
-                      aria-label={`Open ${h.source_uri}${cited ? `, ${cited}` : ""}`}
+                      // Named by what the row shows but the excerpt, which is its description.
+                      aria-label={[
+                        `Open ${h.source_uri}`,
+                        h.section,
+                        cited,
+                        h.keys_matched?.length ? `matched ${h.keys_matched.join(", ")}` : "",
+                      ]
+                        .filter(Boolean)
+                        .join(", ")}
                       aria-describedby={excerptId}
                       onClick={() => onOpen(h.source_uri)}
                       className="list-row-open block w-full"

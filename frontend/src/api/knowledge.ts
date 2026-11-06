@@ -227,7 +227,7 @@ export async function searchKnowledge(
     { org: id.org, namespace: id.namespace, query, top_k: topK, namespace_scope: "this" },
     opts.signal,
   );
-  return r.results ?? [];
+  return r.results;
 }
 
 /** One format `knowledge.formats` lists: the names that select it, and whether a

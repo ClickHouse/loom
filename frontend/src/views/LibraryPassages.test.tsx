@@ -83,6 +83,13 @@ describe("LibraryPassages", () => {
     expect(first).toHaveTextContent("Raw events are kept for 30 days");
     expect(second).toHaveTextContent("revision 1, key retention.days");
     expect(await axeViolations(document.body)).toEqual([]);
+    expect(within(second).getByRole("button")).toHaveAccessibleName(
+      "Open repo://conf/limits.toml, revision 1, key retention.days, matched retention.days",
+    );
+    expect(within(first).getByRole("button")).toHaveAccessibleName(
+      "Open repo://handbook/retention.pdf, Retention > Events, revision 3, page 7",
+    );
+    expect(within(first).getByRole("button")).toHaveAccessibleDescription(/Raw events are kept for 30 days/);
     await user.click(within(first).getByRole("button"));
     expect(onOpen).toHaveBeenCalledWith("repo://handbook/retention.pdf");
     // Gone (folded, or another place), the hits no longer show and the list below takes its

@@ -1,5 +1,7 @@
 // The open document is the Library's URL: a preview writes `?doc=` into the entry (no new
-// entry), closing drops it, and a `?doc=` link opens the preview on arrival.
+// entry), closing drops it, and a `?doc=` link opens the preview on arrival. Finding a
+// passage shares the page and its mocks: its toggle, a hit opening its document (through
+// the same open path as a link), the row keys and when the toggle shows.
 import { act, cleanup, fireEvent, render, screen, within } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
@@ -38,21 +40,25 @@ async function settle() {
     });
 }
 
+function atTeam() {
+  api.listKnowledge.mockResolvedValue({ rows: ROWS, next_cursor: null });
+  api.getKnowledge.mockResolvedValue({ found: true, content: "text", source_uri: "docs/handbook.md" });
+  api.fetchKnowledgePreview.mockResolvedValue(null);
+  useStore.setState({
+    identity: { org: "acme", namespace: "team", agent: "loom-ui" },
+    view: "knowledge",
+    pendingDocSourceUri: null,
+  });
+}
+
+function leave() {
+  cleanup();
+  vi.clearAllMocks();
+}
+
 describe("Library keeps the open document in its URL", () => {
-  beforeEach(() => {
-    api.listKnowledge.mockResolvedValue({ rows: ROWS, next_cursor: null });
-    api.getKnowledge.mockResolvedValue({ found: true, content: "text", source_uri: "docs/handbook.md" });
-    api.fetchKnowledgePreview.mockResolvedValue(null);
-    useStore.setState({
-      identity: { org: "acme", namespace: "team", agent: "loom-ui" },
-      view: "knowledge",
-      pendingDocSourceUri: null,
-    });
-  });
-  afterEach(() => {
-    cleanup();
-    vi.clearAllMocks();
-  });
+  beforeEach(atTeam);
+  afterEach(leave);
 
   it("a preview writes ?doc=, closing drops it, and neither adds an entry", async () => {
     history.replaceState(null, "", "/library");
@@ -210,6 +216,11 @@ describe("Library keeps the open document in its URL", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(location.search).toBe("?namespace=team");
   });
+});
+
+describe("Find a passage in the Library", () => {
+  beforeEach(atTeam);
+  afterEach(leave);
 
   it("a passage found inside the documents opens its document, cited by revision and place", async () => {
     history.replaceState(null, "", "/library");
