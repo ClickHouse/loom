@@ -429,7 +429,6 @@ def score(
                     report[grp].setdefault("diff", {}).setdefault(n, {})[m] = [b.mean, b.lb, b.ub]
             print(line)
     if out_json:
-        # strict JSON: an empty mean is null, never NaN
         out_json.write_text(
             json.dumps({"report": report, "files": scores}, indent=1, allow_nan=False)
         )

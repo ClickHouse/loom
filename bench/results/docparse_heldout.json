@@ -3,12 +3,12 @@
   "docx": {
    "n": 3,
    "text_recall": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.0,
       0.0,
@@ -114,70 +114,70 @@
     }
    },
    "text_precision": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "order_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_f1": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_level_acc": {
-    "previous": 0.10067340067340068,
-    "new": 1.0,
+    "text_layer": 0.10067340067340068,
+    "layout_ocr": 1.0,
     "baseline": 0.10067340067340068
    },
    "table_cell_f1": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "table_det_f1": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "lost_blocks": {
-    "previous": 0.0,
-    "new": 0.0,
+    "text_layer": 0.0,
+    "layout_ocr": 0.0,
     "baseline": 0.0
    },
    "silent_loss": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.023904813608775537,
-    "new": 0.025409800000488758,
+    "text_layer": 0.023904813608775537,
+    "layout_ocr": 0.025409800000488758,
     "baseline": 0.05000418261624873
    },
    "peak_mb": {
-    "previous": 41.6171875,
-    "new": 45.884114583333336,
+    "text_layer": 41.6171875,
+    "layout_ocr": 45.884114583333336,
     "baseline": 379.7213541666667
    }
   },
   "pdf_borderless_table": {
    "n": 2,
    "text_recall": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.0,
       0.0,
@@ -283,75 +283,75 @@
     }
    },
    "text_precision": {
-    "previous": 0.9872159090909092,
-    "new": 1.0,
+    "text_layer": 0.9872159090909092,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "order_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_level_acc": {
-    "previous": null,
-    "new": 1.0,
+    "text_layer": null,
+    "layout_ocr": 1.0,
     "baseline": 0.11805555555555555
    },
    "table_cell_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "table_det_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "locator_acc": {
-    "previous": 0.9384469696969697,
-    "new": 1.0,
+    "text_layer": 0.9384469696969697,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "lost_blocks": {
-    "previous": 0.0,
-    "new": 0.0,
+    "text_layer": 0.0,
+    "layout_ocr": 0.0,
     "baseline": 0.0
    },
    "silent_loss": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.0522020721109584,
-    "new": 0.1655448731034994,
+    "text_layer": 0.0522020721109584,
+    "layout_ocr": 0.1655448731034994,
     "baseline": 7.323018060531467
    },
    "peak_mb": {
-    "previous": 36.1171875,
-    "new": 43.029296875,
+    "text_layer": 36.1171875,
+    "layout_ocr": 43.029296875,
     "baseline": 1626.927734375
    }
   },
   "pdf_export": {
    "n": 5,
    "text_recall": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.0,
       0.0,
@@ -467,75 +467,75 @@
     }
    },
    "text_precision": {
-    "previous": 0.992290899518121,
-    "new": 1.0,
+    "text_layer": 0.992290899518121,
+    "layout_ocr": 1.0,
     "baseline": 0.9974018485262863
    },
    "order_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 0.980337004982953
    },
    "heading_f1": {
-    "previous": 0.3799498746867168,
-    "new": 1.0,
+    "text_layer": 0.3799498746867168,
+    "layout_ocr": 1.0,
     "baseline": 0.9913043478260869
    },
    "heading_level_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 0.11191919191919193
    },
    "table_cell_f1": {
-    "previous": 0.0,
-    "new": 0.9913043478260869,
+    "text_layer": 0.0,
+    "layout_ocr": 0.9913043478260869,
     "baseline": 1.0
    },
    "table_det_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "locator_acc": {
-    "previous": 0.9527470770046651,
-    "new": 0.9949999999999999,
+    "text_layer": 0.9527470770046651,
+    "layout_ocr": 0.9949999999999999,
     "baseline": 0.985817982946777
    },
    "lost_blocks": {
-    "previous": 0.0,
-    "new": 0.0,
+    "text_layer": 0.0,
+    "layout_ocr": 0.0,
     "baseline": 0.4
    },
    "silent_loss": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 2
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.08827132643200457,
-    "new": 0.2669324294198304,
+    "text_layer": 0.08827132643200457,
+    "layout_ocr": 0.2669324294198304,
     "baseline": 10.602800615224988
    },
    "peak_mb": {
-    "previous": 36.4328125,
-    "new": 43.04609375,
+    "text_layer": 36.4328125,
+    "layout_ocr": 43.04609375,
     "baseline": 1883.97890625
    }
   },
   "pdf_native": {
    "n": 1,
    "text_recall": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 0.9873096446700508
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.0,
       0.0,
@@ -641,75 +641,75 @@
     }
    },
    "text_precision": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "order_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 0.16666666666666669
    },
    "heading_level_acc": {
-    "previous": null,
-    "new": 1.0,
+    "text_layer": null,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "table_cell_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "table_det_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "locator_acc": {
-    "previous": 0.9772727272727273,
-    "new": 1.0,
+    "text_layer": 0.9772727272727273,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "lost_blocks": {
-    "previous": 0.0,
-    "new": 0.0,
+    "text_layer": 0.0,
+    "layout_ocr": 0.0,
     "baseline": 0.0
    },
    "silent_loss": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.01485063903965056,
-    "new": 0.04231456317938864,
+    "text_layer": 0.01485063903965056,
+    "layout_ocr": 0.04231456317938864,
     "baseline": 4.9772784889210016
    },
    "peak_mb": {
-    "previous": 35.93359375,
-    "new": 42.671875,
+    "text_layer": 35.93359375,
+    "layout_ocr": 42.671875,
     "baseline": 1291.7734375
    }
   },
   "pdf_public": {
    "n": 3,
    "text_recall": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 0.9989436103897434
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.0,
       0.0,
@@ -795,65 +795,65 @@
     }
    },
    "text_precision": {
-    "previous": 0.9637126536622168,
-    "new": 1.0,
+    "text_layer": 0.9637126536622168,
+    "layout_ocr": 1.0,
     "baseline": 0.9994713776440353
    },
    "order_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 0.9803921568627452
    },
    "heading_level_acc": {
-    "previous": null,
-    "new": 1.0,
+    "text_layer": null,
+    "layout_ocr": 1.0,
     "baseline": 0.10897435897435898
    },
    "locator_acc": {
-    "previous": 0.9956709956709956,
-    "new": 1.0,
+    "text_layer": 0.9956709956709956,
+    "layout_ocr": 1.0,
     "baseline": 0.9422240119914539
    },
    "lost_blocks": {
-    "previous": 0.0,
-    "new": 0.0,
+    "text_layer": 0.0,
+    "layout_ocr": 0.0,
     "baseline": 0.0
    },
    "silent_loss": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.15898820338770747,
-    "new": 0.4923457955786337,
+    "text_layer": 0.15898820338770747,
+    "layout_ocr": 0.4923457955786337,
     "baseline": 14.002530587060997
    },
    "peak_mb": {
-    "previous": 37.3671875,
-    "new": 42.96875,
+    "text_layer": 37.3671875,
+    "layout_ocr": 42.96875,
     "baseline": 2146.9036458333335
    }
   },
   "pdf_rotated": {
    "n": 1,
    "text_recall": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.0,
       0.0,
@@ -959,75 +959,75 @@
     }
    },
    "text_precision": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "order_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_level_acc": {
-    "previous": null,
-    "new": 1.0,
+    "text_layer": null,
+    "layout_ocr": 1.0,
     "baseline": 0.14285714285714285
    },
    "table_cell_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "table_det_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "locator_acc": {
-    "previous": 0.9,
-    "new": 0.95,
+    "text_layer": 0.9,
+    "layout_ocr": 0.95,
     "baseline": 0.95
    },
    "lost_blocks": {
-    "previous": 0.0,
-    "new": 0.0,
+    "text_layer": 0.0,
+    "layout_ocr": 0.0,
     "baseline": 0.0
    },
    "silent_loss": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.007997751934453845,
-    "new": 0.03031291300430894,
+    "text_layer": 0.007997751934453845,
+    "layout_ocr": 0.03031291300430894,
     "baseline": 7.268033592030406
    },
    "peak_mb": {
-    "previous": 35.37109375,
-    "new": 42.58203125,
+    "text_layer": 35.37109375,
+    "layout_ocr": 42.58203125,
     "baseline": 1694.54296875
    }
   },
   "pdf_scanned": {
    "n": 3,
    "text_recall": {
-    "previous": 0.0,
-    "new": 0.9969552076218028,
+    "text_layer": 0.0,
+    "layout_ocr": 0.9969552076218028,
     "baseline": 0.6490765171503958
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.9969552076218028,
       0.9934036939313984,
@@ -1133,75 +1133,75 @@
     }
    },
    "text_precision": {
-    "previous": 0.0,
-    "new": 0.9498101864603666,
+    "text_layer": 0.0,
+    "layout_ocr": 0.9498101864603666,
     "baseline": 0.6589569160997732
    },
    "order_acc": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 0.9807692307692308
    },
    "heading_f1": {
-    "previous": 0.0,
-    "new": 0.5054945054945055,
+    "text_layer": 0.0,
+    "layout_ocr": 0.5054945054945055,
     "baseline": 0.9090909090909092
    },
    "heading_level_acc": {
-    "previous": null,
-    "new": 1.0,
+    "text_layer": null,
+    "layout_ocr": 1.0,
     "baseline": 0.10101010101010101
    },
    "table_cell_f1": {
-    "previous": 0.0,
-    "new": 0.9280538302277432,
+    "text_layer": 0.0,
+    "layout_ocr": 0.9280538302277432,
     "baseline": 0.9782608695652174
    },
    "table_det_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "locator_acc": {
-    "previous": 0.0,
-    "new": 0.9833333333333334,
+    "text_layer": 0.0,
+    "layout_ocr": 0.9833333333333334,
     "baseline": 0.625
    },
    "lost_blocks": {
-    "previous": 24.666666666666668,
-    "new": 0.3333333333333333,
+    "text_layer": 24.666666666666668,
+    "layout_ocr": 0.3333333333333333,
     "baseline": 2.0
    },
    "silent_loss": {
-    "previous": 0,
-    "new": 1,
+    "text_layer": 0,
+    "layout_ocr": 1,
     "baseline": 2
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.001816960284486413,
-    "new": 2.6927621636229255,
+    "text_layer": 0.001816960284486413,
+    "layout_ocr": 2.6927621636229255,
     "baseline": 15.68296032701619
    },
    "peak_mb": {
-    "previous": 36.9453125,
-    "new": 121.47135416666667,
+    "text_layer": 36.9453125,
+    "layout_ocr": 121.47135416666667,
     "baseline": 2170.9192708333335
    }
   },
   "pdf_slides": {
    "n": 3,
    "text_recall": {
-    "previous": 0.9489278470008693,
-    "new": 0.9915966386554622,
+    "text_layer": 0.9489278470008693,
+    "layout_ocr": 0.9915966386554622,
     "baseline": 0.8945328392590056
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.04266879165459284,
       0.0,
@@ -1317,75 +1317,75 @@
     }
    },
    "text_precision": {
-    "previous": 1.0,
-    "new": 0.9595244339540169,
+    "text_layer": 1.0,
+    "layout_ocr": 0.9595244339540169,
     "baseline": 1.0
    },
    "order_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_f1": {
-    "previous": 0.3333333333333333,
-    "new": 1.0,
+    "text_layer": 0.3333333333333333,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_level_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "table_cell_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "table_det_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "locator_acc": {
-    "previous": 0.8539682539682539,
-    "new": 0.9833333333333334,
+    "text_layer": 0.8539682539682539,
+    "layout_ocr": 0.9833333333333334,
     "baseline": 0.7420634920634921
    },
    "lost_blocks": {
-    "previous": 2.0,
-    "new": 0.3333333333333333,
+    "text_layer": 2.0,
+    "layout_ocr": 0.3333333333333333,
     "baseline": 5.333333333333333
    },
    "silent_loss": {
-    "previous": 2,
-    "new": 1,
+    "text_layer": 2,
+    "layout_ocr": 1,
     "baseline": 3
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.015487816650420427,
-    "new": 0.24117019539698958,
+    "text_layer": 0.015487816650420427,
+    "layout_ocr": 0.24117019539698958,
     "baseline": 11.325805862667039
    },
    "peak_mb": {
-    "previous": 35.532552083333336,
-    "new": 88.87630208333333,
+    "text_layer": 35.532552083333336,
+    "layout_ocr": 88.87630208333333,
     "baseline": 2248.9244791666665
    }
   },
   "pdf_table_span": {
    "n": 2,
    "text_recall": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.0,
       0.0,
@@ -1491,75 +1491,75 @@
     }
    },
    "text_precision": {
-    "previous": 0.9629167154433476,
-    "new": 1.0,
+    "text_layer": 0.9629167154433476,
+    "layout_ocr": 1.0,
     "baseline": 0.9901024722209125
    },
    "order_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_level_acc": {
-    "previous": null,
-    "new": 1.0,
+    "text_layer": null,
+    "layout_ocr": 1.0,
     "baseline": 0.18333333333333335
    },
    "table_cell_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "table_det_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "locator_acc": {
-    "previous": 0.9318181818181819,
-    "new": 0.9772727272727273,
+    "text_layer": 0.9318181818181819,
+    "layout_ocr": 0.9772727272727273,
     "baseline": 1.0
    },
    "lost_blocks": {
-    "previous": 0.0,
-    "new": 0.0,
+    "text_layer": 0.0,
+    "layout_ocr": 0.0,
     "baseline": 0.0
    },
    "silent_loss": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.08542946807574481,
-    "new": 0.2754952600225806,
+    "text_layer": 0.08542946807574481,
+    "layout_ocr": 0.2754952600225806,
     "baseline": 16.68705850688275
    },
    "peak_mb": {
-    "previous": 36.62890625,
-    "new": 43.220703125,
+    "text_layer": 36.62890625,
+    "layout_ocr": 43.220703125,
     "baseline": 1808.890625
    }
   },
   "pdf_two_column": {
    "n": 1,
    "text_recall": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.0,
       0.0,
@@ -1645,65 +1645,65 @@
     }
    },
    "text_precision": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "order_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_level_acc": {
-    "previous": null,
-    "new": 1.0,
+    "text_layer": null,
+    "layout_ocr": 1.0,
     "baseline": 0.14285714285714285
    },
    "locator_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 0.9655172413793104
    },
    "lost_blocks": {
-    "previous": 0.0,
-    "new": 0.0,
+    "text_layer": 0.0,
+    "layout_ocr": 0.0,
     "baseline": 0.0
    },
    "silent_loss": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.07543619791977108,
-    "new": 0.2356289408635348,
+    "text_layer": 0.07543619791977108,
+    "layout_ocr": 0.2356289408635348,
     "baseline": 6.585987776052207
    },
    "peak_mb": {
-    "previous": 36.87109375,
-    "new": 42.42578125,
+    "text_layer": 36.87109375,
+    "layout_ocr": 42.42578125,
     "baseline": 1691.25390625
    }
   },
   "pptx": {
    "n": 3,
    "text_recall": {
-    "previous": 0.9376724942934219,
-    "new": 1.0,
+    "text_layer": 0.9376724942934219,
+    "layout_ocr": 1.0,
     "baseline": 0.6961043957944248
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.062327505706578114,
       0.05625000000000002,
@@ -1829,80 +1829,80 @@
     }
    },
    "text_precision": {
-    "previous": 1.0,
-    "new": 0.9505504699839955,
+    "text_layer": 1.0,
+    "layout_ocr": 0.9505504699839955,
     "baseline": 1.0
    },
    "order_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_f1": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "heading_level_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "table_cell_f1": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "table_det_f1": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "locator_acc": {
-    "previous": 0.8654286217215278,
-    "new": 1.0,
+    "text_layer": 0.8654286217215278,
+    "layout_ocr": 1.0,
     "baseline": 0.7436777562635686
    },
    "notes_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 0.0
    },
    "lost_blocks": {
-    "previous": 3.0,
-    "new": 0.0,
+    "text_layer": 3.0,
+    "layout_ocr": 0.0,
     "baseline": 5.666666666666667
    },
    "silent_loss": {
-    "previous": 3,
-    "new": 0,
+    "text_layer": 3,
+    "layout_ocr": 0,
     "baseline": 3
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.002883341939498981,
-    "new": 0.39007906926174957,
+    "text_layer": 0.002883341939498981,
+    "layout_ocr": 0.39007906926174957,
     "baseline": 0.1237075043997417
    },
    "peak_mb": {
-    "previous": 35.36328125,
-    "new": 117.85026041666667,
+    "text_layer": 35.36328125,
+    "layout_ocr": 117.85026041666667,
     "baseline": 388.9921875
    }
   },
   "ALL": {
    "n": 27,
    "text_recall": {
-    "previous": 0.8762889268104769,
-    "new": 0.9987279829196962,
+    "text_layer": 0.8762889268104769,
+    "layout_ocr": 0.9987279829196962,
     "baseline": 0.9149363604611392
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.1224390561092193,
       0.014729366873940079,
@@ -2028,80 +2028,80 @@
     }
    },
    "text_precision": {
-    "previous": 0.8797354706535471,
-    "new": 0.984431676710931,
+    "text_layer": 0.8797354706535471,
+    "layout_ocr": 0.984431676710931,
     "baseline": 0.9608332988260992
    },
    "order_acc": {
-    "previous": 0.92,
-    "new": 1.0,
+    "text_layer": 0.92,
+    "layout_ocr": 1.0,
     "baseline": 0.994528939458129
    },
    "heading_f1": {
-    "previous": 0.34229805282436865,
-    "new": 0.9619611158072696,
+    "text_layer": 0.34229805282436865,
+    "layout_ocr": 0.9619611158072696,
     "baseline": 0.9570210267141213
    },
    "heading_level_acc": {
-    "previous": 0.7002244668911336,
-    "new": 1.0,
+    "text_layer": 0.7002244668911336,
+    "layout_ocr": 1.0,
     "baseline": 0.35688659630967323
    },
    "table_cell_f1": {
-    "previous": 0.2727272727272727,
-    "new": 0.9914831545266328,
+    "text_layer": 0.2727272727272727,
+    "layout_ocr": 0.9914831545266328,
     "baseline": 0.9980237154150197
    },
    "table_det_f1": {
-    "previous": 0.2727272727272727,
-    "new": 1.0,
+    "text_layer": 0.2727272727272727,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "locator_acc": {
-    "previous": 0.813614251225362,
-    "new": 0.990814393939394,
+    "text_layer": 0.813614251225362,
+    "layout_ocr": 0.990814393939394,
     "baseline": 0.8751459557111975
    },
    "notes_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 0.0
    },
    "lost_blocks": {
-    "previous": 3.2962962962962963,
-    "new": 0.07407407407407407,
+    "text_layer": 3.2962962962962963,
+    "layout_ocr": 0.07407407407407407,
     "baseline": 1.5185185185185186
    },
    "silent_loss": {
-    "previous": 5,
-    "new": 2,
+    "text_layer": 5,
+    "layout_ocr": 2,
     "baseline": 10
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.05274621144592486,
-    "new": 0.5203814778511447,
+    "text_layer": 0.05274621144592486,
+    "layout_ocr": 0.5203814778511447,
     "baseline": 9.015573387379172
    },
    "peak_mb": {
-    "previous": 36.90031828703704,
-    "new": 65.42824074074075,
+    "text_layer": 36.90031828703704,
+    "layout_ocr": 65.42824074074075,
     "baseline": 1591.6846064814815
    }
   },
   "ALL_PDF": {
    "n": 21,
    "text_recall": {
-    "previous": 0.8498468352858385,
-    "new": 0.9983645494681808,
+    "text_layer": 0.8498468352858385,
+    "layout_ocr": 0.9983645494681808,
     "baseline": 0.9340461211936897
    },
    "diff": {
-    "new": {
+    "layout_ocr": {
      "text_recall": [
       0.14851771418234225,
       0.008496502049095493,
@@ -2217,69 +2217,69 @@
     }
    },
    "text_precision": {
-    "previous": 0.8453741765545605,
-    "new": 0.9870478029163406,
+    "text_layer": 0.8453741765545605,
+    "layout_ocr": 0.9870478029163406,
     "baseline": 0.9496428127764134
    },
    "order_acc": {
-    "previous": 0.9,
-    "new": 1.0,
+    "text_layer": 0.9,
+    "layout_ocr": 1.0,
     "baseline": 0.9931611743226613
    },
    "heading_f1": {
-    "previous": 0.1449874686716792,
-    "new": 0.9505494505494505,
+    "text_layer": 0.1449874686716792,
+    "layout_ocr": 0.9505494505494505,
     "baseline": 0.9441273347283576
    },
    "heading_level_acc": {
-    "previous": 1.0,
-    "new": 1.0,
+    "text_layer": 1.0,
+    "layout_ocr": 1.0,
     "baseline": 0.29885156510156513
    },
    "table_cell_f1": {
-    "previous": 0.0,
-    "new": 0.9882893374741201,
+    "text_layer": 0.0,
+    "layout_ocr": 0.9882893374741201,
     "baseline": 0.9972826086956522
    },
    "table_det_f1": {
-    "previous": 0.0,
-    "new": 1.0,
+    "text_layer": 0.0,
+    "layout_ocr": 1.0,
     "baseline": 1.0
    },
    "locator_acc": {
-    "previous": 0.8062121982973384,
-    "new": 0.9895021645021645,
+    "text_layer": 0.8062121982973384,
+    "layout_ocr": 0.9895021645021645,
     "baseline": 0.8939271270608588
    },
    "lost_blocks": {
-    "previous": 3.8095238095238093,
-    "new": 0.09523809523809523,
+    "text_layer": 3.8095238095238093,
+    "layout_ocr": 0.09523809523809523,
     "baseline": 1.1428571428571428
    },
    "silent_loss": {
-    "previous": 2,
-    "new": 2,
+    "text_layer": 2,
+    "layout_ocr": 2,
     "baseline": 7
    },
    "error": {
-    "previous": 0,
-    "new": 0,
+    "text_layer": 0,
+    "layout_ocr": 0,
     "baseline": 0
    },
    "seconds": {
-    "previous": 0.06398967820929274,
-    "new": 0.6097063473425806,
+    "text_layer": 0.06398967820929274,
+    "layout_ocr": 0.6097063473425806,
     "baseline": 11.566635542770936
    },
    "peak_mb": {
-    "previous": 36.44605654761905,
-    "new": 60.73139880952381,
+    "text_layer": 36.44605654761905,
+    "layout_ocr": 60.73139880952381,
     "baseline": 1936.6354166666667
    }
   }
  },
  "files": {
-  "previous": {
+  "text_layer": {
    "web_doc_1.pdf": {
     "text_recall": 1.0,
     "text_precision": 0.9689507494646681,
@@ -2795,7 +2795,7 @@
     "peak_mb": 35.1171875
    }
   },
-  "new": {
+  "layout_ocr": {
    "web_doc_1.pdf": {
     "text_recall": 1.0,
     "text_precision": 1.0,

@@ -17,7 +17,7 @@
  ],
  "counted": "each decision, its reasons and its rejected options, where decision extraction grounds their quotes in the parsed text",
  "systems": {
-  "previous": {
+  "text_layer": {
    "docs": 12,
    "claims": 66,
    "kept": 65,
@@ -28,7 +28,7 @@
    "quote_match": 0.9848484848484849,
    "in_gold_rate": 1.0
   },
-  "new": {
+  "layout_ocr": {
    "docs": 12,
    "claims": 84,
    "kept": 84,
