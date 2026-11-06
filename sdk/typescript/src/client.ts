@@ -10,12 +10,15 @@
  * is `loom.call("memory.search", input)`, `loom.knowledge.bulkAdd(...)` is
  * `knowledge.bulk_add`, and so on for every group. Both forms are the same
  * call; the dotted name is the one that appears in the server's ledger.
+ * `loom.knowledge` also uploads a file and follows its ingest job
+ * (`upload`, `waitForIngest`, `ingestFile`; see `files.ts`).
  */
 
 import { AccountClient } from "./account.js";
 import { type Capabilities, capabilities as fetchCapabilities } from "./capabilities.js";
 import { DEFAULT_SERVER, LocalCredential, StoredLogin, sameServer, signedInServer } from "./credentials.js";
 import { AuthError, LoomError } from "./errors.js";
+import { type KnowledgeFiles, knowledgeFiles } from "./files.js";
 import { OP_BY_NAME, OPS, type OpMap, type OpName, type OpSpec } from "./generated/ops.js";
 import { machineLogin } from "./machine.js";
 import { envVar, isBrowser } from "./runtime.js";
@@ -67,8 +70,10 @@ export class LoomClient {
     this.transport = opts instanceof Transport ? opts : new Transport(readEnv(opts));
     this.account = new AccountClient(this.transport);
     for (const group of new Set(OPS.map((o) => o.group))) {
+      const ops = this.group(group as Groups);
       Object.defineProperty(this, group, {
-        value: this.group(group as Groups),
+        // `loom.knowledge` also sends files (`files.ts`); `group("knowledge")` is the ops alone.
+        value: group === "knowledge" ? Object.assign(ops, knowledgeFiles(this.transport)) : ops,
         enumerable: false,
         writable: false,
       });
@@ -116,7 +121,7 @@ export class LoomClient {
     return OP_BY_NAME[name as OpName];
   }
 
-  /** A typed accessor for one group: `loom.group("memory").search(...)`. */
+  /** A typed accessor for one group's ops: `loom.group("memory").search(...)`. */
   group<G extends Groups>(name: G): GroupClient<G> {
     const target: Record<string, unknown> = {};
     for (const spec of OPS) {
@@ -129,7 +134,9 @@ export class LoomClient {
 
 /** The generated groups as properties: `loom.memory`, `loom.knowledge`, … */
 export interface LoomClient extends LoomClientGroups {}
-export type LoomClientGroups = { readonly [G in Groups]: GroupClient<G> };
+export type LoomClientGroups = { readonly [G in Exclude<Groups, "knowledge">]: GroupClient<G> } & {
+  readonly knowledge: GroupClient<"knowledge"> & KnowledgeFiles;
+};
 
 /**
  * The server and credential a client uses, as the Python SDK picks them. A

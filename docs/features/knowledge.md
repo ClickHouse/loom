@@ -909,11 +909,14 @@ configured. `knowledge.update_metadata` with `reindex=true` refuses an ingested 
 (the title, description and section breadcrumb both search legs read) is filled as for
 `knowledge.add`.
 
-The Python SDK runs the two steps: `agent.knowledge.upload(data, filename)` sends the bytes
-with their `sha256`, `agent.knowledge.ingest(upload_id, source_uri=...)` starts the job,
-and `agent.knowledge.wait_for_ingest(ingestion_id)` polls `knowledge.ingest_status` until
-the job ends (a `TimeoutError` after `timeout_s`, 600 by default, with the job still
-running). `agent.knowledge.ingest_file(path)` does all three for a local file, named
+The Python and TypeScript SDKs run the two steps (TypeScript: `loom.knowledge.upload`,
+`waitForIngest` and `ingestFile`, in the [TypeScript SDK
+reference](../reference/typescript-sdk.md#files)). In Python,
+`agent.knowledge.upload(data, filename)` sends the bytes with their `sha256`,
+`agent.knowledge.ingest(upload_id, source_uri=...)` starts the job, and
+`agent.knowledge.wait_for_ingest(ingestion_id)` polls `knowledge.ingest_status` until the
+job ends (a `TimeoutError` after `timeout_s`, 600 by default, with the job still running).
+`agent.knowledge.ingest_file(path)` does all three for a local file, named
 `file://<absolute path>` unless `source_uri` says otherwise:
 
 ```python

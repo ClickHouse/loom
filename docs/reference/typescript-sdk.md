@@ -129,6 +129,37 @@ const out = await loom.call("memory.search", { org, namespace, query: "deploy wi
 const same = await loom.memory.search({ org, namespace, query: "deploy window" });
 ```
 
+### Files
+
+`loom.knowledge` also sends a file for the server's extractor to parse
+([ingesting files](../features/knowledge.md#ingesting-files)); the SDK parses nothing.
+
+- `upload(scope, data, filename)` posts the bytes (`Uint8Array`, `ArrayBuffer` or a `Blob`
+  such as a browser `File`) to `/v1/knowledge.upload` with their sha256 (none where Web
+  Crypto is missing, as on a browser page served over plain http). It is paced on a
+  429 as an op is, retried after a connection failure, and on an answer only when it
+  proves the server never ran it (a retry after a connection that dropped once the file
+  was stored leaves a second upload, which expires unused).
+- `waitForIngest(scope, ingestionId)` polls `knowledge.ingest_status` until the job ends: a
+  `TimeoutError` after `timeoutMs` (600 s by default), at once for a job not found, and an
+  abort through `signal` stops it. It polls on real timers, not a `Transport`'s injected
+  `sleep`.
+- `ingestFile(...)` does both around `knowledge.ingest`, titling the document by the file
+  name less its extension unless `title` says otherwise. `waitTimeoutMs` bounds the wait;
+  `call` holds the upload's and the ingest's own request options (`timeoutMs` for a large
+  file over a slow link), and `call.signal` also stops the wait.
+
+```ts
+const status = await loom.knowledge.ingestFile({
+  org,
+  namespace,
+  data: new TextEncoder().encode("# Runbook"),
+  filename: "runbook.md",
+  source_uri: "repo://runbook.md",
+});
+// status.state: ready | partial | failed | cancelled
+```
+
 ### Probe before you rely
 
 ```ts
