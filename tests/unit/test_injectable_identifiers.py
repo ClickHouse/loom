@@ -26,8 +26,7 @@ from server.memory.app.ask.identifiers import _injectable_identifiers as inj
         pytest.param(
             "the new test file 0123456 for the planner", "0123456", id="seven-digit zero-padded id"
         ),
-        # STID (NNNN-hhhh) is a high-precision failure key the other shapes miss, so a
-        # query naming only a STID must still extract it.
+        # A STID (NNNN-hhhh) is the key of the failure a query asks about.
         pytest.param(
             "What do we know about the BuzzHouse amd_msan failure with STID 3782-2f00?",
             "3782-2f00",
