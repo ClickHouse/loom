@@ -85,10 +85,10 @@ export interface KnowledgeFiles {
   ): Promise<IngestStatus>;
   /** Upload a file and ingest it: the job's final status, or with `wait: false` the ingest answer. */
   ingestFile(input: IngestFileInput & { wait: false }): Promise<OpOutput<"knowledge.ingest">>;
-  ingestFile(input: IngestFileInput): Promise<IngestStatus>;
+  ingestFile(input: IngestFileInput & { wait?: true }): Promise<IngestStatus>;
+  ingestFile(input: IngestFileInput): Promise<IngestStatus | OpOutput<"knowledge.ingest">>;
 }
 
-/** The bytes, in an `ArrayBuffer` as `fetch` and `crypto.subtle` take them (a view of a shared buffer is copied). */
 /** The bytes; a view of a shared buffer is copied, as `fetch` and `crypto.subtle` take none. */
 async function bytesOf(data: FileData): Promise<Uint8Array> {
   if (data instanceof ArrayBuffer) return new Uint8Array(data);

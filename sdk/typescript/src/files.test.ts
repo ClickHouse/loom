@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
-import { LoomClient } from "./client.js";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import { LoomClient, type OpOutput } from "./client.js";
 import { RateLimited, TimeoutError } from "./errors.js";
 import { INGEST_DONE } from "./files.js";
 import { Transport } from "./transport.js";
@@ -198,6 +198,17 @@ describe("knowledge.ingestFile", () => {
     });
     expect(ingest).not.toHaveProperty("data");
     expect(ingest).not.toHaveProperty("filename");
+  });
+
+  it("types its answer by wait: the status, the job, or either when wait is not a literal", () => {
+    const { loom } = server();
+    const input = { ...scope, data: new Uint8Array([1]), filename: "a.md", source_uri: "repo://a" };
+    const follow = Math.random() < 2;
+    expectTypeOf(loom.knowledge.ingestFile(input)).resolves.toHaveProperty("found");
+    expectTypeOf(loom.knowledge.ingestFile({ ...input, wait: false })).resolves.toHaveProperty("ingestion_id");
+    expectTypeOf(loom.knowledge.ingestFile({ ...input, wait: follow })).resolves.toEqualTypeOf<
+      OpOutput<"knowledge.ingest_status"> | OpOutput<"knowledge.ingest">
+    >();
   });
 
   it("with wait: false returns the job, and keeps a title given", async () => {
