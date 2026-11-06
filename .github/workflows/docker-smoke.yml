@@ -61,6 +61,9 @@ on:
         "pyproject.toml",
         ".github/workflows/docker-smoke.yml",
       ]
+  # Weekly, so a critical CVE fixed upstream fails here before a release's scan.
+  schedule:
+    - cron: "17 4 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -134,6 +137,26 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           cache-from: type=gha,scope=docker-smoke-extractor-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=docker-smoke-extractor-${{ matrix.arch }}
+      # The release refuses a critical CVE that has a fixed package. A pull
+      # request or a push sees the report; the weekly run and a dispatch fail on it.
+      - name: Scan the server image as the release does
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/${{ matrix.arch }}
+        with:
+          image-ref: loom:docker-smoke
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+      - name: Scan the extractor image as the release does
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/${{ matrix.arch }}
+        with:
+          image-ref: loom-extractor:docker-smoke
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
       - name: Fresh installer, compiler indexing and dashboard provider recovery
         env:
           CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
